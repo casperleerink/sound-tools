@@ -1,4 +1,4 @@
-//! The Wavetable in the window, on a Pad track at the end of the piece, playing a chord:
+//! The Wavetable in the window, the instrument of a rack, playing a chord:
 //!
 //! - `wavetable.png`: the card: the wavetable of the first oscillator, its position, the
 //!   cutoff and the resonance of the first filter, and the gain.
@@ -10,16 +10,16 @@
 //! - `wavetable-lfos.png`: the LFO page, showing a synced LFO 1.
 //! - `wavetable-matrix.png`: the Matrix page, with three routes.
 
-use anyhow::{Context as _, Result};
-use arrangement::{Colour, TrackState};
-use gpui::{Entity, HeadlessAppContext};
-use sound_core::{Changes, FilterCharacter, FilterType, Instance, LfoShape, Project, Ticks};
+use anyhow::Result;
+use gpui::HeadlessAppContext;
+use sound_core::{FilterCharacter, FilterType, LfoShape, Ticks};
 use sound_notes::{Division, Feel};
 use wavetable::state::{Effect, Oscillator};
 use wavetable::view::{EnvelopeShown, Page, WavetableView};
 use wavetable::{Destination, Route, Source, Table, WavetableState};
 
-use super::{BAR, Opened, clip, note, piece};
+use super::{Opened, Save};
+use crate::rack::{notes, rack_files};
 
 /// A slow pad: vowels that an LFO morphs, a folded second oscillator an octave up, a filter
 /// the second envelope opens, and three routes.
@@ -85,62 +85,22 @@ fn pad() -> WavetableState {
     }
 }
 
-/// A Pad track at the end of the piece whose instrument is `sound`, holding a chord.
-fn add_pad(project: &mut Project, sound: WavetableState) -> Result<()> {
-    let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
-    let mut changes = Changes::new();
-    let track = arrangement::add_track(
-        project,
-        &mut changes,
-        arrangement.id(),
-        "Pad",
-        Colour::Sky,
-        sound,
-    )?;
-    let chord = [57, 60, 64, 67]
-        .map(|pitch| note(0, 4 * BAR, pitch))
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-    changes.create(track.id().child("chord")?, clip(4, 4, chord)?);
-    project.commit("Add pad", changes)?;
-    Ok(())
-}
-
-/// Opens the panel of the last track and gives its card.
-fn open_panel(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<Entity<WavetableView>> {
-    let view = opened.arrangement_view(cx)?;
-    let track = cx.update(|cx| {
-        let project = opened.session.read(cx).project();
-        let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
-        let tracks = project.children::<TrackState>(arrangement.id());
-        let last = tracks.max_by_key(|(_, state)| state.order);
-        last.map(|(track, _): (Instance<TrackState>, _)| track)
-            .context("no track")
-    })?;
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        view.update(cx, |view, cx| view.open_track_panel(track, window, cx));
-    })?;
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned().context("no panel")?;
-        let card = panel.read(cx).device_views().next().flatten().cloned();
-        let card = card.context("no card")?.downcast::<WavetableView>().ok();
-        card.context("not a Wavetable")
-    })
-}
-
-pub(crate) fn snapshots(
-    cx: &mut HeadlessAppContext,
-    save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
-) -> Result<()> {
-    let mut opened = Opened::new(cx, |project| {
-        piece(project)?;
-        add_pad(project, pad())
-    })?;
-    let card = open_panel(&opened, cx)?;
-    opened.play_from(Ticks(4 * BAR + 1920), cx)?;
-    opened.listen(0.3, cx)?;
-    save(cx, &opened, "wavetable")?;
+pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
+    let sound = serde_json::json!({ "tool": "wavetable", "state": pad() }).to_string();
+    let chord = notes(
+        4 * 3840,
+        &[
+            (0, 15360, 57),
+            (0, 15360, 60),
+            (0, 15360, 64),
+            (0, 15360, 67),
+        ],
+    );
+    let children = [("instrument", sound.as_str()), ("chord", chord.as_str())];
+    let mut opened = Opened::open(cx, &rack_files(&children))?;
+    let card = opened.card::<WavetableView>("rack/instrument", cx)?;
+    opened.play_from(Ticks(1920), cx)?;
+    save(cx, opened.window.into(), "wavetable")?;
     cx.update(|cx| {
         card.update(cx, |card, cx| {
             card.set_expanded(true, cx);
@@ -157,7 +117,7 @@ pub(crate) fn snapshots(
     ] {
         cx.update(|cx| card.update(cx, |card, cx| card.show_page(page, cx)));
         cx.run_until_parked();
-        save(cx, &opened, name)?;
+        save(cx, opened.window.into(), name)?;
     }
     Ok(())
 }

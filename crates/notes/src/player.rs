@@ -17,7 +17,9 @@ use sound_core::{
     Watch,
 };
 
-use crate::{Expression, Launch, NoteEvent, NoteTimeline, Pattern, Pedal, Pitch, Velocity};
+use crate::{
+    Expression, Launch, NoteEvent, NoteTimeline, Pattern, Pedal, Pitch, Placing, Velocity,
+};
 
 /// How long a preview note sounds. Its off comes from the processor after this time, so no
 /// interface can leave one sounding.
@@ -42,6 +44,8 @@ pub enum NotePlayerUpdate {
     Patterns(Arc<Vec<Pattern>>),
     /// Takes the place of a launch that has not landed yet.
     Launch(Launch),
+    /// Puts a pattern on the song from the next block on: the notes it holds end there.
+    Place(Placing),
     /// A note from an interface that sounds now, for [`PREVIEW_SECONDS`], also while the
     /// project does not play. A new one ends the one before it.
     Preview { pitch: Pitch, velocity: Velocity },
@@ -93,6 +97,55 @@ enum Source {
 struct Launched {
     pattern: usize,
     anchor: Ticks,
+    /// Placed on the song: the anchor stays through seeks, and nothing plays before it.
+    placed: bool,
+    /// One round from the anchor, and nothing before it.
+    once: bool,
+}
+
+impl Launched {
+    /// Whether the note that starts at `start` of the song plays, in a round of `length`.
+    fn plays_at(&self, start: Ticks, length: Ticks) -> bool {
+        let from_anchor = self.placed || self.once;
+        (!from_anchor || start >= self.anchor) && (!self.once || start < self.anchor + length)
+    }
+
+    /// Whether a note of a pattern of `length` may start or end in `range`.
+    fn plays_in(&self, range: &Range<Ticks>, length: Ticks) -> bool {
+        if !self.placed && !self.once {
+            return true;
+        }
+        let end = match self.once {
+            true => self.anchor + length,
+            false => Ticks(u64::MAX),
+        };
+        range.start <= end && self.anchor < range.end
+    }
+
+    /// After ranges up to `end`, the tick before which no note of a pattern of `length` plays,
+    /// see [`Self::plays_in`]: `Ticks::MAX` when its round is behind. `None` while it plays.
+    fn quiet_until(&self, end: Ticks, length: Ticks) -> Option<Ticks> {
+        if !self.placed && !self.once {
+            return None;
+        }
+        let stop = match self.once {
+            true => self.anchor + length,
+            false => Ticks::MAX,
+        };
+        if end > stop {
+            Some(Ticks::MAX)
+        } else if self.anchor >= end {
+            Some(self.anchor)
+        } else {
+            None
+        }
+    }
+
+    /// Whether it sounds at `heard`, for the watches.
+    fn sounds_at(&self, heard: Ticks, length: Ticks) -> bool {
+        let started = !self.placed || heard >= self.anchor;
+        started && (!self.once || heard < self.anchor + length)
+    }
 }
 
 pub struct NotePlayer {
@@ -104,6 +157,8 @@ pub struct NotePlayer {
     launched: Option<Launched>,
     /// A launch that has not landed yet.
     queued: Option<Launch>,
+    /// A placing that came since the last block.
+    placing: Option<Placing>,
     watches: Option<PlayerWatches>,
     /// Never grows past [`HELD_CAPACITY`], so it never allocates on the audio thread.
     held: Vec<Held>,
@@ -118,6 +173,8 @@ pub struct NotePlayer {
     /// Where this player last put the wheels and the pressure, compared with the lanes of
     /// the snapshot every block as the pedal is.
     sent_expression: Expression,
+    /// See [`Processor::rests_until`].
+    rests_until: Option<Ticks>,
 }
 
 impl NotePlayer {
@@ -125,13 +182,20 @@ impl NotePlayer {
 
     /// A player that shows what it plays in `watches`.
     pub fn watched(watches: PlayerWatches) -> Self {
-        watches.playing.set(NO_PATTERN);
-        watches.queued.set(NO_PATTERN);
-        watches.phase.set(0.0);
-        Self {
-            watches: Some(watches),
-            ..Self::default()
+        let mut player = Self::default();
+        player.show(Some(watches));
+        player
+    }
+
+    /// Shows what it plays in `watches` from now on, or nothing: a player that shows nothing
+    /// can rest.
+    pub fn show(&mut self, watches: Option<PlayerWatches>) {
+        if let Some(watches) = &watches {
+            watches.playing.set(NO_PATTERN);
+            watches.queued.set(NO_PATTERN);
+            watches.phase.set(0.0);
         }
+        self.watches = watches;
     }
 }
 
@@ -144,6 +208,7 @@ impl Default for NotePlayer {
             patterns_swapped: false,
             launched: None,
             queued: None,
+            placing: None,
             watches: None,
             held: Vec::with_capacity(HELD_CAPACITY),
             preview_wanted: None,
@@ -151,7 +216,55 @@ impl Default for NotePlayer {
             preview_frames: 0,
             sent_pedal: Pedal::UP,
             sent_expression: Expression::REST,
+            rests_until: None,
         }
+    }
+}
+
+impl NotePlayer {
+    /// Whether a block over `transport` would send nothing and change nothing: no note held or
+    /// due, no edit, launch or preview to take in, the pedal up and the lanes at rest. A song of
+    /// many timelines then pays almost nothing for those that are not playing.
+    fn idle(&self, transport: &Transport<'_>) -> bool {
+        let range = &transport.tick_range;
+        let pattern_plays = self.launched.is_some_and(|launched| {
+            let length = self.patterns.get(launched.pattern);
+            length.is_some_and(|pattern| launched.plays_in(range, pattern.length().ticks()))
+        });
+        !transport.jumped
+            && !transport.stopped_playing
+            && self.quiet()
+            && !pattern_plays
+            && !self.timeline.plays_in(range)
+    }
+
+    /// Nothing held, nothing to take in, nothing shown, the pedal up and the lanes at rest.
+    fn quiet(&self) -> bool {
+        self.held.is_empty()
+            && self.placing.is_none()
+            && self.queued.is_none()
+            && !self.timeline_swapped
+            && !self.patterns_swapped
+            && self.preview_wanted.is_none()
+            && self.previewed.is_none()
+            && self.watches.is_none()
+            && self.sent_pedal == Pedal::UP
+            && self.sent_expression == Expression::REST
+    }
+
+    /// After a block whose range ended at `end`, the tick before which it stays idle.
+    fn quiet_until(&self, end: Ticks) -> Option<Ticks> {
+        if !self.quiet() {
+            return None;
+        }
+        let pattern = match self.launched {
+            Some(launched) => match self.patterns.get(launched.pattern) {
+                Some(pattern) => launched.quiet_until(end, pattern.length().ticks())?,
+                None => Ticks::MAX,
+            },
+            None => Ticks::MAX,
+        };
+        Some(self.timeline.quiet_until(end)?.min(pattern))
     }
 }
 
@@ -178,13 +291,27 @@ impl Processor for NotePlayer {
                 self.patterns_swapped = true;
             }
             NotePlayerUpdate::Launch(launch) => self.queued = Some(*launch),
+            NotePlayerUpdate::Place(placing) => self.placing = Some(*placing),
             NotePlayerUpdate::Preview { pitch, velocity } => {
                 self.preview_wanted = Some((*pitch, *velocity));
             }
         }
     }
 
+    fn rests_until(&self) -> Option<Ticks> {
+        self.rests_until
+    }
+
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if !self.idle(&context.transport) {
+            self.play_block(context);
+        }
+        self.rests_until = self.quiet_until(context.transport.tick_range.end);
+    }
+}
+
+impl NotePlayer {
+    fn play_block(&mut self, context: &mut ProcessContext<'_>) {
         let ProcessContext {
             transport,
             event_outputs,
@@ -198,6 +325,7 @@ impl Processor for NotePlayer {
             patterns_swapped,
             launched,
             queued,
+            placing,
             watches,
             held,
             preview_wanted,
@@ -205,6 +333,7 @@ impl Processor for NotePlayer {
             preview_frames,
             sent_pedal,
             sent_expression,
+            rests_until: _,
         } = self;
         let mut sender = Sender {
             event_outputs,
@@ -224,7 +353,7 @@ impl Processor for NotePlayer {
             // pause keeps the anchor, so play from the same spot keeps the phase.
             if transport.jumped
                 && !transport.playing
-                && let Some(launched) = launched
+                && let Some(launched) = launched.as_mut().filter(|launched| !launched.placed)
             {
                 launched.anchor = transport.heard_tick;
             }
@@ -267,7 +396,6 @@ impl Processor for NotePlayer {
             previewed,
             *preview_frames,
             context.frames,
-            held,
             &mut sender,
         );
 
@@ -302,6 +430,17 @@ impl Processor for NotePlayer {
             }
         }
 
+        if let Some(placing) = placing.take() {
+            cut_patterns(range.start, held, transport, &mut sender);
+            *launched = placing.pattern.map(|pattern| Launched {
+                pattern,
+                anchor: placing.at,
+                placed: true,
+                once: placing.once,
+            });
+            *queued = None;
+        }
+
         // A launch lands on its point inside this block. While the project does not play it
         // lands at once, anchored where play will start: the tick the device stands on, not
         // the range, which is ahead of it by the latency after this player.
@@ -310,7 +449,7 @@ impl Processor for NotePlayer {
                 return Some((launch, transport.heard_tick));
             }
             let time_signatures = transport.clock.tempo_map().time_signatures();
-            let at = launch.quantize.point_from(range.start, time_signatures);
+            let at = (launch.quantize).point_from(range.start.max(launch.after), time_signatures);
             (at < range.end).then_some((launch, at))
         });
         let playing = |launched: Option<Launched>| {
@@ -331,6 +470,8 @@ impl Processor for NotePlayer {
             *launched = launch.pattern.map(|pattern| Launched {
                 pattern,
                 anchor: at,
+                placed: false,
+                once: launch.once,
             });
             *queued = None;
             let pattern = playing(*launched);
@@ -346,14 +487,21 @@ impl Processor for NotePlayer {
 
         if let Some(watches) = watches {
             let shown = |pattern: Option<usize>| pattern.map_or(NO_PATTERN, |index| index as f32);
+            // A launch of a pattern the set does not have shows, so a view sees what it asked.
+            let sounding = launched.filter(|launched| {
+                let length = patterns
+                    .get(launched.pattern)
+                    .map(|pattern| pattern.length());
+                length.is_none_or(|length| launched.sounds_at(transport.heard_tick, length.ticks()))
+            });
             watches
                 .playing
-                .set(shown(launched.map(|launched| launched.pattern)));
+                .set(shown(sounding.map(|launched| launched.pattern)));
             watches.queued.set(match queued {
                 Some(Launch { pattern: None, .. }) => QUEUED_STOP,
                 launch => shown(launch.and_then(|launch| launch.pattern)),
             });
-            let phase = playing(*launched).map(|(pattern, launched)| {
+            let phase = playing(sounding).map(|(pattern, launched)| {
                 // Before the anchor, as a launch is while the latency after the player passes.
                 let heard = transport.heard_tick.max(launched.anchor);
                 let phase = pattern.phase(launched.anchor, heard);
@@ -379,7 +527,9 @@ fn play(
         .map(|note| (*note, Source::Timeline))
         .peekable();
     let from_pattern = pattern.into_iter().flat_map(|(pattern, launched)| {
+        let length = pattern.length().ticks();
         let notes = pattern.starting_in(launched.anchor, ticks.clone());
+        let notes = notes.filter(move |(note, _)| launched.plays_at(note.start, length));
         notes.map(move |(note, start)| {
             let pattern = launched.pattern;
             (note, Source::Pattern { pattern, start })
@@ -443,25 +593,18 @@ fn cut_patterns(
 
 /// The preview note, in engine time, so it sounds while the project does not play. It goes out
 /// at the start of the block, before the notes of the timeline.
-///
-/// A preview and a note of the timeline may share a pitch, and an off releases every note of
-/// its pitch. So the preview sends no off while the timeline holds its pitch: the off of that
-/// note ends both. The other way round, a note of the timeline that ends cuts a preview of its
-/// pitch short, which nobody hears as a fault.
 fn preview(
     wanted: &mut Option<(Pitch, Velocity)>,
     previewed: &mut Option<Previewed>,
     preview_frames: usize,
     frames: usize,
-    held: &[Held],
     sender: &mut Sender<'_, '_>,
 ) {
     let end = |previewed: &mut Option<Previewed>, sender: &mut Sender<'_, '_>| {
         let Some(note) = *previewed else {
             return true;
         };
-        let shared = held.iter().any(|held| held.pitch == note.pitch);
-        let ended = shared || sender.send(0, NoteEvent::Off { pitch: note.pitch });
+        let ended = sender.send(0, NoteEvent::Off { pitch: note.pitch });
         if ended {
             *previewed = None;
         }
@@ -516,11 +659,8 @@ impl Sender<'_, '_> {
     }
 }
 
-/// Ends the held note at `index` and takes it off the list. While another held note has the
-/// same pitch, no off is sent: an off releases every note of its pitch, so it goes out with
-/// the last holder. The pitch then sounds until its last note ends, in any order of ends and
-/// with or without a snapshot swap in between. Returns false when the off did not fit: the
-/// note stays listed and ends in a later block.
+/// Ends the held note at `index` and takes it off the list. Returns false when the off did not
+/// fit: the note stays listed and ends in a later block.
 fn end_note(
     held: &mut Vec<Held>,
     index: usize,
@@ -530,17 +670,14 @@ fn end_note(
     let Some(note) = held.get(index).copied() else {
         return false;
     };
-    let mut others = held.iter().enumerate().filter(|(other, _)| *other != index);
-    let shared = others.any(|(_, other)| other.pitch == note.pitch);
-    if shared || sender.send(offset, NoteEvent::Off { pitch: note.pitch }) {
+    if sender.send(offset, NoteEvent::Off { pitch: note.pitch }) {
         held.swap_remove(index);
         return true;
     }
     false
 }
 
-/// Ends every held note that ends before `limit`, the earliest end first, so that of two
-/// notes of one pitch the later end sends the off.
+/// Ends every held note that ends before `limit`, the earliest end first.
 fn release_before(
     held: &mut Vec<Held>,
     limit: Ticks,

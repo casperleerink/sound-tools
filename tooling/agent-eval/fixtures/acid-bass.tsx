@@ -1,23 +1,4 @@
-import {
-  adsr,
-  beat,
-  clamp,
-  floor,
-  h,
-  Knob,
-  knob,
-  lowpass,
-  pattern,
-  phasor,
-  playing,
-  pow,
-  saturate,
-  smooth,
-  Steps,
-  tool,
-  watch,
-  wrap,
-} from "./sdk";
+import { adsr, beat, clamp, floor, h, Knob, number, lowpass, pattern, phasor, playing, pow, saturate, smooth, Steps, tool, output, wrap } from "./sdk";
 
 tool({
   name: "acid-bass",
@@ -34,18 +15,17 @@ tool({
     "- `resonance`: the peak at the cutoff. 0 is a plain bass, 0.5 squelchy, 1 screaming acid.",
     "- `note`: the pitch every step plays, as a MIDI number in whole semitones: 36 is C2, 48 C3.",
   ].join("\n"),
-  kind: "source",
   state: {
     steps: pattern({ length: 16, min: 0, max: 1, default: 0, label: "Steps" }),
     accents: pattern({ length: 16, min: 0, max: 1, default: 0, label: "Accents" }),
-    cutoff: knob({ min: 60, max: 4000, default: 400, unit: "hz", label: "Cutoff" }),
-    resonance: knob({ min: 0, max: 1, default: 0.6, label: "Resonance" }),
-    note: knob({ min: 24, max: 60, default: 36, label: "Note" }),
+    cutoff: number({ min: 60, max: 4000, default: 400, unit: "hz", label: "Cutoff" }),
+    resonance: number({ min: 0, max: 1, default: 0.6, label: "Resonance" }),
+    note: number({ min: 24, max: 60, default: 36, label: "Note" }),
   },
   sound: ({ steps, accents, cutoff, resonance, note }) => {
     const sixteenths = beat.times(4);
     const step = floor(sixteenths).mod(16);
-    watch("step", step);
+    output("step", step);
 
     const on = steps.at(step).gt(0.5);
     const accent = on.times(accents.at(step).gt(0.5));
@@ -66,12 +46,12 @@ tool({
     const filtered = lowpass(lowpass(saw, hz), hz, q);
     return saturate(filtered.times(amp).times(level).times(0.9)).times(0.13);
   },
-  card: () => (
+  view: () => (
     <div style={{ gap: 8 }}>
       <div style={{ direction: "row", gap: 8, align: "center" }}>
-        <Knob path="cutoff" label="Cutoff" min={60} max={4000} default={400} unit="hz" />
-        <Knob path="resonance" label="Resonance" min={0} max={1} default={0.6} />
-        <Knob path="note" label="Note" min={24} max={60} default={36} />
+        <Knob value="cutoff" label="Cutoff" min={60} max={4000} default={400} unit="hz" />
+        <Knob value="resonance" label="Resonance" min={0} max={1} default={0.6} />
+        <Knob value="note" label="Note" min={24} max={60} default={36} />
       </div>
       <div style={{ color: "#9ca3af" }}>Steps</div>
       <Steps path="steps" playing="step" />

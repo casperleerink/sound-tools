@@ -1,9 +1,9 @@
-//! Recording audio: from the input to a take file per armed track, and from a take file to a
+//! Recording audio: from the input to a take file per armed recorder, and from a take file to a
 //! clip where the composer heard it.
 //!
 //! Three threads and no waiting, as for MIDI. The device thread puts what it captured into a
 //! ring, stamped with when it was captured ([`sound_core::capture`]). A [`Recorder`] takes it
-//! from there away from the thread that draws and writes one WAV file per armed track. The
+//! from there away from the thread that draws and writes one WAV file per armed recorder. The
 //! thread that draws then places each take as a clip: the moment a frame was captured is the
 //! moment the composer played it, the timing of the output device says which engine frame was
 //! sounding then, and the engine status says which project frame that engine frame was.
@@ -15,64 +15,75 @@ use std::sync::Arc;
 use sound_core::{
     Assets, CaptureReader, Clock, EngineStatus, Frames, InstanceId, StreamTiming, Ticks,
 };
-use sound_media::{AudioAsset, Imported, MediaError, TakeFile, TakeOverview};
+use sound_media::{AudioAsset, Imported, Info, MediaError, TakeFile, TakeOverview};
 
-/// One armed track of a recording: which channels of the input it records, and the name its
+/// One armed recorder of a recording: which channels of the input it records, and the name its
 /// file is made from, such as `voice-take`, which becomes `voice-take-1.wav`.
 #[derive(Clone, Debug)]
 pub struct TakeRequest {
-    pub track: InstanceId,
+    pub recorder: InstanceId,
     pub name: String,
     /// Channels of the input, counted from 0: one for a mono take, two for a stereo one.
     pub channels: Range<usize>,
 }
 
-/// What the thread that draws asks of a [`Recorder`].
+/// What the thread that draws asks of a [`Recorder`]. Each recording has a number of its own:
+/// several run at once over the one input, as when a second recorder starts while one records,
+/// or a take starts again at a loop while the one before waits for its last frames.
 #[derive(Debug)]
 pub enum RecorderCommand {
-    /// Begin a take on each of these tracks, all from the same frame of the input.
-    Start(Vec<TakeRequest>),
-    /// End the recording and close every file of it: once the takes hold `frames` frames of
+    /// Begin recording `.0`: a take on each of these tracks, all from the next frame of the
+    /// input.
+    Start(u64, Vec<TakeRequest>),
+    /// End recording `id` and close every file of it: once the takes hold `frames` frames of
     /// the input, the last one heard before the end, or at once when `None`. What the input
     /// brings past those frames is not written. The input may be late by its latency and the
     /// window's poll, so this waits for what was played up to the end. A recording whose input
     /// is gone ends at once with what it has.
-    Finish { frames: Option<u64> },
+    Finish { id: u64, frames: Option<u64> },
 }
 
 /// A take file of a running recording, for its waveform while it grows.
 #[derive(Clone, Debug)]
 pub struct StartedTake {
-    pub track: InstanceId,
+    pub recorder: InstanceId,
     pub asset: AudioAsset,
     pub overview: TakeOverview,
 }
 
-/// What a [`Recorder`] tells the thread that draws.
+/// What a [`Recorder`] tells the thread that draws, of the recording `id`.
 #[derive(Debug)]
 pub enum RecorderReport {
     /// The first frames of a recording arrived. `first_nanos` is when the first frame of every
     /// file of it was captured, on the clock of [`sound_core::monotonic_nanos`].
     Started {
+        id: u64,
         first_nanos: u64,
         takes: Vec<StartedTake>,
     },
     /// A recording ended: each take that has a file, in memory as an import gives it. The
     /// first frame of each was captured at `first_nanos`, `None` when no frame ever came.
     Finished {
+        id: u64,
         first_nanos: Option<u64>,
         takes: Vec<(InstanceId, Imported)>,
     },
-    /// The take of a track has no file, or stopped being written: the error says why. What was
+    /// The take of a recorder has no file, or stopped being written: the error says why. What was
     /// written before it is kept and becomes its clip, and the rest of the recording goes on.
-    Failed { track: InstanceId, error: TakeError },
+    Failed {
+        id: u64,
+        recorder: InstanceId,
+        error: TakeError,
+    },
     /// The recorder fell behind the input and frames were lost: the takes have silence
     /// there, and every frame after it is still where it was heard.
     Behind { frames: u64 },
+    /// The input could not open: no recording gets sound.
+    NoInput,
 }
 
 struct Take {
-    track: InstanceId,
+    recorder: InstanceId,
     channels: Range<usize>,
     /// `None` once it failed, which was reported: the first error ends the writing.
     file: Option<TakeFile>,
@@ -80,7 +91,7 @@ struct Take {
     kept: Option<Imported>,
 }
 
-/// Why the take of a track has no file, or stopped being written.
+/// Why the take of a recorder has no file, or stopped being written.
 #[derive(Debug, thiserror::Error)]
 pub enum TakeError {
     #[error("the input has {channels} channels and no channel {wanted}")]
@@ -90,6 +101,7 @@ pub enum TakeError {
 }
 
 struct Recording {
+    id: u64,
     takes: Vec<Take>,
     first_nanos: Option<u64>,
     /// Frames of the input the takes hold.
@@ -98,13 +110,13 @@ struct Recording {
     until: Option<u64>,
 }
 
-/// Takes what the input captured and writes the takes of a running recording. It reads and
+/// Takes what the input captured and writes the takes of the running recordings. It reads and
 /// writes files, so it runs on a thread of its own or a background task, never on the thread
 /// that draws. While nothing records it still takes everything, so the ring never fills.
 pub struct Recorder {
     input: CaptureReader,
     assets: Assets,
-    recording: Option<Recording>,
+    recordings: Vec<Recording>,
     /// Frames the ring had lost when this recorder last looked.
     lost: u64,
     read: Vec<f32>,
@@ -117,7 +129,7 @@ impl Recorder {
         Self {
             input,
             assets,
-            recording: None,
+            recordings: Vec::new(),
             lost,
             read: Vec::new(),
             picked: Vec::new(),
@@ -130,36 +142,40 @@ impl Recorder {
         let mut reports = Vec::new();
         for command in commands {
             match command {
-                RecorderCommand::Start(requests) => {
-                    // A recording that was never finished is finished first: its files are
-                    // closed and given back, not lost.
-                    if self.recording.is_some() {
-                        reports.extend(self.finish());
-                    }
-                    reports.extend(self.start(requests));
+                RecorderCommand::Start(id, requests) => {
+                    // What runs already starts with the input before this one does.
+                    reports.extend(self.take_input());
+                    // One under the same number that was never finished is finished first:
+                    // its files are closed and given back, not lost.
+                    reports.extend(self.finish(id));
+                    reports.extend(self.start(id, requests));
                 }
-                RecorderCommand::Finish { frames: None } => reports.extend(self.finish()),
-                RecorderCommand::Finish { frames } => {
-                    if let Some(recording) = &mut self.recording {
+                RecorderCommand::Finish { id, frames: None } => {
+                    reports.extend(self.take_input());
+                    reports.extend(self.finish(id));
+                }
+                RecorderCommand::Finish { id, frames } => {
+                    let recording = self.recordings.iter_mut().find(|each| each.id == id);
+                    if let Some(recording) = recording {
                         recording.until = frames;
                     }
                 }
             }
         }
         reports.extend(self.take_input());
-        let complete = self.recording.as_ref().is_some_and(|recording| {
-            recording
-                .until
-                .is_some_and(|until| recording.frames >= until || self.input.is_gone())
-        });
-        if complete {
-            reports.extend(self.finish());
+        let gone = self.input.is_gone();
+        let complete: Vec<u64> = (self.recordings.iter())
+            .filter(|each| each.until.is_some_and(|until| each.frames >= until || gone))
+            .map(|each| each.id)
+            .collect();
+        for id in complete {
+            reports.extend(self.finish(id));
         }
         reports
     }
 
     /// Opens a file per request. Gives the ones that could not be opened.
-    fn start(&mut self, requests: Vec<TakeRequest>) -> Vec<RecorderReport> {
+    fn start(&mut self, id: u64, requests: Vec<TakeRequest>) -> Vec<RecorderReport> {
         let (rate, count) = (self.input.sample_rate(), self.input.channels());
         let mut failed = Vec::new();
         let mut takes = Vec::new();
@@ -175,18 +191,23 @@ impl Recorder {
             };
             let file = file
                 .map_err(|error| {
-                    let track = request.track.clone();
-                    failed.push(RecorderReport::Failed { track, error });
+                    let recorder = request.recorder.clone();
+                    failed.push(RecorderReport::Failed {
+                        id,
+                        recorder,
+                        error,
+                    });
                 })
                 .ok();
             takes.push(Take {
-                track: request.track,
+                recorder: request.recorder,
                 channels: request.channels,
                 file,
                 kept: None,
             });
         }
-        self.recording = Some(Recording {
+        self.recordings.push(Recording {
+            id,
             takes,
             first_nanos: None,
             frames: 0,
@@ -195,16 +216,16 @@ impl Recorder {
         failed
     }
 
-    /// Writes everything the ring holds into the takes of the recording, if one runs.
+    /// Writes everything the ring holds into the takes of the recordings that run.
     fn take_input(&mut self) -> Vec<RecorderReport> {
         self.read.clear();
         let first = self.input.read(&mut self.read);
         let lost = self.input.lost_frames();
         let before = std::mem::replace(&mut self.lost, lost);
-        let Some(recording) = self.recording.as_mut() else {
-            return Vec::new();
-        };
         let mut reports = Vec::new();
+        if self.recordings.is_empty() {
+            return reports;
+        }
         if lost != before {
             reports.push(RecorderReport::Behind {
                 frames: lost - before,
@@ -213,59 +234,67 @@ impl Recorder {
         if self.read.is_empty() {
             return reports;
         }
-        if recording.first_nanos.is_none() {
-            let first_nanos = self.input.nanos_of(first).unwrap_or_default();
-            recording.first_nanos = Some(first_nanos);
-            let growing = recording.takes.iter().filter_map(|take| {
-                let file = take.file.as_ref()?;
-                Some(StartedTake {
-                    track: take.track.clone(),
-                    asset: file.asset().clone(),
-                    overview: file.overview(),
-                })
-            });
-            reports.push(RecorderReport::Started {
-                first_nanos,
-                takes: growing.collect(),
-            });
-        }
         let channels = self.input.channels();
-        // Past the end a finish waits for, the input is no part of the recording.
-        let read = self.read.len() / channels;
-        let wanted = recording.until.map_or(read as u64, |until| {
-            until.saturating_sub(recording.frames).min(read as u64)
-        });
-        recording.frames += wanted;
-        let read = self
-            .read
-            .get(..wanted as usize * channels)
-            .unwrap_or_default();
-        for take in &mut recording.takes {
-            let Some(file) = &mut take.file else {
-                continue;
-            };
-            self.picked.clear();
-            for frame in read.chunks_exact(channels) {
-                let picked = frame.get(take.channels.clone()).unwrap_or_default();
-                self.picked.extend_from_slice(picked);
+        let first_nanos = self.input.nanos_of(first).unwrap_or_default();
+        for recording in &mut self.recordings {
+            if recording.first_nanos.is_none() {
+                recording.first_nanos = Some(first_nanos);
+                let growing = recording.takes.iter().filter_map(|take| {
+                    let file = take.file.as_ref()?;
+                    Some(StartedTake {
+                        recorder: take.recorder.clone(),
+                        asset: file.asset().clone(),
+                        overview: file.overview(),
+                    })
+                });
+                reports.push(RecorderReport::Started {
+                    id: recording.id,
+                    first_nanos,
+                    takes: growing.collect(),
+                });
             }
-            if let Err(error) = file.write(&self.picked) {
-                // What was written is closed and kept, and becomes the clip of the take.
-                take.kept = take.file.take().and_then(|file| close(file, &self.assets));
-                let track = take.track.clone();
-                let error = error.into();
-                reports.push(RecorderReport::Failed { track, error });
+            // Past the end a finish waits for, the input is no part of the recording.
+            let read = self.read.len() / channels;
+            let wanted = recording.until.map_or(read as u64, |until| {
+                until.saturating_sub(recording.frames).min(read as u64)
+            });
+            recording.frames += wanted;
+            let read = (self.read)
+                .get(..wanted as usize * channels)
+                .unwrap_or_default();
+            for take in &mut recording.takes {
+                let Some(file) = &mut take.file else {
+                    continue;
+                };
+                self.picked.clear();
+                for frame in read.chunks_exact(channels) {
+                    let picked = frame.get(take.channels.clone()).unwrap_or_default();
+                    self.picked.extend_from_slice(picked);
+                }
+                if let Err(error) = file.write(&self.picked) {
+                    // What was written is closed and kept, and becomes the clip of the take.
+                    take.kept = take.file.take().and_then(|file| close(file, &self.assets));
+                    let recorder = take.recorder.clone();
+                    let error = error.into();
+                    let id = recording.id;
+                    reports.push(RecorderReport::Failed {
+                        id,
+                        recorder,
+                        error,
+                    });
+                }
             }
         }
         reports
     }
 
-    /// Writes what is left and closes every file of the recording.
-    fn finish(&mut self) -> Vec<RecorderReport> {
-        let mut reports = self.take_input();
-        let Some(recording) = self.recording.take() else {
+    /// Closes every file of the recording `id`, with what it holds.
+    fn finish(&mut self, id: u64) -> Vec<RecorderReport> {
+        let mut reports = Vec::new();
+        let Some(index) = self.recordings.iter().position(|each| each.id == id) else {
             return reports;
         };
+        let recording = self.recordings.remove(index);
         let mut finished = Vec::new();
         for take in recording.takes {
             let kept = match take.file {
@@ -274,9 +303,13 @@ impl Recorder {
                     match file.finish() {
                         Ok(file) => Some(file),
                         Err(error) => {
-                            let track = take.track.clone();
+                            let recorder = take.recorder.clone();
                             let error = error.into();
-                            reports.push(RecorderReport::Failed { track, error });
+                            reports.push(RecorderReport::Failed {
+                                id,
+                                recorder,
+                                error,
+                            });
                             reopen(&self.assets, asset)
                         }
                     }
@@ -284,10 +317,11 @@ impl Recorder {
                 None => take.kept,
             };
             if let Some(kept) = kept {
-                finished.push((take.track, kept));
+                finished.push((take.recorder, kept));
             }
         }
         reports.push(RecorderReport::Finished {
+            id,
             first_nanos: recording.first_nanos,
             takes: finished,
         });
@@ -360,6 +394,36 @@ fn take_head(first_heard: i64, playing: PlayingAt) -> i128 {
 /// The seconds into a take at which the composer heard project frame `frame`, from its head.
 pub fn take_seconds_at(head: i128, frame: Frames, clock: &Clock) -> f64 {
     (i128::from(frame.0) - head) as f64 / f64::from(clock.sample_rate())
+}
+
+/// Where a take file plays in the song, heard from `start` to `end`: its start, and the part
+/// of the file that plays from there, in seconds of the file, to the end of the file with
+/// `None`. `head` is the project frame its first frame was heard at, see [`Placement::head`].
+/// What the file holds before `start` is trimmed away, and so is what came after `end`, so it
+/// plays what was heard in the recording and nothing else. `None` when the file holds nothing
+/// of that stretch.
+///
+/// A take that began before `start` was heard starts at `start`. One whose first frame came
+/// later starts at the first tick of its sound. Either way the frame of the file that plays at
+/// its start is the one captured when that frame was heard.
+pub fn take_place(
+    file: &Info,
+    head: i128,
+    (start, end): (Ticks, Ticks),
+    clock: &Clock,
+) -> Option<(Ticks, f64, Option<f64>)> {
+    let start_frame = i128::from(clock.frame_of(start).0);
+    let start = match head <= start_frame {
+        true => start,
+        false => clock.tick_at(Frames(u64::try_from(head).ok()?)),
+    };
+    let file_start = take_seconds_at(head, clock.frame_of(start), clock);
+    let file_end = take_seconds_at(head, clock.frame_of(end), clock);
+    let seconds = file.seconds();
+    if start >= end || file_start >= seconds.min(file_end) {
+        return None;
+    }
+    Some((start, file_start, (file_end < seconds).then_some(file_end)))
 }
 
 /// A recording on the thread that draws: where it began, the clock it began under, and what

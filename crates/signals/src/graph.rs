@@ -5,15 +5,15 @@
 //! lowers them: a node is one operation, but a field or a control reads the operation made for
 //! it at the start.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde::Deserialize;
 
 use crate::code::{
     ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS,
-    MAX_STAGE_PORTS, MAX_WATCHES, Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
+    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_WATCHES,
+    Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
 };
 
 /// A sound as the SDK sends it.
@@ -30,12 +30,6 @@ pub struct Graph {
     pub(crate) bangs: Vec<NamedNode>,
     pub(crate) notes: Vec<NotesNode>,
     pub(crate) output: OutputNode,
-    /// The left and the right node of each signal a stage hands on, see [`crate::Program`].
-    #[serde(skip)]
-    pub(crate) exports: Vec<[usize; 2]>,
-    /// The node of each number of a device a stage moves.
-    #[serde(skip)]
-    pub(crate) device_numbers: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -137,13 +131,6 @@ pub(crate) enum Node {
     Lookup(Lookup),
     Length(Length),
     Write(Write),
-    /// A built-in device the sound plays through: no signal itself, see [`Played`].
-    Device(Device),
-    /// What a device plays.
-    Played(Played),
-    /// What a stage takes from before. Made by [`crate::Program`], never sent.
-    #[serde(skip_deserializing)]
-    Import(Import),
 }
 
 /// The fields of the nodes, as the SDK names them.
@@ -174,17 +161,6 @@ fields! {
     Lookup { table: TableNode, phase: usize }
     Length { table: TableNode }
     Write { buffer: usize, index: usize, value: usize }
-    // The tool of the device, what it hears, the numbers signals move by their fields, and the
-    // rest of its record.
-    Device {
-        tool: String,
-        input: [usize; 2],
-        numbers: BTreeMap<String, usize>,
-        state: serde_json::Map<String, serde_json::Value>
-    }
-    // Of the channel the code runs on when `channel` is left out.
-    Played { device: usize, channel: Option<u8> }
-    Import { port: u16, channel: Option<u8> }
 }
 
 /// What the record and the interface give a sound, in the order of the tool's fields and
@@ -260,6 +236,16 @@ fn error<T>(message: impl Into<String>) -> Result<T, GraphError> {
 }
 
 impl Graph {
+    /// The names of the fields and inputs it reads.
+    pub fn params(&self) -> std::collections::BTreeSet<&str> {
+        (self.nodes.iter())
+            .filter_map(|node| match node {
+                Node::Param(Param { name }) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn compile(&self, declarations: &Declarations) -> Result<Code, GraphError> {
         // Each is read by an operation, so more of them than operations is no sound.
         if self.feedbacks.len() > MAX_OPERATIONS || self.buffers.len() > MAX_OPERATIONS {
@@ -279,7 +265,6 @@ impl Graph {
             triggers: Vec::new(),
             names: HashMap::new(),
             registers: Vec::with_capacity(self.nodes.len()),
-            imports: 0,
         };
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
@@ -301,7 +286,7 @@ impl Graph {
         let (watches, watch_registers) =
             lowering.named(&self.watches, MAX_WATCHES, ("watch", "watches"))?;
         let (numbers, number_registers) =
-            lowering.named(&self.numbers, MAX_OUTPUTS, ("number", "numbers"))?;
+            lowering.named(&self.numbers, MAX_NUMBERS, ("number", "numbers"))?;
         let (bangs, mut event_registers) =
             lowering.named(&self.bangs, MAX_OUTPUTS, ("bang", "bangs"))?;
         if self.notes.len() > MAX_OUTPUTS {
@@ -337,22 +322,6 @@ impl Graph {
                 Output::Stereo(lowering.read(left)?, lowering.read(right)?)
             }
         };
-        let exports = (self.exports.iter())
-            .map(|[left, right]| Ok([lowering.read(*left)?, lowering.read(*right)?]))
-            .collect::<Result<Vec<_>, GraphError>>()?;
-        let device_number_registers = (self.device_numbers.iter())
-            .map(|node| lowering.read(*node))
-            .collect::<Result<Vec<_>, _>>()?;
-        if exports.len() > MAX_STAGE_PORTS || lowering.imports > MAX_STAGE_PORTS {
-            return error(format!(
-                "at most {MAX_STAGE_PORTS} signals go from one side of a device to the other: use fewer signals after it"
-            ));
-        }
-        if device_number_registers.len() > MAX_DEVICE_NUMBERS {
-            return error(format!(
-                "signals move at most {MAX_DEVICE_NUMBERS} numbers of devices"
-            ));
-        }
         let mut hasher = DefaultHasher::new();
         format!("{self:?}{declarations:?}").hash(&mut hasher);
         Ok(Code {
@@ -364,7 +333,6 @@ impl Graph {
             numbers,
             bangs,
             notes,
-            imports: lowering.imports,
             hash: hasher.finish(),
             operations: lowering.operations,
             output,
@@ -372,8 +340,6 @@ impl Graph {
             watch_registers,
             number_registers,
             event_registers,
-            exports,
-            device_number_registers,
             slots: lowering.slots,
         })
     }
@@ -390,8 +356,6 @@ struct Lowering<'a> {
     names: HashMap<&'a str, Register>,
     /// The register of each node lowered so far.
     registers: Vec<Register>,
-    /// How many ports the imports read.
-    imports: usize,
 }
 
 impl<'a> Lowering<'a> {
@@ -537,16 +501,6 @@ impl<'a> Lowering<'a> {
             Node::Gate => Operation::Gate,
             Node::Velocity => Operation::Velocity,
             Node::Onset => Operation::Onset,
-            Node::Import(Import { port, channel }) => {
-                self.imports = self.imports.max(usize::from(*port) + 1);
-                Operation::Import {
-                    port: *port,
-                    channel: *channel,
-                }
-            }
-            Node::Device(_) | Node::Played(_) => {
-                return error("a device is cut out by `Graph::program` before the code compiles");
-            }
             Node::Param(Param { name }) => {
                 return match self.names.get(name.as_str()) {
                     Some(register) => Ok(*register),

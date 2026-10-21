@@ -2,6 +2,10 @@
 //! note sounds: such a sender sends no off where it played, so the instrument hears
 //! [`NoteEvent::AllOff`] from the feed instead. A performer plays the instrument through it
 //! too, to the frame.
+//!
+//! An off releases every note of its pitch, and several senders may hold one pitch, such as two
+//! clips that overlap, or a clip and a key. So the feed counts the ons of each pitch and passes
+//! an off on only when it ends the last of them.
 
 use sound_core::{
     EventInput, EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor,
@@ -17,6 +21,8 @@ const WAITING: usize = 256;
 pub struct NoteFeed {
     performed: Schedule<NoteEvent>,
     now: Now,
+    /// How many ons of each pitch reached the instrument and have not ended.
+    held: [u8; 128],
 }
 
 impl Default for NoteFeed {
@@ -24,6 +30,7 @@ impl Default for NoteFeed {
         Self {
             performed: Schedule::new(WAITING),
             now: Now::default(),
+            held: [0; 128],
         }
     }
 }
@@ -121,6 +128,29 @@ impl Now {
 impl NoteFeed {
     pub const INPUT: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: EventOutput<NoteEvent> = EventOutput::new(0);
+
+    /// Passes `event` on unless it is an off another on of its pitch still holds. False when it
+    /// did not fit.
+    fn pass(&mut self, outputs: &mut EventOutputs<'_>, offset: usize, event: NoteEvent) -> bool {
+        match event {
+            NoteEvent::Off { pitch } => {
+                let held = &mut self.held[usize::from(pitch.number())];
+                if *held > 1 {
+                    *held -= 1;
+                    return true;
+                }
+                *held = 0;
+            }
+            NoteEvent::AllOff => self.held = [0; 128],
+            _ => {}
+        }
+        let sent = outputs.push(Self::OUTPUT, offset, event);
+        if sent && let NoteEvent::On { pitch, .. } = event {
+            let held = &mut self.held[usize::from(pitch.number())];
+            *held = held.saturating_add(1);
+        }
+        sent
+    }
 }
 
 impl Processor for NoteFeed {
@@ -136,7 +166,10 @@ impl Processor for NoteFeed {
 
     fn update(&mut self, update: &mut NoteFeedUpdate) {
         match update {
-            NoteFeedUpdate::Senders => self.now.keep(NoteEvent::AllOff),
+            NoteFeedUpdate::Senders => {
+                self.held = [0; 128];
+                self.now.keep(NoteEvent::AllOff);
+            }
             NoteFeedUpdate::Note(performed) => {
                 if let Some(event) = self.performed.perform(*performed) {
                     self.now.keep(event);
@@ -149,26 +182,48 @@ impl Processor for NoteFeed {
         for _ in 0..self.performed.take_dropped() {
             context.event_outputs.count_dropped();
         }
+        let start = context.start_frame;
         let outputs = &mut context.event_outputs;
         self.now.send(outputs);
-        // On one frame, the offs before the ons, as the note contract says, whoever sends them.
+        self.performed.playing(start, context.frames);
+        // In the order they play, so an off finds the ons before it counted. On one frame the
+        // offs before the ons, as the note contract says, whoever sends them.
         let inputs = context.event_inputs.get(Self::INPUT);
         let is_on = |event: &NoteEvent| matches!(event, NoteEvent::On { .. });
-        for timed in inputs.iter().filter(|timed| !is_on(&timed.event)) {
-            outputs.push(Self::OUTPUT, timed.offset, timed.event);
-        }
-        self.performed.playing(context.start_frame, context.frames);
-        let last = context.start_frame + context.frames.saturating_sub(1) as u64;
-        while let Some((at, event)) = self.performed.take(last) {
-            let offset = usize::try_from(at.saturating_sub(context.start_frame)).unwrap_or(0);
-            // A dropped off would hold its note for ever: what does not fit waits, in order.
-            if !outputs.push(Self::OUTPUT, offset, event) {
-                self.performed.put_back((at, event));
-                break;
+        let mut performing = true;
+        let mut rest = inputs;
+        while let Some(offset) = rest.first().map(|timed| timed.offset) {
+            let (frame, after) =
+                rest.split_at(rest.partition_point(|timed| timed.offset == offset));
+            rest = after;
+            performing = performing && self.perform(outputs, start, start + offset as u64);
+            for timed in frame.iter().filter(|timed| !is_on(&timed.event)) {
+                self.pass(outputs, offset, timed.event);
+            }
+            for timed in frame.iter().filter(|timed| is_on(&timed.event)) {
+                self.pass(outputs, offset, timed.event);
             }
         }
-        for timed in inputs.iter().filter(|timed| is_on(&timed.event)) {
-            outputs.push(Self::OUTPUT, timed.offset, timed.event);
+        if performing {
+            self.perform(outputs, start, start + context.frames as u64);
         }
+    }
+}
+
+impl NoteFeed {
+    /// Passes on what a performer played before frame `before`. False once one did not fit:
+    /// it waits for the next block, and what comes after it too.
+    fn perform(&mut self, outputs: &mut EventOutputs<'_>, start: u64, before: u64) -> bool {
+        let Some(last) = before.checked_sub(1) else {
+            return true;
+        };
+        while let Some((at, event)) = self.performed.take(last) {
+            let offset = usize::try_from(at.saturating_sub(start)).unwrap_or(0);
+            if !self.pass(outputs, offset, event) {
+                self.performed.put_back((at, event));
+                return false;
+            }
+        }
+        true
     }
 }

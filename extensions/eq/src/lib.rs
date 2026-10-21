@@ -320,7 +320,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<EqState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Eq::AUTOMATION.parameters());
+        .schema(Eq::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

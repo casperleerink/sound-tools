@@ -25,10 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
-pub use binding::{
-    BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, PartPorts, RecordStamp,
-};
-pub use editing::{Changes, Derived, Edit};
+pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, RecordStamp};
+pub use editing::{Changes, Edit};
 pub use fields::{FieldDoc, FieldRange, RecordSchema, ranges, type_doc, unit_of};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
@@ -40,7 +38,7 @@ pub use history::OUTSIDE_UNDO_WINDOW;
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
-    ToolSchema, Was,
+    ToolSchema, parse_state,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;
@@ -49,7 +47,7 @@ pub use watcher::GROUPING_WINDOW;
 use binding::{BindError, Bindings};
 use editing::{Change, RecordChange};
 use history::History;
-use instance::Record;
+use instance::{JsonState, Record};
 use live::LiveSources;
 use outside::NotApplied;
 use storage::{Form, Locked, RecordOnDisk, Storage};
@@ -100,10 +98,6 @@ pub enum ProjectError {
     UnknownTool(&'static str),
     #[error("instance {id}: {message}")]
     InvalidState { id: InstanceId, message: String },
-    #[error(
-        "{path} holds a change that did not load, and {id} decides what is in it, so this cannot be applied: a record and what it derives are saved together or not at all. Fix {path} first"
-    )]
-    DerivesIntoAStaleProjectFile { id: InstanceId, path: String },
     #[error("the behaviour of {instance} failed: {source}")]
     Behaviour {
         instance: InstanceId,
@@ -182,9 +176,6 @@ pub struct Project {
     events: Vec<ProjectEvent>,
     /// By path relative to the project folder.
     file_problems: BTreeMap<String, String>,
-    /// What the derive of an instance could not compute, by instance. It stays until that
-    /// derive runs again, like what a behaviour reports about its own instance.
-    derive_problems: BTreeMap<InstanceId, Vec<String>>,
     /// Rejected groups of outside changes, see [`NotApplied`].
     not_applied: Vec<NotApplied>,
     /// The generated files may no longer match the project. See `generated.rs`.
@@ -246,7 +237,6 @@ impl Project {
             history: History::default(),
             events: Vec::new(),
             file_problems: BTreeMap::new(),
-            derive_problems: BTreeMap::new(),
             not_applied: Vec::new(),
             generated_are_stale: true,
             watcher: None,
@@ -335,14 +325,14 @@ impl Project {
 
     /// The number `field` that `instance` takes automation for, as its behaviour named it the
     /// last time it ran. `None` while it takes none of that name. For an owner that edits its
-    /// lanes, such as the arrangement when a clip takes the automation under it along.
+    /// lanes, such as a view that shows what a lane plays.
     pub fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {
         self.bindings.automation(instance, field)
     }
 
     /// The names of every number `instance` takes automation for, in the order its behaviour
     /// named them the last time it ran, each of which [`Self::automation`] gives. For an owner
-    /// that offers to automate them, such as the arrangement when a lane is added.
+    /// that offers to automate them, such as a menu that adds a lane.
     pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &str> + '_ {
         self.bindings.automatable(instance)
     }
@@ -424,14 +414,6 @@ impl Project {
             .filter_map(|(id, record)| Some((Instance::new(id.clone()), record.state::<S>()?)))
     }
 
-    /// How the tool of `id` describes the instance and what it owns, as lines of text. `None`
-    /// when the instance does not exist or its tool registered no summary.
-    pub fn summary(&self, id: &InstanceId) -> Option<String> {
-        let record = self.instances.get(id)?;
-        let summary = self.registry.definition(record.tool)?.summary.as_ref()?;
-        Some(summary(self, id))
-    }
-
     /// Where the project ends: the latest end that a tool gives for one of its instances, see
     /// [`ToolRegistration::end`]. `None` for a project that runs without a set end.
     pub fn end(&self) -> Option<Ticks> {
@@ -458,6 +440,17 @@ impl Project {
             number += 1;
             candidate = InstanceId::numbered(wanted, number);
         }
+    }
+
+    /// The `state` of an instance of a JSON tool, as its file holds it.
+    pub(crate) fn json_state(&self, id: &InstanceId) -> Option<&serde_json::Value> {
+        let state = self.instances.get(id)?.state.as_any();
+        Some(&state.downcast_ref::<JsonState>()?.value)
+    }
+
+    /// What changes when the record of `id` does, to keep what was made of it until then.
+    pub fn stamp(&self, id: &InstanceId) -> Option<RecordStamp> {
+        Some(RecordStamp::of(&self.instances.get(id)?.state))
     }
 
     /// The state of any instance as compact JSON, for summaries.
@@ -597,7 +590,7 @@ impl Project {
                 path: storage::PROJECT_FILE.to_string(),
                 message,
             });
-        // What a behaviour or a derive said about its own instance while it ran. The record is
+        // What a behaviour said about its own instance while it ran. The record is
         // live and untouched; part of what it asks for is not.
         files
             .chain(connections)
@@ -605,15 +598,10 @@ impl Project {
             .collect()
     }
 
-    /// What every behaviour and every derive reported about its own instance, on the path of
-    /// its record.
+    /// What every behaviour reported about its own instance, on the path of its record.
     fn instance_problems(&self) -> Vec<Problem> {
-        let derived = self
-            .derive_problems
-            .iter()
-            .flat_map(|(id, messages)| messages.iter().map(move |message| (id, message)));
-        let problems = self.bindings.instance_problems().chain(derived);
-        problems
+        self.bindings
+            .instance_problems()
             .filter_map(|(id, message)| {
                 let record = self.instances.get(id)?;
                 let path = self.storage.record_path(id, Form::of(record));

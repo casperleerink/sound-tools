@@ -11,7 +11,7 @@
 //! ```json
 //! {
 //!   "/Users/me/pieces/night": {
-//!     "arrangement/piano/instrument": {"open": true, "x": 120, "y": 80, "display": 1}
+//!     "song/piano/synth": {"open": true, "x": 120, "y": 80, "display": 1}
 //!   }
 //! }
 //! ```
@@ -145,9 +145,9 @@ mod tests {
         std::fs::create_dir_all(&night).expect("a project");
         std::fs::create_dir_all(&day).expect("a project");
         let mut first = Placements::new();
-        first.insert(id("arrangement/piano/instrument"), placement(true, 120));
+        first.insert(id("song/piano/synth"), placement(true, 120));
         let mut second = Placements::new();
-        second.insert(id("arrangement/bass/space"), placement(false, 300));
+        second.insert(id("song/bass/space"), placement(false, 300));
         store(folder.path())
             .write(&night, &first)
             .expect("it writes");

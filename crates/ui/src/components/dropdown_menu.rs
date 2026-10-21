@@ -26,13 +26,14 @@
 //! escape closes. It shows at most a hundred rows: drawing thousands of them on every frame
 //! the menu is open would cost more than typing a few letters.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
     App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent,
     Pixels, Point, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
-    anchored, deferred, div, point, prelude::*, px,
+    anchored, canvas, deferred, div, point, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -48,6 +49,12 @@ const MAX_FOUND: usize = 100;
 /// The rounded square an item icon sits on.
 const ICON_TILE: f32 = 24.;
 const SUBMENU_WIDTH: f32 = 280.;
+/// How wide a menu is unless it says.
+pub const MENU_WIDTH: f32 = 320.;
+/// The key context of an open menu. Its search field leaves up and down to it.
+pub const KEY_CONTEXT: &str = "DropdownMenu";
+/// How tall a menu's rows go before they scroll, unless it says: twelve rows and a heading.
+pub const MENU_MAX_HEIGHT: f32 = 420.;
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -777,6 +784,8 @@ pub struct DropdownMenu {
     search: Option<Search>,
     /// Where a [`Trigger::Pointer`] menu opened, in the window.
     position: Point<Pixels>,
+    /// Whether a [`Trigger::Pointer`] menu moves inside the window, as one under a trigger does.
+    snapped: bool,
     /// What had the focus before [`Self::open_at`], which gets it back.
     focus_before: Option<FocusHandle>,
 }
@@ -788,6 +797,9 @@ struct Search {
     query: String,
     /// The rows it keeps, worked out when the text or the rows change and not every frame.
     found: Vec<MenuEntry>,
+    /// How tall the rows and the field were when the menu opened. They stay as tall while the
+    /// search drops rows, so in a menu that opened upward the field does not move as one types.
+    opened_height: Rc<Cell<Option<Pixels>>>,
 }
 
 impl DropdownMenu {
@@ -810,8 +822,8 @@ impl DropdownMenu {
             pointer_on: None,
             side: Side::default(),
             align: Align::default(),
-            width: 320.,
-            max_height: None,
+            width: MENU_WIDTH,
+            max_height: Some(MENU_MAX_HEIGHT),
             trigger: Trigger::Outline,
             trigger_width: None,
             trigger_height: None,
@@ -819,6 +831,7 @@ impl DropdownMenu {
             debug_name: None,
             search: None,
             position: Point::default(),
+            snapped: false,
             focus_before: None,
         }
     }
@@ -854,6 +867,7 @@ impl DropdownMenu {
             input,
             query: String::new(),
             found: found(&self.entries, ""),
+            opened_height: Rc::default(),
         });
         self
     }
@@ -914,6 +928,16 @@ impl DropdownMenu {
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self
+    }
+
+    /// How wide it is and how tall its groups go before they scroll, for a menu filled again.
+    pub fn set_size(&mut self, width: f32, max_height: Option<f32>) {
+        self.width = width;
+        self.max_height = Some(max_height.unwrap_or(MENU_MAX_HEIGHT));
+    }
+
+    pub fn is_searchable(&self) -> bool {
+        self.search.is_some()
     }
 
     /// Scrolls the groups past this height, for a list that may be long, such as the plugins
@@ -1005,16 +1029,12 @@ impl DropdownMenu {
         self.open
     }
 
-    /// Whether the trigger has the focus, as tab gives it.
-    pub fn trigger_is_focused(&self, window: &Window) -> bool {
-        self.trigger_focus.is_focused(window)
-    }
-
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
         match &self.search {
             // A search starts empty each time, with the keys in its field.
             Some(search) => {
+                search.opened_height.set(None);
                 let input = search.input.clone();
                 input.update(cx, |input, cx| input.set_text("", cx));
                 window.focus(&input.focus_handle(cx), cx);
@@ -1032,12 +1052,25 @@ impl DropdownMenu {
         cx: &mut Context<Self>,
     ) {
         self.position = position;
+        self.snapped = false;
         self.highlighted = usize::MAX;
         self.set_submenu(None, cx);
         if !self.open {
             self.focus_before = window.focused(cx);
         }
         self.open(window, cx);
+    }
+
+    /// Opens a [`Trigger::Pointer`] menu with its top left at `position`, under what opened it,
+    /// moved up or left as far as it must to stay inside the window, as a select's list does.
+    pub fn open_under(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_at(position, window, cx);
+        self.snapped = true;
     }
 
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1218,7 +1251,27 @@ impl DropdownMenu {
                 .pb(px(4.))
                 .child(search.input.clone())
         });
+        let opened_height = (self.search.as_ref()).map(|search| search.opened_height.clone());
+        let held_height = opened_height.as_ref().and_then(|height| height.get());
+        let measure = opened_height.map(|opened_height| {
+            canvas(
+                move |bounds, _, _| {
+                    if opened_height.get().is_none() {
+                        opened_height.set(Some(bounds.size.height));
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full()
+        });
+        let body = div()
+            .relative()
+            .when_some(held_height, |body, height| body.min_h(height))
+            .children(measure)
+            .children(search);
         surface(cx)
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .w(px(self.width))
             .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
@@ -1233,30 +1286,33 @@ impl DropdownMenu {
             .on_key_down(
                 cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)),
             )
-            .children(search)
             .child(
-                MenuList::new(self.shown().to_vec())
-                    .selected(self.selected.clone())
-                    .highlighted(self.highlighted)
-                    .max_height(self.max_height)
-                    .submenu(OpenSubmenu {
-                        value: self.submenu.clone(),
-                        highlighted: self.submenu_highlighted,
-                        on_open: Rc::new(cx.processor(
-                            |this, value: Option<SharedString>, _, cx| this.set_submenu(value, cx),
-                        )),
-                        on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
-                            this.pointer_in_submenu = hovered
+                body.child(
+                    MenuList::new(self.shown().to_vec())
+                        .selected(self.selected.clone())
+                        .highlighted(self.highlighted)
+                        .max_height(self.max_height)
+                        .submenu(OpenSubmenu {
+                            value: self.submenu.clone(),
+                            highlighted: self.submenu_highlighted,
+                            on_open: Rc::new(cx.processor(
+                                |this, value: Option<SharedString>, _, cx| {
+                                    this.set_submenu(value, cx)
+                                },
+                            )),
+                            on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
+                                this.pointer_in_submenu = hovered
+                            })),
+                        })
+                        .on_point(Rc::new(cx.processor(
+                            |this, (value, hovered): (SharedString, bool), _, cx| {
+                                this.point(value, hovered, cx)
+                            },
+                        )))
+                        .on_select(cx.processor(|this, value: SharedString, window, cx| {
+                            this.pick(value, window, cx)
                         })),
-                    })
-                    .on_point(Rc::new(cx.processor(
-                        |this, (value, hovered): (SharedString, bool), _, cx| {
-                            this.point(value, hovered, cx)
-                        },
-                    )))
-                    .on_select(cx.processor(|this, value: SharedString, window, cx| {
-                        this.pick(value, window, cx)
-                    })),
+                ),
             )
     }
 }
@@ -1265,7 +1321,12 @@ impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.trigger == Trigger::Pointer {
             let open = self.open.then(|| {
-                deferred(anchored().position(self.position).child(self.panel(cx))).with_priority(1)
+                let placed = anchored().position(self.position);
+                let placed = match self.snapped {
+                    true => placed.snap_to_window_with_margin(px(8.)),
+                    false => placed,
+                };
+                deferred(placed.child(self.panel(cx))).with_priority(1)
             });
             return div().children(open).into_any_element();
         }

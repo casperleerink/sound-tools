@@ -1,17 +1,15 @@
-//! The built-in delay in the chain of a real track: an outside agent changes it by file while
+//! The built-in delay in a rack after the synth: an outside agent changes it by file while
 //! the project plays and the change is heard, and a synced delay follows the tempo of the
 //! project.
 
 use sound_core::{Changes, Tempo, TempoMap, TimeSignature};
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, Harness, clip, difference, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const DELAY_FILE: &str = "state/arrangement/piano/echo.json";
+const DELAY_FILE: &str = "state/rack/echo.json";
 
-/// A track that plays short chords for four bars through a delay named `echo`.
+/// A rack that plays short chords for four bars through a delay named `echo`.
 fn piano_through(delay: &str) -> Harness {
-    let mut harness = Harness::new();
     let chords = [
         (0, 240, 48),
         (0, 240, 55),
@@ -19,15 +17,8 @@ fn piano_through(delay: &str) -> Harness {
         (3840, 240, 64),
         (5760, 240, 67),
     ];
-    harness.write_track("piano", 1, 0.15, &[("chords", clip(0, 15360, &chords))]);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["echo"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(DELAY_FILE, delay),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chords) = (synth(0.15), clip(0, 15360, &chords));
+    Harness::rack(&[("instrument", &synth), ("chords", &chords), ("echo", delay)])
 }
 
 fn record(state: &str) -> String {

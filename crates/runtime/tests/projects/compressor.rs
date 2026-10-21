@@ -1,25 +1,20 @@
-//! The built-in compressor in the chain of a real track: an outside agent changes it by file
+//! The built-in compressor in a rack after the synth: an outside agent changes it by file
 //! while the project plays and the change is heard, and its lookahead is a latency the project
 //! makes up for.
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, Harness, clip, difference, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const COMPRESSOR_FILE: &str = "state/arrangement/piano/glue.json";
+const COMPRESSOR_FILE: &str = "state/rack/glue.json";
 
-/// A track that plays a chord for four bars through a compressor named `glue`.
+/// A rack that plays a chord for four bars through a compressor named `glue`.
 fn piano_through(compressor: &str) -> Harness {
-    let mut harness = Harness::new();
     let chord = [(0, 15360, 48), (0, 15360, 55), (0, 15360, 64)];
-    harness.write_track("piano", 1, 0.15, &[("chord", clip(0, 15360, &chord))]);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["glue"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(COMPRESSOR_FILE, compressor),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chord) = (synth(0.15), clip(0, 15360, &chord));
+    Harness::rack(&[
+        ("instrument", &synth),
+        ("chord", &chord),
+        ("glue", compressor),
+    ])
 }
 
 fn record(state: &str) -> String {
@@ -77,7 +72,7 @@ fn an_outside_edit_of_the_compressor_while_it_plays_is_heard_and_undone_in_one_s
     assert_eq!(state["state"]["threshold_db"], -6.0);
 }
 
-/// A compressor that does nothing but look ahead delays its track by 10 ms, and the project
+/// A compressor that does nothing but look ahead delays the rack by 10 ms, and the project
 /// makes up for it: the render is the render without the lookahead, sample for sample, and the
 /// project reports the latency.
 #[test]
@@ -95,9 +90,9 @@ fn the_lookahead_is_a_latency_the_project_makes_up_for() {
     assert!(heard.iter().any(|sample| sample.abs() > 0.01));
 }
 
-/// An agent turns the lookahead on while the track plays: the project learns the new latency
+/// An agent turns the lookahead on while the rack plays: the project learns the new latency
 /// at once, the sound fades to the delayed one without a jump, and from the next note on the
-/// track plays as if the lookahead had been there from the start.
+/// rack plays as if the lookahead had been there from the start.
 #[test]
 fn a_lookahead_turned_on_while_it_plays_is_in_time_without_a_jump() {
     let with = |lookahead: u8| {
@@ -109,7 +104,7 @@ fn a_lookahead_turned_on_while_it_plays_is_in_time_without_a_jump() {
     let notes: Vec<(u64, u64, u8)> = (0..16).map(|beat| (beat * 960, 240, 60)).collect();
     let track = |compressor: &str| {
         let mut harness = piano_through(compressor);
-        harness.write_and_apply(&format!("{FOLDER}/chord.json"), &clip(0, 15360, &notes));
+        harness.write_and_apply("state/rack/chord.json", &clip(0, 15360, &notes));
         harness
     };
     let reference = track(&with(10)).play_from_the_start(2 * BAR);
@@ -155,44 +150,4 @@ fn a_lookahead_turned_on_while_it_plays_is_in_time_without_a_jump() {
         .fold(0.0, f32::max);
     assert!(largest < 1e-5, "{largest}");
     assert!(heard.iter().any(|sample| sample.abs() > 0.01));
-}
-
-/// A kick on another track keys the compressor of the bass: the bass is turned down while the
-/// kick plays and comes back after it. The kick is muted, so the render is the bass alone: a
-/// muted track still keys from `post_fx`.
-#[test]
-fn a_kick_on_another_track_ducks_the_bass_while_it_plays() {
-    let mut harness = Harness::new();
-    let beat = BAR / 4;
-    harness.write_track("kick", 1, 0.3, &[("hit", clip(960, 960, &[(0, 960, 36)]))]);
-    harness.write_track(
-        "bass",
-        2,
-        0.15,
-        &[("line", clip(0, 3840, &[(0, 3840, 40)]))],
-    );
-    let duck = r#"{"threshold_db": -40.0, "ratio": 8.0, "attack_ms": 1.0, "release_ms": 20.0}"#;
-    let paths = [
-        harness.write(
-            "state/arrangement/kick/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "kick", "order": 1, "mute": true}}"#,
-        ),
-        harness.write("state/arrangement/bass/duck.json", &record(duck)),
-        harness.write(
-            "state/arrangement/bass/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "bass", "order": 2, "effects": [{"name": "duck", "sidechain": {"track": "kick", "tap": "post_fx"}}]}}"#,
-        ),
-    ];
-    assert_eq!(harness.apply(&paths), 3);
-    assert_eq!(harness.project.problems(), []);
-    let played = harness.play_from_the_start(4 * beat);
-    // The second half of each beat, after the attack and the release.
-    let level = |index: usize| {
-        let beat = frames(&played, index * beat + beat / 2, (index + 1) * beat);
-        beat.iter()
-            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
-    };
-    let (before, during, after) = (level(0), level(1), level(3));
-    assert!(during < before / 4.0, "{during} against {before}");
-    assert!(after > before * 0.9, "{after} against {before}");
 }

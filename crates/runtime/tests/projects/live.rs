@@ -3,44 +3,31 @@
 
 use sound_core::Ticks;
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, CHORDS, Harness, clip, difference, synth};
 
 #[test]
-fn the_default_project_is_an_arrangement_with_no_tracks() {
+fn a_new_folder_is_an_empty_project_of_every_extension() {
     let harness = Harness::new();
-    let instances: Vec<(String, &str)> = harness
-        .project
-        .instances()
-        .map(|(id, tool)| (id.to_string(), tool))
-        .collect();
-    assert_eq!(instances, [("arrangement".to_string(), "arrangement")]);
+    assert_eq!(harness.project.instances().count(), 0);
     let project_file = harness.project.project_file();
     assert_eq!(project_file.tempo_map, sound_core::TempoMap::default());
     assert_eq!(project_file.connections, []);
-    assert!(harness.path("state/arrangement/instance.json").exists());
-    // Making the default content is nothing to undo.
+    let extensions = runtime::bundled_extensions().unwrap();
+    assert_eq!(project_file.extensions, extensions);
     assert_eq!(harness.project.undo_label(), None);
 }
 
 #[test]
-fn a_folder_without_a_project_file_becomes_the_default_project_whatever_else_is_in_it() {
+fn a_folder_without_a_project_file_becomes_a_new_project_whatever_else_is_in_it() {
     let folder = tempfile::tempdir().unwrap();
     std::fs::create_dir(folder.path().join(".git")).unwrap();
     std::fs::write(folder.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     std::fs::write(folder.path().join(".DS_Store"), [0_u8; 4]).unwrap();
     let harness = Harness::open(folder);
-    assert_eq!(harness.project.instances().count(), 1);
+    assert!(harness.path("project.json").exists());
     assert!(harness.path(".git/HEAD").exists());
 
-    // An existing project is left as it is, also one with no instances.
-    let mut harness = harness;
-    let mut changes = sound_core::Changes::new();
-    changes.delete(&sound_core::InstanceId::new("arrangement").unwrap());
-    harness.project.commit("Delete all", changes).unwrap();
-    let harness = harness.reopen();
-    assert_eq!(harness.project.instances().count(), 0);
-
-    // Records without a project file are someone's work, not a new project.
+    // Records without a project file are someone's work, and they load.
     let folder = tempfile::tempdir().unwrap();
     let drone = r#"{"tool": "tone", "state": {"frequency_hz": 110.0, "gain": 0.1}}"#;
     crate::support::write(folder.path(), "state/drone.json", drone);
@@ -54,15 +41,21 @@ fn a_folder_without_a_project_file_becomes_the_default_project_whatever_else_is_
 }
 
 #[test]
-fn a_clip_file_written_during_playback_sounds_in_its_bars_and_disturbs_nothing_else() {
+fn a_timeline_written_during_playback_sounds_in_its_bars_and_disturbs_nothing_else() {
     let expected = Harness::piece().play(5 * BAR);
 
-    // The part goes on an empty track, in bars 3 and 4, written while bar 1 plays.
+    // The part goes into a rack with no notes yet, in bars 3 and 4, written while bar 1 plays.
     let part = clip(7680, 7680, &[(0, 1920, 36), (3840, 1920, 43)]);
-    let file = "state/arrangement/empty/agent-part.json";
+    let file = "state/empty/agent-part.json";
     let run = |gain: f32| {
-        let mut harness = Harness::piece();
-        harness.write_track("empty", 3, gain, &[]);
+        let (piano, chords) = (synth(0.15), clip(0, 15360, &CHORDS));
+        let (pad, long) = (synth(0.1), clip(0, 15360, &[(0, 15360, 72)]));
+        let empty = synth(gain);
+        let mut harness = Harness::racks(&[
+            ("piano", &[("instrument", &piano), ("chords", &chords)]),
+            ("pad", &[("instrument", &pad), ("long", &long)]),
+            ("empty", &[("instrument", &empty)]),
+        ]);
         let mut output = harness.play(BAR / 2);
         assert_eq!(harness.write_and_apply(file, &part), 1);
         assert_eq!(harness.project.problems(), []);
@@ -70,7 +63,7 @@ fn a_clip_file_written_during_playback_sounds_in_its_bars_and_disturbs_nothing_e
         (harness, output)
     };
 
-    // With a silent synth on the new part, every sample of the other tracks is the same:
+    // With a silent synth on the new part, every sample of the other racks is the same:
     // the edit, its compile and its snapshot swap disturb nothing.
     let (_, silent) = run(0.0);
     assert_eq!(difference(&expected, &silent), None);
@@ -94,43 +87,6 @@ fn a_clip_file_written_during_playback_sounds_in_its_bars_and_disturbs_nothing_e
 }
 
 #[test]
-fn a_track_folder_written_during_playback_adds_a_track_without_stopping_the_others() {
-    let expected = Harness::piece().play(5 * BAR);
-    let run = |gain: f32| {
-        let mut harness = Harness::piece();
-        let mut output = harness.play(BAR / 2);
-        let line = clip(7680, 3840, &[(0, 1920, 36)]);
-        harness.write_track("bass", 3, gain, &[("line", line)]);
-        assert_eq!(harness.project.problems(), []);
-        output.extend(harness.render(5 * BAR - BAR / 2));
-        (harness, output)
-    };
-    let (_, silent) = run(0.0);
-    assert_eq!(difference(&expected, &silent), None);
-
-    let (mut harness, audible) = run(0.15);
-    let (first, last) = difference(&expected, &audible).unwrap();
-    assert!((2 * BAR..2 * BAR + 64).contains(&first), "{first}");
-    assert!((2 * BAR + BAR / 2..3 * BAR).contains(&last), "{last}");
-
-    // Deleting the folder removes the track, and one undo brings the three records back.
-    let folder = harness.path("state/arrangement/bass");
-    std::fs::remove_dir_all(&folder).unwrap();
-    assert_eq!(harness.apply(std::slice::from_ref(&folder)), 3);
-    harness.project.engine().stop();
-    harness.render(BAR);
-    assert_eq!(difference(&harness.play(5 * BAR), &expected), None);
-    assert_eq!(
-        harness.project.undo().unwrap().as_deref(),
-        Some("File change")
-    );
-    assert!(folder.join("line.json").exists());
-    harness.project.engine().stop();
-    harness.render(BAR);
-    assert_eq!(difference(&harness.play(5 * BAR), &audible), None);
-}
-
-#[test]
 fn snapshot_swaps_during_a_held_note_do_not_change_a_sample_of_it() {
     let run = |edits: bool| {
         let mut harness = Harness::piece();
@@ -141,7 +97,7 @@ fn snapshot_swaps_during_a_held_note_do_not_change_a_sample_of_it() {
         for step in 0..(4 * BAR / 512) as u64 {
             if edits {
                 let dragged = clip(15360, 3840, &[(step, 480, 60)]);
-                harness.write_and_apply("state/arrangement/pad/dragged.json", &dragged);
+                harness.write_and_apply("state/pad/dragged.json", &dragged);
             }
             output.extend(harness.render(512));
         }

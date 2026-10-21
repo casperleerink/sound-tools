@@ -1,34 +1,4 @@
-import {
-  bandpass,
-  clamp,
-  db,
-  exp,
-  feedback,
-  h,
-  highpass,
-  hold,
-  Knob,
-  knob,
-  live,
-  lowpass,
-  max,
-  Meter,
-  mix,
-  noise,
-  Pad,
-  phasor,
-  pow,
-  rise,
-  sampleRate,
-  saturate,
-  type Signal,
-  smooth,
-  sqrt,
-  type Style,
-  tool,
-  trigger,
-  watch,
-} from "./sdk";
+import { bandpass, clamp, db, exp, feedback, h, highpass, hold, Knob, number, lowpass, max, Meter, mix, noise, Pad, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, type Style, tool, bang, output } from "./sdk";
 
 /** A slow random wander from -1 to 1: a new target `hz` times a second, glided over `ms`. */
 const gust = (hz: Signal | number, ms: Signal | number): Signal =>
@@ -40,7 +10,6 @@ const button: Style = { paddingX: 12, paddingY: 8, radius: 6, background: "#3a33
 tool({
   name: "storm",
   title: "Storm",
-  kind: "source",
   when: "You want wind, a stormy noise drone, or thunder that plays by itself with no notes",
   doc: [
     "A storm that blows all the time, notes or not: wind made of filtered noise that gusts and howls by itself, with thunder on a button.",
@@ -50,14 +19,14 @@ tool({
     "`level` is the wind's loudness. `thunder` is how loud a thunderclap is next to the wind: 0 turns thunder off, 1 is a big, close clap. `thunder_decay` is how long the rumble rolls on.",
   ].join("\n"),
   state: {
-    level: knob({ min: -30, max: 6, default: -10, unit: "db", label: "Level" }),
-    thunder: knob({ min: 0, max: 1, default: 0.7, unit: "percent", label: "Thunder" }),
-    thunder_decay: knob({ min: 500, max: 8000, default: 3000, unit: "ms", label: "Rumble" }),
+    level: number({ min: -30, max: 6, default: -10, unit: "db", label: "Level" }),
+    thunder: number({ min: 0, max: 1, default: 0.7, unit: "percent", label: "Thunder" }),
+    thunder_decay: number({ min: 500, max: 8000, default: 3000, unit: "ms", label: "Rumble" }),
   },
-  controls: {
-    tone: live({ min: 0, max: 1, default: 0.4, label: "Dark / bright" }),
-    wild: live({ min: 0, max: 1, default: 0.3, label: "Wild" }),
-    strike: trigger({ label: "Thunder" }),
+  inputs: {
+    tone: number({ min: 0, max: 1, default: 0.4, label: "Dark / bright" }),
+    wild: number({ min: 0, max: 1, default: 0.3, label: "Wild" }),
+    strike: bang({ label: "Thunder" }),
   },
   sound: ({ level, thunder, thunder_decay, tone, wild, strike }) => {
     // Wind: noise through a band that wanders with the gusts.
@@ -106,21 +75,21 @@ tool({
     const crack = highpass(noise(), 500)
       .times(pow(smooth(env, 10), 12))
       .times(1.2);
-    watch("rumble", swellUp);
+    output("rumble", swellUp);
 
     return wind.plus(rumble.plus(crack).times(thunder));
   },
-  card: ({ fire }) => (
+  view: ({ send }) => (
     <div style={row}>
       <Pad x="tone" y="wild" size={160} />
       <div style={{ gap: 8 }}>
-        <div style={button} onClick={() => fire("strike")}>
+        <div style={button} onPress={() => send("strike")}>
           Thunder
         </div>
-        <Meter watch="rumble" label="Rumble" />
-        <Knob path="level" label="Level" min={-30} max={6} default={-10} unit="db" />
-        <Knob path="thunder" label="Thunder" min={0} max={1} default={0.7} unit="percent" />
-        <Knob path="thunder_decay" label="Rumble" min={500} max={8000} default={3000} unit="ms" />
+        <Meter value="rumble" label="Rumble" />
+        <Knob value="level" label="Level" min={-30} max={6} default={-10} unit="db" />
+        <Knob value="thunder" label="Thunder" min={0} max={1} default={0.7} unit="percent" />
+        <Knob value="thunder_decay" label="Rumble" min={500} max={8000} default={3000} unit="ms" />
       </div>
     </div>
   ),

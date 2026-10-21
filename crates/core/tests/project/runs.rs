@@ -162,6 +162,27 @@ fn a_run_that_goes_on_is_written_at_its_longest() {
     );
 }
 
+/// A run of another label of the same editor ends the open one, so undo takes back the second
+/// alone, even when both changed one record.
+#[test]
+fn another_label_ends_the_run_before_it() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness);
+    let start = Instant::now();
+    edit_each_frame(&mut harness, &dc, ("One", 1), start, 1);
+    edit_each_frame(
+        &mut harness,
+        &dc,
+        ("Two", 2),
+        start + Duration::from_millis(100),
+        1,
+    );
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Two"));
+    assert_eq!(harness.level(), 0.001);
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some("One"));
+    assert_eq!(harness.level(), 0.0);
+}
+
 /// Undo takes back what the composer just saw, so it finishes the run first.
 #[test]
 fn an_undo_during_a_run_takes_the_run_back() {

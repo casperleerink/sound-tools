@@ -54,7 +54,7 @@ use sound_ui::{
     weak_callback,
 };
 
-use crate::parameters::{lane_of_pin, pin_of_lane};
+use crate::parameters::lane_of_pin;
 use crate::{Parameter, Pin, PluginRecord, Plugins, Steps, WeakPlugins};
 
 /// The room at the left of the body, where the plain card has all of it.
@@ -88,36 +88,11 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
     devices.numbers::<PluginRecord>(PluginNumbers(plugins));
 }
 
-/// What the lanes of a track need of the parameters of a plugin: a lane names a pin by its
-/// path, `parameters.12.value`, and reads out a value in the plugin's own text, as the card does.
-/// A lane can be added for any parameter that takes one, as for a knob of a built-in device:
-/// one that is not pinned yet is pinned at what it plays now, in the same undo step.
+/// The parameters of a plugin a lane can move: a lane names a pin by its path,
+/// `parameters.12.value`.
 struct PluginNumbers(WeakPlugins);
 
 impl Numbers<PluginRecord> for PluginNumbers {
-    fn name(
-        &self,
-        _: &Project,
-        _: &InstanceId,
-        record: &PluginRecord,
-        field: &str,
-    ) -> Option<String> {
-        let pin = record.parameters.get(&pin_of_lane(field)?)?;
-        (!pin.name.is_empty()).then(|| pin.name.clone())
-    }
-
-    fn text(
-        &self,
-        _: &Project,
-        id: &InstanceId,
-        _: &PluginRecord,
-        field: &str,
-        value: f32,
-    ) -> Option<String> {
-        let plugins = self.0.upgrade()?;
-        plugins.parameter_text(id, pin_of_lane(field)?, f64::from(value))
-    }
-
     fn lane_numbers(&self, _: &Project, id: &InstanceId, record: &PluginRecord) -> Vec<LaneNumber> {
         let parameters = self.0.upgrade().and_then(|plugins| plugins.parameters(id));
         let Some(parameters) = parameters else {
@@ -130,27 +105,6 @@ impl Numbers<PluginRecord> for PluginNumbers {
                 name: parameter.name.clone().into(),
             })
             .collect()
-    }
-
-    fn take(
-        &self,
-        _: &Project,
-        id: &InstanceId,
-        record: &PluginRecord,
-        field: &str,
-    ) -> Option<(PluginRecord, f32)> {
-        let plugins = self.0.upgrade()?;
-        let parameter_id = pin_of_lane(field)?;
-        let parameters = plugins.parameters(id)?;
-        let parameter = parameters.get(&parameter_id)?;
-        if record.parameters.contains_key(&parameter_id) || !can_take_lane(record, parameter) {
-            return None;
-        }
-        let pin = pin_now(&plugins, id, parameter);
-        let value = pin.value as f32;
-        let mut record = record.clone();
-        record.parameters.insert(parameter_id, pin);
-        Some((record, value))
     }
 }
 
@@ -319,11 +273,6 @@ impl PluginView {
     fn record<'a>(&self, cx: &'a App) -> Option<&'a PluginRecord> {
         let device = &self.device;
         device.session.read(cx).project().state(&device.instance)
-    }
-
-    /// The list that puts a parameter on the card, for a snapshot that shows it open.
-    pub fn parameters_menu(&self) -> &Entity<DropdownMenu> {
-        &self.menu
     }
 
     /// Asks the plugin what the card draws from: its parameters, and its text for the value of

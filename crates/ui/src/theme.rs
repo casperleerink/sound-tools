@@ -70,6 +70,39 @@ impl Theme {
         }
     }
 
+    /// The colour called `name`, such as `gray-700` or `green`, as tools of a project name them.
+    pub fn named(&self, name: &str) -> Option<Hsla> {
+        Some(match name {
+            "gray-50" => self.gray_50,
+            "gray-100" => self.gray_100,
+            "gray-200" => self.gray_200,
+            "gray-300" => self.gray_300,
+            "gray-400" => self.gray_400,
+            "gray-500" => self.gray_500,
+            "gray-600" => self.gray_600,
+            "gray-700" => self.gray_700,
+            "gray-800" => self.gray_800,
+            "gray-900" => self.gray_900,
+            "gray-950" => self.gray_950,
+            "alpha" => self.alpha,
+            "blue" => self.blue,
+            "sapphire" => self.sapphire,
+            "sky" => self.sky,
+            "teal" => self.teal,
+            "green" => self.green,
+            "yellow" => self.yellow,
+            "peach" => self.peach,
+            "red" => self.red,
+            "maroon" => self.maroon,
+            "mauve" => self.mauve,
+            "pink" => self.pink,
+            "lavender" => self.lavender,
+            "rosewater" => self.rosewater,
+            "flamingo" => self.flamingo,
+            _ => return None,
+        })
+    }
+
     /// `alpha` at the given opacity, like Tailwind's `alpha/10`.
     pub fn alpha_at(&self, opacity: f32) -> Hsla {
         let mut color = self.alpha;

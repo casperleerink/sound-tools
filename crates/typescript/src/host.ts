@@ -5,11 +5,11 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
-const files = process.argv.slice(2);
+const [bunNumber, ...files] = process.argv.slice(2);
 /** Each file as a call stack names it, with links resolved. */
 const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file))}:`] as const);
 // So the stack `tool` keeps reaches its file through any number of helpers.
@@ -22,43 +22,46 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 // Code of a tool that fails after an `await`, where nothing waits for it, must not stop Bun.
 process.on("unhandledRejection", (error) => console.error(error));
 
-type Spec = ToolSpec<Fields, Controls, unknown>;
+type Spec = ToolSpec<Fields, Inputs, unknown>;
 type State = ValuesOf<Fields>;
 type Choices = Record<string, string | number>;
 type Watches = Record<string, number>;
 type Size = { width: number; height: number };
-/** The room of a page in the check without a window: the default window's. */
-const CHECKED_PAGE: Size = { width: 1422, height: 824 };
+/** The room of a view in the check without a window: the default window's. */
+const CHECKED_ROOM: Size = { width: 1422, height: 824 };
 /** An instance whose code runs, with its watches as they are now. */
 type Played = { instance: string; watches: Watches };
 /** A record as the runtime tells it: its `state` as the file holds it. */
 type Told = { id: string; tool: string; state: unknown };
+/** Where the piece plays and how, as the window tells it. */
+type Transport = { playing: boolean; tick: number; bar: number; beat: number; bpm: number; repeat: [number, number] | null; click: boolean; keys: boolean };
 /** Where the sound and the piece are now, which all code of a tool gets. */
 type Clock = { time: number; transport: Transport };
+/** The tempo map and the sections, as `project.json` holds them. */
+type Song = { tempo_map: TempoMap; sections: Section[] };
 
-type Render = { type: "render"; card: number; instance: string; watches: Watches; page: Size | null } & Clock;
 type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
   | { type: "records"; records: Told[]; gone: string[]; edits: number }
-  | Render
-  /** A click, or a press or a drag on a canvas `at` across and down. */
-  | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null; time: number }
+  /** A view opens in the room the window gives it: its code makes its nodes. */
+  | ({ type: "mount"; card: number; instance: string; watches: Watches; size: Size } & Clock)
+  | { type: "resize"; card: number; size: Size }
+  | { type: "watches"; instance: string; watches: Watches }
+  | ({ type: "clock" } & Clock)
+  | ({ type: "song" } & Song)
+  /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
+  | { type: "event"; card: number; node: number; kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
-  | ({ type: "key"; instance: Played; key: string; down: boolean } & Clock)
+  | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
+  | ({ type: "take"; instance: Played } & Take & Clock)
   | { type: "drop"; card: number }
-  | { type: "behaviour"; question: number; tool: string; instance: string };
+  | { type: "behaviour"; question: number; tool: string; instance: string }
+  /** The answer to a question of `ask`. */
+  | { type: "answer"; question: number; answer: unknown };
 
-type Canvas = Extract<Node, { type: "canvas" }>;
-/** What the runtime gets of a node: a handler is its index. */
-type Sent =
-  | { type: "div"; style?: unknown; onClick?: number; children: Sent[] }
-  | { type: "text"; text: string }
-  | (Omit<Canvas, "onPress" | "onDrag"> & { onPress?: number; onDrag?: number })
-  | Exclude<Node, { type: "div" | "canvas" }>;
-
-/** A click, which hears nothing, or a press or a drag on a canvas, which hears where. */
-type Handler = (x: number, y: number) => void;
+/** What bindings of an instance read: the window tells this Bun at once only what they read. */
+type Reads = { state: string[] | null; children: boolean; watches: string[] | null };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -70,19 +73,6 @@ function runs(tool: string, what: string) {
   say({ type: "runs", tool, what });
 }
 
-/** The handlers of the last trees of each card, by the version of the tree. */
-const handlers = new Map<number, Map<number, Handler[]>>();
-/**
- * The version of the last tree drawn: a click names the tree it was on. From the time this Bun
- * started, so a click on a tree an earlier Bun drew runs nothing here.
- */
-let treeVersion = Date.now() * 1000;
-/** The trees of a card whose clicks still count: the window may still show an older one. */
-const KEPT_TREES = 8;
-/** The last tree sent of each card, so the same tree again is not sent. */
-const lastTrees = new Map<number, { text: string; version: number }>();
-/** What each card was last drawn from, so it draws again after a tick or a click. */
-const drawn = new Map<number, Render & { tool: string }>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
 /** The tools whose tick or a click on whose card failed. */
@@ -102,10 +92,14 @@ const NAME = /^[a-z][a-z0-9_]*$/;
 const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
 const KEYS = {
-  name: true, title: true, when: true, doc: true, kind: true, state: true, controls: true, sound: true,
-  behaviour: true, children: true, memory: true, tick: true, card: true, page: true, transport: true, onKey: true,
-  onNotes: true,
+  name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, sound: true,
+  behaviour: true, children: true, memory: true, tick: true, view: true, onKey: true,
+  keys: true, globalKeys: true, onNotes: true, onTake: true,
 } satisfies Record<keyof Spec, true>;
+/** The keys the app keeps, on macOS and elsewhere: no tool takes them. */
+const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["tab"]);
+/** The most voices a sound plays at once. */
+const MAX_VOICES = 8;
 
 /**
  * What is wrong with the definition of a tool that its types do not say, so the agent that
@@ -124,26 +118,42 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${key}: write it, it is what the composer and agents read`);
       }
     }
-    const names = [...Object.keys(spec.state), ...Object.keys(spec.controls ?? {})];
+    const names = [...Object.keys(spec.state), ...Object.keys(spec.inputs ?? {})];
     for (const name of names) {
       if (!NAME.test(name)) {
-        problems.push(`${name}: a field or control name is lowercase letters, digits and _, starting with a letter`);
+        problems.push(`${name}: a field or input name is lowercase letters, digits and _, starting with a letter`);
       }
       if (names.indexOf(name) !== names.lastIndexOf(name)) {
-        problems.push(`${name}: a field and a control cannot share a name`);
+        problems.push(`${name}: a field and an input cannot share a name`);
       }
     }
-    for (const name of Object.keys(spec.controls ?? {})) {
+    for (const name of Object.keys(spec.inputs ?? {})) {
       if (name === "audio" || name === "notes") {
-        problems.push(`${name}: a control is not named ${name}, the input of the sound`);
+        problems.push(`${name}: an input is not named ${name}, an input every sound has`);
       }
+    }
+    const voices = spec.voices ?? 1;
+    if (!Number.isInteger(voices) || voices < 1 || voices > MAX_VOICES) {
+      problems.push(`voices: ${voices} is not a whole number from 1 to ${MAX_VOICES}`);
     }
     const sounds = choiceFields(spec).reduce((count, [, field]) => count * field.options.length, 1);
     if (sounds > MAX_SOUNDS) {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
-    if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
-      problems.push('kind: a parent\'s sound hears what it connects to its own { port: "audio" } as `input`, so leave `kind` out');
+    if (spec.behaviour && voices !== 1) {
+      problems.push('voices: a parent\'s sound is one voice that hears what it connects to its own { port: "audio" } as `input`, so leave `voices` out');
+    }
+    for (const [list, names] of [["keys", spec.keys ?? []], ["globalKeys", spec.globalKeys ?? []]] as const) {
+      for (const name of names) {
+        if (!sdk.host.isKeyName(name)) {
+          problems.push(`${list}: ${name} is no key; name one as "a", "space", "left" or "cmd-c", with cmd, ctrl and alt first`);
+        }
+      }
+    }
+    for (const key of spec.globalKeys ?? []) {
+      if (APP_KEYS.includes(key)) {
+        problems.push(`globalKeys: ${key} is the app's: undo, new, open, quit, the panel, the computer keys and tab are`);
+      }
     }
     if (spec.children && !spec.behaviour) {
       problems.push("children: only a parent has children: give it a behaviour that connects them");
@@ -196,10 +206,11 @@ async function load() {
 
 /**
  * A tool as the runtime reads it: what it is, the sound of every combination of its choices,
- * and its card and page at their defaults, so the runtime never waits for Bun. A function of
- * the wrong type is called anyway, so it fails as a problem of its tool.
+ * and the nodes of its view at its defaults, so a view that fails is a problem at
+ * once. A function of the wrong type is called anyway, so it fails as a problem of its tool.
  */
 function described(spec: Spec, file: string) {
+  const sounds = combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))] as const);
   return {
     info: {
       name: spec.name,
@@ -207,25 +218,33 @@ function described(spec: Spec, file: string) {
       title: spec.title,
       when: spec.when,
       doc: spec.doc,
-      kind: spec.kind ?? "effect",
+      voices: spec.voices ?? 1,
+      input: sounds.some(([, graph]) => "Ok" in graph && readsInput(graph.Ok)),
+      sound: spec.sound !== undefined,
       fields: spec.state,
-      controls: spec.controls ?? {},
+      inputs: spec.inputs ?? {},
       tick: spec.tick !== undefined,
-      page: spec.page !== undefined,
-      transport: spec.transport === true,
+      view: spec.view !== undefined,
       keys: spec.onKey !== undefined,
+      takes: spec.keys ?? null,
+      global_keys: spec.globalKeys ?? [],
       notes: spec.onNotes !== undefined,
+      on_take: spec.onTake !== undefined,
       behaviour: spec.behaviour !== undefined,
       children: spec.children,
     },
-    sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
-    card: made(() => draw(spec, false)),
-    page: spec.page === undefined ? null : made(() => draw(spec, true)),
+    sounds,
+    view: made(() => draw(spec)),
   };
 }
 
+/** Whether a sound hears what comes in, so its tool has an audio input. */
+function readsInput(graph: Graph): boolean {
+  return graph.nodes.some((node) => node.op === "input" || node.op === "inputLeft" || node.op === "inputRight");
+}
+
 /** What `make` gives, or why it failed, as the runtime reads a `Result`. */
-function made(make: () => unknown) {
+function made<T>(make: () => T): { Ok: T } | { Err: string } {
   try {
     return { Ok: make() };
   } catch (error) {
@@ -259,14 +278,15 @@ function specOf(tool: string): Spec {
 function sound(spec: Spec, choices: Choices): Graph {
   const fields: Record<string, unknown> = {};
   for (const [name, field] of Object.entries(spec.state)) {
-    fields[name] =
-      field.kind === "choice"
-        ? (choices[name] ?? field.default)
-        : field.kind === "pattern" || field.kind === "sample"
-          ? new sdk.Table({ list: name })
-          : new sdk.Param(name);
+    if (field.kind === "number" || field.kind === "boolean") {
+      fields[name] = new sdk.Param(name);
+    } else if (field.kind === "choice") {
+      fields[name] = choices[name] ?? field.default;
+    } else if (field.kind === "file" || (field.kind === "list" && field.item.kind === "number")) {
+      fields[name] = new sdk.Table({ list: name });
+    }
   }
-  for (const name of Object.keys(spec.controls ?? {})) {
+  for (const name of Object.keys(spec.inputs ?? {})) {
     fields[name] = new sdk.Param(name);
   }
   const build = spec.sound ?? (() => sdk.input);
@@ -274,10 +294,59 @@ function sound(spec: Spec, choices: Choices): Graph {
 }
 
 /**
+ * What a behaviour read of its record and its children: the fields of its own state, and the
+ * fields of any child's state, each `null` when it read them all, as `Object.keys` does. The
+ * names and tools of its children always count. The runtime asks again only when one of these
+ * changed, so a fader dragged on a child does not ask a behaviour that reads only names.
+ */
+type BehaviourReads = { state: string[] | null; children: string[] | null };
+
+/** `source` as a behaviour reads it, which notes each field it reads in `into`. */
+function noting<T extends object>(source: T, into: { fields: Set<string> | null }): T {
+  const note = (key: PropertyKey) => {
+    if (typeof key === "string") into.fields?.add(key);
+  };
+  const all = () => {
+    into.fields = null;
+  };
+  return new Proxy({} as T, {
+    get: (_, key) => (note(key), Reflect.get(source, key)),
+    has: (_, key) => (note(key), Reflect.has(source, key)),
+    ownKeys: () => (all(), Reflect.ownKeys(source)),
+    getOwnPropertyDescriptor: (_, key) => {
+      note(key);
+      const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
+      return descriptor && { ...descriptor, configurable: true };
+    },
+  });
+}
+
+/** The children as a behaviour reads them: every child's state notes the fields it reads. */
+/** `children` as a behaviour reads them, at any depth: the fields of the state it reads are what the runtime compares of each. */
+function notingChildren(children: OwnedChild[], into: { fields: Set<string> | null }): OwnedChild[] {
+  return children.map((child) => {
+    let state: unknown;
+    let inside: OwnedChild[] | undefined;
+    return Object.freeze({
+      name: child.name,
+      tool: child.tool,
+      get state() {
+        return (state ??= isObject(child.state) ? noting(child.state, into) : child.state);
+      },
+      get children() {
+        return (inside ??= notingChildren(child.children, into));
+      },
+    }) as OwnedChild;
+  });
+}
+
+/**
  * Answers what the behaviour of a parent declares for its record and its children as the
  * runtime told them, which its question is for: not with the edits this Bun sent since.
  */
 function declare({ question, tool, instance }: Extract<Request, { type: "behaviour" }>) {
+  const own = { fields: new Set<string>() as Set<string> | null };
+  const inside = { fields: new Set<string>() as Set<string> | null };
   const declaration = made(() => {
     const spec = specOf(tool);
     if (!spec.behaviour) {
@@ -288,7 +357,10 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
       throw new Error(`the runtime told no record of ${instance}`);
     }
     runs(tool, "behaviour");
-    const answer = spec.behaviour({ state: filledState(spec, record), children: childrenOf(instance, false) });
+    const answer = spec.behaviour({
+      state: noting(filledState(spec, record), own),
+      children: notingChildren(childrenOf(instance, false), inside),
+    });
     // JSON leaves out a `child` that is undefined, which would make the end a port of the parent.
     const connections: unknown[] = Array.isArray(answer?.connections) ? answer.connections : [];
     connections.forEach((connection, index) => {
@@ -302,71 +374,30 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
       }
     });
     // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `say`.
-    const declared = JSON.parse(JSON.stringify(answer));
-    if (declared !== null && typeof declared === "object" && "players" in declared) {
-      throw new Error(
-        "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +
-          'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and set({ child, live: "launch" }, index) launches',
-      );
-    }
-    return declared;
+    return JSON.parse(JSON.stringify(answer));
   });
-  say({ type: "declared", question, declaration });
+  const list = (read: { fields: Set<string> | null }) => (read.fields ? [...read.fields].sort() : null);
+  const reads: BehaviourReads = { state: list(own), children: list(inside) };
+  say({ type: "declared", question, declaration, reads });
 }
 
-function flatten(child: Child, handlers: Handler[], into: Sent[]) {
-  if (child === null || child === undefined || typeof child === "boolean") {
-    return;
-  }
-  if (Array.isArray(child)) {
-    for (const each of child) {
-      flatten(each, handlers, into);
-    }
-  } else if (typeof child === "string" || typeof child === "number") {
-    // `{count} lines` is three children in JSX and one line of text on screen.
-    const last = into.at(-1);
-    if (last?.type === "text") {
-      last.text += String(child);
-    } else {
-      into.push({ type: "text", text: String(child) });
-    }
-  } else {
-    into.push(serialize(child, handlers));
-  }
+/** What draws the view of a tool. */
+function drawerOf(spec: Spec) {
+  return (spec.view ?? sdk.defaultView(spec.state, spec.inputs)) as (view: unknown) => Child;
 }
 
-/** A node as the runtime gets it, with its handlers kept for its card. */
-function serialize(node: Node, handlers: Handler[]): Sent {
-  const keep = (handler: Handler | undefined) => handler && handlers.push(handler) - 1;
-  if (node.type === "canvas") {
-    const { onPress, onDrag, ...rest } = node;
-    return { ...rest, onPress: keep(onPress), onDrag: keep(onDrag) };
-  }
-  if (node.type !== "div") {
-    return node;
-  }
-  const children: Sent[] = [];
-  flatten(node.children, handlers, children);
-  return { type: "div", style: node.style, onClick: keep(node.onClick), children };
-}
-
-/** What draws the card of a tool, or its page. */
-function drawerOf(spec: Spec, page: boolean) {
-  const draw = page ? spec.page : (spec.card ?? sdk.defaultCard(spec.state, spec.controls));
-  if (!draw) {
-    throw new Error(`${spec.name} has no page`);
-  }
-  return draw as (card: unknown) => Node;
-}
-
-/** The memory of an instance, made when it is first needed. */
+/** The memory of an instance, made when it is first needed: a store its cards follow. */
 function memoryOf(instance: string, spec: Spec): unknown {
   // A record that becomes another tool's starts its memory again.
   const key = `${instance} ${spec.name}`;
   if (!memories.has(key)) {
-    memories.set(key, spec.memory ? spec.memory() : {});
+    memories.set(key, freshMemory(spec));
   }
   return memories.get(key);
+}
+
+function freshMemory(spec: Spec): unknown {
+  return sdk.host.store((spec.memory ? spec.memory() : {}) as object, true);
 }
 
 /** The `time` of the last frame. */
@@ -381,27 +412,45 @@ function checkAt(at: number | undefined) {
   }
 }
 
-/** What a card, a page and the control loop use to play an instance. */
-function performer(instance: string): Performer<Controls> {
-  const send: Performer<Controls>["send"] = (event, { at, child } = {}) => {
+/** An input as `send` names it, as the runtime reads it: the child it is of, its name, and what it carries. */
+function inputOf(input: unknown): { child?: string; name: string; kind?: "number" | "bang" | "notes" } {
+  if (typeof input === "string") return { name: input, kind: input === "notes" ? "notes" : undefined };
+  if (input !== null && typeof input === "object" && "child" in input && typeof input.child === "string") {
+    for (const kind of ["number", "bang", "notes"] as const) {
+      const name = (input as Record<string, unknown>)[kind];
+      if (typeof name === "string") return { child: input.child, name, kind };
+    }
+  }
+  throw new TypeError(`send plays an input: its name, "notes", or { child, number }, { child, bang } or { child, notes }, not ${JSON.stringify(input)}`);
+}
+
+/** What a view and the control loop use to play an instance. */
+function performer(instance: string): Performer<Inputs> {
+  const notes = (event: NoteEvent, at: number | undefined, child: string | undefined) => {
     checkAt(at);
     say({ type: "send", instance, child, event: wired(event), at });
   };
   return {
-    set(control, value) {
-      const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.live];
-      say({ type: "control", instance, child, name, value });
-    },
-    fire(control, { at } = {}) {
+    send: ((input: unknown, ...rest: unknown[]) => {
+      const { child, name, kind } = inputOf(input);
+      const [first, second] = rest as [unknown, { at?: number } | undefined];
+      if (kind === "notes") {
+        notes(first as NoteEvent, second?.at, child);
+        return;
+      }
+      // A number input takes a number; a bang takes only when it happens.
+      const value = typeof first === "number" ? finite(first, name) : undefined;
+      if (kind === "number" && value === undefined) {
+        throw new TypeError(`send({ child: "${child}", number: "${name}" }, value) takes a number`);
+      }
+      const { at } = ((value === undefined ? first : second) ?? {}) as { at?: number };
       checkAt(at);
-      const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.trigger];
-      say({ type: "control", instance, child, name, at });
-    },
-    send,
+      say({ type: "control", instance, child, name, value, at });
+    }) as Performer<Inputs>["send"],
     play(pitch, { seconds = 0.25, hold = false, velocity = 0.8, at, child } = {}) {
       checkAt(at);
       if (hold) {
-        send({ type: "noteOn", pitch, velocity }, { at, child });
+        notes({ type: "noteOn", pitch, velocity }, at, child);
       } else {
         say({ type: "note", instance, child, pitch: keyOf(finite(pitch, "pitch")), velocity: finite(velocity, "velocity"), seconds: finite(seconds, "seconds"), at });
       }
@@ -479,8 +528,28 @@ function parentOf(id: string): [string, string] | undefined {
   return at < 0 ? undefined : [id.slice(0, at), id.slice(at + 1)];
 }
 
+/** `ids` and every instance they are inside: those whose children change with them. */
+function withOwners(ids: Iterable<string>): Set<string> {
+  const all = new Set<string>();
+  for (const id of ids) {
+    all.add(id);
+    for (let owner = parentOf(id); owner !== undefined; owner = parentOf(owner[0])) {
+      all.add(owner[0]);
+    }
+  }
+  return all;
+}
+
+/** Forgets the memory of `id`, which is gone or another tool's now. */
+function forget(id: string) {
+  for (const key of memories.keys()) {
+    if (key.startsWith(`${id} `)) memories.delete(key);
+  }
+}
+
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
   for (const { id, tool, state } of records) {
+    if (told.get(id)?.tool !== tool) forget(id);
     told.set(id, { tool, state });
     const [parent, name] = parentOf(id) ?? [];
     if (parent !== undefined && name !== undefined) {
@@ -489,6 +558,8 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
   }
   for (const id of gone) {
     told.delete(id);
+    kids.delete(id);
+    forget(id);
     const [parent, name] = parentOf(id) ?? [];
     const known = parent === undefined ? undefined : kids.get(parent);
     if (parent !== undefined && name !== undefined && known) {
@@ -496,7 +567,16 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
       kids.set(parent, { names: known.names });
     }
   }
+  // An edit the runtime refused changed nothing: what it showed goes back to what was told.
+  const refused = unheard.filter(({ number }) => number <= heard).flatMap(({ changes }) => changes.map((change) => change.id));
   unheard = unheard.filter(({ number }) => number > heard);
+  const touched = withOwners([...records.map((record) => record.id), ...gone, ...refused]);
+  // The lists of children made before hold what changed, also those of an owner far up.
+  for (const id of touched) {
+    const known = kids.get(id);
+    if (known) known.told = undefined;
+  }
+  refresh(touched);
 }
 
 /** The record of `id` as its code knows it: as told, and with the edits not heard on top when `latest`. */
@@ -522,11 +602,18 @@ function recordOf(id: string, latest = true): Entry | undefined {
 /** The children of `id` in name order, as a behaviour gets them. */
 function childrenOf(id: string, latest = true): OwnedChild[] {
   const known = kids.get(id);
-  // As told: kept until a child changes, so a parent of a thousand takes asks for none of them again.
-  if (known && (!latest || unheard.length === 0)) {
+  // As told: kept until a child changes, so a parent of a thousand takes asks for none of them
+  // again, and an edit of one clip makes again only the lists it is in.
+  if (known && (!latest || !editedBelow(id))) {
     return (known.told ??= listed(id, known.names, false));
   }
   return listed(id, known?.names ?? new Set(), latest);
+}
+
+/** Whether an edit the runtime has not said it heard changes a record inside `id`. */
+function editedBelow(id: string): boolean {
+  const inside = `${id}/`;
+  return unheard.some(({ changes }) => changes.some((change) => change.id.startsWith(inside)));
 }
 
 function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
@@ -540,8 +627,9 @@ function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
     }
   }
   return frozen([...names].sort().flatMap((name) => {
-    const entry = recordOf(`${id}/${name}`, latest);
-    return entry ? [{ name, ...entry }] : [];
+    const child = `${id}/${name}`;
+    const entry = recordOf(child, latest);
+    return entry ? [{ name, tool: entry.tool, state: filledOf(entry), children: childrenOf(child, latest) } as OwnedChild] : [];
   }));
 }
 
@@ -550,16 +638,39 @@ function filledState(spec: Spec, entry: Entry): State {
   return frozen(filledObject(spec.state, entry.state));
 }
 
-/** Whether a child a change got is a copy whose state it never read. */
-const untouched = new WeakMap<object, () => boolean>();
+/**
+ * The state of a child as code gets it: every field that has a default at it, as the code of its
+ * tool gets its own, so a view or a change reads `clip.state.start` with no `?? 0`.
+ */
+function filledOf(child: { tool: string; state: unknown }): unknown {
+  const spec = sdk.host.tools.get(child.tool);
+  if (spec) return filledObject(spec.state, child.state);
+  const defaults = (sdk as { defaultStates?: Record<string, object> }).defaultStates?.[child.tool];
+  return defaults && isObject(child.state) ? deepFilled(defaults, child.state) : child.state;
+}
+
+/** `state` with what it leaves out of `defaults` filled in, also inside its objects, as Rust reads it. */
+function deepFilled(defaults: object, state: Record<string, unknown>): Record<string, unknown> {
+  const filled: Record<string, unknown> = structuredClone(defaults) as Record<string, unknown>;
+  for (const [name, value] of Object.entries(state)) {
+    const fallback = filled[name];
+    filled[name] = isObject(value) && isObject(fallback) ? deepFilled(fallback, value) : value;
+  }
+  return filled;
+}
+
+/** What a change did with a child it got: whether it read its state, and its children as it left them. */
+type Drafted = { untouched: () => boolean; children: () => [OwnedChild[], unknown] | [] };
+const drafts = new WeakMap<object, Drafted>();
 
 /**
- * A copy of a child for a change to edit, whose state is copied when it is first read. Its name
- * stays: it is the id of the record, which never changes.
+ * A copy of a child for a change to edit, whose state, and children, are copied when first
+ * read. Its name stays: it is the id of the record, which never changes.
  */
 function draft(child: OwnedChild): OwnedChild {
   let state: unknown;
   let copied = false;
+  let children: [OwnedChild[], unknown] | [] = [];
   const copy = {} as OwnedChild;
   Object.defineProperties(copy, {
     name: {
@@ -574,7 +685,7 @@ function draft(child: OwnedChild): OwnedChild {
       enumerable: true,
       get() {
         if (!copied) {
-          state = structuredClone(child.state);
+          state = structuredClone(filledOf(child));
           copied = true;
         }
         return state;
@@ -584,9 +695,27 @@ function draft(child: OwnedChild): OwnedChild {
         copied = true;
       },
     },
+    children: {
+      enumerable: true,
+      get() {
+        if (children.length === 0) children = [child.children, child.children.map(draft)];
+        return children[1];
+      },
+      set(value) {
+        children = [child.children, value];
+      },
+    },
   });
-  untouched.set(copy, () => !copied);
+  drafts.set(copy, { untouched: () => !copied, children: () => children });
   return copy;
+}
+
+/**
+ * A copy of what code put in a record, as JSON: a record holds JSON, and a value read from
+ * `memory` or another store is a proxy, which `structuredClone` refuses.
+ */
+function plain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -609,12 +738,12 @@ function fieldsChanged(before: unknown, after: unknown, what: string) {
     }
   }
   removed.push(...Object.keys(was).filter((name) => !(name in after)));
-  return Object.keys(set).length > 0 || removed.length > 0 ? { set: structuredClone(set), removed } : null;
+  return Object.keys(set).length > 0 || removed.length > 0 ? { set: plain(set), removed } : null;
 }
 
 /**
  * What a change made of the record of `instance`, `before` and now `state`, and of its children,
- * `edited` as they were `before` when it read them.
+ * `edited` as they were `before` when it read them, at any depth.
  */
 function changesOf(
   instance: string,
@@ -626,40 +755,80 @@ function changesOf(
   if (own) {
     changes.push({ type: "fields", id: instance, ...own });
   }
-  if (children === undefined) {
-    return changes;
+  if (children !== undefined) {
+    childChanges(instance, children, edited, changes);
   }
+  return changes;
+}
+
+/** A child of a list a change left, checked: its name, its tool and its state. */
+function childOf(child: unknown): OwnedChild {
+  if (!isObject(child) || typeof child.name !== "string" || typeof child.tool !== "string") {
+    throw new TypeError(`a child is { name, tool, state }, not ${JSON.stringify(child)}`);
+  }
+  if (child.name.includes("/")) {
+    throw new Error(`the child ${child.name} is named with a \`/\`: a grandchild goes in the \`children\` of its parent`);
+  }
+  return child as OwnedChild;
+}
+
+/** What `edited`, the children of `parent` a change left, changes of `children`, as they were. */
+function childChanges(parent: string, children: OwnedChild[], edited: unknown, changes: Change[]) {
   if (!Array.isArray(edited)) {
     throw new TypeError("children is a list of { name, tool, state }");
   }
   const old = new Map(children.map((child) => [child.name, child]));
   const kept = new Set<string>();
-  for (const child of edited as unknown[]) {
-    if (!isObject(child) || typeof child.name !== "string" || typeof child.tool !== "string") {
-      throw new TypeError(`a child is { name, tool, state }, not ${JSON.stringify(child)}`);
-    }
+  for (const each of edited as unknown[]) {
+    const child = childOf(each);
     const { name, tool } = child;
     if (kept.has(name)) {
       throw new Error(`two children are named ${name}`);
     }
     kept.add(name);
-    const id = `${instance}/${name}`;
+    const id = `${parent}/${name}`;
     const was = old.get(name);
     if (!was || was.tool !== tool) {
-      changes.push({ type: "record", id, tool, state: structuredClone(child.state ?? {}) });
-    } else if (!untouched.get(child)?.()) {
-      const fields = fieldsChanged(was.state, child.state, `the state of ${name}`);
+      created(id, child, changes);
+      continue;
+    }
+    const drafted = drafts.get(child);
+    if (!drafted?.untouched()) {
+      // Against its defaults too: a field the file leaves out and the change did not touch stays out.
+      const fields = fieldsChanged(filledOf(was), child.state, `the state of ${name}`);
       if (fields) {
         changes.push({ type: "fields", id, ...fields });
       }
     }
+    // A draft's children, when the change read them; the children of a plain object as they are.
+    const [owned, changed]: [OwnedChild[] | undefined, unknown] | [] = drafted ? drafted.children() : "children" in child ? [was.children ?? [], child.children] : [];
+    if (owned) {
+      childChanges(id, owned, changed, changes);
+    }
   }
   for (const name of old.keys()) {
     if (!kept.has(name)) {
-      changes.push({ type: "delete", id: `${instance}/${name}` });
+      // What it owns goes with it.
+      changes.push({ type: "delete", id: `${parent}/${name}` });
     }
   }
-  return changes;
+}
+
+/** A new record at `id` and the children it comes with, parents first. */
+function created(id: string, child: OwnedChild, changes: Change[]) {
+  changes.push({ type: "record", id, tool: child.tool, state: plain(child.state ?? {}) });
+  const inner: unknown = (child as { children?: unknown }).children;
+  if (inner === undefined) return;
+  if (!Array.isArray(inner)) {
+    throw new TypeError(`the children of ${id} are a list of { name, tool, state }`);
+  }
+  const names = new Set<string>();
+  for (const each of inner) {
+    const grandchild = childOf(each);
+    if (names.has(grandchild.name)) throw new Error(`two children of ${id} are named ${grandchild.name}`);
+    names.add(grandchild.name);
+    created(`${id}/${grandchild.name}`, grandchild, changes);
+  }
 }
 
 /**
@@ -705,77 +874,300 @@ function updater(instance: string) {
     edits += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);
+    // What its cards show follows at once, before the runtime answers.
+    refresh(withOwners(changes.map((change) => change.id)), {
+      instance,
+      state: part.state,
+      children: children.length > 0,
+    });
   };
 }
 
-/** What all code of an instance gets: a card, a page, `tick`, `onKey` and `onNotes`. */
+/** What `tick`, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
 function contextOf<Extra extends object>(
   instance: string,
   spec: Spec,
   record: Entry,
   watches: Watches,
-  { time, transport }: Clock,
+  { time }: Clock,
   extra: Extra,
 ) {
   const context = {
     ...extra,
-    state: filledState(spec, record),
-    watches,
-    memory: memoryOf(instance, spec),
     time,
-    transport,
-    update: updater(instance),
-    ...performer(instance),
+    ...doers(instance, spec),
   };
   // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
   let children: OwnedChild[] | undefined;
-  return Object.defineProperty(context, "children", { enumerable: true, get: () => (children ??= childrenOf(instance)) }) as typeof context & {
-    children: OwnedChild[];
+  return Object.defineProperties(context, {
+    state: { enumerable: true, value: filledState(spec, record) },
+    outputs: { enumerable: true, value: watches },
+    children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
+  }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
+}
+
+/** What every piece of code of an instance can do, in a view or in `tick`, `onKey`, `onNotes` and `onTake`. */
+function doers(instance: string, spec: Spec) {
+  return {
+    memory: memoryOf(instance, spec),
+    clock: clockFor(instance),
+    update: updater(instance),
+    select: selector(instance),
+    addOffer: offerAdder(instance),
+    now: sdk.now as Context<State>["now"],
+    ...askers(instance),
+    ...performer(instance),
   };
 }
 
-/** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
-function render(request: Render) {
-  const { card, instance, watches, page } = request;
-  now = request.time;
+/** `select`: what the composer works on, a child by its path, which the window plays live notes into. */
+function selector(instance: string) {
+  return (path: string | null, { span }: { span?: { from: number; to: number } } = {}) => {
+    const range = span && [wholeTick(span.from, "span from"), wholeTick(span.to, "span to")];
+    say({ type: "select", instance, path, span: range ?? null });
+  };
+}
+
+/** Questions to the window, by number, which its answers settle: `openFile`, `openMenu`, `confirm`, `offers`, `numbers`. */
+const asked = new Map<number, (answer: unknown) => void>();
+let questions = Number(bunNumber) * 2 ** 32;
+function ask<Answer>(message: { type: string } & Record<string, unknown>): Promise<Answer> {
+  const question = ++questions;
+  say({ ...message, question });
+  return new Promise((resolve) => asked.set(question, resolve as (answer: unknown) => void));
+}
+
+/** What a tool asks the window, for its instance. */
+function askers(instance: string) {
+  return {
+    openMenu: (items: readonly MenuItem[], { notes = [], width, maxHeight, search = false }: MenuOptions = {}) =>
+      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group, separator, shortcut }) => ({ label, disabled, checked, icon, detail, group, separator, shortcut })), notes, width, maxHeight, search }),
+    offers: (takes: "notes" | "audio", { at }: { at?: string } = {}) => ask<Offers>({ type: "offers", takes, instance, at }),
+    numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
+    /** The runtime opens the file and copies it under `assets/audio/`. */
+    openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>({ type: "open_file", title }),
+    confirm: ({ message, detail, confirm }: { message: string; detail?: string; confirm: string }) => ask<boolean>({ type: "confirm", message, detail, confirm }),
+  };
+}
+
+/** `addOffer`: the window writes the offer's record into the child, as one edit. */
+function offerAdder(instance: string) {
+  return (key: string, path: string, label: string) => say({ type: "add_offer", instance, path, key, label });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Views: their code runs once and makes nodes; stores of the record, its children,
+// the watches and the clock change what reads them. The window gets the ops of each card
+// after every request, and at once after an `await`.
+
+/** What the cards of an instance read, which its stores hold as they are now. */
+type Stores = {
+  tool: string;
+  state: Record<string, unknown>;
+  children: OwnedChild[];
+  watches: Watches;
+  /** What its bindings read as last told to the window, as JSON. */
+  told?: string;
+};
+
+type Mounted = { root: ReturnType<typeof sdk.host.mount>; instance: string; tool: string; size: Size };
+
+const stores = new Map<string, Stores>();
+const cards = new Map<number, Mounted>();
+/** Cards whose next ops make all of them again, and the card whose event the next ops answer. */
+const mounting = new Set<number>();
+const answering = new Set<number>();
+let flushing = false;
+/** Where the piece plays as last told: what moves on every frame, which no binding follows. */
+let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120, repeat: null, click: false, keys: false };
+/** What of the clock bindings follow, one for every tool. */
+const following = sdk.host.adopted({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false });
+const song = sdk.host.adopted<Song>({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] });
+
+/** A tick as the window takes it: a whole number from 0. */
+function wholeTick(tick: number, what: string): number {
+  if (!Number.isFinite(tick) || tick < 0) throw new Error(`${what} ${tick} is not a tick from 0 on`);
+  return Math.round(tick);
+}
+
+/** The clock as the code of `instance` gets it: what bindings follow, and what moves it. */
+function clockFor(instance: string): SdkClock {
+  const followed = sdk.host.store(following, false);
+  const songOf = sdk.host.store(song, false);
+  const moving = (name: "tick" | "bar" | "beat" | "bpm") => {
+    if (sdk.host.binding()) {
+      throw new Error(`clock.${name} moves on every frame, so no binding follows it: show it with now.tick or now.bpm, or read it in a handler`);
+    }
+    return transport[name];
+  };
+  const op = (message: object) => say({ type: "transport", ...message });
+  return {
+    get playing() { return followed.playing; },
+    get repeat() { return followed.repeat; },
+    get click() { return followed.click; },
+    get computerKeys() { return followed.keys; },
+    get tempo_map() { return songOf.tempo_map; },
+    get sections() { return songOf.sections; },
+    get tick() { return moving("tick"); },
+    get bar() { return moving("bar"); },
+    get beat() { return moving("beat"); },
+    get bpm() { return moving("bpm"); },
+    play: () => op({ op: "play" }),
+    pause: () => op({ op: "pause" }),
+    stop: () => op({ op: "stop" }),
+    jump: (to, { atTick } = {}) => op({ op: "jump", to: wholeTick(to, "jump to"), at: atTick === undefined ? null : wholeTick(atTick, "jump atTick") }),
+    setRepeat: (range) => op({ op: "repeat", range: range && [wholeTick(range.from, "repeat from"), wholeTick(range.to, "repeat to")] }),
+    setClick: (on) => op({ op: "click", on }),
+    setComputerKeys: (on) => op({ op: "keys", on }),
+    update: (label, change) => {
+      const draft = structuredClone({ tempo_map: song.tempo_map, sections: song.sections });
+      change(draft);
+      // Before it counts: a value JSON cannot hold throws here.
+      const line = JSON.stringify({ type: "song_edit", instance, label, ...draft }) + "\n";
+      writeSync(1, line);
+      // What its views show follows at once, before the runtime answers.
+      sdk.host.batch(() => sdk.host.reconcile(song as never, draft as never));
+      later();
+    },
+  };
+}
+
+/** The stores of `instance`, made from the record as code knows it, with its edits not heard. */
+function storesOf(instance: string, spec: Spec, record: Entry): Stores {
+  let known = stores.get(instance);
+  // A record of another tool now is another instance to its code.
+  if (!known || known.tool !== spec.name) {
+    known = {
+      tool: spec.name,
+      state: sdk.host.adopted(filledState(spec, record)) as Record<string, unknown>,
+      children: sdk.host.adopted(childrenOf(instance)) as OwnedChild[],
+      watches: {},
+    };
+    stores.set(instance, known);
+  }
+  return known;
+}
+
+/**
+ * Brings the stores of each of `instances` to the records as code knows them now; `edited` is
+ * the state an `update` just made, which is that already.
+ */
+function refresh(instances: Iterable<string>, edited?: { instance: string; state: unknown; children: boolean }) {
+  sdk.host.batch(() => {
+    for (const instance of new Set(instances)) {
+      const known = stores.get(instance);
+      const record = recordOf(instance);
+      const spec = sdk.host.tools.get(known?.tool ?? "");
+      if (known && (!record || record.tool !== known.tool)) stores.delete(instance);
+      if (!known || !record || !spec || record.tool !== known.tool) continue;
+      const own = edited?.instance === instance ? edited : undefined;
+      sdk.host.reconcile(known.state, (own?.state ?? filledState(spec, record)) as Record<string, unknown>);
+      if (!own || own.children) {
+        sdk.host.reconcile(known.children as never, childrenOf(instance) as never);
+      }
+    }
+  });
+  later();
+}
+
+function setWatches(instance: string, watches: Watches) {
+  const known = stores.get(instance);
+  if (known) sdk.host.reconcile(known.watches, watches);
+}
+
+function setClock({ time, transport: next }: Clock) {
+  now = time;
+  transport = next;
+  const repeat = next.repeat && { from: next.repeat[0], to: next.repeat[1] };
+  sdk.host.batch(() => sdk.host.reconcile(following as never, { playing: next.playing, repeat, click: next.click, keys: next.keys } as never));
+}
+
+/** Sends the ops at once when code changed something outside a request, such as after an `await`. */
+function later() {
+  if (!flushing) {
+    flushing = true;
+    queueMicrotask(flushOps);
+  }
+}
+
+/** Sends the window the ops of every card that has some, and what the bindings of each instance read now. */
+function flushOps() {
+  flushing = false;
+  for (const [card, mounted] of cards) {
+    const taken = sdk.host.takeOps(mounted.root);
+    const mount = mounting.delete(card);
+    const event = answering.delete(card);
+    if ("error" in taken) {
+      fail(mounted.tool, `its card failed: ${taken.error}`);
+      say({ type: "ops", card, error: taken.error, event });
+      mounted.root.dispose();
+      cards.delete(card);
+    } else if (taken.ops.length > 0 || mount || event) {
+      const started = performance.now();
+      const text = JSON.stringify(taken.ops);
+      writeSync(1, `{"type":"ops","card":${card},"mount":${mount},"event":${event},"took":${performance.now() - started + took},"ops":${text}}\n`);
+    }
+  }
+  for (const card of answering) {
+    say({ type: "ops", card, mount: false, event: true, took: 0, ops: [] });
+  }
+  answering.clear();
+  for (const [instance, known] of stores) {
+    const reads: Reads = {
+      state: sdk.host.readFields(known.state),
+      children: sdk.host.isRead(known.children),
+      watches: sdk.host.readFields(known.watches),
+    };
+    const text = JSON.stringify(reads);
+    if (text !== known.told) {
+      known.told = text;
+      say({ type: "reads", instance, reads });
+    }
+  }
+}
+
+/** Milliseconds this Bun spent on the request whose ops go now. */
+let took = 0;
+
+/** Opens a view: its code runs once and makes its nodes, or the window hears why not. */
+function mount(request: Extract<Request, { type: "mount" }>) {
+  const { card, instance, watches } = request;
+  setClock(request);
   const record = recordOf(instance);
-  if (!record) {
-    say({ type: "tree", card, tree: { Err: "drawn without a record" } });
+  const spec = sdk.host.tools.get(record?.tool ?? "");
+  if (!record || !spec) {
+    say({ type: "ops", card, error: record ? `no tool ${record.tool} is loaded` : "drawn without a record", event: false });
     return;
   }
-  const { tool } = record;
-  drawn.set(card, { ...request, tool });
-  let same = false;
-  const tree = made(() => {
-    // Such as a tool whose file this Bun runs without.
-    const spec = specOf(tool);
-    const kept: Handler[] = [];
-    runs(tool, page ? "page" : "card");
-    const node = drawerOf(spec, page !== null)(contextOf(instance, spec, record, watches, request, page ? { size: page } : {}));
-    const drawnTree = serialize(node, kept);
-    const text = JSON.stringify(drawnTree);
-    const trees = handlers.get(card) ?? new Map<number, Handler[]>();
-    const last = lastTrees.get(card);
-    // The same tree keeps its version, with the handlers of this draw.
-    if (last?.text === text) {
-      trees.set(last.version, kept);
-      same = true;
-      return null;
-    }
-    treeVersion += 1;
-    lastTrees.set(card, { text, version: treeVersion });
-    trees.set(treeVersion, kept);
-    if (trees.size > KEPT_TREES) {
-      const [oldest] = trees.keys();
-      trees.delete(oldest);
-    }
-    handlers.set(card, trees);
-    return [treeVersion, drawnTree];
-  });
-  if ("Err" in tree) {
-    lastTrees.delete(card);
+  cards.get(card)?.root.dispose();
+  cards.delete(card);
+  const known = storesOf(instance, spec, record);
+  setWatches(instance, watches);
+  // A resize reconciles the object itself: the store over it is read only.
+  const room = { ...request.size };
+  const size = sdk.host.store(room, false);
+  runs(spec.name, "view");
+  try {
+    const context = cardContext(instance, spec, known, { size });
+    const draw = drawerOf(spec);
+    const root = sdk.host.mount(card, () => draw(context), { state: context.state, children: context.children, fields: spec.state, update: context.update, openMenu: context.openMenu });
+    cards.set(card, { root, instance, tool: spec.name, size: room });
+    mounting.add(card);
+  } catch (error) {
+    say({ type: "ops", card, error: String(error), event: false });
   }
-  say(same ? { type: "unchanged", card } : { type: "tree", card, tree });
+}
+
+/** What a view gets: the stores of its instance, its memory, and what plays it. */
+function cardContext<Extra extends object>(instance: string, spec: Spec, known: Stores, extra: Extra) {
+  const context = {
+    ...extra,
+    state: sdk.host.store(known.state, false) as State,
+    children: sdk.host.store(known.children, false),
+    outputs: sdk.host.store(known.watches, false),
+    ...doers(instance, spec),
+  };
+  return Object.defineProperty(context, "time", { enumerable: true, get: () => now }) as typeof context & { time: number };
 }
 
 /** `value` of `field` as the window gives it: at its default when left out, and so each item. */
@@ -795,11 +1187,8 @@ function filledObject(fields: Fields, value: unknown): State {
 
 function defaultOf(field: Field): unknown {
   switch (field.kind) {
-    case "pattern":
-      return Array(field.length).fill(field.default);
-    case "sample":
+    case "file":
       return "";
-    case "notes":
     case "list":
       return field.default ?? [];
     case "text":
@@ -811,33 +1200,33 @@ function defaultOf(field: Field): unknown {
   }
 }
 
-/** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
-function draw(spec: Spec, page: boolean): Sent {
-  const context = {
-    state: frozen(filledObject(spec.state, {})),
-    children: [],
-    watches: {},
-    memory: spec.memory ? spec.memory() : {},
-    time: 0,
-    transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },
-    set() {},
-    fire() {},
-    play() {},
-    send() {},
-    update() {},
-  };
+/** The ops of a tool's view at its defaults, after one tick: a check without a window. */
+function draw(spec: Spec): unknown {
+  const memory = freshMemory(spec);
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {} };
+  const state = frozen(filledObject(spec.state, {}));
+  // What the check plays on the clock goes nowhere.
+  const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };
+  const context = { state, children: [], outputs: {}, memory, time: 0, clock, now: sdk.now, ...performs };
   try {
-    spec.tick?.({ ...context, dt: 1 / 30 });
+    spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  const node = drawerOf(spec, page)({ ...context, ...(page && { size: CHECKED_PAGE }) });
-  return serialize(node, []);
+  const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {} };
+  const drawn = { ...context, state: sdk.host.store(known.state, false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };
+  const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, children: [], fields: spec.state, update() {}, openMenu: performs.openMenu });
+  const taken = sdk.host.takeOps(root);
+  root.dispose();
+  if ("error" in taken) {
+    throw new Error(taken.error);
+  }
+  return taken.ops;
 }
 
 /**
- * Runs the code of each instance that `call` picks, with what all its code gets, then its cards
- * draw again. `what` names that code in a problem.
+ * Runs the code of each instance that `call` picks, with what all its code gets; its cards
+ * follow what it changed. `what` names that code in a problem.
  */
 function run<Extra extends object>(
   // Only the clock: a key or notes request has an `instance` of its own, which the cards would draw.
@@ -845,11 +1234,12 @@ function run<Extra extends object>(
   instances: Played[],
   what: string,
   extra: Extra,
-  call: (spec: Spec, tool: Context<State, Controls, unknown> & Extra) => unknown,
+  call: (spec: Spec, tool: Context<State, Inputs, unknown> & Extra) => unknown,
 ) {
   const clock = { time, transport };
-  now = time;
+  setClock(clock);
   for (const { instance, watches } of instances) {
+    setWatches(instance, watches);
     const record = recordOf(instance);
     const spec = sdk.host.tools.get(record?.tool ?? "");
     if (!spec || !record) {
@@ -861,12 +1251,6 @@ function run<Extra extends object>(
       caught(call(spec, contextOf(instance, spec, record, watches, clock, extra)), failed);
     } catch (error) {
       failed(error);
-      continue;
-    }
-    for (const last of drawn.values()) {
-      if (last.instance === instance) {
-        render({ ...last, ...clock, watches });
-      }
     }
   }
 }
@@ -883,25 +1267,36 @@ function handle(request: Request) {
     case "records":
       hear(request);
       break;
-    case "render":
-      render(request);
+    case "mount":
+      mount(request);
+      break;
+    case "resize": {
+      const mounted = cards.get(request.card);
+      if (mounted) sdk.host.reconcile(mounted.size as never, request.size as never);
+      break;
+    }
+    case "watches":
+      setWatches(request.instance, request.watches);
+      break;
+    case "clock":
+      setClock(request);
+      break;
+    case "song":
+      sdk.host.reconcile(song as never, { tempo_map: request.tempo_map, sections: request.sections } as never);
       break;
     case "event": {
       now = request.time;
-      const last = drawn.get(request.card);
-      const failed = (error: unknown) => last && fail(last.tool, `a click on its card failed: ${error}`);
+      const mounted = cards.get(request.card);
+      const failed = (error: unknown) => mounted && fail(mounted.tool, `a click on its card failed: ${error}`);
       try {
-        if (last) {
-          runs(last.tool, "click handler");
+        if (mounted) {
+          runs(mounted.tool, "click handler");
         }
-        caught(handlers.get(request.card)?.get(request.version)?.[request.handler]?.(...(request.at ?? [0, 0])), failed);
+        caught(sdk.host.batch(() => sdk.host.nodeEvent(request.node, request.kind, request.payload as never)), failed);
       } catch (error) {
         failed(error);
       }
-      // It may have changed the memory.
-      if (last) {
-        render(last);
-      }
+      answering.add(request.card);
       break;
     }
     case "frame":
@@ -909,8 +1304,14 @@ function handle(request: Request) {
       say({ type: "framed" });
       break;
     case "key": {
-      const key = { key: request.key, down: request.down };
+      const { key: name, down, shift, alt, cmd, ctrl } = request;
+      const key = { key: name, down, shift, alt, cmd, ctrl };
       run(request, [request.instance], "onKey", {}, (spec, tool) => spec.onKey?.(tool, key));
+      break;
+    }
+    case "take": {
+      const { recorder, name, tool: kind, state } = request;
+      run(request, [request.instance], "onTake", {}, (spec, tool) => spec.onTake?.(tool, { recorder, name, tool: kind, state } as Take));
       break;
     }
     case "notes":
@@ -919,16 +1320,21 @@ function handle(request: Request) {
       );
       break;
     case "drop":
-      handlers.delete(request.card);
-      lastTrees.delete(request.card);
-      drawn.delete(request.card);
+      cards.get(request.card)?.root.dispose();
+      cards.delete(request.card);
+      mounting.delete(request.card);
       break;
     case "behaviour":
       declare(request);
       break;
+    case "answer":
+      asked.get(request.question)?.(request.answer);
+      asked.delete(request.question);
+      break;
   }
 }
 
+sdk.host.changed = later;
 
 await load();
 
@@ -937,9 +1343,12 @@ for await (const line of console) {
   if (line === "") {
     continue;
   }
+  const started = performance.now();
   try {
-    handle(JSON.parse(line) as Request);
+    sdk.host.batch(() => handle(JSON.parse(line) as Request));
   } finally {
+    took = performance.now() - started;
+    flushOps();
     // Bun does one thing at a time, so the runtime knows what hangs: the oldest not done.
     say({ type: "done" });
   }

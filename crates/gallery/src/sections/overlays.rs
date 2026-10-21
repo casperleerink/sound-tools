@@ -24,17 +24,17 @@ struct OverlaysState {
 
 impl Global for OverlaysState {}
 
-/// The split button of the arrangement: `Add track`, and an instrument or an audio track.
-pub(crate) fn add_track_button(name: &'static str, cx: &mut App) -> Entity<SplitButton> {
+/// A split button: a main choice, and the others in its menu.
+pub(crate) fn split_button(name: &'static str, cx: &mut App) -> Entity<SplitButton> {
     cx.new(|cx| {
         let items = [
-            MenuItem::new("instrument", "Instrument track").selectable(false),
-            MenuItem::new("audio", "Audio track").selectable(false),
+            MenuItem::new("chat", "Chat").selectable(false),
+            MenuItem::new("plan", "Plan").selectable(false),
         ];
         let choices = SplitChoices {
-            label: "Add track".into(),
-            main_value: "instrument".into(),
-            menu_label: "Instrument or audio track".into(),
+            label: "New thread".into(),
+            main_value: "chat".into(),
+            menu_label: "Chat or plan".into(),
             entries: vec![MenuEntry::Group(MenuGroup::new().items(items))],
         };
         SplitButton::new(name, choices, cx).icon("plus")
@@ -109,8 +109,8 @@ fn install(window: &mut Window, cx: &mut App) {
             .width(260.)
             .max_height(260.)
     });
-    let split = add_track_button("split", cx);
-    let split_open = add_track_button("split-open", cx);
+    let split = split_button("split", cx);
+    let split_open = split_button("split-open", cx);
     match open.as_str() {
         "dropdown" => menu.update(cx, |this, cx| this.open(window, cx)),
         "search" => search.update(cx, |this, cx| this.open(window, cx)),

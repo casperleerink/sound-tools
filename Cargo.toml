@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -14,13 +14,11 @@ publish = false
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
 analyzer = { path = "extensions/analyzer" }
-arrangement = { path = "extensions/arrangement" }
 compressor = { path = "extensions/compressor" }
 delay = { path = "extensions/delay" }
 drum-pad = { path = "extensions/drum-pad" }
 eq = { path = "extensions/eq" }
 filter = { path = "extensions/filter" }
-fit-tempo = { path = "extensions/fit-tempo" }
 gate = { path = "extensions/gate" }
 instrument = { path = "extensions/instrument" }
 limiter = { path = "extensions/limiter" }
@@ -97,7 +95,7 @@ rtsan-standalone = "0.3"
 schemars = "1.2.2"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps key order stable, so agent diffs of project files stay small.
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 # Errors name the field, such as `state.gain`, so an agent can fix its edit.
 serde_path_to_error = "0.1"
 # Checks the agent CLI the app downloads against its pinned checksum. MIT OR Apache-2.0.
@@ -107,6 +105,8 @@ smol = "2"
 tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
+# Grapheme boundaries, so the caret steps over an emoji as one character. The version gpui uses.
+unicode-segmentation = "1.13"
 # Claude session ids, which the app picks.
 uuid = { version = "1", features = ["v4", "v5"] }
 # Windows: the job object that ends the agent with every program it started, and hidden
@@ -162,13 +162,11 @@ lyon_geom = { opt-level = 3 }
 # Decodes FLAC samples of SFZ instruments when they load.
 claxon = { opt-level = 3 }
 analyzer = { opt-level = 3 }
-arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
 delay = { opt-level = 3 }
 drum-pad = { opt-level = 3 }
 eq = { opt-level = 3 }
 filter = { opt-level = 3 }
-fit-tempo = { opt-level = 3 }
 gate = { opt-level = 3 }
 instrument = { opt-level = 3 }
 limiter = { opt-level = 3 }

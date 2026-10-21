@@ -1,93 +1,75 @@
 //! The part of `sdk.ts` the runtime writes: the record of each built-in tool as a TypeScript
-//! type, made from the JSON Schema of its Rust type, the `Tools` that names them, and the
-//! `devices` a sound plays through. Each object type is written once, as a named type. What
+//! type, made from the JSON Schema of its Rust type, and the `Tools` that names them. Each
+//! object type is written once, as a named type. What
 //! [`RecordSchema::field`] says of a field is its TSDoc, as the agent docs say it too.
 
 use serde_json::Value;
-use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc, unit_of};
+use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};
 
-use crate::sequencer;
+use crate::built_in_schemas;
 
-/// The runtime's part of `sdk.ts` for the tools of `schemas` and the `sequencer`.
+/// The runtime's part of `sdk.ts` for the tools of `schemas` and the built-in children.
 pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
-    let sequencer = sequencer::schema();
-    let mut tools: Vec<&ToolSchema> = schemas.iter().chain([&sequencer]).collect();
+    let built_in = built_in_schemas();
+    let mut tools: Vec<&ToolSchema> = schemas.iter().chain(&built_in).collect();
     tools.sort_by_key(|schema| schema.tool);
     let mut text = String::from(
         "
 // ---------------------------------------------------------------------------------------------
-// Built-in tools: their records, from their Rust types, and the devices a sound plays through.
+// Built-in tools: their records, from their Rust types.
 ",
     );
     for schema in &tools {
         text.push_str(&Writer::new(schema).types());
     }
     text.push_str(
-        "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * and the live controls (`live`) and triggers (`trigger`) a parent plays.\n */\nexport interface Tools {\n",
+        "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * the number inputs `send` plays (`input`), its bang inputs (`bang`) and the numbers it sends\n * out (`out`).\n */\nexport interface Tools {\n",
     );
     for schema in &tools {
         let names = |names: Vec<String>| match names.is_empty() {
             true => "never".to_string(),
             false => names.join(" | "),
         };
+        let inputs = schema.live.iter().map(|input| quoted(input));
         let number = names(
             (schema.numbers.iter())
                 .map(|(info, _)| quoted(&info.field))
+                .chain(inputs.clone())
                 .collect(),
         );
-        let live = names(schema.live.iter().map(|live| quoted(live)).collect());
+        let input = names(inputs.collect());
+        let out = names(schema.outputs.iter().map(|output| quoted(output)).collect());
+        let defaults = names(
+            defaults_of(schema)
+                .keys()
+                .map(|field| quoted(field))
+                .collect(),
+        );
         text.push_str(&format!(
-            "  {}: {{ state: {}; number: {number}; live: {live}; trigger: never }};\n",
+            "  {}: {{ state: {}; number: {number}; input: {input}; bang: never; out: {out}; defaults: {defaults} }};\n",
             property_name(schema.tool),
             type_name(schema.tool, "State"),
         ));
     }
     text.push_str("}\n");
-    text.push_str(&sdk_devices(&tools));
+    let defaults: serde_json::Map<String, Value> = (tools.iter())
+        .map(|schema| (schema.tool.to_string(), Value::Object(defaults_of(schema))))
+        .collect();
+    text.push_str(&format!(
+        "\n/** What the record of each built-in tool holds where it leaves a field out: what code that edits one gets. */\nexport const defaultStates: Record<string, Record<string, unknown>> = {};\n",
+        Value::Object(defaults)
+    ));
     text
 }
 
-/// `devices` as the SDK offers them: a knob for each number a signal moves, in its units. The
-/// docs of their settings are those of the record.
-fn sdk_devices(tools: &[&ToolSchema]) -> String {
-    let mut text = String::from(
-        "
-/**
- * The built-in devices a sound plays through: `devices.reverb(input, { mix: 0.3 })`. Each of
- * `fields` takes a signal or a number; the rest of its record is written as it is. Not in an
- * instrument, and not inside a `feedback`.
- */
-export const devices = {
-",
-    );
-    for schema in tools.iter().filter(|schema| schema.in_code) {
-        let tool = schema.tool;
-        text.push_str(&format!(
-            "  {}: device({}, {{\n",
-            property_name(tool),
-            quoted(tool)
-        ));
-        for (number, default) in &schema.numbers {
-            let field = &*number.field;
-            // A number inside a list is written as the rest of the record is.
-            if !field
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-            {
-                continue;
-            }
-            let unit = unit_of(field)
-                .filter(|(unit, _)| ["hz", "ms", "db"].contains(unit))
-                .map_or(String::new(), |(unit, _)| format!(", unit: \"{unit}\""));
-            let (min, max) = (number.range.min, number.range.max);
-            text.push_str(&format!(
-                "    {field}: knob({{ min: {min}, max: {max}, default: {default}{unit} }}),\n",
-            ));
-        }
-        text.push_str("  }),\n");
-    }
-    text.push_str("};\n");
-    text
+/// The fields of the record of a tool that have a default, with it.
+fn defaults_of(schema: &ToolSchema) -> serde_json::Map<String, Value> {
+    let record = RecordSchema::new(&schema.schema);
+    let root = record.resolved(&schema.schema);
+    let properties = root.get("properties").and_then(Value::as_object);
+    (properties.into_iter().flatten())
+        .filter_map(|(name, property)| Some((name.clone(), property.get("default")?.clone())))
+        .collect()
 }
 
 /// Writes the TypeScript of the record of one tool.

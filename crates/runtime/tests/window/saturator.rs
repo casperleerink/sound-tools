@@ -1,32 +1,18 @@
-//! The card of the built-in saturator in the track rack, with a simulated mouse: it is added
-//! from the control at the end of the rack, and every edit of it is one undo step written once.
+//! The card of the built-in saturator in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once.
 
 use gpui::{TestAppContext, point, px};
 use saturator::{Curve, DRIVE, SaturatorState};
 
+use crate::rack::record;
 use crate::support::{self, Opened, id};
 
-const SATURATOR: &str = "arrangement/track-1/saturator";
-const SATURATOR_FILE: &str = "state/arrangement/track-1/saturator.json";
+const SATURATOR: &str = "rack/saturator";
+const SATURATOR_FILE: &str = "state/rack/saturator.json";
 
-/// One track with no instrument, so the only card with knobs is the saturator, and its panel
-/// open. The saturator is added the way a composer adds it: `Add effect`, then `Saturator`.
+/// A rack of the saturator alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-saturator");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Saturator"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(cx, &[("saturator", &record("saturator", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> SaturatorState {
@@ -45,7 +31,7 @@ fn file(opened: &mut Opened<'_>) -> String {
 fn the_handle_drags_the_drive(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     // Everything fits on the card: it has nothing to expand.
-    assert_eq!(opened.find("card-saturator-expand"), None);
+    assert_eq!(opened.find("card-rack/saturator-expand"), None);
     let default = SaturatorState::default();
     let handle = opened.control("handle-drive");
     opened.drag(handle, point(handle.x - px(30.), handle.y));

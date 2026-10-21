@@ -61,7 +61,7 @@ impl Place {
 /// Derive `Serialize`, `Deserialize`, `Clone` and `PartialEq`. Add `#[serde(deny_unknown_fields)]`
 /// so a misspelled field in an outside edit is an error and not silently ignored.
 pub trait State: Serialize + DeserializeOwned + Clone + PartialEq + Send + Sync + 'static {
-    /// The stable tool name that records carry, for example `"arrangement.clip"`.
+    /// The stable tool name that records carry, for example `"instrument.synth"`.
     const TOOL: &'static str;
 
     /// Whether instances of this tool can own child instances. It decides the place of the
@@ -89,7 +89,7 @@ pub struct InvalidInstanceId {
 }
 
 /// The stable id of an instance: its path under `state/`, without `.json`, with `/` between
-/// names. `arrangement/piano` is a child of `arrangement`. The id never changes; display names
+/// names. `song/piano` is a child of `song`. The id never changes; display names
 /// live in the record.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

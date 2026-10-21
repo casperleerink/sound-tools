@@ -310,6 +310,9 @@ fn listeners<V: Copy + PartialEq + 'static>(
                         // holds still now.
                         return end_drag(&state, &on_change, window, cx);
                     }
+                    // The drag of the control has the mouse: what holds it, such as a card that
+                    // drags to another place, does not start a drag of its own.
+                    cx.stop_propagation();
                     let next = state.update(cx, |state, _| {
                         let drag = state.drag.as_mut()?;
                         let next = (drag.value_at)(event.position, event.modifiers.shift);

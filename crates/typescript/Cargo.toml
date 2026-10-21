@@ -7,6 +7,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# What tests of the window read: what live values last showed.
+test-support = []
+
 [dependencies]
 dunce.workspace = true
 gpui.workspace = true

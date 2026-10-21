@@ -214,7 +214,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ReverbState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Reverb::AUTOMATION.parameters());
+        .schema(Reverb::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -268,7 +268,7 @@ fn reporter_record(message: &str) -> String {
 #[test]
 fn a_rejected_group_applies_whole_once_its_failing_file_is_fixed() {
     let mut harness = one_dc();
-    // A reporter with the message "fail" derives an invalid record, which rejects the group.
+    // A reporter with the message "fail" fails its behaviour, which rejects the group.
     let paths = [
         harness.write("state/second.json", &dc_record(0.125)),
         harness.write("state/reporter.json", &reporter_record("fail")),
@@ -298,7 +298,7 @@ fn a_rejected_group_applies_whole_once_its_failing_file_is_fixed() {
     assert_eq!(harness.level(), 0.375);
     let problems = harness.project.problems();
     assert_eq!(problems.len(), 1);
-    // What the reporter's derive says, not that the file did not apply.
+    // What the reporter says, not that the file did not apply.
     assert_eq!(problems[0].path, "state/reporter.json");
     assert_eq!(problems[0].message, "fixed");
 }

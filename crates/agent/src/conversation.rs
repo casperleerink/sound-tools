@@ -333,9 +333,9 @@ mod tests {
             AgentEvent::TurnStarted,
             AgentEvent::StepStarted {
                 id: step("one"),
-                title: "Wrote state/arrangement/track-1/clip.json".to_string(),
-                request_title: "Write state/arrangement/track-1/clip.json".to_string(),
-                running_title: "Writing state/arrangement/track-1/clip.json".to_string(),
+                title: "Wrote state/song/track-1/clip.json".to_string(),
+                request_title: "Write state/song/track-1/clip.json".to_string(),
+                running_title: "Writing state/song/track-1/clip.json".to_string(),
             },
             AgentEvent::StepDone {
                 id: step("one"),

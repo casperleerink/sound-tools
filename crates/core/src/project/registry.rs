@@ -10,7 +10,6 @@ use schemars::JsonSchema;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
-use super::editing::Derived;
 use super::instance::{Instance, InstanceId, JsonState, Record, State, is_valid_name};
 use crate::clock::Ticks;
 use crate::parameter::{Parameter, ParameterInfo};
@@ -51,6 +50,8 @@ pub struct JsonTool {
     pub asset_folders: Vec<&'static str>,
     /// What [`State::OWNS_CHILDREN`] is for a typed tool.
     pub owns_children: bool,
+    /// What [`ToolRegistration::end`] is for a typed tool. It gets the project and the `state`.
+    pub end: Option<Box<dyn Fn(&Project, &serde_json::Value) -> Option<Ticks>>>,
 }
 
 /// A built-in tool as the code of a tool of the project sees it, see
@@ -63,10 +64,10 @@ pub struct ToolSchema {
     /// The numbers a cable or a signal moves, each with its default, by their paths in the
     /// record.
     pub numbers: Vec<(ParameterInfo, f32)>,
-    /// The other numbers a parent plays it from, such as `launch` of the sequencer.
+    /// The other numbers a parent plays it from, such as `launch` of the timeline.
     pub live: &'static [&'static str],
-    /// A sound may play it as a device, see [`ToolRegistration::in_code`].
-    pub in_code: bool,
+    /// The numbers it sends out, which a parent connects, such as `value` of a lane.
+    pub outputs: &'static [&'static str],
     /// Checks a `state` as a record of the tool is checked. The message names the field.
     pub check: fn(serde_json::Value) -> Result<(), String>,
 }
@@ -81,7 +82,7 @@ impl ToolSchema {
                 .map(|parameter| (parameter.info(), parameter.default))
                 .collect(),
             live: &[],
-            in_code: false,
+            outputs: &[],
             check: |state| decode::<S>(state).map(drop),
         }
     }
@@ -149,37 +150,7 @@ impl RegisteredDoc {
 type ErasedBehaviour =
     Box<dyn Fn(&dyn Any, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>;
 
-/// Not `Send`, for the same reason a behaviour is not: it may read something the tool
-/// keeps on the thread the project lives on, such as a cache of a file it parsed.
-type ErasedSummary = Box<dyn Fn(&Project, &InstanceId) -> String>;
-
 type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks>>;
-
-/// Not `Send`, like a behaviour: it may keep control-side state, such as a cache of a big file
-/// it reads.
-type ErasedDerive = Box<dyn Fn(&Project, &InstanceId, DerivedFrom<'_>, &mut Derived)>;
-
-/// The untyped form of [`Was`], which only this crate can build.
-pub(crate) enum DerivedFrom<'a> {
-    Created,
-    Changed(&'a Record),
-    Unchanged,
-}
-
-/// What the record of a derived instance was before the group that is running its derive.
-///
-/// A derive that writes several things uses it to write only what really moved: the tempo fit
-/// rewrites the notes of a clip when a field that decides where the beats are changed, and
-/// only the tempo map when the steadiness did, so a hand edit of that clip survives.
-pub enum Was<'a, S> {
-    /// The record was created in this group. There is nothing it was.
-    Created,
-    /// The record changed in this group, from this state.
-    Changed(&'a S),
-    /// The record did not change. Something else this derive follows did, such as the
-    /// project's time signature.
-    Unchanged,
-}
 
 pub(crate) struct ToolDefinition {
     /// `None` for a tool of the project itself, which every project loads.
@@ -187,8 +158,6 @@ pub(crate) struct ToolDefinition {
     /// Decodes and validates the `state` value of a record. The error names the field.
     pub decode: Box<dyn Fn(serde_json::Value) -> Result<Record, String>>,
     pub behaviour: Option<ErasedBehaviour>,
-    pub derive: Option<ErasedDerive>,
-    pub summary: Option<ErasedSummary>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
@@ -244,8 +213,6 @@ impl Registry {
             extension: Some(extension),
             decode: Box::new(decode::<S>),
             behaviour: None,
-            derive: None,
-            summary: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
             asset_folders: Vec::new(),
@@ -308,6 +275,7 @@ impl Registry {
             doc,
             asset_folders,
             owns_children,
+            end,
         } = tool;
         let name = match self.tools.get_key_value(name.as_str()) {
             Some((existing, definition)) if definition.extension.is_some() => {
@@ -360,9 +328,9 @@ impl Registry {
                 extension: None,
                 decode: Box::new(decode),
                 behaviour: Some(Box::new(behaviour)),
-                derive: None,
-                summary: None,
-                end: None,
+                end: end.map(|end| -> ErasedEnd {
+                    Box::new(move |project, id| end(project, project.json_state(id)?))
+                }),
                 owns_children,
                 asset_folders,
                 schema: None,
@@ -405,7 +373,7 @@ impl Registry {
 
     /// The extensions of the runtime, which `project.json` enables. A tool of the project has
     /// none.
-    pub(crate) fn extensions(&self) -> BTreeSet<&'static str> {
+    pub fn extensions(&self) -> BTreeSet<&'static str> {
         self.tools
             .values()
             .filter_map(|definition| definition.extension)
@@ -447,76 +415,6 @@ impl<S: State> ToolRegistration<'_, S> {
         self
     }
 
-    /// [`Self::schema`], and lets the code of a tool of the project play this tool inside its
-    /// sound, as a device with no record of its own: its behaviour runs with the record the
-    /// code gives, see [`BehaviourContext::part`]. A signal moves the `numbers` that are fields
-    /// of the record itself, through the automation input, so the tool takes `audio` in and
-    /// out and declares its automation. A number inside a list stays as the code writes it.
-    pub fn in_code(self, numbers: &[&Parameter<S>]) -> Self
-    where
-        S: JsonSchema,
-    {
-        self.definition.schema = Some(ToolSchema {
-            in_code: true,
-            ..ToolSchema::of(numbers)
-        });
-        self
-    }
-
-    /// What this instance decides about other records and about the tempo map: state that is
-    /// computed from its own, never edited by hand, and always rebuilt from it.
-    ///
-    /// It runs inside the same state application as the change that asked for it, so the
-    /// record, what it decides and the tempo map are one group, one engine batch and one undo
-    /// step. It runs when a record of this tool changed in the group, and when the project's
-    /// time signature changed, which is the other thing a musical grid is made of. It does not
-    /// run while the project loads, for undo, for redo or for a cancel: the files and the undo
-    /// step already hold what it would compute, and a read-only project therefore writes
-    /// nothing. Its own changes never start another round, so it cannot loop.
-    ///
-    /// Keep it a pure function of the project: it may be called several times for one gesture,
-    /// once per mouse move. Say in your agent doc that the records it writes are derived, so an
-    /// agent edits the input and not the result.
-    ///
-    /// [`Was`] is what the record was before this group, so a derive that writes several
-    /// things can write only what really moved.
-    pub fn derive(
-        self,
-        derive: impl Fn(&Project, &Instance<S>, Was<'_, S>, &mut Derived) + 'static,
-    ) -> Self {
-        self.definition.derive = Some(Box::new(move |project, id, from, derived| {
-            let was = match from {
-                DerivedFrom::Created => Was::Created,
-                DerivedFrom::Unchanged => Was::Unchanged,
-                // The record of an instance always holds the state type of its tool.
-                DerivedFrom::Changed(record) => match record.state::<S>() {
-                    Some(state) => Was::Changed(state),
-                    None => Was::Unchanged,
-                },
-            };
-            // Only called for a live instance of this tool.
-            if let Some(instance) = project.resolve::<S>(id) {
-                derive(project, &instance, was, derived);
-            }
-        }));
-        self
-    }
-
-    /// How an instance of this tool describes itself and what it owns in a project summary,
-    /// as lines of plain text. [`Project::summary`] calls it. Without one, a summary lists the
-    /// instance and everything inside it as plain records. An owner of many small records
-    /// gives one here, so that an agent reads one summary and not every record.
-    pub fn summary(self, summary: impl Fn(&Project, &Instance<S>) -> String + 'static) -> Self {
-        self.definition.summary = Some(Box::new(move |project, id| {
-            match project.resolve::<S>(id) {
-                Some(instance) => summary(project, &instance),
-                // Only called for an instance of this tool.
-                None => String::new(),
-            }
-        }));
-        self
-    }
-
     /// When a file under `assets/<folder>/` is added, changed or removed, every instance of
     /// this tool that has a problem runs its behaviour again, with the record it has.
     ///
@@ -543,17 +441,52 @@ impl<S: State> ToolRegistration<'_, S> {
 }
 
 fn decode<S: State>(value: serde_json::Value) -> Result<Record, String> {
-    let state: S = serde_path_to_error::deserialize(value).map_err(|error| {
-        let path = error.path().to_string();
-        let field = if path == "." {
-            "state".to_string()
-        } else {
-            format!("state.{path}")
-        };
-        format!("{field}: {}", error.inner())
-    })?;
+    let state: S = parse_state(&value)?;
     state
         .validate()
         .map_err(|message| format!("state: {message}"))?;
     Ok(Record::new(state))
+}
+
+/// A record's `state` read as `S`, or what is wrong with it at its path, such as
+/// `state.points[2].tick: …`.
+pub fn parse_state<S: serde::de::DeserializeOwned>(value: &serde_json::Value) -> Result<S, String> {
+    serde_path_to_error::deserialize(value).map_err(|error| {
+        let path = error.path().to_string();
+        let field = match path.as_str() {
+            "." => "state".to_string(),
+            _ => format!("state.{path}"),
+        };
+        let inner = error.inner().to_string();
+        // JavaScript numbers are all floats: say the fix where a whole number was wanted.
+        let whole = inner.starts_with("invalid type: floating point")
+            && [", expected u", ", expected i"]
+                .iter()
+                .any(|kind| inner.contains(kind));
+        match whole {
+            true => {
+                format!("{field}: {inner}; it must be a whole number, so round it (Math.round)")
+            }
+            false => format!("{field}: {inner}"),
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_state;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Point {
+        #[allow(dead_code)]
+        tick: u64,
+    }
+
+    #[test]
+    fn a_float_where_a_whole_number_goes_says_to_round_it() {
+        let error = parse_state::<Vec<Point>>(&serde_json::json!([{ "tick": 0 }, { "tick": 1.5 }]))
+            .unwrap_err();
+        assert!(error.starts_with("state.[1].tick: invalid type"), "{error}");
+        assert!(error.ends_with("so round it (Math.round)"), "{error}");
+    }
 }

@@ -1,4 +1,4 @@
-//! The rows of a multi-line text input and the caret math over them, apart from GPUI so it can
+//! The rows of a text input and the caret and scroll math over them, apart from GPUI so it can
 //! be tested. A row is one visual line: a hard line between newlines, or a part of one that
 //! wrapped at the width of the box.
 
@@ -60,12 +60,13 @@ pub(super) fn row_of(rows: &[Row], offset: usize) -> usize {
         .unwrap_or(rows.len().saturating_sub(1))
 }
 
-/// The row at `y` from the top of the text, the last row below it, `None` above it.
-pub(super) fn row_at(y: Pixels, line_height: Pixels, row_count: usize) -> Option<usize> {
-    if y < px(0.) || line_height <= px(0.) {
-        return None;
+/// The row at `y` from the top of the text: the first row above it and the last below it, as
+/// a drag past the edge selects.
+pub(super) fn row_at(y: Pixels, line_height: Pixels, row_count: usize) -> usize {
+    if line_height <= px(0.) {
+        return 0;
     }
-    Some(((y / line_height) as usize).min(row_count.saturating_sub(1)))
+    ((y.max(px(0.)) / line_height) as usize).min(row_count.saturating_sub(1))
 }
 
 /// The part of `selection` on each row it touches: the row, its byte range there, and whether
@@ -95,29 +96,25 @@ pub(super) fn selection_spans(
         .collect()
 }
 
-/// The scroll offset that keeps the caret row in view, from the offset of the last frame.
+/// The scroll offset along one axis that keeps the caret, from `caret_start` to `caret_end`, in
+/// view, from the offset of the last frame. A caret bigger than the view shows its start.
 pub(super) fn scroll_to_show(
-    scroll_top: Pixels,
-    caret_row: usize,
-    line_height: Pixels,
-    view_height: Pixels,
-    content_height: Pixels,
+    scroll: Pixels,
+    caret_start: Pixels,
+    caret_end: Pixels,
+    view: Pixels,
+    content: Pixels,
 ) -> Pixels {
-    let caret_top = line_height * caret_row;
-    let caret_bottom = caret_top + line_height;
-    let top = if caret_top < scroll_top {
-        caret_top
-    } else if caret_bottom > scroll_top + view_height {
-        caret_bottom - view_height
-    } else {
-        scroll_top
+    let scroll = match caret_end > scroll + view {
+        true => caret_end - view,
+        false => scroll,
     };
-    clamp_scroll(top, view_height, content_height)
+    clamp_scroll(scroll.min(caret_start), view, content)
 }
 
-/// A scroll offset that shows no room above the first row or below the last.
-pub(super) fn clamp_scroll(top: Pixels, view_height: Pixels, content_height: Pixels) -> Pixels {
-    top.min(content_height - view_height).max(px(0.))
+/// A scroll offset that shows no room before the start of the text or past its end.
+pub(super) fn clamp_scroll(scroll: Pixels, view: Pixels, content: Pixels) -> Pixels {
+    scroll.min(content - view).max(px(0.))
 }
 
 #[cfg(test)]
@@ -182,10 +179,10 @@ mod tests {
     #[test]
     fn a_point_finds_its_row() {
         let height = px(20.);
-        assert_eq!(row_at(px(-1.), height, 3), None);
-        assert_eq!(row_at(px(0.), height, 3), Some(0));
-        assert_eq!(row_at(px(39.), height, 3), Some(1));
-        assert_eq!(row_at(px(400.), height, 3), Some(2));
+        assert_eq!(row_at(px(-1.), height, 3), 0);
+        assert_eq!(row_at(px(0.), height, 3), 0);
+        assert_eq!(row_at(px(39.), height, 3), 1);
+        assert_eq!(row_at(px(400.), height, 3), 2);
     }
 
     #[test]
@@ -211,13 +208,23 @@ mod tests {
 
     #[test]
     fn the_scroll_follows_the_caret_and_stays_inside_the_text() {
-        let (height, view, content) = (px(20.), px(60.), px(200.));
+        let (view, content) = (px(60.), px(200.));
+        let row = |index: f32| (px(20. * index), px(20. * index + 20.));
+        let show = |scroll, (start, end)| scroll_to_show(scroll, start, end, view, content);
         // In view: unchanged.
-        assert_eq!(scroll_to_show(px(20.), 2, height, view, content), px(20.));
+        assert_eq!(show(px(20.), row(2.)), px(20.));
         // Below: the caret row becomes the last visible row.
-        assert_eq!(scroll_to_show(px(0.), 5, height, view, content), px(60.));
+        assert_eq!(show(px(0.), row(5.)), px(60.));
         // Above: the caret row becomes the first.
-        assert_eq!(scroll_to_show(px(100.), 1, height, view, content), px(20.));
+        assert_eq!(show(px(100.), row(1.)), px(20.));
+        // A caret taller than the view shows its top, from either side: a row of a box
+        // shorter than the row used to move 2 px at every key.
+        for scroll in [px(0.), px(2.)] {
+            assert_eq!(
+                scroll_to_show(scroll, px(0.), px(20.), px(18.), px(20.)),
+                px(0.)
+            );
+        }
         // Text that got shorter pulls the scroll back.
         assert_eq!(clamp_scroll(px(180.), view, content), px(140.));
         assert_eq!(clamp_scroll(px(40.), view, px(40.)), px(0.));

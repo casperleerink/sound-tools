@@ -1,16 +1,14 @@
-//! The built-in utility in the chain of a real track: at its defaults the track sounds as it
+//! The built-in utility in a rack after the synth: at its defaults the rack sounds as it
 //! does without it, to the bit, and an outside agent changes it by file while the project plays
 //! and the change is heard and undone in one step.
 
-use crate::support::{BAR, Harness, clip};
+use crate::support::{BAR, Harness, clip, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const UTILITY_FILE: &str = "state/arrangement/piano/trim.json";
+const UTILITY_FILE: &str = "state/rack/trim.json";
 
-/// A track that plays short chords for four bars, through a utility named `trim` when there is
+/// A rack that plays short chords for four bars, through a utility named `trim` when there is
 /// a record for it.
 fn piano(utility: Option<&str>) -> Harness {
-    let mut harness = Harness::new();
     let chords = [
         (0, 480, 48),
         (0, 480, 55),
@@ -18,17 +16,10 @@ fn piano(utility: Option<&str>) -> Harness {
         (3840, 480, 64),
         (5760, 480, 67),
     ];
-    harness.write_track("piano", 1, 0.15, &[("chords", clip(0, 15360, &chords))]);
-    if let Some(utility) = utility {
-        let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["trim"]}}"#;
-        let paths = [
-            harness.write(&format!("{FOLDER}/instance.json"), track),
-            harness.write(UTILITY_FILE, utility),
-        ];
-        assert_eq!(harness.apply(&paths), 2);
-    }
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chords) = (synth(0.15), clip(0, 15360, &chords));
+    let mut children = vec![("instrument", synth.as_str()), ("chords", chords.as_str())];
+    children.extend(utility.map(|record| ("trim", record)));
+    Harness::rack(&children)
 }
 
 fn record(state: &str) -> String {
@@ -44,7 +35,7 @@ fn right(samples: &[f32]) -> Vec<f32> {
 }
 
 #[test]
-fn at_its_defaults_the_track_sounds_as_it_does_without_it() {
+fn at_its_defaults_the_rack_sounds_as_it_does_without_it() {
     let without = piano(None).play_from_the_start(2 * BAR);
     let with = piano(Some(&record("{}"))).play_from_the_start(2 * BAR);
     assert_eq!(with, without);

@@ -1,35 +1,25 @@
-//! The card of the built-in utility in the track rack, with a simulated mouse: it is added from
-//! the control at the end of the rack, every edit of it is one undo step written once, and what
-//! it does is heard.
+//! The card of the built-in utility in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once, and what it does is heard.
 
 use gpui::{TestAppContext, point, px};
 use utility::{Channels, UtilityState};
 
-use crate::support::{self, Opened, id};
+use crate::rack::{notes, record};
+use crate::support::{self, BAR, Opened, id};
 
-const UTILITY: &str = "arrangement/track-1/utility";
-const UTILITY_FILE: &str = "state/arrangement/track-1/utility.json";
+const UTILITY: &str = "rack/utility";
+const UTILITY_FILE: &str = "state/rack/utility.json";
 
-/// `Track 1` with a note that plays for four bars, and its panel open. The utility is
-/// added the way a composer adds it: `Add effect`, then `Utility`.
+/// The synth playing a note for four bars through the utility.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        let note = support::note(0, 4 * support::BAR, 64);
-        let part = support::clip(0, 4 * support::BAR, vec![note]);
-        changes.create(id("arrangement/track-1/part"), part);
-        project.commit("Add clip", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-utility");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Utility"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(
+        cx,
+        &[
+            ("instrument", &record("instrument.synth", "{}")),
+            ("part", &notes(4 * BAR, &[(0, 4 * BAR, 64)])),
+            ("utility", &record("utility", "{}")),
+        ],
+    )
 }
 
 fn state(opened: &mut Opened<'_>) -> UtilityState {
@@ -43,7 +33,7 @@ fn file(opened: &mut Opened<'_>) -> String {
     std::fs::read_to_string(opened.path(UTILITY_FILE)).unwrap()
 }
 
-/// What the track plays, left and right, after a few blocks for any glide.
+/// What the rack plays, left and right, after a few blocks for any glide.
 fn heard(opened: &mut Opened<'_>) -> (Vec<f32>, Vec<f32>) {
     opened.settle();
     opened.cx.update(|_, cx| {
@@ -91,9 +81,9 @@ fn the_handle_drags_gain_and_pan_as_one_step(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_hidden_controls_and_a_switch_is_one_click(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-utility-expand");
+    let expand = opened.control("card-rack/utility-expand");
     opened.click(expand);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Utility"));
+    assert_eq!(opened.undo_label(), None);
     for hidden in [
         "toggle-bass_mono",
         "knob-bass_mono_hz",
@@ -118,13 +108,13 @@ fn expand_shows_the_hidden_controls_and_a_switch_is_one_click(cx: &mut TestAppCo
     assert_eq!(state(&mut opened).channels, Channels::Swap);
     assert_eq!(opened.undo_label().as_deref(), Some("Change channels"));
 
-    let expand = opened.control("card-utility-expand");
+    let expand = opened.control("card-rack/utility-expand");
     opened.click(expand);
     assert_eq!(opened.find("toggle-bass_mono"), None);
 }
 
 /// What the card does is heard: the left upside down cancels the right of a synth that plays the
-/// same in both, and mute silences it. The power icon bypasses the utility and brings it back.
+/// same in both, and mute silences it.
 #[gpui::test]
 fn what_the_card_does_is_heard(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
@@ -133,7 +123,7 @@ fn what_the_card_does_is_heard(cx: &mut TestAppContext) {
     assert!(level > 1.0, "{level}");
     assert_eq!(left, right);
 
-    let expand = opened.control("card-utility-expand");
+    let expand = opened.control("card-rack/utility-expand");
     opened.click(expand);
     let invert = opened.control("toggle-invert_left");
     opened.click(invert);
@@ -148,11 +138,4 @@ fn what_the_card_does_is_heard(cx: &mut TestAppContext) {
     assert_eq!(opened.undo_label().as_deref(), Some("Change mute"));
     let (left, right) = heard(&mut opened);
     assert_eq!(loudness(&left) + loudness(&right), 0.0);
-
-    let power = opened.control("card-utility-power");
-    opened.click(power);
-    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Utility"));
-    let (left, right) = heard(&mut opened);
-    assert!(loudness(&left) > 1.0);
-    assert_eq!(left, right);
 }

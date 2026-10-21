@@ -1,11 +1,11 @@
 //! What a composer can put in a device slot of a rack, and what to call what is in one.
 //!
-//! The track panel is a rack of slots. It knows no instrument and no plugin, so it has to be
-//! told. This registry is that telling: a list of offers, and a name per tool. Whoever makes
-//! the window fills it, as it fills [`crate::Views`], and installs it as a GPUI global.
+//! A rack of slots knows no instrument and no plugin, so it has to be told. This registry is that
+//! telling: a list of offers, and a name per tool. Whoever makes the window fills it, as it
+//! fills [`crate::Views`], and installs it as a GPUI global.
 //!
-//! Provisional and small, like the view registry. There are two kinds of slot, the instrument
-//! of a track and an effect after it, and an offer is made for one of them.
+//! Provisional and small, like the view registry. An offer is asked for by what its device takes
+//! in, see [`Takes`].
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -217,26 +217,9 @@ type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>
 ///
 /// Each may call into a plugin, so they are asked when something changes, never while drawing.
 pub trait Numbers<S> {
-    /// What a person reads for the number `field`: `Cutoff`.
-    fn name(&self, project: &Project, id: &InstanceId, state: &S, field: &str) -> Option<String>;
-
-    /// What a person reads for `value` of the number `field`: the plugin's own `-6 dB`.
-    fn text(
-        &self,
-        project: &Project,
-        id: &InstanceId,
-        state: &S,
-        field: &str,
-        value: f32,
-    ) -> Option<String>;
-
     /// Every number a lane can be added for, in the device's own order, also one the device
     /// takes only once its record says so, such as a parameter of a plugin that is not pinned.
     fn lane_numbers(&self, project: &Project, id: &InstanceId, state: &S) -> Vec<LaneNumber>;
-
-    /// The record that lets a lane move `field`, which it does not yet, with the value the lane
-    /// starts at: what the device plays now. `None` when the record already does, or cannot.
-    fn take(&self, project: &Project, id: &InstanceId, state: &S, field: &str) -> Option<(S, f32)>;
 }
 
 /// A number a lane can be added for, see [`Numbers::lane_numbers`].
@@ -249,48 +232,16 @@ pub struct LaneNumber {
 
 /// [`Numbers`] of one tool, with the state looked up.
 trait ToolNumbers {
-    fn name(&self, project: &Project, id: &InstanceId, field: &str) -> Option<String>;
-    fn text(&self, project: &Project, id: &InstanceId, field: &str, value: f32) -> Option<String>;
     fn lane_numbers(&self, project: &Project, id: &InstanceId) -> Vec<LaneNumber>;
-    fn take(
-        &self,
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        changes: &mut Changes,
-    ) -> Option<f32>;
 }
 
 struct Typed<S, N>(N, std::marker::PhantomData<S>);
 
 impl<S: State, N: Numbers<S>> ToolNumbers for Typed<S, N> {
-    fn name(&self, project: &Project, id: &InstanceId, field: &str) -> Option<String> {
-        let state = project.state(&project.resolve::<S>(id)?)?;
-        self.0.name(project, id, state, field)
-    }
-
-    fn text(&self, project: &Project, id: &InstanceId, field: &str, value: f32) -> Option<String> {
-        let state = project.state(&project.resolve::<S>(id)?)?;
-        self.0.text(project, id, state, field, value)
-    }
-
     fn lane_numbers(&self, project: &Project, id: &InstanceId) -> Vec<LaneNumber> {
         let state = project.resolve::<S>(id).and_then(|it| project.state(&it));
         let numbers = state.map(|state| self.0.lane_numbers(project, id, state));
         numbers.unwrap_or_default()
-    }
-
-    fn take(
-        &self,
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        changes: &mut Changes,
-    ) -> Option<f32> {
-        let instance = project.resolve::<S>(id)?;
-        let (record, value) = self.0.take(project, id, project.state(&instance)?, field)?;
-        changes.set(&instance, record);
-        Some(value)
     }
 }
 
@@ -303,12 +254,12 @@ pub struct DeviceLabel {
     pub name: SharedString,
 }
 
-/// Which slot of a rack an offer is for. A rack asks for one kind at a time: the picker on the
-/// instrument card offers instruments, and the control that adds one offers effects.
+/// What the device of an offer takes in, by its ports: notes, which it plays into sound, or
+/// sound, which it changes. A picker asks for one at a time.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Slot {
-    Instrument,
-    Effect,
+pub enum Takes {
+    Notes,
+    Audio,
 }
 
 #[derive(Default)]
@@ -337,7 +288,7 @@ impl Devices {
 
     /// Adds a source of instruments. It is asked every time a picker is filled, not while the
     /// window opens, so a source that has to look at this machine pays for it when a composer
-    /// opens a track panel and not before.
+    /// opens a picker and not before.
     pub fn instruments(&mut self, list: impl Fn() -> Vec<DeviceOffer> + 'static) {
         self.instruments.push(Rc::new(list));
     }
@@ -417,14 +368,23 @@ impl Devices {
         offers.push(Rc::new(move || vec![offer.clone()]));
     }
 
-    /// Everything on offer for one kind of slot, from the installed registry.
-    pub fn offered(slot: Slot, cx: &App) -> Vec<DeviceOffer> {
+    /// What the sources of offers say under them in a picker, such as whose trademark a format
+    /// is.
+    pub fn notes_of(cx: &App) -> Vec<SharedString> {
         let Some(devices) = cx.try_global::<Self>() else {
             return Vec::new();
         };
-        let sources = match slot {
-            Slot::Instrument => &devices.instruments,
-            Slot::Effect => &devices.effects,
+        devices.notes.iter().flat_map(|list| list()).collect()
+    }
+
+    /// Everything on offer that takes `takes`, from the installed registry.
+    pub fn offered(takes: Takes, cx: &App) -> Vec<DeviceOffer> {
+        let Some(devices) = cx.try_global::<Self>() else {
+            return Vec::new();
+        };
+        let sources = match takes {
+            Takes::Notes => &devices.instruments,
+            Takes::Audio => &devices.effects,
         };
         sources.iter().flat_map(|list| list()).collect()
     }
@@ -441,14 +401,6 @@ impl Devices {
         };
         let sources = devices.generations.iter();
         sources.fold(0, |total, generation| total.wrapping_add(generation()))
-    }
-
-    /// Every quiet line under the offers, from the installed registry.
-    pub fn offer_notes(cx: &App) -> Vec<SharedString> {
-        let Some(devices) = cx.try_global::<Self>() else {
-            return Vec::new();
-        };
-        devices.notes.iter().flat_map(|list| list()).collect()
     }
 
     /// What a rack says about what is in `id`. `None` when the instance is gone or its tool
@@ -470,45 +422,10 @@ impl Devices {
         devices.numbers.get(project.tool_of(id)?).cloned()
     }
 
-    /// What a person reads for the number `field` of `id`, when its tool names it, see
-    /// [`Numbers::name`].
-    pub fn number_name(
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        cx: &App,
-    ) -> Option<String> {
-        Self::numbers_of(project, id, cx)?.name(project, id, field)
-    }
-
-    /// What a person reads for `value` of the number `field` of `id`, when its tool says, see
-    /// [`Numbers::text`].
-    pub fn number_text(
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        value: f32,
-        cx: &App,
-    ) -> Option<String> {
-        Self::numbers_of(project, id, cx)?.text(project, id, field, value)
-    }
-
     /// Every number of `id` a lane can be added for, when its tool says, see
     /// [`Numbers::lane_numbers`]. `None` when it does not, and its behaviour names them.
     pub fn lane_numbers(project: &Project, id: &InstanceId, cx: &App) -> Option<Vec<LaneNumber>> {
         Some(Self::numbers_of(project, id, cx)?.lane_numbers(project, id))
-    }
-
-    /// Puts the record of `id` that lets a lane move `field` into `changes`, and gives the
-    /// value the lane starts at, see [`Numbers::take`].
-    pub fn take_number(
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        changes: &mut Changes,
-        cx: &App,
-    ) -> Option<f32> {
-        Self::numbers_of(project, id, cx)?.take(project, id, field, changes)
     }
 }
 

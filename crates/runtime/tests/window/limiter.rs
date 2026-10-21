@@ -1,41 +1,21 @@
-//! The card of the built-in limiter in the track rack, with a simulated mouse: it is added from
-//! the control at the end of the rack, every edit of it is one undo step written once, and its
-//! display shows the reduction while the track plays.
+//! The card of the built-in limiter in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once, and its display shows the reduction while it plays.
 
-use gpui::{Entity, TestAppContext, point, px};
+use gpui::{TestAppContext, point, px};
 use limiter::view::LimiterView;
 use limiter::{LimiterState, Lookahead};
 use sound_ui::POLL_INTERVAL;
 use sound_ui::components::limiter_display::POLLS_PER_COLUMN;
 
-use crate::support::{self, Opened, clip, id, note};
+use crate::rack::{notes, record};
+use crate::support::{self, Opened, id};
 
-const LIMITER: &str = "arrangement/track-1/limiter";
-const LIMITER_FILE: &str = "state/arrangement/track-1/limiter.json";
+const LIMITER: &str = "rack/limiter";
+const LIMITER_FILE: &str = "state/rack/limiter.json";
 
-/// Adds a limiter the way a composer does, `Add effect`, then `Limiter`, to the open panel.
-fn add_limiter(opened: &mut Opened<'_>) {
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-limiter");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Limiter"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-}
-
-/// One track with no instrument, so the only card with knobs is the limiter, and its panel
-/// open.
+/// A rack of the limiter alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    add_limiter(&mut opened);
-    opened
+    support::open_rack(cx, &[("limiter", &record("limiter", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> LimiterState {
@@ -49,22 +29,12 @@ fn file(opened: &mut Opened<'_>) -> String {
     std::fs::read_to_string(opened.path(LIMITER_FILE)).unwrap()
 }
 
-/// The card of the limiter: the effect after the instrument slot.
-fn card(opened: &mut Opened<'_>) -> Entity<LimiterView> {
-    let panel = opened.track_panel().unwrap();
-    let view = opened.cx.read(|cx| {
-        let mut views = panel.read(cx).device_views();
-        views.nth(1).unwrap().cloned()
-    });
-    view.unwrap().downcast::<LimiterView>().ok().unwrap()
-}
-
 /// The ceiling handle moves up and down only, and stops at the ends of the range.
 #[gpui::test]
 fn a_drag_of_the_ceiling_handle_changes_the_ceiling(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     // Every control is shown, so there is nothing to expand.
-    assert_eq!(opened.find("card-limiter-expand"), None);
+    assert_eq!(opened.find("card-rack/limiter-expand"), None);
     let default = LimiterState::default();
     let handle = opened.control("handle-ceiling");
     opened.drag(handle, point(handle.x - px(30.), handle.y + px(20.)));
@@ -112,31 +82,22 @@ fn the_lookahead_is_picked_and_follows_an_outside_edit(cx: &mut TestAppContext) 
     assert_eq!(opened.undo_label(), label);
 }
 
-/// While a loud track plays into a low ceiling, the display shows how much the limiter takes.
+/// While a loud chord plays into a low ceiling, the display shows how much the limiter takes.
 /// It comes from the audio thread.
 #[gpui::test]
-fn the_reduction_shows_while_the_track_plays(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| {
-        let chord = vec![note(0, 3840, 48), note(0, 3840, 55), note(0, 3840, 64)];
-        let mut changes = sound_core::Changes::new();
-        changes.create(id("arrangement/track-1/chord"), clip(0, 3840, chord));
-        project.commit("Add chord", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    add_limiter(&mut opened);
-    let path = opened.path(LIMITER_FILE);
-    std::fs::write(
-        &path,
-        r#"{"tool": "limiter", "state": {"ceiling_db": -24.0}}"#,
-    )
-    .unwrap();
-    opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
-    opened.settle();
-    let view = card(&mut opened);
+fn the_reduction_shows_while_it_plays(cx: &mut TestAppContext) {
+    let chord = notes(3840, &[(0, 3840, 48), (0, 3840, 55), (0, 3840, 64)]);
+    let low = record("limiter", r#"{"ceiling_db": -24.0}"#);
+    let mut opened = support::open_rack(
+        cx,
+        &[
+            ("instrument", &record("instrument.synth", "{}")),
+            ("chord", &chord),
+            ("limiter", &low),
+        ],
+    );
+    let view = opened.card::<LimiterView>(LIMITER);
     assert_eq!(opened.cx.read(|cx| view.read(cx).reduction_db()), 0.0);
-
     opened.cx.update(|_, cx| {
         let session = opened.session.clone();
         session.update(cx, |session, _| session.engine().play());

@@ -40,7 +40,7 @@ impl<S> Parameter<S> {
     }
 
     /// The parameter without its state type, for an owner that knows the tool only by its
-    /// ports, such as the arrangement that automates the devices of a track.
+    /// ports, such as a parent that automates the devices of its children.
     pub fn info(&self) -> ParameterInfo {
         ParameterInfo {
             field: self.field.into(),

@@ -1,32 +1,18 @@
-//! The card of the built-in reverb in the track rack, with a simulated mouse: it is added from
-//! the control at the end of the rack, and every edit of it is one undo step written once.
+//! The card of the built-in reverb in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once.
 
 use gpui::{TestAppContext, point, px};
 use reverb::ReverbState;
 
+use crate::rack::record;
 use crate::support::{self, Opened, id};
 
-const REVERB: &str = "arrangement/track-1/reverb";
-const REVERB_FILE: &str = "state/arrangement/track-1/reverb.json";
+const REVERB: &str = "rack/reverb";
+const REVERB_FILE: &str = "state/rack/reverb.json";
 
-/// One track with no instrument, so the only card with knobs is the reverb, and its panel
-/// open. The reverb is added the way a composer adds it: `Add effect`, then `Reverb`.
+/// A rack of the reverb alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-reverb");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Reverb"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(cx, &[("reverb", &record("reverb", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> ReverbState {
@@ -78,9 +64,9 @@ fn the_handles_drag_the_pre_delay_and_the_decay(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_hidden_controls_and_freeze_is_one_click(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-reverb-expand");
+    let expand = opened.control("card-rack/reverb-expand");
     opened.click(expand);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Reverb"));
+    assert_eq!(opened.undo_label(), None);
     for hidden in [
         "knob-low_cut_hz",
         "knob-high_cut_hz",
@@ -102,7 +88,7 @@ fn expand_shows_the_hidden_controls_and_freeze_is_one_click(cx: &mut TestAppCont
     assert!(state(&mut opened).decay_seconds > ReverbState::default().decay_seconds);
     assert_eq!(opened.undo_label().as_deref(), Some("Change decay"));
 
-    let expand = opened.control("card-reverb-expand");
+    let expand = opened.control("card-rack/reverb-expand");
     opened.click(expand);
     assert_eq!(opened.find("toggle-freeze"), None);
 }

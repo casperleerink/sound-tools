@@ -1,11 +1,13 @@
 //! The app started with no folder, as the Finder starts it. It opens the last project, or
 //! shows the macOS folder panel when there is none: the panel has a New Folder button, and a
-//! new empty folder becomes a new project. Cancel quits.
+//! new empty folder becomes a new, empty project. Cancel quits. The start window also makes a
+//! new project from a template.
 //!
 //! When a project does not open, a small window says why and offers the panel again, since an
 //! app started from the Finder has no terminal to print to.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui::{
     App, Global, PathPromptOptions, SharedString, TitlebarOptions, Window, WindowBounds,
@@ -94,6 +96,37 @@ pub(super) fn choose_project(cx: &mut App) {
                 }
             }
             Err(error) => explain(error, cx),
+        });
+    })
+    .detach();
+}
+
+/// Asks where a new project goes, writes `template` there and opens it. Does nothing while a
+/// project opens.
+fn new_project(template: &'static crate::Template, cx: &mut App) {
+    if opening(cx) {
+        return;
+    }
+    let home = std::env::home_dir().unwrap_or_default();
+    let picked = cx.prompt_for_new_path(&home, Some("New project"));
+    cx.spawn(async move |cx| {
+        let folder = match picked.await {
+            Ok(Ok(Some(folder))) => folder,
+            Ok(Ok(None)) | Err(_) => return,
+            Ok(Err(error)) => {
+                cx.update(|cx| explain(format!("The save panel did not open: {error:#}"), cx));
+                return;
+            }
+        };
+        let written = cx
+            .background_spawn({
+                let folder = folder.clone();
+                async move { crate::templates::write(&folder, template) }
+            })
+            .await;
+        cx.update(|cx| match written {
+            Ok(()) => open_or_explain(folder, cx),
+            Err(error) => explain(format!("{error:#}"), cx),
         });
     })
     .detach();
@@ -192,8 +225,20 @@ impl Render for StartView {
                 EmptyState::new("Open a project", self.message.clone())
                     .max_w(px(START_WIDTH - 48.))
                     .action(
-                        Button::new("choose-folder", "Choose folder…")
-                            .on_click(|_, _, cx| choose_project(cx)),
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("choose-folder", "Choose folder…")
+                                    .on_click(|_, _, cx| choose_project(cx)),
+                            )
+                            .child(Button::new("new-project", "New project…").on_click(
+                                |_, _, cx| {
+                                    let on_pick =
+                                        |template, cx: &mut App| new_project(template, cx);
+                                    super::new_project::choose_template(Rc::new(on_pick), cx)
+                                },
+                            )),
                     ),
             )
     }

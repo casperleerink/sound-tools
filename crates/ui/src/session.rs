@@ -11,10 +11,11 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
 
+use crate::metering::{PeaksReader, SharedPeaks};
 use crate::recording::Recording;
 use sound_core::{
-    EngineControl, EngineStatus, InstanceId, Project, ProjectEdit, ProjectError, ProjectEvent,
-    Ticks,
+    EngineControl, EngineStatus, GraphError, InstanceId, Project, ProjectEdit, ProjectError,
+    ProjectEvent, Ticks,
 };
 
 /// How often the session polls. About one display frame, so the playhead moves smoothly.
@@ -41,6 +42,13 @@ pub struct Loop {
     pub on: bool,
 }
 
+/// What stretch of the piece a selection covers in a project, see [`Session::selected_span`].
+pub type SpanOf = std::rc::Rc<dyn Fn(&Project) -> Option<(Ticks, Ticks)>>;
+
+/// Turns the click in the engine on or off. The window attaches it; the session holds it, so
+/// every view that shows the click shows the same one.
+pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), GraphError>>;
+
 /// Where a notice came from decides what clears it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum NoticeSource {
@@ -63,14 +71,20 @@ pub struct Session {
     gesture: Option<ProjectEdit>,
     /// What the composer is working on, see [`Self::select`].
     selected: Option<InstanceId>,
-    /// The clips the composer is working on, see [`Self::select_clips`].
-    selected_clips: Vec<InstanceId>,
+    /// See [`Self::selected_span`].
+    span: Option<SpanOf>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
-    /// See [`Self::history_moves`].
-    history_moves: u64,
     /// See [`Self::looped`].
     looped: Entity<Loop>,
+    /// What the device plays, for every view that shows its level.
+    output: SharedPeaks,
+    /// The click, once the window attached it, and whether it sounds. Interface state, like the
+    /// loop: nothing is saved and there is no undo step.
+    click: Option<ClickSwitch>,
+    click_on: bool,
+    /// Whether the computer keys play notes, which the window's live input follows.
+    computer_keys_on: bool,
     _polling: Task<()>,
 }
 
@@ -94,6 +108,7 @@ impl Session {
         });
         let time_signatures = project.project_file().tempo_map.time_signatures();
         let bar_five = time_signatures.bar(5).map_or(Ticks(0), |bar| bar.start);
+        let output = SharedPeaks::new(project.engine().output_peaks().clone());
         Self {
             looped: cx.new(|_| Loop {
                 range: Ticks(0)..bar_five,
@@ -106,11 +121,19 @@ impl Session {
             notice: None,
             gesture: None,
             selected: None,
-            selected_clips: Vec::new(),
+            span: None,
             engine_stopped: false,
-            history_moves: 0,
+            output,
+            click: None,
+            click_on: false,
+            computer_keys_on: false,
             _polling: polling,
         }
+    }
+
+    /// A reader of the levels of what the device plays, for a meter.
+    pub fn output_peaks(&self) -> PeaksReader {
+        self.output.reader()
     }
 
     /// Read the current state from here when rendering.
@@ -122,7 +145,7 @@ impl Session {
         &self.playhead
     }
 
-    /// Recording audio as the views see it: the armed tracks, the input level and the takes
+    /// Recording audio as the views see it: the armed recorders, the input level and the takes
     /// while they grow. Its own entity, like the playhead, because the level changes every poll.
     pub fn recording(&self) -> &Entity<Recording> {
         &self.recording
@@ -134,13 +157,12 @@ impl Session {
         self.status
     }
 
-    /// The instance the composer is working on, such as the track whose header was clicked
-    /// last. It is interface state: nothing is saved and there is no undo step.
+    /// The instance the composer is working on, as the view that chose it last says. It is
+    /// interface state: nothing is saved and there is no undo step.
     ///
     /// The view that owns a selection publishes it here, and anything outside that view reads
-    /// it. Live MIDI input plays into the instrument of the selected track, and the window
-    /// wires that, so the extension that owns the tracks and the one that reads the keyboard
-    /// need nothing of each other.
+    /// it. Live MIDI input plays into the selected instance, and the window wires that, so the
+    /// tool that chooses and the one that reads the keyboard need nothing of each other.
     pub fn selected(&self) -> Option<&InstanceId> {
         self.selected.as_ref()
     }
@@ -152,27 +174,19 @@ impl Session {
         }
     }
 
-    /// The first of the clips the composer has selected, next to [`Self::selected`], which is
-    /// a track. It is interface state too, and the view that owns the selection publishes it
-    /// here.
-    ///
-    /// Two fields and not one, because the two are read for different things and both are
-    /// wanted at once: a keyboard plays into the instrument of the selected track while the
-    /// Clip card of that track shows the selected clip.
-    pub fn selected_clip(&self) -> Option<&InstanceId> {
-        self.selected_clips.first()
+    /// The stretch of the piece the composer has selected, from a tick to a tick, which the
+    /// project menu exports: worked out from the project as it is now, so a selected clip that
+    /// moved exports where it is. `None` when nothing is selected.
+    pub fn selected_span(&self) -> Option<(Ticks, Ticks)> {
+        let (from, to) = (self.span.as_ref()?)(&self.project)?;
+        (from < to).then_some((from, to))
     }
 
-    /// Every selected clip, the first one first. The project menu exports the time they cover.
-    pub fn selected_clips(&self) -> &[InstanceId] {
-        &self.selected_clips
-    }
-
-    pub fn select_clips(&mut self, clips: Vec<InstanceId>, cx: &mut Context<Self>) {
-        if self.selected_clips != clips {
-            self.selected_clips = clips;
-            cx.notify();
-        }
+    /// The view that owns a selection says what stretch it covers. Interface state, as
+    /// [`Self::select`].
+    pub fn select_span(&mut self, span: Option<SpanOf>, cx: &mut Context<Self>) {
+        self.span = span;
+        cx.notify();
     }
 
     /// The transport: `play`, `pause`, `stop` and `seek`. The result shows in the
@@ -198,12 +212,40 @@ impl Session {
         }
     }
 
-    pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
-        if self.playhead.read(cx).playing {
-            self.engine().pause();
-        } else {
-            self.engine().play();
+    /// Gives the session the click of the window. It starts off.
+    pub fn attach_click(&mut self, click: ClickSwitch) {
+        self.click = Some(click);
+    }
+
+    pub fn click_on(&self) -> bool {
+        self.click_on
+    }
+
+    pub fn computer_keys_on(&self) -> bool {
+        self.computer_keys_on
+    }
+
+    /// Turns the computer keys on or off. Not an edit, like the click.
+    pub fn set_computer_keys(&mut self, on: bool, cx: &mut Context<Self>) {
+        if on != self.computer_keys_on {
+            self.computer_keys_on = on;
+            cx.notify();
         }
+    }
+
+    /// Turns the click on or off. Nothing without a click attached.
+    pub fn set_click(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(click) = self.click.as_mut() else {
+            return;
+        };
+        if on == self.click_on {
+            return;
+        }
+        match click(self.project.engine(), on) {
+            Ok(()) => self.click_on = on,
+            Err(error) => self.report(error, cx),
+        }
+        cx.notify();
     }
 
     /// Runs one project operation, such as a `commit`. Observers hear what it changed. An
@@ -275,15 +317,15 @@ impl Session {
     /// Undo for keys and menus. Ignored while a gesture is open: undo in the middle of a drag
     /// would be overwritten by the next mouse move and leave a step that ends nowhere.
     pub fn undo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() && self.edit(cx, Project::undo).flatten().is_some() {
-            self.history_moves += 1;
+        if self.gesture.is_none() {
+            self.edit(cx, Project::undo);
         }
     }
 
     /// Redo, ignored while a gesture is open, like [`Self::undo`].
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() && self.edit(cx, Project::redo).flatten().is_some() {
-            self.history_moves += 1;
+        if self.gesture.is_none() {
+            self.edit(cx, Project::redo);
         }
     }
 
@@ -297,15 +339,6 @@ impl Session {
     /// [`Project::end_request`].
     pub fn end_request(&mut self) {
         self.project.end_request();
-    }
-
-    /// How many times undo or redo was asked for in this session. A view that keeps the last
-    /// value knows that the events it hears now come from one, so it can select what the undo
-    /// brought back: the project events do not say where a change came from. It counts only a
-    /// step that applied. Views hear the events of an update when it is over, so the events of
-    /// the step already see the new count.
-    pub fn history_moves(&self) -> u64 {
-        self.history_moves
     }
 
     /// Runs the behaviours of these instances again, with the records they already have.

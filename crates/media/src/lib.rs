@@ -27,6 +27,7 @@ pub mod analysis;
 mod file;
 mod loader;
 mod overview;
+mod player;
 mod resample;
 mod stream;
 mod take;
@@ -48,6 +49,9 @@ use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES, SampleLoop};
 pub use loader::{Keep, Loader, Read, Stamp, load_in_background};
 pub use overview::{FINEST_FRAMES, Overview};
+pub use player::{
+    AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS, Region, file_frames, snapshot,
+};
 pub use resample::{Resampler, SCRATCH_FRAMES};
 pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use take::{TakeFile, TakeOverview};
@@ -237,6 +241,23 @@ fn read(
 /// thread inside a snapshot.
 pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaError> {
     load_path(&assets.path(asset.asset_name()), &asset.project_path())
+}
+
+/// The file a record names when it is in memory already and unchanged on disk: never a read,
+/// so the control side asks it before it reads a long file on a thread of its own.
+pub fn in_memory(assets: &Assets, asset: &AudioAsset) -> Option<Arc<Audio>> {
+    let path = assets.path(asset.asset_name());
+    let stamp = fs::metadata(&path)
+        .ok()
+        .map(|metadata| (metadata.len(), metadata.modified().ok()))?;
+    let known = known();
+    let entry = known
+        .get(&path)
+        .filter(|entry| (entry.length, entry.modified) == stamp)?;
+    match &entry.outcome {
+        Outcome::Plays { audio, .. } => audio.upgrade(),
+        _ => None,
+    }
 }
 
 /// [`load`] for a file at any path, such as a sample of an instrument library in nested
@@ -496,7 +517,8 @@ pub fn import(assets: &Assets, source: &Path) -> Result<Imported, MediaError> {
 
 /// A file copied into `assets/audio/`: the name a record gives it, and the file in memory.
 /// Hold it until the clip that names it is added, so the track that plays it reads nothing.
-#[derive(Debug)]
+/// Clones share the file.
+#[derive(Clone, Debug)]
 pub struct Imported {
     pub asset: AudioAsset,
     pub audio: Arc<Audio>,

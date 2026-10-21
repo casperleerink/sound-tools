@@ -6,9 +6,7 @@ use sound_core::{
     PROBLEMS_FILE, Project, RegistryError,
 };
 
-use crate::tools::{
-    BANK_RECORD, Dc, EXTENSION, Harness, SAMPLE_RATE, dc_record, id, level_record, registry,
-};
+use crate::tools::{Dc, EXTENSION, Harness, SAMPLE_RATE, dc_record, id, registry};
 
 #[test]
 fn the_map_is_written_on_open_and_lists_the_docs_of_the_enabled_extensions() {
@@ -245,23 +243,6 @@ fn a_generated_file_that_cannot_be_written_does_not_stop_the_others() {
     for file in [AGENT_DOC_FILE, "CLAUDE.md", &doc] {
         assert!(folder.path().join(file).exists(), "{file}");
     }
-}
-
-#[test]
-fn a_tool_summarises_itself_and_what_it_owns() {
-    let mut harness = Harness::new();
-    harness.write_and_apply("state/bank/instance.json", BANK_RECORD);
-    for name in ["a", "b", "c"] {
-        harness.write_and_apply(&format!("state/bank/{name}.json"), &level_record(0.1));
-    }
-    harness.write_and_apply("state/plain.json", &dc_record(0.5));
-    assert_eq!(
-        harness.project.summary(&id("bank")).as_deref(),
-        Some("bank bank with 3 levels")
-    );
-    assert_eq!(harness.project.summary(&id("plain")), None);
-    assert_eq!(harness.project.summary(&id("missing")), None);
-    assert_eq!(harness.project.tool_of(&id("bank/a")), Some("test.level"));
 }
 
 #[test]

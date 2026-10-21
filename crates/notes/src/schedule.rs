@@ -41,7 +41,7 @@ pub struct Schedule<T> {
     dropped: u64,
 }
 
-impl<T: Scheduled> Schedule<T> {
+impl<T> Schedule<T> {
     pub fn new(room: usize) -> Self {
         Self {
             waiting: Vec::with_capacity(room),
@@ -68,6 +68,33 @@ impl<T: Scheduled> Schedule<T> {
         true
     }
 
+    /// How many note ons it dropped since the last call.
+    pub fn take_dropped(&mut self) -> u64 {
+        std::mem::take(&mut self.dropped)
+    }
+
+    /// The frame of what comes next.
+    pub fn next(&self) -> Option<u64> {
+        self.waiting.last().map(|(at, _)| *at)
+    }
+
+    /// What is due at `frame`, the earliest first, with its frame.
+    pub fn take(&mut self, frame: u64) -> Option<(u64, T)> {
+        self.waiting.pop_if(|(at, _)| *at <= frame)
+    }
+
+    /// Puts back what [`Self::take`] gave, to be taken first again.
+    pub fn put_back(&mut self, taken: (u64, T)) {
+        self.waiting.push(taken);
+    }
+
+    /// Drops everything that waits: what is sent for now replaces what was sent for later.
+    pub fn clear(&mut self) {
+        self.waiting.clear();
+    }
+}
+
+impl<T: Scheduled> Schedule<T> {
     /// Keeps what a performer plays for its frame. A full schedule drops a note on, which
     /// leaves nothing sounding, and gives back any other event to play now: a dropped off or
     /// pedal up would hold notes for ever. What waits that would undo it goes: an off takes the
@@ -116,26 +143,6 @@ impl<T: Scheduled> Schedule<T> {
                 Some(event)
             }
         }
-    }
-
-    /// How many note ons it dropped since the last call.
-    pub fn take_dropped(&mut self) -> u64 {
-        std::mem::take(&mut self.dropped)
-    }
-
-    /// The frame of what comes next.
-    pub fn next(&self) -> Option<u64> {
-        self.waiting.last().map(|(at, _)| *at)
-    }
-
-    /// What is due at `frame`, the earliest first, with its frame.
-    pub fn take(&mut self, frame: u64) -> Option<(u64, T)> {
-        self.waiting.pop_if(|(at, _)| *at <= frame)
-    }
-
-    /// Puts back what [`Self::take`] gave, to be taken first again.
-    pub fn put_back(&mut self, taken: (u64, T)) {
-        self.waiting.push(taken);
     }
 }
 

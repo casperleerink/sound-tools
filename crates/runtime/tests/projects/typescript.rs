@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use crate::automation::{gate, off_the_gate};
-use crate::support::{BAR, Harness, clip, synth};
+use crate::rack::racks_files;
+use crate::support::{BAR, Harness, clip, synth, write};
 
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
 fn doc_example() -> String {
@@ -16,7 +16,7 @@ fn doc_example() -> String {
 }
 
 /// Combs whose number is a choice: `sound` builds a different graph for each.
-const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool, type Signal } from "./sdk";
+const COMBS: &str = r#"import { choice, delay, feedback, input, number, lowpass, mix, tool, type Signal } from "./sdk";
 
 const TIMES = [29.7, 37.1, 41.1, 43.7, 31.3, 39.9, 45.1, 33.5];
 
@@ -26,9 +26,9 @@ tool({
   when: "You want a ringing room",
   doc: "Feedback combs.",
   state: {
-    size: knob({ min: 0, max: 0.95, default: 0.8 }),
+    size: number({ min: 0, max: 0.95, default: 0.8 }),
     combs: choice({ options: [2, 4, 8], default: 4 }),
-    blend: knob({ min: 0, max: 1, default: 0.3 }),
+    blend: number({ min: 0, max: 1, default: 0.3 }),
   },
   sound: ({ size, combs, blend }) => {
     const rings: Signal[] = TIMES.slice(0, combs).map((ms) => {
@@ -43,42 +43,53 @@ tool({
 "#;
 
 /// A project whose `extensions/` holds the first example of the doc, `wobble`, `COMBS` and `LEVEL`,
-/// with a pad that plays a held chord through `effects` that are written next to it.
-fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
-    pad_through_with(effects, "")
+/// with a rack `pad` that plays a held chord through `effects`.
+fn pad_through(effects: &[(&str, &str)]) -> Harness {
+    pad_through_with(effects, &[])
 }
 
-/// [`pad_through`], with more fields of the track's record, such as automation lanes.
-fn pad_through_with(effects: &[(&str, &str)], track_fields: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
-    let folder = tempfile::tempdir().unwrap();
-    crate::support::write(folder.path(), "extensions/wobble.ts", &doc_example());
-    crate::support::write(folder.path(), "extensions/combs.ts", COMBS);
-    crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
-    let mut harness = Harness::open(folder);
-    let names: Vec<String> = effects
-        .iter()
-        .map(|(name, _)| format!("{name:?}"))
-        .collect();
-    let track = format!(
-        r#"{{"tool": "arrangement.track", "state": {{"name": "Pad", "effects": [{}]{track_fields}}}}}"#,
-        names.join(", ")
+/// [`pad_through`], with lanes of the rack: each its name, the number it moves, such as
+/// `wobble.depth`, and its points.
+fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
     );
-    harness.write("state/arrangement/pad/instance.json", &track);
-    harness.write("state/arrangement/pad/instrument.json", &synth(0.2));
-    let chord = clip(0, 15360, &[(0, 15360, 60), (0, 15360, 64), (0, 15360, 67)]);
-    harness.write("state/arrangement/pad/chord.json", &chord);
-    for (name, state) in effects {
-        let record = format!(r#"{{"tool": "{name}", "state": {state}}}"#);
-        harness.write(&format!("state/arrangement/pad/{name}.json"), &record);
+    let folder = tempfile::tempdir().unwrap();
+    write(folder.path(), "extensions/wobble.ts", &doc_example());
+    write(folder.path(), "extensions/combs.ts", COMBS);
+    write(folder.path(), "extensions/level.ts", LEVEL);
+    let (synth, chord) = (
+        synth(0.2),
+        clip(0, 15360, &[(0, 15360, 60), (0, 15360, 64), (0, 15360, 67)]),
+    );
+    let records: Vec<(&str, String)> = (effects.iter())
+        .map(|(name, state)| (*name, format!(r#"{{"tool": "{name}", "state": {state}}}"#)))
+        .chain(lanes.iter().map(|(name, _, points)| {
+            (
+                *name,
+                format!(r#"{{"tool": "lane", "state": {{"points": {points}}}}}"#),
+            )
+        }))
+        .collect();
+    let mut children = vec![("instrument", synth.as_str()), ("chord", chord.as_str())];
+    children.extend(
+        records
+            .iter()
+            .map(|(name, record)| (*name, record.as_str())),
+    );
+    for (path, contents) in racks_files(&[("pad", &children)]) {
+        write(folder.path(), &path, &contents);
     }
-    let folder = harness.path("state/arrangement/pad");
-    harness.apply(&[folder]);
+    let order: Vec<&str> = effects.iter().map(|(name, _)| *name).collect();
+    let automation: Vec<_> = (lanes.iter())
+        .map(|(lane, target, _)| serde_json::json!({ "lane": lane, "target": target }))
+        .collect();
+    let rack = serde_json::json!({ "tool": "rack", "state": { "order": order, "automation": automation } });
+    write(folder.path(), "state/pad/instance.json", &rack.to_string());
+    let harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
-    Some(harness)
+    harness
 }
 
 /// The loudness of the left channel over 20 ms around `seconds`.
@@ -92,9 +103,7 @@ fn loudness_at(samples: &[f32], seconds: f32) -> f32 {
 
 #[test]
 fn the_tremolo_of_the_doc_dips_to_silence_at_its_rate() {
-    let Some(mut harness) = pad_through(&[("wobble", r#"{"rate": 2, "depth": 1}"#)]) else {
-        return;
-    };
+    let mut harness = pad_through(&[("wobble", r#"{"rate": 2, "depth": 1}"#)]);
     let output = harness.play_from_the_start(BAR);
     // At 2 Hz and full depth the wave is at its top, and the sound at silence, a quarter of
     // the way into each half second, and the sound is at its loudest three quarters in.
@@ -113,9 +122,7 @@ fn the_tremolo_of_the_doc_dips_to_silence_at_its_rate() {
 fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
     for combs in [2, 4, 8] {
         let state = format!(r#"{{"combs": {combs}, "size": 0.9, "blend": 1}}"#);
-        let Some(mut harness) = pad_through(&[("combs", &state)]) else {
-            return;
-        };
+        let mut harness = pad_through(&[("combs", &state)]);
         let output = harness.play_from_the_start(5 * BAR);
         let peak = output
             .iter()
@@ -131,23 +138,19 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
 
 #[test]
 fn a_knob_the_record_leaves_out_is_automated_from_its_default() {
-    let Some(harness) = pad_through(&[("wobble", r#"{"rate": 2}"#)]) else {
-        return;
-    };
-    let wobble = sound_core::InstanceId::new("arrangement/pad/wobble").unwrap();
+    let harness = pad_through(&[("wobble", r#"{"rate": 2}"#)]);
+    let wobble = sound_core::InstanceId::new("pad/wobble").unwrap();
     let depth = harness.project.automation(&wobble, "depth").unwrap();
     // A lane added for it starts where it plays: at the default of the doc's `depth`.
     assert_eq!(depth.record, Some(0.5));
 }
 
 #[test]
-fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
+fn a_lane_moves_a_knob_of_the_tremolo() {
     // The record dips to silence; the lane holds the depth at 0 for the whole bar.
-    let lane = r#", "automation": [{"device": "wobble", "parameter": "depth", "points": [{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]}]"#;
-    let Some(mut harness) = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], lane)
-    else {
-        return;
-    };
+    let points = r#"[{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]"#;
+    let lane = [("depth", "wobble.depth", points)];
+    let mut harness = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], &lane);
     let output = harness.play_from_the_start(BAR);
     for half_second in 1..4 {
         let start = half_second as f32 * 0.5;
@@ -159,24 +162,25 @@ fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
     }
 }
 
-/// A gain the track's lanes can move.
-const LEVEL: &str = r#"import { input, knob, tool } from "./sdk";
+/// A gain a lane can move.
+const LEVEL: &str = r#"import { input, number, tool } from "./sdk";
 
 tool({
   name: "level",
   title: "Level",
   when: "You want a gain",
   doc: "A gain.",
-  state: { level: knob({ min: 0, max: 1, default: 1 }) },
+  state: { level: number({ min: 0, max: 1, default: 1 }) },
   sound: ({ level }) => input.times(level),
 });
 "#;
 
 #[test]
 fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
     crate::support::write(folder.path(), "extensions/stuck.ts", "while (true) {}\n");
@@ -200,9 +204,10 @@ fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
 
 #[test]
 fn a_tool_whose_pattern_cannot_be_is_a_problem_before_anything_is_made_of_it() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let steps = r#"import { input, pattern, tool } from "./sdk";
 
 tool({
@@ -230,9 +235,10 @@ tool({
 
 #[test]
 fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let old = LEVEL.replace("sound:", "onMidi: () => {},\n  sound:");
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/level.ts", &old);
@@ -250,19 +256,27 @@ fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
     );
 }
 
-/// A lane of a tool of the project bends on its frame, as one of a built-in device does: the
-/// level opens from 0 to 1 in 50 frames, and is silent before and full after.
 #[test]
-fn a_fast_ramp_of_a_lane_starts_and_ends_on_its_frames() {
-    let gate = gate(Some("level"), "level", "0.0", "1.0");
-    let lanes = format!(r#", "automation": [{gate}]"#);
-    let Some(mut gated) = pad_through_with(&[("level", "{}")], &lanes) else {
-        return;
+fn a_key_the_app_keeps_is_a_problem_of_the_tool_that_takes_it() {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
+    let greedy = LEVEL.replace(
+        "sound:",
+        "globalKeys: [\"space\", \"cmd-z\"],\n  onKey: () => {},\n  sound:",
+    );
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/level.ts", &greedy);
+    let harness = Harness::open(folder);
+    let problems = harness.project.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
     };
-    let gated = gated.play_from_the_start(2 * BAR);
-    let mut open = pad_through(&[("level", "{}")]).unwrap();
-    let open = open.play_from_the_start(2 * BAR);
-    assert_eq!(off_the_gate(&gated, &open), (0, 0));
+    assert!(
+        problem.message.contains("cmd-z is the app's"),
+        "{problem:?}"
+    );
 }
 
 /// Every function of the sound graph once, in mono and in stereo by its `out`, so a node the
@@ -276,17 +290,17 @@ s.tool({
   doc: "Every function of the sound graph.",
   state: {
     out: s.choice({ options: ["mono", "stereo"], default: "mono" }),
-    level: s.knob({ min: 0, max: 1, default: 0.5 }),
-    on: s.toggle({ default: true }),
+    level: s.number({ min: 0, max: 1, default: 0.5 }),
+    on: s.boolean({ default: true }),
     steps: s.pattern({ length: 4, min: 0, max: 1, default: 0.5 }),
   },
-  controls: { x: s.live({ min: 0, max: 1, default: 0 }), hit: s.trigger() },
+  inputs: { x: s.number({ min: 0, max: 1, default: 0 }), hit: s.bang() },
   sound: ({ out, level, on, steps, x, hit }) => {
     const back = s.feedback();
     back.set(s.input);
     const tape = s.buffer(0.1);
     tape.write(s.phasor(1).times(tape.length), s.input);
-    s.watch("level", level);
+    s.output("level", level);
     const n = s.note;
     const all: s.Operand[] = [
       s.inputLeft, s.inputRight, s.channel, s.sampleRate, s.beat, s.bpm, s.playing,
@@ -309,35 +323,38 @@ s.tool({
 
 #[test]
 fn every_node_of_the_sdk_builds_in_mono_and_in_stereo() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/every.ts", EVERY_NODE);
-    let mut harness = Harness::open(folder);
-    let track =
-        r#"{"tool": "arrangement.track", "state": {"name": "Pad", "effects": ["mono", "stereo"]}}"#;
-    harness.write("state/arrangement/pad/instance.json", track);
-    harness.write("state/arrangement/pad/instrument.json", &synth(0.2));
-    for out in ["mono", "stereo"] {
-        let record = format!(r#"{{"tool": "every", "state": {{"out": "{out}"}}}}"#);
-        harness.write(&format!("state/arrangement/pad/{out}.json"), &record);
+    let synth = synth(0.2);
+    let (mono, stereo) = (
+        r#"{"tool": "every", "state": {"out": "mono"}}"#,
+        r#"{"tool": "every", "state": {"out": "stereo"}}"#,
+    );
+    let children = [
+        ("instrument", synth.as_str()),
+        ("mono", mono),
+        ("stereo", stereo),
+    ];
+    for (path, contents) in racks_files(&[("pad", &children)]) {
+        write(folder.path(), &path, &contents);
     }
-    let folder = harness.path("state/arrangement/pad");
-    harness.apply(&[folder]);
+    let harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
 }
 
 /// A player of a sample: its sound, from the start, at its own speed.
-const PLAYER: &str = r#"import { phasor, sample, tool } from "./sdk";
+const PLAYER: &str = r#"import { phasor, file, tool } from "./sdk";
 
 tool({
   name: "player",
   title: "Player",
   when: "You want a sound file to play",
   doc: "Plays a sound file over and over.",
-  kind: "source",
-  state: { sound: sample() },
+  state: { sound: file() },
   sound: ({ sound }) => sound.at(phasor(1).times(sound.length)),
 });
 "#;
@@ -364,18 +381,17 @@ fn write_sine(root: &Path) {
 
 #[test]
 fn a_sample_plays_once_its_file_is_there() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/player.ts", PLAYER);
-    let mut harness = Harness::open(folder);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "Player"}}"#;
-    harness.write("state/arrangement/player/instance.json", track);
     let player = r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#;
-    harness.write("state/arrangement/player/instrument.json", player);
-    let folder = harness.path("state/arrangement/player");
-    harness.apply(&[folder]);
+    for (path, contents) in racks_files(&[("player", &[("instrument", player)])]) {
+        write(folder.path(), &path, &contents);
+    }
+    let mut harness = Harness::open(folder);
     // The file is not there yet: a problem that names it, and silence.
     let problems = harness.project.problems();
     assert!(

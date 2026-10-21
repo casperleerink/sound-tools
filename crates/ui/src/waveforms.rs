@@ -2,7 +2,7 @@
 //! thread the first time it is asked for, and kept in memory while the application runs. Never
 //! written into the project folder.
 //!
-//! One cache for the whole application, a GPUI global, so the arrangement and the Sampler draw
+//! One cache for the whole application, a GPUI global, so a song's regions and the Sampler draw
 //! from the same overview of a file. A view that draws a waveform observes
 //! [`Waveforms::entity`], which notifies when an overview is ready, and asks
 //! [`Waveforms::overview`] while it draws: that returns at once, with `None` until the overview

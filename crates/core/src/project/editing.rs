@@ -75,29 +75,6 @@ impl Changes {
     }
 }
 
-/// What a derive gives back: the changes it adds to the group it runs in, and what it could
-/// not compute. See [`ToolRegistration::derive`](super::ToolRegistration::derive).
-#[derive(Default)]
-pub struct Derived {
-    pub(crate) changes: Changes,
-    pub(crate) problems: Vec<String>,
-}
-
-impl Derived {
-    /// The changes this derive adds to the group.
-    pub fn changes(&mut self) -> &mut Changes {
-        &mut self.changes
-    }
-
-    /// Says that part of the derived state could not be made, without failing the edit. The
-    /// message is listed in [`Project::problems`](super::Project::problems) on the record's
-    /// path until this derive runs again without it, exactly as
-    /// [`BehaviourContext::problem`](super::BehaviourContext::problem) does for a behaviour.
-    pub fn problem(&mut self, message: impl Into<String>) {
-        self.problems.push(message.into());
-    }
-}
-
 /// One record before and after a state application. `None` means the instance did not exist.
 pub(crate) struct RecordChange {
     pub id: InstanceId,
@@ -111,10 +88,6 @@ pub(crate) struct Applied {
     pub records: Vec<RecordChange>,
     /// Before and after.
     pub project_file: Option<(ProjectFile, ProjectFile)>,
-    /// The records a derive wrote. They are in `records` like any other change; this says
-    /// which files a group of outside changes still has to write, because those files hold
-    /// what an agent wrote and not what a derive made of it.
-    pub derived: Vec<InstanceId>,
 }
 
 /// An edit in progress: a drag, or any other group of changes that becomes one undo step.
@@ -206,12 +179,8 @@ impl Project {
         changes: Changes,
     ) -> Result<(), ProjectError> {
         validate(&changes.changes)?;
-        // A derive may rewrite the tempo map, so a change to a record that has one touches
-        // `project.json` as surely as a tempo edit does.
-        let touches_project_file = changes.changes.iter().any(|change| match change {
-            Change::Set(_, record) => self.derives(record.tool),
-            _ => true,
-        });
+        let touches_project_file =
+            (changes.changes.iter()).any(|change| !matches!(change, Change::Set(..)));
         if touches_project_file {
             self.sync_project_file();
         }
@@ -221,8 +190,8 @@ impl Project {
         Ok(())
     }
 
-    /// Applies changes to the sound and the state, and to nothing else: no file is written, no
-    /// derive runs and there is no undo step. The one change a read-only project takes, for a
+    /// Applies changes to the sound and the state, and to nothing else: no file is written and
+    /// there is no undo step. The one change a read-only project takes, for a
     /// render that plays it other than its files say, such as with one track soloed. A project
     /// that writes refuses with [`ProjectError::WritesFiles`]: its next edit of these records
     /// would save them, and the folder would no longer be the truth.

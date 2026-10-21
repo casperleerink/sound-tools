@@ -7,6 +7,7 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 
 use crate::automation::Automation;
+use crate::clock::Ticks;
 use crate::transport::Transport;
 
 /// Processors never see more frames than this in one `process` call.
@@ -70,6 +71,15 @@ pub trait Processor: Send + 'static {
     /// that leaves before it and goes around it is delayed to match.
     fn latency(&self) -> u32 {
         0
+    }
+
+    /// Audio thread, after each block: the tick before which its blocks would send nothing and
+    /// change nothing, while the transport goes on with no jump, start or stop, nothing
+    /// reaches its inputs and no update arrives. The engine skips its blocks until its range
+    /// reaches that tick, so a song of many clips pays for those that play. Only a processor
+    /// with no audio output rests. `None`, the default, never rests.
+    fn rests_until(&self) -> Option<Ticks> {
+        None
     }
 }
 

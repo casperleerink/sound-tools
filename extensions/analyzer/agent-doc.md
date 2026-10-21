@@ -4,7 +4,7 @@
 
 Here the bass shows its sound through an analyzer named `analyzer`:
 
-```json state/arrangement/bass/analyzer.json
+```json state/song/bass/chain/analyzer.json
 {
   "tool": "analyzer",
   "state": {}

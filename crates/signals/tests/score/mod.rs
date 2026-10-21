@@ -84,6 +84,7 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
             SignalsUpdate::Live {
                 index: 0,
                 value: 0.9,
+                at: None,
             },
         ),
         (
@@ -91,6 +92,7 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
             SignalsUpdate::Live {
                 index: 1,
                 value: 0.1,
+                at: None,
             },
         ),
         (

@@ -240,17 +240,12 @@ pub fn check_project_folder(folder: &Path) -> Result<()> {
     if folder.join(crate::PROJECT_FILE).exists() || !folder.exists() {
         return Ok(());
     }
-    let entries = std::fs::read_dir(folder)
-        .with_context(|| format!("could not read {}", folder.display()))?;
-    for entry in entries {
-        let entry = entry.with_context(|| format!("could not read {}", folder.display()))?;
-        if !entry.file_name().to_string_lossy().starts_with('.') {
-            let name = folder.file_name().unwrap_or(folder.as_os_str());
-            bail!(
-                "“{}” has files in it and is not a Sound Tools project. Pick a project folder, or make a new empty folder for a new project.",
-                name.to_string_lossy()
-            );
-        }
+    if !crate::templates::is_empty(folder)? {
+        let name = folder.file_name().unwrap_or(folder.as_os_str());
+        bail!(
+            "“{}” has files in it and is not a Sound Tools project. Pick a project folder, or make a new empty folder for a new project.",
+            name.to_string_lossy()
+        );
     }
     Ok(())
 }

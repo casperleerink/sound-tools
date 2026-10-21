@@ -175,15 +175,27 @@ impl EngineControl {
         self.send(Command::Transport(TransportCommand::Pause));
     }
 
-    /// Ends playback and returns the project position to zero. Processors see a jump.
+    /// Ends playback and returns the project position to zero, in one batch. Processors see a
+    /// jump.
     pub fn stop(&mut self) {
-        self.send(Command::Transport(TransportCommand::Stop));
+        self.pending.push_back(vec![
+            Command::Transport(TransportCommand::Pause),
+            Command::Transport(TransportCommand::Seek(Ticks(0))),
+        ]);
+        self.flush();
     }
 
     /// Moves the project position. Playback keeps running or stays stopped. Nothing between the
     /// old and the new position is replayed. Processors see a jump.
     pub fn seek(&mut self, position: Ticks) {
         self.send(Command::Transport(TransportCommand::Seek(position)));
+    }
+
+    /// Once playback reaches `at`, it goes on from `to`, on the frame of `at`: one jump, as a
+    /// seek. A tick it has already passed jumps at once. Replaces one that waits, and a seek
+    /// drops it.
+    pub fn jump_at(&mut self, at: Ticks, to: Ticks) {
+        self.send(Command::Transport(TransportCommand::JumpAt { at, to }));
     }
 
     /// Playback goes back to the start of `range` each time it reaches its end, or plays on

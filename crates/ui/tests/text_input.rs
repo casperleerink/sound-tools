@@ -1,4 +1,4 @@
-//! The multi-line text input with keys, on the test text system, where every character is
+//! The text input with keys and the mouse, on the test text system, where every character is
 //! 8.4 px wide at the 14 px text size.
 
 use std::cell::RefCell;
@@ -6,14 +6,16 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Focusable, IntoElement,
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement, Render, Styled,
-    TestAppContext, VisualTestContext, Window, div, point, px,
+    AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, Focusable, IntoElement,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Point, Render, Styled, TestAppContext, VisualTestContext, Window, div, point, px,
 };
 use sound_ui::components::text_input::{Arrow, TextInput};
 
-/// Ten characters to a row.
+/// Ten characters to a row. A one-line field with its border and padding shows 63 px of text.
 const WIDTH: f32 = 85.;
+/// Where the text of a one-line field starts: its border and padding.
+const TEXT_LEFT: f32 = 11.;
 
 struct Field {
     input: Entity<TextInput>,
@@ -166,6 +168,11 @@ fn the_caret_moves_by_characters_in_text_of_many_bytes(cx: &mut TestAppContext) 
     set_text(&input, "😀a\n😀b", cx);
     cx.simulate_keystrokes("up x");
     assert_eq!(text(&input, cx), "😀ax\n😀b");
+
+    // An emoji of several code points is one step, as a thumb with a skin tone.
+    set_text(&input, "a👍🏽b", cx);
+    cx.simulate_keystrokes("left backspace");
+    assert_eq!(text(&input, cx), "ab");
 }
 
 #[gpui::test]
@@ -216,19 +223,162 @@ fn the_rows_scroll_to_the_caret_past_the_last_row_of_the_box(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn a_one_line_field_leaves_up_and_cmd_z_to_the_views_around_it(cx: &mut TestAppContext) {
+fn a_one_line_field_undoes_its_own_edits_and_up_and_down_go_to_its_ends(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, TextInput::new);
-    cx.simulate_keystrokes("a b up secondary-z c");
-    assert_eq!(text(&input, cx), "abc");
+    cx.simulate_keystrokes("a b space c d up x down y");
+    assert_eq!(text(&input, cx), "xab cdy");
+    cx.simulate_keystrokes("secondary-z secondary-z");
+    assert_eq!(text(&input, cx), "ab cd");
+    cx.simulate_keystrokes("shift-secondary-z");
+    assert_eq!(text(&input, cx), "xab cd");
+}
+
+#[gpui::test]
+fn cmd_z_never_empties_a_field_its_host_filled(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    set_text(&input, "Bass", cx);
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&input, cx), "Bass");
 }
 
 #[gpui::test]
 fn a_one_line_field_turns_newlines_into_spaces(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, TextInput::new);
-    cx.simulate_keystrokes("a shift-enter");
-    cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("b\r\nc\nd".into())));
+    cx.simulate_keystrokes("a");
+    // A copied line's own break goes.
+    cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("b\r\nc\nd\n".into())));
     cx.simulate_keystrokes("secondary-v");
-    assert_eq!(text(&input, cx), "a b c d");
+    assert_eq!(text(&input, cx), "ab c d");
+}
+
+/// Where the text from `offset` is drawn, from the left top of the field's text.
+fn place_of(input: &Entity<TextInput>, offset: usize, cx: &mut VisualTestContext) -> Point<Pixels> {
+    input
+        .update_in(cx, |input, window, cx| {
+            input.bounds_for_range(offset..offset, Bounds::default(), window, cx)
+        })
+        .map(|bounds| bounds.origin)
+        .unwrap_or_default()
+}
+
+#[gpui::test]
+fn the_text_stays_put_from_the_placeholder_to_the_first_characters_and_back(
+    cx: &mut TestAppContext,
+) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).placeholder("Search"));
+    let empty = place_of(&input, 0, cx);
+    for keys in ["a", "b", "left", "backspace", "backspace"] {
+        cx.simulate_keystrokes(keys);
+        assert_eq!(place_of(&input, 0, cx), empty, "after {keys}");
+    }
+}
+
+#[gpui::test]
+fn a_long_line_scrolls_to_keep_the_caret_in_view(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    // 20 characters are 168 px, in a field that shows 63 px.
+    cx.simulate_keystrokes("a b c d e f g h i j k l m n o p q r s t");
+    let caret = place_of(&input, 20, cx).x;
+    assert!(caret > px(0.) && caret <= px(61.), "caret at {caret:?}");
+    cx.simulate_keystrokes("cmd-left");
+    assert_eq!(place_of(&input, 0, cx).x, px(0.));
+    cx.simulate_keystrokes("cmd-right");
+
+    // A click lands on the character under it in the scrolled text: 107 px scrolled, and
+    // 20 px into the text is after "o".
+    cx.simulate_click(point(px(TEXT_LEFT + 20.), px(16.)), Modifiers::none());
+    cx.simulate_keystrokes("X");
+    assert_eq!(text(&input, cx), "abcdefghijklmnoXpqrst");
+}
+
+fn press(cx: &mut VisualTestContext, x: f32, click_count: usize) {
+    cx.simulate_event(MouseDownEvent {
+        position: point(px(x), px(5.)),
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count,
+        first_mouse: false,
+    });
+}
+
+fn drag_to(cx: &mut VisualTestContext, x: f32) {
+    cx.simulate_event(MouseMoveEvent {
+        position: point(px(x), px(5.)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    });
+}
+
+fn release(cx: &mut VisualTestContext, x: f32) {
+    cx.simulate_event(MouseUpEvent {
+        position: point(px(x), px(5.)),
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 1,
+    });
+}
+
+#[gpui::test]
+fn a_drag_past_the_edge_of_the_field_selects_on(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    set_text(&input, "abcdefghijklmnopqrst", cx);
+    cx.simulate_keystrokes("cmd-left");
+    press(cx, TEXT_LEFT + 18., 1);
+    // Far right of the field, where its element no longer hears the mouse.
+    drag_to(cx, 300.);
+    release(cx, 300.);
+    cx.simulate_keystrokes("Z");
+    assert_eq!(text(&input, cx), "abZ");
+}
+
+#[gpui::test]
+fn a_drag_after_a_double_click_selects_whole_words(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    set_text(&input, "ab cd ef", cx);
+    // From inside "ab" to inside "ef": both words whole.
+    press(cx, 5., 1);
+    release(cx, 5.);
+    press(cx, 5., 2);
+    drag_to(cx, 55.);
+    release(cx, 55.);
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&input, cx), "x");
+}
+
+#[gpui::test]
+fn a_right_click_in_the_selection_offers_to_cut_it(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    set_text(&input, "Bass", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_event(MouseDownEvent {
+        position: point(px(TEXT_LEFT + 10.), px(16.)),
+        button: MouseButton::Right,
+        modifiers: Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.run_until_parked();
+    // Cut is the first row; enter is the menu's, not the field's.
+    cx.simulate_keystrokes("down enter");
+    assert_eq!(text(&input, cx), "");
+    let cut = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(cut.as_deref(), Some("Bass"));
+    // The focus is back in the field.
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&input, cx), "Bass");
+}
+
+#[gpui::test]
+fn a_press_outside_takes_the_focus_where_nothing_else_does(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    let focused = |cx: &mut VisualTestContext| {
+        input.update_in(cx, |input, window, cx| {
+            input.focus_handle(cx).is_focused(window)
+        })
+    };
+    assert!(focused(cx));
+    cx.simulate_click(point(px(40.), px(200.)), Modifiers::none());
+    assert!(!focused(cx));
 }
 
 #[gpui::test]

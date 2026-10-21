@@ -1,4 +1,4 @@
-import { clamp, cos, feedback, hold, knob, lookup, max, min, noise, phasor, pow, rise, sample, sampleRate, type Signal, sqrt, TAU, tool, wrap } from "./sdk";
+import { clamp, cos, feedback, hold, number, lookup, max, min, noise, phasor, pow, rise, file, sampleRate, type Signal, sqrt, TAU, tool, wrap } from "./sdk";
 
 // Grains come from this many streams; each fires in turn, so at most this many overlap.
 const STREAMS = 16;
@@ -17,13 +17,12 @@ tool({
     "- `position`: where in the file the grains read, 0 the start, 0.5 the middle, 1 the end. Each grain starts up to 40 ms either side of it. Automate it to scan through the recording.",
     "- `pitch_spread`: how far each grain's pitch may stray, in semitones up or down, at random. 0 keeps the recording's pitch, 0.1 to 0.3 a chorus-like shimmer, 12 a cloud over two octaves. Half way is a spread half as wide.",
   ].join("\n"),
-  kind: "source",
   state: {
-    sound: sample({ label: "Sound" }),
-    size: knob({ min: 10, max: 1000, default: 120, unit: "ms", label: "Grain size" }),
-    density: knob({ min: 1, max: 200, default: 30, unit: "hz", label: "Density" }),
-    position: knob({ min: 0, max: 1, default: 0.5, unit: "percent", label: "Position" }),
-    pitch_spread: knob({ min: 0, max: 12, default: 0.5, label: "Pitch spread" }),
+    sound: file({ label: "Sound" }),
+    size: number({ min: 10, max: 1000, default: 120, unit: "ms", label: "Grain size" }),
+    density: number({ min: 1, max: 200, default: 30, unit: "hz", label: "Density" }),
+    position: number({ min: 0, max: 1, default: 0.5, unit: "percent", label: "Position" }),
+    pitch_spread: number({ min: 0, max: 12, default: 0.5, label: "Pitch spread" }),
   },
   sound: ({ sound, size, density, position, pitch_spread }) => {
     const streamRate = density.over(STREAMS);

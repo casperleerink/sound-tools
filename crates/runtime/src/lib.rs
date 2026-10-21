@@ -4,10 +4,10 @@
 //! crate.
 
 pub mod app;
-pub mod arrangement_wiring;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
+pub mod templates;
 pub mod update;
 pub mod window;
 
@@ -21,17 +21,16 @@ use plugin_host::{
 };
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
-    AgentDoc, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError, Registry,
-    SavedDestination, SavedSource, Ticks, ToolSchema,
+    AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Project,
+    ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks, ToolSchema,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
-use arrangement_wiring::{FIT_TEMPO, add_track_of_kind};
-pub use arrangement_wiring::{add_audio_track, add_track, clips_span, main_arrangement, solo};
+pub use templates::{TEMPLATES, Template};
 
-const PROJECT_FILE: &str = "project.json";
+pub const PROJECT_FILE: &str = "project.json";
 
 /// Offline renders have no device to ask. `offline` is what every processor is told, and what a
 /// hosted plugin passes on to the plugin in the way its format intends.
@@ -59,7 +58,7 @@ sound-tools . --analyze
 sound-tools . --render <wav>
 ```
 
-- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every track in order, every clip with its bar range, note count and pitch range, and the problems.
+- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every instance with its record, the connections and the problems.
 - `--analyze` plays the piece and its tail offline and prints what it measures, of the whole and in up to 32 rows. Use it after a change, to check that it sounds as you meant.
 - `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
 
@@ -67,7 +66,7 @@ sound-tools . --render <wav>
 
 - `--from <at>` and `--to <at>`, together or alone: a part of the piece, and its tail. `<at>` is ticks (`3840`), or a time as the composer reads it off the playhead (`1:23.5`) or in seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
 - `--seconds <n>`: the first `n` seconds, with no tail.
-- `--solo <track>`, once per track: only these tracks play, by name or id. No file changes.
+- `--only <path>`: the device plays only the sound of this instance, such as `song/bass`, before what its parents do to it. No file changes.
 
 `sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`, with `--from` and `--to` as times.
 
@@ -153,13 +152,11 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
 /// Registers every bundled extension, and the plugin host when given the plugins it hosts.
 fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Result<()> {
     analyzer::register(registry)?;
-    arrangement::register(registry)?;
     compressor::register(registry)?;
     delay::register(registry)?;
     drum_pad::register(registry)?;
     eq::register(registry)?;
     filter::register(registry)?;
-    fit_tempo::register(registry)?;
     gate::register(registry)?;
     instrument::register(registry)?;
     limiter::register(registry)?;
@@ -176,6 +173,15 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     Ok(())
 }
 
+/// The name of every bundled extension.
+pub fn bundled_extensions() -> Result<Vec<&'static str>> {
+    let mut registry = Registry::new();
+    register_extensions(&mut registry, None)?;
+    let mut names = registry.extensions();
+    names.insert(plugin_host::EXTENSION);
+    Ok(names.into_iter().collect())
+}
+
 /// The built-in tools as the tools of a project see them, for their SDK.
 pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
     let mut registry = Registry::new();
@@ -187,12 +193,10 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
 /// and what a composer can pick. The window names no view type and no instrument: it takes
 /// both registries and installs them, see `Shell::new`.
 ///
-/// This is the one place that knows the built-in synth and the plugin host at once. The
-/// arrangement, which owns the track panel, depends on neither.
+/// This is the one place that knows the built-in synth and the plugin host at once.
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
-    arrangement::view::register(&mut views, add_track_of_kind, FIT_TEMPO);
     // The order here is the order of a picker: the instruments, then the effects group by
     // group, and the plugins of this Mac after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
@@ -210,6 +214,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
     analyzer::view::register(&mut views, &mut devices);
+    sound_typescript::register_views(&mut views);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
@@ -274,7 +279,9 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let bun_folder = bun_folder.clone();
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
+        let composer = sidebar.clone();
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+            .with_composer(move |cx| composer.read(cx).composer().clone())
     })
 }
 
@@ -355,11 +362,8 @@ pub const SCAN_AGAIN: &str = "plugins:scan-again";
 /// own. A host that was not told to scan on a thread scans on this one, the first time a
 /// record needs a plugin.
 ///
-/// A folder without a `project.json` becomes the default
-/// project: 120 bpm, 4/4, one arrangement with no tracks. Other
-/// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
-///
-/// Making the default content is not something to undo, so a new project has no history.
+/// A folder without a `project.json` becomes an empty project: 120 bpm, 4/4, every bundled
+/// extension.
 ///
 /// With no window, it waits for what the behaviours of its own tools declare, so it plays what
 /// the records say from the start.
@@ -368,7 +372,8 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    let mut project = open_with_extensions(folder, control, plugins)?.0;
+    let extensions = load_tools(folder)?;
+    let mut project = open_with_loaded(folder, control, plugins, extensions)?.0;
     first(settle_behaviours(&mut project))?;
     Ok(project)
 }
@@ -381,8 +386,17 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    let extensions = Extensions::load(folder, &tool_schemas()?);
-    open_with_loaded(folder, control, plugins, extensions)
+    open_with_loaded(folder, control, plugins, load_tools(folder)?)
+}
+
+/// The project's own tools, once the code of the template it was made from is this release's
+/// where the project never changed it, see [`templates::update`]. What waits for a merge the
+/// window asks again.
+pub(crate) fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
+    if let Err(error) = templates::update(folder) {
+        eprintln!("error: {error:#}");
+    }
+    Ok(Extensions::load(folder, &tool_schemas()?))
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
@@ -393,16 +407,10 @@ pub(crate) fn open_with_loaded(
     plugins: Plugins,
     extensions: Option<FirstLoad>,
 ) -> Result<(Project, Option<Extensions>)> {
-    let is_new = !folder.join(PROJECT_FILE).exists();
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
-    }
-    // A `state/` folder with content but no project file is someone's work, not a new project.
-    if is_new && project.instances().next().is_none() && project.problems().is_empty() {
-        arrangement_wiring::create_default_project(&mut project)?;
-        project.clear_history();
     }
     Ok((project, extensions))
 }
@@ -415,6 +423,31 @@ fn registry_of(
     let mut registry = registry(plugins)?;
     let extensions = extensions.map(|loaded| loaded.register(&mut registry));
     Ok((registry, extensions))
+}
+
+/// Makes the device play only the `audio` output of `path`, in memory, for a render of one part
+/// of a read-only project: every `project.json` connection to the device output gives way to one
+/// from it. What its parents do to its sound after it, such as a mixer or a send, is not heard,
+/// and a tool that plays to the device by itself rather than through `project.json` still does.
+pub fn listen_only(project: &mut Project, path: &str) -> Result<()> {
+    let id = InstanceId::new(path)?;
+    if project.tool_of(&id).is_none() {
+        bail!(
+            "no instance is called {path:?}: name it by its path under state/, such as song/bass"
+        );
+    }
+    let mut changes = Changes::new();
+    let to_device = (project.project_file().connections.iter())
+        .filter(|connection| matches!(connection.to, SavedDestination::DeviceOutput(_)));
+    for connection in to_device {
+        changes.disconnect(connection.clone());
+    }
+    changes.connect(SavedConnection::to_device(
+        PortReference::new(&id, "audio"),
+        0,
+    ));
+    project.apply_in_memory(changes)?;
+    Ok(())
 }
 
 /// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
@@ -440,8 +473,8 @@ pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, 
     Ok((project, engine))
 }
 
-/// What `--inspect` prints. A tool with a summary of its own, such as the arrangement, tells
-/// what it owns. Every other instance is one line with its record.
+/// What `--inspect` prints: the time, the sections, every instance with its record, the
+/// connections and the problems.
 pub fn summary(project: &Project) -> String {
     let project_file = project.project_file();
     let tempo_map = &project_file.tempo_map;
@@ -471,21 +504,10 @@ pub fn summary(project: &Project) -> String {
     }
     lines.extend(sections(project));
 
-    let mut summarised: Vec<&InstanceId> = Vec::new();
     for (id, tool) in project.instances() {
-        // Ids sort as text, so `arrangement-2` comes between `arrangement` and what is inside
-        // it: every summarised owner is checked, not only the last.
-        if summarised.iter().any(|owner| id.is_inside(owner)) {
-            continue;
-        }
-        if let Some(summary) = project.summary(id) {
-            lines.push(summary);
-            summarised.push(id);
-        } else {
-            let indent = "  ".repeat(id.as_str().matches('/').count());
-            let state = project.state_json(id).unwrap_or_default();
-            lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
-        }
+        let indent = "  ".repeat(id.as_str().matches('/').count());
+        let state = project.state_json(id).unwrap_or_default();
+        lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
     }
 
     lines.push(format!("connections: {}", project_file.connections.len()));
@@ -703,6 +725,7 @@ pub fn tick(
     // A tool of the project that owns children, whose behaviour Bun answered.
     let declared = sound_typescript::take_declared(project.assets());
     errors.extend(rebind(project, &declared));
+    sound_typescript::forget_gone(project);
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);
     // A plugin that is started again is handed to the engine. After the poll, which is what

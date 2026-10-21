@@ -47,8 +47,8 @@ fn voice() -> Code {
 #[ignore = "a measurement, not a check; run it locally and read the printed ratio"]
 fn realtime_ratio_of_one_hundred_processors() {
     for (label, code, kind) in [
-        ("echo effect", echo(), Kind::Effect),
-        ("saw source", voice(), Kind::Source),
+        ("echo effect", echo(), Kind::One),
+        ("saw source", voice(), Kind::One),
     ] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();

@@ -7,18 +7,31 @@
 //! graph of signals that the SDK sends as JSON. The runtime registers each as a [`JsonTool`]
 //! before the records load, so a record of one loads like any other, and plays with no Bun.
 //! Only an owner asks Bun while it plays: how its children connect (`behaviours`). The
-//! `sequencer` a parent plays patterns with is a tool of this crate, defined with them.
+//! built-in children a parent plays with, such as the `timeline`, are tools of this crate,
+//! defined with them.
 //!
 //! In the window, any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
 //! audio thread, and the window never waits for Bun.
 
 mod behaviours;
+#[cfg(test)]
+mod bindings;
 mod bun;
 mod card;
+mod fader;
+mod feeds;
+mod lane;
+mod live;
+mod meter;
+#[cfg(test)]
+mod performance;
+mod recorder;
 mod records;
+mod region;
+mod region_card;
 mod samples;
-mod sequencer;
+mod timeline;
 mod tools;
 mod tree;
 mod window;
@@ -31,9 +44,19 @@ use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
-pub use behaviours::{take_declared, wait_for_behaviours};
-pub use bun::sent_bytes;
-pub use window::{page_shows_transport, start_window};
+pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
+pub use bun::{
+    bun_answered_everything, heard_batches, heard_bytes, last_batch, sent_bytes,
+    sent_updates_and_events,
+};
+#[cfg(feature = "test-support")]
+pub use card::node_count;
+pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
+#[cfg(feature = "test-support")]
+pub use feeds::shown_by_live_values;
+pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
+pub use tools::forget_gone;
+pub use window::start_window;
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};
@@ -41,9 +64,31 @@ use crate::tools::{Sounds, ToolInfo, Tools};
 /// The folder of a project that holds its own tools and cards.
 pub const FOLDER: &str = "extensions";
 
-/// The key context of a card or a page whose tool hears the computer keyboard while it has the
-/// focus. The plain keys of the window, such as space, leave it alone.
+/// The key context of a card or a page whose tool hears every key of the computer keyboard while
+/// it has the focus. The plain keys of the window, such as space, leave it alone.
 pub const KEY_CONTEXT: &str = "ToolKeys";
+
+/// The key context of a card or a page whose tool hears the keys `takes`, or every key: the
+/// computer keys leave those to it.
+pub(crate) fn key_context(takes: Option<&[String]>) -> gpui::KeyContext {
+    let mut context = gpui::KeyContext::default();
+    match takes {
+        None => context.add(KEY_CONTEXT),
+        Some(takes) => takes.iter().for_each(|key| context.add(taken(key))),
+    }
+    context
+}
+
+fn taken(key: &str) -> String {
+    format!("{KEY_CONTEXT}_{key}")
+}
+
+/// Whether the focus is in a tool that hears the plain key `key`, which the computer keys leave
+/// to it.
+pub fn takes_key(window: &gpui::Window, key: &str) -> bool {
+    let key = taken(key);
+    (window.context_stack().iter()).any(|context| context.contains(&key))
+}
 
 /// A note event as the code of a tool sends and hears it, see `NoteEvent` in `sdk.ts`: a
 /// velocity or a value from 0 to 1, the bend from -1 to 1. The pedal is controller 64 and the
@@ -123,7 +168,9 @@ impl NoteMessage {
 }
 
 const SDK: &str = include_str!("sdk.ts");
-const HOST: &str = include_str!("host.ts");
+pub const HOST: &str = include_str!("host.ts");
+/// What [`HOST`] uses of Node and Bun, for a check of its types.
+pub const HOST_TYPES: &str = include_str!("node.d.ts");
 const BUN_TYPES: &str = include_str!("bun.d.ts");
 /// What the runtime writes in `extensions/` and owns there.
 const OWNED: [&str; 3] = ["sdk.ts", "tsconfig.json", "bun.d.ts"];
@@ -138,6 +185,7 @@ const TSCONFIG: &str = r#"{
     "moduleResolution": "bundler",
     "jsx": "react",
     "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
     "noEmit": true
   }
 }
@@ -159,8 +207,6 @@ pub struct Extensions {
     bun: Option<Arc<Bun>>,
     /// The opening of the project every Bun of it runs for.
     opening: u64,
-    /// The built-in tools, whose devices a sound plays.
-    schemas: Arc<[ToolSchema]>,
     /// The tools of the first load that the registry took.
     tools: Vec<ToolInfo>,
     skipped: Skipped,
@@ -172,7 +218,6 @@ pub struct Extensions {
 pub struct FirstLoad {
     folder: PathBuf,
     opening: u64,
-    schemas: Arc<[ToolSchema]>,
     launched: Result<Option<Launched>, String>,
 }
 
@@ -188,14 +233,12 @@ impl Extensions {
             return None;
         }
         let opening = bun::new_opening();
-        let schemas: Arc<[ToolSchema]> = schemas.into();
-        let launched = write_sdk(&folder, &schemas)
+        let launched = write_sdk(&folder, schemas)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch((&folder, opening, &schemas), Skipped::new()));
+            .and_then(|()| launch((&folder, opening), Skipped::new()));
         Some(FirstLoad {
             folder,
             opening,
-            schemas,
             launched,
         })
     }
@@ -213,7 +256,6 @@ impl FirstLoad {
         let Self {
             folder,
             opening,
-            schemas,
             launched,
         } = self;
         let none = |problems| (None, Vec::new(), Skipped::new(), problems);
@@ -242,7 +284,6 @@ impl FirstLoad {
             folder,
             bun,
             opening,
-            schemas,
             tools,
             skipped,
             problems,
@@ -251,14 +292,9 @@ impl FirstLoad {
 }
 
 /// The tools of `loaded` by `bun` with their sounds compiled, and what is wrong: the errors of
-/// the files, the files Bun runs without, and every tool whose fields, sounds, card or page
-/// fail, such as a sound that plays a device of `schemas` with a setting it refuses. Takes as
-/// long as compiling every sound: not on the thread that draws.
-fn checked(
-    loaded: Loaded,
-    skipped: &Skipped,
-    (bun, schemas): (&Arc<Bun>, &[ToolSchema]),
-) -> (Vec<Sounds>, Vec<Problem>) {
+/// the files, the files Bun runs without, and every tool whose fields, sounds or view fail.
+/// Takes as long as compiling every sound: not on the thread that draws.
+fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -269,10 +305,9 @@ fn checked(
         .collect();
     let mut kept = Vec::new();
     for tool in loaded.tools {
-        // Before anything is made from the fields, such as a pattern at its defaults.
-        let checked = (tool.info.declarations().check())
-            .map_err(|error| error.to_string())
-            .and_then(|()| tool.info.fields.check_defaults("state."));
+        // Before anything is made from the fields, such as a list at its defaults. Each sound
+        // checks the ranges of what it reads as it builds.
+        let checked = tool.info.fields.check_defaults("state.");
         match checked {
             Ok(()) => kept.push(tool),
             Err(error) => problems.push(tool.info.problem(error)),
@@ -284,13 +319,8 @@ fn checked(
     let infos: Arc<Tools> = Arc::new(infos.collect());
     let mut tools = Vec::new();
     for tool in kept {
-        let LoadedTool {
-            info,
-            sounds,
-            card,
-            page,
-        } = tool;
-        let sounds = Sounds::new(&info, sounds, (bun, &infos), schemas);
+        let LoadedTool { info, sounds, view } = tool;
+        let sounds = Sounds::new(&info, sounds, (bun, &infos));
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
         sounds_failed.sort();
@@ -300,13 +330,9 @@ fn checked(
         let failed: Vec<String> = (sounds_failed.into_iter().take(shown).cloned())
             .chain(more)
             .chain(
-                drawn(card)
+                drawn(view)
                     .err()
-                    .map(|error| format!("its card does not draw: {error}")),
-            )
-            .chain(
-                page.and_then(|page| drawn(page).err())
-                    .map(|error| format!("its page does not draw: {error}")),
+                    .map(|error| format!("its view does not draw: {error}")),
             )
             .collect();
         if !failed.is_empty() {
@@ -326,7 +352,7 @@ fn define(
 ) -> Vec<ToolInfo> {
     let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
     // First, so a tool of the project of its name is the one refused.
-    let tools = std::iter::once(sequencer::json_tool());
+    let tools = built_in().into_iter();
     let refused = define(
         tools
             .chain(sounds.into_iter().map(Sounds::json_tool))
@@ -342,11 +368,34 @@ fn define(
     infos
 }
 
-/// Whether a card or a page drew a tree the window can show.
-fn drawn(tree: Result<serde_json::Value, String>) -> Result<(), String> {
-    serde_json::from_value::<tree::Node>(tree?)
-        .map(drop)
-        .map_err(|error| error.to_string())
+/// The built-in children a parent of the project plays with.
+fn built_in() -> [JsonTool; 6] {
+    [
+        timeline::json_tool(),
+        meter::json_tool(),
+        fader::json_tool(),
+        lane::json_tool(),
+        region::json_tool(),
+        recorder::json_tool(),
+    ]
+}
+
+/// The records of the built-in children, for `sdk.ts`.
+pub(crate) fn built_in_schemas() -> [ToolSchema; 6] {
+    [
+        timeline::schema(),
+        meter::schema(),
+        fader::schema(),
+        lane::schema(),
+        region::schema(),
+        recorder::schema(),
+    ]
+}
+
+/// Whether a card or a page made nodes the window can show.
+fn drawn(ops: Result<serde_json::Value, String>) -> Result<(), String> {
+    let ops: Vec<tree::Op> = serde_json::from_value(ops?).map_err(|error| error.to_string())?;
+    tree::NodeTable::default().apply(ops)
 }
 
 /// The files of tools in `extensions`, by name, in order: those that are not the runtime's.
@@ -380,11 +429,11 @@ struct Launched {
 }
 
 /// Starts Bun on the tools of `extensions` for the project's `opening` without the `skipped`
-/// files, and waits for its load, with the built-in tools of `schemas`. A file whose code hangs or stops Bun while it loads is
+/// files, and waits for its load. A file whose code hangs or stops Bun while it loads is
 /// skipped too, and Bun starts again without it. `None` when the folder has no tool file.
 /// Blocks for as long as the load takes.
 fn launch(
-    (extensions, opening, schemas): (&Path, u64, &[ToolSchema]),
+    (extensions, opening): (&Path, u64),
     mut skipped: Skipped,
 ) -> Result<Option<Launched>, String> {
     let files = tool_files(extensions);
@@ -407,7 +456,7 @@ fn launch(
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.
                 let bun = Arc::new(bun);
-                let (sounds, problems) = checked(loaded, &skipped, (&bun, schemas));
+                let (sounds, problems) = checked(loaded, &skipped, &bun);
                 return Ok(Some(Launched {
                     bun,
                     sounds,
@@ -471,6 +520,11 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
 }
 
 /// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
+/// Registers the cards of the blocks of this crate that have one: a region's.
+pub fn register_views(views: &mut sound_ui::Views) {
+    region_card::register(views);
+}
+
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }

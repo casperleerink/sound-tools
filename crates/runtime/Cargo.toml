@@ -10,7 +10,6 @@ workspace = true
 [dependencies]
 analyzer.workspace = true
 anyhow.workspace = true
-arrangement.workspace = true
 chrono.workspace = true
 compressor.workspace = true
 delay.workspace = true
@@ -18,7 +17,6 @@ drum-pad.workspace = true
 dunce.workspace = true
 eq.workspace = true
 filter.workspace = true
-fit-tempo.workspace = true
 gate.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
@@ -58,8 +56,11 @@ windows-sys = { workspace = true, features = [
 
 [build-dependencies]
 embed-resource.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
+sound-typescript = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
 sha2.workspace = true

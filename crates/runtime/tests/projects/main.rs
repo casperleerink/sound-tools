@@ -6,8 +6,7 @@
 
 mod agent;
 mod agent_doc;
-mod audio;
-mod automation;
+mod blocks;
 mod cables;
 mod compressor;
 mod delay;
@@ -18,29 +17,31 @@ mod eq;
 mod events;
 mod export;
 mod filter;
-mod fit;
-mod generated_take;
 mod latency;
+mod launcher;
 mod limiter;
 mod live;
 mod metronome;
-mod mixer;
 mod modulation;
 mod own_ports;
 mod owners;
+// The sizes of its page are for the window tests.
 #[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;
-mod plugin_lanes;
 mod plugins;
-mod rack_order;
-mod recording;
-mod recording_audio;
+#[allow(dead_code)]
+#[path = "../shared/rack.rs"]
+mod rack;
+mod render_cost;
 mod reverb;
 mod sampler;
 mod saturator;
-mod scale;
-mod sequencer;
-mod solo;
+#[allow(dead_code)]
+#[path = "../shared/song.rs"]
+mod shared_song;
+mod song;
+mod song_mixer;
+mod song_sound;
 mod summary;
 mod support;
 mod typescript;

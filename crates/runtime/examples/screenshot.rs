@@ -6,8 +6,6 @@
 //! ```
 //!
 //! - `window.png`: the window as the project opens, which is its page when it has one.
-//! - `track-<name>.png`: each track of the arrangement selected and its panel open, so its
-//!   cards show. `<name>` is the folder of the track.
 //!
 //! It opens a copy of the folder, because opening a project writes into it. It plays no sound,
 //! since the engine runs offline, and writes nothing to the app's support folder: no agent
@@ -20,11 +18,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
-use arrangement::view::ArrangementView;
 use gpui::{AppContext as _, Entity, HeadlessAppContext, px, size};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
 use runtime::window::Shell;
-use runtime::{OFFLINE, main_arrangement, open_with_extensions, views};
+use runtime::{OFFLINE, open_with_extensions, views};
 use sound_core::Engine;
 use sound_ui::{Assets, POLL_INTERVAL, Session};
 
@@ -97,31 +94,6 @@ fn main() -> Result<()> {
 
     settle(&mut cx, &mut engine, &session, &plugins);
     save(&mut cx, "window")?;
-
-    let main = cx.update(|cx| anyhow::Ok(window.read(cx)?.main_view().cloned()))?;
-    if let Some(view) = main.and_then(|view| view.downcast::<ArrangementView>().ok()) {
-        let tracks = cx.update(|cx| {
-            let project = session.read(cx).project();
-            let arrangement = main_arrangement(project);
-            let tracks =
-                arrangement.map(|arrangement| arrangement::tracks(project, arrangement.id()));
-            let tracks = tracks.into_iter().flatten();
-            tracks.map(|(track, _)| track).collect::<Vec<_>>()
-        });
-        let timeline = cx.update(|cx| view.read(cx).timeline().clone());
-        for track in tracks {
-            cx.update_window(window.into(), |_, window, cx| {
-                timeline.update(cx, |timeline, cx| {
-                    timeline.select_track(Some(track.id().clone()), cx)
-                });
-                view.update(cx, |view, cx| {
-                    view.open_track_panel(track.clone(), window, cx)
-                });
-            })?;
-            settle(&mut cx, &mut engine, &session, &plugins);
-            save(&mut cx, &format!("track-{}", track.id().name()))?;
-        }
-    }
 
     println!(
         "{}",

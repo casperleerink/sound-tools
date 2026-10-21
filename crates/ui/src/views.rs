@@ -81,6 +81,24 @@ impl Views {
         );
     }
 
+    /// [`Self::register_card`] for a tool whose record the project keeps as JSON, such as a
+    /// block of the TypeScript kit: the view gets the id and reads the record itself.
+    pub fn register_json_card<V: Render>(
+        &mut self,
+        tool: &'static str,
+        create: impl Fn(Entity<Session>, InstanceId, CardFrame, &mut Window, &mut Context<V>) -> V
+        + 'static,
+    ) {
+        self.cards.insert(
+            tool,
+            Rc::new(move |session, id, frame, window, cx| {
+                session.read(cx).project().tool_of(id)?;
+                let view = cx.new(|cx| create(session.clone(), id.clone(), frame, window, cx));
+                Some(view.into())
+            }),
+        );
+    }
+
     /// What makes the card of a tool that registered none: a tool the project wrote, which
     /// comes and goes while the project is open. It says `None` for a tool it does not know.
     pub fn set_other_cards(
@@ -146,17 +164,24 @@ impl Views {
         create(session, id, window, cx)
     }
 
-    /// The first instance at the top of the project whose tool has a view. The window shows
-    /// it in its main area.
+    /// The instance at the top of the project that `main` in `project.json` names, else the
+    /// first one whose tool has a view. The window shows it in its main area.
     pub fn main_instance(session: &Entity<Session>, cx: &App) -> Option<InstanceId> {
         let views = cx.try_global::<Self>()?;
         let project = session.read(cx).project();
-        let mut instances = project.instances();
         let other = |tool: &str| views.other_views.as_ref().is_some_and(|(has, _)| has(tool));
+        let shown = |id: &InstanceId, tool: &str| {
+            id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
+        };
+        let named = project.project_file().main.as_ref();
+        if let Some(main) =
+            named.filter(|main| project.tool_of(main).is_some_and(|tool| shown(main, tool)))
+        {
+            return Some(main.clone());
+        }
+        let mut instances = project.instances();
         instances
-            .find(|(id, tool)| {
-                id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
-            })
+            .find(|(id, tool)| shown(id, tool))
             .map(|(id, _)| id.clone())
     }
 }

@@ -1,32 +1,18 @@
-//! The card of the built-in modulation in the track rack, with a simulated mouse: it is added
-//! from the control at the end of the rack, and every edit of it is one undo step written once.
+//! The card of the built-in modulation in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once.
 
 use gpui::{TestAppContext, point, px};
 use modulation::{Mode, ModulationState};
 
+use crate::rack::record;
 use crate::support::{self, Opened, id};
 
-const MODULATION: &str = "arrangement/track-1/modulation";
-const MODULATION_FILE: &str = "state/arrangement/track-1/modulation.json";
+const MODULATION: &str = "rack/modulation";
+const MODULATION_FILE: &str = "state/rack/modulation.json";
 
-/// One track with no instrument, so the only card with knobs is the modulation, and its panel
-/// open. The modulation is added the way a composer adds it: `Add effect`, then `Modulation`.
+/// A rack of the modulation alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-modulation");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Modulation"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(cx, &[("modulation", &record("modulation", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> ModulationState {
@@ -90,15 +76,15 @@ fn the_handles_drag_the_depth_and_the_spread(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_spread(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-modulation-expand");
+    let expand = opened.control("card-rack/modulation-expand");
     opened.click(expand);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Modulation"));
+    assert_eq!(opened.undo_label(), None);
     let spread = opened.control("knob-spread");
     opened.drag(spread, point(spread.x, spread.y - px(50.)));
     assert!(state(&mut opened).spread > ModulationState::default().spread);
     assert_eq!(opened.undo_label().as_deref(), Some("Change spread"));
 
-    let expand = opened.control("card-modulation-expand");
+    let expand = opened.control("card-rack/modulation-expand");
     opened.click(expand);
     assert_eq!(opened.find("knob-spread"), None);
 }

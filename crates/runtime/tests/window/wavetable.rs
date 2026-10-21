@@ -1,29 +1,22 @@
-//! The card of the Wavetable in the track panel, with a simulated mouse and keys: it is picked
-//! as the instrument of a track, a drag on its wavetable moves the position as one undo step,
-//! routes of its matrix are added, changed and removed one undo step each, and its tabs and the
-//! switches of its sections change nothing that is saved.
+//! The card of the Wavetable in a rack, with a simulated mouse and keys: a drag on its
+//! wavetable moves the position as one undo step, routes of its matrix are added, changed and
+//! removed one undo step each, and its tabs and the switches of its sections change nothing
+//! that is saved.
 
 use gpui::{TestAppContext, point, px};
-use sound_core::Changes;
 use wavetable::{Destination, Route, Source, WavetableState};
 
+use crate::rack::record;
 use crate::support::{self, Opened, id};
 
-const SLOT: &str = "arrangement/track-1/instrument";
+const SLOT: &str = "rack/instrument";
 
-/// One track whose instrument is a default Wavetable, its panel open.
+/// A rack whose instrument is a default Wavetable.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = Changes::new();
-        changes.delete(&id(SLOT));
-        project.commit("Remove synth", changes).unwrap();
-        let mut changes = Changes::new();
-        changes.create(id(SLOT), WavetableState::default());
-        project.commit("Add wavetable", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
+    let synth = record("instrument.synth", "{}");
+    let mut opened = support::open_rack(cx, &[("instrument", &synth)]);
+    opened.replace(SLOT, WavetableState::default());
+    opened.control("knob-osc-1-position");
     opened
 }
 
@@ -35,7 +28,7 @@ fn state(opened: &mut Opened<'_>) -> WavetableState {
 }
 
 fn expand(opened: &mut Opened<'_>) {
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
 }
 
@@ -47,17 +40,8 @@ fn show(opened: &mut Opened<'_>, page: &str) {
 }
 
 #[gpui::test]
-fn the_picker_puts_a_wavetable_with_its_card_on_the_track(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| project.clear_history());
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("instrument-picker");
-    opened.click(trigger);
-    let row = opened.control("menu-wavetable");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Choose Wavetable"));
-    assert_eq!(state(&mut opened), WavetableState::default());
-    assert_eq!(opened.project(|project| project.problems()), []);
+fn the_card_shows_four_knobs_and_its_sections_one_page_at_a_time(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
     // The four knobs of the card and the table of its display; nothing of the sections.
     for shown in [
         "knob-osc-1-position",
@@ -85,12 +69,6 @@ fn the_picker_puts_a_wavetable_with_its_card_on_the_track(cx: &mut TestAppContex
         assert!(opened.find(shown).is_some(), "{shown}");
     }
     assert_eq!(opened.find("knob-osc-2-position"), None);
-    // Picked from the menu, not defaulted: undo gives the synth back.
-    opened.keys("secondary-z");
-    assert!(
-        opened.project(|project| project.resolve::<WavetableState>(&id(SLOT)).is_none()),
-        "the Wavetable is still there"
-    );
 }
 
 /// A drag up and down anywhere on the wavetable moves the position, from where it is, and a

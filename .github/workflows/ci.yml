@@ -87,6 +87,8 @@ jobs:
       - run: cargo nextest run --workspace --locked
         env:
           RTSAN_ENABLE: 1
+      # The window rendered offscreen, which nextest leaves out: it has no test harness.
+      - run: cargo test -p runtime --test snapshots --locked
 
   # Linux builds and runs the tests.
   linux:

@@ -4,13 +4,11 @@
 use midi::{Input, Keyboard, Played};
 use sound_core::{
     Engine, EngineConfig, EngineControl, EventInput, InputEndpoint, Node, Ports, PrepareConfig,
-    ProcessContext, Processor, Ticks,
+    ProcessContext, Processor,
 };
 use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
-/// Frames per tick at 120 bpm and 48 kHz.
-pub(crate) const TICK: usize = 25;
 
 /// An event that reached the instrument, with the engine frame it landed on.
 pub(crate) type Heard = (u64, NoteEvent);
@@ -153,11 +151,6 @@ impl Harness {
         }
         heard
     }
-
-    /// Where the project position is, as the interface reads it. Recording starts here.
-    pub(crate) fn playhead(&mut self) -> Ticks {
-        self.control.poll().unwrap().playhead_tick
-    }
 }
 
 pub(crate) fn pitch(number: u8) -> Pitch {
@@ -184,12 +177,4 @@ pub(crate) fn pedal(value: u8) -> Played {
 
 pub(crate) fn bend(value: i16) -> Played {
     Played::Bend(sound_notes::Bend::new(value).unwrap())
-}
-
-pub(crate) fn mod_wheel(value: u8) -> Played {
-    Played::ModWheel(sound_notes::Amount::new(value).unwrap())
-}
-
-pub(crate) fn pressure(value: u8) -> Played {
-    Played::Pressure(sound_notes::Amount::new(value).unwrap())
 }

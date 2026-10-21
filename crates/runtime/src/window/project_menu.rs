@@ -10,9 +10,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use gpui::{
     App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Task,
     WeakEntity, Window, prelude::*,
@@ -28,7 +28,6 @@ use sound_ui::components::dropdown_menu::{
 use crate::app::ChosenDevices;
 #[cfg(unix)]
 use crate::app::Installed;
-use crate::main_arrangement;
 use crate::{app, log_file};
 
 const EXPORT: &str = "export";
@@ -87,7 +86,6 @@ pub struct ProjectMenu {
 /// All that the items depend on in the project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Shown {
-    has_arrangement: bool,
     has_selection: bool,
     exporting: bool,
     undo: Option<String>,
@@ -98,8 +96,7 @@ impl Shown {
     fn of(session: &Session, exporting: bool) -> Self {
         let project = session.project();
         Self {
-            has_arrangement: main_arrangement(project).is_some(),
-            has_selection: !session.selected_clips().is_empty(),
+            has_selection: session.selected_span().is_some(),
             exporting,
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
@@ -248,7 +245,7 @@ impl ProjectMenu {
             .update(cx, |session, cx| match picked.0.as_ref() {
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
-                NEW_PROJECT => new_project(session, cx),
+                NEW_PROJECT => choose_new_project(cx.entity(), cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 LOG => {
@@ -295,7 +292,7 @@ fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     if !selection {
         return project.end().map(|_| Vec::new());
     }
-    let (from, to) = crate::clips_span(project, session.selected_clips())?;
+    let (from, to) = session.selected_span()?;
     Some(vec![
         "--from".into(),
         from.0.to_string(),
@@ -319,7 +316,7 @@ fn export_audio(
         (folder, export_span(session, selection))
     });
     let Some(span) = span else {
-        let message = "The project has no clips, so there is nothing to export.";
+        let message = "Nothing in the project plays to an end, such as a clip, so there is nothing to export.";
         session.update(cx, |session, cx| session.report(message, cx));
         return;
     };
@@ -535,10 +532,17 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
     .detach();
 }
 
+/// Shows the templates, and makes a new project of the one picked, see [`new_project`].
+pub(super) fn choose_new_project(session: Entity<Session>, cx: &mut App) {
+    let on_pick = move |template, cx: &mut App| {
+        session.update(cx, |session, cx| new_project(session, template, cx));
+    };
+    super::new_project::choose_template(Rc::new(on_pick), cx);
+}
+
 /// Asks for the name and place of a new project in the save panel, next to the open project,
-/// and opens it as [`open_another_project`] does. The panel itself asks before it reuses a
-/// folder that is there, and a folder with other files in it is refused as when opened.
-pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
+/// and opens it as [`open_another_project`] does. A folder with files in it is refused.
+fn new_project(session: &Session, template: &'static crate::Template, cx: &mut Context<Session>) {
     let root = session.project().root();
     let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
     cx.spawn(async move |session, cx| {
@@ -555,7 +559,7 @@ pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
                 return;
             }
         };
-        start_on(folder, &session, cx).await;
+        start_on(folder, Some(template), &session, cx).await;
     })
     .detach();
 }
@@ -567,7 +571,7 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
     let picked = cx.prompt_for_paths(super::start::folder_prompt());
     cx.spawn(
         async move |session, cx| match super::start::picked_folder(picked.await.ok()) {
-            Ok(Some(folder)) => start_on(folder, &session, cx).await,
+            Ok(Some(folder)) => start_on(folder, None, &session, cx).await,
             Ok(None) => {}
             Err(error) => report(&session, error, cx),
         },
@@ -577,12 +581,18 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
 
 /// Makes `folder` when it is new and remembers it as the last project, off the UI thread, then
 /// starts the app again on it.
-async fn start_on(folder: PathBuf, session: &WeakEntity<Session>, cx: &mut AsyncApp) {
+async fn start_on(
+    folder: PathBuf,
+    template: Option<&'static crate::Template>,
+    session: &WeakEntity<Session>,
+    cx: &mut AsyncApp,
+) {
     let remembered = cx
         .background_spawn(async move {
-            app::check_project_folder(&folder)?;
-            std::fs::create_dir_all(&folder)
-                .with_context(|| format!("could not make {}", folder.display()))?;
+            match template {
+                Some(template) => crate::templates::write(&folder, template)?,
+                None => app::check_project_folder(&folder)?,
+            }
             app::remember_project(&folder)
         })
         .await;
@@ -705,8 +715,7 @@ fn entries(
     vec![
         MenuEntry::Group(
             MenuGroup::new().items([
-                command(EXPORT, "Export audio…".to_string())
-                    .disabled(!shown.has_arrangement || shown.exporting),
+                command(EXPORT, "Export audio…".to_string()).disabled(shown.exporting),
                 command(EXPORT_SELECTION, "Export selection…".to_string())
                     .disabled(!shown.has_selection || shown.exporting),
             ]),
@@ -791,33 +800,37 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
 /// to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
 /// started from a terminal writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
-    [
-        (NEW_PROJECT, "New project…"),
+    let mut items = vec![
+        MenuItem::new(NEW_PROJECT, "New project…")
+            .selectable(false)
+            .shortcut("mod+n"),
+    ];
+    let rest = [
         (OPEN_PROJECT, "Open project…"),
         (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
         (LOG, "Reveal log file"),
-    ]
-    .into_iter()
-    .filter(|(value, _)| match *value {
-        INSTALL_TOOL => cfg!(unix),
-        LOG => log_file::path().is_some(),
-        _ => true,
-    })
-    .map(|(value, label)| {
-        let item = MenuItem::new(value, label).selectable(false);
-        match value {
-            NEW_PROJECT => item.shortcut("mod+n"),
-            OPEN_PROJECT => item.shortcut("mod+o"),
-            OPEN_RECENT => item
-                .submenu(recent_items(recent))
-                .disabled(recent.is_empty()),
-            _ => item,
-        }
-    })
-    .collect()
+    ];
+    let rest = (rest.into_iter())
+        .filter(|(value, _)| match *value {
+            INSTALL_TOOL => cfg!(unix),
+            LOG => log_file::path().is_some(),
+            _ => true,
+        })
+        .map(|(value, label)| {
+            let item = MenuItem::new(value, label).selectable(false);
+            match value {
+                OPEN_PROJECT => item.shortcut("mod+o"),
+                OPEN_RECENT => item
+                    .submenu(recent_items(recent))
+                    .disabled(recent.is_empty()),
+                _ => item,
+            }
+        });
+    items.extend(rest);
+    items
 }
 
 #[cfg(test)]

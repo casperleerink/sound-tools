@@ -1,30 +1,21 @@
-//! The built-in limiter in the chain of a real track: an outside agent changes it by file while
-//! the project plays and the change is heard, its lookahead is a latency the project makes up
-//! for, and it sounds as the limiter of the master does with the same settings.
+//! The built-in limiter in a rack after the synth: an outside agent changes it by file while the
+//! project plays and the change is heard, and its lookahead is a latency the project makes up
+//! for.
 
-use crate::support::{BAR, Harness, clip};
+use crate::support::{BAR, Harness, clip, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const LIMITER_FILE: &str = "state/arrangement/piano/peaks.json";
+const LIMITER_FILE: &str = "state/rack/peaks.json";
 
-/// A chord for four bars, loud enough to go over -6 dBFS.
-fn loud_piano(harness: &mut Harness) {
-    let chord = [(0, 15360, 48), (0, 15360, 55), (0, 15360, 64)];
-    harness.write_track("piano", 1, 0.5, &[("chord", clip(0, 15360, &chord))]);
-}
-
-/// A track that plays the chord through a limiter named `peaks`.
+/// A rack that plays a chord for four bars, loud enough to go over -6 dBFS, through a limiter
+/// named `peaks`.
 fn piano_through(limiter: &str) -> Harness {
-    let mut harness = Harness::new();
-    loud_piano(&mut harness);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["peaks"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(LIMITER_FILE, limiter),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let chord = [(0, 15360, 48), (0, 15360, 55), (0, 15360, 64)];
+    let (synth, chord) = (synth(0.5), clip(0, 15360, &chord));
+    Harness::rack(&[
+        ("instrument", &synth),
+        ("chord", &chord),
+        ("peaks", limiter),
+    ])
 }
 
 fn record(state: &str) -> String {
@@ -65,7 +56,7 @@ fn an_outside_edit_of_the_limiter_while_it_plays_is_heard_and_undone_in_one_step
     assert!(peak(&undone[BAR / 4..]) > amplitude(-20.0));
 }
 
-/// A limiter whose ceiling the track never reaches only looks ahead: it delays its track by
+/// A limiter whose ceiling the rack never reaches only looks ahead: it delays the rack by
 /// 5 ms, and the project makes up for it. The render is the render without the lookahead,
 /// sample for sample, and the project reports the latency.
 #[test]
@@ -82,25 +73,4 @@ fn the_lookahead_is_a_latency_the_project_makes_up_for() {
     assert_eq!(plain.project.engine().poll().unwrap().latency, 0);
     assert_eq!(heard, plain.play(BAR));
     assert!(peak(&heard) > 0.1);
-}
-
-/// The limiter on the track and the limiter of the master are one limiter: with the same
-/// settings, the track through the device into a master that is not reached sounds exactly as
-/// the track straight into a master set that way.
-#[test]
-fn the_device_sounds_as_the_limiter_of_the_master() {
-    let mut device = piano_through(&record(
-        r#"{"ceiling_db": -6.0, "release_ms": 50.0, "lookahead_ms": 5}"#,
-    ));
-    let mut master = Harness::new();
-    loud_piano(&mut master);
-    let arrangement = r#"{"tool": "arrangement", "state": {"master": {"limiter": {"ceiling_db": -6.0, "release_ms": 50.0, "lookahead_ms": 5.0}}}}"#;
-    assert_eq!(
-        master.write_and_apply("state/arrangement/instance.json", arrangement),
-        1
-    );
-    let heard = device.play_from_the_start(2 * BAR);
-    assert!(peak(&heard) <= amplitude(-6.0));
-    assert_eq!(heard, master.play_from_the_start(2 * BAR));
-    assert!(peak(&heard) > amplitude(-6.5));
 }

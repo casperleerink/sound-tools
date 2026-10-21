@@ -1,14 +1,12 @@
-//! The built-in reverb in the chain of a real track: an outside agent changes it by file while
+//! The built-in reverb in a rack after the synth: an outside agent changes it by file while
 //! the project plays and the change is heard.
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, Harness, clip, difference, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const REVERB_FILE: &str = "state/arrangement/piano/room.json";
+const REVERB_FILE: &str = "state/rack/room.json";
 
-/// A track that plays short chords for four bars through a reverb named `room`.
+/// A rack that plays short chords for four bars through a reverb named `room`.
 fn piano_through(reverb: &str) -> Harness {
-    let mut harness = Harness::new();
     let chords = [
         (0, 480, 48),
         (0, 480, 55),
@@ -16,15 +14,12 @@ fn piano_through(reverb: &str) -> Harness {
         (3840, 480, 64),
         (5760, 480, 67),
     ];
-    harness.write_track("piano", 1, 0.15, &[("chords", clip(0, 15360, &chords))]);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["room"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(REVERB_FILE, reverb),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chords) = (synth(0.15), clip(0, 15360, &chords));
+    Harness::rack(&[
+        ("instrument", &synth),
+        ("chords", &chords),
+        ("room", reverb),
+    ])
 }
 
 fn record(state: &str) -> String {

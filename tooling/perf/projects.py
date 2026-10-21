@@ -60,23 +60,43 @@ def drums(bars=BARS):
     return [{"start": start, "length": 120, "pitch": pitch, "velocity": 100} for start, pitch in sorted(hits)]
 
 
+def daw(folder, source):
+    """The song of the DAW template of `source` in the project the runtime made: its tools, its
+    master, its audio track, and how it reaches the device. Its first track is left out."""
+    template = source / "templates/daw"
+    shutil.copytree(template / "extensions", folder / "extensions", dirs_exist_ok=True)
+    song = template / "state/song"
+    for path in [*song.glob("*.json"), *(song / "voice").glob("*.json")]:
+        target = folder / "state/song" / path.relative_to(song)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(path, target)
+    project = json.loads((folder / "project.json").read_text())
+    project.update({key: value for key, value in json.loads((template / "project.json").read_text()).items()
+                    if key != "extensions"})
+    write(folder / "project.json", project)
+
+
 def track(folder, name, order, instrument, clip_notes, effects=None, gain_db=0.0, bars=BARS):
-    """An instrument track. `effects` is effect name -> state, reverb and delay at their defaults
-    when left out."""
-    base = folder / "state/arrangement" / name
-    state = {"name": name, "colour": "teal", "order": order}
-    if gain_db:
-        state["gain_db"] = gain_db
+    """A track of the song, in its place `order`. `effects` is effect name -> state, reverb and
+    delay at their defaults when left out."""
+    base = folder / "state/song" / name
     effects = {"reverb": {}, "delay": {}} if effects is None else effects
-    if effects:
-        state["effects"] = list(effects)
-        for effect, effect_state in effects.items():
-            write(base / f"{effect}.json", {"tool": effect, "state": effect_state})
-    write(base / "instance.json", {"tool": "arrangement.track", "state": state})
-    write(base / "instrument.json", instrument)
+    for effect, effect_state in effects.items():
+        write(base / f"chain/{effect}.json", {"tool": effect, "state": effect_state})
+    write(base / "chain/instance.json", {"tool": "chain", "state": {"order": list(effects)}})
+    write(base / "instance.json", {"tool": "track", "state": {"title": name}})
+    write(base / "synth.json", instrument)
+    write(base / "fx.json", {"tool": "filter", "state": {}})
+    write(base / "mix.json", {"tool": "fader", "state": {"gain_db": gain_db}})
+    write(base / "rec.json", {"tool": "recorder", "state": {}})
     if clip_notes is not None:
         clip = {"start": 0, "length": BAR * bars, "notes": clip_notes}
-        write(base / "clip.json", {"tool": "arrangement.clip", "state": clip})
+        write(base / "clip.json", {"tool": "timeline", "state": clip})
+    song = folder / "state/song/instance.json"
+    record = json.loads(song.read_text())
+    tracks = record["state"].setdefault("order", [])
+    tracks.insert(min(order, len(tracks)), name)
+    write(song, record)
 
 
 def builtins(folder, synths, wavetables, start=0):
@@ -212,39 +232,43 @@ def heavy(folder, clips):
 
 
 def reverb_project(folder, name):
-    """rv-ir-<setting>: a click on an audio track into a wet reverb. rv-chords and rv-drums: the
-    default reverb on the synth playing chords and on the Drum pad."""
+    """rv-ir-<setting>: a click into a wet reverb, wired in `project.json` in place of the song.
+    rv-chords and rv-drums:
+    the default reverb on the synth playing chords and on the Drum pad."""
     if name == "rv-chords":
         return track(folder, "chords", 0, SYNTH, notes("chords", 0), {"reverb": {}})
     if name == "rv-drums":
         return track(folder, "drums", 0, BI_INSTRUMENTS["drum-pad"], drums(), {"reverb": {}})
     click = int(CLICK_SECONDS * RATE)
     write_wav(folder, "click.wav", (0.5 if t == click else 0.0 for t in range(click * 2)), RATE)
-    base = folder / "state/arrangement/click"
-    state = {"name": "click", "colour": "teal", "order": 0, "kind": "audio", "effects": ["reverb"]}
-    write(base / "instance.json", {"tool": "arrangement.track", "state": state})
-    write(base / "reverb.json", {"tool": "reverb", "state": REVERBS[name.removeprefix("rv-ir-")]})
-    write(base / "take.json", {"tool": "arrangement.audio_clip", "state": {"asset": "click.wav", "start": 0}})
+    write(folder / "state/click.json", {"tool": "region", "state": {"asset": "click.wav", "start": 0}})
+    write(folder / "state/verb.json", {"tool": "reverb", "state": REVERBS[name.removeprefix("rv-ir-")]})
+    project = json.loads((folder / "project.json").read_text())
+    project["connections"] = [
+        {"from": {"instance": "click", "port": "audio"}, "to": {"input": {"instance": "verb", "port": "audio"}}},
+        {"from": {"instance": "verb", "port": "audio"}, "to": {"device_output": 0}},
+    ]
+    project.pop("main", None)
+    write(folder / "project.json", project)
 
 
 def automate(folder):
-    """On every track, a gate on its volume and on the cutoff of its instrument each sixteenth: up
-    in 5 ticks, then down over the rest, so each lane bends twice a sixteenth inside a block."""
-    cutoffs = {"instrument.synth": "cutoff_hz", "wavetable": "filter_1.cutoff_hz"}
+    """On every track, a gate on its volume and on the cutoff of its filter each sixteenth: up in
+    5 ticks, then down over the rest, so each lane bends twice a sixteenth inside a block."""
 
     def gate(low, high):
         return [point for step in range(BARS * 16)
                 for point in ({"tick": step * 240, "value": low}, {"tick": step * 240 + 5, "value": high})]
 
-    for path in (folder / "state/arrangement").glob("*/instance.json"):
-        instrument = path.parent / "instrument.json"
-        if not instrument.exists():
+    for path in (folder / "state/song").glob("*/instance.json"):
+        if not (path.parent / "synth.json").exists():
             continue
+        write(path.parent / "lane-gain.json", {"tool": "lane", "state": {"points": gate(-12.0, 0.0)}})
+        write(path.parent / "lane-cutoff.json", {"tool": "lane", "state": {"points": gate(400.0, 4000.0), "scale": "log"}})
         record = json.loads(path.read_text())
         record["state"]["automation"] = [
-            {"parameter": "gain_db", "points": gate(-12.0, 0.0)},
-            {"device": "instrument", "parameter": cutoffs[json.loads(instrument.read_text())["tool"]],
-             "points": gate(400.0, 4000.0)},
+            {"lane": "lane-gain", "target": "mix.gain_db"},
+            {"lane": "lane-cutoff", "target": "fx.cutoff_hz"},
         ]
         write(path, record)
 
@@ -256,6 +280,7 @@ def make(runtime, source, folder, name, env):
     made = subprocess.run([runtime, folder, "--headless"], input="quit\n", env=env, capture_output=True, text=True)
     if made.returncode != 0 or not (folder / "project.json").exists():
         raise SystemExit(f"could not make {name}:\n{made.stdout}{made.stderr}")
+    daw(folder, source)
     if name == "builtin12":
         builtins(folder, 8, 4)
     elif name == "automated":
@@ -286,7 +311,4 @@ def make(runtime, source, folder, name, env):
 
 
 def set_master_gain(folder, gain_db):
-    path = folder / "state/arrangement/instance.json"
-    record = json.loads(path.read_text())
-    record["state"]["master"]["gain_db"] = gain_db
-    path.write_text(json.dumps(record, indent=1))
+    write(folder / "state/song/master.json", {"tool": "fader", "state": {"gain_db": gain_db}})
