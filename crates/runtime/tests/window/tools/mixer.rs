@@ -71,9 +71,10 @@ pub(super) fn open_mixer(cx: &mut TestAppContext, count: usize) -> Opened<'_> {
 }
 
 impl Opened<'_> {
-    /// Plays `frames` of the engine and draws a frame of the page.
+    /// Plays `frames` of the engine and draws the next frame of the page.
     pub(super) fn play_and_draw(&mut self, frames: usize) {
         self.loudest(frames);
+        self.cx.executor().advance_clock(sound_ui::POLL_INTERVAL);
         self.find("space-fader-master");
     }
 }
