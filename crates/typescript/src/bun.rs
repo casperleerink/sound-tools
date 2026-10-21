@@ -174,7 +174,7 @@ pub(crate) enum EventKind {
     Title,
     /// A pick in a select of the sidechain picker of an embedded card.
     Sidechain,
-    /// A control's new value, as code keeps it: a slider let go, a segment picked.
+    /// A pick of a segmented control: the place of its option.
     Change,
 }
 

@@ -824,7 +824,7 @@ export const song = tool({
                 {() => <Volume path={`${name}/mix`} length={PANEL_FADER} meter={memory.armed.has(name) ? { input: inputOf(row()) } : { of: `${name}/mix` }} />}
               </div>
               <div style={{ align: "start" }}>
-                <Knob value={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
+                <Knob field={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
                 <div style={{ direction: "row", gap: 4, paddingTop: 6 }}>
                   <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onPress={() => toggleMute(name)} />
                   <Show when={() => !isReturn()}>
@@ -914,8 +914,8 @@ export const song = tool({
     /** The volume of the fader `path` over `meter`, as the window drew a strip's, and under it its gain, to drag or type. */
     const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
       <>
-        <Fader value={`${path}.gain_db`} length={length} default={0} label="Change the volume" played meter={meter} />
-        <NumberBox key={`gain-${path}`} value={`${path}.gain_db`} unit="db" played max={6} label="Change the volume" width={56} height={16} size={12} align="center" />
+        <Fader field={`${path}.gain_db`} length={length} default={0} label="Change the volume" played meter={meter} />
+        <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" played max={6} label="Change the volume" width={56} height={16} size={12} align="center" />
       </>
     );
     /**
@@ -934,9 +934,9 @@ export const song = tool({
         });
       return (
         <div style={{ width: STRIP, align: "center" }}>
-          <For each={sends}>{(send) => <Knob value={`${each!.name}/${send}.gain_db`} label={returnTitle(send)} min={-60} max={6} default={0} unit="db" />}</For>
+          <For each={sends}>{(send) => <Knob field={`${each!.name}/${send}.gain_db`} label={returnTitle(send)} min={-60} max={6} default={0} unit="db" />}</For>
           <div style={() => ({ height: (mostSends() - sends().length) * KNOB, keep: true })} />
-          <Knob value={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
+          <Knob field={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
           <div style={{ align: "center", gap: 7, paddingTop: 4 }}>
             <Volume path={path} length={MIXER_FADER} meter={master ? "device" : { of: path }} />
           </div>
@@ -991,7 +991,7 @@ export const song = tool({
               {(column) => (
                 <div>
                   <For each={() => sends().slice(column * 2, column * 2 + 2)}>
-                    {(send) => <Knob value={`${name}/${send}.gain_db`} label={returnTitle(send)} min={-60} max={6} default={0} unit="db" />}
+                    {(send) => <Knob field={`${name}/${send}.gain_db`} label={returnTitle(send)} min={-60} max={6} default={0} unit="db" />}
                   </For>
                 </div>
               )}

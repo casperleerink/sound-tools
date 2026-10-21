@@ -27,11 +27,8 @@ use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::icon::Icon;
-use sound_ui::components::indicator::{Indicator, IndicatorSize};
-use sound_ui::components::kbd::Kbd;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
 };
@@ -53,10 +50,9 @@ use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
     self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, CardSelect, Cursor,
-    DivProps, Drag, EmptyProps, IconProps, IndicatorProps, IndicatorSized, InputProps, KbdProps,
-    List, MeterProps, NodeTable, NoticeProps, NoticeToned, Paint, Props, Reach, Readout,
-    SegmentedProps, ShapeKind, SliderProps, SpaceProps, TextProps, ToggleProps, Turned, Weight,
-    Words,
+    DivProps, Drag, IconProps, InputProps, List, MeterProps, NodeTable, NoticeProps, NoticeToned,
+    Paint, Props, Reach, Readout, SegmentedProps, ShapeKind, SliderProps, SpaceProps, TextProps,
+    ToggleProps, Turned, Weight, Words,
 };
 use crate::window::OpenedMenu;
 use crate::window::{Live, Surface, state_of};
@@ -86,9 +82,6 @@ pub(crate) struct TypeScriptCard {
     state: Option<(u64, Rc<Value>)>,
     /// The drag of the pointer, from its press until the answer to its end arrives.
     held: Option<Held>,
-    /// Where the drag of a slider on what code keeps put it, by node, until the answer to the
-    /// event of its end arrives: its number, and when it was sent.
-    slid: HashMap<u64, (f32, Option<(u64, Instant)>)>,
     /// The shape the pointer is over: the key of its space and its node.
     hovered: Option<(String, u64)>,
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
@@ -607,7 +600,6 @@ impl TypeScriptCard {
             spaces: Rc::default(),
             state: None,
             held: None,
-            slid: HashMap::new(),
             hovered: None,
             focus,
             keys_down: BTreeSet::new(),
@@ -1365,35 +1357,6 @@ impl TypeScriptCard {
         }
     }
 
-    /// The gesture of a slider: it turns its field or input as a knob's drag does, or keeps
-    /// where its drag is and tells its code the value it is let go at.
-    fn slide(
-        &mut self,
-        node: u64,
-        turns: Option<&tree::Turns>,
-        change: ValueChange,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(turns) = turns {
-            self.turn(turns, change, cx);
-            return;
-        }
-        let changed = |value: f32| json!({ "value": value });
-        match change {
-            ValueChange::Drag(value) => _ = self.slid.insert(node, (value, None)),
-            ValueChange::DragEnd => {
-                if let Some(&(value, None)) = self.slid.get(&node) {
-                    let number = self.event(node, EventKind::Change, changed(value), cx);
-                    self.slid
-                        .insert(node, (value, Some((number, Instant::now()))));
-                }
-            }
-            ValueChange::DragCancel => _ = self.slid.remove(&node),
-            ValueChange::Set(value) => _ = self.event(node, EventKind::Change, changed(value), cx),
-        }
-        cx.notify();
-    }
-
     /// How the field of an instance inside it a drag turns spreads over its travel: as that
     /// instance's number.
     fn child_range(&self, turns: &tree::Turns, cx: &App) -> Option<ValueRange> {
@@ -1924,7 +1887,6 @@ struct Drawing<'a, 'b> {
     /// The card's own, which the paint of a space writes its size in.
     laid_out: Rc<RefCell<HashMap<String, SpaceView>>>,
     drag: Option<(String, DragNumbers)>,
-    slid: &'a HashMap<u64, (f32, Option<(u64, Instant)>)>,
     hovered: Option<(String, u64)>,
     table: &'a NodeTable,
     feeds: &'a Feeds,
@@ -1988,45 +1950,9 @@ impl Drawing<'_, '_> {
             },
             Props::Button(props) => self.button(id, props, index),
             Props::Toggle(props) => self.toggle(id, props, index),
-            Props::Slider(props) => self.slider(id, props, index),
+            Props::Slider(props) => self.slider(props, index),
             Props::Segmented(props) => self.segmented(id, props, index),
             Props::Notice(props) => self.notice(id, props, index),
-            Props::Indicator(IndicatorProps {
-                key,
-                color,
-                size,
-                ring,
-                pulse,
-            }) => {
-                let size = match size {
-                    Some(IndicatorSized::Xs) => IndicatorSize::Xs,
-                    Some(IndicatorSized::Sm) => IndicatorSize::Sm,
-                    Some(IndicatorSized::Md) | None => IndicatorSize::Md,
-                };
-                let name = element_name("indicator", key.as_deref(), index);
-                Indicator::new(ElementId::Name(name.into()))
-                    .size(size)
-                    .when_some(*color, |indicator, color| indicator.color(color.0))
-                    .ring(*ring == Some(true))
-                    .pulse(*pulse == Some(true))
-                    .into_any_element()
-            }
-            Props::Kbd(KbdProps { keys }) => {
-                Kbd::new(keys.clone().unwrap_or_default()).into_any_element()
-            }
-            Props::Empty(EmptyProps { title, body }) => {
-                let children: Vec<AnyElement> = (entry.children.iter().enumerate())
-                    .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
-                    .collect();
-                let empty = EmptyState::new(
-                    title.clone().unwrap_or_default(),
-                    body.clone().unwrap_or_default(),
-                );
-                match children.is_empty() {
-                    true => empty.into_any_element(),
-                    false => empty.action(div().children(children)).into_any_element(),
-                }
-            }
             Props::Meter(MeterProps {
                 of,
                 input,
@@ -2285,15 +2211,11 @@ impl Drawing<'_, '_> {
             .into_any_element()
     }
 
-    /// A slider of the app: on a field or an input it turns as a knob's drag does; on what code
-    /// keeps it shows where its drag is, and its code hears the value it is let go at.
-    fn slider(&mut self, id: u64, props: &SliderProps, index: &[usize]) -> AnyElement {
+    /// A slider of the app, which turns its field or input as a knob's drag does.
+    fn slider(&mut self, props: &SliderProps, index: &[usize]) -> AnyElement {
         let name = element_name("slider", props.key.as_deref(), index);
         let (min, max) = (props.min.unwrap_or(0.0), props.max.unwrap_or(1.0));
-        let value = match self.slid.get(&id) {
-            Some((value, _)) => *value,
-            None => (props.value.as_ref()).map_or(min, |value| self.sources().number(value) as f32),
-        };
+        let value = (props.value.as_ref()).map_or(min, |value| self.sources().number(value) as f32);
         let slider = Slider::new(ElementId::Name(name.into()), props.width.unwrap_or(120.0))
             .range(crate::tools::knob_range(min, max, props.unit))
             .value(value)
@@ -2310,11 +2232,9 @@ impl Drawing<'_, '_> {
             label: props.label.clone(),
         });
         let card = self.cx.entity().downgrade();
-        let heard = turns.is_some() || props.on_change == Some(true);
-        let slider = slider.when(heard, |slider| {
+        let slider = slider.when_some(turns, |slider, turns| {
             slider.on_change(move |change, _, cx| {
-                let turns = turns.clone();
-                (card.update(cx, |view, cx| view.slide(id, turns.as_ref(), change, cx))).ok();
+                (card.update(cx, |view, cx| view.turn(&turns, change, cx))).ok();
             })
         });
         // A drag of it is its own, not the row's under it.
@@ -3854,7 +3774,6 @@ impl TypeScriptCard {
             spaces: self.spaces.borrow().clone(),
             laid_out: self.spaces.clone(),
             drag,
-            slid: &self.slid,
             hovered: self.hovered.clone(),
             table: &table,
             feeds: &self.feeds,
@@ -3932,9 +3851,6 @@ impl Render for TypeScriptCard {
         {
             self.held = None;
         }
-        self.slid.retain(|_, (_, ended)| {
-            ended.is_none_or(|(number, at)| answered < number && at.elapsed() <= ENDED_DRAG)
-        });
         let live = self.live.read(cx);
         let info = live.info(self.card);
         let hears_keys = info.as_ref().is_some_and(|info| info.keys);
@@ -3993,7 +3909,6 @@ impl Render for TypeScriptCard {
                     spaces: self.spaces.borrow().clone(),
                     laid_out: self.spaces.clone(),
                     drag,
-                    slid: &self.slid,
                     hovered: self.hovered.clone(),
                     table: &table,
                     feeds: &self.feeds,

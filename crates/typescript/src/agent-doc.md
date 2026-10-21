@@ -121,7 +121,7 @@ Every sound also has the input `notes`, which plays its voices. `send` plays an 
 
 ## Its view
 
-Without `view`, it gets a knob per number field and number input, a row of steps per list of numbers, a chooser per file, and a button per option, boolean and bang. For your own, give `view` in a `.tsx` file. It runs once and makes what shows; what it keeps goes in `memory`. The window gives it a room, `size`: a card where its parent shows it, or the whole window for a tool at the top.
+Without `view`, it gets a knob per number field and number input, a row of steps per list of numbers, a chooser per file, options side by side per choice, a switch per boolean and a button per bang. For your own, give `view` in a `.tsx` file. It runs once and makes what shows; what it keeps goes in `memory`. The window gives it a room, `size`: a card where its parent shows it, or the whole window for a tool at the top.
 
 A card is 144 points tall: more is cut off. It is as wide as it needs, at least 200. So put things side by side: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
@@ -130,18 +130,19 @@ import { Button, Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
 
 const column: Style = { gap: 8 };
 const row: Style = { direction: "row", gap: 8, align: "center" };
+const pad = { x: "bend", y: "drive" };
 
 tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ send }) => (
     <div style={column}>
       <div style={row}>
-        <Knob value="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
-        <Pad x="bend" y="drive" size={72} />
+        <Knob field="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
+        <Pad field={pad} size={72} />
         <Meter value="level" />
       </div>
       <div style={row}>
-        <Steps value="steps" playing="step" />
+        <Steps field="steps" playing="step" />
         <Button label="Hit" onPress={() => send("hit")} />
       </div>
     </div>
@@ -154,8 +155,8 @@ tool({
 | `<div style onPress carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. `onPress` hears a click or a right click; a `disabled` div hears no press, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
 | `<Input>` | A text field; keys typed there play nothing. |
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view; `sidechain` puts selects behind the expand of a compressor or a gate. |
-| `<Knob>`, `<Fader>`, `<Slider>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>` | A knob, a fader (over a meter with `meter`), a slider, a number to drag or type, a row of steps, a square for the pointer, a list, options side by side. `value` names a field as `now.value` does; with `onChange`, it is what code keeps, such as `memory`, which hears a drag at its end. |
-| `<Meter>`, `<Indicator>`, `<Kbd>`, `<Notice>`, `<EmptyState>` | A level of any live value, a status dot, a shortcut, a quiet message, an empty place. |
+| `<Knob>`, `<Fader>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>`, `<Slider>` | A knob, a fader (over a meter with `meter`), a number to drag or type, a row of steps, a square for the pointer, a list, options side by side, a slider. `field` names a field as `now.value` does; or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag at its end. A `Slider` takes only a `field`. |
+| `<Meter>`, `<Notice>` | A level of any live value; a quiet message. |
 
 All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `confirm` (the system's yes-or-no question), `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 

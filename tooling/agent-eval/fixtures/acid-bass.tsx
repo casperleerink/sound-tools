@@ -49,14 +49,14 @@ tool({
   view: () => (
     <div style={{ gap: 8 }}>
       <div style={{ direction: "row", gap: 8, align: "center" }}>
-        <Knob value="cutoff" label="Cutoff" min={60} max={4000} default={400} unit="hz" />
-        <Knob value="resonance" label="Resonance" min={0} max={1} default={0.6} />
-        <Knob value="note" label="Note" min={24} max={60} default={36} />
+        <Knob field="cutoff" label="Cutoff" min={60} max={4000} default={400} unit="hz" />
+        <Knob field="resonance" label="Resonance" min={0} max={1} default={0.6} />
+        <Knob field="note" label="Note" min={24} max={60} default={36} />
       </div>
       <div style={{ color: "#9ca3af" }}>Steps</div>
-      <Steps value="steps" playing="step" />
+      <Steps field="steps" playing="step" />
       <div style={{ color: "#9ca3af" }}>Accents</div>
-      <Steps value="accents" playing="step" />
+      <Steps field="accents" playing="step" />
     </div>
   ),
 });

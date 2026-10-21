@@ -2029,7 +2029,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "slider" | "segmented" | "indicator" | "kbd" | "notice" | "empty" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "slider" | "segmented" | "notice" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -2778,12 +2778,14 @@ function drawing(): Drawing {
   return currentCard().drawn;
 }
 
+/** A value code keeps, such as in `memory`: a control shows it and `onChange` hears a drag once, at its end. */
+export type Kept<T> = { value: Bind<T>; onChange: (value: T) => void };
+
 /**
- * What a control shows and changes: a field as `now.value` names it, such as `"cutoff"` or
- * `"bass/mix.gain_db"`, whose change is one undo step; or, with `onChange`, a value code keeps,
- * such as in `memory`, which it shows as `value` gives it and which hears a drag once, at its end.
+ * What a control shows and changes: a `field` as `now.value` names it, such as `"cutoff"` or
+ * `"bass/mix.gain_db"`, whose change is one undo step; or a value code keeps, see `Kept`.
  */
-export type ValueProps<T> = { value: string; onChange?: undefined } | { value: Bind<T>; onChange: (value: T) => void };
+export type ValueProps<T> = { field: string } | Kept<T>;
 
 const read = <V,>(bound: Bind<V>): V => (typeof bound === "function" ? (bound as Accessor<V>)() : bound);
 
@@ -2798,12 +2800,12 @@ const controlId = (kind: string) => `${kind}-${++controls}`;
 
 /** A field, or what code keeps, as a control reads and sets it. A field's change is one undo step of `label`. */
 function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label?: string) => void } {
-  if (props.onChange !== undefined) {
+  if (!("field" in props)) {
     const { value, onChange } = props;
     return { get: () => read(value), set: (value) => onChange(value) };
   }
   const { state, children, update } = drawing();
-  const { child, name } = splitPath(props.value);
+  const { child, name } = splitPath(props.field);
   return {
     get: () => recordAt({ state, children }, child)?.state[name] as T,
     set: (value, label) =>
@@ -2835,8 +2837,8 @@ function liveValueAt({ min, max, scale }: Travel, position: Live): Live {
  * `onChange`, at its end, gives it a new value.
  */
 function turned(kind: string, props: ValueProps<number> & { key?: string; played?: boolean }, travel: Travel, turns: Omit<DragTurns, "value">, along: "x" | "y") {
-  if (props.onChange === undefined) {
-    const { value: name, played } = props;
+  if ("field" in props) {
+    const { field: name, played } = props;
     return {
       key: props.key ?? `${kind}-${name}`,
       value: () => now.value(name, { played }),
@@ -2939,7 +2941,7 @@ export type FaderProps = ValueProps<number> & { key?: string; length: number; ho
 /**
  * A fader on a number, as the app's volumes look: a handle a drag moves along `length` points,
  * up or, `horizontal`, to the right, over two bars of `meter` when given, green up to -6 dB and
- * yellow above with a peak line that holds, on the fader's scale. `value` is as a `Knob`'s; it
+ * yellow above with a peak line that holds, on the fader's scale. What it moves is as a `Knob`'s; it
  * takes the number's range and scale unless `min` and `max` say, so a `gain_db` of a `fader`
  * moves on the fader's scale, as does what code keeps without them. A double click puts it at
  * `default`.
@@ -2990,11 +2992,13 @@ export function Fader(props: FaderProps): UiNode {
 const TICK_UNITS = ["position", "time", "signature", "beats", "note"] as const;
 type TickUnit = (typeof TICK_UNITS)[number];
 
-export type NumberBoxProps = ValueProps<number> & {
+export type NumberBoxProps = (
+  | { field: string }
+  /** `show` is what it shows in place of what code keeps, as a `Label` does: `now.bpm` of a tempo that changes as the piece plays, or `now.tick` in `"beats"`. */
+  | (Kept<number> & { show?: Num })
+) & {
   /** Names its space and its drag, as `now.drag(key)`. */
   key: string;
-  /** What it shows in place of what code keeps, as a `Label` does: `now.bpm` of a tempo that changes as the piece plays, or `now.tick` in `"beats"`. */
-  show?: Num;
   min?: number;
   max?: number;
   /** What a drag of what code keeps moves by, and what a typed value rounds to: 1 when left out. */
@@ -3034,7 +3038,7 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const { key, unit, width, values } = props;
-  const field = props.onChange === undefined ? props.value : undefined;
+  const field = "field" in props ? props.field : undefined;
   const height = props.height ?? 18;
   const per = props.per ?? 10;
   const step = props.step ?? 1;
@@ -3047,7 +3051,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
   const text = { x, y: 0, size: props.size ?? 14, color: props.color ?? "gray-950", align: props.align } as const;
-  const shows = field !== undefined ? now.value(field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
+  const shows = "field" in props ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
   const shown = { ...text, text: shows, unit };
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit | "pan");
   const onPress = ({ clicks, button }: Press) => {
@@ -3112,7 +3116,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
 
 /** A number field as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
 function numberField(path: string, label?: string) {
-  const field = valueOf<unknown>({ value: path });
+  const field = valueOf<unknown>({ field: path });
   return {
     get: () => {
       const found = field.get();
@@ -3148,7 +3152,7 @@ export interface SelectOption<T> {
   disabled?: boolean;
 }
 
-/** `value` is a field, or what code keeps with `onChange`, which hears a pick of another option. */
+/** `onChange` hears a pick of another option. */
 export type SelectProps<T> = ValueProps<T> & {
   /** Names it for tests: `div-<key>`. */
   key?: string;
@@ -3193,15 +3197,14 @@ export function Select<const T extends string | number | boolean | null>(props: 
 export type SegmentedControlProps<T> = ValueProps<T> & {
   /** Names it for tests: `segmented-<key>`, and each option `segment-<place>`. */
   key?: string;
-  options: Bind<readonly { value: T; label: string }[]>;
+  options: Bind<readonly Pick<SelectOption<T>, "value" | "label">[]>;
   disabled?: Bind<boolean>;
 };
 
-/** One of a few options side by side, as the window's pages of a card: a pick of another changes `value`. */
+/** One of a few options side by side, as the window's pages of a card. */
 export function SegmentedControl<const T extends string | number | boolean | null>(props: SegmentedControlProps<T>): UiNode {
   const { get, set } = valueOf(props);
   const options = () => read(props.options);
-  // The window shows the labels of the options, and tells a pick by its place.
   return element("segmented", {
     key: props.key,
     options: () => options().map((option) => option.label),
@@ -3217,92 +3220,66 @@ export function SegmentedControl<const T extends string | number | boolean | nul
   }, []);
 }
 
-export type SliderProps = ValueProps<number> & { key?: string; min: number; max: number; default?: number; unit?: Unit; label?: string; played?: boolean; bipolar?: boolean; width?: number };
+export type SliderProps = { field: string; key?: string; min: number; max: number; default?: number; unit?: Unit; label?: string; played?: boolean; bipolar?: boolean; width?: number };
 
 /**
- * A number on a short line, as the window's sliders: a drag sideways, ten times finer with shift,
- * a double click to `default`, the arrows step. From `min` to `max`, on a log scale for `"hz"`;
- * `bipolar` draws from 0. 120 points wide unless `width` says. `value` is as a `Knob`'s.
+ * A field or a number input on a short line, as the window's sliders: a drag sideways, ten times
+ * finer with shift, a double click to `default`, the arrows step. From `min` to `max`, on a log
+ * scale for `"hz"`; `bipolar` draws from 0. 120 points wide unless `width` says.
  */
-export function Slider(props: SliderProps): UiNode {
-  const look = { key: props.key, min: props.min, max: props.max, default: props.default, unit: props.unit, bipolar: props.bipolar, width: props.width ?? 120 };
-  if (props.onChange === undefined) {
-    return element("slider", { ...look, value: now.value(props.value, { played: props.played }), field: props.value, label: props.label }, []);
-  }
-  const { value, onChange } = props;
-  return element("slider", { ...look, value: () => read(value), onChange: (changed: { value: number }) => onChange(changed.value) }, []);
+export function Slider({ field, played, ...props }: SliderProps): UiNode {
+  return element("slider", { ...props, field, value: now.value(field, { played }) }, []);
 }
-
-/** A status dot of the app, `gray-600` unless `color` says: `ring` gives it a soft halo, `pulse` a slow pulse, as of work going on. */
-export const Indicator = (props: { key?: string; color?: Bind<Color>; size?: "xs" | "sm" | "md"; ring?: Bind<boolean>; pulse?: Bind<boolean> }): UiNode =>
-  element("indicator", { ...props }, []);
-
-/** A shortcut as key caps, keys joined by `+`: `"mod+k"` is ⌘ K on macOS and Ctrl K elsewhere. */
-export const Kbd = (props: { keys: Bind<string> }): UiNode => element("kbd", { ...props }, []);
 
 /**
- * A quiet line for what the composer should know: a dot of its `tone` (`error` when left out),
- * the `message`, a bar of `progress` from 0 to 1, a button `action` that calls `onAction`, and a
- * close button with `onDismiss`.
+ * A quiet line for what the composer should know, as the window's: `tone` is `error` when left
+ * out, `progress` runs from 0 to 1.
  */
-export interface NoticeProps {
-  key?: string;
-  message: Bind<string>;
-  tone?: Bind<"error" | "warning" | "info">;
-  progress?: Bind<number>;
-  action?: Bind<string>;
-  onAction?: () => void;
-  onDismiss?: () => void;
-}
-
-/** A notice, see `NoticeProps`. */
-export const Notice = ({ onAction, onDismiss, ...props }: NoticeProps): UiNode => element("notice", { ...props, onPress: onAction, onClose: onDismiss }, []);
-
-/** A centred `title` over a muted line of `body`, where nothing is yet; its children go under them, such as a button that adds one. */
-export const EmptyState = ({ children, ...props }: { title: Bind<string>; body: Bind<string>; children?: Child }): UiNode =>
-  element("empty", props, [children]);
+export const Notice = ({ action, onDismiss, ...props }: { key?: string; message: Bind<string>; tone?: Bind<"error" | "warning" | "info">; progress?: Bind<number>; action?: { label: Bind<string>; onPress: () => void }; onDismiss?: () => void }): UiNode =>
+  element("notice", { ...props, action: action?.label, onPress: action?.onPress, onClose: onDismiss }, []);
 
 const STEP = { size: 14, gap: 3 } as const;
 
 export type StepsProps = ValueProps<readonly number[]> & { key?: string; max?: number; playing?: string };
 
 /**
- * A row of steps on a list of numbers, such as a `pattern` field, see `ValueProps`: a click
- * turns a step on (to `max`, the item's max or 1 when left out) or off (to its min, or 0).
- * `playing` names an output, as `now.value` does, whose value is the step that plays, which lights up.
+ * A row of steps on a list of numbers, such as a `pattern` field, one per number: a click turns
+ * a step on (to `max`, the item's max or 1 when left out) or off (to its min, or 0). `playing`
+ * names an output, as `now.value` does, whose value is the step that plays, which lights up.
  */
 export function Steps(props: StepsProps): UiNode {
-  const field = props.onChange === undefined ? drawing().fields[props.value] : undefined;
+  const field = "field" in props ? drawing().fields[props.field] : undefined;
   const item = field?.kind === "list" && field.item.kind === "number" ? field.item : undefined;
   const [off, on] = [item?.min ?? 0, props.max ?? item?.max ?? 1];
   const { get, set } = valueOf(props);
   const list = () => get() ?? [];
-  const length = untrack(() => list().length);
   const isOn = (step: number) => (list()[step] ?? off) > off;
   const pitch = STEP.size + STEP.gap;
   return Space({
-    key: props.key ?? (props.onChange === undefined ? `steps-${props.value}` : undefined),
-    width: Math.max(length * pitch - STEP.gap, 0),
+    key: props.key ?? ("field" in props ? `steps-${props.field}` : undefined),
+    width: () => Math.max(list().length * pitch - STEP.gap, 0),
     height: STEP.size,
-    children: Array.from({ length }, (_, step) =>
-      Rect({
-        x: step * pitch,
-        y: 0,
-        width: STEP.size,
-        height: STEP.size,
-        radius: 3,
-        color: () => (isOn(step) ? "lavender" : "alpha/10"),
-        border: "gray-950",
-        borderWidth: props.playing === undefined ? 0 : now.value(props.playing).floor().eq(step).times(2),
-        cursor: "pointer",
-        onPress: () => {
-          const wasOn = isOn(step);
-          const changed = [...untrack(list)];
-          changed[step] = wasOn ? off : on;
-          set(changed, wasOn ? "Turn a step off" : "Turn a step on");
-        },
-      }),
-    ),
+    children: For({
+      each: () => list().map((_, step) => step),
+      children: (step) =>
+        Rect({
+          x: step * pitch,
+          y: 0,
+          width: STEP.size,
+          height: STEP.size,
+          radius: 3,
+          color: () => (isOn(step) ? "lavender" : "alpha/10"),
+          border: "gray-950",
+          borderWidth: props.playing === undefined ? 0 : now.value(props.playing).floor().eq(step).times(2),
+          cursor: "pointer",
+          onPress: () => {
+            const wasOn = isOn(step);
+            const changed = [...untrack(list)];
+            changed[step] = wasOn ? off : on;
+            set(changed, wasOn ? "Turn a step off" : "Turn a step on");
+          },
+        }),
+    }),
   });
 }
 
@@ -3323,19 +3300,16 @@ export function Meter(props: { value: string | Bind<Num>; label?: string }): UiN
   return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: "gray-800", fontSize: 11 } }, props.label));
 }
 
-export type PadProps = { key?: string; size?: number } & (
-  | { x: string; y: string; onChange?: undefined }
-  /** What code keeps, from 0 to 1 across and up. */
-  | { x: Bind<number>; y: Bind<number>; onChange: (at: { x: number; y: number }) => void }
-);
+/** Fields or number inputs named as `now.value` names them, or what code keeps, from 0 to 1 across and up. */
+export type PadProps = { key?: string; size?: number } & ({ field: { x: string; y: string } } | Kept<{ x: number; y: number }>);
 
-/** A square to play with the pointer: across moves `x` and up moves `y`, number inputs or fields named as `now.value` names them, or what code keeps. */
+/** A square to play with the pointer: across moves `x` and up moves `y`. */
 export function Pad(props: PadProps): UiNode {
   const size = props.size ?? 120;
   const look = { width: size, height: size, background: "alpha/5", radius: 6, cursor: "crosshair" } as const;
   const dot = (x: Bind<Num>, y: Bind<Num>) => Circle({ x, y, radius: 5, color: "gray-950" });
-  if (props.onChange === undefined) {
-    const { x, y } = props;
+  if ("field" in props) {
+    const { x, y } = props.field;
     return Space({
       ...look,
       key: props.key ?? `pad-${x}-${y}`,
@@ -3343,7 +3317,7 @@ export function Pad(props: PadProps): UiNode {
       children: [dot(now.value(x, { fraction: true }).times(size), now.value(y, { fraction: true }).negate().plus(1).times(size))],
     });
   }
-  const { x, y, onChange } = props;
+  const { value, onChange } = props;
   const key = props.key ?? controlId("pad");
   const drag = now.drag(key);
   /** Where the pointer is while the drag goes on and until code answers its end, else what code keeps. */
@@ -3353,7 +3327,7 @@ export function Pad(props: PadProps): UiNode {
     ...look,
     key,
     drag: { id: key, onEnd: ended, onClick: ended },
-    children: [dot(() => at(drag.x, read(x)), () => at(drag.y, 1 - read(y)))],
+    children: [dot(() => at(drag.x, read(value).x), () => at(drag.y, 1 - read(value).y))],
   });
 }
 
@@ -3375,13 +3349,13 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
     // Booleans and bangs share one row, so a card fits its room.
     const buttons: Child[] = [];
     const knob = (name: string, field: NumberField) =>
-      Knob({ value: name, label: field.label ?? words(name), min: field.min, max: field.max, default: field.default ?? field.min, unit: field.unit });
+      Knob({ field: name, label: field.label ?? words(name), min: field.min, max: field.max, default: field.default ?? field.min, unit: field.unit });
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
       if (field.kind === "number") {
         knobs.push(knob(name, field));
       } else if (field.kind === "list" && field.item.kind === "number") {
-        rows.push(Steps({ value: name }));
+        rows.push(Steps({ field: name }));
       } else if (field.kind === "file") {
         rows.push(
           h("div", { style: { direction: "row", gap: 8, align: "center" } },
@@ -3417,7 +3391,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         rows.push(
           h("div", { style: { direction: "row", gap: 8, align: "center" } },
             h("div", { style: { color: "gray-700" } }, label),
-            SegmentedControl({ value: name, options: field.options.map((option) => ({ value: option, label: String(option) })) }),
+            SegmentedControl({ field: name, options: field.options.map((option) => ({ value: option, label: String(option) })) }),
           ),
         );
       }

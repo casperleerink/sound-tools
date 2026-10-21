@@ -44,7 +44,7 @@ tool({
   doc: "A knob on a page.",
   state: { level: number({ min: 0, max: 1, default: 0.5 }) },
   sound: () => 0,
-  view: () => h(Knob, { value: "level", label: "Level", min: 0, max: 1, default: 0.5 }),
+  view: () => h(Knob, { field: "level", label: "Level", min: 0, max: 1, default: 0.5 }),
 });
 "#;
 
@@ -143,7 +143,7 @@ tool({
   doc: "A row of steps.",
   state: { steps: pattern({ length: 4, min: 0, max: 1, default: 0 }) },
   sound: () => 0,
-  view: () => h(Steps, { value: "steps" }),
+  view: () => h(Steps, { field: "steps" }),
 });
 "#;
 
@@ -160,8 +160,8 @@ fn a_click_on_a_step_turns_it_on_through_its_code(cx: &mut TestAppContext) {
     assert_eq!(window.undo_label().as_deref(), Some("Turn a step on"));
 }
 
-/// A knob and a slider on what code keeps, and the options of a mode, which keep each value
-/// they hear in the record.
+/// A knob on what code keeps and the options of a mode, which keep each value they hear in the
+/// record, and a slider on a field.
 const KEPT: &str = r#"import { choice, h, Knob, number, SegmentedControl, Slider, tool } from "./sdk";
 
 tool({
@@ -173,6 +173,7 @@ tool({
     level: number({ min: 0, max: 1, default: 0 }),
     heard: number({ min: 0, max: 100, default: 0 }),
     mode: choice({ options: ["soft", "hard"], default: "soft" }),
+    amount: number({ min: 0, max: 1, default: 0.5 }),
   },
   memory: () => ({ level: 0.5, mode: "soft" as "soft" | "hard" }),
   sound: () => 0,
@@ -183,7 +184,7 @@ tool({
     };
     return h("div", { style: { gap: 8 } },
       h(Knob, { key: "kept", value: () => memory.level, onChange: hear, min: 0, max: 1, default: 0.5 }),
-      h(Slider, { key: "amount", value: () => memory.level, onChange: hear, min: 0, max: 1 }),
+      h(Slider, { key: "amount", field: "amount", min: 0, max: 1 }),
       h(SegmentedControl, {
         key: "mode", value: () => memory.mode,
         options: [{ value: "soft", label: "Soft" }, { value: "hard", label: "Hard" }],
@@ -234,7 +235,7 @@ fn a_knob_on_what_code_keeps_moves_with_no_bun_and_its_code_hears_the_end_once(
 }
 
 #[gpui::test]
-fn a_slider_on_what_code_keeps_tells_its_code_where_it_is_let_go(cx: &mut TestAppContext) {
+fn a_slider_turns_its_field_as_one_undo_step_with_no_bun(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("kept", KEPT));
     let slider = window.control("slider-amount");
     let (_, events) = sound_typescript::sent_updates_and_events();
@@ -242,10 +243,12 @@ fn a_slider_on_what_code_keeps_tells_its_code_where_it_is_let_go(cx: &mut TestAp
     for step in 1..=4 {
         window.drag_to(slider + point(px(step as f32 * 7.), px(0.)));
     }
-    assert_eq!(sound_typescript::sent_updates_and_events().1, events);
     window.release(slider + point(px(28.), px(0.)));
+    window.wait_for_bun();
     // From 0.5, a quarter of the 112 points of its line.
-    assert_eq!(window.heard(1), 0.75);
+    assert_eq!(window.record("kept")["amount"], 0.75);
+    assert_eq!(window.undo_label().as_deref(), Some("Change amount"));
+    assert_eq!(sound_typescript::sent_updates_and_events().1, events);
 }
 
 #[gpui::test]
@@ -255,5 +258,54 @@ fn a_pick_of_a_segmented_control_tells_its_code_the_option(cx: &mut TestAppConte
     window.click(hard);
     window.until("the mode to be hard", |window| {
         window.record("kept")["mode"] == "hard"
+    });
+}
+
+/// Steps on what code keeps, which starts with none, and two buttons that give it four or two.
+const GROWING: &str = r#"import { h, Steps, text, tool } from "./sdk";
+
+tool({
+  name: "growing",
+  title: "Growing",
+  when: "You want steps that come and go",
+  doc: "Steps on its memory.",
+  state: { heard: text() },
+  memory: () => ({ steps: [] as number[] }),
+  sound: () => 0,
+  view: ({ memory, update }) =>
+    h("div", { style: { gap: 8 } },
+      h(Steps, {
+        key: "kept", value: () => memory.steps,
+        onChange: (steps) => {
+          memory.steps = [...steps];
+          update("Hear", ({ state }) => { state.heard = steps.join(""); });
+        },
+      }),
+      h("div", { key: "four", onPress: () => { memory.steps = [0, 0, 0, 0]; } }, "Four"),
+      h("div", { key: "two", onPress: () => { memory.steps = [0, 0]; } }, "Two"),
+    ),
+});
+"#;
+
+#[gpui::test]
+fn steps_on_what_code_keeps_grow_and_shrink_with_it(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("growing", GROWING));
+    let row = window.space("kept");
+    let width = |window: &mut Opened, steps: f32| {
+        window.bounds("space-kept").unwrap().size.width == px(steps * 17. - 3.)
+    };
+    let four = window.control("div-four");
+    window.click(four);
+    window.until("four steps", |window| width(window, 4.));
+    window.click(row + point(px(3. * 17. + 7.), px(7.)));
+    window.until("the fourth step to turn on", |window| {
+        window.record("growing")["heard"] == "0001"
+    });
+    let two = window.control("div-two");
+    window.click(two);
+    window.until("two steps", |window| width(window, 2.));
+    window.click(row + point(px(17. + 7.), px(7.)));
+    window.until("the second of two steps to turn on", |window| {
+        window.record("growing")["heard"] == "01"
     });
 }

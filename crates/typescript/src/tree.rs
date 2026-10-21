@@ -168,7 +168,7 @@ props! {
 
 props! {
     /// A slider of the app on a number from `min` to `max`: a `field` or number input it turns
-    /// as a knob's drag does, or `value` its code keeps, which hears the value it is let go at.
+    /// as a knob's drag does, which shows as `value`.
     SliderProps / SliderChange {
         key: String,
         value: Num,
@@ -181,7 +181,6 @@ props! {
         default: f32,
         bipolar: bool,
         width: f32,
-        on_change: bool,
     }
 }
 
@@ -198,22 +197,6 @@ props! {
 }
 
 props! {
-    /// A status dot of the app.
-    IndicatorProps / IndicatorChange {
-        key: String,
-        color: Color,
-        size: IndicatorSized,
-        ring: bool,
-        pulse: bool,
-    }
-}
-
-props! {
-    /// A shortcut as key caps, keys joined by `+`.
-    KbdProps / KbdChange { keys: String }
-}
-
-props! {
     /// A quiet line of the app: a dot of its tone, the message, a bar of progress, a button
     /// that tells a press and a close button.
     NoticeProps / NoticeChange {
@@ -225,19 +208,6 @@ props! {
         on_press: bool,
         on_close: bool,
     }
-}
-
-props! {
-    /// A centred title over a muted line, with its children under them.
-    EmptyProps / EmptyChange { title: String, body: String }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum IndicatorSized {
-    Xs,
-    Sm,
-    Md,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -351,10 +321,7 @@ pub(crate) enum Props {
     Toggle(ToggleProps),
     Slider(SliderProps),
     Segmented(SegmentedProps),
-    Indicator(IndicatorProps),
-    Kbd(KbdProps),
     Notice(NoticeProps),
-    Empty(EmptyProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -373,10 +340,7 @@ pub(crate) enum Change {
     Toggle(ToggleChange),
     Slider(SliderChange),
     Segmented(SegmentedChange),
-    Indicator(IndicatorChange),
-    Kbd(KbdChange),
     Notice(NoticeChange),
-    Empty(EmptyChange),
     Marker,
 }
 
@@ -441,10 +405,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "toggle" => Props::Toggle(next(&mut seq, "props")?),
                         "slider" => Props::Slider(next(&mut seq, "props")?),
                         "segmented" => Props::Segmented(next(&mut seq, "props")?),
-                        "indicator" => Props::Indicator(next(&mut seq, "props")?),
-                        "kbd" => Props::Kbd(next(&mut seq, "props")?),
                         "notice" => Props::Notice(next(&mut seq, "props")?),
-                        "empty" => Props::Empty(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -470,10 +431,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "toggle" => Change::Toggle(next(&mut seq, "props")?),
                         "slider" => Change::Slider(next(&mut seq, "props")?),
                         "segmented" => Change::Segmented(next(&mut seq, "props")?),
-                        "indicator" => Change::Indicator(next(&mut seq, "props")?),
-                        "kbd" => Change::Kbd(next(&mut seq, "props")?),
                         "notice" => Change::Notice(next(&mut seq, "props")?),
-                        "empty" => Change::Empty(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -513,10 +471,7 @@ const FAMILIES: &[&str] = &[
     "toggle",
     "slider",
     "segmented",
-    "indicator",
-    "kbd",
     "notice",
-    "empty",
     "marker",
 ];
 
@@ -756,12 +711,7 @@ impl NodeTable {
                         (Props::Segmented(props), Change::Segmented(change)) => {
                             props.apply(change);
                         }
-                        (Props::Indicator(props), Change::Indicator(change)) => {
-                            props.apply(change);
-                        }
-                        (Props::Kbd(props), Change::Kbd(change)) => props.apply(change),
                         (Props::Notice(props), Change::Notice(change)) => props.apply(change),
-                        (Props::Empty(props), Change::Empty(change)) => props.apply(change),
                         (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}

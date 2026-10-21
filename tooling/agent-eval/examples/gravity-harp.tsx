@@ -199,12 +199,12 @@ tool({
           {options("Octave", "octave", [3, 4, 5], () => state.octave ?? 4)}
         </div>
         <div style={row}>
-          <Knob value="decay" label="Decay" min={0.3} max={12} default={4} />
-          <Knob value="brightness" label="Brightness" min={300} max={12000} default={3500} unit="hz" />
-          <Knob value="space" label="Space" min={0} max={1} default={0.35} unit="percent" />
-          <Knob value="volume" label="Volume" min={0} max={1} default={0.5} unit="percent" />
-          <Knob value="gravity" label="Gravity" min={150} max={2500} default={DEFAULTS.gravity} />
-          <Knob value="bounce" label="Bounce" min={0.2} max={0.95} default={DEFAULTS.bounce} />
+          <Knob field="decay" label="Decay" min={0.3} max={12} default={4} />
+          <Knob field="brightness" label="Brightness" min={300} max={12000} default={3500} unit="hz" />
+          <Knob field="space" label="Space" min={0} max={1} default={0.35} unit="percent" />
+          <Knob field="volume" label="Volume" min={0} max={1} default={0.5} unit="percent" />
+          <Knob field="gravity" label="Gravity" min={150} max={2500} default={DEFAULTS.gravity} />
+          <Knob field="bounce" label="Bounce" min={0.2} max={0.95} default={DEFAULTS.bounce} />
         </div>
       </div>
     );
