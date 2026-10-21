@@ -57,6 +57,7 @@ fn a_knob_of_a_page_turns_its_field_as_it_drags_as_one_undo_step_and_asks_bun_fo
 ) {
     let mut window = open_project(cx, &project("dial", DIAL));
     let dial = window.space("knob-level") + point(px(28.), px(20.));
+    window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     window.press(dial);
     for step in 1..=10 {
