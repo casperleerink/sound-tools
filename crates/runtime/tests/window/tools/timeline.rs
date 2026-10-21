@@ -6,7 +6,6 @@ use gpui::{Modifiers, MouseButton, MouseUpEvent, TestAppContext, point, px};
 
 use super::Opened;
 use super::song::open_song;
-use sound_core::Ticks;
 
 use crate::song::{ACROSS, BAR, LEAD};
 
@@ -177,13 +176,7 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
     window.wait_for_bun();
     // Its name, after the number of its bar.
     window.click(at(2 * BAR, 30.));
-    let session = window.session.clone();
-    window.until("the playhead on its bar", |window| {
-        window
-            .cx
-            .read(|cx| session.read(cx).playhead().read(cx).tick)
-            == Ticks(2 * BAR)
-    });
+    window.until_playhead(2 * BAR);
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
     window.until("the section removed", |window| {
@@ -213,13 +206,7 @@ fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
         signatures(window)
             == serde_json::json!([{ "signature": "4/4", "bars": 2 }, { "signature": "4/4", "bars": 1 }])
     });
-    let session = window.session.clone();
-    window.until("the playhead on bar 3", |window| {
-        window
-            .cx
-            .read(|cx| session.read(cx).playhead().read(cx).tick)
-            == Ticks(2 * BAR)
-    });
+    window.until_playhead(2 * BAR);
     window.wait_for_bun();
     // Twenty points up: two beats more, from bar 3 on.
     let beats = window.space_at("transport-beats") + point(px(7.), px(9.));
@@ -344,6 +331,7 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
 
     let ruler = window.space_at("ruler");
     window.click(ruler + point(px(LEAD + (8 * BAR) as f32 * ACROSS), px(8.)));
+    window.until_playhead(8 * BAR);
     window.wait_for_bun();
     window.cx.simulate_keystrokes("cmd-v");
     window.until("the clip pasted", |window| window.has("song/t00/c00"));

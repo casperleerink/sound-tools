@@ -12,7 +12,7 @@ use gpui::{
 use midi::Played;
 use runtime::OFFLINE;
 use runtime::window::DeviceAccess;
-use sound_core::{Changes, Problem};
+use sound_core::{Changes, Problem, Ticks};
 use sound_notes::{Pitch, Velocity};
 
 use crate::support::{Opened, id, open_files, open_folder, peak};
@@ -301,6 +301,15 @@ impl Opened<'_> {
             }
             window.poll_plugins();
             window.page_ready()
+        });
+    }
+
+    /// Waits for the playhead to reach `tick`. A jump from code moves it only once the engine
+    /// played a block and the session polled it, which can be after Bun answered.
+    fn until_playhead(&mut self, tick: u64) {
+        let session = self.session.clone();
+        self.until("the playhead moved", |window| {
+            window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(tick)
         });
     }
 
