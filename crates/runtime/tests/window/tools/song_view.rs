@@ -472,13 +472,7 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     };
     // At the tempo there, with the playhead on it: the transport's drag changes it.
     window.until("a tempo change", |window| tempo_at(window, 120.0));
-    let session = window.session.clone();
-    window.until("the playhead on it", |window| {
-        window
-            .cx
-            .read(|cx| session.read(cx).playhead().read(cx).tick)
-            == Ticks(2 * BAR + 240)
-    });
+    window.until_playhead(2 * BAR + 240);
     window.wait_for_bun();
     let tempo = window.space_at("transport-tempo") + point(px(10.), px(8.));
     window.press(tempo);

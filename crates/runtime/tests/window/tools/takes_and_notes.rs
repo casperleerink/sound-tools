@@ -212,13 +212,7 @@ fn the_editor_ruler_seeks_and_a_line_draws_velocities(cx: &mut TestAppContext) {
     let editor = window.editor("t00/c00");
     let ruler = window.space_at("editor-t00/c00-ruler");
     window.click(point(editor.at(970., 60).x, ruler.y + px(16.)));
-    let session = window.session.clone();
-    window.until("the playhead on the beat", |window| {
-        window
-            .cx
-            .read(|cx| session.read(cx).playhead().read(cx).tick)
-            == sound_core::Ticks(960)
-    });
+    window.until_playhead(960);
 
     // From the bottom before the first note to the top half way through the clip.
     let notes = window.notes_of("song/t00/c00");
