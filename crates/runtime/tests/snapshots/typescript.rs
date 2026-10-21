@@ -10,8 +10,8 @@
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, its
-//!   slider, options and notice, beside a small piano roll whose notes and labels are shapes
-//!   of a space.
+//!   slider, options and notice, and an open popover, beside a small piano roll whose notes,
+//!   labels and paths are shapes of a space.
 //! - `typescript-style.png`: the looks and layout of a div: one held pressed, two disabled, a card
 //!   with a shadow, a badge and an overlay placed on it, a clipped child, a row that wraps.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
@@ -28,7 +28,7 @@ use gpui::{
 };
 use sound_core::Ticks;
 
-const DEMO: &str = r##"import { choice, h, number, Knob, Label, Line, Meter, Notice, Pad, pattern, Rect, SegmentedControl, Slider, Space, Steps, tool } from "./sdk";
+const DEMO: &str = r##"import { Button, choice, h, number, Knob, Label, Line, Meter, Notice, Pad, Path, pattern, Popover, Rect, SegmentedControl, Slider, Space, Steps, tool } from "./sdk";
 
 const notes = [[0, 60], [480, 64], [960, 67], [1440, 72], [1920, 67], [2400, 64], [2880, 62], [3360, 60]];
 
@@ -62,6 +62,10 @@ tool({
           ),
         ),
         h(Notice, { message: "The sample did not load.", action: { label: "Retry", onClick: () => {} }, onDismiss: () => {} }),
+        h("div", {},
+          h(Button, { label: "Preset", variant: "subtle" }),
+          h(Popover, { open: () => true, onClose: () => {} }, () => ["Warm pad", "Bright lead"]),
+        ),
       ),
       h(Space, { key: "roll", width: 640, height: 320, background: "#121317", radius: 6, unit: { x: 0.15, y: 12 }, extent: { x: [0, 3840], y: [0, 36] } },
         Array.from({ length: 4 }, (_, beat) => h(Line, { from: [beat * 960, 0], to: [beat * 960, 36], color: "#292c34", width: 1 })),
@@ -71,6 +75,9 @@ tool({
         })),
         notes.map(([start, pitch], index) => h(Label, { x: start + 30, y: 84 - pitch + 0.05, text: String(pitch), size: 9, color: "#121317" })),
         h(Line, { from: [now.tick.plus(1200), 0], to: [now.tick.plus(1200), 36], color: "#7ee0a0", width: 2 }),
+        h(Path, { points: [[0, 8], [960, 8, 960, 2, 1920, 4], [2400, 6, 2700, 2]], color: "#f5a97f", width: 2 }),
+        h(Path, { points: [[3000, 2], [3400, 2], [3200, 6]], color: "#7ee0a0", width: 1.5, closed: true }),
+        h(Path, { points: [[3000, 8], [3200, 8, 3400, 12], [3000, 12]], color: "#7ee0a0/40" }),
       ),
     ),
 });

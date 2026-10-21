@@ -14,8 +14,8 @@ use gpui::{
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle, ScrollWheelEvent,
-    SharedString, Stateful, StyleRefinement, Task, TextAlign, TextRun, WeakEntity, Window, canvas,
-    div, fill, outline, point, prelude::*, px, size,
+    SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun, WeakEntity, Window,
+    anchored, canvas, deferred, div, fill, hsla, outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -35,6 +35,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::meter::Meter;
 use sound_ui::components::notice::{Notice, NoticeTone};
+use sound_ui::components::popover;
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::select::Select;
 use sound_ui::components::slider::Slider;
@@ -52,8 +53,8 @@ use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
     self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, CardSelect, Cursor,
     DivProps, Drag, IconProps, InputProps, List, MeterProps, NodeTable, NoticeProps, NoticeToned,
-    Paint, Props, Reach, Readout, SegmentedProps, ShapeKind, SliderProps, SpaceProps, TextProps,
-    ToggleProps, Turned, Weight, Words,
+    OverlayProps, Paint, PathPoint, Props, Reach, Readout, SegmentedProps, ShapeKind, SliderProps,
+    SpaceProps, TextProps, ToggleProps, Turned, Weight, Words,
 };
 use crate::window::OpenedMenu;
 use crate::window::{Live, Surface, state_of};
@@ -105,6 +106,9 @@ pub(crate) struct TypeScriptCard {
     menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
     inputs: HashMap<u64, (Entity<TextInput>, String)>,
+    /// The keys of each open popover and dialog, by node, with what had them before it opened,
+    /// which gets them back when it closes.
+    overlays: HashMap<u64, (FocusHandle, Option<FocusHandle>)>,
     /// The cards of other instances it shows, by node.
     embedded: HashMap<u64, Embedded>,
     /// The div it shows in the window's title bar, by its slot and index, as last drawn.
@@ -651,6 +655,7 @@ impl TypeScriptCard {
             indexes: RefCell::default(),
             menu: None,
             inputs: HashMap::new(),
+            overlays: HashMap::new(),
             embedded: HashMap::new(),
             title_bar: None,
             meters: Rc::default(),
@@ -701,6 +706,26 @@ impl TypeScriptCard {
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
         };
+        // An overlay takes the keys as it opens, before a text field in it that asks for them.
+        let mut overlays = HashMap::new();
+        for entry in table.entries() {
+            if let Props::Overlay(_) = entry.props {
+                let overlay = self.overlays.remove(&entry.id).unwrap_or_else(|| {
+                    let before = window.focused(cx);
+                    let focus = cx.focus_handle();
+                    window.focus(&focus, cx);
+                    (focus, before)
+                });
+                overlays.insert(entry.id, overlay);
+            }
+        }
+        for (focus, before) in std::mem::replace(&mut self.overlays, overlays).into_values() {
+            if let Some(before) = before
+                && focus.contains_focused(window, cx)
+            {
+                window.focus(&before, cx);
+            }
+        }
         let mut inputs = HashMap::new();
         let mut embedded = HashMap::new();
         for entry in table.entries() {
@@ -1676,8 +1701,53 @@ enum Geometry {
         notes: Rc<Notes>,
     },
     Path {
-        points: Rc<[(f64, f64)]>,
+        bends: Rc<[Bend<(f64, f64)>]>,
+        outline: Option<Outline>,
     },
+}
+
+/// A path's outline: its width, and whether it goes back to its first point. A path without
+/// one is filled.
+#[derive(Clone, Copy)]
+struct Outline {
+    width: f32,
+    closed: bool,
+}
+
+/// A piece of a path: straight to a point, or curved to it pulled by one or two control
+/// points, which come first.
+#[derive(Clone, Copy)]
+enum Bend<P> {
+    To(P),
+    Quadratic(P, P),
+    Cubic(P, P, P),
+}
+
+impl<P: Copy> Bend<P> {
+    fn map<Q>(self, at: impl Fn(P) -> Q) -> Bend<Q> {
+        match self {
+            Self::To(to) => Bend::To(at(to)),
+            Self::Quadratic(control, to) => Bend::Quadratic(at(control), at(to)),
+            Self::Cubic(first, second, to) => Bend::Cubic(at(first), at(second), at(to)),
+        }
+    }
+
+    fn end(self) -> P {
+        match self {
+            Self::To(to) | Self::Quadratic(_, to) | Self::Cubic(_, _, to) => to,
+        }
+    }
+
+    /// Its points with its control points: a curve stays inside their box.
+    fn points(self) -> impl Iterator<Item = P> {
+        match self {
+            Self::To(to) => [Some(to), None, None],
+            Self::Quadratic(control, to) => [Some(control), Some(to), None],
+            Self::Cubic(first, second, to) => [Some(first), Some(second), Some(to)],
+        }
+        .into_iter()
+        .flatten()
+    }
 }
 
 impl Geometry {
@@ -1691,7 +1761,9 @@ impl Geometry {
             | Self::Wave { x, y, .. }
             | Self::Notes { x, y, .. } => (x, y),
             Self::Line { from, .. } => from,
-            Self::Path { ref points } => points.first().copied().unwrap_or_default(),
+            Self::Path { ref bends, .. } => {
+                bends.first().map(|bend| bend.end()).unwrap_or_default()
+            }
         }
     }
 }
@@ -1929,7 +2001,7 @@ enum PaintedShape {
     Text(Point<Pixels>, SharedString, Rc<[TextPart]>, f32, Align),
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
-    Path(Rc<[Point<Pixels>]>),
+    Path(Rc<[Bend<Point<Pixels>>]>, Option<Outline>),
 }
 
 impl PaintedShape {
@@ -1942,18 +2014,19 @@ impl PaintedShape {
         };
         match self {
             Self::Rect(bounds, ..) | Self::Wave(bounds, _) | Self::Notes(bounds, _) => *bounds,
-            Self::Path(points) => {
+            Self::Path(bends, outline) => {
                 let (mut low, mut high) = (
                     point(px(f32::MAX), px(f32::MAX)),
                     point(px(f32::MIN), px(f32::MIN)),
                 );
-                for each in points.iter() {
+                for each in bends.iter().flat_map(|bend| bend.points()) {
                     low = point(low.x.min(each.x), low.y.min(each.y));
                     high = point(high.x.max(each.x), high.y.max(each.y));
                 }
-                match points.is_empty() {
+                let pad = outline.map_or(px(0.), |outline| px(outline.width / 2. + 2.));
+                match bends.is_empty() {
                     true => Bounds::default(),
-                    false => Bounds::from_corners(low, high),
+                    false => Bounds::from_corners(low - point(pad, pad), high + point(pad, pad)),
                 }
             }
             Self::Circle(centre, radius) => square(*centre, *radius),
@@ -1992,7 +2065,7 @@ impl PaintedShape {
     fn is_filled_path(&self) -> bool {
         match self {
             Self::Wave(_, wave) => wave.band,
-            Self::Path(_) => true,
+            Self::Path(_, outline) => outline.is_none(),
             _ => false,
         }
     }
@@ -2029,6 +2102,9 @@ struct Drawing<'a, 'b> {
     feeds: &'a Feeds,
     indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
     inputs: &'a HashMap<u64, (Entity<TextInput>, String)>,
+    overlays: &'a HashMap<u64, (FocusHandle, Option<FocusHandle>)>,
+    /// The size of the window, which a dialog's backdrop covers.
+    viewport: Size<Pixels>,
     embedded: &'a HashMap<u64, Embedded>,
     meters: &'a RefCell<HashMap<u64, Metering>>,
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
@@ -2090,6 +2166,7 @@ impl Drawing<'_, '_> {
             Props::Slider(props) => self.slider(props, index),
             Props::Segmented(props) => self.segmented(id, props, index),
             Props::Notice(props) => self.notice(id, props, index),
+            Props::Overlay(props) => self.overlay(id, props, &entry.children, index),
             Props::Meter(MeterProps {
                 of,
                 input,
@@ -2446,6 +2523,94 @@ impl Drawing<'_, '_> {
             notice.on_dismiss(tell(EventKind::Close, json!({})))
         })
         .into_any_element()
+    }
+
+    /// A popover under the node it is in, or a dialog over the window. Escape and a press
+    /// outside it ask its code to close it; a press on the node a popover hangs from is that
+    /// node's own, such as a button that opens and closes it.
+    fn overlay(
+        &mut self,
+        id: u64,
+        props: &OverlayProps,
+        children: &[usize],
+        index: &[usize],
+    ) -> AnyElement {
+        let table = self.table;
+        let content: Vec<AnyElement> = (children.iter())
+            .filter(|child| {
+                !matches!(
+                    table.get(**child).map(|child| &child.props),
+                    Some(Props::Marker)
+                )
+            })
+            .enumerate()
+            .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
+            .collect();
+        let card = self.cx.entity().downgrade();
+        let close = Rc::new(move |cx: &mut App| {
+            (card.update(cx, |view, cx| {
+                view.event(id, EventKind::Close, json!({}), cx)
+            }))
+            .ok();
+        });
+        let modal = props.modal == Some(true);
+        let look = if modal { "dialog" } else { "popover" };
+        let selector = format!("{look}-{}", props.key.as_deref().unwrap_or_default());
+        let panel = popover::surface(self.cx)
+            .flex()
+            .flex_col()
+            .p(px(if modal { 16. } else { 8. }))
+            .text_size(px(12.))
+            .debug_selector(move || selector)
+            .when_some(self.overlays.get(&id), |panel, (focus, _)| {
+                panel.track_focus(focus)
+            })
+            .on_key_down({
+                let close = close.clone();
+                move |event: &KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "escape" {
+                        close(cx);
+                        cx.stop_propagation();
+                    }
+                }
+            })
+            .children(content);
+        if modal {
+            let backdrop = div()
+                .occlude()
+                .w(self.viewport.width)
+                .h(self.viewport.height)
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(hsla(0., 0., 0., 0.4))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| close(cx))
+                .child(panel);
+            let placed = anchored().position(point(px(0.), px(0.))).child(backdrop);
+            return deferred(placed).with_priority(2).into_any_element();
+        }
+        let hangs_from = Rc::new(Cell::new(Bounds::default()));
+        let measure = canvas(
+            {
+                let hangs_from = hangs_from.clone();
+                move |bounds, _, _| hangs_from.set(bounds)
+            },
+            |_, _, _, _| {},
+        );
+        let panel = panel.on_mouse_down_out(move |event: &MouseDownEvent, _, cx| {
+            if !hangs_from.get().contains(&event.position) {
+                close(cx);
+            }
+        });
+        // As large as the node it is in, which lays it out as if it were not there.
+        (div().absolute().top_0().left_0().size_full())
+            .child(measure.absolute().size_full())
+            .child(popover::anchor(
+                popover::Side::Bottom,
+                popover::Align::Start,
+                panel,
+            ))
+            .into_any_element()
     }
 
     /// A switch of the app, which tells the pointer as a div does: its code turns it.
@@ -2859,14 +3024,15 @@ impl Extent {
             Geometry::Line { from, to, width } => {
                 extent((from.0, to.0), (from.1, to.1), (width, width))
             }
-            Geometry::Path { ref points } => {
-                let fold = |pick: fn(&(f64, f64)) -> f64| {
-                    (points.iter().map(pick))
+            Geometry::Path { ref bends, outline } => {
+                let fold = |pick: fn((f64, f64)) -> f64| {
+                    (bends.iter().flat_map(|bend| bend.points()).map(pick))
                         .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
                             (low.min(value), high.max(value))
                         })
                 };
-                extent(fold(|point| point.0), fold(|point| point.1), (1.0, 1.0))
+                let reach = outline.map_or(1.0, |outline| outline.width);
+                extent(fold(|point| point.0), fold(|point| point.1), (reach, reach))
             }
             // A line of text is as wide as its words: a long label far off to the left may
             // still reach in.
@@ -3273,11 +3439,29 @@ impl Placing<'_> {
                     ),
                 }
             }
-            ShapeKind::Path => Geometry::Path {
-                points: (shape.points.iter().flatten())
-                    .map(|[x, y]| (left + self.sources.number(x), top + self.sources.number(y)))
-                    .collect(),
-            },
+            ShapeKind::Path => {
+                let at = |x: &tree::Num, y: &tree::Num| {
+                    (left + self.sources.number(x), top + self.sources.number(y))
+                };
+                let width = self.number(&shape.width) as f32;
+                Geometry::Path {
+                    bends: (shape.points.iter().flatten())
+                        .map(|each| match each {
+                            PathPoint::To([x, y]) => Bend::To(at(x, y)),
+                            PathPoint::Quadratic([cx, cy, x, y]) => {
+                                Bend::Quadratic(at(cx, cy), at(x, y))
+                            }
+                            PathPoint::Cubic([ax, ay, bx, by, x, y]) => {
+                                Bend::Cubic(at(ax, ay), at(bx, by), at(x, y))
+                            }
+                        })
+                        .collect(),
+                    outline: (width > 0.0).then_some(Outline {
+                        width,
+                        closed: shape.closed == Some(true),
+                    }),
+                }
+            }
             ShapeKind::Group => return None,
         };
         Some(geometry)
@@ -3408,8 +3592,8 @@ fn prepaint(
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Notes(Bounds::new(at((*x, *y)), size), notes.clone())
             }
-            Geometry::Path { points } => {
-                PaintedShape::Path(points.iter().map(|each| at(*each)).collect())
+            Geometry::Path { bends, outline } => {
+                PaintedShape::Path(bends.iter().map(|bend| bend.map(at)).collect(), *outline)
             }
         };
         let clip = (placed.clip).map(|Area([left, top, right, bottom])| {
@@ -3543,15 +3727,22 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
-        PaintedShape::Path(points) => {
-            let mut path = gpui::PathBuilder::fill();
-            for (index, each) in points.iter().enumerate() {
-                match index {
-                    0 => path.move_to(*each),
-                    _ => path.line_to(*each),
+        PaintedShape::Path(bends, outline) => {
+            let mut path = match outline {
+                Some(outline) => gpui::PathBuilder::stroke(px(outline.width)),
+                None => gpui::PathBuilder::fill(),
+            };
+            for (index, bend) in bends.iter().enumerate() {
+                match (index, *bend) {
+                    (0, bend) => path.move_to(bend.end()),
+                    (_, Bend::To(to)) => path.line_to(to),
+                    (_, Bend::Quadratic(control, to)) => path.curve_to(to, control),
+                    (_, Bend::Cubic(first, second, to)) => path.cubic_bezier_to(to, first, second),
                 }
             }
-            path.close();
+            if outline.is_none_or(|outline| outline.closed) {
+                path.close();
+            }
             if let Ok(path) = path.build() {
                 window.paint_path(path, color);
             }
@@ -3904,7 +4095,7 @@ impl TypeScriptCard {
     }
 
     /// The div its view shows in the window's title bar, with what the body last read.
-    fn draw_title_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn draw_title_bar(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (slot, index) = self.title_bar.clone()?;
         let state = self.state(cx)?;
         let live = self.live.read(cx);
@@ -3931,6 +4122,8 @@ impl TypeScriptCard {
             feeds: &self.feeds,
             indexes: &self.indexes,
             inputs: &self.inputs,
+            overlays: &self.overlays,
+            viewport: window.viewport_size(),
             embedded: &self.embedded,
             meters: &self.meters,
             placed: self.placed.clone(),
@@ -3979,8 +4172,10 @@ impl TitleBar {
 }
 
 impl Render for TitleBar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let bar = self.0.update(cx, |card, cx| card.draw_title_bar(cx));
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let bar = self
+            .0
+            .update(cx, |card, cx| card.draw_title_bar(window, cx));
         // A click on it does not move the window, as the rest of the title row does.
         div().flex_none().occlude().children(bar)
     }
@@ -4066,6 +4261,8 @@ impl Render for TypeScriptCard {
                     feeds: &self.feeds,
                     indexes: &self.indexes,
                     inputs: &self.inputs,
+                    overlays: &self.overlays,
+                    viewport: window.viewport_size(),
                     embedded: &self.embedded,
                     meters: &self.meters,
                     placed: self.placed.clone(),
