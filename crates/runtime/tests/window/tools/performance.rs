@@ -652,6 +652,13 @@ fn measure_rack(cx: &mut TestAppContext, count: usize) {
     print(&format!("{what}: an idle frame"), idle);
     let drawn = window.cards_drawn_in(60);
     println!("{what}: {drawn} cards drawn in an idle second");
+    let redrawn: Vec<Duration> = (0..MOVES)
+        .map(|_| window.timed(Opened::redraw_page))
+        .collect();
+    print(
+        &format!("{what}: a frame as the page draws again, its cards unchanged"),
+        redrawn,
+    );
     let rack = window.origin("div-rack") + point(px(200.), px(100.));
     let scrolling: Vec<Duration> = (0..MOVES)
         .map(|step| {

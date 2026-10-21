@@ -25,7 +25,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString,
+    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Entity, Hsla, MouseButton, SharedString,
     StyleRefinement, Window, div, prelude::*, px,
 };
 
@@ -76,6 +76,7 @@ pub struct CardFrame {
     power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     sidechain: Option<SidechainColumn>,
+    on_notify: Option<Rc<dyn Fn(&mut App)>>,
 }
 
 impl CardFrame {
@@ -86,6 +87,7 @@ impl CardFrame {
             power: None,
             close: None,
             sidechain: None,
+            on_notify: None,
         }
     }
 
@@ -111,6 +113,20 @@ impl CardFrame {
     pub fn sidechain(mut self, column: impl Fn(&App) -> Column + 'static) -> Self {
         self.sidechain = Some(Rc::new(column));
         self
+    }
+
+    /// Called each time the view of the device is notified, before the window draws it: a rack
+    /// that draws a card from its last frame lays it out again then.
+    pub fn on_notify(mut self, on_notify: impl Fn(&mut App) + 'static) -> Self {
+        self.on_notify = Some(Rc::new(on_notify));
+        self
+    }
+
+    /// Makes `view`, the view of the device, call [`Self::on_notify`].
+    pub fn follow<V: 'static>(&self, view: &Entity<V>, cx: &mut App) {
+        if let Some(on_notify) = self.on_notify.clone() {
+            cx.observe(view, move |_, cx| on_notify(cx)).detach();
+        }
     }
 
     /// The column of the sidechain picker, for the view to place. `None` when the rack gives

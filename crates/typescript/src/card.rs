@@ -41,6 +41,7 @@ use sound_ui::{
 };
 
 use crate::bun::{EventKind, PageSize};
+use crate::embedded_card::{self, EmbeddedCard};
 use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
@@ -123,7 +124,7 @@ pub fn embedded_view(page: &AnyView, instance: &InstanceId, cx: &App) -> Option<
     let embedded = page.read(cx).0.read(cx).embedded.values();
     embedded
         .filter(|card| card.instance == *instance)
-        .find_map(|card| card.view.clone())
+        .find_map(|card| Some(card.view.as_ref()?.read(cx).view.clone()))
 }
 
 /// One frame of the tools of the project of the page `page`, as its timer runs them every
@@ -142,6 +143,15 @@ static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 #[cfg(feature = "test-support")]
 pub fn card_renders() -> u64 {
     RENDERS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Draws the page `page` again, as its playhead or an edit of it does.
+#[cfg(feature = "test-support")]
+pub fn redraw_page(page: &AnyView, cx: &mut App) {
+    if let Ok(page) = page.clone().downcast::<Page>() {
+        let card = page.read(cx).0.entity_id();
+        cx.notify(card);
+    }
 }
 
 /// How many nodes the window keeps for the page `page`, for tests that a list leaves none behind.
@@ -201,7 +211,7 @@ struct Embedded {
     /// The selects of its sidechain picker as its code last said, which the picker reads.
     sidechain: Rc<RefCell<Vec<CardSelect>>>,
     frame: CardFrame,
-    view: Option<AnyView>,
+    view: Option<Entity<EmbeddedCard>>,
 }
 
 /// The picker of what keys an embedded card, as the arrangement's racks had it: a select over
@@ -386,10 +396,16 @@ impl Render for Carried {
 pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>);
 
 impl Render for Page {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.0
-            .clone()
-            .cached(StyleRefinement::default().size_full())
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A view that draws again draws every view in it again, even one the window could draw
+        // from its last frame. So a page with cards draws whenever the window does, and its
+        // cards from their last frames.
+        if self.0.read(cx).embedded.is_empty() {
+            return (self.0.clone())
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element();
+        }
+        self.0.clone().into_any_element()
     }
 }
 
@@ -790,12 +806,12 @@ impl TypeScriptCard {
             && old.tool == tool
             && old.icons == icons
         {
-            old.on.set(on);
-            if *old.sidechain.borrow() != selects {
-                old.sidechain.replace(selects);
-                if let Some(view) = &old.view {
-                    App::notify(cx, view.entity_id());
-                }
+            // The card draws from its last frame until it hears that the rack changed it.
+            let changed = old.on.replace(on) != on || *old.sidechain.borrow() != selects;
+            old.sidechain.replace(selects);
+            if changed && let Some(card) = &old.view {
+                let view = card.read(cx).view.entity_id();
+                App::notify(cx, view);
             }
             return Some(old);
         }
@@ -846,7 +862,13 @@ impl TypeScriptCard {
             let (card, selects) = (cx.weak_entity(), sidechain.clone());
             frame = frame.sidechain(move |_| sidechain_column(&selects.borrow(), &card, node));
         }
-        let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx);
+        let changed = Rc::new(Cell::new(false));
+        frame = frame.on_notify({
+            let changed = changed.clone();
+            move |_| changed.set(true)
+        });
+        let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx)
+            .map(|view| cx.new(|_| EmbeddedCard::new(view, changed)));
         Some(Embedded {
             instance,
             tool,
@@ -2004,8 +2026,8 @@ impl Drawing<'_, '_> {
             Props::Card(_) => {
                 let card = match self.embedded.get(&id) {
                     Some(Embedded {
-                        view: Some(view), ..
-                    }) => view.clone().into_any_element(),
+                        view: Some(card), ..
+                    }) => embedded_card::draw(card, self.cx),
                     // A tool with no card shows its frame with its name.
                     Some(Embedded { frame, .. }) => frame.card().into_any_element(),
                     None => div().into_any_element(),

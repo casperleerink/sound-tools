@@ -75,7 +75,9 @@ impl Views {
             S::TOOL,
             Rc::new(move |session, id, frame, window, cx| {
                 let instance = session.read(cx).project().resolve::<S>(id)?;
+                let follows = frame.clone();
                 let view = cx.new(|cx| create(session.clone(), instance, frame, window, cx));
+                follows.follow(&view, cx);
                 Some(view.into())
             }),
         );
@@ -93,14 +95,17 @@ impl Views {
             tool,
             Rc::new(move |session, id, frame, window, cx| {
                 session.read(cx).project().tool_of(id)?;
+                let follows = frame.clone();
                 let view = cx.new(|cx| create(session.clone(), id.clone(), frame, window, cx));
+                follows.follow(&view, cx);
                 Some(view.into())
             }),
         );
     }
 
     /// What makes the card of a tool that registered none: a tool the project wrote, which
-    /// comes and goes while the project is open. It says `None` for a tool it does not know.
+    /// comes and goes while the project is open. It says `None` for a tool it does not know,
+    /// and calls [`CardFrame::follow`] for the view it makes.
     pub fn set_other_cards(
         &mut self,
         create: impl Fn(

@@ -215,7 +215,9 @@ pub fn start_window(
             let tool = session.read(cx).project().tool_of(id)?;
             find(&tools.borrow(), tool)?;
             let (live, session, id) = (live.clone(), session.clone(), id.clone());
+            let follows = frame.clone();
             let card = cx.new(|cx| TypeScriptCard::new(live, session, id, Some(frame), window, cx));
+            follows.follow(&card, cx);
             Some(card.into())
         }
     });

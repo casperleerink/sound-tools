@@ -293,6 +293,18 @@ impl Opened<'_> {
         sound_typescript::card_renders() - drawn
     }
 
+    /// Draws the page again, as its playhead or an edit of it does: no window refresh, which
+    /// would draw every view again.
+    fn redraw_page(&mut self) {
+        let shell = self.shell.clone();
+        self.cx.update(|_, cx| {
+            if let Some(page) = shell.read(cx).main_view().cloned() {
+                sound_typescript::redraw_page(&page, cx);
+            }
+        });
+        self.cx.run_until_parked();
+    }
+
     /// Waits for pending records, watches and behaviour answers to reach the window.
     fn wait_for_bun(&mut self) {
         self.until("Bun answered", |window| {

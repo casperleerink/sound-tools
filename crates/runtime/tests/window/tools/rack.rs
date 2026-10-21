@@ -395,3 +395,44 @@ fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
     });
     assert!(window.find("card-title-song/t00/chain/fx0").is_none());
 }
+
+/// The page draws again and its cards, which did not change, are drawn from their last frames.
+#[gpui::test]
+fn a_card_that_did_not_change_is_not_drawn_again_with_the_page(cx: &mut TestAppContext) {
+    let mut window = open_rack(cx);
+    window.wait_for_bun();
+    window.redraw_page();
+    let (pages, cards) = (
+        sound_typescript::card_renders(),
+        sound_typescript::embedded_card_renders(),
+    );
+    assert!(cards > 0, "no card was drawn");
+    for _ in 0..3 {
+        window.redraw_page();
+    }
+    assert_eq!(sound_typescript::card_renders(), pages + 3);
+    assert_eq!(sound_typescript::embedded_card_renders(), cards);
+}
+
+/// A card that grows comes out at its new size in the frame it grows in: the rack moves what
+/// is after it then, not a frame later.
+#[gpui::test]
+fn a_card_that_grows_moves_what_is_after_it_in_the_same_frame(cx: &mut TestAppContext) {
+    let mut window = open_compressor(cx);
+    window.wait_for_bun();
+    let expand = window.until_found("card-song/t00/chain/comp-expand");
+    let header = "card-song/t00/chain/comp-header";
+    let narrow = window.bounds(header).unwrap();
+    window.redraw_page();
+    window.click(expand);
+    let (wide, after) = (
+        window.cx.debug_bounds(header).unwrap(),
+        window.cx.debug_bounds("div-add-effect").unwrap(),
+    );
+    assert!(wide.size.width > narrow.size.width);
+    assert!(
+        after.origin.x >= wide.right(),
+        "{after:?} overlaps {wide:?}"
+    );
+    assert_eq!(window.bounds(header), Some(wide));
+}
