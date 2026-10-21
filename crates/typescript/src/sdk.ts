@@ -1258,7 +1258,7 @@ export interface DragValues {
   /** Where it is: the start and how far it moved. */
   x: Live;
   y: Live;
-  /** 1 while the pointer holds it. */
+  /** 1 while the pointer holds it, and until its code answered the end. */
   active: Live;
 }
 
@@ -2029,7 +2029,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "slider" | "segmented" | "indicator" | "kbd" | "notice" | "empty" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -2049,6 +2049,7 @@ interface Made {
   onClose?: () => void;
   onTitle?: () => void;
   onSidechain?: (select: number, option: number) => void;
+  onChange?: (changed: { value: number }) => void;
   drag?: Drag;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
@@ -2132,7 +2133,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain"]);
+const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2777,37 +2778,119 @@ function drawing(): Drawing {
   return currentCard().drawn;
 }
 
+/**
+ * What a control shows and changes: a field as `now.value` names it, such as `"cutoff"` or
+ * `"bass/mix.gain_db"`, whose change is one undo step; or, with `onChange`, a value code keeps,
+ * such as in `memory`, which it shows as `value` gives it and which hears a drag once, at its end.
+ */
+export type ValueProps<T> = { value: string; onChange?: undefined } | { value: Bind<T>; onChange: (value: T) => void };
+
+const read = <V,>(bound: Bind<V>): V => (typeof bound === "function" ? (bound as Accessor<V>)() : bound);
+
+/** A number as a live value, to combine with others. */
+const liveOf = (value: Num): Live => (typeof value === "number" ? new Live({ op: "plus", a: value, b: 0 }) : value);
+
+const within = (position: number) => Math.min(Math.max(position, 0), 1);
+
+let controls = 0;
+/** The drag id and key of a control on what code keeps, when its props name none. */
+const controlId = (kind: string) => `${kind}-${++controls}`;
+
+/** A field, or what code keeps, as a control reads and sets it. A field's change is one undo step of `label`. */
+function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label?: string) => void } {
+  if (props.onChange !== undefined) {
+    const { value, onChange } = props;
+    return { get: () => read(value), set: (value) => onChange(value) };
+  }
+  const { state, children, update } = drawing();
+  const { child, name } = splitPath(props.value);
+  return {
+    get: () => recordAt({ state, children }, child)?.state[name] as T,
+    set: (value, label) =>
+      update(label ?? `Change ${name.replaceAll("_", " ")}`, (part) => {
+        const record = recordAt(part, child);
+        if (record) record.state[name] = value;
+      }),
+  };
+}
+
 /** The arc of a knob runs from -135 to +135 degrees, in turns. */
 const SWEEP = 0.75;
 
+/** Points of a drag for the whole range of a knob, as the window's. */
+const TRAVEL = 200;
+
+/** How a knob spreads a number from `min` to `max`, as the window's knobs: on a log scale for `"hz"`. */
+const knobTravel = (min: number, max: number, unit?: Unit | "pan"): Travel => ({ min, max, scale: unit === "hz" && min > 0 ? "log" : "linear" });
+
+/** The value at `position` along a knob's `travel`, as `valueAt` puts it, worked out in the window. */
+function liveValueAt({ min, max, scale }: Travel, position: Live): Live {
+  if (scale === "log") return new Live({ op: "pow", a: max / min, b: position }).times(min);
+  return position.times(max - min).plus(min);
+}
+
+/**
+ * What a knob or a fader shows and the drag that turns it, `along` an axis: a field the window
+ * turns as the drag goes; or what code keeps, which shows where the drag went from it until
+ * `onChange`, at its end, gives it a new value.
+ */
+function turned(kind: string, props: ValueProps<number> & { key?: string; played?: boolean }, travel: Travel, turns: Omit<DragTurns, "value">, along: "x" | "y") {
+  if (props.onChange === undefined) {
+    const { value: name, played } = props;
+    return {
+      key: props.key ?? `${kind}-${name}`,
+      value: () => now.value(name, { played }),
+      fraction: () => now.value(name, { played, fraction: true }),
+      drag: { [along]: { value: name, ...turns } } as Drag,
+      onPress: undefined,
+    };
+  }
+  const { value, onChange } = props;
+  const key = props.key ?? controlId(kind);
+  const length = turns.travel ?? TRAVEL;
+  const { dx, dy } = now.drag(key);
+  const moved = along === "x" ? dx.over(length) : dy.over(-length);
+  const position = () => positionOf(travel, read(value));
+  const fraction = () => moved.plus(position()).clamp(0, 1);
+  const onEnd = (drag: DragResult) => onChange(valueAt(travel, within(untrack(position) + (along === "x" ? drag.dx : -drag.dy) / length)));
+  const onPress = ({ clicks }: Press) => {
+    if (clicks === 2 && turns.default !== undefined) onChange(turns.default);
+  };
+  return { key, value: () => liveValueAt(travel, fraction()), fraction, drag: { id: key, axis: along, onEnd }, onPress };
+}
+
+export type KnobProps = ValueProps<number> & { key?: string; label?: string; min: number; max: number; default: number; unit?: Unit | "pan"; played?: boolean; bipolar?: boolean; size?: "sm" | "md" };
+
 /**
  * A knob on a number, as the app's knobs look: a field of the record such as `rate`, whose drag
- * is smooth and one undo step, or a number input, which nothing saves. `value` names it as
- * `now.value` does. With `played`, it shows the field as it plays, so it moves with a lane. A
+ * is smooth and one undo step, a number input, which nothing saves, or what code keeps, see
+ * `ValueProps`. With `played`, it shows the field as it plays, so it moves with a lane. A
  * double click puts it at `default`. A `bipolar` one, such as a pan, draws its arc from the top;
  * `unit: "pan"` reads `C`, `25L`, `100R`. It shows `label` and the value under it; `size: "sm"`
  * is a 28-point dial alone.
  */
-export function Knob(props: { value: string; label?: string; min: number; max: number; default: number; unit?: Unit | "pan"; played?: boolean; bipolar?: boolean; size?: "sm" | "md" }): UiNode {
-  const { value: name, label, min, max, unit, played, bipolar } = props;
+export function Knob(props: KnobProps): UiNode {
+  const { label, min, max, unit, bipolar } = props;
   const small = props.size === "sm";
-  const value = now.value(name, { played });
-  const fraction = now.value(name, { played, fraction: true });
-  const turns: DragTurns = { value: name, min, max, unit: unit === "pan" ? undefined : unit, default: props.default, label: label && `Change ${label.toLowerCase()}` };
-  const angle = fraction.times(SWEEP).minus(SWEEP / 2);
-  const radians = angle.times(2 * Math.PI);
+  const turns = { min, max, unit: unit === "pan" ? undefined : unit, default: props.default, label: label && `Change ${label.toLowerCase()}` };
+  const { key, value, fraction, drag, onPress } = turned("knob", props, knobTravel(min, max, unit), turns, "y");
+  const angle = () => fraction().times(SWEEP).minus(SWEEP / 2);
   const [centreX, centreY, radius, cap] = small ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
-  const along = (distance: number) => [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
+  const along = (distance: number) => () => {
+    const radians = angle().times(2 * Math.PI);
+    return [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
+  };
   const texts = small ? [] : [
     ...(label === undefined ? [] : [Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" })]),
     Label({ x: centreX, y: label === undefined ? 38 : 54, text: value, unit, color: "gray-950", size: 12, align: "center" }),
   ];
   return Space({
-    key: `knob-${name}`,
+    key,
     width: small ? 28 : 56,
     height: small ? 28 : label === undefined ? 56 : 72,
     cursor: "ns-resize",
-    drag: { y: turns },
+    drag,
+    onPress,
     children: [
       Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "alpha/10", width: 2.5 }),
       Arc({ x: centreX, y: centreY, radius, from: bipolar ? 0 : -SWEEP / 2, to: angle, color: "gray-950", width: 2.5 }),
@@ -2851,17 +2934,21 @@ const faderLevel = (amplitude: Live) => amplitude.pow(20 / FADER.decade).times(F
 /** What a meter shows: the peaks a child keeps as `now.peak` names them, channels of the audio input, or what the device plays. */
 export type Peaks = { of: string } | { input: readonly number[] } | "device";
 
+export type FaderProps = ValueProps<number> & { key?: string; length: number; horizontal?: boolean; default?: number; label?: string; min?: number; max?: number; unit?: Unit; played?: boolean; meter?: Peaks };
+
 /**
  * A fader on a number, as the app's volumes look: a handle a drag moves along `length` points,
  * up or, `horizontal`, to the right, over two bars of `meter` when given, green up to -6 dB and
- * yellow above with a peak line that holds, on the fader's scale. `value` names the number as a
- * `Knob` does, which turns as the drag goes and is one undo step; it takes the number's range and
- * scale unless `min` and `max` say, so a `gain_db` of a `fader` moves on the fader's scale. A
- * double click puts it at `default`.
+ * yellow above with a peak line that holds, on the fader's scale. `value` is as a `Knob`'s; it
+ * takes the number's range and scale unless `min` and `max` say, so a `gain_db` of a `fader`
+ * moves on the fader's scale, as does what code keeps without them. A double click puts it at
+ * `default`.
  */
-export function Fader(props: { value: string; length: number; horizontal?: boolean; default?: number; label?: string; min?: number; max?: number; unit?: Unit; played?: boolean; meter?: Peaks }): UiNode {
-  const { value: name, length, horizontal, meter } = props;
-  const turns: DragTurns = { value: name, min: props.min, max: props.max, unit: props.unit, travel: length, default: props.default, label: props.label };
+export function Fader(props: FaderProps): UiNode {
+  const { length, horizontal, meter, min, max, unit } = props;
+  const travel: Travel = min !== undefined && max !== undefined ? knobTravel(min, max, unit) : { min: 0, max: 0, scale: "fader" };
+  const turns = { min, max, unit, travel: length, default: props.default, label: props.label };
+  const { key, fraction, drag, onPress } = turned("fader", props, travel, turns, horizontal ? "x" : "y");
   /** A box `size` long from `from` along the travel, from its foot, and `thickness` across from `side`. */
   const box = (from: Num, size: Num, side: number, thickness: number) => {
     if (horizontal) return { x: from, y: side, width: size, height: thickness };
@@ -2884,43 +2971,37 @@ export function Fader(props: { value: string; length: number; horizontal?: boole
       Rect({ ...box(peak.minus(1), 1, side, 5), color: "gray-950", opacity: peak.gt(0.01 * length) }),
     ];
   });
-  const at = now.value(name, { played: props.played, fraction: true }).times(length).minus(3);
+  const at = () => fraction().times(length).minus(3);
+  const handle = horizontal
+    ? Rect({ x: at, y: 0, width: 6, height: 28, radius: 3, color: "gray-950" })
+    : Rect({ x: 0, y: () => at().negate().plus(length - 6), width: 28, height: 6, radius: 3, color: "gray-950" });
   return Space({
-    key: `fader-${name}`,
+    key,
     width: horizontal ? length : 28,
     height: horizontal ? 28 : length,
     cursor: horizontal ? "ew-resize" : "ns-resize",
-    drag: horizontal ? { x: turns } : { y: turns },
-    children: [...bars, Rect({ ...box(at, 6, 0, 28), radius: 3, color: "gray-950" })],
+    drag,
+    onPress,
+    children: [...bars, handle],
   });
-}
-
-/** What a `NumberBox` that is no field shows and changes: what it shows, such as `now.bpm`, its value as code reads it, and what takes a new one. */
-export interface NumberSource {
-  show: Num;
-  get: () => number;
-  set: (value: number) => void;
 }
 
 /** The units of a `Label` that show a tick of the clock, not a number. */
 const TICK_UNITS = ["position", "time", "signature", "beats", "note"] as const;
 type TickUnit = (typeof TICK_UNITS)[number];
 
-export interface NumberBoxProps {
+export type NumberBoxProps = ValueProps<number> & {
   /** Names its space and its drag, as `now.drag(key)`. */
   key: string;
-  /**
-   * A field as `now.value` names it, such as `"bass/mix.gain_db"`, which a drag turns as it goes
-   * as a `Knob` does; or a `NumberSource`, which hears the value once, when the drag ends.
-   */
-  value: string | NumberSource;
+  /** What it shows in place of what code keeps, as a `Label` does: `now.bpm` of a tempo that changes as the piece plays, or `now.tick` in `"beats"`. */
+  show?: Num;
   min?: number;
   max?: number;
-  /** What a drag of a `NumberSource` moves by, and what a typed value rounds to: 1 when left out. */
+  /** What a drag of what code keeps moves by, and what a typed value rounds to: 1 when left out. */
   step?: number;
   /** The only values it takes, in order, such as note values: a drag steps through them, and a typed value goes to the nearest. */
   values?: readonly number[];
-  /** Points of a drag for one step of a `NumberSource`: 10 when left out. */
+  /** Points of a drag for one step of what code keeps: 10 when left out. */
   per?: number;
   /** How it shows the number, as a `Label` does. */
   unit?: Unit | "pan" | TickUnit;
@@ -2935,7 +3016,7 @@ export interface NumberBoxProps {
   size?: number;
   color?: Color;
   align?: "left" | "center" | "right";
-}
+};
 
 /** A number that `text` says, or `null`: `-6 dB`, `2k` for 2000 in Hz, `-inf`. */
 function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null {
@@ -2948,33 +3029,35 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
 
 /**
  * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
- * or what code keeps, such as the tempo map, as `value` says. A field's drag and a typed value
- * are one undo step each; a `NumberSource` hears a value once, at the end of a drag.
+ * or what code keeps, such as the tempo map, see `ValueProps`. A field's drag and a typed value
+ * are one undo step each; what code keeps hears a value once, at the end of a drag.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
-  const { key, value, unit, width, values } = props;
+  const { key, unit, width, values } = props;
+  const field = props.onChange === undefined ? props.value : undefined;
   const height = props.height ?? 18;
   const per = props.per ?? 10;
   const step = props.step ?? 1;
-  const source = typeof value === "string" ? sourceOfField(value, props) : value;
+  const { get, set } = field === undefined ? valueOf(props) : numberField(field, props.label);
   const [typing, type] = signal(false);
   const clamped = (number: number) => Math.min(Math.max(number, props.min ?? -Infinity), props.max ?? Infinity);
   /** A typed or dragged value as it takes it: one of `values`, or on the grid of `step`. */
   const taken = (number: number) =>
     values ? values.reduce((best, each) => (Math.abs(each - number) < Math.abs(best - number) ? each : best), values[0] ?? number)
-    : typeof value === "string" ? clamped(number) : clamped(Math.round(number / step) * step);
+    : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
   const text = { x, y: 0, size: props.size ?? 14, color: props.color ?? "gray-950", align: props.align } as const;
-  const shown = { ...text, text: typeof source.show === "number" ? String(source.show) : source.show, unit };
+  const shows = field !== undefined ? now.value(field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
+  const shown = { ...text, text: shows, unit };
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit | "pan");
   const onPress = ({ clicks, button }: Press) => {
     if (button === "left" && clicks === 2) type(true);
   };
   const box = (): UiNode => {
-    if (typeof value === "string") {
+    if (field !== undefined) {
       return Space({
         key, width, height, cursor: "ns-resize", onPress,
-        drag: { y: { value, min: props.min, max: props.max, unit: valueUnit === "pan" ? undefined : valueUnit, label: props.label } },
+        drag: { y: { value: field, min: props.min, max: props.max, unit: valueUnit === "pan" ? undefined : valueUnit, label: props.label } },
         children: [Label(shown)],
       });
     }
@@ -2994,7 +3077,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     return Space({
       key, width, height, cursor: "ns-resize",
       onPress: (pointer) => {
-        press(values ? Math.max(values.indexOf(taken(value.get())), 0) : value.get());
+        press(values ? Math.max(values.indexOf(taken(get())), 0) : get());
         onPress(pointer);
       },
       drag: {
@@ -3002,7 +3085,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
         onEnd: ({ dy }) => {
           const moved = -Math.round(dy / per);
           const next = values ? values[Math.min(Math.max(pressed() + moved, 0), values.length - 1)] : clamped(pressed() + moved * step);
-          if (next !== undefined && next !== value.get()) value.set(next);
+          if (next !== undefined && next !== get()) set(next);
         },
       },
       children: [
@@ -3014,34 +3097,28 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   return Show({
     when: typing,
     children: () => {
-      const before = untrack(source.get);
+      const before = untrack(get);
       const done = (typed: string | null) => {
         type(false);
         const number = typed === null ? null : typedNumber(typed, unit);
-        if (number !== null && taken(number) !== before) source.set(taken(number));
+        if (number !== null && taken(number) !== before) set(taken(number));
       };
-      const field = Input({ value: Number.isFinite(before) ? String(Number(before.toFixed(3))) : "-inf", width, focus: true, onCommit: done, onCancel: () => done(null) });
-      return h("div", { key: `${key}-typed` }, field);
+      const input = Input({ value: Number.isFinite(before) ? String(Number(before.toFixed(3))) : "-inf", width, focus: true, onCommit: done, onCancel: () => done(null) });
+      return h("div", { key: `${key}-typed` }, input);
     },
     fallback: box,
   });
 }
 
-/** A field of the view's record, or of a child's as `"bass/mix.gain_db"`, as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
-function sourceOfField(path: string, { played, label }: Pick<NumberBoxProps, "played" | "label">): NumberSource {
-  const { state, children, update } = drawing();
-  const { child, name } = splitPath(path);
+/** A number field as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
+function numberField(path: string, label?: string) {
+  const field = valueOf<unknown>({ value: path });
   return {
-    show: now.value(path, { played }),
     get: () => {
-      const found = recordAt({ state, children }, child)?.state[name];
+      const found = field.get();
       return found === "-inf" ? -Infinity : typeof found === "number" ? found : Number.NaN;
     },
-    set: (number) =>
-      update(label ?? `Change ${name.replaceAll("_", " ")}`, (part) => {
-        const record = recordAt(part, child);
-        if (record) record.state[name] = number === -Infinity ? "-inf" : Number(number.toFixed(3));
-      }),
+    set: (number: number) => field.set(number === -Infinity ? "-inf" : Number(number.toFixed(3)), label),
   };
 }
 
@@ -3071,13 +3148,11 @@ export interface SelectOption<T> {
   disabled?: boolean;
 }
 
-export interface SelectProps<T> {
+/** `value` is a field, or what code keeps with `onChange`, which hears a pick of another option. */
+export type SelectProps<T> = ValueProps<T> & {
   /** Names it for tests: `div-<key>`. */
   key?: string;
-  value: Bind<T>;
   options: Bind<readonly SelectOption<T>[]>;
-  /** A pick of another option than `value`. */
-  onChange: (value: T) => void;
   /** The heading over its list. */
   title?: string;
   /** What it says while `value` is none of the options: the value when left out. */
@@ -3086,28 +3161,28 @@ export interface SelectProps<T> {
   menuWidth?: number;
   /** `"md"` says it in 13 points; 12 when left out, as a select of a card. */
   size?: "sm" | "md";
-}
+};
 
 const TRIGGER = {
   sm: { style: { direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: { background: "alpha/10" } }, text: 12 },
   md: { style: { direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: { background: "alpha/10" } }, text: 13 },
 } as const satisfies Record<string, { style: Style; text: number }>;
 
-/** Shows the option `value` is and opens the list of `options` under it, as the window's selects; a pick calls `onChange`. */
+/** Shows the option `value` is and opens the list of `options` under it, as the window's selects. */
 export function Select<const T extends string | number | boolean | null>(props: SelectProps<T>): UiNode {
   const { openMenu } = drawing();
-  const read = <V,>(bound: Bind<V>): V => (typeof bound === "function" ? (bound as Accessor<V>)() : bound);
+  const { get, set } = valueOf(props);
   const look = TRIGGER[props.size ?? "sm"];
   const said = () => {
-    const value = read(props.value);
+    const value = get();
     return read(props.options).find((option) => option.value === value)?.label ?? props.placeholder ?? String(value);
   };
   const open = async () => {
-    const [value, options] = [read(props.value), read(props.options)];
+    const [value, options] = [get(), read(props.options)];
     const items = options.map(({ label, detail, icon, disabled, value: each }) => ({ label, detail, icon, disabled, checked: each === value, group: props.title }));
     const picked = await openMenu(items, { width: props.menuWidth ?? 160 });
     const option = picked === null ? undefined : options[picked];
-    if (option && option.value !== value) props.onChange(option.value);
+    if (option && option.value !== value) set(option.value);
   };
   return h("div", { key: props.key, style: look.style, onPress: open },
     h("div", { style: { fontSize: look.text, weight: "medium", color: "gray-950" } }, said),
@@ -3115,24 +3190,98 @@ export function Select<const T extends string | number | boolean | null>(props: 
   );
 }
 
-const STEP = { size: 14, gap: 3, on: "#a9b1ff", off: "#292c34", light: "#e9ebef" } as const;
+export type SegmentedControlProps<T> = ValueProps<T> & {
+  /** Names it for tests: `segmented-<key>`, and each option `segment-<place>`. */
+  key?: string;
+  options: Bind<readonly { value: T; label: string }[]>;
+  disabled?: Bind<boolean>;
+};
+
+/** One of a few options side by side, as the window's pages of a card: a pick of another changes `value`. */
+export function SegmentedControl<const T extends string | number | boolean | null>(props: SegmentedControlProps<T>): UiNode {
+  const { get, set } = valueOf(props);
+  const options = () => read(props.options);
+  // The window shows the labels of the options, and tells a pick by its place.
+  return element("segmented", {
+    key: props.key,
+    options: () => options().map((option) => option.label),
+    chosen: () => {
+      const value = get();
+      return options().findIndex((option) => option.value === value);
+    },
+    disabled: props.disabled,
+    onChange: ({ value: place }: { value: number }) => {
+      const option = untrack(options)[place];
+      if (option && option.value !== untrack(get)) set(option.value);
+    },
+  }, []);
+}
+
+export type SliderProps = ValueProps<number> & { key?: string; min: number; max: number; default?: number; unit?: Unit; label?: string; played?: boolean; bipolar?: boolean; width?: number };
 
 /**
- * A row of steps on a list of numbers of the record, such as a `pattern`: a click turns a step
- * on (to `max`, the item's max when left out) or off (to its min). `playing` names an output,
- * as `now.value` does, whose value is the step that plays, which lights up.
+ * A number on a short line, as the window's sliders: a drag sideways, ten times finer with shift,
+ * a double click to `default`, the arrows step. From `min` to `max`, on a log scale for `"hz"`;
+ * `bipolar` draws from 0. 120 points wide unless `width` says. `value` is as a `Knob`'s.
  */
-export function Steps(props: { path: string; max?: number; playing?: string }): UiNode {
-  const { state, fields, update } = drawing();
-  const field = fields[props.path];
+export function Slider(props: SliderProps): UiNode {
+  const look = { key: props.key, min: props.min, max: props.max, default: props.default, unit: props.unit, bipolar: props.bipolar, width: props.width ?? 120 };
+  if (props.onChange === undefined) {
+    return element("slider", { ...look, value: now.value(props.value, { played: props.played }), field: props.value, label: props.label }, []);
+  }
+  const { value, onChange } = props;
+  return element("slider", { ...look, value: () => read(value), onChange: (changed: { value: number }) => onChange(changed.value) }, []);
+}
+
+/** A status dot of the app, `gray-600` unless `color` says: `ring` gives it a soft halo, `pulse` a slow pulse, as of work going on. */
+export const Indicator = (props: { key?: string; color?: Bind<Color>; size?: "xs" | "sm" | "md"; ring?: Bind<boolean>; pulse?: Bind<boolean> }): UiNode =>
+  element("indicator", { ...props }, []);
+
+/** A shortcut as key caps, keys joined by `+`: `"mod+k"` is ⌘ K on macOS and Ctrl K elsewhere. */
+export const Kbd = (props: { keys: Bind<string> }): UiNode => element("kbd", { ...props }, []);
+
+/**
+ * A quiet line for what the composer should know: a dot of its `tone` (`error` when left out),
+ * the `message`, a bar of `progress` from 0 to 1, a button `action` that calls `onAction`, and a
+ * close button with `onDismiss`.
+ */
+export interface NoticeProps {
+  key?: string;
+  message: Bind<string>;
+  tone?: Bind<"error" | "warning" | "info">;
+  progress?: Bind<number>;
+  action?: Bind<string>;
+  onAction?: () => void;
+  onDismiss?: () => void;
+}
+
+/** A notice, see `NoticeProps`. */
+export const Notice = ({ onAction, onDismiss, ...props }: NoticeProps): UiNode => element("notice", { ...props, onPress: onAction, onClose: onDismiss }, []);
+
+/** A centred `title` over a muted line of `body`, where nothing is yet; its children go under them, such as a button that adds one. */
+export const EmptyState = ({ children, ...props }: { title: Bind<string>; body: Bind<string>; children?: Child }): UiNode =>
+  element("empty", props, [children]);
+
+const STEP = { size: 14, gap: 3 } as const;
+
+export type StepsProps = ValueProps<readonly number[]> & { key?: string; max?: number; playing?: string };
+
+/**
+ * A row of steps on a list of numbers, such as a `pattern` field, see `ValueProps`: a click
+ * turns a step on (to `max`, the item's max or 1 when left out) or off (to its min, or 0).
+ * `playing` names an output, as `now.value` does, whose value is the step that plays, which lights up.
+ */
+export function Steps(props: StepsProps): UiNode {
+  const field = props.onChange === undefined ? drawing().fields[props.value] : undefined;
   const item = field?.kind === "list" && field.item.kind === "number" ? field.item : undefined;
   const [off, on] = [item?.min ?? 0, props.max ?? item?.max ?? 1];
-  const list = () => (state[props.path] as number[] | undefined) ?? [];
+  const { get, set } = valueOf(props);
+  const list = () => get() ?? [];
   const length = untrack(() => list().length);
   const isOn = (step: number) => (list()[step] ?? off) > off;
   const pitch = STEP.size + STEP.gap;
   return Space({
-    key: `steps-${props.path}`,
+    key: props.key ?? (props.onChange === undefined ? `steps-${props.value}` : undefined),
     width: Math.max(length * pitch - STEP.gap, 0),
     height: STEP.size,
     children: Array.from({ length }, (_, step) =>
@@ -3142,56 +3291,69 @@ export function Steps(props: { path: string; max?: number; playing?: string }): 
         width: STEP.size,
         height: STEP.size,
         radius: 3,
-        color: () => (isOn(step) ? STEP.on : STEP.off),
-        border: STEP.light,
+        color: () => (isOn(step) ? "lavender" : "alpha/10"),
+        border: "gray-950",
         borderWidth: props.playing === undefined ? 0 : now.value(props.playing).floor().eq(step).times(2),
         cursor: "pointer",
         onPress: () => {
           const wasOn = isOn(step);
-          update(wasOn ? "Turn a step off" : "Turn a step on", ({ state: next }) => {
-            const changed = [...list()];
-            changed[step] = wasOn ? off : on;
-            next[props.path] = changed;
-          });
+          const changed = [...untrack(list)];
+          changed[step] = wasOn ? off : on;
+          set(changed, wasOn ? "Turn a step off" : "Turn a step on");
         },
       }),
     ),
   });
 }
 
-/** A bar that shows a number from 0 to 1, such as a level an output sends: `value` names it as `now.value` does. */
-export function Meter(props: { value: string; label?: string }): UiNode {
-  const level = now.value(props.value).clamp(0, 1).times(64);
+/** A bar that shows a number from 0 to 1: one named as `now.value` names it, such as a level an output sends, or any live value. */
+export function Meter(props: { value: string | Bind<Num>; label?: string }): UiNode {
+  const level = () => {
+    const value = read(props.value);
+    return (typeof value === "string" ? now.value(value) : liveOf(value)).clamp(0, 1).times(64);
+  };
   const bar = Space({
     width: 8,
     height: 64,
     children: [
-      Rect({ x: 0, y: 0, width: 8, height: 64, radius: 2, color: "#292c34" }),
-      Rect({ x: 0, y: level.negate().plus(64), width: 8, height: level, radius: 2, color: "#7ee0a0" }),
+      Rect({ x: 0, y: 0, width: 8, height: 64, radius: 2, color: "alpha/5" }),
+      Rect({ x: 0, y: () => level().negate().plus(64), width: 8, height: level, radius: 2, color: "green" }),
     ],
   });
   return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: "gray-800", fontSize: 11 } }, props.label));
 }
 
-/** A square to play with the pointer: across moves the number input `x`, up moves `y`. */
-export function Pad(props: { x: string; y: string; size?: number }): UiNode {
+export type PadProps = { key?: string; size?: number } & (
+  | { x: string; y: string; onChange?: undefined }
+  /** What code keeps, from 0 to 1 across and up. */
+  | { x: Bind<number>; y: Bind<number>; onChange: (at: { x: number; y: number }) => void }
+);
+
+/** A square to play with the pointer: across moves `x` and up moves `y`, number inputs or fields named as `now.value` names them, or what code keeps. */
+export function Pad(props: PadProps): UiNode {
   const size = props.size ?? 120;
+  const look = { width: size, height: size, background: "alpha/5", radius: 6, cursor: "crosshair" } as const;
+  const dot = (x: Bind<Num>, y: Bind<Num>) => Circle({ x, y, radius: 5, color: "gray-950" });
+  if (props.onChange === undefined) {
+    const { x, y } = props;
+    return Space({
+      ...look,
+      key: props.key ?? `pad-${x}-${y}`,
+      drag: { x: { value: x, absolute: true }, y: { value: y, absolute: true } },
+      children: [dot(now.value(x, { fraction: true }).times(size), now.value(y, { fraction: true }).negate().plus(1).times(size))],
+    });
+  }
+  const { x, y, onChange } = props;
+  const key = props.key ?? controlId("pad");
+  const drag = now.drag(key);
+  /** Where the pointer is while the drag goes on and until code answers its end, else what code keeps. */
+  const at = (pointer: Live, kept: number) => drag.active.times(pointer.clamp(0, size)).plus(drag.active.negate().plus(1).times(kept * size));
+  const ended = (end: DragResult) => onChange({ x: within(end.x / size), y: within(1 - end.y / size) });
   return Space({
-    key: `pad-${props.x}-${props.y}`,
-    width: size,
-    height: size,
-    background: "#292c34",
-    radius: 6,
-    cursor: "crosshair",
-    drag: { x: { value: props.x, absolute: true }, y: { value: props.y, absolute: true } },
-    children: [
-      Circle({
-        x: now.value(props.x, { fraction: true }).times(size),
-        y: now.value(props.y, { fraction: true }).negate().plus(1).times(size),
-        radius: 5,
-        color: "#a9b1ff",
-      }),
-    ],
+    ...look,
+    key,
+    drag: { id: key, onEnd: ended, onClick: ended },
+    children: [dot(() => at(drag.x, read(x)), () => at(drag.y, 1 - read(y)))],
   });
 }
 
@@ -3201,12 +3363,10 @@ export function words(name: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-const BUTTON: Style = { paddingX: 8, paddingY: 4, radius: 6, background: "#2a2f3a" };
-const CHOSEN: Style = { ...BUTTON, background: "#7c3aed", color: "#ffffff" };
-
 /**
  * The view of a tool that has none: a knob per number and per number input, a row of steps per
- * list of numbers, a chooser per file, a button per option, boolean and bang.
+ * list of numbers, a chooser per file, options side by side per choice, a switch per boolean and
+ * a button per bang.
  */
 export function defaultView(fields: Fields, inputs: Inputs = {}) {
   return ({ state, update, send, openFile }: Context<Record<string, unknown>>): UiNode => {
@@ -3221,47 +3381,43 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
       if (field.kind === "number") {
         knobs.push(knob(name, field));
       } else if (field.kind === "list" && field.item.kind === "number") {
-        rows.push(Steps({ path: name }));
+        rows.push(Steps({ value: name }));
       } else if (field.kind === "file") {
         rows.push(
           h("div", { style: { direction: "row", gap: 8, align: "center" } },
             label,
-            h("div", { style: { color: "#9ca3af" } }, () => (state[name] as string) || "No sound"),
-            h("div", {
-              style: BUTTON,
+            h("div", { style: { color: "gray-700" } }, () => (state[name] as string) || "No sound"),
+            Button({
+              label: "Choose…",
+              variant: "subtle",
+              size: "xs",
               onPress: async () => {
                 const chosen = await openFile({ title: `Choose ${label.toLowerCase()}` });
                 if (chosen !== null) update(`Choose ${label.toLowerCase()}`, ({ state: next }) => {
                   next[name] = chosen;
                 });
               },
-            }, "Choose…"),
+            }),
           ),
         );
       } else if (field.kind === "boolean") {
         buttons.push(
-          h("div", {
-            style: () => (state[name] ? CHOSEN : BUTTON),
+          Toggle({
+            label,
+            on: () => state[name] as boolean,
             onPress: () => {
               const on = state[name] as boolean;
               update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
                 next[name] = !on;
               });
             },
-          }, label),
+          }),
         );
       } else if (field.kind === "choice") {
         rows.push(
-          h("div", { style: { direction: "row", gap: 4, align: "center" } },
-            h("div", { style: { color: "#9ca3af" } }, label),
-            field.options.map((option) =>
-              h("div", {
-                style: () => (option === state[name] ? CHOSEN : BUTTON),
-                onPress: () => update(`Set ${label.toLowerCase()} to ${option}`, ({ state: next }) => {
-                  next[name] = option;
-                }),
-              }, String(option)),
-            ),
+          h("div", { style: { direction: "row", gap: 8, align: "center" } },
+            h("div", { style: { color: "gray-700" } }, label),
+            SegmentedControl({ value: name, options: field.options.map((option) => ({ value: option, label: String(option) })) }),
           ),
         );
       }
@@ -3270,7 +3426,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
       if (input.kind === "number") {
         knobs.push(knob(name, input));
       } else {
-        buttons.push(h("div", { style: BUTTON, onPress: () => (send as (input: string) => void)(name) }, input.label ?? words(name)));
+        buttons.push(Button({ label: input.label ?? words(name), variant: "subtle", size: "sm", onPress: () => (send as (input: string) => void)(name) }));
       }
     }
     if (buttons.length > 0) {
@@ -3333,8 +3489,8 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** A press, the end of a drag, a drop, a field's text or a card's icon, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain", payload: never) {
+/** A press, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
+function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
@@ -3352,6 +3508,8 @@ function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "can
       const { select, option } = payload as { select: number; option: number };
       return made.onSidechain?.(select, option);
     }
+    case "change":
+      return made.onChange?.(payload);
     default: {
       const handler = { press: made.onPress, end: made.drag?.onEnd, click: made.drag?.onClick, drop: made.onDrop }[kind];
       return handler?.(payload);

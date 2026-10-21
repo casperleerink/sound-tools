@@ -54,9 +54,9 @@ tool({
         <Knob value="note" label="Note" min={24} max={60} default={36} />
       </div>
       <div style={{ color: "#9ca3af" }}>Steps</div>
-      <Steps path="steps" playing="step" />
+      <Steps value="steps" playing="step" />
       <div style={{ color: "#9ca3af" }}>Accents</div>
-      <Steps path="accents" playing="step" />
+      <Steps value="accents" playing="step" />
     </div>
   ),
 });

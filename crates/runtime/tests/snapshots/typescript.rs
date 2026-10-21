@@ -9,8 +9,9 @@
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
-//! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside
-//!   a small piano roll whose notes and labels are shapes of a space.
+//! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, its
+//!   slider, options, dots, keys, notice and empty state, beside a small piano roll whose
+//!   notes and labels are shapes of a space.
 //! - `typescript-style.png`: the looks and layout of a div: one held pressed, two disabled, a card
 //!   with a shadow, a badge and an overlay placed on it, a clipped child, a row that wraps.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
@@ -27,7 +28,7 @@ use gpui::{
 };
 use sound_core::Ticks;
 
-const DEMO: &str = r##"import { h, number, Knob, Label, Line, Meter, Pad, pattern, Rect, Space, Steps, tool } from "./sdk";
+const DEMO: &str = r##"import { Button, choice, EmptyState, h, Indicator, Kbd, number, Knob, Label, Line, Meter, Notice, Pad, pattern, Rect, SegmentedControl, Slider, Space, Steps, tool } from "./sdk";
 
 const notes = [[0, 60], [480, 64], [960, 67], [1440, 72], [1920, 67], [2400, 64], [2880, 62], [3360, 60]];
 
@@ -40,6 +41,7 @@ tool({
     cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
     level: number({ min: -30, max: 6, default: -6, unit: "db" }),
     steps: pattern({ length: 8, min: 0, max: 1, default: 0 }),
+    mode: choice({ options: ["soft", "hard", "fold"], default: "hard" }),
   },
   inputs: { bend: number({ min: 0, max: 1, default: 0.3 }), drive: number({ min: 0, max: 1, default: 0.7 }) },
   sound: () => 0,
@@ -51,8 +53,19 @@ tool({
           h(Knob, { value: "level", label: "Level", min: -30, max: 6, default: -6, unit: "db" }),
           h(Meter, { value: "level", label: "Out" }),
         ),
-        h(Steps, { path: "steps" }),
-        h(Pad, { x: "bend", y: "drive", size: 120 }),
+        h(Steps, { value: "steps" }),
+        h("div", { style: { direction: "row", gap: 12, align: "center" } },
+          h(Pad, { x: "bend", y: "drive", size: 120 }),
+          h("div", { style: { gap: 8 } },
+            h(Slider, { value: "level", min: -30, max: 6, default: -6, unit: "db" }),
+            h(SegmentedControl, { value: "mode", options: [{ value: "soft", label: "Soft" }, { value: "hard", label: "Hard" }, { value: "fold", label: "Fold" }] }),
+            h("div", { style: { direction: "row", gap: 8, align: "center" } },
+              h(Indicator, { color: "green", ring: true }), h(Indicator, { size: "sm" }), h(Kbd, { keys: "mod+shift+k" }),
+            ),
+          ),
+        ),
+        h(Notice, { message: "The sample did not load.", action: "Retry", onAction: () => {}, onDismiss: () => {} }),
+        h(EmptyState, { title: "No notes yet", body: "Draw one in the roll." }, h(Button, { label: "Add a note" })),
       ),
       h(Space, { key: "roll", width: 640, height: 320, background: "#121317", radius: 6, unit: { x: 0.15, y: 12 }, extent: { x: [0, 3840], y: [0, 36] } },
         Array.from({ length: 4 }, (_, beat) => h(Line, { from: [beat * 960, 0], to: [beat * 960, 36], color: "#292c34", width: 1 })),

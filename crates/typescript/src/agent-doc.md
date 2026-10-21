@@ -126,11 +126,10 @@ Without `view`, it gets a knob per number field and number input, a row of steps
 A card is 144 points tall: more is cut off. It is as wide as it needs, at least 200. So put things side by side: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
 ```tsx
-import { Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
+import { Button, Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
 
 const column: Style = { gap: 8 };
 const row: Style = { direction: "row", gap: 8, align: "center" };
-const button: Style = { paddingX: 8, paddingY: 4, radius: 6, background: "#2a2f3a" };
 
 tool({
   // name, title, when, doc, state, inputs and sound
@@ -142,8 +141,8 @@ tool({
         <Meter value="level" />
       </div>
       <div style={row}>
-        <Steps path="steps" playing="step" />
-        <div style={button} onPress={() => send("hit")}>Hit</div>
+        <Steps value="steps" playing="step" />
+        <Button label="Hit" onPress={() => send("hit")} />
       </div>
     </div>
   ),
@@ -155,8 +154,8 @@ tool({
 | `<div style onPress carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. `onPress` hears a click or a right click; a `disabled` div hears no press, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
 | `<Input>` | A text field; keys typed there play nothing. |
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view; `sidechain` puts selects behind the expand of a compressor or a gate. |
-| `<Knob>`, `<Fader>`, `<Steps>`, `<Meter>`, `<Pad>` | A knob, a fader (over a meter with `meter`), a row of steps, a level, a square for the pointer, on numbers named as `now.value` names them. |
-| `<NumberBox>`, `<Select>` | A number to drag or double-click and type, a field or what code keeps such as the tempo; a value picked from a list, typed by its options. |
+| `<Knob>`, `<Fader>`, `<Slider>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>` | A knob, a fader (over a meter with `meter`), a slider, a number to drag or type, a row of steps, a square for the pointer, a list, options side by side. `value` names a field as `now.value` does; with `onChange`, it is what code keeps, such as `memory`, which hears a drag at its end. |
+| `<Meter>`, `<Indicator>`, `<Kbd>`, `<Notice>`, `<EmptyState>` | A level of any live value, a status dot, a shortcut, a quiet message, an empty place. |
 
 All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `confirm` (the system's yes-or-no question), `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 

@@ -107,14 +107,12 @@ tool({
         h(Button, { key: "play", icon: () => (clock.playing ? "pause" : "play"), onPress: () => (clock.playing ? clock.pause() : clock.play()) }),
         h(NumberBox, {
           key: "tempo", width: 32, per: 2, min: 10, max: 1000,
-          value: {
-            show: now.bpm.round(),
-            get: () => clock.bpm,
-            set: (bpm) => clock.update("Change the tempo", ({ tempo_map }) => {
-              const first = tempo_map.tempo_changes[0];
-              if (first) first.bpm = bpm;
-            }),
-          },
+          show: now.bpm.round(),
+          value: () => clock.bpm,
+          onChange: (bpm) => clock.update("Change the tempo", ({ tempo_map }) => {
+            const first = tempo_map.tempo_changes[0];
+            if (first) first.bpm = bpm;
+          }),
         }),
         h(Button, { key: "click", icon: "metronome", onPress: () => clock.setClick(!clock.click) }),
         h(Button, { key: "computer-keys", icon: "keyboard-music", onPress: () => clock.setComputerKeys(!clock.computerKeys) }),
