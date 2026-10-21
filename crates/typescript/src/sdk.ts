@@ -2781,11 +2781,14 @@ function drawing(): Drawing {
 /** A value code keeps, such as in `memory`: a control shows it and `onChange` hears a drag once, at its end. */
 export type Kept<T> = { value: Bind<T>; onChange: (value: T) => void };
 
+/** `A` or `B`, never a mix: each leaves out the keys of the other. */
+type Either<A, B> = (A & { [K in Exclude<keyof B, keyof A>]?: never }) | (B & { [K in Exclude<keyof A, keyof B>]?: never });
+
 /**
  * What a control shows and changes: a `field` as `now.value` names it, such as `"cutoff"` or
  * `"bass/mix.gain_db"`, whose change is one undo step; or a value code keeps, see `Kept`.
  */
-export type ValueProps<T> = { field: string } | Kept<T>;
+export type ValueProps<T> = Either<{ field: string }, Kept<T>>;
 
 const read = <V,>(bound: Bind<V>): V => (typeof bound === "function" ? (bound as Accessor<V>)() : bound);
 
@@ -2800,7 +2803,7 @@ const controlId = (kind: string) => `${kind}-${++controls}`;
 
 /** A field, or what code keeps, as a control reads and sets it. A field's change is one undo step of `label`. */
 function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label?: string) => void } {
-  if (!("field" in props)) {
+  if (props.field === undefined) {
     const { value, onChange } = props;
     return { get: () => read(value), set: (value) => onChange(value) };
   }
@@ -2837,7 +2840,7 @@ function liveValueAt({ min, max, scale }: Travel, position: Live): Live {
  * `onChange`, at its end, gives it a new value.
  */
 function turned(kind: string, props: ValueProps<number> & { key?: string; played?: boolean }, travel: Travel, turns: Omit<DragTurns, "value">, along: "x" | "y") {
-  if ("field" in props) {
+  if (props.field !== undefined) {
     const { field: name, played } = props;
     return {
       key: props.key ?? `${kind}-${name}`,
@@ -2992,11 +2995,11 @@ export function Fader(props: FaderProps): UiNode {
 const TICK_UNITS = ["position", "time", "signature", "beats", "note"] as const;
 type TickUnit = (typeof TICK_UNITS)[number];
 
-export type NumberBoxProps = (
-  | { field: string }
+export type NumberBoxProps = Either<
+  { field: string },
   /** `show` is what it shows in place of what code keeps, as a `Label` does: `now.bpm` of a tempo that changes as the piece plays, or `now.tick` in `"beats"`. */
-  | (Kept<number> & { show?: Num })
-) & {
+  Kept<number> & { show?: Num }
+> & {
   /** Names its space and its drag, as `now.drag(key)`. */
   key: string;
   min?: number;
@@ -3037,8 +3040,7 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
  * are one undo step each; what code keeps hears a value once, at the end of a drag.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
-  const { key, unit, width, values } = props;
-  const field = "field" in props ? props.field : undefined;
+  const { key, unit, width, values, field } = props;
   const height = props.height ?? 18;
   const per = props.per ?? 10;
   const step = props.step ?? 1;
@@ -3051,7 +3053,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
   const text = { x, y: 0, size: props.size ?? 14, color: props.color ?? "gray-950", align: props.align } as const;
-  const shows = "field" in props ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
+  const shows = props.field !== undefined ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
   const shown = { ...text, text: shows, unit };
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit | "pan");
   const onPress = ({ clicks, button }: Press) => {
@@ -3248,7 +3250,7 @@ export type StepsProps = ValueProps<readonly number[]> & { key?: string; max?: n
  * names an output, as `now.value` does, whose value is the step that plays, which lights up.
  */
 export function Steps(props: StepsProps): UiNode {
-  const field = "field" in props ? drawing().fields[props.field] : undefined;
+  const field = props.field !== undefined ? drawing().fields[props.field] : undefined;
   const item = field?.kind === "list" && field.item.kind === "number" ? field.item : undefined;
   const [off, on] = [item?.min ?? 0, props.max ?? item?.max ?? 1];
   const { get, set } = valueOf(props);
@@ -3256,7 +3258,7 @@ export function Steps(props: StepsProps): UiNode {
   const isOn = (step: number) => (list()[step] ?? off) > off;
   const pitch = STEP.size + STEP.gap;
   return Space({
-    key: props.key ?? ("field" in props ? `steps-${props.field}` : undefined),
+    key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
     width: () => Math.max(list().length * pitch - STEP.gap, 0),
     height: STEP.size,
     children: For({
@@ -3301,14 +3303,14 @@ export function Meter(props: { value: string | Bind<Num>; label?: string }): UiN
 }
 
 /** Fields or number inputs named as `now.value` names them, or what code keeps, from 0 to 1 across and up. */
-export type PadProps = { key?: string; size?: number } & ({ field: { x: string; y: string } } | Kept<{ x: number; y: number }>);
+export type PadProps = { key?: string; size?: number } & Either<{ field: { x: string; y: string } }, Kept<{ x: number; y: number }>>;
 
 /** A square to play with the pointer: across moves `x` and up moves `y`. */
 export function Pad(props: PadProps): UiNode {
   const size = props.size ?? 120;
   const look = { width: size, height: size, background: "alpha/5", radius: 6, cursor: "crosshair" } as const;
   const dot = (x: Bind<Num>, y: Bind<Num>) => Circle({ x, y, radius: 5, color: "gray-950" });
-  if ("field" in props) {
+  if (props.field !== undefined) {
     const { x, y } = props.field;
     return Space({
       ...look,
