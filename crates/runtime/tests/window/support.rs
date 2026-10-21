@@ -23,6 +23,9 @@ use crate::plugin_hosts::{scanner, test_plugin_host};
 use crate::rack::rack_files;
 
 pub(crate) const BAR: u64 = 3840;
+/// How long a test waits for Bun, which answers in real time: a Windows runner with tests side
+/// by side is slow.
+const PATIENCE: Duration = Duration::from_secs(20);
 
 pub(crate) struct Opened<'a> {
     pub folder: TempDir,
@@ -349,14 +352,14 @@ impl Opened<'_> {
     /// Settles until `done` holds: Bun answers on a thread of its own, in real time.
     pub(crate) fn until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(5) {
+        while start.elapsed() < PATIENCE {
             self.settle();
             if done(self) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("{what} did not happen within 5 s");
+        panic!("{what} did not happen within {PATIENCE:?}");
     }
 
     /// One poll of the background work, which the runtime does on its own timer every 16 ms:
@@ -452,7 +455,7 @@ impl Opened<'_> {
 
     /// The middle of a control that names itself for tests: `knob-<id>` or `segment-<value>`.
     /// GPUI knows the bounds of what the last frame painted, and a cached view paints
-    /// nothing, so this asks for a whole frame first. Waits for Bun to draw it, up to 5 s.
+    /// nothing, so this asks for a whole frame first. Waits for Bun to draw it.
     pub(crate) fn control(&mut self, selector: &str) -> Point<Pixels> {
         let start = Instant::now();
         loop {
@@ -460,7 +463,7 @@ impl Opened<'_> {
                 return found;
             }
             assert!(
-                start.elapsed() < Duration::from_secs(5),
+                start.elapsed() < PATIENCE,
                 "nothing on screen is called {selector}"
             );
             self.settle();

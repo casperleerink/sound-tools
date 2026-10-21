@@ -1584,7 +1584,10 @@ fn region_players(
             let Some(region) = records.get(name).cloned() else {
                 continue;
             };
-            let Some(file) = sound_media::in_memory(context.assets(), &region.asset) else {
+            let Ok(id) = context.id().child(name) else {
+                continue;
+            };
+            let Some(file) = region::audio(context.assets(), &region.asset, &id) else {
                 continue;
             };
             // The file itself: one read again is another, as the player holds the one before.
