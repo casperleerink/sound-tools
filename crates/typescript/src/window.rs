@@ -88,6 +88,9 @@ pub(crate) struct Live {
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
+    /// The notes the code of the running Bun holds, by the instance and child it plays them
+    /// on, with the frame each starts: a new Bun knows nothing of them, so the window lets go.
+    held_notes: HashMap<(InstanceId, Option<String>), BTreeMap<Pitch, u64>>,
     /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
@@ -407,6 +410,7 @@ impl Live {
                 told_song: None,
                 told_watches: HashMap::new(),
                 taps: HashMap::new(),
+                held_notes: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
                 _watcher: watcher,
@@ -1629,6 +1633,7 @@ impl Live {
                     return eprintln!("error: {instance} sends {event:?}, which is no note event");
                 };
                 let at = performed_frame(at, &session, cx);
+                self.follow_held(&instance, child.clone(), event, at);
                 self.perform_note(
                     &instance,
                     child.as_deref(),
@@ -1903,6 +1908,7 @@ impl Live {
                     .spawn(async move { bun.end() })
                     .detach();
             }
+            self.release_held_notes(cx);
             let message = format!(
                 "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
             );
@@ -1923,6 +1929,46 @@ impl Live {
             Host::Starting { .. } => self.host = Host::Starting { again: true },
             Host::Running { bun, .. } => self.launch(Some(bun), cx),
             Host::Stopped => self.launch(None, cx),
+        }
+        self.release_held_notes(cx);
+    }
+
+    /// Keeps which notes the code holds as it sends `event` at `at` to `child` of `instance`.
+    fn follow_held(
+        &mut self,
+        instance: &InstanceId,
+        child: Option<String>,
+        event: NoteEvent,
+        at: u64,
+    ) {
+        let place = (instance.clone(), child);
+        match event {
+            NoteEvent::On { pitch, .. } => {
+                self.held_notes.entry(place).or_default().insert(pitch, at);
+            }
+            NoteEvent::Off { pitch } => {
+                if let Some(held) = self.held_notes.get_mut(&place) {
+                    held.remove(&pitch);
+                }
+            }
+            NoteEvent::AllOff => {
+                self.held_notes.remove(&place);
+            }
+            _ => {}
+        }
+    }
+
+    /// Lets go of the notes the code of the Bun that ended still held.
+    fn release_held_notes(&mut self, cx: &mut Context<Self>) {
+        for ((instance, child), held) in std::mem::take(&mut self.held_notes) {
+            for (pitch, at) in held {
+                // After its on: on one frame an off comes first.
+                let off = Performed::Send {
+                    event: NoteEvent::Off { pitch },
+                    at: at + 1,
+                };
+                self.perform_note(&instance, child.as_deref(), off, cx);
+            }
         }
     }
 

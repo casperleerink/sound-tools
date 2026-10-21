@@ -984,6 +984,68 @@ tool({
     });
 }
 
+/// A parent whose keys hold a note on its synth: `a` with `send`, `b` with `play` and `hold`.
+const PADS: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "pads",
+  title: "Pads",
+  when: "You want to hold notes from the keys",
+  doc: "The keys a and b hold a note on its synth.",
+  state: {},
+  behaviour: () => ({ connections: [{ from: { child: "synth" }, to: { port: "audio" } }] }),
+  onKey: ({ play, send }, { key, down }) => {
+    if (!down) return;
+    if (key === "a") send({ child: "synth", notes: "notes" }, { type: "noteOn", pitch: 60, velocity: 0.8 });
+    if (key === "b") play(64, { child: "synth", hold: true });
+  },
+  view: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Pads"),
+});
+"#;
+
+#[gpui::test]
+fn a_note_code_holds_on_a_child_ends_with_a_new_bun(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"pads\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/pads/instance.json",
+            r#"{"tool": "pads", "state": {}}"#,
+        ),
+        (
+            "state/pads/synth.json",
+            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
+        ),
+        ("extensions/pads.ts", PADS),
+    ];
+    let mut window = open(cx, &files);
+    for key in ["a", "b"] {
+        held_until_a_save(&mut window, key, "extensions/pads.ts", PADS);
+    }
+}
+
+#[gpui::test]
+fn a_note_code_holds_on_its_own_voices_ends_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open(cx, &EXPERIMENT);
+    held_until_a_save(&mut window, "a", "extensions/keys.ts", KEYS);
+}
+
+/// Holds a note with `key`, then saves `file` with `code` and something new: the new Bun
+/// does not know the note, and still it ends.
+fn held_until_a_save(window: &mut Opened<'_>, key: &str, file: &str, code: &str) {
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes(key);
+    window.until(key, |window| window.loudest(480) > 0.05);
+    let root = window.folder.path().to_path_buf();
+    write(&root, file, &format!("{code}// Saved after {key}.\n"));
+    window.until("the release of the note", |window| {
+        window.loudest(4_800) == 0.0
+    });
+}
+
 /// A loop that never ends but keeps saying things, here moving a number input, is a hang of
 /// its tool too.
 #[gpui::test]
