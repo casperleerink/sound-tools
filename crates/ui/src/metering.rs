@@ -132,6 +132,13 @@ impl PeaksReader {
             .and_then(|reader| reader.replace([0.0; 2]))
             .unwrap_or_default()
     }
+
+    /// Nothing came since this reader last took. Takes nothing.
+    pub fn is_silent(&self) -> bool {
+        let unread = self.shared.unread.borrow();
+        let own = unread.get(self.place).copied().flatten();
+        self.shared.peaks.is_silent() && own.is_none_or(|own| own == [0.0; 2])
+    }
 }
 
 impl Drop for PeaksReader {

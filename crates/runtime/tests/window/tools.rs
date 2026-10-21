@@ -278,6 +278,21 @@ impl Opened<'_> {
         peak(&self.render(frames))
     }
 
+    /// Plays `polls` polls of the engine, each with its timers and the frame it asked for, as
+    /// the app does: how many times a card was drawn.
+    fn cards_drawn_in(&mut self, polls: usize) -> u64 {
+        let drawn = sound_typescript::card_renders();
+        let frames =
+            sound_ui::POLL_INTERVAL.as_millis() as usize * OFFLINE.sample_rate as usize / 1000;
+        for _ in 0..polls {
+            self.render(frames);
+            self.cx.executor().advance_clock(sound_ui::POLL_INTERVAL);
+            self.cx.update(|window, cx| window.simulate_next_frame(cx));
+            self.cx.run_until_parked();
+        }
+        sound_typescript::card_renders() - drawn
+    }
+
     /// Waits for pending records, watches and behaviour answers to reach the window.
     fn wait_for_bun(&mut self) {
         self.until("Bun answered", |window| {

@@ -50,6 +50,11 @@ impl Peaks {
     pub fn take(&self) -> [f32; CHANNELS] {
         self.0.each_ref().map(take)
     }
+
+    /// Nothing was recorded since the last take. Takes nothing.
+    pub fn is_silent(&self) -> bool {
+        self.0.iter().all(|peak| peak.load(Ordering::Relaxed) == 0)
+    }
 }
 
 /// The largest absolute value of `samples`, 0 for none.
