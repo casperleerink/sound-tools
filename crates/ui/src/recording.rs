@@ -118,7 +118,7 @@ impl Recording {
         &self.input
     }
 
-    /// Set at every poll, with no notify: what draws a level draws on every frame anyway.
+    /// Set at every poll, with no notify: what draws a level reads it at its own poll.
     pub fn set_input_levels(&mut self, levels: Vec<f32>) {
         self.input = levels;
     }

@@ -92,6 +92,14 @@ impl Level {
         peak: [f32::NEG_INFINITY; 2],
         clipped: false,
     };
+
+    /// Its bars and peak lines are at the bottom: with no sound it shows the same from now on.
+    pub fn rests(&self) -> bool {
+        self.now
+            .iter()
+            .chain(&self.peak)
+            .all(|db| *db == f32::NEG_INFINITY)
+    }
 }
 
 impl Default for Level {

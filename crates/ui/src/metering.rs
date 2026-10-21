@@ -110,6 +110,16 @@ impl SharedPeaks {
             place,
         }
     }
+
+    /// Whether these share `peaks`.
+    pub fn shares(&self, peaks: &Peaks) -> bool {
+        self.peaks.same(peaks)
+    }
+
+    /// Whether a reader of them is left.
+    pub fn is_read(&self) -> bool {
+        self.unread.borrow().iter().any(Option::is_some)
+    }
 }
 
 /// One reader of [`SharedPeaks`].
@@ -131,6 +141,18 @@ impl PeaksReader {
         (unread.get_mut(self.place))
             .and_then(|reader| reader.replace([0.0; 2]))
             .unwrap_or_default()
+    }
+
+    /// Whether it reads `peaks`.
+    pub fn reads(&self, peaks: &Peaks) -> bool {
+        self.shared.shares(peaks)
+    }
+
+    /// Nothing came since this reader last took. Takes nothing.
+    pub fn is_silent(&self) -> bool {
+        let unread = self.shared.unread.borrow();
+        let own = unread.get(self.place).copied().flatten();
+        self.shared.peaks.is_silent() && own.is_none_or(|own| own == [0.0; 2])
     }
 }
 

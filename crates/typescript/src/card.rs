@@ -13,7 +13,7 @@ use gpui::{
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle, ScrollWheelEvent,
-    SharedString, StyleRefinement, TextAlign, TextRun, WeakEntity, Window, canvas, div, fill,
+    SharedString, StyleRefinement, Task, TextAlign, TextRun, WeakEntity, Window, canvas, div, fill,
     outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
@@ -37,7 +37,7 @@ use sound_ui::components::select::Select;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, typography,
+    ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, every_poll, typography,
 };
 
 use crate::bun::{EventKind, PageSize};
@@ -113,6 +113,7 @@ pub(crate) struct TypeScriptCard {
     /// Whether a mouse button is down in the window. A card out of view is drawn then too, so
     /// a knob dragged while the rack scrolls hears its mouse up.
     button_down: Rc<Cell<bool>>,
+    _polling: Task<()>,
 }
 
 /// The view of the card of `instance` that the page `page` shows, for tests that read what a
@@ -132,6 +133,15 @@ pub fn run_frame(page: &AnyView, cx: &mut App) {
         let live = page.read(cx).0.read(cx).live.clone();
         live.update(cx, |live, cx| live.frame(cx));
     }
+}
+
+#[cfg(feature = "test-support")]
+static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times a card of a tool of the project was drawn, for a test of what an idle page draws.
+#[cfg(feature = "test-support")]
+pub fn card_renders() -> u64 {
+    RENDERS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// How many nodes the window keeps for the page `page`, for tests that a list leaves none behind.
@@ -529,6 +539,13 @@ impl TypeScriptCard {
                 view.state = None;
                 cx.notify();
             }
+            // And the records of instances inside it.
+            ProjectEvent::Changed(id)
+                if id.is_inside(&view.id)
+                    && !view.live.read(cx).uses(view.card).inside.is_empty() =>
+            {
+                cx.notify();
+            }
             _ => {}
         })
         .detach();
@@ -593,6 +610,21 @@ impl TypeScriptCard {
             scrolls: RefCell::default(),
             scrolled_cards: Rc::default(),
             button_down: Rc::default(),
+            _polling: every_poll(cx, Self::poll),
+        }
+    }
+
+    /// Draws again when what it reads of the engine changed since it last drew, or still moves.
+    fn poll(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.state(cx) else {
+            return;
+        };
+        let uses = self.live.read(cx).uses(self.card);
+        let session = self.session.read(cx);
+        let tick = session.playhead().read(cx).tick;
+        let input = session.recording().read(cx).input_levels();
+        if (self.feeds).changed(session, (&self.id, &state), &uses, tick, input) {
+            cx.notify();
         }
     }
 
@@ -1937,6 +1969,9 @@ impl Drawing<'_, '_> {
                 let mut meters = self.meters.borrow_mut();
                 let metering = meters.entry(id).or_default();
                 metering.read_amplitudes(amplitudes);
+                if !metering.level().rests() {
+                    self.feeds.moving.set(true);
+                }
                 let card = self.cx.entity().downgrade();
                 let meter = Meter::new(ElementId::Integer(id), metering.level()).on_clear_clip(
                     move |_, cx| {
@@ -3686,6 +3721,8 @@ impl Render for TitleBar {
 
 impl Render for TypeScriptCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "test-support")]
+        RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Some(state) = self.state(cx) else {
             return div().into_any_element();
         };

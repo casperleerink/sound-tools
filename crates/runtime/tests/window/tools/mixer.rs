@@ -143,3 +143,149 @@ fn a_pan_knob_shows_the_pan_a_cable_plays_and_not_its_record(cx: &mut TestAppCon
     assert_eq!(window.record("mixer/bass-mix")["pan"], 0.0);
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
 }
+
+/// A meter of a tone, as a bar of the window and as a shape that falls after the sound.
+const LEVEL: &str = r##"import { h, now, PeakMeter, Rect, Space, tool, type Declaration } from "./sdk";
+
+tool({
+  name: "level",
+  title: "Level",
+  when: "A test",
+  doc: "The meter `meter` hears the tone `tone`.",
+  state: {},
+  behaviour: (): Declaration => ({ connections: [{ from: { child: "tone" }, to: { child: "meter" } }] }),
+  view: () => h("div", null,
+    h(PeakMeter, { of: "meter" }),
+    h(Space, { key: "level", width: 20, height: 100 },
+      h(Rect, { x: 0, y: 0, width: 10, height: now.peak("meter").fall(0.5).times(100), color: "#7ee0a0" }),
+    ),
+  ),
+});
+"##;
+
+#[gpui::test]
+fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in_silence(
+    cx: &mut TestAppContext,
+) {
+    let project = json!({
+        "format": 1,
+        "extensions": ["tone"],
+        "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
+        "connections": [],
+    })
+    .to_string();
+    let mut window = open(
+        cx,
+        &[
+            ("project.json", &project),
+            (
+                "state/level/instance.json",
+                r#"{"tool": "level", "state": {}}"#,
+            ),
+            (
+                "state/level/tone.json",
+                r#"{"tool": "tone", "state": {"frequency_hz": 220.0, "gain": 0.0}}"#,
+            ),
+            ("state/level/meter.json", METER),
+            ("extensions/level.ts", LEVEL),
+        ],
+    );
+    window.until_found("space-level");
+    assert_eq!(window.problems(), []);
+    window.wait_for_bun();
+    window.cards_drawn_in(10);
+    assert_eq!(window.cards_drawn_in(60), 0, "a second of silence");
+
+    let gain = |window: &mut Opened, gain: f64| {
+        window.edit(|project| {
+            let mut edit = project.begin("Gain");
+            project.update_json(&mut edit, &crate::support::id("level/tone"), |state| {
+                state["gain"] = gain.into();
+            })?;
+            project.finish(edit)
+        });
+    };
+    gain(&mut window, 0.3);
+    assert!(window.cards_drawn_in(60) > 50, "a second of the tone");
+    let shown = sound_typescript::shown_by_live_values("peak:meter").unwrap();
+    assert!(shown > 0.2, "{shown}");
+
+    gain(&mut window, 0.0);
+    let falling = window.cards_drawn_in(60);
+    assert!(
+        falling > 50,
+        "the second after the tone, as the meter falls: {falling}"
+    );
+    // An ease falls in real time, which these frames outrun.
+    let mut seconds = 1;
+    while window.cards_drawn_in(60) > 0 {
+        seconds += 1;
+        assert!(seconds < 60, "the meter never rested");
+    }
+    assert_eq!(
+        sound_typescript::shown_by_live_values("peak:meter"),
+        Some(0.0)
+    );
+}
+
+/// The gain of a tone as it plays, as a shape.
+const GAIN: &str = r##"import { h, now, Rect, Space, tool, type Declaration } from "./sdk";
+
+tool({
+  name: "gain",
+  title: "Gain",
+  when: "A test",
+  doc: "Shows the gain of the tone `tone` as it plays.",
+  state: {},
+  behaviour: (): Declaration => ({ connections: [] }),
+  view: () => h("div", null,
+    h(Space, { key: "gain", width: 20, height: 100 },
+      h(Rect, { x: 0, y: 0, width: 10, height: now.value("tone.gain", { played: true }).times(100), color: "#7ee0a0" }),
+    ),
+  ),
+});
+"##;
+
+#[gpui::test]
+fn a_number_a_page_shows_as_it_plays_draws_again_when_the_record_of_its_child_changes(
+    cx: &mut TestAppContext,
+) {
+    let project = json!({
+        "format": 1,
+        "extensions": ["tone"],
+        "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
+        "connections": [],
+    })
+    .to_string();
+    let mut window = open(
+        cx,
+        &[
+            ("project.json", &project),
+            (
+                "state/gain/instance.json",
+                r#"{"tool": "gain", "state": {}}"#,
+            ),
+            (
+                "state/gain/tone.json",
+                r#"{"tool": "tone", "state": {"frequency_hz": 220.0, "gain": 0.25}}"#,
+            ),
+            ("extensions/gain.ts", GAIN),
+        ],
+    );
+    window.until_found("space-gain");
+    assert_eq!(window.problems(), []);
+    window.wait_for_bun();
+    window.cards_drawn_in(10);
+    let shown = || sound_typescript::shown_by_live_values("played:tone.gain");
+    assert_eq!(shown(), Some(0.25));
+
+    window.edit(|project| {
+        let mut edit = project.begin("Gain");
+        project.update_json(&mut edit, &crate::support::id("gain/tone"), |state| {
+            state["gain"] = 0.5.into();
+        })?;
+        project.finish(edit)
+    });
+    window.cards_drawn_in(1);
+    assert_eq!(shown(), Some(0.5));
+}

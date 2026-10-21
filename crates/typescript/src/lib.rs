@@ -48,7 +48,7 @@ pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
-pub use card::{node_count, page_has_text, page_ready};
+pub use card::{card_renders, node_count, page_has_text, page_ready};
 #[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};

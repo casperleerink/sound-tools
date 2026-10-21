@@ -2,16 +2,16 @@
 //! levels of its meters and of the device, the sound of its meters, the numbers as lanes and
 //! cables play them, and what eases from frame to frame.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use sound_core::{Clock, InstanceId, Project, RecordStamp, Scope, Ticks, ValueRange};
+use sound_core::{Clock, InstanceId, Peaks, Project, RecordStamp, Scope, Ticks, ValueRange};
 use sound_media::Overview;
-use sound_ui::{LiveNotes, PeaksReader, Session};
+use sound_ui::{LiveNotes, PeaksReader, Session, SharedPeaks};
 
 use crate::meter;
 use crate::tree::{Ease, Uses};
@@ -48,6 +48,8 @@ const WAVE_COLUMNS: usize = 4096;
 const SAME_FRAME: Duration = Duration::from_millis(4);
 /// A frame after a pause eases as one of this long, so a meter does not jump.
 const LONGEST_FRAME: f64 = 0.1;
+/// An eased number this close to where it goes is there.
+const SETTLED: f64 = 1e-6;
 
 #[derive(Default)]
 pub(crate) struct Feeds {
@@ -60,6 +62,8 @@ pub(crate) struct Feeds {
     last: Option<Instant>,
     /// The loudest of each channel since the last frame, by the name the tree reads them by.
     pub peaks: HashMap<String, [f32; 2]>,
+    /// What it reads those from, by the same name.
+    meters: HashMap<String, PeaksReader>,
     taken: Option<Instant>,
     output_reader: Option<PeaksReader>,
     pub output: [f32; 2],
@@ -72,6 +76,11 @@ pub(crate) struct Feeds {
     /// The last frames of each scope the tree draws, oldest first, and how far it was read.
     pub scopes: HashMap<String, (VecDeque<[f32; 2]>, u64)>,
     pub eased: RefCell<HashMap<String, Eased>>,
+    /// What was drawn since the last poll still moves with no new sound: a meter that falls or
+    /// a number that eases. The title bar draws from these feeds too, before or after the body.
+    pub moving: Cell<bool>,
+    /// The frame the last poll saw, and whether what was drawn until then still moved.
+    polled: (u64, bool),
     pub histories: RefCell<HashMap<String, (u64, VecDeque<f32>)>>,
     /// The clock of the project, for the tempo and the places in the piece a tree shows.
     pub clock: Option<Clock>,
@@ -145,8 +154,21 @@ impl Feeds {
         }
         if self.taken.is_none_or(|taken| now - taken >= SAME_FRAME) {
             self.taken = Some(now);
+            self.meters.retain(|name, _| uses.peaks.contains(name));
+            let meters = &mut self.meters;
             self.peaks = (uses.peaks.iter())
-                .map(|name| (name.clone(), peaks_of(project, id, name, now)))
+                .map(|name| {
+                    let Some((key, peaks)) = peaks_at(project, id, name) else {
+                        meters.remove(name);
+                        return (name.clone(), [0.0; 2]);
+                    };
+                    let reader =
+                        (meters.entry(name.clone())).or_insert_with(|| shared_reader(&key, &peaks));
+                    if !reader.reads(&peaks) {
+                        *reader = shared_reader(&key, &peaks);
+                    }
+                    (name.clone(), reader.take())
+                })
                 .collect();
             match (uses.output, &self.output_reader) {
                 (true, Some(reader)) => self.output = reader.take(),
@@ -155,7 +177,7 @@ impl Feeds {
                     self.output = reader.take();
                     self.output_reader = Some(reader);
                 }
-                (false, _) => self.output_reader = None,
+                (false, _) => (self.output_reader, self.output) = (None, [0.0; 2]),
             }
         }
         self.records.next_frame();
@@ -188,6 +210,44 @@ impl Feeds {
         (self.eased.borrow_mut()).retain(|_, eased| frame - eased.frame < 60);
         (self.histories.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+    }
+
+    /// Whether a frame now would draw something else than the last: what it reads of the
+    /// engine, of the audio input or of what plays changed, or the last frame still moves.
+    /// Takes nothing, so the frame sees all of it.
+    pub(crate) fn changed(
+        &mut self,
+        session: &Session,
+        (id, state): (&InstanceId, &Value),
+        uses: &Uses,
+        tick: Ticks,
+        input: &[f32],
+    ) -> bool {
+        if self.polled.0 != self.frame {
+            self.polled = (self.frame, self.moving.take());
+        }
+        let loud = |peaks: &[f32; 2]| peaks.iter().any(|peak| *peak > 0.0);
+        if self.polled.1 || self.peaks.values().any(loud) || loud(&self.output) {
+            return true;
+        }
+        let project = session.project();
+        let new_peaks = (uses.peaks.iter()).any(|name| {
+            let Some((_, peaks)) = peaks_at(project, id, name) else {
+                return false;
+            };
+            match self.meters.get(name) {
+                Some(reader) if reader.reads(&peaks) => !reader.is_silent(),
+                _ => !peaks.is_silent(),
+            }
+        });
+        let new_output =
+            uses.output && (self.output_reader.as_ref()).is_none_or(|reader| !reader.is_silent());
+        let records = &mut self.records;
+        let new_played = (uses.played.iter()).any(|name| {
+            let now = played(project, (id, state), name, tick, records);
+            now.map(|(value, _)| value) != self.played.get(name).map(|(value, _)| *value)
+        });
+        new_peaks || new_output || (uses.input && self.input != input) || new_played
     }
 
     /// The waveform of a take as it is now, in the form of [`Self::wave`].
@@ -248,7 +308,7 @@ impl Feeds {
             return kept.value;
         }
         kept.frame = self.frame;
-        let dt = self.dt;
+        let (dt, before) = (self.dt, kept.value);
         match ease {
             Ease::Smooth { ms } => {
                 let seconds = f64::from(ms.max(1.0)) / 1000.0;
@@ -265,8 +325,12 @@ impl Feeds {
                 }
             }
         }
-        if !kept.value.is_finite() {
+        // Close enough to stop, or a smooth ease would draw for a minute.
+        if !kept.value.is_finite() || (value - kept.value).abs() < SETTLED {
             kept.value = value;
+        }
+        if kept.value != before || kept.value != value {
+            self.moving.set(true);
         }
         kept.value
     }
@@ -286,33 +350,33 @@ impl Feeds {
 }
 
 /// The peaks the tree reads as `name`: of the `meter` at that path inside the instance, or
-/// `path.name`, peaks an instance inside it keeps, such as a built-in device.
-fn peaks_of(project: &Project, id: &InstanceId, name: &str, now: Instant) -> [f32; 2] {
+/// `path.name`, peaks an instance inside it keeps, such as a built-in device. With the name
+/// every card shares them by.
+fn peaks_at(project: &Project, id: &InstanceId, name: &str) -> Option<(String, Peaks)> {
     let (path, peaks) = name.rsplit_once('.').unwrap_or((name, meter::LEVEL));
-    let Some(inner) = id.child(path).ok() else {
-        return [0.0; 2];
-    };
-    match project.peaks(&inner, peaks) {
-        Some(taken) => take_shared(format!("{inner}.{peaks}"), &taken, now),
-        None => [0.0; 2],
-    }
+    let inner = id.child(path).ok()?;
+    Some((format!("{inner}.{peaks}"), project.peaks(&inner, peaks)?))
 }
 
 thread_local! {
-    /// The peaks each card took last, by instance and name, and when.
-    static TAKEN: RefCell<HashMap<String, (Instant, [f32; 2])>> = RefCell::default();
+    /// The peaks of every meter a card shows, by instance and name.
+    static SHARED: RefCell<HashMap<String, SharedPeaks>> = RefCell::default();
 }
 
-/// Takes `peaks` once a frame for every card that shows them: a take empties them, so a second
-/// card in the same frame gets what the first took.
-fn take_shared(key: String, peaks: &sound_core::Peaks, now: Instant) -> [f32; 2] {
-    TAKEN.with_borrow_mut(|taken| {
-        taken.retain(|_, (when, _)| now.duration_since(*when) < Duration::from_secs(1));
-        let (when, value) = taken.entry(key).or_insert_with(|| (now, peaks.take()));
-        if now.duration_since(*when) >= SAME_FRAME {
-            (*when, *value) = (now, peaks.take());
+/// A reader of the peaks `key` of a meter, which sees every peak however the other cards that
+/// show it draw: a take empties the peaks.
+fn shared_reader(key: &str, peaks: &Peaks) -> PeaksReader {
+    SHARED.with_borrow_mut(|shared| {
+        shared.retain(|_, each| each.is_read());
+        match shared.get(key) {
+            Some(each) if each.shares(peaks) => each.reader(),
+            _ => {
+                let each = SharedPeaks::new(peaks.clone());
+                let reader = each.reader();
+                shared.insert(key.to_string(), each);
+                reader
+            }
         }
-        *value
     })
 }
 
@@ -372,9 +436,7 @@ fn played(
     let inner = id.child(path).ok()?;
     // The owner whose behaviour wires the cable keeps what it plays, by its child's name.
     let owner = inner.parent()?;
-    let cable = (project.watches(&owner).into_iter())
-        .find(|(each, _)| *each == played_name(&format!("{}.{number}", inner.name())))
-        .map(|(_, watch)| watch.get())
+    let cable = (project.watched(&owner, &played_name(&format!("{}.{number}", inner.name()))))
         .filter(|value| value.is_finite());
     let (record, range) = child_field(project, id, name, records)?;
     Some((
@@ -388,18 +450,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn two_cards_that_show_one_meter_in_a_frame_both_see_its_peak() {
-        let peaks = sound_core::Peaks::new();
+    fn every_card_that_shows_a_meter_sees_its_peak_however_their_draws_interleave() {
+        let peaks = Peaks::new();
+        let first = shared_reader("song/meter.level", &peaks);
+        let second = shared_reader("song/meter.level", &peaks);
         peaks.record_block([&[0.5], &[0.25]]);
-        let now = Instant::now();
-        let first = take_shared("song/meter.level".to_string(), &peaks, now);
-        let second = take_shared("song/meter.level".to_string(), &peaks, now);
-        assert_eq!((first, second), ([0.5, 0.25], [0.5, 0.25]));
-        // What plays after the frame waits for the next one.
-        peaks.record_block([&[0.75], &[0.75]]);
-        let later = take_shared("song/meter.level".to_string(), &peaks, now);
-        assert_eq!(later, [0.5, 0.25]);
-        let next = take_shared("song/meter.level".to_string(), &peaks, now + SAME_FRAME);
-        assert_eq!(next, [0.75, 0.75]);
+        assert_eq!(first.take(), [0.5, 0.25]);
+        assert!(!second.is_silent());
+        peaks.record_block([&[0.75], &[0.0]]);
+        assert_eq!(second.take(), [0.75, 0.25]);
+        assert_eq!(first.take(), [0.75, 0.0]);
     }
 }

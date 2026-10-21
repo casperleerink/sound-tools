@@ -398,8 +398,9 @@ const FAMILIES: &[&str] = &[
 pub(crate) struct Uses {
     pub watches: bool,
     pub tick: bool,
-    /// It moves on every frame by itself: with the clock, the engine's levels or what a lane
-    /// or a cable plays, or as it eases.
+    /// It moves on every frame by itself: with the time since it opened, a history, a scope or
+    /// a take as it grows. What moves with the engine's levels, what a lane or a cable plays or
+    /// as it eases draws again only when that changed, see `Feeds::changed`.
     pub animates: bool,
     /// The peaks it reads, by name, and whether it reads the device output.
     pub peaks: BTreeSet<String>,
@@ -729,10 +730,7 @@ fn uses_of(props: &Props) -> Uses {
     match props {
         Props::Shape(shape) => shape.uses(),
         Props::Meter(MeterProps { of, input, .. }) => {
-            let mut uses = Uses {
-                animates: true,
-                ..Uses::default()
-            };
+            let mut uses = Uses::default();
             match (of, input) {
                 (_, Some(_)) => uses.input = true,
                 (Some(name), None) => _ = uses.peaks.insert(name.clone()),
@@ -1260,18 +1258,9 @@ impl Live {
         match self {
             Self::Tick | Self::Bpm => uses.tick = true,
             Self::Elapsed => uses.animates = true,
-            Self::Peak { name, .. } => {
-                uses.peaks.insert(name.clone());
-                uses.animates = true;
-            }
-            Self::DevicePeak { .. } => {
-                uses.output = true;
-                uses.animates = true;
-            }
-            Self::Input { .. } => {
-                uses.input = true;
-                uses.animates = true;
-            }
+            Self::Peak { name, .. } => _ = uses.peaks.insert(name.clone()),
+            Self::DevicePeak { .. } => uses.output = true,
+            Self::Input { .. } => uses.input = true,
             Self::Value {
                 name,
                 child,
@@ -1287,7 +1276,6 @@ impl Live {
                 }
                 if *played {
                     uses.played.insert(named);
-                    uses.animates = true;
                 }
                 // It may be an output, which moves with the watches.
                 uses.watches = true;
@@ -1318,10 +1306,7 @@ impl Live {
             | Self::Sin { x }
             | Self::Cos { x }
             | Self::Decibels { x } => x.add_uses(uses),
-            Self::Ease { x, .. } => {
-                x.add_uses(uses);
-                uses.animates = true;
-            }
+            Self::Ease { x, .. } => x.add_uses(uses),
         }
     }
 }
