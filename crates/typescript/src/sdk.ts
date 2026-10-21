@@ -1467,7 +1467,7 @@ export interface Press extends Modifiers {
 export interface PointerEvents {
   /** A button goes down on it. */
   onPress?: (press: Press) => void;
-  /** That button goes up, wherever the pointer is by then, also after Escape or when the window loses focus. */
+  /** That button goes up, wherever the pointer is by then, also after Escape, when the window loses focus or when the node is gone. */
   onRelease?: (press: Press) => void;
   /** A left press and release on it with no drag between. */
   onClick?: (press: Press) => void;
@@ -3466,11 +3466,23 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
+/** The `onRelease` of each press, by node and button: a node its press took away still hears its release. */
+const releases = new Map<string, (press: Press) => void>();
+
 /** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
 function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
+  if (kind === "release") {
+    const pressed = `${id} ${(payload as Press).button}`;
+    const release = releases.get(pressed);
+    releases.delete(pressed);
+    return release?.(payload);
+  }
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
+    case "press":
+      if (made.onRelease) releases.set(`${id} ${(payload as Press).button}`, made.onRelease);
+      return made.onPress?.(payload);
     case "commit":
       return made.onCommit?.((payload as { text: string }).text);
     case "cancel":
@@ -3488,7 +3500,7 @@ function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "co
     case "change":
       return made.onChange?.(payload);
     default: {
-      const handler = { press: made.onPress, release: made.onRelease, click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
+      const handler = { click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);
     }
   }

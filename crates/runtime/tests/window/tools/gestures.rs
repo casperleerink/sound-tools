@@ -1,7 +1,9 @@
 //! What moves on a page moves in the window, with no Bun: a knob turns its field as one undo
 //! step, and a drag moves what binds to it; Bun hears the drag once, at its end.
 
-use gpui::{Pixels, Point, TestAppContext, point, px};
+use gpui::{
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
+};
 
 use super::{ONLY_THE_TOOL, Opened, open};
 
@@ -314,7 +316,7 @@ fn steps_on_what_code_keeps_grow_and_shrink_with_it(cx: &mut TestAppContext) {
     });
 }
 
-const POINTER: &str = r##"import { h, Rect, Space, text, tool } from "./sdk";
+const POINTER: &str = r##"import { h, type PointerEvents, Rect, Show, signal, Space, text, Toggle, tool, type UiNode } from "./sdk";
 
 tool({
   name: "pointer",
@@ -331,11 +333,18 @@ tool({
       update(what, ({ state }) => { state.heard = all; });
     };
     const pointer = (name: string) => ({ onPress: hear(`${name}-press`), onRelease: hear(`${name}-release`), onClick: hear(`${name}-click`) });
+    const vanishing = (name: string, made: (heard: PointerEvents) => UiNode) => {
+      const [shown, show] = signal(true);
+      return Show({ when: shown, children: () => made({ onPress: () => { hear(`${name}-press`)(); show(false); }, onRelease: hear(`${name}-release`) }) });
+    };
     return h("div", {},
       h("div", { key: "pad", style: { width: 100, height: 40 }, ...pointer("div") }),
+      vanishing("gone", (heard) => h("div", { key: "gone", style: { width: 100, height: 40 }, ...heard })),
+      h(Toggle, { key: "switch", on: false, onClick: (press) => hear(`toggle-click-${press.clicks}`)() }),
       h(Space, { key: "board", width: 400, height: 100 },
         h(Rect, { x: 0, y: 0, width: 50, height: 50, color: "#ffffff", ...pointer("shape") }),
         h(Rect, { x: 100, y: 0, width: 50, height: 50, color: "#ffffff", drag: { onEnd: hear("drag-end") }, ...pointer("drag") }),
+        vanishing("gone-shape", (heard) => h(Rect, { x: 200, y: 0, width: 50, height: 50, color: "#ffffff", ...heard })),
       ),
     );
   },
@@ -381,4 +390,72 @@ fn a_release_follows_a_press_off_the_node_after_escape_and_when_the_window_goes_
     window.heard_by_the_pointer(
         "div-press div-release shape-press shape-release drag-press drag-release div-press div-release",
     );
+}
+
+impl Opened<'_> {
+    fn button(&mut self, position: Point<Pixels>, button: MouseButton, down: bool) {
+        let modifiers = Modifiers::default();
+        if down {
+            self.cx.simulate_event(MouseDownEvent {
+                position,
+                modifiers,
+                button,
+                click_count: 1,
+                first_mouse: false,
+            });
+        } else {
+            self.cx.simulate_event(MouseUpEvent {
+                position,
+                modifiers,
+                button,
+                click_count: 1,
+            });
+        }
+        self.cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+fn a_node_its_press_takes_away_still_hears_the_release(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let gone = window.until_found("div-gone");
+    window.press(gone);
+    window.until("the div gone", |window| window.find("div-gone").is_none());
+    window.release(gone);
+    let shape = window.space("board") + point(px(225.), px(25.));
+    window.press(shape);
+    window.release(shape);
+    window.heard_by_the_pointer("gone-press gone-release gone-shape-press gone-shape-release");
+}
+
+#[gpui::test]
+fn the_other_button_neither_clicks_a_held_press_nor_keeps_its_release(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let pad = window.until_found("div-pad");
+    let board = window.space("board");
+    let (shape, empty) = (
+        board + point(px(25.), px(25.)),
+        board + point(px(350.), px(80.)),
+    );
+    window.button(empty, MouseButton::Right, true);
+    window.press(shape);
+    window.button(empty, MouseButton::Right, false);
+    window.release(shape);
+    window.press(pad);
+    window.button(empty, MouseButton::Right, true);
+    window.button(empty, MouseButton::Right, false);
+    // The left button came up outside the window.
+    window
+        .cx
+        .simulate_mouse_move(empty, None, Modifiers::default());
+    window.cx.run_until_parked();
+    window.heard_by_the_pointer("shape-press shape-release shape-click div-press div-release");
+}
+
+#[gpui::test]
+fn a_toggle_tells_how_many_clicks(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let toggle = window.until_found("toggle-switch");
+    window.double_click(toggle);
+    window.heard_by_the_pointer("toggle-click-1 toggle-click-2");
 }

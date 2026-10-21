@@ -346,8 +346,11 @@ fn hears_the_button(down: Rc<Cell<bool>>, card: WeakEntity<TypeScriptCard>) -> i
             });
             // A button that came up outside the window.
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                if phase == DispatchPhase::Capture && !event.dragging() && down.replace(false) {
-                    (card.update(cx, |card, cx| card.let_go(None, cx))).ok();
+                if phase == DispatchPhase::Capture {
+                    down.set(event.dragging());
+                    if !event.dragging() {
+                        (card.update(cx, |card, cx| card.let_go(None, cx))).ok();
+                    }
                 }
             });
         },
@@ -1121,15 +1124,16 @@ impl TypeScriptCard {
         press: Value,
         cx: &mut App,
     ) {
+        if !hears.press {
+            return;
+        }
         if hears.release {
             self.pressed.push((node, button, press.clone()));
         }
-        if hears.press {
-            self.event(node, EventKind::Press, press, cx);
-        }
+        self.event(node, EventKind::Press, press, cx);
     }
 
-    /// A left press and release on the div or button `id`.
+    /// A left press and release on the div, button or toggle `id`.
     fn click(&mut self, id: u64, event: &gpui::ClickEvent, cx: &mut App) {
         self.hang_menus_under(id);
         let click = press_of(
@@ -1522,6 +1526,8 @@ fn range_of(info: Option<&ToolInfo>, turns: &tree::Turns) -> Option<ValueRange> 
 /// Which pointer events the code of a node hears.
 #[derive(Clone, Copy, Default)]
 struct Hears {
+    /// Its presses, also for a node that hears only their release: Bun keeps the release of a
+    /// press for a node gone since.
     press: bool,
     release: bool,
     click: bool,
@@ -1530,14 +1536,21 @@ struct Hears {
 impl Hears {
     fn of(press: Option<bool>, release: Option<bool>, click: Option<bool>) -> Self {
         Self {
-            press: press == Some(true),
+            press: press == Some(true) || release == Some(true),
             release: release == Some(true),
             click: click == Some(true),
         }
     }
 
     fn any(self) -> bool {
-        self.press || self.release || self.click
+        self.press || self.click
+    }
+
+    fn unless(self, disabled: Option<bool>) -> Self {
+        match disabled {
+            Some(true) => Self::default(),
+            _ => self,
+        }
     }
 }
 
@@ -2417,22 +2430,21 @@ impl Drawing<'_, '_> {
             (None, false) => Toggle::new(name, props.label.clone().unwrap_or_default(), on),
         };
         let selector = format!("toggle-{}", props.key.as_deref().unwrap_or_default());
+        let hears =
+            Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
             .when_some(props.color, |toggle, color| toggle.color(color.0))
             .when_some(props.tooltip.clone(), Toggle::tooltip)
             .disabled(props.disabled == Some(true))
             .tab_stop(false)
-            .when(props.on_click == Some(true), |toggle| {
-                let card = self.cx.entity().downgrade();
-                toggle.on_change(move |_, _, cx| {
-                    let click = press_of((0.0, 0.0), MouseButton::Left, 1, Modifiers::default());
-                    (card.update(cx, |view, cx| view.event(id, EventKind::Click, click, cx))).ok();
-                })
+            .when(hears.click, |toggle| {
+                toggle.on_click(
+                    (self.cx).listener(move |view, event, _, cx| view.click(id, event, cx)),
+                )
             });
-        let hears = Hears::of(props.on_press, props.on_release, props.on_click);
         // A click on it is its own, not the row's under it.
         let wrap = div().flex_none().occlude().debug_selector(move || selector);
-        self.hears_presses(wrap, id, hears, props.disabled)
+        self.hears_presses(wrap, id, hears)
             .child(toggle)
             .into_any_element()
     }
@@ -2465,6 +2477,8 @@ impl Drawing<'_, '_> {
             ),
         };
         let selector = format!("button-{}", props.key.as_deref().unwrap_or_default());
+        let hears =
+            Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let button = button
             .variant(variant)
             .size(size)
@@ -2476,29 +2490,22 @@ impl Drawing<'_, '_> {
                 button
             })
             .debug_selector(move || selector)
-            .when(props.on_click == Some(true), |button| {
+            .when(hears.click, |button| {
                 button.on_click(
                     self.cx
                         .listener(move |view, event, _, cx| view.click(id, event, cx)),
                 )
             });
-        let hears = Hears::of(props.on_press, props.on_release, props.on_click);
         let wrap = div().flex_none().relative();
-        self.hears_presses(wrap, id, hears, props.disabled)
+        self.hears_presses(wrap, id, hears)
             .child(button)
             .when(hears.any(), |wrap| wrap.child(placed(id, &self.placed)))
             .into_any_element()
     }
 
     /// `element`, the node `id`, tells its code the presses `hears` asks for, and their release.
-    fn hears_presses<E: InteractiveElement>(
-        &mut self,
-        element: E,
-        id: u64,
-        hears: Hears,
-        disabled: Option<bool>,
-    ) -> E {
-        if !(hears.press || hears.release) || disabled == Some(true) {
+    fn hears_presses<E: InteractiveElement>(&mut self, element: E, id: u64, hears: Hears) -> E {
+        if !hears.press {
             return element;
         }
         let press = |button| {
@@ -2534,7 +2541,7 @@ impl Drawing<'_, '_> {
         {
             {
                 let lavender = self.cx.theme().lavender;
-                let element = self.hears_presses(element, id, hears, None);
+                let element = self.hears_presses(element, id, hears);
                 let element = element
                     .when(hears.any(), |element| element.child(placed(id, &self.placed)))
                     .when(hears.click, |element| {
@@ -3773,7 +3780,8 @@ fn listen(
     window.on_mouse_event({
         let (frame, card, hitbox) = (frame.clone(), card.clone(), hitbox.clone());
         move |event: &MouseUpEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble {
+            // Only the left button clicks and drags.
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
                 return;
             }
             let over = hitbox.is_hovered(window).then(|| {
