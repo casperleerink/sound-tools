@@ -381,11 +381,9 @@ fn an_audio_track_has_a_lane_for_its_volume(cx: &mut TestAppContext) {
     window.until_found("div-lane-name-audio-voice-lane-mix-gain-db");
     let session = window.session.clone();
     let mix = crate::support::id("song/audio-voice/mix");
-    assert!(
-        window
-            .cx
-            .read(|cx| session.read(cx).project().lanes(&mix).is_some())
-    );
+    window.until("the mix plays from the lane", |window| {
+        (window.cx).read(|cx| session.read(cx).project().lanes(&mix).is_some())
+    });
 }
 
 #[gpui::test]
