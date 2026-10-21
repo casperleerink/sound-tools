@@ -469,17 +469,19 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
             sample(
                 "lanes",
                 cx,
-                Toggle::icon("lanes-off", "automation", "Automation", false),
+                Toggle::icon("lanes-off", "automation", false).tooltip("Automation"),
             ),
             sample(
                 "lanes shown",
                 cx,
-                Toggle::icon("lanes-on", "automation", "Automation", true),
+                Toggle::icon("lanes-on", "automation", true).tooltip("Automation"),
             ),
             sample(
                 "lanes, 2",
                 cx,
-                Toggle::icon("lanes-count", "automation", "Automation", false).count(2),
+                Toggle::icon("lanes-count", "automation", false)
+                    .tooltip("Automation")
+                    .count(2),
             ),
             sample(
                 "segmented",
