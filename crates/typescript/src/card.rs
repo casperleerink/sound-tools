@@ -321,19 +321,21 @@ impl Render for CardTitle {
     }
 }
 
-/// Takes no room and writes into `down` whether a mouse button is down in the window. A button
-/// that goes down ends the click of `card`; one that goes up releases its presses of it, before
-/// a click or a drag's end.
+/// Takes no room and writes into `down` whether a mouse button is down in the window. A left or
+/// right button that goes down ends the click of `card`; one that goes up releases its presses of
+/// it, before a click or a drag's end.
 fn hears_the_button(down: Rc<Cell<bool>>, card: WeakEntity<TypeScriptCard>) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |_, (), window, _| {
             window.on_mouse_event({
                 let (down, card) = (down.clone(), card.clone());
-                move |_: &MouseDownEvent, phase, _, cx| {
+                move |event: &MouseDownEvent, phase, _, cx| {
                     if phase == DispatchPhase::Capture {
                         down.set(true);
-                        (card.update(cx, |card, _| card.clicking = None)).ok();
+                        if heard(event.button) {
+                            (card.update(cx, |card, _| card.clicking = None)).ok();
+                        }
                     }
                 }
             });
@@ -499,6 +501,11 @@ impl Held {
         add_modifiers(&mut result, self.modifiers);
         result
     }
+}
+
+/// Code hears only the left and the right button.
+fn heard(button: MouseButton) -> bool {
+    matches!(button, MouseButton::Left | MouseButton::Right)
 }
 
 /// What a press tells its node's code: where in the units of its space (0 on a div), which
@@ -3730,7 +3737,8 @@ fn listen(
         let (frame, card, painted, hitbox) =
             (frame.clone(), card.clone(), painted.clone(), hitbox.clone());
         move |event: &MouseDownEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+            if phase != DispatchPhase::Bubble || !heard(event.button) || !hitbox.is_hovered(window)
+            {
                 return;
             }
             let target = found(&frame, &painted, event.position);

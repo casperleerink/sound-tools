@@ -455,6 +455,21 @@ fn the_other_button_neither_clicks_a_held_press_nor_keeps_its_release(cx: &mut T
 }
 
 #[gpui::test]
+fn the_middle_button_is_not_heard_while_the_left_holds_a_shape(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let pad = window.until_found("div-pad");
+    let shape = window.space("board") + point(px(25.), px(25.));
+    window.press(shape);
+    window.button(shape, MouseButton::Middle, true);
+    window.button(shape, MouseButton::Middle, false);
+    window.release(shape);
+    window.click(pad);
+    window.heard_by_the_pointer(
+        "shape-press shape-release shape-click div-press div-release div-click",
+    );
+}
+
+#[gpui::test]
 fn a_toggle_and_a_button_tell_how_many_clicks(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
     let toggle = window.until_found("toggle-switch");
