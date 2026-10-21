@@ -162,7 +162,7 @@ impl Feeds {
                     self.output = reader.take();
                     self.output_reader = Some(reader);
                 }
-                (false, _) => self.output_reader = None,
+                (false, _) => (self.output_reader, self.output) = (None, [0.0; 2]),
             }
         }
         self.records.next_frame();
