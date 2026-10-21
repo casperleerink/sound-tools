@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { h, input, number, list, notes, output, rise, Select, text, tool, bang, type Declaration, type HeardEvent, type TimelineState } from "./sdk";
+import { h, input, number, list, notes, output, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -419,3 +419,15 @@ const lane = (): "velocity" | "pedal" => "velocity";
 Select({ value: lane, options: lanes, onChange: (picked: "velocity" | "pedal") => picked });
 // @ts-expect-error: no option is "bend".
 Select({ value: lane, options: lanes, onChange: (picked: "bend") => picked });
+
+// A toggle shows one face: a label, an icon with its count, or a dot.
+Toggle({ icon: "automation", count: 2, tooltip: "Automation", on: true });
+// @ts-expect-error: an icon toggle shows no label.
+Toggle({ icon: "automation", label: "Automation", on: true });
+
+// A look takes only what a look changes, even from a `Style`.
+const look: Look = { background: "alpha/10" };
+const sized = { width: 120, background: "red" } satisfies Style;
+// @ts-expect-error: a width is no part of a look.
+const sizedLook: Look = sized;
+h("div", { style: { hover: look, pressed: sizedLook } });

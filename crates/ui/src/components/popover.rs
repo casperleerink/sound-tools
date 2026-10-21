@@ -27,8 +27,19 @@ pub enum Align {
 /// Standard height of the small trigger buttons in this file.
 pub(crate) const TRIGGER_HEIGHT: f32 = 32.;
 
+/// The dropdown shadow from `globals.css`: `0 4px 24px -8px rgba(0,0,0,0.2)`.
+pub fn shadow() -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: hsla(0., 0., 0., 0.2),
+        offset: point(px(0.), px(4.)),
+        blur_radius: px(24.),
+        spread_radius: px(-8.),
+        inset: false,
+    }]
+}
+
 /// The shared overlay surface: `gray_200` with an `alpha/10` border and the
-/// dropdown shadow from `globals.css` (`0 4px 24px -8px rgba(0,0,0,0.2)`).
+/// dropdown [`shadow`].
 pub(crate) fn surface(cx: &App) -> Div {
     let theme = cx.theme();
     div()
@@ -38,13 +49,7 @@ pub(crate) fn surface(cx: &App) -> Div {
         .border_color(theme.alpha_at(0.10))
         .rounded(px(10.))
         .text_color(theme.gray_950)
-        .shadow(vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.2),
-            offset: point(px(0.), px(4.)),
-            blur_radius: px(24.),
-            spread_radius: px(-8.),
-            inset: false,
-        }])
+        .shadow(shadow())
 }
 
 /// Zero-size box pinned to the chosen trigger edge; the deferred `anchored`

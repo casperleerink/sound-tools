@@ -475,6 +475,41 @@ fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     assert_eq!(count(&mut window), Some(2.0));
 }
 
+/// A disabled div hears no click; the same div beside it does.
+#[gpui::test]
+fn a_disabled_div_hears_no_click(cx: &mut TestAppContext) {
+    let code = r#"import { h, input, number, tool } from "./sdk";
+
+tool({
+  name: "counter",
+  title: "Counter",
+  when: "You want to count clicks",
+  doc: "Counts the clicks on one of its two buttons.",
+  state: { count: number({ min: 0, max: 100, default: 0 }) },
+  sound: () => input,
+  view: ({ state, update }) => {
+    const count = () => update("Count", ({ state: next }) => { next.count = state.count + 1; });
+    const style = { width: 80, height: 40 };
+    return h("div", { style: { direction: "row" } },
+      h("div", { key: "locked", disabled: true, style, onPress: count }, "Locked"),
+      h("div", { key: "open", style, onPress: count }, "Open"),
+    );
+  },
+});
+"#;
+    let mut window = open(
+        cx,
+        &[COUNTER[0], COUNTER[1], ("extensions/counter.ts", code)],
+    );
+    let locked = window.until_found("div-locked");
+    let open = window.until_found("div-open");
+    window.wait_for_bun();
+    window.click(locked);
+    window.click(open);
+    window.wait_for_bun();
+    assert_eq!(window.record("counter")["count"], 1.0);
+}
+
 /// The page draws again after its code hears a note or a key, and a click on it still runs.
 #[gpui::test]
 fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut TestAppContext) {

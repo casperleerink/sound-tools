@@ -13,8 +13,8 @@ use gpui::{
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle, ScrollWheelEvent,
-    SharedString, StyleRefinement, Task, TextAlign, TextRun, WeakEntity, Window, canvas, div, fill,
-    outline, point, prelude::*, px, size,
+    SharedString, Stateful, StyleRefinement, Task, TextAlign, TextRun, WeakEntity, Window, canvas,
+    div, fill, outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -36,6 +36,7 @@ use sound_ui::components::meter::Meter;
 use sound_ui::components::select::Select;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::toggle::Toggle;
+use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{
     ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, every_poll, typography,
 };
@@ -2019,6 +2020,9 @@ impl Drawing<'_, '_> {
                 key,
                 style,
                 on_press,
+                disabled,
+                cursor,
+                tooltip,
                 follow,
                 carry,
                 on_drop,
@@ -2029,6 +2033,7 @@ impl Drawing<'_, '_> {
                     return div().into_any_element();
                 }
                 let style = style.clone().unwrap_or_default();
+                let disabled = *disabled == Some(true);
                 let shown: Vec<usize> = (entry.children.iter())
                     .filter(|child| {
                         !matches!(
@@ -2047,7 +2052,7 @@ impl Drawing<'_, '_> {
                         let heights: Option<Vec<f32>> = (shown.iter())
                             .map(|child| match table.get(*child).map(|child| &child.props) {
                                 Some(Props::Div(child)) => {
-                                    child.style.as_ref().and_then(tree::Style::fixed_height)
+                                    child.style.as_ref().and_then(|style| style.fixed_height())
                                 }
                                 _ => None,
                             })
@@ -2106,9 +2111,9 @@ impl Drawing<'_, '_> {
                             .when(follow.x.is_none(), |inside| inside.w_full())
                             .when(follow.y.is_none(), |inside| inside.h_full())
                             .children(children);
-                        (style.apply(div()).relative().overflow_hidden()).child(inside)
+                        (style.apply(div(), disabled).overflow_hidden()).child(inside)
                     }
-                    None => style.apply(div()).children(children),
+                    None => style.apply(div(), disabled).children(children),
                 };
                 // Tests find a div by its key.
                 let element = match key {
@@ -2118,34 +2123,47 @@ impl Drawing<'_, '_> {
                     }
                     None => element,
                 };
-                let hears = *on_press == Some(true) || *on_drop == Some(true) || carry.is_some();
+                let hears = !disabled
+                    && (*on_press == Some(true) || *on_drop == Some(true) || carry.is_some());
+                let element = match (disabled, cursor) {
+                    (true, _) => element.cursor_not_allowed(),
+                    (false, Some(cursor)) => element.cursor(cursor.style()),
+                    (false, None) if *on_press == Some(true) => element.cursor_pointer(),
+                    (false, None) => element,
+                };
+                let pressed = style.pressed().filter(|_| !disabled);
+                let inner = match hears || pressed.is_some() || tooltip.is_some() {
+                    false => element.into_any_element(),
+                    true => {
+                        let name = element_name("div", key.as_deref(), index);
+                        let element = (element.id(ElementId::Name(name.into())))
+                            .when_some(pressed, |element, look| {
+                                // The hitbox the pressed look needs, on a div that hears nothing.
+                                element
+                                    .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                                    .active(move |style| look.refine(style))
+                            })
+                            .when_some(tooltip.clone(), |element, text| {
+                                element.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
+                            });
+                        match hears {
+                            true => self.heard_div(element, id, on_press, carry, on_drop),
+                            false => element.into_any_element(),
+                        }
+                    }
+                };
                 if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
                     let name = element_name("scroll", key.as_deref(), index);
-                    let inner = match hears {
-                        true => self.heard_div(
-                            element,
-                            id,
-                            key.as_deref(),
-                            index,
-                            on_press,
-                            carry,
-                            on_drop,
-                        ),
-                        false => element.into_any_element(),
-                    };
-                    let scrolling = (style.sized(div()).id(ElementId::Name(name.into())))
-                        .track_scroll(&scroller);
+                    let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
+                    let scrolling = style.fade(scrolling, disabled).track_scroll(&scroller);
                     let scrolling = match axis {
                         tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
                         tree::ScrollAxis::Y => scrolling.overflow_y_scroll(),
                     };
                     return scrolling.child(inner).into_any_element();
                 }
-                if !hears {
-                    return element.into_any_element();
-                }
-                self.heard_div(element, id, key.as_deref(), index, on_press, carry, on_drop)
+                inner
             }
         }
     }
@@ -2186,26 +2204,20 @@ impl Drawing<'_, '_> {
             .into_any_element()
     }
 
-    /// A div that hears presses, drops or carries something when dragged.
-    #[allow(clippy::too_many_arguments)]
     /// A switch of the app, which tells a press as a pressed div does: its code turns it.
     fn toggle(&mut self, id: u64, props: &ToggleProps, index: &[usize]) -> AnyElement {
         let name: SharedString = element_name("toggle", props.key.as_deref(), index).into();
         let on = props.on == Some(true);
         let toggle = match (&props.icon, props.dot == Some(true)) {
-            (Some(icon), _) => Toggle::icon(
-                name,
-                icon.clone(),
-                props.label.clone().unwrap_or_default(),
-                on,
-            )
-            .count(props.count.unwrap_or_default().max(0.0) as usize),
+            (Some(icon), _) => Toggle::icon(name, icon.clone(), on)
+                .count(props.count.unwrap_or_default().max(0.0) as usize),
             (None, true) => Toggle::dot(name, on),
             (None, false) => Toggle::new(name, props.label.clone().unwrap_or_default(), on),
         };
         let selector = format!("toggle-{}", props.key.as_deref().unwrap_or_default());
         let toggle = toggle
             .when_some(props.color, |toggle, color| toggle.color(color.0))
+            .when_some(props.tooltip.clone(), Toggle::tooltip)
             .disabled(props.disabled == Some(true))
             .tab_stop(false)
             .when(props.on_press == Some(true), |toggle| {
@@ -2255,6 +2267,10 @@ impl Drawing<'_, '_> {
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
             .when_some(props.opacity, |button, opacity| button.opacity(opacity))
+            .when_some(props.tooltip.clone(), |mut button, text| {
+                (button.interactivity()).tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx));
+                button
+            })
             .debug_selector(move || selector)
             .when(props.on_press == Some(true), |button| {
                 button.on_click(
@@ -2277,12 +2293,11 @@ impl Drawing<'_, '_> {
             .into_any_element()
     }
 
+    /// A div that hears presses, drops or carries something when dragged.
     fn heard_div(
         &mut self,
-        element: Div,
+        element: Stateful<Div>,
         id: u64,
-        key: Option<&str>,
-        index: &[usize],
         on_press: &Option<bool>,
         carry: &Option<String>,
         on_drop: &Option<bool>,
@@ -2290,37 +2305,34 @@ impl Drawing<'_, '_> {
         {
             {
                 let lavender = self.cx.theme().lavender;
-                let element = element
-                    .id(ElementId::Name(element_name("div", key, index).into()))
-                    .when(*on_press == Some(true), |element| {
-                        element
-                            .cursor_pointer()
-                            .on_click((self.cx).listener(
-                                move |view, event: &gpui::ClickEvent, _, cx| {
-                                    view.hang_menus_under(id);
-                                    let mut press = json!({
-                                        "x": 0, "y": 0, "button": "left",
-                                        "clicks": event.click_count(),
-                                    });
-                                    add_modifiers(&mut press, event.modifiers());
-                                    view.event(id, EventKind::Press, press, cx);
-                                },
-                            ))
-                            .child(placed(id, &self.placed))
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                (self.cx).listener(move |view, event: &MouseDownEvent, _, cx| {
-                                    view.anchor.set(None);
-                                    let mut press = json!({
-                                        "x": 0, "y": 0, "button": "right",
-                                        "clicks": event.click_count,
-                                    });
-                                    add_modifiers(&mut press, event.modifiers);
-                                    view.event(id, EventKind::Press, press, cx);
-                                    cx.stop_propagation();
-                                }),
-                            )
-                    });
+                let element = element.when(*on_press == Some(true), |element| {
+                    element
+                        .on_click((self.cx).listener(
+                            move |view, event: &gpui::ClickEvent, _, cx| {
+                                view.hang_menus_under(id);
+                                let mut press = json!({
+                                    "x": 0, "y": 0, "button": "left",
+                                    "clicks": event.click_count(),
+                                });
+                                add_modifiers(&mut press, event.modifiers());
+                                view.event(id, EventKind::Press, press, cx);
+                            },
+                        ))
+                        .child(placed(id, &self.placed))
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            (self.cx).listener(move |view, event: &MouseDownEvent, _, cx| {
+                                view.anchor.set(None);
+                                let mut press = json!({
+                                    "x": 0, "y": 0, "button": "right",
+                                    "clicks": event.click_count,
+                                });
+                                add_modifiers(&mut press, event.modifiers);
+                                view.event(id, EventKind::Press, press, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                });
                 let element = match carry {
                     Some(carry) => element
                         .on_drag(Carried(carry.clone()), |carried: &Carried, _, _, cx| {

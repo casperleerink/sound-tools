@@ -11,6 +11,8 @@
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside
 //!   a small piano roll whose notes and labels are shapes of a space.
+//! - `typescript-style.png`: the looks and layout of a div: one held pressed, two disabled, a card
+//!   with a shadow, a badge and an overlay placed on it, a clipped child, a row that wraps.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
@@ -65,6 +67,43 @@ tool({
 });
 "##;
 
+const STYLES: &str = r##"import { h, tool, type Style } from "./sdk";
+
+const box: Style = { width: 120, height: 40, align: "center", justify: "center", radius: 6, background: "alpha/5" };
+
+tool({
+  name: "styles",
+  title: "Styles",
+  when: "A snapshot",
+  doc: "The looks and layout of a div.",
+  state: {},
+  sound: () => 0,
+  view: () =>
+    h("div", { style: { gap: 24 } },
+      h("div", { style: { direction: "row", gap: 16 } },
+        h("div", { key: "pressed", style: { ...box, hover: { background: "alpha/10" }, pressed: { background: "lavender", color: "gray-50" } }, onPress: () => {} }, "Pressed"),
+        h("div", { key: "disabled", disabled: true, style: box, onPress: () => {} }, "Disabled"),
+        h("div", { disabled: true, style: { ...box, disabled: { background: "red/20", color: "red" } } }, "Its own look"),
+        h("div", { style: { ...box, opacity: 0.5 } }, "Half"),
+      ),
+      h("div", { style: { direction: "row", gap: 24 } },
+        h("div", { style: { width: 240, height: 120, padding: 12, radius: 10, background: "gray-200", shadow: true } },
+          "A card",
+          h("div", { style: { absolute: { top: -6, right: -6 }, width: 20, height: 20, radius: 10, align: "center", justify: "center", background: "red", color: "gray-50", fontSize: 11 } }, "3"),
+          h("div", { style: { absolute: { left: 0, right: 0, bottom: 0 }, height: 32, align: "center", justify: "center", background: "alpha/10" } }, "Overlay"),
+        ),
+        h("div", { style: { width: 120, height: 60, radius: 10, background: "alpha/5", clip: true } },
+          h("div", { style: { width: 200, height: 40, background: "teal/40" } }),
+        ),
+        h("div", { style: { direction: "row", wrap: true, gap: 4, maxWidth: 136 } },
+          Array.from({ length: 9 }, (_, index) => h("div", { style: { width: 40, height: 24, radius: 4, align: "center", justify: "center", background: "alpha/10" } }, String(index))),
+        ),
+      ),
+      h("div", { style: { width: 240, padding: 8, background: "alpha/5", textAlign: "end" } }, "Aligned right"),
+    ),
+});
+"##;
+
 const PIANO_ROLL: &str = include_str!("../../../../tooling/agent-eval/examples/piano-roll.tsx");
 const MIXER: &str = include_str!("../../../../tooling/agent-eval/examples/mixer.tsx");
 const METER: &str = r#"{"tool": "meter", "state": {}}"#;
@@ -78,6 +117,34 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let demo = r#"{"tool": "demo", "state": {"steps": [1, 0, 0, 1, 0, 1, 0, 0], "cutoff": 2400}}"#;
     let opened = open_page(cx, "demo", demo, "extensions/demo.ts", DEMO)?;
     save(cx, opened.window.into(), "typescript-page")?;
+    drop(opened);
+
+    let opened = open_page(
+        cx,
+        "styles",
+        r#"{"tool": "styles", "state": {}}"#,
+        "extensions/styles.ts",
+        STYLES,
+    )?;
+    let pressed = point(px(104.), px(68.));
+    for event in [
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: pressed,
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+        PlatformInput::MouseDown(MouseDownEvent {
+            position: pressed,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        }),
+    ] {
+        opened.event(event, cx)?;
+    }
+    wait_for_bun(cx);
+    save(cx, opened.window.into(), "typescript-style")?;
     drop(opened);
 
     let record = serde_json::json!({ "tool": "piano-roll", "state": { "notes": melody() } });

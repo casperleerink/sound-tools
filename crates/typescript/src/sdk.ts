@@ -2613,20 +2613,21 @@ export const PeakMeter = (props: { key?: string; of?: string; input?: readonly n
   element("meter", { ...props }, []);
 
 /**
- * A switch of the app: a letter (`label`), an `icon` with `label` as its tooltip and a `count`
- * after it, or a `dot`. Coloured while `on`, `color` when given; its code turns it in `onPress`.
+ * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.
+ * Coloured while `on`, `color` when given; its code turns it in `onPress`.
  */
-export interface ToggleProps {
+export type ToggleProps = (
+  | { label: Bind<string>; icon?: never; count?: never; dot?: never }
+  | { icon: Bind<IconName>; count?: Bind<number>; label?: never; dot?: never }
+  | { dot: true; label?: never; icon?: never; count?: never }
+) & {
   key?: string;
-  label?: Bind<string>;
-  icon?: Bind<IconName>;
-  count?: Bind<number>;
-  dot?: boolean;
   on: Bind<boolean>;
   color?: Bind<Color>;
   disabled?: Bind<boolean>;
+  tooltip?: Bind<string>;
   onPress?: (press: Press) => void;
-}
+};
 
 /** A switch, see `ToggleProps`. */
 export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
@@ -2646,6 +2647,7 @@ export interface ButtonProps {
   disabled?: Bind<boolean>;
   /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
   opacity?: number;
+  tooltip?: Bind<string>;
   onPress?: (press: Press) => void;
 }
 
@@ -2674,8 +2676,16 @@ export interface Style {
   paddingBottom?: number;
   width?: number;
   height?: number;
+  minWidth?: number;
+  maxWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
   /** Takes the room left in its parent. */
   grow?: boolean;
+  /** Out of its parent's flow, over its siblings, this far from its parent's edges: a badge, an overlay. */
+  absolute?: { top?: number; left?: number; right?: number; bottom?: number };
+  /** Its children go on to a next line where a row is full. */
+  wrap?: boolean;
   /** Where children sit across the direction. */
   align?: "start" | "center" | "end";
   /** Where children sit along the direction. */
@@ -2693,19 +2703,36 @@ export interface Style {
   /** `tabular`: digits of one width, so a number that changes does not move what follows. */
   font?: "tabular";
   weight?: "normal" | "medium" | "semibold";
-  /** Its background while the pointer is over it. */
-  hover?: Color;
+  textAlign?: "start" | "center" | "end";
+  /** 0 to 1. */
+  opacity?: number;
+  /** The shadow of the app's menus. */
+  shadow?: boolean;
+  /** Its children do not show outside it. */
+  clip?: boolean;
+  /** Its look while the pointer is over it, while a press on it is held, and while its div is `disabled` (40% opacity when left out). */
+  hover?: Look;
+  pressed?: Look;
+  disabled?: Look;
   /** It never shrinks below what it needs, in a row too narrow. */
   keep?: boolean;
   /** One line, cut with an ellipsis where it does not fit. */
   truncate?: boolean;
 }
 
+type LookKey = "background" | "color" | "borderColor" | "opacity";
+/** What a look changes of a div's `Style`; a `Style` with more in it is no look. */
+export type Look = Pick<Style, LookKey> & { [Key in Exclude<keyof Style, LookKey>]?: never };
+
 interface DivProps {
   key?: string;
   style?: Bind<Style>;
   /** A click on it, or a press of the right button. */
   onPress?: (press: Press) => void;
+  /** It hears no press, drag or drop and shows its `disabled` look; its children still hear theirs, and it still scrolls. */
+  disabled?: Bind<boolean>;
+  cursor?: Pointed["cursor"];
+  tooltip?: Bind<string>;
   /** A drag of it carries this to a node that hears drops, such as another row of a list it reorders. */
   carry?: string;
   /** Files from the system, or what a dragged `div` carries, let go on it. */
@@ -3062,8 +3089,8 @@ export interface SelectProps<T> {
 }
 
 const TRIGGER = {
-  sm: { style: { direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: "alpha/10" }, text: 12 },
-  md: { style: { direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: "alpha/10" }, text: 13 },
+  sm: { style: { direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: { background: "alpha/10" } }, text: 12 },
+  md: { style: { direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: { background: "alpha/10" } }, text: 13 },
 } as const satisfies Record<string, { style: Style; text: number }>;
 
 /** Shows the option `value` is and opens the list of `options` under it, as the window's selects; a pick calls `onChange`. */
