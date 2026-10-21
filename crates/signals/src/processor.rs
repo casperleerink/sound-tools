@@ -83,6 +83,9 @@ pub enum SignalsUpdate {
     /// From the interface: a key or another note event, as if it came in on
     /// [`Signals::NOTES`]. Not saved.
     Note(Performed),
+    /// From the interface: the performer is gone, such as code that restarted. The keys it
+    /// holds come up now, and what it sent to play later does not play.
+    PerformerGone,
     /// From the behaviour: where to write what comes in on [`Signals::NOTES`], for the
     /// interface, or nowhere. The one it replaces rides back.
     Tap(Option<EventTap<NoteEvent>>),
@@ -135,6 +138,8 @@ pub struct Signals {
     arrays: Vec<Vec<f32>>,
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
+    /// A bit for each key a note the interface played holds.
+    performer_held: u128,
     watches: Vec<Watch>,
     tap: Option<EventTap<NoteEvent>>,
     sending: Sending,
@@ -273,6 +278,7 @@ impl Signals {
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
+            performer_held: 0,
             watches,
             tap: None,
             sending: Sending {
@@ -392,9 +398,21 @@ impl Signals {
         }
     }
 
+    /// Follows `event` the interface played.
+    fn perform(&mut self, event: NoteEvent) {
+        if let NoteEvent::On { pitch, .. } = event {
+            self.performer_held |= 1 << pitch.number();
+        }
+        self.follow(event);
+    }
+
     fn follow(&mut self, event: NoteEvent) {
-        if let NoteEvent::Bend(bend) = event {
-            self.bend = bend.fraction() * BEND_SEMITONES;
+        match event {
+            NoteEvent::Bend(bend) => self.bend = bend.fraction() * BEND_SEMITONES,
+            // An off ends every note of its key, whoever played it.
+            NoteEvent::Off { pitch } => self.performer_held &= !(1 << pitch.number()),
+            NoteEvent::AllOff => self.performer_held = 0,
+            _ => {}
         }
         match &mut self.players {
             Players::Many(voices) => voices.handle(event, &()),
@@ -735,7 +753,17 @@ impl Processor for Signals {
             }
             SignalsUpdate::Note(performed) => {
                 if let Some(now) = self.scheduled.perform(*performed) {
-                    self.follow(now);
+                    self.perform(now);
+                }
+            }
+            SignalsUpdate::PerformerGone => {
+                self.scheduled.clear();
+                for number in 0..128 {
+                    if self.performer_held & (1 << number) != 0 {
+                        self.follow(NoteEvent::Off {
+                            pitch: Pitch::nearest(number),
+                        });
+                    }
                 }
             }
             SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
@@ -924,7 +952,7 @@ impl Signals {
             let now = start_frame + start as u64;
             while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
-                    Played::Note(event) => self.follow(event),
+                    Played::Note(event) => self.perform(event),
                     Played::Trigger(index) => self.block.fire(index, start),
                     Played::Live(index, value) => self.move_live(index, value),
                 }

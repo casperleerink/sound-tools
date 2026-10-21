@@ -6,6 +6,9 @@
 //! An off releases every note of its pitch, and several senders may hold one pitch, such as two
 //! clips that overlap, or a clip and a key. So the feed counts the ons of each pitch and passes
 //! an off on only when it ends the last of them.
+//!
+//! It counts the performer's ons apart too: a performer that goes away, such as code that
+//! restarts, sends no off for what it holds.
 
 use sound_core::{
     EventInput, EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor,
@@ -23,6 +26,8 @@ pub struct NoteFeed {
     now: Now,
     /// How many ons of each pitch reached the instrument and have not ended.
     held: [u8; 128],
+    /// How many of `held` the performer played.
+    performer_held: [u8; 128],
 }
 
 impl Default for NoteFeed {
@@ -31,6 +36,7 @@ impl Default for NoteFeed {
             performed: Schedule::new(WAITING),
             now: Now::default(),
             held: [0; 128],
+            performer_held: [0; 128],
         }
     }
 }
@@ -40,6 +46,9 @@ pub enum NoteFeedUpdate {
     /// holds before it passes anything on.
     Senders,
     Note(Performed),
+    /// The performer is gone: what it holds ends now, and what it sent to play later does not
+    /// play.
+    PerformerGone,
 }
 
 /// What plays at the start of the next block: the release of a change of senders, and what a
@@ -129,25 +138,39 @@ impl NoteFeed {
     pub const INPUT: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: EventOutput<NoteEvent> = EventOutput::new(0);
 
-    /// Passes `event` on unless it is an off another on of its pitch still holds. False when it
-    /// did not fit.
-    fn pass(&mut self, outputs: &mut EventOutputs<'_>, offset: usize, event: NoteEvent) -> bool {
+    /// Passes `event`, from the performer or not, on unless it is an off another on of its
+    /// pitch still holds. False when it did not fit.
+    fn pass(
+        &mut self,
+        outputs: &mut EventOutputs<'_>,
+        offset: usize,
+        event: NoteEvent,
+        performed: bool,
+    ) -> bool {
         match event {
             NoteEvent::Off { pitch } => {
-                let held = &mut self.held[usize::from(pitch.number())];
+                let index = usize::from(pitch.number());
+                let (held, performer) = (&mut self.held[index], &mut self.performer_held[index]);
+                if performed {
+                    *performer = performer.saturating_sub(1);
+                }
                 if *held > 1 {
                     *held -= 1;
+                    *performer = (*performer).min(*held);
                     return true;
                 }
-                *held = 0;
+                (*held, *performer) = (0, 0);
             }
-            NoteEvent::AllOff => self.held = [0; 128],
+            NoteEvent::AllOff => (self.held, self.performer_held) = ([0; 128], [0; 128]),
             _ => {}
         }
         let sent = outputs.push(Self::OUTPUT, offset, event);
         if sent && let NoteEvent::On { pitch, .. } = event {
-            let held = &mut self.held[usize::from(pitch.number())];
-            *held = held.saturating_add(1);
+            let index = usize::from(pitch.number());
+            self.held[index] = self.held[index].saturating_add(1);
+            if performed {
+                self.performer_held[index] = self.performer_held[index].saturating_add(1);
+            }
         }
         sent
     }
@@ -167,8 +190,23 @@ impl Processor for NoteFeed {
     fn update(&mut self, update: &mut NoteFeedUpdate) {
         match update {
             NoteFeedUpdate::Senders => {
-                self.held = [0; 128];
+                (self.held, self.performer_held) = ([0; 128], [0; 128]);
                 self.now.keep(NoteEvent::AllOff);
+            }
+            NoteFeedUpdate::PerformerGone => {
+                self.performed.clear();
+                let held = self.held.iter_mut().zip(&mut self.performer_held);
+                for (number, (held, performer)) in (0..).zip(held) {
+                    if *performer == 0 {
+                        continue;
+                    }
+                    *held = held.saturating_sub(std::mem::take(performer));
+                    if *held == 0 {
+                        self.now.keep(NoteEvent::Off {
+                            pitch: Pitch::nearest(number),
+                        });
+                    }
+                }
             }
             NoteFeedUpdate::Note(performed) => {
                 if let Some(event) = self.performed.perform(*performed) {
@@ -198,10 +236,10 @@ impl Processor for NoteFeed {
             rest = after;
             performing = performing && self.perform(outputs, start, start + offset as u64);
             for timed in frame.iter().filter(|timed| !is_on(&timed.event)) {
-                self.pass(outputs, offset, timed.event);
+                self.pass(outputs, offset, timed.event, false);
             }
             for timed in frame.iter().filter(|timed| is_on(&timed.event)) {
-                self.pass(outputs, offset, timed.event);
+                self.pass(outputs, offset, timed.event, false);
             }
         }
         if performing {
@@ -219,7 +257,7 @@ impl NoteFeed {
         };
         while let Some((at, event)) = self.performed.take(last) {
             let offset = usize::try_from(at.saturating_sub(start)).unwrap_or(0);
-            if !self.pass(outputs, offset, event) {
+            if !self.pass(outputs, offset, event, true) {
                 self.performed.put_back((at, event));
                 return false;
             }

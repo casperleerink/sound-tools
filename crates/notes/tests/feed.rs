@@ -298,3 +298,30 @@ fn an_all_off_drops_what_was_sent_to_play_after_it_and_keeps_what_comes_before_a
         [(100, 60.0), (500, 0.0), (3_000, 64.0), (3_100, 0.0)]
     );
 }
+
+#[test]
+fn a_gone_performer_ends_each_note_it_holds_and_what_it_sent_for_later_never_plays() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, None));
+    harness.send(note(60, 10, None));
+    harness.send(note(62, 1_000, None));
+    harness.send(release(62, 500));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    // What a new performer plays before the frames of the old one keeps sounding.
+    harness.send(note(62, 300, None));
+    // Silent from the first frame, so no change there.
+    assert_eq!(level_changes(&harness.render(2_000)), [(100, 62.0)]);
+}
+
+#[test]
+fn a_gone_performer_leaves_the_note_another_sender_holds_on_its_pitch() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, None));
+    let (pitch, velocity) = (Pitch::new(60).unwrap(), Velocity::new(100).unwrap());
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    assert_eq!(harness.render(1_000).last(), Some(&60.0));
+}

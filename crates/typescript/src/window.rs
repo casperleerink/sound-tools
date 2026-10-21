@@ -8,7 +8,7 @@
 //! Nothing here waits for Bun: what it says comes as events.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,8 +18,8 @@ use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
-    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Scale,
-    Sections, TempoMap, Ticks,
+    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectError, ProjectEvent,
+    Scale, Sections, TempoMap, Ticks,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
@@ -88,9 +88,9 @@ pub(crate) struct Live {
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
-    /// The notes the code of the running Bun holds, by the instance and child it plays them
-    /// on, with the frame each starts: a new Bun knows nothing of them, so the window lets go.
-    held_notes: HashMap<(InstanceId, Option<String>), BTreeMap<Pitch, u64>>,
+    /// Where the code of the running Bun played notes: an instance's own voices, or the feed
+    /// of a child of it. A new Bun knows nothing of them, so each place hears it is gone.
+    performed_on: HashSet<(InstanceId, Option<String>)>,
     /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
@@ -410,7 +410,7 @@ impl Live {
                 told_song: None,
                 told_watches: HashMap::new(),
                 taps: HashMap::new(),
-                held_notes: HashMap::new(),
+                performed_on: HashSet::new(),
                 last_frame: Instant::now(),
                 problems,
                 _watcher: watcher,
@@ -1129,6 +1129,7 @@ impl Live {
         performed: Performed,
         cx: &mut Context<Self>,
     ) {
+        (self.performed_on).insert((id.clone(), child.map(str::to_string)));
         let Some(child) = child else {
             let update = |_: &ToolInfo, _: &Session| Ok(SignalsUpdate::Note(performed));
             if let Err(error) = self.send_update(id, update, cx) {
@@ -1633,7 +1634,6 @@ impl Live {
                     return eprintln!("error: {instance} sends {event:?}, which is no note event");
                 };
                 let at = performed_frame(at, &session, cx);
-                self.follow_held(&instance, child.clone(), event, at);
                 self.perform_note(
                     &instance,
                     child.as_deref(),
@@ -1908,7 +1908,7 @@ impl Live {
                     .spawn(async move { bun.end() })
                     .detach();
             }
-            self.release_held_notes(cx);
+            self.performer_gone(cx);
             let message = format!(
                 "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
             );
@@ -1930,45 +1930,34 @@ impl Live {
             Host::Running { bun, .. } => self.launch(Some(bun), cx),
             Host::Stopped => self.launch(None, cx),
         }
-        self.release_held_notes(cx);
+        self.performer_gone(cx);
     }
 
-    /// Keeps which notes the code holds as it sends `event` at `at` to `child` of `instance`.
-    fn follow_held(
-        &mut self,
-        instance: &InstanceId,
-        child: Option<String>,
-        event: NoteEvent,
-        at: u64,
-    ) {
-        let place = (instance.clone(), child);
-        match event {
-            NoteEvent::On { pitch, .. } => {
-                self.held_notes.entry(place).or_default().insert(pitch, at);
-            }
-            NoteEvent::Off { pitch } => {
-                if let Some(held) = self.held_notes.get_mut(&place) {
-                    held.remove(&pitch);
+    /// Tells each place the code of the Bun that ended played on that it is gone, as an
+    /// instance or child gone since has nothing left to release.
+    fn performer_gone(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        for (id, child) in std::mem::take(&mut self.performed_on) {
+            let gone = |project: &mut Project| match &child {
+                None => {
+                    let tools = self.tools.borrow();
+                    let info = (project.tool_of(&id)).and_then(|tool| find(&tools, tool));
+                    let Some(processor) = info.map(ToolInfo::processor) else {
+                        return Ok(());
+                    };
+                    project.send::<Signals>(&id, processor, SignalsUpdate::PerformerGone)
                 }
-            }
-            NoteEvent::AllOff => {
-                self.held_notes.remove(&place);
-            }
-            _ => {}
-        }
-    }
-
-    /// Lets go of the notes the code of the Bun that ended still held.
-    fn release_held_notes(&mut self, cx: &mut Context<Self>) {
-        for ((instance, child), held) in std::mem::take(&mut self.held_notes) {
-            for (pitch, at) in held {
-                // After its on: on one frame an off comes first.
-                let off = Performed::Send {
-                    event: NoteEvent::Off { pitch },
-                    at: at + 1,
-                };
-                self.perform_note(&instance, child.as_deref(), off, cx);
-            }
+                Some(child) => {
+                    let feed = feed_processor(child);
+                    project.send::<NoteFeed>(&id, &feed, NoteFeedUpdate::PerformerGone)
+                }
+            };
+            session.update(cx, |session, cx| match session.background(cx, gone) {
+                Ok(()) | Err(ProjectError::MissingProcessor { .. }) => {}
+                Err(error) => session.report(error, cx),
+            });
         }
     }
 

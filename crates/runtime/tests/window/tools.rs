@@ -12,7 +12,7 @@ use gpui::{
 use midi::Played;
 use runtime::OFFLINE;
 use runtime::window::DeviceAccess;
-use sound_core::{Changes, Problem, Ticks};
+use sound_core::{Changes, Problem, Project, Ticks};
 use sound_notes::{Pitch, Velocity};
 
 use crate::support::{Opened, id, open_files, open_folder, peak};
@@ -984,46 +984,113 @@ tool({
     });
 }
 
-/// A parent whose keys hold a note on its synth: `a` with `send`, `b` with `play` and `hold`.
-const PADS: &str = r#"import { h, tool } from "./sdk";
+/// A tool whose keys play pitch 60 on its child `synth`, or on its own voices, and count in its
+/// record: `a` holds it with `send`, `b` holds 64 with `play` and `hold`, `c` holds 60 twice,
+/// `d` sends it 5 s ahead, `e` too with its off 2.5 s ahead. Its page is `saved` once code
+/// saved so runs.
+fn pads(on_child: bool, saved: bool) -> String {
+    let (to, play, plays) = match on_child {
+        true => (
+            r#"{ child: "synth", notes: "notes" } as const"#,
+            r#"{ child: "synth" } as const"#,
+            r#"behaviour: () => ({ connections: [{ from: { child: "synth" }, to: { port: "audio" } }] }),"#,
+        ),
+        false => (
+            r#""notes" as const"#,
+            "{}",
+            "voices: 8,\n  sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),",
+        ),
+    };
+    format!(
+        r#"import {{ adsr, h, note, number, sine, tool }} from "./sdk";
 
-tool({
+const SAVED = {saved};
+const TO = {to};
+const PLAY = {play};
+
+tool({{
   name: "pads",
   title: "Pads",
   when: "You want to hold notes from the keys",
-  doc: "The keys a and b hold a note on its synth.",
-  state: {},
-  behaviour: () => ({ connections: [{ from: { child: "synth" }, to: { port: "audio" } }] }),
-  onKey: ({ play, send }, { key, down }) => {
+  doc: "Its keys hold notes and send them for later.",
+  state: {{ count: number({{ min: 0, max: 1000, default: 0 }}) }},
+  {plays}
+  onKey: ({{ play, send, time, update }}, {{ key, down }}) => {{
     if (!down) return;
-    if (key === "a") send({ child: "synth", notes: "notes" }, { type: "noteOn", pitch: 60, velocity: 0.8 });
-    if (key === "b") play(64, { child: "synth", hold: true });
-  },
-  view: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Pads"),
-});
-"#;
+    update("Count the key", ({{ state }}) => {{
+      state.count = (state.count ?? 0) + 1;
+    }});
+    const on = {{ type: "noteOn", pitch: 60, velocity: 0.8 }} as const;
+    const off = {{ type: "noteOff", pitch: 60 }} as const;
+    if (key === "a") send(TO, on);
+    if (key === "b") play(64, {{ ...PLAY, hold: true }});
+    if (key === "c") {{
+      send(TO, on);
+      send(TO, on);
+    }}
+    if (key === "d") send(TO, on, {{ at: time + 5 }});
+    if (key === "e") {{
+      send(TO, on, {{ at: time + 5 }});
+      send(TO, off, {{ at: time + 2.5 }});
+    }}
+  }},
+  view: ({{ size }}) =>
+    h("div", {{ key: SAVED ? "saved" : "pads", style: () => ({{ width: size.width, height: size.height }}) }}, "Pads"),
+}});
+"#
+    )
+}
+
+/// A project of `pads` at the top, with its child `synth` when `on_child`.
+fn open_pads(cx: &mut TestAppContext, on_child: bool) -> Opened<'_> {
+    let (_, project) = EXPERIMENT[0];
+    let mut project = project.replace("\"keys\"", "\"pads\"");
+    let mut files = vec![("extensions/pads.ts".to_string(), pads(on_child, false))];
+    if on_child {
+        project = project.replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+        files.extend([
+            (
+                "state/pads/instance.json".to_string(),
+                r#"{"tool": "pads", "state": {}}"#.to_string(),
+            ),
+            ("state/pads/synth.json".to_string(), SYNTH.to_string()),
+        ]);
+    } else {
+        files.push((
+            "state/pads.json".to_string(),
+            r#"{"tool": "pads", "state": {}}"#.to_string(),
+        ));
+    }
+    files.push(("project.json".to_string(), project));
+    open_files(cx, &files)
+}
+
+const SYNTH: &str = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
+
+impl Opened<'_> {
+    /// Presses `key` on `pads` and waits for its code to have heard it.
+    fn press_on_pads(&mut self, key: &str) {
+        self.wait_for_bun();
+        let count = |window: &mut Self| window.record("pads")["count"].as_f64().unwrap_or(0.0);
+        let before = count(self);
+        self.cx.simulate_keystrokes(key);
+        self.until(key, |window| count(window) > before);
+    }
+
+    /// Saves the code of `pads` and waits for a new Bun to run it.
+    fn save_pads(&mut self, on_child: bool) {
+        let root = self.folder.path().to_path_buf();
+        write(&root, "extensions/pads.ts", &pads(on_child, true));
+        self.until_found("div-saved");
+    }
+}
 
 #[gpui::test]
 fn a_note_code_holds_on_a_child_ends_with_a_new_bun(cx: &mut TestAppContext) {
-    let (_, project) = EXPERIMENT[0];
-    let project = project
-        .replace("\"keys\"", "\"pads\"")
-        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
-    let files = [
-        ("project.json", project.as_str()),
-        (
-            "state/pads/instance.json",
-            r#"{"tool": "pads", "state": {}}"#,
-        ),
-        (
-            "state/pads/synth.json",
-            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
-        ),
-        ("extensions/pads.ts", PADS),
-    ];
-    let mut window = open(cx, &files);
+    let mut window = open_pads(cx, true);
     for key in ["a", "b"] {
-        held_until_a_save(&mut window, key, "extensions/pads.ts", PADS);
+        let code = pads(true, false);
+        held_until_a_save(&mut window, key, "extensions/pads.ts", &code);
     }
 }
 
@@ -1044,6 +1111,71 @@ fn held_until_a_save(window: &mut Opened<'_>, key: &str, file: &str, code: &str)
     window.until("the release of the note", |window| {
         window.loudest(4_800) == 0.0
     });
+}
+
+#[gpui::test]
+fn a_pitch_code_holds_twice_on_a_child_ends_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open_pads(cx, true);
+    window.press_on_pads("c");
+    window.until("the note", |window| window.loudest(480) > 0.05);
+    window.save_pads(true);
+    window.until("the release of the note", |window| {
+        window.loudest(4_800) == 0.0
+    });
+}
+
+#[gpui::test]
+fn a_note_old_code_sent_for_later_neither_plays_nor_ends_the_note_of_the_new_code(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_pads(cx, false);
+    window.press_on_pads("d");
+    window.save_pads(false);
+    window.press_on_pads("a");
+    window.until("the note of the new code", |window| {
+        window.loudest(480) > 0.05
+    });
+    // Past the frame the old code sent its note for.
+    window.render(6 * OFFLINE.sample_rate as usize);
+    assert!(window.loudest(4_800) > 0.05);
+}
+
+#[gpui::test]
+fn a_note_old_code_sent_for_after_its_off_does_not_play_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open_pads(cx, true);
+    window.press_on_pads("e");
+    window.save_pads(true);
+    window.render(6 * OFFLINE.sample_rate as usize);
+    assert_eq!(window.loudest(4_800), 0.0);
+}
+
+/// A child deleted and made again is another instrument: the note the old code held on the
+/// first does not end what the second plays.
+#[gpui::test]
+fn a_child_made_again_keeps_its_note_when_the_code_that_held_one_on_the_old_child_ends(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_pads(cx, true);
+    window.press_on_pads("a");
+    window.until("the note", |window| window.loudest(480) > 0.05);
+    window.edit(|project| {
+        let mut changes = Changes::new();
+        changes.delete(&id("pads/synth"));
+        project.commit("Delete the synth", changes)
+    });
+    window.until("the child gone", |window| window.loudest(4_800) == 0.0);
+    window.edit(Project::undo);
+    window.until("the child back", |window| {
+        window.project(|project| project.tool_of(&id("pads/synth")).is_some())
+    });
+    window.select("pads/synth");
+    window.play_midi(60);
+    window.until("the note of the keyboard", |window| {
+        window.loudest(480) > 0.05
+    });
+    window.save_pads(true);
+    window.render(4_800);
+    assert!(window.loudest(4_800) > 0.05);
 }
 
 /// A loop that never ends but keeps saying things, here moving a number input, is a hang of
