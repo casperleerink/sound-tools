@@ -763,7 +763,7 @@ fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut
     assert_eq!(notes(&mut window), count);
     window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
-    window.cx.simulate_keystrokes("cmd-z");
+    window.cx.simulate_keystrokes("secondary-z");
     window.until("the paste undone", |window| notes(window) == count);
     window.cx.simulate_keystrokes("cmd-c cmd-d");
     window.wait_for_bun();
