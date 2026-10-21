@@ -166,6 +166,8 @@ pub(crate) enum EventKind {
     Commit,
     /// Escape in a field.
     Cancel,
+    /// An edit of a field's text, or a pick of a segmented control: the place of its option.
+    Change,
     /// Files, or what a drag of a node carried, let go on a node.
     Drop,
     /// The power icon of an embedded card.
@@ -176,8 +178,6 @@ pub(crate) enum EventKind {
     Title,
     /// A pick in a select of the sidechain picker of an embedded card.
     Sidechain,
-    /// A pick of a segmented control: the place of its option.
-    Change,
 }
 
 /// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.

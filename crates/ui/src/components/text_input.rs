@@ -6,8 +6,8 @@
 //! It behaves as a browser's input does on macOS. One line by default, which scrolls sideways
 //! to keep the caret in view. `multi_line(n)` wraps at the width of the box, grows up to `n`
 //! rows and then scrolls, for the agent composer: enter submits and shift-enter adds a newline.
-//! `fill()` is a multi-line input as tall as its box, where enter adds a newline too, for a
-//! text that is the whole view.
+//! `enter_adds_line()` makes enter add a newline and cmd-enter submit, as in a text area.
+//! `fill()` is such an input as tall as its box, for a text that is the whole view.
 //!
 //! The editing keys follow macOS text fields: option moves and deletes by words, cmd by rows
 //! and to the ends of the text, shift with any of them selects, and the ctrl keys of macOS
@@ -136,14 +136,18 @@ fn install_bindings(cx: &mut App) {
         KeyBinding::new("shift-end", SelectToEnd, ctx),
         KeyBinding::new("shift-cmd-left", SelectToHome, ctx),
         KeyBinding::new("shift-cmd-right", SelectToEnd, ctx),
-        KeyBinding::new("enter", Submit, ctx),
         KeyBinding::new("escape", Cancel, ctx),
         KeyBinding::new("secondary-z", Undo, ctx),
         KeyBinding::new("shift-secondary-z", Redo, ctx),
     ]);
     let multi_line = format!("{KEY_CONTEXT} && multi_line");
     let one_line = format!("{KEY_CONTEXT} && !multi_line");
+    let text_area = format!("{KEY_CONTEXT} && enter_adds_line");
+    let field = format!("{KEY_CONTEXT} && !enter_adds_line");
     cx.bind_keys([
+        KeyBinding::new("enter", Submit, Some(field.as_str())),
+        KeyBinding::new("enter", Newline, Some(text_area.as_str())),
+        KeyBinding::new("secondary-enter", Submit, Some(text_area.as_str())),
         KeyBinding::new("shift-enter", Newline, Some(multi_line.as_str())),
         KeyBinding::new("shift-enter", Submit, Some(one_line.as_str())),
     ]);
@@ -258,6 +262,7 @@ pub struct TextInput {
     max_rows: Option<usize>,
     /// As tall as its box, see [`Self::fill`].
     fills: bool,
+    enter_adds_line: bool,
     /// How far the text is scrolled: up in a multi-line input, left in a one-line one.
     scroll: Point<Pixels>,
     /// Set by every edit and caret move, so the next frame scrolls to the caret. The wheel
@@ -273,6 +278,7 @@ pub struct TextInput {
     disabled: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel: Option<SubmitHandler>,
+    on_change: Option<SubmitHandler>,
     on_arrow_past_edge: Option<ArrowHandler>,
     /// The caret blinks from here, so it shows solid right after a move, an edit or a focus.
     blink_start: Instant,
@@ -302,6 +308,7 @@ impl TextInput {
             size: InputSize::default(),
             max_rows: None,
             fills: false,
+            enter_adds_line: false,
             scroll: Point::default(),
             follow_caret: false,
             goal_x: None,
@@ -312,6 +319,7 @@ impl TextInput {
             disabled: false,
             on_submit: None,
             on_cancel: None,
+            on_change: None,
             on_arrow_past_edge: None,
             blink_start: Instant::now(),
             blink: None,
@@ -337,12 +345,17 @@ impl TextInput {
         self
     }
 
-    /// A multi-line input as tall as its box, which scrolls past it. Enter adds a newline, as
-    /// in a text editor: there is nothing to submit.
-    pub fn fill(mut self) -> Self {
-        self.max_rows = Some(usize::MAX);
-        self.fills = true;
+    /// Enter adds a newline and cmd-enter submits, in a [`Self::multi_line`] input.
+    pub fn enter_adds_line(mut self) -> Self {
+        self.enter_adds_line = true;
         self
+    }
+
+    /// A multi-line input as tall as its box, which scrolls past it, and whose enter adds a
+    /// newline, as in a text editor.
+    pub fn fill(mut self) -> Self {
+        self.fills = true;
+        self.multi_line(usize::MAX).enter_adds_line()
     }
 
     /// Drop the field's own surface, border, padding and focus ring, for use inside a card
@@ -355,6 +368,18 @@ impl TextInput {
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
+    }
+
+    pub fn set_disabled(&mut self, disabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled != disabled {
+            self.disabled = disabled;
+            if let Some(menu) = self.context_menu.clone()
+                && menu.read(cx).is_open()
+            {
+                menu.update(cx, |menu, cx| menu.close(window, cx));
+            }
+            cx.notify();
+        }
     }
 
     pub fn text(&self) -> &str {
@@ -396,6 +421,12 @@ impl TextInput {
     /// the field.
     pub fn set_on_cancel(&mut self, f: impl Fn(&str, &mut Window, &mut App) + 'static) {
         self.on_cancel = Some(Rc::new(f));
+    }
+
+    /// Called with the new text after each edit (typing, deleting, pasting, undo), not after
+    /// `set_text`.
+    pub fn set_on_change(&mut self, f: impl Fn(&str, &mut Window, &mut App) + 'static) {
+        self.on_change = Some(Rc::new(f));
     }
 
     /// Called with the current text when up is pressed on the first row or down on the last,
@@ -576,19 +607,31 @@ impl TextInput {
         self.replace_text_in_range(None, "\n", window, cx);
     }
 
-    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+    fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(snapshot) = self.undo_stack.pop() {
             let current = self.snapshot();
+            let before = current.content.clone();
             self.redo_stack.push(current);
             self.restore(snapshot, cx);
+            self.changed(&before, window, cx);
         }
     }
 
-    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+    fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(snapshot) = self.redo_stack.pop() {
             let current = self.snapshot();
+            let before = current.content.clone();
             self.undo_stack.push(current);
             self.restore(snapshot, cx);
+            self.changed(&before, window, cx);
+        }
+    }
+
+    fn changed(&self, before: &str, window: &mut Window, cx: &mut App) {
+        if self.content.as_ref() != before
+            && let Some(f) = self.on_change.clone()
+        {
+            f(&self.content.clone(), window, cx);
         }
     }
 
@@ -768,9 +811,7 @@ impl TextInput {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fills {
-            self.replace_text_in_range(None, "\n", window, cx);
-        } else if let Some(f) = self.on_submit.clone() {
+        if let Some(f) = self.on_submit.clone() {
             f(&self.content.clone(), window, cx);
         }
     }
@@ -1144,7 +1185,7 @@ impl EntityInputHandler for TextInput {
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let range = range_utf16
@@ -1152,6 +1193,7 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let before = self.content.clone();
         let Some(inserted) = self.edit(range.clone(), new_text) else {
             return;
         };
@@ -1159,6 +1201,7 @@ impl EntityInputHandler for TextInput {
         self.selected_range = cursor..cursor;
         self.marked_range.take();
         cx.notify();
+        self.changed(&before, window, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -1166,7 +1209,7 @@ impl EntityInputHandler for TextInput {
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range_utf16: Option<Range<usize>>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let range = range_utf16
@@ -1174,6 +1217,7 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let before = self.content.clone();
         let Some(inserted) = self.edit(range.clone(), new_text) else {
             return;
         };
@@ -1186,6 +1230,7 @@ impl EntityInputHandler for TextInput {
                 ..range.start + utf8_from_utf16(new_text, new.end)
         });
         cx.notify();
+        self.changed(&before, window, cx);
     }
 
     fn bounds_for_range(
@@ -1533,11 +1578,14 @@ impl Element for TextElement {
             Some(_) => CARET_WIDTH,
             None => px(0.),
         };
-        window.handle_input(
-            &focus_handle,
-            ElementInputHandler::new(bounds, self.input.clone()),
-            cx,
-        );
+        // A disabled field that has the focus, given by its host, takes no text either.
+        if !input.disabled {
+            window.handle_input(
+                &focus_handle,
+                ElementInputHandler::new(bounds, self.input.clone()),
+                cx,
+            );
+        }
         // Not on the field's own element, which hears the mouse only while it is over it.
         window.on_mouse_event({
             let input = self.input.clone();
@@ -1622,6 +1670,9 @@ impl Render for TextInput {
         key_context.add(KEY_CONTEXT);
         if multi_line {
             key_context.add("multi_line");
+        }
+        if self.enter_adds_line {
+            key_context.add("enter_adds_line");
         }
         // The padding leaves room for the border, so the row fits the box exactly: a row taller
         // than its box scrolled 2 px at every key. A multi-line box takes its height from its

@@ -160,6 +160,35 @@ tool({
     ),
 ];
 
+/// A page that is a text field with the keys, which keeps what is typed as it is typed and is
+/// disabled from two characters on.
+const NOTE: [(&str, &str); 3] = [
+    ONLY_THE_TOOL[0],
+    ("state/note.json", r#"{"tool": "note", "state": {}}"#),
+    (
+        "extensions/note.ts",
+        r#"import { h, input, Input, text, tool } from "./sdk";
+
+tool({
+  name: "note",
+  title: "Note",
+  when: "You want to type a note",
+  doc: "Keeps what is typed.",
+  state: { typed: text() },
+  sound: () => input,
+  view: ({ state, update }) =>
+    h(Input, {
+      value: () => state.typed ?? "",
+      focus: true,
+      disabled: () => (state.typed ?? "").length >= 2,
+      onChange: (typed) => update("Type", ({ state: next }) => { next.typed = typed; }),
+      onCommit: () => {},
+    }),
+});
+"#,
+    ),
+];
+
 /// A page that counts in its memory the notes and the keys it hears, and keeps the count on a
 /// click. Nothing else draws it again.
 const EAR: [(&str, &str); 3] = [
@@ -518,6 +547,27 @@ tool({
     window.click(open);
     window.wait_for_bun();
     assert_eq!(window.record("counter")["count"], 1.0);
+}
+
+#[gpui::test]
+fn a_field_tells_each_edit_and_a_disabled_one_takes_no_keys(cx: &mut TestAppContext) {
+    let mut window = open(cx, &NOTE);
+    window.until("the field has the keys", |window| {
+        window.cx.update(|window, _| {
+            (window.context_stack().iter())
+                .any(|context| context.contains(sound_ui::components::text_input::KEY_CONTEXT))
+        })
+    });
+    let typed = |window: &mut Opened| window.record("note")["typed"].clone();
+    window.cx.simulate_input("a");
+    window.until("the first edit", |window| typed(window) == "a");
+    window.cx.simulate_input("b");
+    window.until("the second edit", |window| typed(window) == "ab");
+    window.wait_for_bun();
+    // The field still has the focus, but no longer the keys.
+    window.cx.simulate_input("c");
+    window.wait_for_bun();
+    assert_eq!(typed(&mut window), "ab");
 }
 
 /// The page draws again after its code hears a note or a key, and a click on it still runs.

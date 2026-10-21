@@ -153,7 +153,7 @@ tool({
 | Element | Does |
 | --- | --- |
 | `<div style onClick carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. A `disabled` div hears no pointer, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
-| `<Input>` | A text field; keys typed there play nothing. |
+| `<Input>` | A text field, or with `rows` a text area; keys typed there play nothing. |
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view; `sidechain` puts selects behind the expand of a compressor or a gate. |
 | `<Knob>`, `<Fader>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>`, `<Slider>` | A knob, a fader (over a meter with `meter`), a number to drag or type, a row of steps, a square for the pointer, a list, options side by side, a slider. `field` names a field as `now.value` does; or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag at its end. A `Slider` takes only a `field`. |
 | `<Meter>`, `<Notice>` | A level of any live value; a quiet message. |
