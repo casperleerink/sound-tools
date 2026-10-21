@@ -158,7 +158,7 @@ tool({
 | `<Knob>`, `<Fader>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>`, `<Slider>` | A knob, a fader (over a meter with `meter`), a number to drag or type, a row of steps, a square for the pointer, a list, options side by side, a slider. `field` names a field as `now.value` does; or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag at its end. A `Slider` takes only a `field`. |
 | `<Meter>`, `<Notice>` | A level of any live value; a quiet message. |
 
-A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up (always, wherever the pointer went: a note off), and `onClick` after a left press and release on it with no drag, on the innermost node that hears it.
+A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up (wherever the pointer went, unless the code reloads: a note off), and `onClick` after a left press and release on it with no drag, on the innermost node that hears it.
 
 All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `confirm` (the system's yes-or-no question), `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 
