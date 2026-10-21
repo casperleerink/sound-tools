@@ -414,9 +414,7 @@ fn played(
     let inner = id.child(path).ok()?;
     // The owner whose behaviour wires the cable keeps what it plays, by its child's name.
     let owner = inner.parent()?;
-    let cable = (project.watches(&owner).into_iter())
-        .find(|(each, _)| *each == played_name(&format!("{}.{number}", inner.name())))
-        .map(|(_, watch)| watch.get())
+    let cable = (project.watched(&owner, &played_name(&format!("{}.{number}", inner.name()))))
         .filter(|value| value.is_finite());
     let (record, range) = child_field(project, id, name, records)?;
     Some((

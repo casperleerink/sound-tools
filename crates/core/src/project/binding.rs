@@ -760,6 +760,10 @@ impl Bindings {
             .collect()
     }
 
+    pub(super) fn watch(&self, instance: &InstanceId, name: &str) -> Option<&Watch> {
+        self.by_instance.get(instance)?.watches.get(name)
+    }
+
     /// The number `field` that the behaviour of `instance` takes automation for, see
     /// [`BehaviourContext::automation`].
     pub(super) fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {

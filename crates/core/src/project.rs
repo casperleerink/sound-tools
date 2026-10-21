@@ -373,6 +373,11 @@ impl Project {
         self.bindings.watches(instance)
     }
 
+    /// The value of the watch `name` of `instance`, see [`BehaviourContext::watch`].
+    pub fn watched(&self, instance: &InstanceId, name: &str) -> Option<f32> {
+        self.bindings.watch(instance, name).map(Watch::get)
+    }
+
     /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.
     pub fn clock(&self) -> &Clock {
         self.engine.clock()
