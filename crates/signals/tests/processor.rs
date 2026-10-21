@@ -9,7 +9,7 @@ use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput,
     EventTap, Node, Ports, PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_notes::{NoteEvent, Performed, Pitch, Velocity};
+use sound_notes::{NoteEvent, Pedal, Performed, Pitch, Velocity};
 use sound_signals::{
     Bang, Cable, Code, Control, Kind, Machine, Number, Signals, SignalsUpdate, Values,
 };
@@ -756,10 +756,10 @@ fn a_score_of_every_timing_renders_as_it_did() {
         }
     }
     let expected = [
-        (5776360306822237945, 6672061644954794190),
-        (9782693442129799630, 6622498506930331513),
-        (9453197873779793825, 1517712285991712962),
-        (16517895486679873485, 7353583470673154908),
+        (5926154012030582869, 1010679254138105471),
+        (14047036350601615105, 17939792986079062633),
+        (16880789244861997553, 1517712285991712962),
+        (13256509999253765021, 7353583470673154908),
         (7202922979984856391, 14695981039346656037),
         (8568832297698623357, 14695981039346656037),
         (9607617552142065038, 14695981039346656037),
@@ -1111,4 +1111,42 @@ fn a_live_control_moves_at_the_frame_the_interface_says() {
     let output = played.render(9_600);
     assert_eq!(output[4_799], 0.0);
     assert_eq!(output[9_599], 1.0);
+}
+
+fn performed(event: NoteEvent) -> SignalsUpdate {
+    SignalsUpdate::Note(Performed::Send { event, at: 0 })
+}
+
+#[test]
+fn a_gone_performer_leaves_the_note_another_sender_holds_on_its_key() {
+    let notes = vec![(4_800, on(60))];
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), notes);
+    played
+        .control
+        .update(played.signals, performed(on(60)))
+        .unwrap();
+    played.render(9_600);
+    played
+        .control
+        .update(played.signals, SignalsUpdate::PerformerGone)
+        .unwrap();
+    assert!(loudest(&played.render(9_600)[4_800..]) > 0.1);
+}
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_holds() {
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
+    let down = NoteEvent::Pedal(Pedal::new(127).unwrap());
+    for event in [down, on(60), off(60)] {
+        played
+            .control
+            .update(played.signals, performed(event))
+            .unwrap();
+    }
+    assert!(loudest(&played.render(9_600)[4_800..]) > 0.1);
+    played
+        .control
+        .update(played.signals, SignalsUpdate::PerformerGone)
+        .unwrap();
+    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
 }

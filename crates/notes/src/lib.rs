@@ -31,6 +31,7 @@
 mod division;
 mod expression;
 mod feed;
+mod held;
 mod lane;
 mod pattern;
 mod player;
@@ -46,6 +47,7 @@ use sound_core::Ticks;
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use feed::{NoteFeed, NoteFeedUpdate};
+pub use held::Held;
 pub use lane::{
     ExpressionValue, LaneValue, MAX_PIECES, Point, check_order, cut, pieces, thinned, value_at,
     value_at_frame,

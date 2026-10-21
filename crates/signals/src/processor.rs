@@ -17,7 +17,7 @@ use sound_core::{
     Smoothed, Timed, Watch,
 };
 use sound_notes::{
-    NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+    Held, NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
 };
 
 use crate::cable::{Bang, Control, Number};
@@ -138,8 +138,7 @@ pub struct Signals {
     arrays: Vec<Vec<f32>>,
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
-    /// A bit for each key a note the interface played holds.
-    performer_held: u128,
+    held: Held,
     watches: Vec<Watch>,
     tap: Option<EventTap<NoteEvent>>,
     sending: Sending,
@@ -278,7 +277,7 @@ impl Signals {
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
-            performer_held: 0,
+            held: Held::default(),
             watches,
             tap: None,
             sending: Sending {
@@ -398,26 +397,29 @@ impl Signals {
         }
     }
 
-    /// Follows `event` the interface played.
-    fn perform(&mut self, event: NoteEvent) {
-        if let NoteEvent::On { pitch, .. } = event {
-            self.performer_held |= 1 << pitch.number();
-        }
-        self.follow(event);
+    /// Follows `event`, which the interface played or not, through [`Held`].
+    fn follow(&mut self, event: NoteEvent, performed: bool) {
+        let Self {
+            held,
+            players,
+            bend,
+            ..
+        } = self;
+        held.pass(event, performed, |event| {
+            play(players, bend, event);
+            true
+        });
     }
+}
 
-    fn follow(&mut self, event: NoteEvent) {
-        match event {
-            NoteEvent::Bend(bend) => self.bend = bend.fraction() * BEND_SEMITONES,
-            // An off ends every note of its key, whoever played it.
-            NoteEvent::Off { pitch } => self.performer_held &= !(1 << pitch.number()),
-            NoteEvent::AllOff => self.performer_held = 0,
-            _ => {}
-        }
-        match &mut self.players {
-            Players::Many(voices) => voices.handle(event, &()),
-            Players::One(single) => single.keys.follow(event, &mut single.voice.note),
-        }
+/// Plays `event` on `players`, and moves the `bend` they read.
+fn play(players: &mut Players, bend: &mut f32, event: NoteEvent) {
+    if let NoteEvent::Bend(moved) = event {
+        *bend = moved.fraction() * BEND_SEMITONES;
+    }
+    match players {
+        Players::Many(voices) => voices.handle(event, &()),
+        Players::One(single) => single.keys.follow(event, &mut single.voice.note),
     }
 }
 
@@ -753,18 +755,18 @@ impl Processor for Signals {
             }
             SignalsUpdate::Note(performed) => {
                 if let Some(now) = self.scheduled.perform(*performed) {
-                    self.perform(now);
+                    self.follow(now, true);
                 }
             }
             SignalsUpdate::PerformerGone => {
                 self.scheduled.clear();
-                for number in 0..128 {
-                    if self.performer_held & (1 << number) != 0 {
-                        self.follow(NoteEvent::Off {
-                            pitch: Pitch::nearest(number),
-                        });
-                    }
-                }
+                let Self {
+                    held,
+                    players,
+                    bend,
+                    ..
+                } = self;
+                held.performer_gone(|event| play(players, bend, event));
             }
             SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
         }
@@ -947,12 +949,12 @@ impl Signals {
         let mut start = 0;
         while start < frames {
             while let Some(timed) = events.next_if(|timed| timed.offset <= start) {
-                self.follow(timed.event);
+                self.follow(timed.event, false);
             }
             let now = start_frame + start as u64;
             while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
-                    Played::Note(event) => self.perform(event),
+                    Played::Note(event) => self.follow(event, true),
                     Played::Trigger(index) => self.block.fire(index, start),
                     Played::Live(index, value) => self.move_live(index, value),
                 }

@@ -325,3 +325,39 @@ fn a_gone_performer_leaves_the_note_another_sender_holds_on_its_pitch() {
     harness.send(NoteFeedUpdate::PerformerGone);
     assert_eq!(harness.render(1_000).last(), Some(&60.0));
 }
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_holds_unless_another_sender_holds_it_too() {
+    for other_holds in [false, true] {
+        let mut harness = Harness::new();
+        harness.send(send(NoteEvent::Pedal(Pedal::new(127).unwrap()), 0));
+        if other_holds {
+            let down = Send::Once(10, NoteEvent::Pedal(Pedal::new(127).unwrap()));
+            harness.control.update(harness.sender, down).unwrap();
+        }
+        harness.send(note(60, 0, None));
+        harness.send(release(60, 50));
+        assert_eq!(harness.render(200).last(), Some(&1_000.0));
+        harness.send(NoteFeedUpdate::PerformerGone);
+        let pedal = if other_holds { 1_000.0 } else { 0.0 };
+        assert_eq!(harness.render(200).last(), Some(&pedal), "{other_holds}");
+    }
+}
+
+/// More ons of a pitch than a byte counts: a gone performer still leaves the one another
+/// sender holds.
+#[test]
+fn a_gone_performer_that_played_a_pitch_many_times_leaves_another_senders_note_of_it() {
+    let mut harness = Harness::new();
+    for _ in 0..255 {
+        harness.send(note(60, 0, None));
+    }
+    // Through the ring of updates, which holds fewer.
+    harness.render(48_000);
+    let (pitch, velocity) = (Pitch::new(60).unwrap(), Velocity::new(100).unwrap());
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    assert_eq!(harness.render(1_000).last(), Some(&60.0));
+}
