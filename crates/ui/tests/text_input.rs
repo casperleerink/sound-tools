@@ -118,6 +118,19 @@ fn shift_enter_adds_a_line_and_enter_submits(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn in_a_text_area_enter_adds_a_line_and_cmd_enter_submits(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).enter_adds_line(4));
+    let submitted: Rc<RefCell<Vec<String>>> = Rc::default();
+    input.update(cx, |input, _| {
+        let submitted = submitted.clone();
+        input.set_on_submit(move |text, _, _| submitted.borrow_mut().push(text.to_string()));
+    });
+    cx.simulate_keystrokes("a enter b secondary-enter");
+    assert_eq!(text(&input, cx), "a\nb");
+    assert_eq!(*submitted.borrow(), ["a\nb"]);
+}
+
+#[gpui::test]
 fn cmd_z_takes_back_a_typed_word_and_shift_cmd_z_brings_it_again(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
     cx.simulate_keystrokes("a b c left backspace");
