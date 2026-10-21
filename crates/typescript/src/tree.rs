@@ -166,6 +166,88 @@ props! {
     IconProps / IconChange { name: String, size: f32, color: Color }
 }
 
+props! {
+    /// A slider of the app on a number from `min` to `max`: a `field` or number input it turns
+    /// as a knob's drag does, or `value` its code keeps, which hears the value it is let go at.
+    SliderProps / SliderChange {
+        key: String,
+        value: Num,
+        field: String,
+        /// The undo step of a field.
+        label: String,
+        min: f32,
+        max: f32,
+        unit: Unit,
+        default: f32,
+        bipolar: bool,
+        width: f32,
+        on_change: bool,
+    }
+}
+
+props! {
+    /// One of a few options side by side, by their labels; `chosen` is the place of the one
+    /// chosen, and a pick tells its place.
+    SegmentedProps / SegmentedChange {
+        key: String,
+        options: Vec<String>,
+        chosen: i64,
+        disabled: bool,
+        on_change: bool,
+    }
+}
+
+props! {
+    /// A status dot of the app.
+    IndicatorProps / IndicatorChange {
+        key: String,
+        color: Color,
+        size: IndicatorSized,
+        ring: bool,
+        pulse: bool,
+    }
+}
+
+props! {
+    /// A shortcut as key caps, keys joined by `+`.
+    KbdProps / KbdChange { keys: String }
+}
+
+props! {
+    /// A quiet line of the app: a dot of its tone, the message, a bar of progress, a button
+    /// that tells a press and a close button.
+    NoticeProps / NoticeChange {
+        key: String,
+        message: String,
+        tone: NoticeToned,
+        progress: f32,
+        action: String,
+        on_press: bool,
+        on_close: bool,
+    }
+}
+
+props! {
+    /// A centred title over a muted line, with its children under them.
+    EmptyProps / EmptyChange { title: String, body: String }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum IndicatorSized {
+    Xs,
+    Sm,
+    Md,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NoticeToned {
+    Error,
+    Warning,
+    Info,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ButtonLook {
@@ -267,6 +349,12 @@ pub(crate) enum Props {
     Icon(IconProps),
     Meter(MeterProps),
     Toggle(ToggleProps),
+    Slider(SliderProps),
+    Segmented(SegmentedProps),
+    Indicator(IndicatorProps),
+    Kbd(KbdProps),
+    Notice(NoticeProps),
+    Empty(EmptyProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -283,6 +371,12 @@ pub(crate) enum Change {
     Icon(IconChange),
     Meter(MeterChange),
     Toggle(ToggleChange),
+    Slider(SliderChange),
+    Segmented(SegmentedChange),
+    Indicator(IndicatorChange),
+    Kbd(KbdChange),
+    Notice(NoticeChange),
+    Empty(EmptyChange),
     Marker,
 }
 
@@ -345,6 +439,12 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "icon" => Props::Icon(next(&mut seq, "props")?),
                         "meter" => Props::Meter(next(&mut seq, "props")?),
                         "toggle" => Props::Toggle(next(&mut seq, "props")?),
+                        "slider" => Props::Slider(next(&mut seq, "props")?),
+                        "segmented" => Props::Segmented(next(&mut seq, "props")?),
+                        "indicator" => Props::Indicator(next(&mut seq, "props")?),
+                        "kbd" => Props::Kbd(next(&mut seq, "props")?),
+                        "notice" => Props::Notice(next(&mut seq, "props")?),
+                        "empty" => Props::Empty(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -368,6 +468,12 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "icon" => Change::Icon(next(&mut seq, "props")?),
                         "meter" => Change::Meter(next(&mut seq, "props")?),
                         "toggle" => Change::Toggle(next(&mut seq, "props")?),
+                        "slider" => Change::Slider(next(&mut seq, "props")?),
+                        "segmented" => Change::Segmented(next(&mut seq, "props")?),
+                        "indicator" => Change::Indicator(next(&mut seq, "props")?),
+                        "kbd" => Change::Kbd(next(&mut seq, "props")?),
+                        "notice" => Change::Notice(next(&mut seq, "props")?),
+                        "empty" => Change::Empty(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -395,7 +501,23 @@ impl<'de> Visitor<'de> for OpVisitor {
 }
 
 const FAMILIES: &[&str] = &[
-    "div", "text", "space", "shape", "input", "card", "button", "icon", "meter", "toggle", "marker",
+    "div",
+    "text",
+    "space",
+    "shape",
+    "input",
+    "card",
+    "button",
+    "icon",
+    "meter",
+    "toggle",
+    "slider",
+    "segmented",
+    "indicator",
+    "kbd",
+    "notice",
+    "empty",
+    "marker",
 ];
 
 /// What of the window the live values of a card move with, without its code, and what the
@@ -630,6 +752,16 @@ impl NodeTable {
                         (Props::Icon(props), Change::Icon(change)) => props.apply(change),
                         (Props::Meter(props), Change::Meter(change)) => props.apply(change),
                         (Props::Toggle(props), Change::Toggle(change)) => props.apply(change),
+                        (Props::Slider(props), Change::Slider(change)) => props.apply(change),
+                        (Props::Segmented(props), Change::Segmented(change)) => {
+                            props.apply(change);
+                        }
+                        (Props::Indicator(props), Change::Indicator(change)) => {
+                            props.apply(change);
+                        }
+                        (Props::Kbd(props), Change::Kbd(change)) => props.apply(change),
+                        (Props::Notice(props), Change::Notice(change)) => props.apply(change),
+                        (Props::Empty(props), Change::Empty(change)) => props.apply(change),
                         (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}
@@ -742,6 +874,13 @@ fn uses_of(props: &Props) -> Uses {
                 (Some(name), None) => _ = uses.peaks.insert(name.clone()),
                 (None, None) => uses.output = true,
             }
+            uses
+        }
+        Props::Slider(SliderProps {
+            value: Some(value), ..
+        }) => {
+            let mut uses = Uses::default();
+            value.add_uses(&mut uses);
             uses
         }
         _ => Uses::default(),

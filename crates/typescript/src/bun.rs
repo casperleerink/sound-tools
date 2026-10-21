@@ -174,6 +174,8 @@ pub(crate) enum EventKind {
     Title,
     /// A pick in a select of the sidechain picker of an embedded card.
     Sidechain,
+    /// A control's new value, as code keeps it: a slider let go, a segment picked.
+    Change,
 }
 
 /// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.
