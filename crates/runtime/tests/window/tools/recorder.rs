@@ -36,10 +36,10 @@ tool({
   }),
   view: ({ send }) =>
     h("div", { style: { direction: "row", gap: 8 } },
-      h("div", { key: "arm", onPress: () => send({ child: "rec", number: "record" }, 1) }, "Arm"),
-      h("div", { key: "done", onPress: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
-      h("div", { key: "arm-2", onPress: () => send({ child: "rec-2", number: "record" }, 1) }, "Arm 2"),
-      h("div", { key: "done-2", onPress: () => send({ child: "rec-2", number: "record" }, 0) }, "Done 2"),
+      h("div", { key: "arm", onClick: () => send({ child: "rec", number: "record" }, 1) }, "Arm"),
+      h("div", { key: "done", onClick: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
+      h("div", { key: "arm-2", onClick: () => send({ child: "rec-2", number: "record" }, 1) }, "Arm 2"),
+      h("div", { key: "done-2", onClick: () => send({ child: "rec-2", number: "record" }, 0) }, "Done 2"),
       h(PeakMeter, { key: "input", input: [1] }),
     ),
   onTake: ({ update }, take) =>

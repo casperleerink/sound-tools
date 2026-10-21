@@ -102,7 +102,7 @@ tool({
   behaviour: () => ({ connections: [] }),
   view: ({ update }) =>
     h("div", {
-      onPress: () =>
+      onClick: () =>
         update("Move it on", ({ children }) => {
           const clip = children[0];
           if (clip?.tool === "timeline") clip.state.start = clip.state.start + 960;
@@ -159,14 +159,14 @@ fn an_update_reads_the_defaults_of_a_child_and_sets_only_what_it_changed() {
     });
     let button = (next_ops(&bun).into_iter())
         .find_map(|op| match op {
-            Op::Create(id, Props::Div(div)) if div.on_press == Some(true) => Some(id),
+            Op::Create(id, Props::Div(div)) if div.on_click == Some(true) => Some(id),
             _ => None,
         })
         .unwrap();
     bun.send(&Request::Event {
         card: 1,
         node: button,
-        kind: EventKind::Press,
+        kind: EventKind::Click,
         payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
         time: 0.0,
     });
@@ -208,7 +208,7 @@ tool({
   sound: () => 0,
   view: ({ clock }) =>
     h("div", {
-      onPress: () => clock.update("Faster", ({ tempo_map }) => { tempo_map.tempo_changes[0].bpm += 10; }),
+      onClick: () => clock.update("Faster", ({ tempo_map }) => { tempo_map.tempo_changes[0].bpm += 10; }),
     }, () => `${clock.tempo_map.tempo_changes[0]?.bpm} bpm`),
 });
 "#;
@@ -264,7 +264,7 @@ fn a_binding_follows_the_tempo_map_and_code_edits_it() {
     let bun = mounted("tempo.ts", TEMPO, "tempo");
     let button = (next_ops(&bun).into_iter())
         .find_map(|op| match op {
-            Op::Create(id, Props::Div(div)) if div.on_press == Some(true) => Some(id),
+            Op::Create(id, Props::Div(div)) if div.on_click == Some(true) => Some(id),
             _ => None,
         })
         .unwrap();
@@ -281,7 +281,7 @@ fn a_binding_follows_the_tempo_map_and_code_edits_it() {
     bun.send(&Request::Event {
         card: 1,
         node: button,
-        kind: EventKind::Press,
+        kind: EventKind::Click,
         payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
         time: 0.0,
     });

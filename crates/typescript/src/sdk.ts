@@ -1463,6 +1463,16 @@ export interface Press extends Modifiers {
   clicks: number;
 }
 
+/** What a node hears of the pointer. Each hears the `Press` it follows. */
+export interface PointerEvents {
+  /** A button goes down on it. */
+  onPress?: (press: Press) => void;
+  /** That button goes up, wherever the pointer is by then, also after Escape or when the window loses focus. */
+  onRelease?: (press: Press) => void;
+  /** A left press and release on it with no drag between. */
+  onClick?: (press: Press) => void;
+}
+
 /**
  * What was let go on a node that hears drops: audio files from the system, copied into
  * `assets/audio/` under the names in `files`, or what a dragged `div` carries. `x` and `y` are
@@ -1528,8 +1538,6 @@ export interface Drag {
   y?: DragTurns;
   /** At the end of the drag, when the pointer moved. */
   onEnd?: (drag: DragResult) => void;
-  /** When the pointer let go where it pressed: a click on what it would drag. */
-  onClick?: (drag: DragResult) => void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2033,7 +2041,7 @@ type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" |
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
-interface Made {
+interface Made extends PointerEvents {
   readonly [nodeBrand]: true;
   id: number;
   family: Family;
@@ -2041,7 +2049,6 @@ interface Made {
   props: Wired;
   /** Sent to the window: changes after this go as `set`. */
   sent: boolean;
-  onPress?: (press: Press) => void;
   onDrop?: (drop: Dropped) => void;
   onCommit?: (text: string) => void;
   onCancel?: () => void;
@@ -2128,12 +2135,12 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   if (id === undefined) {
     id = nextNode++;
     card.drags.set(drag, id);
-    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined, onClick: drag.onClick !== undefined }]);
+    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined }]);
   }
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange"]);
+const HANDLERS = new Set(["onPress", "onRelease", "onClick", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2386,8 +2393,7 @@ export type ThemeColor =
 export type Color = `#${string}` | ThemeColor | `${ThemeColor}/${number}`;
 
 /** What a shape the pointer reaches can do. */
-interface Pointed {
-  onPress?: (press: Press) => void;
+interface Pointed extends PointerEvents {
   /** A drag, made once and given to every shape it drags. */
   drag?: Drag;
   /** Its colour while the pointer is over it. */
@@ -2483,9 +2489,9 @@ export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?:
 /**
  * A surface that draws shapes in units of its own, such as ticks across and notes down. It
  * scrolls over `extent` and zooms in `zoom` in the window, with no code, and draws only what
- * shows. Without `unit`, a unit is a point.
+ * shows. Without `unit`, a unit is a point. It hears the pointer where no shape that hears it is.
  */
-export interface SpaceProps {
+export interface SpaceProps extends PointerEvents {
   /** Names it for `now.space(key)`, and keeps its scroll and zoom. */
   key?: string;
   /** Its size in points; `grow` takes the room left in its parent. */
@@ -2509,8 +2515,6 @@ export interface SpaceProps {
   follow?: { x?: string; y?: string };
   background?: Bind<Color>;
   radius?: number;
-  /** A press where no shape that hears the pointer is. */
-  onPress?: (press: Press) => void;
   /** A drag from where no shape that hears the pointer is, such as a marquee. */
   drag?: Drag;
   /** Files or a carried value let go on it, where in its units. */
@@ -2615,26 +2619,25 @@ export const PeakMeter = (props: { key?: string; of?: string; input?: readonly n
 
 /**
  * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.
- * Coloured while `on`, `color` when given; its code turns it in `onPress`.
+ * Coloured while `on`, `color` when given; its code turns it in `onClick`.
  */
 export type ToggleProps = (
   | { label: Bind<string>; icon?: never; count?: never; dot?: never }
   | { icon: Bind<IconName>; count?: Bind<number>; label?: never; dot?: never }
   | { dot: true; label?: never; icon?: never; count?: never }
-) & {
+) & PointerEvents & {
   key?: string;
   on: Bind<boolean>;
   color?: Bind<Color>;
   disabled?: Bind<boolean>;
   tooltip?: Bind<string>;
-  onPress?: (press: Press) => void;
 };
 
 /** A switch, see `ToggleProps`. */
 export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
 
 /** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
-export interface ButtonProps {
+export interface ButtonProps extends PointerEvents {
   key?: string;
   label?: Bind<string>;
   icon?: Bind<IconName>;
@@ -2649,7 +2652,6 @@ export interface ButtonProps {
   /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
   opacity?: number;
   tooltip?: Bind<string>;
-  onPress?: (press: Press) => void;
 }
 
 /** A button, see `ButtonProps`. */
@@ -2725,12 +2727,10 @@ type LookKey = "background" | "color" | "borderColor" | "opacity";
 /** What a look changes of a div's `Style`; a `Style` with more in it is no look. */
 export type Look = Pick<Style, LookKey> & { [Key in Exclude<keyof Style, LookKey>]?: never };
 
-interface DivProps {
+interface DivProps extends PointerEvents {
   key?: string;
   style?: Bind<Style>;
-  /** A click on it, or a press of the right button. */
-  onPress?: (press: Press) => void;
-  /** It hears no press, drag or drop and shows its `disabled` look; its children still hear theirs, and it still scrolls. */
+  /** It hears no press, release, click, drag or drop and shows its `disabled` look; its children still hear theirs, and it still scrolls. */
   disabled?: Bind<boolean>;
   cursor?: Pointed["cursor"];
   tooltip?: Bind<string>;
@@ -3190,7 +3190,7 @@ export function Select<const T extends string | number | boolean | null>(props: 
     const option = picked === null ? undefined : options[picked];
     if (option && option.value !== value) set(option.value);
   };
-  return h("div", { key: props.key, style: look.style, onPress: open },
+  return h("div", { key: props.key, style: look.style, onClick: open },
     h("div", { style: { fontSize: look.text, weight: "medium", color: "gray-950" } }, said),
     Icon({ name: "chevron-down", size: 12, color: "gray-700" }),
   );
@@ -3237,8 +3237,8 @@ export function Slider({ field, played, ...props }: SliderProps): UiNode {
  * A quiet line for what the composer should know, as the window's: `tone` is `error` when left
  * out, `progress` runs from 0 to 1.
  */
-export const Notice = ({ action, onDismiss, ...props }: { key?: string; message: Bind<string>; tone?: Bind<"error" | "warning" | "info">; progress?: Bind<number>; action?: { label: Bind<string>; onPress: () => void }; onDismiss?: () => void }): UiNode =>
-  element("notice", { ...props, action: action?.label, onPress: action?.onPress, onClose: onDismiss }, []);
+export const Notice = ({ action, onDismiss, ...props }: { key?: string; message: Bind<string>; tone?: Bind<"error" | "warning" | "info">; progress?: Bind<number>; action?: { label: Bind<string>; onClick: () => void }; onDismiss?: () => void }): UiNode =>
+  element("notice", { ...props, action: action?.label, onClick: action?.onClick, onClose: onDismiss }, []);
 
 const STEP = { size: 14, gap: 3 } as const;
 
@@ -3324,11 +3324,12 @@ export function Pad(props: PadProps): UiNode {
   const drag = now.drag(key);
   /** Where the pointer is while the drag goes on and until code answers its end, else what code keeps. */
   const at = (pointer: Live, kept: number) => drag.active.times(pointer.clamp(0, size)).plus(drag.active.negate().plus(1).times(kept * size));
-  const ended = (end: DragResult) => onChange({ x: within(end.x / size), y: within(1 - end.y / size) });
+  const ended = ({ x, y }: { x: number; y: number }) => onChange({ x: within(x / size), y: within(1 - y / size) });
   return Space({
     ...look,
     key,
-    drag: { id: key, onEnd: ended, onClick: ended },
+    drag: { id: key, onEnd: ended },
+    onClick: ended,
     children: [dot(() => at(drag.x, read(value).x), () => at(drag.y, 1 - read(value).y))],
   });
 }
@@ -3367,7 +3368,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
               label: "Choose…",
               variant: "subtle",
               size: "xs",
-              onPress: async () => {
+              onClick: async () => {
                 const chosen = await openFile({ title: `Choose ${label.toLowerCase()}` });
                 if (chosen !== null) update(`Choose ${label.toLowerCase()}`, ({ state: next }) => {
                   next[name] = chosen;
@@ -3381,7 +3382,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
           Toggle({
             label,
             on: () => state[name] as boolean,
-            onPress: () => {
+            onClick: () => {
               const on = state[name] as boolean;
               update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
                 next[name] = !on;
@@ -3402,7 +3403,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
       if (input.kind === "number") {
         knobs.push(knob(name, input));
       } else {
-        buttons.push(Button({ label: input.label ?? words(name), variant: "subtle", size: "sm", onPress: () => (send as (input: string) => void)(name) }));
+        buttons.push(Button({ label: input.label ?? words(name), variant: "subtle", size: "sm", onClick: () => (send as (input: string) => void)(name) }));
       }
     }
     if (buttons.length > 0) {
@@ -3465,8 +3466,8 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** A press, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
+/** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
+function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
@@ -3487,7 +3488,7 @@ function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "can
     case "change":
       return made.onChange?.(payload);
     default: {
-      const handler = { press: made.onPress, end: made.drag?.onEnd, click: made.drag?.onClick, drop: made.onDrop }[kind];
+      const handler = { press: made.onPress, release: made.onRelease, click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);
     }
   }

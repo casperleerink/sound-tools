@@ -193,12 +193,6 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     id: "note-move",
     snap: { x: snap || 1, y: 1, grid: snap > 0 },
     onEnd: ({ dx, dy, alt }) => change(alt ? "Copy notes" : "Move notes", (all, chosen) => moved(all, chosen, Math.round(dx), -dy, alt)),
-    // A plain click on one of several chosen notes chooses it alone.
-    onClick: ({ startX, startY, shift, cmd }) => {
-      const row = Math.floor(startY);
-      const note = notes().find((each) => rowOf(each.pitch) === row && each.start <= startX && each.start + each.length > startX);
-      if (note && !shift && !cmd) memory.notes = new Set([noteKey(note)]);
-    },
   });
   const resizeDrag = (snap: number): Drag => ({
     id: "note-resize",
@@ -282,11 +276,15 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     const picked = memo(() => isPicked(noteKey(note)));
     const handle = () => Math.min(90, note.length / 3);
     const onPress = pressNote(note);
+    // A plain click on one of several chosen notes chooses it alone.
+    const onClick = ({ shift, cmd }: Press) => {
+      if (!shift && !cmd) memory.notes = new Set([noteKey(note)]);
+    };
     // A point short of its length and of its row, as the window drew notes apart.
     return [
       <Rect x={() => note.start} y={() => rowOf(note.pitch)} width={() => space.pointX.negate().plus(note.length).max(space.pointX.times(2))} height={(ROW - 1) / ROW} radius={3}
         moves={() => (picked() ? ["note-move"] : undefined)} grows={() => (picked() ? ["note-resize"] : undefined)}
-        color={() => (picked() ? "gray-950" : blend(colour(), "gray-950", boxed(note)))} border={colour} borderWidth={1} cursor="grab" drag={drags.move} onPress={onPress} />,
+        color={() => (picked() ? "gray-950" : blend(colour(), "gray-950", boxed(note)))} border={colour} borderWidth={1} cursor="grab" drag={drags.move} onPress={onPress} onClick={onClick} />,
       <Rect x={() => note.start + note.length - handle()} y={() => rowOf(note.pitch)} width={handle} height={1}
         moves={() => (picked() ? ["note-move", "note-resize"] : undefined)}
         color="#00000000" cursor="ew-resize" drag={drags.resize} onPress={onPress} anchor={() => ({ x: note.start + note.length })} />,
@@ -358,7 +356,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
           <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
-          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={onClose} />
+          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} onClick={onClose} />
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}

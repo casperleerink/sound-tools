@@ -1,7 +1,8 @@
 //! The card of an instance of a tool of the project, in a rack, or its page, the whole window:
 //! the nodes its code made. What moves on it moves here, with no code: a space scrolls and
 //! zooms, a drag moves what binds to it and turns what it turns, and live values follow the
-//! playhead, the watches and the record. Code hears a press, and a drag once, at its end.
+//! playhead, the watches and the record. Code hears a press, its release and a click, and a drag
+//! once, at its end.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -84,6 +85,12 @@ pub(crate) struct TypeScriptCard {
     held: Option<Held>,
     /// The shape the pointer is over: the key of its space and its node.
     hovered: Option<(String, u64)>,
+    /// The presses whose release its code hears, by node, with their button and what the
+    /// press told, which the release tells again.
+    pressed: Vec<(u64, MouseButton, Value)>,
+    /// A left press on a shape or a space whose code hears a click: the key of its space, its
+    /// node and what the press told.
+    clicking: Option<(String, u64, Value)>,
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
     /// them, and a page takes them when it opens and nothing else has them.
     focus: FocusHandle,
@@ -314,8 +321,9 @@ impl Render for CardTitle {
     }
 }
 
-/// Takes no room and writes into `down` whether a mouse button is down in the window.
-fn hears_the_button(down: Rc<Cell<bool>>) -> impl IntoElement {
+/// Takes no room and writes into `down` whether a mouse button is down in the window. A button
+/// that goes up releases the presses of it on `card`, before a click or a drag's end.
+fn hears_the_button(down: Rc<Cell<bool>>, card: WeakEntity<TypeScriptCard>) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |_, (), window, _| {
@@ -328,17 +336,18 @@ fn hears_the_button(down: Rc<Cell<bool>>) -> impl IntoElement {
                 }
             });
             window.on_mouse_event({
-                let down = down.clone();
-                move |_: &MouseUpEvent, phase, _, _| {
+                let (down, card) = (down.clone(), card.clone());
+                move |event: &MouseUpEvent, phase, _, cx| {
                     if phase == DispatchPhase::Capture {
                         down.set(false);
+                        (card.update(cx, |card, cx| card.let_go(Some(event.button), cx))).ok();
                     }
                 }
             });
             // A button that came up outside the window.
-            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, _| {
-                if phase == DispatchPhase::Capture && !event.dragging() {
-                    down.set(false);
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture && !event.dragging() && down.replace(false) {
+                    (card.update(cx, |card, cx| card.let_go(None, cx))).ok();
                 }
             });
         },
@@ -487,6 +496,18 @@ impl Held {
     }
 }
 
+/// What a press tells its node's code: where in the units of its space (0 on a div), which
+/// button, how many clicks in a row and the modifiers.
+fn press_of((x, y): (f64, f64), button: MouseButton, clicks: usize, modifiers: Modifiers) -> Value {
+    let button = match button {
+        MouseButton::Right => "right",
+        _ => "left",
+    };
+    let mut press = json!({ "x": x, "y": y, "button": button, "clicks": clicks });
+    add_modifiers(&mut press, modifiers);
+    press
+}
+
 fn add_modifiers(value: &mut Value, modifiers: Modifiers) {
     if let Some(object) = value.as_object_mut() {
         object.insert("shift".into(), modifiers.shift.into());
@@ -583,6 +604,14 @@ impl TypeScriptCard {
             }
         })
         .detach();
+        // A window in the back may never hear the button go up.
+        cx.observe_window_activation(window, |view, window, cx| {
+            if !window.is_window_active() {
+                view.clicking = None;
+                view.let_go(None, cx);
+            }
+        })
+        .detach();
         cx.on_release(|view, cx| {
             view.edit.finish(&view.session, cx);
             // A card that is gone hears no focus out.
@@ -601,6 +630,8 @@ impl TypeScriptCard {
             state: None,
             held: None,
             hovered: None,
+            pressed: Vec::new(),
+            clicking: None,
             focus,
             keys_down: BTreeSet::new(),
             feeds: Feeds::default(),
@@ -1080,6 +1111,48 @@ impl TypeScriptCard {
         (self.live).update(cx, |live, cx| live.event(card, node, kind, payload, cx))
     }
 
+    /// The pointer pressed the node `node`: its code hears the press now and the release as the
+    /// button goes up.
+    fn pointer_down(
+        &mut self,
+        node: u64,
+        hears: Hears,
+        button: MouseButton,
+        press: Value,
+        cx: &mut App,
+    ) {
+        if hears.release {
+            self.pressed.push((node, button, press.clone()));
+        }
+        if hears.press {
+            self.event(node, EventKind::Press, press, cx);
+        }
+    }
+
+    /// A left press and release on the div or button `id`.
+    fn click(&mut self, id: u64, event: &gpui::ClickEvent, cx: &mut App) {
+        self.hang_menus_under(id);
+        let click = press_of(
+            (0.0, 0.0),
+            MouseButton::Left,
+            event.click_count(),
+            event.modifiers(),
+        );
+        self.event(id, EventKind::Click, click, cx);
+    }
+
+    /// `button` went up, or with `None` every button: the nodes pressed with it hear their
+    /// release.
+    fn let_go(&mut self, button: Option<MouseButton>, cx: &mut App) {
+        let (released, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pressed)
+            .into_iter()
+            .partition(|(_, pressed, _)| button.is_none_or(|button| button == *pressed));
+        self.pressed = kept;
+        for (node, _, press) in released {
+            self.event(node, EventKind::Release, press, cx);
+        }
+    }
+
     /// The record with each field it leaves out at its default, and its tool.
     fn record(&self, cx: &App) -> (Value, Option<ToolInfo>) {
         let info = self.live.read(cx).info(self.card);
@@ -1116,10 +1189,10 @@ impl TypeScriptCard {
         cx: &mut Context<Self>,
     ) {
         let units = frame.units_at(bounds, event.position);
-        let (on_press, drag, node, on_shape, anchor) = match target {
+        let (hears, drag, node, on_shape, anchor) = match target {
             Some(index) => match frame.pointed.get(index).and_then(Option::as_ref) {
                 Some(pointer) => (
-                    pointer.on_press,
+                    pointer.hears,
                     pointer.drag.clone(),
                     pointer.node,
                     true,
@@ -1127,23 +1200,13 @@ impl TypeScriptCard {
                 ),
                 None => return,
             },
-            None => (frame.on_press, frame.drag.clone(), frame.node, false, units),
+            None => (frame.hears, frame.drag.clone(), frame.node, false, units),
         };
-        if on_press {
-            self.anchor.set(None);
-            let button = match event.button {
-                MouseButton::Right => "right",
-                _ => "left",
-            };
-            let mut press = json!({
-                "x": units.0,
-                "y": units.1,
-                "button": button,
-                "clicks": event.click_count,
-            });
-            add_modifiers(&mut press, event.modifiers);
-            self.event(node, EventKind::Press, press, cx);
-        }
+        self.anchor.set(None);
+        let press = press_of(units, event.button, event.click_count, event.modifiers);
+        self.clicking = (hears.click && event.button == MouseButton::Left)
+            .then(|| (frame.key.clone(), node, press.clone()));
+        self.pointer_down(node, hears, event.button, press, cx);
         let Some(drag) = drag.filter(|_| event.button == MouseButton::Left) else {
             return;
         };
@@ -1243,6 +1306,19 @@ impl TypeScriptCard {
         cx.notify();
     }
 
+    /// A button went up while the pointer is over the node `over` of the space of `frame`, if
+    /// any: a press there with no drag since clicks it, and the drag it held ends.
+    fn pointer_up(&mut self, frame: &SpaceFrame, over: Option<u64>, cx: &mut Context<Self>) {
+        if let Some((_, node, press)) = self.clicking.take_if(|(space, ..)| *space == frame.key) {
+            let dragged =
+                (self.held.as_ref()).is_some_and(|held| held.ended.is_none() && held.moved);
+            if over == Some(node) && !dragged {
+                self.event(node, EventKind::Click, press, cx);
+            }
+        }
+        self.drag_ends(frame, cx);
+    }
+
     /// The pointer let go of the drag it held, over the space of `frame`.
     fn drag_ends(&mut self, frame: &SpaceFrame, cx: &mut Context<Self>) {
         let Some(mut held) = self
@@ -1254,9 +1330,6 @@ impl TypeScriptCard {
         };
         held.follow(frame);
         if !held.moved {
-            if held.drag.on_click {
-                self.event(held.node, EventKind::Click, held.result(), cx);
-            }
             self.held = None;
             return;
         }
@@ -1289,11 +1362,12 @@ impl TypeScriptCard {
     }
 
     /// Escape: the drag the pointer holds lets go of what it moved and turned, and its code
-    /// hears nothing.
+    /// hears no end and no click; the release still comes as the button goes up.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(held) = self.held.take_if(|held| held.ended.is_none()) else {
             return false;
         };
+        self.clicking = None;
         let turns = [&held.drag.x, &held.drag.y];
         let info = self.live.read(cx).info(self.card);
         let target = |turns: &tree::Turns| turns.target(info.as_ref()).to_owned_input();
@@ -1445,11 +1519,33 @@ fn range_of(info: Option<&ToolInfo>, turns: &tree::Turns) -> Option<ValueRange> 
     }
 }
 
+/// Which pointer events the code of a node hears.
+#[derive(Clone, Copy, Default)]
+struct Hears {
+    press: bool,
+    release: bool,
+    click: bool,
+}
+
+impl Hears {
+    fn of(press: Option<bool>, release: Option<bool>, click: Option<bool>) -> Self {
+        Self {
+            press: press == Some(true),
+            release: release == Some(true),
+            click: click == Some(true),
+        }
+    }
+
+    fn any(self) -> bool {
+        self.press || self.release || self.click
+    }
+}
+
 /// What a shape of a space does with the pointer.
 #[derive(Clone)]
 struct Pointer {
     node: u64,
-    on_press: bool,
+    hears: Hears,
     drag: Option<Drag>,
     cursor: Option<Cursor>,
     anchor: (f64, f64),
@@ -1654,7 +1750,7 @@ struct SpaceFrame {
     pointed: Vec<Option<Pointer>>,
     background: Option<Hsla>,
     radius: f32,
-    on_press: bool,
+    hears: Hears,
     drag: Option<Drag>,
     cursor: Option<Cursor>,
     extent: tree::Ranges,
@@ -2030,6 +2126,8 @@ impl Drawing<'_, '_> {
                 disabled,
                 cursor,
                 tooltip,
+                on_release,
+                on_click,
                 follow,
                 carry,
                 on_drop,
@@ -2130,12 +2228,13 @@ impl Drawing<'_, '_> {
                     }
                     None => element,
                 };
-                let hears = !disabled
-                    && (*on_press == Some(true) || *on_drop == Some(true) || carry.is_some());
+                let pointer = Hears::of(*on_press, *on_release, *on_click);
+                let hears =
+                    !disabled && (pointer.any() || *on_drop == Some(true) || carry.is_some());
                 let element = match (disabled, cursor) {
                     (true, _) => element.cursor_not_allowed(),
                     (false, Some(cursor)) => element.cursor(cursor.style()),
-                    (false, None) if *on_press == Some(true) => element.cursor_pointer(),
+                    (false, None) if pointer.any() => element.cursor_pointer(),
                     (false, None) => element,
                 };
                 let pressed = style.pressed().filter(|_| !disabled);
@@ -2154,7 +2253,7 @@ impl Drawing<'_, '_> {
                                 element.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
                             });
                         match hears {
-                            true => self.heard_div(element, id, on_press, carry, on_drop),
+                            true => self.heard_div(element, id, pointer, carry, on_drop),
                             false => element.into_any_element(),
                         }
                     }
@@ -2267,7 +2366,7 @@ impl Drawing<'_, '_> {
             .into_any_element()
     }
 
-    /// A quiet line of the app, whose button tells a press and whose close button a close.
+    /// A quiet line of the app, whose button tells a click and whose close button a close.
     fn notice(&mut self, id: u64, props: &NoticeProps, index: &[usize]) -> AnyElement {
         let name = element_name("notice", props.key.as_deref(), index);
         let tone = match props.tone {
@@ -2283,7 +2382,7 @@ impl Drawing<'_, '_> {
                 (card.update(cx, |view, cx| view.event(id, kind, payload, cx))).ok();
             }
         };
-        let press = json!({ "x": 0, "y": 0, "button": "left", "clicks": 1 });
+        let click = press_of((0.0, 0.0), MouseButton::Left, 1, Modifiers::default());
         Notice::new(
             ElementId::Name(name.into()),
             props.message.clone().unwrap_or_default(),
@@ -2294,10 +2393,10 @@ impl Drawing<'_, '_> {
             props
                 .action
                 .clone()
-                .filter(|_| props.on_press == Some(true)),
+                .filter(|_| props.on_click == Some(true)),
             |notice, action| {
                 let button =
-                    Button::new("notice-action", action).on_click(tell(EventKind::Press, press));
+                    Button::new("notice-action", action).on_click(tell(EventKind::Click, click));
                 notice.action(button)
             },
         )
@@ -2307,7 +2406,7 @@ impl Drawing<'_, '_> {
         .into_any_element()
     }
 
-    /// A switch of the app, which tells a press as a pressed div does: its code turns it.
+    /// A switch of the app, which tells the pointer as a div does: its code turns it.
     fn toggle(&mut self, id: u64, props: &ToggleProps, index: &[usize]) -> AnyElement {
         let name: SharedString = element_name("toggle", props.key.as_deref(), index).into();
         let on = props.on == Some(true);
@@ -2323,20 +2422,22 @@ impl Drawing<'_, '_> {
             .when_some(props.tooltip.clone(), Toggle::tooltip)
             .disabled(props.disabled == Some(true))
             .tab_stop(false)
-            .when(props.on_press == Some(true), |toggle| {
+            .when(props.on_click == Some(true), |toggle| {
                 let card = self.cx.entity().downgrade();
                 toggle.on_change(move |_, _, cx| {
-                    let press = json!({ "x": 0, "y": 0, "button": "left", "clicks": 1 });
-                    (card.update(cx, |view, cx| view.event(id, EventKind::Press, press, cx))).ok();
+                    let click = press_of((0.0, 0.0), MouseButton::Left, 1, Modifiers::default());
+                    (card.update(cx, |view, cx| view.event(id, EventKind::Click, click, cx))).ok();
                 })
             });
+        let hears = Hears::of(props.on_press, props.on_release, props.on_click);
         // A click on it is its own, not the row's under it.
-        (div().flex_none().occlude().debug_selector(move || selector))
+        let wrap = div().flex_none().occlude().debug_selector(move || selector);
+        self.hears_presses(wrap, id, hears, props.disabled)
             .child(toggle)
             .into_any_element()
     }
 
-    /// A button of the app, which tells a press as a pressed div does.
+    /// A button of the app, which tells the pointer as a div does.
     fn button(&mut self, id: u64, props: &ButtonProps, index: &[usize]) -> AnyElement {
         let name = element_name("button", props.key.as_deref(), index);
         let accent = props.color.map(|color| color.0);
@@ -2375,67 +2476,72 @@ impl Drawing<'_, '_> {
                 button
             })
             .debug_selector(move || selector)
-            .when(props.on_press == Some(true), |button| {
+            .when(props.on_click == Some(true), |button| {
                 button.on_click(
                     self.cx
-                        .listener(move |view, event: &gpui::ClickEvent, _, cx| {
-                            view.hang_menus_under(id);
-                            let mut press = json!({
-                                "x": 0, "y": 0, "button": "left", "clicks": event.click_count(),
-                            });
-                            add_modifiers(&mut press, event.modifiers());
-                            view.event(id, EventKind::Press, press, cx);
-                        }),
+                        .listener(move |view, event, _, cx| view.click(id, event, cx)),
                 )
             });
-        (div().flex_none().relative())
+        let hears = Hears::of(props.on_press, props.on_release, props.on_click);
+        let wrap = div().flex_none().relative();
+        self.hears_presses(wrap, id, hears, props.disabled)
             .child(button)
-            .when(props.on_press == Some(true), |wrap| {
-                wrap.child(placed(id, &self.placed))
-            })
+            .when(hears.any(), |wrap| wrap.child(placed(id, &self.placed)))
             .into_any_element()
     }
 
-    /// A div that hears presses, drops or carries something when dragged.
+    /// `element`, the node `id`, tells its code the presses `hears` asks for, and their release.
+    fn hears_presses<E: InteractiveElement>(
+        &mut self,
+        element: E,
+        id: u64,
+        hears: Hears,
+        disabled: Option<bool>,
+    ) -> E {
+        if !(hears.press || hears.release) || disabled == Some(true) {
+            return element;
+        }
+        let press = |button| {
+            (self.cx).listener(
+                move |view: &mut TypeScriptCard, event: &MouseDownEvent, _, cx| {
+                    match button {
+                        MouseButton::Left => view.hang_menus_under(id),
+                        _ => view.anchor.set(None),
+                    }
+                    let press = press_of((0.0, 0.0), button, event.click_count, event.modifiers);
+                    view.pointer_down(id, hears, button, press, cx);
+                    // A right press opens one menu, its own and not one of a node under it.
+                    if button == MouseButton::Right {
+                        cx.stop_propagation();
+                    }
+                },
+            )
+        };
+        element
+            .on_mouse_down(MouseButton::Left, press(MouseButton::Left))
+            .on_mouse_down(MouseButton::Right, press(MouseButton::Right))
+    }
+
+    /// A div that hears the pointer, drops or carries something when dragged.
     fn heard_div(
         &mut self,
         element: Stateful<Div>,
         id: u64,
-        on_press: &Option<bool>,
+        hears: Hears,
         carry: &Option<String>,
         on_drop: &Option<bool>,
     ) -> AnyElement {
         {
             {
                 let lavender = self.cx.theme().lavender;
-                let element = element.when(*on_press == Some(true), |element| {
-                    element
-                        .on_click((self.cx).listener(
-                            move |view, event: &gpui::ClickEvent, _, cx| {
-                                view.hang_menus_under(id);
-                                let mut press = json!({
-                                    "x": 0, "y": 0, "button": "left",
-                                    "clicks": event.click_count(),
-                                });
-                                add_modifiers(&mut press, event.modifiers());
-                                view.event(id, EventKind::Press, press, cx);
-                            },
-                        ))
-                        .child(placed(id, &self.placed))
-                        .on_mouse_down(
-                            MouseButton::Right,
-                            (self.cx).listener(move |view, event: &MouseDownEvent, _, cx| {
-                                view.anchor.set(None);
-                                let mut press = json!({
-                                    "x": 0, "y": 0, "button": "right",
-                                    "clicks": event.click_count,
-                                });
-                                add_modifiers(&mut press, event.modifiers);
-                                view.event(id, EventKind::Press, press, cx);
-                                cx.stop_propagation();
-                            }),
+                let element = self.hears_presses(element, id, hears, None);
+                let element = element
+                    .when(hears.any(), |element| element.child(placed(id, &self.placed)))
+                    .when(hears.click, |element| {
+                        element.on_click(
+                            (self.cx).listener(move |view, event, _, cx| view.click(id, event, cx)),
                         )
-                });
+                    });
                 let element = match carry {
                     Some(carry) => element
                         .on_drag(Carried(carry.clone()), |carried: &Carried, _, _, cx| {
@@ -2535,7 +2641,7 @@ impl Drawing<'_, '_> {
             pointed,
             background: space.background.map(|color| color.0),
             radius: space.radius.unwrap_or(0.0),
-            on_press: space.on_press == Some(true),
+            hears: Hears::of(space.on_press, space.on_release, space.on_click),
             drag: self.table.drag(space.drag).cloned(),
             cursor: space.cursor,
             extent: space.extent.unwrap_or_default(),
@@ -2991,7 +3097,7 @@ impl Placing<'_> {
         let anchor = shape.anchor.unwrap_or_default();
         self.pointed.push(shape.is_pointed().then(|| Pointer {
             node: id,
-            on_press: shape.on_press == Some(true),
+            hears: Hears::of(shape.on_press, shape.on_release, shape.on_click),
             drag: self.table.drag(shape.drag).cloned(),
             cursor: shape.cursor,
             anchor: (
@@ -3618,7 +3724,7 @@ fn listen(
                 return;
             }
             let target = found(&frame, &painted, event.position);
-            if target.is_none() && !frame.on_press && frame.drag.is_none() {
+            if target.is_none() && !frame.hears.any() && frame.drag.is_none() {
                 return;
             }
             card.update(cx, |card, cx| {
@@ -3637,7 +3743,8 @@ fn listen(
         }
     });
     window.on_mouse_event({
-        let (frame, card, hitbox) = (frame.clone(), card.clone(), hitbox.clone());
+        let (frame, card, painted, hitbox) =
+            (frame.clone(), card.clone(), painted.clone(), hitbox.clone());
         move |event: &MouseMoveEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -3664,11 +3771,17 @@ fn listen(
         }
     });
     window.on_mouse_event({
-        let (frame, card) = (frame.clone(), card.clone());
-        move |_: &MouseUpEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble {
-                card.update(cx, |card, cx| card.drag_ends(&frame, cx)).ok();
+        let (frame, card, hitbox) = (frame.clone(), card.clone(), hitbox.clone());
+        move |event: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
             }
+            let over = hitbox.is_hovered(window).then(|| {
+                found(&frame, &painted, event.position)
+                    .and_then(|index| Some(frame.pointed.get(index)?.as_ref()?.node))
+                    .unwrap_or(frame.node)
+            });
+            (card.update(cx, |card, cx| card.pointer_up(&frame, over, cx))).ok();
         }
     });
     if !frame.scrolls() {
@@ -3728,7 +3841,7 @@ fn frame_now(
         pointed: Vec::new(),
         background: None,
         radius: 0.0,
-        on_press: false,
+        hears: Hears::default(),
         drag: None,
         cursor: None,
         extent: frame.extent,
@@ -3977,7 +4090,10 @@ impl Render for TypeScriptCard {
             .text_size(px(12.))
             .text_color(text)
             .child(body)
-            .child(hears_the_button(self.button_down.clone()))
+            .child(hears_the_button(
+                self.button_down.clone(),
+                cx.entity().downgrade(),
+            ))
             .children(self.menu.as_ref().map(|(menu, _)| menu.clone()));
         match &self.frame {
             // At least as wide as a plain card, so the title fits.
@@ -4026,7 +4142,7 @@ mod tests {
             pointed: Vec::new(),
             background: None,
             radius: 0.0,
-            on_press: false,
+            hears: Hears::default(),
             drag: None,
             cursor: None,
             extent,

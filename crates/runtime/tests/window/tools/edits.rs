@@ -156,7 +156,7 @@ tool({
   view: ({ size, update }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onPress: () => update("Write a bass line", ({ children }) => {
+      onClick: () => update("Write a bass line", ({ children }) => {
         const bass = children.find((child) => child.name === "bass")!.state as TimelineState;
         bass.notes = [{ start: 0, length: 3840, pitch: 45, velocity: 100 }];
       }),
@@ -440,7 +440,7 @@ tool({
     h("div", {
       key: "box",
       style: () => ({ width: state.level > 1 ? 200 : 100, height: 40 }),
-      onPress: () => update("Too far", ({ state }) => {
+      onClick: () => update("Too far", ({ state }) => {
         state.level = 5;
       }),
     }, "Box"),
@@ -482,7 +482,7 @@ tool({
       h("div", {
         key: "swap",
         style: { width: 100, height: 20 },
-        onPress: () => update("Swap", (part) => {
+        onClick: () => update("Swap", (part) => {
           part.children = [...part.children.filter((child) => child.name !== "a"), { name: "c", tool: "utility", state: {} }];
         }),
       }, "Swap"),
@@ -576,7 +576,7 @@ tool({
   memory: () => ({ list: [7, 7, 1] }),
   view: ({ memory }) =>
     h("div", { style: { width: 300 } },
-      h("div", { key: "top", style: { width: 100, height: 20 }, onPress: () => (memory.list = [7, 1]) }, "Top"),
+      h("div", { key: "top", style: { width: 100, height: 20 }, onClick: () => (memory.list = [7, 1]) }, "Top"),
       h(For, { each: () => memory.list }, (value: number) => h("div", { style: { width: 100, height: 20 } }, String(value))),
       h("div", { key: "end", style: { width: 100, height: 20 } }, "End"),
     ),

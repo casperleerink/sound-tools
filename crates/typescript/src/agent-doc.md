@@ -143,7 +143,7 @@ tool({
       </div>
       <div style={row}>
         <Steps field="steps" playing="step" />
-        <Button label="Hit" onPress={() => send("hit")} />
+        <Button label="Hit" onClick={() => send("hit")} />
       </div>
     </div>
   ),
@@ -152,11 +152,13 @@ tool({
 
 | Element | Does |
 | --- | --- |
-| `<div style onPress carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. `onPress` hears a click or a right click; a `disabled` div hears no press, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
+| `<div style onClick carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. A `disabled` div hears no pointer, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
 | `<Input>` | A text field; keys typed there play nothing. |
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view; `sidechain` puts selects behind the expand of a compressor or a gate. |
 | `<Knob>`, `<Fader>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>`, `<Slider>` | A knob, a fader (over a meter with `meter`), a number to drag or type, a row of steps, a square for the pointer, a list, options side by side, a slider. `field` names a field as `now.value` does; or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag at its end. A `Slider` takes only a `field`. |
 | `<Meter>`, `<Notice>` | A level of any live value; a quiet message. |
+
+A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up (always, wherever the pointer went: a note off), and `onClick` after a left press and release on it with no drag.
 
 All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `confirm` (the system's yes-or-no question), `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 
@@ -202,7 +204,7 @@ view: ({ state, memory, update, now }) => {
 ```
 
 - `moves` names the drags a shape moves with, `grows` those that make it wider and taller, as the selected notes above: one small change when the selection does. A `<Group x y>` places its shapes from `x`, `y`, and moves them with its own `moves`; with a `clip` of `{ width, height }` they do not show or hear the pointer outside that box: a clip and its notes, which end at its end.
-- `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. With cmd held `dx` does not snap, off the grid in time: round ticks at `onEnd`. Escape lets go of a drag, and its code hears nothing.
+- `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. With cmd held `dx` does not snap, off the grid in time: round ticks at `onEnd`. Escape lets go of a drag: its code hears only `onRelease`.
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts. On a `div`, `follow: { y: "timeline" }` scrolls its children with it, cut off at its edges: the heads of the rows of a timeline.
 - `<>...</>` gives several children where one goes, such as a component that gives two shapes; import `Fragment` with `h`.
 - A drag can also turn a number as it goes, with no code, as a knob does: `{ y: { value: "cutoff" } }`, named as `now.value` names it; for a field the whole drag is one undo step.
@@ -371,7 +373,7 @@ tool({
         const waits = () => loop !== undefined && outputs[`${loop}.queued`] === 1;
         return h("div", {
           style: () => ({ padding: 8, radius: 6, background: plays() ? "#7c3aed" : waits() ? "#4c1d95" : "#2a2f3a" }),
-          onPress: () => launch(loop),
+          onClick: () => launch(loop),
         }, loop ?? "Stop");
       }),
     );

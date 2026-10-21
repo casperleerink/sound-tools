@@ -51,9 +51,9 @@ function Pan({ name, child }: { name: string; child: string }) {
   );
 }
 
-function Button({ label, on, color, onPress }: { label: string; on: () => boolean; color: `#${string}`; onPress: () => void }) {
+function Button({ label, on, color, onClick }: { label: string; on: () => boolean; color: `#${string}`; onClick: () => void }) {
   return (
-    <div style={() => ({ width: 22, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onPress={onPress}>
+    <div style={() => ({ width: 22, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onClick={onClick}>
       {label}
     </div>
   );
@@ -107,8 +107,8 @@ export const mixer = tool({
                   <Label x={STRIP / 2} y={0} text={now.value(`${name}-mix.gain_db`)} unit="db" size={10} color={COLOR.text} align="center" />
                 </Space>
                 <div style={{ direction: "row", gap: 4 }}>
-                  <Button label="M" on={() => muted(name)} color={COLOR.mute} onPress={() => toggleMute(name)} />
-                  <Button label="S" on={() => state.solo.includes(name)} color={COLOR.solo} onPress={() => toggleSolo(name)} />
+                  <Button label="M" on={() => muted(name)} color={COLOR.mute} onClick={() => toggleMute(name)} />
+                  <Button label="S" on={() => state.solo.includes(name)} color={COLOR.solo} onClick={() => toggleSolo(name)} />
                 </div>
                 <div style={{ fontSize: 11, color: COLOR.text }}>{name}</div>
               </div>

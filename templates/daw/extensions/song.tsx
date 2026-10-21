@@ -418,14 +418,15 @@ export const song = tool({
       return rows().findIndex((each) => each.name === to);
     };
     // The drags of clips and regions land on the grid of the snap in the corner, a tick apart while
-    // it is off. A click that did not move on one of several chosen chooses it alone.
-    const moveDrag = (snap: number, key: string): Drag => ({
+    // it is off.
+    const moveDrag = (snap: number): Drag => ({
       id: "move",
       snap: { x: snap || 1, y: 1, grid: snap > 0 },
       onEnd: ({ dx, dy, alt }) =>
         choose(moveItems({ children, update, outputs, clock }, state.order, memory.selected, Math.round(dx), (row) => rowMoved(row, Math.round(dy)), alt)),
-      onClick: ({ shift, cmd }) => !shift && !cmd && memory.selected.size > 1 && choose(new Set([key])),
     });
+    /** A click on one of several chosen chooses it alone. */
+    const clickItem = (key: string) => ({ shift, cmd }: Press) => !shift && !cmd && memory.selected.size > 1 && choose(new Set([key]));
     const marquee = now.drag("clip-marquee");
     const marqueeDrag: Drag = {
       id: "clip-marquee",
@@ -817,7 +818,7 @@ export const song = tool({
             <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
               <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
               <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-              <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.below = null)} />
+              <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} onClick={() => (memory.below = null)} />
             </div>
             <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
               <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
@@ -826,9 +827,9 @@ export const song = tool({
               <div style={{ align: "start" }}>
                 <Knob field={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
                 <div style={{ direction: "row", gap: 4, paddingTop: 6 }}>
-                  <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onPress={() => toggleMute(name)} />
+                  <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onClick={() => toggleMute(name)} />
                   <Show when={() => !isReturn()}>
-                    {() => <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onPress={() => toggleSolo(name)} />}
+                    {() => <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />}
                   </Show>
                 </div>
                 <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: 14 }}><InputSelect name={name} /></div>}</Show>
@@ -862,7 +863,7 @@ export const song = tool({
               </div>
             )}
           </For>
-          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "alpha/5" }, keep: true }} onPress={addEffect}
+          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "alpha/5" }, keep: true }} onClick={addEffect}
             onDrop={({ carried }) => carried && moveBefore(carried, null)}>
             <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
             <Icon name="chevron-down" size={14} color="gray-700" />
@@ -941,11 +942,11 @@ export const song = tool({
             <Volume path={path} length={MIXER_FADER} meter={master ? "device" : { of: path }} />
           </div>
           <div style={{ height: 32, direction: "row", align: "center", gap: 4 }}>
-            {each ? <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} /> : null}
-            {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onPress={() => toggleSolo(each.name)} /> : null}
+            {each ? <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
+            {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
           </div>
           <div key={each ? `strip-name-${each.name}` : "strip-name-master"} style={{ width: STRIP - 8, fontSize: 12, color: "gray-800", align: "center", truncate: true }}
-            onPress={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
+            onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
             {() => (each ? titleOf(each) : "Master")}
           </div>
         </div>
@@ -1008,7 +1009,7 @@ export const song = tool({
       };
       return (
         <Toggle key={`pre-fader-${name}`} label="Pre fader" on={on}
-          onPress={() =>
+          onClick={() =>
             update(on() ? "Send after the faders" : "Send before the faders", ({ children }) => {
               const back = children.find((child) => child.name === name);
               if (back?.tool === "bus") back.state.pre_fader = !back.state.pre_fader;
@@ -1029,16 +1030,16 @@ export const song = tool({
         <div style={{ height: 31, direction: "row", align: "center", keep: true }}>
           <div style={{ width: HEADER - 1, height: 31, direction: "row", align: "center", paddingRight: 12, keep: true }}>
             <div key="returns-header" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 5, paddingLeft: 17 }}
-              onPress={() => (memory.returnsOpen = !memory.returnsOpen)}>
+              onClick={() => (memory.returnsOpen = !memory.returnsOpen)}>
               <Icon name={() => (memory.returnsOpen ? "chevron-down" : "chevron-right")} size={14} color="gray-700" />
               <div style={{ fontSize: 12, color: "gray-900" }}>Returns</div>
               <div style={{ fontSize: 12, color: "gray-700" }}>{() => String(returns().length)}</div>
             </div>
-            <Button key="add-return" icon="plus" variant="ghost" size="xs" onPress={() => addTrack(2)} />
+            <Button key="add-return" icon="plus" variant="ghost" size="xs" onClick={() => addTrack(2)} />
           </div>
           <div style={{ width: 1, height: 31, background: "alpha/5" }} />
           <div key="returns-folded" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 16, paddingLeft: 16 }}
-            onPress={() => (memory.returnsOpen = !memory.returnsOpen)}>
+            onClick={() => (memory.returnsOpen = !memory.returnsOpen)}>
             <Show when={() => !memory.returnsOpen}>
               {() => (
                 <For each={returns}>
@@ -1066,7 +1067,8 @@ export const song = tool({
       <div style={{ height: RETURN_ROW, direction: "row", keep: true }}>
         <div style={{ width: HEADER - 1, height: RETURN_ROW, paddingX: 8, paddingY: 4, keep: true }}>
           <div key={`return-${each.name}`} style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 12, paddingRight: 4, radius: 6, background: panelOf() === each.name ? "alpha/5" : COLOR.clear })}
-            onPress={({ clicks, button }) => (button === "right" ? trackMenu(each) : clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
+            onPress={({ button }) => button === "right" && trackMenu(each)}
+            onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
             <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
             {() =>
               memory.renaming === each.name ? (
@@ -1075,7 +1077,7 @@ export const song = tool({
                 <div style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-950/40" : "gray-950" })}>{() => titleOf(each)}</div>
               )
             }
-            <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} />
+            <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
           </div>
         </div>
         <div style={{ width: 1, height: RETURN_ROW, background: "alpha/5" }} />
@@ -1089,7 +1091,7 @@ export const song = tool({
           <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
             <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
             <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-950" }}>Master</div>
-            <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.below = null)} />
+            <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} onClick={() => (memory.below = null)} />
           </div>
           <div style={{ direction: "row", paddingLeft: 8 }}>
             <div style={{ align: "center", gap: 7, paddingTop: 5 }}>
@@ -1104,10 +1106,11 @@ export const song = tool({
       </div>
     );
 
-    /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. A press anywhere on it but its toggles shows its panel, a double press names it, a right press opens its menu. */
+    /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. A click anywhere on it but its toggles shows its panel, a double click names it, a right press opens its menu. */
     const TrackHead = ({ each }: { each: Child }) => (
       <div style={() => ({ height: ROW - 8, radius: 6, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
-        onPress={({ clicks, button }) => (button === "right" ? trackMenu(each) : clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
+        onPress={({ button }) => button === "right" && trackMenu(each)}
+        onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
         <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, paddingRight: 9, direction: "row", align: "center", gap: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
           {() =>
@@ -1123,13 +1126,13 @@ export const song = tool({
         </div>
         <div style={{ height: 24, direction: "row", align: "center", paddingLeft: 4, paddingRight: 4, gap: 4 }}>
           <Toggle key={`lanes-${each.name}`} icon="automation" tooltip="Automation" on={() => memory.lanes.has(each.name)}
-            count={() => lanesOf(each).length} onPress={() => showLanes(each, !memory.lanes.has(each.name))} />
+            count={() => lanesOf(each).length} onClick={() => showLanes(each, !memory.lanes.has(each.name))} />
           <div style={{ grow: true }} />
           <Show when={() => each.tool === "tape"}>
-            {() => <Toggle key={`arm-${each.name}`} dot on={() => memory.armed.has(each.name)} color="red" onPress={() => toggleArm(each.name)} />}
+            {() => <Toggle key={`arm-${each.name}`} dot on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(each.name)} />}
           </Show>
-          <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} />
-          <Toggle key={`solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onPress={() => toggleSolo(each.name)} />
+          <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
+          <Toggle key={`solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />
         </div>
       </div>
     );
@@ -1257,7 +1260,7 @@ export const song = tool({
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
             color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
-            grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap, key)} onPress={pressItem(key)} cursor="grab" />
+            grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           <For each={() => clip.state.notes}>
             {(note) => (
               <Rect x={() => note.start} y={() => { const m = miniature(); return (m.bottom - (note.pitch - m.lowest + 0.5) * m.step - m.height / 2) / ROW; }}
@@ -1406,7 +1409,7 @@ export const song = tool({
       return (
         <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? MOVES : undefined)}>
           <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
-            drag={moveDrag(snap, key)} onPress={pressItem(key)} cursor="grab" />
+            drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           <Wave x={0} y={() => louder().times(-22 / ROW).plus(0.5)} width={width} height={() => louder().times(44 / ROW)} list={sound} band low={-1} high={1} level={level} color={() => `${colourOf(each)}/85` as Color} />
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={pressItem(key)} cursor="ew-resize"
             moves={() => (alone() ? ["trim"] : undefined)} />
@@ -1548,7 +1551,6 @@ export const song = tool({
       id: `repeat-${part}`,
       axis: "x",
       snap: { x: BEAT, grid: true },
-      onClick: toggleRepeat,
       onEnd: ({ dx }) => {
         const { from, to } = repeat();
         if (part === "move") {
@@ -1636,7 +1638,7 @@ export const song = tool({
                   add ? (
                     <div style={{ height: ADD_LANE, paddingX: 8, paddingY: 4 }}>
                       <div key={`add-lane-${each.name}`} style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: { background: "alpha/8" } }}
-                        onPress={() => addLane(each)}>
+                        onClick={() => addLane(each)}>
                         <div style={{ grow: true, fontSize: 13, weight: "medium", color: "gray-950" }}>Add lane</div>
                         <Icon name="chevron-down" size={14} color="gray-700" />
                       </div>
@@ -1658,12 +1660,12 @@ export const song = tool({
               </For>
               <div style={{ height: ROW, direction: "row", align: "center", paddingX: 8 }}>
                 <div key="add-track" style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
-                  onPress={() => addTrack(0)}>
+                  onClick={() => addTrack(0)}>
                   <Icon name="plus" size={14} color="gray-800" />
                   <div style={{ fontSize: 12, weight: "medium", color: "gray-800" }}>Add track</div>
                 </div>
                 <div style={{ width: 1, height: 12, background: "alpha/10" }} />
-                <div key="add-track-kind" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onPress={() => addTrack()}>
+                <div key="add-track-kind" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onClick={() => addTrack()}>
                   <Icon name="chevron-down" size={14} color="gray-700" />
                 </div>
               </div>
@@ -1693,11 +1695,11 @@ export const song = tool({
               <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 10}
                 width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={8} radius={2} color={() => (clock.repeat ? "gray-900" : "alpha/15")} />
               <Rect x={() => moving!.dx.plus(repeat().from)} y={RULER - 14} width={() => repeat().to - repeat().from} height={14}
-                color={COLOR.clear} cursor="pointer" drag={repeatMove!} />
+                color={COLOR.clear} cursor="pointer" drag={repeatMove!} onClick={toggleRepeat} />
               <Rect x={() => starting!.dx.plus(repeat().from)} y={RULER - 14} width={handle} height={14}
-                color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} />
+                color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} onClick={toggleRepeat} />
               <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
-                anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} />
+                anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} onClick={toggleRepeat} />
               <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active.times(loop.dx.abs().gt(0))} />
               <Line from={[playhead, RULER / 2]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
               <Circle x={playhead} y={RULER / 2} radius={3.5} color="gray-950" />
@@ -1739,14 +1741,14 @@ export const song = tool({
         <div style={{ height: MASTER_ROW - 1, direction: "row", align: "center", keep: true }}>
           <div style={{ width: HEADER - 1, height: MASTER_ROW - 1, paddingX: 8, paddingY: 4, keep: true }}>
             <div key="master-row" style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.below?.kind === "master" ? "alpha/5" : COLOR.clear })}
-              onPress={() => (memory.below = { kind: "master" })}>
+              onClick={() => (memory.below = { kind: "master" })}>
               <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
               <div style={{ fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
             </div>
           </div>
           <div style={{ width: 1, height: MASTER_ROW - 1, background: "alpha/5" }} />
           <div style={{ grow: true }} />
-          <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onPress={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
+          <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onClick={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
           <div style={{ width: 8 }} />
         </div>
         {() => {

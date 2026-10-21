@@ -193,7 +193,7 @@ tool({
           update("Pick", ({ state }) => { state.mode = mode; });
         },
       }),
-      h("div", { key: "quarter", onPress: () => { memory.level = 0.25; } }, "Quarter"),
+      h("div", { key: "quarter", onClick: () => { memory.level = 0.25; } }, "Quarter"),
     );
   },
 });
@@ -206,6 +206,10 @@ impl Opened<'_> {
             window.record("kept")["heard"] == count
         });
         self.record("kept")["level"].as_f64().unwrap()
+    }
+
+    fn heard_by_the_pointer(&mut self, heard: &str) {
+        self.until(heard, |window| window.record("pointer")["heard"] == heard);
     }
 }
 
@@ -281,8 +285,8 @@ tool({
           update("Hear", ({ state }) => { state.heard = steps.join(""); });
         },
       }),
-      h("div", { key: "four", onPress: () => { memory.steps = [0, 0, 0, 0]; } }, "Four"),
-      h("div", { key: "two", onPress: () => { memory.steps = [0, 0]; } }, "Two"),
+      h("div", { key: "four", onClick: () => { memory.steps = [0, 0, 0, 0]; } }, "Four"),
+      h("div", { key: "two", onClick: () => { memory.steps = [0, 0]; } }, "Two"),
     ),
 });
 "#;
@@ -308,4 +312,73 @@ fn steps_on_what_code_keeps_grow_and_shrink_with_it(cx: &mut TestAppContext) {
     window.until("the second of two steps to turn on", |window| {
         window.record("growing")["heard"] == "01"
     });
+}
+
+const POINTER: &str = r##"import { h, Rect, Space, text, tool } from "./sdk";
+
+tool({
+  name: "pointer",
+  title: "Pointer",
+  when: "A test",
+  doc: "Writes down what each node hears of the pointer.",
+  state: { heard: text() },
+  sound: () => 0,
+  view: ({ update }) => {
+    const heard: string[] = [];
+    const hear = (what: string) => () => {
+      heard.push(what);
+      const all = heard.join(" ");
+      update(what, ({ state }) => { state.heard = all; });
+    };
+    const pointer = (name: string) => ({ onPress: hear(`${name}-press`), onRelease: hear(`${name}-release`), onClick: hear(`${name}-click`) });
+    return h("div", {},
+      h("div", { key: "pad", style: { width: 100, height: 40 }, ...pointer("div") }),
+      h(Space, { key: "board", width: 400, height: 100 },
+        h(Rect, { x: 0, y: 0, width: 50, height: 50, color: "#ffffff", ...pointer("shape") }),
+        h(Rect, { x: 100, y: 0, width: 50, height: 50, color: "#ffffff", drag: { onEnd: hear("drag-end") }, ...pointer("drag") }),
+      ),
+    );
+  },
+});
+"##;
+
+#[gpui::test]
+fn a_div_and_a_shape_hear_their_press_then_its_release_then_the_click(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let pad = window.until_found("div-pad");
+    let shape = window.space("board") + point(px(25.), px(25.));
+    window.click(pad);
+    window.click(shape);
+    window.heard_by_the_pointer(
+        "div-press div-release div-click shape-press shape-release shape-click",
+    );
+}
+
+#[gpui::test]
+fn a_release_follows_a_press_off_the_node_after_escape_and_when_the_window_goes_back(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let pad = window.until_found("div-pad");
+    let board = window.space("board");
+    let (shape, slide) = (
+        board + point(px(25.), px(25.)),
+        board + point(px(125.), px(25.)),
+    );
+    let away = board + point(px(300.), px(300.));
+    for node in [pad, shape] {
+        window.press(node);
+        window.drag_to(away);
+        window.release(away);
+    }
+    window.press(slide);
+    window.drag_to(slide + point(px(40.), px(0.)));
+    window.cx.simulate_keystrokes("escape");
+    window.release(slide + point(px(40.), px(0.)));
+    window.cx.update(|window, _| window.activate_window());
+    window.press(pad);
+    window.cx.deactivate_window();
+    window.heard_by_the_pointer(
+        "div-press div-release shape-press shape-release drag-press drag-release div-press div-release",
+    );
 }

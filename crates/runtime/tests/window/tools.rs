@@ -104,7 +104,7 @@ tool({
   view: ({ size, clock, update }) =>
     h("div", { style: () => ({ width: size.width, height: size.height }) },
       h("div", { style: { direction: "row", gap: 8 } },
-        h(Button, { key: "play", icon: () => (clock.playing ? "pause" : "play"), onPress: () => (clock.playing ? clock.pause() : clock.play()) }),
+        h(Button, { key: "play", icon: () => (clock.playing ? "pause" : "play"), onClick: () => (clock.playing ? clock.pause() : clock.play()) }),
         h(NumberBox, {
           key: "tempo", width: 32, per: 2, min: 10, max: 1000,
           show: now.bpm.round(),
@@ -114,13 +114,13 @@ tool({
             if (first) first.bpm = bpm;
           }),
         }),
-        h(Button, { key: "click", icon: "metronome", onPress: () => clock.setClick(!clock.click) }),
-        h(Button, { key: "computer-keys", icon: "keyboard-music", onPress: () => clock.setComputerKeys(!clock.computerKeys) }),
+        h(Button, { key: "click", icon: "metronome", onClick: () => clock.setClick(!clock.click) }),
+        h(Button, { key: "computer-keys", icon: "keyboard-music", onClick: () => clock.setComputerKeys(!clock.computerKeys) }),
       ),
       h("div", {
         key: "keep",
         style: { grow: true },
-        onPress: () => update("Keep the tick", ({ state }) => { state.tick = clock.tick; }),
+        onClick: () => update("Keep the tick", ({ state }) => { state.tick = clock.tick; }),
       }, "Keep"),
     ),
 });
@@ -151,7 +151,7 @@ tool({
       "div",
       {
         style: () => ({ width: size.width, height: size.height }),
-        onPress: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
+        onClick: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
       },
       "Count",
     ),
@@ -188,7 +188,7 @@ tool({
       "div",
       {
         style: () => ({ width: size.width, height: size.height }),
-        onPress: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
+        onClick: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
       },
       "Listen",
     ),
@@ -485,9 +485,9 @@ fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     assert_eq!(count(&mut window), Some(2.0));
 }
 
-/// A disabled div hears no click; the same div beside it does.
+/// A disabled div hears no press, release or click; the same div beside it hears its click.
 #[gpui::test]
-fn a_disabled_div_hears_no_click(cx: &mut TestAppContext) {
+fn a_disabled_div_hears_nothing_of_the_pointer(cx: &mut TestAppContext) {
     let code = r#"import { h, input, number, tool } from "./sdk";
 
 tool({
@@ -501,8 +501,8 @@ tool({
     const count = () => update("Count", ({ state: next }) => { next.count = state.count + 1; });
     const style = { width: 80, height: 40 };
     return h("div", { style: { direction: "row" } },
-      h("div", { key: "locked", disabled: true, style, onPress: count }, "Locked"),
-      h("div", { key: "open", style, onPress: count }, "Open"),
+      h("div", { key: "locked", disabled: true, style, onPress: count, onRelease: count, onClick: count }, "Locked"),
+      h("div", { key: "open", style, onClick: count }, "Open"),
     );
   },
 });
@@ -1103,7 +1103,7 @@ tool({
   view: ({ size, outputs, send }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onPress: () => send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1),
+      onClick: () => send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1),
     }, "Launch"),
 });
 "#;
@@ -1312,7 +1312,7 @@ tool({
   view: ({ size, memory, play, send }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onPress: () => {
+      onClick: () => {
         memory.clicks += 1;
         if (memory.clicks === 1) play(45, { child: "synth", seconds: 0.1 });
         if (memory.clicks === 2) play(69, { child: "keys", seconds: 0.1 });
