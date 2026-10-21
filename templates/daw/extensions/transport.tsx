@@ -100,9 +100,9 @@ export function Transport({ clock, record, end }: { clock: Clock; record: Transp
     <div key="transport" style={pill}>
       <div style={{ direction: "row", align: "center", gap: 4 }}>
         <Button key="play" icon={() => (clock.playing ? "pause" : "play")} variant={() => (clock.playing ? "subtle" : "ghost")} color="green" size="sm" rounded
-          onPress={() => (clock.playing ? clock.pause() : clock.play())} />
-        <Button key="stop" icon="square" variant="ghost" size="sm" rounded onPress={() => clock.stop()} />
-        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded onPress={record.press} />
+          onClick={() => (clock.playing ? clock.pause() : clock.play())} />
+        <Button key="stop" icon="square" variant="ghost" size="sm" rounded onClick={() => clock.stop()} />
+        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded onClick={record.press} />
       </div>
       {clockText("transport-position", 28, "position")}
       {clockText("transport-time", 34, "time", "gray-700")}
@@ -134,8 +134,8 @@ export function Transport({ clock, record, end }: { clock: Clock; record: Transp
           value={() => signature().note} onChange={(note) => setSignature(signature().beats, note)} show={now.tick} />
       </div>
       <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded
-        onPress={() => clock.setComputerKeys(!clock.computerKeys)} />
-      <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="sm" rounded onPress={() => clock.setClick(!clock.click)} />
+        onClick={() => clock.setComputerKeys(!clock.computerKeys)} />
+      <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="sm" rounded onClick={() => clock.setClick(!clock.click)} />
       <PeakMeter key="transport-meter" horizontal />
     </div>
   );

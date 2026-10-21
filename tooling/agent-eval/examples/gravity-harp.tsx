@@ -167,7 +167,7 @@ tool({
         {values.map((value) => (
           <div
             style={() => (value === current() ? picked : button)}
-            onPress={() => update(`${label} ${value}`, ({ state: s }) => void ((s as Record<string, unknown>)[field] = value))}
+            onClick={() => update(`${label} ${value}`, ({ state: s }) => void ((s as Record<string, unknown>)[field] = value))}
           >
             {value}
           </div>
@@ -180,7 +180,7 @@ tool({
         <div style={row}>
           <div style={{ color: "#e5e7eb", fontSize: 18 }}>Gravity harp</div>
           <div style={{ color: "#9ca3af" }}>Click to drop a ball.</div>
-          <div style={button} onPress={() => (memory.balls = [])}>
+          <div style={button} onClick={() => (memory.balls = [])}>
             Clear
           </div>
         </div>

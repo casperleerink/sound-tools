@@ -129,7 +129,7 @@ Round 16d adds the armed and recording scenes of main (`look-armed`, `look-recor
 - Clip previews drew their notes twice. A list inside a row of another list took only the nodes of its first draw along when that row went; what it drew since stayed, stale. A list or a function child now takes its own nodes out as its row goes.
 - Menus scroll past 420 points unless they say: the design system's height, as wide menus have its width. `openMenu` takes `search`, a field over the items, as main's lane picker had.
 - `numbers()` gives each number its `label`, as its device names it (a plugin's parameter) or its field in plain words. The template's Add lane menu lists them as main did: Track, then a group per device.
-- A drag's `onClick` hears a press that let go where it was. Why: main's repeat bar is clicked on and off and dragged, and code heard a press only as it went down. The ruler now does what main's did: a click on the repeat's bar turns it on or off, its body moves it, an end moves that end; a double click adds a section.
+- Every node that hears the pointer has `onPress`, `onRelease` and `onClick`. Why: main's repeat bar is clicked on and off and dragged, and code heard a press only as it went down; a pad needs its release. The ruler now does what main's did: a click on the repeat's bar turns it on or off, its body moves it, an end moves that end; a double click adds a section.
 - What shows under the timeline is one slot of the song's memory: a track's panel, the master's, a clip's notes or the mixer. A mixer strip has a track panel's knobs and fader; strips keep the room of the most sends, so faders line up; the master's strip is on the right, its limiter in its panel.
 
 ## Round 18: updates of a template

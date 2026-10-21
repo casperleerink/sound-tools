@@ -50,7 +50,7 @@ type Request =
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
-  | { type: "event"; card: number; node: number; kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change"; payload: unknown; time: number }
+  | { type: "event"; card: number; node: number; kind: "press" | "release" | "click" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)

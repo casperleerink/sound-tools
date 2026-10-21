@@ -124,11 +124,11 @@ tool({
           {shapes}
         </Space>
         <div style={row}>
-          <div style={button} onPress={() => (memory.running = !memory.running)}>
+          <div style={button} onClick={() => (memory.running = !memory.running)}>
             {() => (memory.running ? "Pause" : "Play")}
           </div>
-          <div style={button} onPress={() => ((memory.cells = empty()), (memory.generation = 0))}>Clear</div>
-          <div style={button} onPress={randomize}>Random</div>
+          <div style={button} onClick={() => ((memory.cells = empty()), (memory.generation = 0))}>Clear</div>
+          <div style={button} onClick={randomize}>Random</div>
           <div style={{ color: "#94a3b8", fontSize: 12 }}>{() => `Generation ${memory.generation}`}</div>
         </div>
         <div style={row}>

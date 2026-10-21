@@ -49,9 +49,11 @@ props! {
         /// Keeps the state of the element.
         key: String,
         style: Box<Style>,
-        /// It hears a click.
         on_press: bool,
-        /// It hears no press, drag or drop and shows its disabled look; it still scrolls.
+        on_release: bool,
+        on_click: bool,
+        /// It hears no press, release, click, drag or drop and shows its disabled look; it still
+        /// scrolls.
         disabled: bool,
         cursor: Cursor,
         tooltip: String,
@@ -130,6 +132,8 @@ props! {
         opacity: f32,
         tooltip: String,
         on_press: bool,
+        on_release: bool,
+        on_click: bool,
     }
 }
 
@@ -158,6 +162,8 @@ props! {
         disabled: bool,
         tooltip: String,
         on_press: bool,
+        on_release: bool,
+        on_click: bool,
     }
 }
 
@@ -198,14 +204,14 @@ props! {
 
 props! {
     /// A quiet line of the app: a dot of its tone, the message, a bar of progress, a button
-    /// that tells a press and a close button.
+    /// that tells a click and a close button.
     NoticeProps / NoticeChange {
         key: String,
         message: String,
         tone: NoticeToned,
         progress: f32,
         action: String,
-        on_press: bool,
+        on_click: bool,
         on_close: bool,
     }
 }
@@ -253,6 +259,8 @@ props! {
         background: Color,
         radius: f32,
         on_press: bool,
+        on_release: bool,
+        on_click: bool,
         /// Its drag, by its number among the drags of the card.
         drag: u64,
         cursor: Cursor,
@@ -266,6 +274,8 @@ props! {
     ShapeProps / ShapeChange {
         kind: ShapeKind,
         on_press: bool,
+        on_release: bool,
+        on_click: bool,
         drag: u64,
         anchor: Axes,
         /// The drags it moves with, those it grows with and those it shrinks with, by their ids.
@@ -942,6 +952,8 @@ impl ShapeProps {
     /// Whether the pointer can do something with it, so it is found under the pointer.
     pub(crate) fn is_pointed(&self) -> bool {
         self.on_press == Some(true)
+            || self.on_release == Some(true)
+            || self.on_click == Some(true)
             || self.drag.is_some()
             || self.hover.is_some()
             || self.cursor.is_some()
@@ -1441,9 +1453,6 @@ pub(crate) struct Drag {
     /// Its code hears its end.
     #[serde(default)]
     pub on_end: bool,
-    /// Its code hears a press that let go where it was, as a click.
-    #[serde(default)]
-    pub on_click: bool,
 }
 
 /// Whole steps of a drag, in units: of how far it went, or with `grid`, of where the anchor of

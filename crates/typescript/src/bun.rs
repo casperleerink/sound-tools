@@ -89,7 +89,7 @@ pub(crate) enum Request<'a> {
         tempo_map: &'a TempoMap,
         sections: &'a Sections,
     },
-    /// A press, a click, or a drag that ended or moved, on a node: `payload` is what its
+    /// A press, a release, a click, or a drag that ended, on a node: `payload` is what its
     /// handler hears.
     Event {
         card: u64,
@@ -157,9 +157,11 @@ pub(crate) enum Request<'a> {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EventKind {
     Press,
-    End,
-    /// A drag let go where it was pressed.
+    /// The button of a press went up, wherever the pointer is.
+    Release,
+    /// A left press and release on a node, with no drag between.
     Click,
+    End,
     /// Text a field tells.
     Commit,
     /// Escape in a field.

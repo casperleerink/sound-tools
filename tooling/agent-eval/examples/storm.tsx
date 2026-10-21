@@ -83,7 +83,7 @@ tool({
     <div style={row}>
       <Pad field={{ x: "tone", y: "wild" }} size={160} />
       <div style={{ gap: 8 }}>
-        <div style={button} onPress={() => send("strike")}>
+        <div style={button} onClick={() => send("strike")}>
           Thunder
         </div>
         <Meter value="rumble" label="Rumble" />
