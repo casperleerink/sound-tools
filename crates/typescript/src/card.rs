@@ -107,8 +107,8 @@ pub(crate) struct TypeScriptCard {
     menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
     inputs: HashMap<u64, (Entity<TextInput>, String)>,
-    /// The keys of each open popover and dialog, by node, the last opened last.
-    overlays: Vec<(u64, FocusHandle)>,
+    /// The nodes of its open popovers and dialogs, the last opened last.
+    overlays: Vec<u64>,
     /// What had the keys before the first overlay opened, which gets them back when the last
     /// one closes.
     focus_before_overlays: Option<WeakFocusHandle>,
@@ -714,22 +714,24 @@ impl TypeScriptCard {
             .filter(|entry| matches!(entry.props, Props::Overlay(_)))
             .map(|entry| entry.id)
             .collect();
-        let (kept, closed): (Vec<_>, Vec<_>) = std::mem::take(&mut self.overlays)
-            .into_iter()
-            .partition(|(node, _)| open.contains(node));
-        self.overlays = kept;
-        // An overlay takes the keys as it opens, before a text field in it that asks for them.
-        for node in open {
-            if !self.overlays.iter().any(|(kept, _)| *kept == node) {
-                if self.overlays.is_empty() && closed.is_empty() {
-                    self.focus_before_overlays = window.focused(cx).map(|focus| focus.downgrade());
-                }
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
-                self.overlays.push((node, focus));
+        let had_overlays = !self.overlays.is_empty();
+        self.overlays.retain(|node| open.contains(node));
+        let opened: Vec<u64> = (open.into_iter())
+            .filter(|node| !self.overlays.contains(node))
+            .collect();
+        if !opened.is_empty() {
+            if !had_overlays {
+                self.focus_before_overlays = window.focused(cx).map(|focus| focus.downgrade());
             }
+            // The card takes the keys, for escape to close it, before a text field in it that
+            // asks for them.
+            window.focus(&self.focus, cx);
+            self.overlays.extend(opened);
         }
-        let lost_focus = (closed.iter()).any(|(_, focus)| focus.contains_focused(window, cx));
+        // Not when the keys went elsewhere, such as to another card a press outside it went to.
+        let give_back = had_overlays
+            && self.overlays.is_empty()
+            && (window.focused(cx).is_none() || self.focus.contains_focused(window, cx));
         let mut inputs = HashMap::new();
         let mut embedded = HashMap::new();
         for entry in table.entries() {
@@ -750,11 +752,8 @@ impl TypeScriptCard {
         (self.scrolled_cards.borrow_mut()).retain(|node, _| embedded.contains_key(node));
         self.embedded = embedded;
         // After the fields, so one that closed with an overlay is dropped and not given the keys.
-        if lost_focus {
-            let back = match self.overlays.last() {
-                Some((_, focus)) => Some(focus.clone()),
-                None => (self.focus_before_overlays.as_ref()).and_then(WeakFocusHandle::upgrade),
-            };
+        if give_back {
+            let back = (self.focus_before_overlays.take()).and_then(|focus| focus.upgrade());
             window.focus(&back.unwrap_or_else(|| self.focus.clone()), cx);
         }
     }
@@ -848,16 +847,15 @@ impl TypeScriptCard {
         self.event(node, EventKind::Commit, json!({ "text": text }), cx);
     }
 
-    /// Shows in the field `node` what it last showed or told, gives the keys back to the card
-    /// or the overlay last opened, and tells its code.
+    /// Shows in the field `node` what it last showed or told, gives the keys back and tells
+    /// its code.
     fn revert(&mut self, node: u64, window: &mut Window, cx: &mut Context<Self>) {
         let Some((input, shown)) = self.inputs.get(&node) else {
             return;
         };
         let shown = shown.clone();
         input.update(cx, |input, cx| input.set_text(shown, cx));
-        let back = (self.overlays.last()).map_or(&self.focus, |(_, focus)| focus);
-        window.focus(back, cx);
+        window.focus(&self.focus, cx);
         self.event(node, EventKind::Cancel, json!({}), cx);
     }
 
@@ -1124,17 +1122,32 @@ impl TypeScriptCard {
     /// cmd, ctrl, alt or fn only goes down, as macOS sends no up while cmd is held; one the
     /// window binds, such as cmd-z, is the window's and never comes here.
     fn key(&mut self, keystroke: &Keystroke, down: bool, repeat: bool, cx: &mut Context<Self>) {
-        if down && keystroke.key == "escape" && self.cancel_drag(cx) {
+        if down && keystroke.key == "escape" {
+            if self.cancel_drag(cx) {
+                cx.stop_propagation();
+                return;
+            }
+            if let Some(&newest) = self.overlays.last() {
+                self.event(newest, EventKind::Close, json!({}), cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
+        // A dialog keeps every key from its code, the window's included. A key held before it
+        // opened comes up all the same.
+        if down && self.live.read(cx).shows_dialog(&self.id) {
             cx.stop_propagation();
             return;
         }
+        let Some(info) = self.live.read(cx).info(self.card).filter(|info| info.keys) else {
+            return;
+        };
         let modifiers = keystroke.modifiers;
         let chord = modifiers.platform || modifiers.control || modifiers.alt || modifiers.function;
         let key = keystroke.key.clone();
         // A tool that names its keys leaves the rest to the window, such as space to play. A key
         // it took comes up here all the same.
-        let takes = (self.live.read(cx).info(self.card)).and_then(|info| info.takes);
-        if let Some(takes) = takes
+        if let Some(takes) = info.takes
             && !takes.contains(&sound_ui::global_keys::chord_name(keystroke))
             && (down || !self.keys_down.contains(&key))
         {
@@ -2108,7 +2121,8 @@ struct Drawing<'a, 'b> {
     feeds: &'a Feeds,
     indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
     inputs: &'a HashMap<u64, (Entity<TextInput>, String)>,
-    overlays: &'a [(u64, FocusHandle)],
+    /// The keys of the card.
+    focus: &'a FocusHandle,
     /// The size of the window, which a dialog's backdrop covers.
     viewport: Size<Pixels>,
     embedded: &'a HashMap<u64, Embedded>,
@@ -2531,9 +2545,9 @@ impl Drawing<'_, '_> {
         .into_any_element()
     }
 
-    /// A popover under the node it is in, or a dialog over the window. Escape and a press
-    /// outside it ask its code to close it; a press on the node a popover hangs from is that
-    /// node's own, such as a button that opens and closes it.
+    /// A popover under the node it is in, or a dialog over the window. A press outside it asks
+    /// its code to close it, as escape does in [`TypeScriptCard::key`]; a press on the node a
+    /// popover hangs from is that node's own, such as a button that opens and closes it.
     fn overlay(
         &mut self,
         id: u64,
@@ -2553,40 +2567,24 @@ impl Drawing<'_, '_> {
             .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
             .collect();
         let card = self.cx.entity().downgrade();
-        let close = Rc::new(move |cx: &mut App| {
+        let close = move |cx: &mut App| {
             (card.update(cx, |view, cx| {
                 view.event(id, EventKind::Close, json!({}), cx)
             }))
             .ok();
-        });
+        };
         let modal = props.modal == Some(true);
         let look = if modal { "dialog" } else { "popover" };
         let selector = format!("{look}-{}", props.key.as_deref().unwrap_or_default());
-        let focus = (self.overlays.iter())
-            .find(|(node, _)| *node == id)
-            .map(|(_, focus)| focus.clone());
         let panel = popover::surface(self.cx)
             .flex()
             .flex_col()
             .p(px(if modal { 16. } else { 8. }))
             .text_size(px(12.))
             .debug_selector(move || selector)
-            .when_some(focus.clone(), |panel, focus| panel.track_focus(&focus))
-            .on_key_down({
-                let close = close.clone();
-                move |event: &KeyDownEvent, window, cx| {
-                    if event.keystroke.key == "escape" {
-                        close(cx);
-                        cx.stop_propagation();
-                    } else if modal && !typing(window) {
-                        // The page and its global keys hear none while a dialog is open; a
-                        // text field has its keys when this stops nothing.
-                        cx.stop_propagation();
-                    }
-                }
-            })
             .children(content);
         if modal {
+            let focus = self.focus.clone();
             let backdrop = div()
                 .occlude()
                 .w(self.viewport.width)
@@ -2595,12 +2593,10 @@ impl Drawing<'_, '_> {
                 .items_center()
                 .justify_center()
                 .bg(hsla(0., 0., 0., 0.4))
-                // A text field in it lets go of the keys on this press: the dialog takes them, to
+                // A text field in it lets go of the keys on this press: the card takes them, to
                 // give them back as it closes.
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    if let Some(focus) = &focus {
-                        window.focus(focus, cx);
-                    }
+                    window.focus(&focus, cx);
                     close(cx);
                 })
                 .child(panel);
@@ -4140,7 +4136,7 @@ impl TypeScriptCard {
             feeds: &self.feeds,
             indexes: &self.indexes,
             inputs: &self.inputs,
-            overlays: &self.overlays,
+            focus: &self.focus,
             viewport: window.viewport_size(),
             embedded: &self.embedded,
             meters: &self.meters,
@@ -4279,7 +4275,7 @@ impl Render for TypeScriptCard {
                     feeds: &self.feeds,
                     indexes: &self.indexes,
                     inputs: &self.inputs,
-                    overlays: &self.overlays,
+                    focus: &self.focus,
                     viewport: window.viewport_size(),
                     embedded: &self.embedded,
                     meters: &self.meters,
@@ -4313,14 +4309,16 @@ impl Render for TypeScriptCard {
         };
         let theme = cx.theme();
         let (text, background) = (theme.gray_950, theme.gray_100);
-        // A click in what takes the keys gives them: the body of a card, a whole page.
+        // A click in what takes the keys gives them: the body of a card, a whole page. Also while
+        // it shows an overlay, for escape to close it.
         let takes_keys = |element: Div| {
-            element.when(hears_keys, |element| {
+            element.when(hears_keys || !self.overlays.is_empty(), |element| {
                 element
                     .track_focus(&self.focus)
-                    .when_some(key_context.clone(), |element, context| {
-                        element.key_context(context)
-                    })
+                    .when_some(
+                        key_context.clone().filter(|_| hears_keys),
+                        |element, context| element.key_context(context),
+                    )
                     .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                         // A text field in it has the keys first.
                         if !typing(window) {

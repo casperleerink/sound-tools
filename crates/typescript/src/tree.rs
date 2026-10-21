@@ -646,6 +646,13 @@ impl NodeTable {
         self.slots.get(slot)?.as_ref()
     }
 
+    /// Whether it shows a dialog.
+    pub(crate) fn shows_dialog(&self) -> bool {
+        (self.entries()).any(
+            |entry| matches!(&entry.props, Props::Overlay(overlay) if overlay.modal == Some(true)),
+        )
+    }
+
     /// Every node there is now, in the order they were made.
     pub(crate) fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.slots.iter().flatten()

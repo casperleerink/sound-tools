@@ -174,6 +174,73 @@ fn a_dialog_keeps_the_keys_from_the_page_but_its_text_field_has_them(cx: &mut Te
     window.until_found("div-heard-a");
 }
 
+/// A page that hears keys, with a dialog that holds a space a press focuses, and a div whose
+/// press opens a menu and closes the dialog 50 ms later.
+const DIALOG_PARTS: &str = r#"import { Dialog, h, Space, timeout, tool } from "./sdk";
+
+tool({
+  name: "parts",
+  title: "Parts",
+  when: "Never",
+  doc: "A dialog with a space and a menu.",
+  state: {},
+  memory: () => ({ open: false, heard: "" }),
+  onKey: ({ memory }, { key, down }) => { if (down) memory.heard = key; },
+  view: ({ memory, openMenu }) => {
+    const box = { width: 80, height: 20 };
+    return h("div", { style: { padding: 40, gap: 40 } },
+      h("div", { key: "open", style: box, onPress: () => (memory.open = true) }, "Open"),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+      h(Dialog, { open: () => memory.open, onClose: () => (memory.open = false) }, () =>
+        h("div", { style: { gap: 8 } },
+          h(Space, { key: "board", width: 80, height: 40, onPress: () => {} }),
+          h("div", {
+            key: "menu",
+            style: box,
+            onPress: () => {
+              openMenu([{ label: "One" }]);
+              timeout(() => { memory.open = false; }, 50);
+            },
+          }, "Menu"))),
+    );
+  },
+});
+"#;
+
+#[gpui::test]
+fn a_dialog_keeps_the_keys_from_the_page_wherever_they_are(cx: &mut TestAppContext) {
+    let mut window = page(cx, "parts", DIALOG_PARTS);
+    let open = window.until_found("div-open");
+    window.click(open);
+    // A press on a space in it gives the card the keys.
+    let board = window.until_found("space-board");
+    window.click(board);
+    window.key_down("delete", false);
+    assert!(!window.heard("delete"));
+    window.key_down("escape", false);
+    window.until("the dialog to close", |window| {
+        window.find("space-board").is_none()
+    });
+    window.key_down("delete", false);
+    window.until_found("div-heard-delete");
+}
+
+#[gpui::test]
+fn a_dialog_that_closes_while_its_menu_is_open_gives_the_page_its_keys(cx: &mut TestAppContext) {
+    let mut window = page(cx, "parts", DIALOG_PARTS);
+    let open = window.until_found("div-open");
+    window.click(open);
+    let menu = window.until_found("div-menu");
+    window.click(menu);
+    window.until_found("menu-0");
+    window.until("the timer to close the dialog", |window| {
+        window.find("div-menu").is_none()
+    });
+    window.key_down("escape", false);
+    window.key_down("a", false);
+    window.until_found("div-heard-a");
+}
+
 /// An interval counts while a `Show` shows its part, and another, which a press of a node starts,
 /// while that node shows. A press hides both and, 100 ms later, says whether the count still went
 /// up.

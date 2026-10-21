@@ -196,7 +196,7 @@ pub fn start_window(
                         .is_some_and(|info| info.global_keys.contains(&key.name))
                 });
                 // A key it took comes up to it whatever it takes now.
-                if !takes && key.down {
+                if key.down && (!takes || live.read(cx).shows_dialog(&main)) {
                     return false;
                 }
                 let (name, modifiers) = (key.keystroke.key.clone(), key.keystroke.modifiers);
@@ -571,6 +571,13 @@ impl Live {
     /// The nodes of a card. `None` until its first ops came.
     pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<NodeTable>, String>> {
         self.cards.get(&card)?.tree.as_ref()
+    }
+
+    /// Whether a card of the instance `id` shows a dialog, which keeps the keys from its code.
+    pub(crate) fn shows_dialog(&self, id: &InstanceId) -> bool {
+        (self.cards.values())
+            .filter(|card| card.id == *id)
+            .any(|card| matches!(&card.tree, Some(Ok(table)) if table.shows_dialog()))
     }
 
     /// The watches the live values of a card read.
