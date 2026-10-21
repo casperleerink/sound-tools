@@ -321,8 +321,6 @@ props! {
         band: bool,
         /// The points of a path, in order.
         points: Vec<PathPoint>,
-        /// A path's outline goes back to its first point.
-        closed: bool,
         /// What a wave's values are multiplied by along it: `[x, factor]` from its left, straight
         /// between them.
         level: Vec<[Num; 2]>,

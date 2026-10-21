@@ -1714,7 +1714,7 @@ function root<T>(make: (dispose: () => void) => T, card: CardRoot | null = owner
   }
 }
 
-/** Runs `cleanup` when what runs now goes: the view, a part `Show` shows, a row of a `For`, or a binding that runs again. */
+/** Runs `cleanup` when what runs now goes: the view, a part `Show` shows, a row of a `For`, a binding that runs again, or the node whose handler runs. */
 export function onCleanup(cleanup: () => void) {
   owner?.cleanups.push(cleanup);
 }
@@ -1737,7 +1737,7 @@ export function untrack<T>(read: () => T): T {
 
 /**
  * Runs `run` once after `ms`, unless what made it goes first, as `onCleanup` tells: a delayed
- * hide. Made in a view, a component or a node's handler. Gives what stops it sooner.
+ * hide. Made in a view, a component, or a node's handler or drag. Gives what stops it sooner.
  */
 export function timeout(run: () => void, ms: number): () => void {
   return timer(run, ms, false);
@@ -1750,7 +1750,7 @@ export function interval(run: () => void, ms: number): () => void {
 
 function timer(run: () => void, ms: number, repeats: boolean): () => void {
   const scope = owner;
-  if (!scope) throw new Error("a timer is made in a view, a component or a handler of a node");
+  if (!scope) throw new Error("a timer is made in a view, a component, or a node's handler or drag");
   const fire = () => {
     if (!repeats) stop();
     try {
@@ -2100,6 +2100,8 @@ interface Made extends PointerEvents {
   onTitle?: () => void;
   onSidechain?: (select: number, option: number) => void;
   drag?: Drag;
+  /** Where its handlers run, made at the first: what they start, such as a timer, goes with the node. */
+  scope?: Owner;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
   region?: { parent: number | null };
@@ -2160,6 +2162,7 @@ function insert(parent: number, child: Made, before: Made | null) {
 
 function forget(made: Made) {
   nodes.delete(made.id);
+  if (made.scope) dispose(made.scope);
   made.card.changes.delete(made);
   for (const child of made.children) forget(child);
 }
@@ -2190,9 +2193,7 @@ function element(family: Family, props: Record<string, unknown>, children: Child
   for (const [name, value] of Object.entries(props)) {
     if (name === "children" || value === undefined) continue;
     if (HANDLERS.has(name)) {
-      // A handler runs as part of where its node was made, so a timer it starts goes with the node.
-      const scope = owner;
-      (made as unknown as Record<string, unknown>)[name] = (...args: never[]) => within(scope, () => (value as (...args: never[]) => unknown)(...args));
+      (made as unknown as Record<string, unknown>)[name] = value;
       made.props[name] = true;
     } else if (name === "drag") {
       made.drag = value as Drag;
@@ -2475,7 +2476,7 @@ const overlay =
 
 /** Content of its own under the div it is in, as the window's menus hang: the div's own press, such as of a button in it, opens and closes it. */
 export const Popover = overlay(false);
-/** Content of its own over the window, which a dark backdrop covers: a press on the backdrop closes it. */
+/** Content of its own over the window, which a dark backdrop covers: a press on the backdrop closes it. While it is open, the view hears no key but those of its text fields. */
 export const Dialog = overlay(true);
 
 // ---------------------------------------------------------------------------------------------
@@ -2551,12 +2552,12 @@ export type Shape =
         | { kind: "notes"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<TakeList>; color: Bind<Paint> }
         /**
          * A shape through `points`, in order, filled, or with `width` its outline that many points
-         * wide, back to its start if `closed`: a fade's shade, a triangle, a curve.
+         * wide, closed where its last point is its first: a fade's shade, a triangle, a curve.
          */
-        | { kind: "path"; points: Bind<readonly PathPoint[]>; color: Bind<Paint>; width?: Bind<number>; closed?: boolean }
+        | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
       ));
 
-/** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. It starts at an `[x, y]`. */
+/** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
 export type PathPoint = readonly [Num, Num] | readonly [Num, Num, Num, Num] | readonly [Num, Num, Num, Num, Num, Num];
 
 /** A colour, or one between two by a live value: see `blend`. */
@@ -3587,6 +3588,11 @@ function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "co
   }
   const made = nodes.get(id);
   if (!made) return;
+  made.scope ??= { owner: null, owned: [], cleanups: [], card: made.card, disposed: false };
+  return within(made.scope, () => handle(made, kind, payload));
+}
+
+function handle(made: Made, kind: Parameters<typeof nodeEvent>[1], payload: never) {
   switch (kind) {
     case "press":
       if (made.onRelease) releases.set(`${id} ${(payload as Press).button}`, made.onRelease);

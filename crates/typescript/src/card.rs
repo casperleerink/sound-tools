@@ -14,8 +14,9 @@ use gpui::{
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle, ScrollWheelEvent,
-    SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun, WeakEntity, Window,
-    anchored, canvas, deferred, div, fill, hsla, outline, point, prelude::*, px, size,
+    SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun, WeakEntity,
+    WeakFocusHandle, Window, anchored, canvas, deferred, div, fill, hsla, outline, point,
+    prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -106,9 +107,11 @@ pub(crate) struct TypeScriptCard {
     menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
     inputs: HashMap<u64, (Entity<TextInput>, String)>,
-    /// The keys of each open popover and dialog, by node, with what had them before it opened,
-    /// which gets them back when it closes.
-    overlays: HashMap<u64, (FocusHandle, Option<FocusHandle>)>,
+    /// The keys of each open popover and dialog, by node, the last opened last.
+    overlays: Vec<(u64, FocusHandle)>,
+    /// What had the keys before the first overlay opened, which gets them back when the last
+    /// one closes.
+    focus_before_overlays: Option<WeakFocusHandle>,
     /// The cards of other instances it shows, by node.
     embedded: HashMap<u64, Embedded>,
     /// The div it shows in the window's title bar, by its slot and index, as last drawn.
@@ -655,7 +658,8 @@ impl TypeScriptCard {
             indexes: RefCell::default(),
             menu: None,
             inputs: HashMap::new(),
-            overlays: HashMap::new(),
+            overlays: Vec::new(),
+            focus_before_overlays: None,
             embedded: HashMap::new(),
             title_bar: None,
             meters: Rc::default(),
@@ -706,26 +710,26 @@ impl TypeScriptCard {
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
         };
+        let open: Vec<u64> = (table.entries())
+            .filter(|entry| matches!(entry.props, Props::Overlay(_)))
+            .map(|entry| entry.id)
+            .collect();
+        let (kept, closed): (Vec<_>, Vec<_>) = std::mem::take(&mut self.overlays)
+            .into_iter()
+            .partition(|(node, _)| open.contains(node));
+        self.overlays = kept;
         // An overlay takes the keys as it opens, before a text field in it that asks for them.
-        let mut overlays = HashMap::new();
-        for entry in table.entries() {
-            if let Props::Overlay(_) = entry.props {
-                let overlay = self.overlays.remove(&entry.id).unwrap_or_else(|| {
-                    let before = window.focused(cx);
-                    let focus = cx.focus_handle();
-                    window.focus(&focus, cx);
-                    (focus, before)
-                });
-                overlays.insert(entry.id, overlay);
+        for node in open {
+            if !self.overlays.iter().any(|(kept, _)| *kept == node) {
+                if self.overlays.is_empty() && closed.is_empty() {
+                    self.focus_before_overlays = window.focused(cx).map(|focus| focus.downgrade());
+                }
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                self.overlays.push((node, focus));
             }
         }
-        for (focus, before) in std::mem::replace(&mut self.overlays, overlays).into_values() {
-            if let Some(before) = before
-                && focus.contains_focused(window, cx)
-            {
-                window.focus(&before, cx);
-            }
-        }
+        let lost_focus = (closed.iter()).any(|(_, focus)| focus.contains_focused(window, cx));
         let mut inputs = HashMap::new();
         let mut embedded = HashMap::new();
         for entry in table.entries() {
@@ -745,6 +749,14 @@ impl TypeScriptCard {
         self.inputs = inputs;
         (self.scrolled_cards.borrow_mut()).retain(|node, _| embedded.contains_key(node));
         self.embedded = embedded;
+        // After the fields, so one that closed with an overlay is dropped and not given the keys.
+        if lost_focus {
+            let back = match self.overlays.last() {
+                Some((_, focus)) => Some(focus.clone()),
+                None => (self.focus_before_overlays.as_ref()).and_then(WeakFocusHandle::upgrade),
+            };
+            window.focus(&back.unwrap_or_else(|| self.focus.clone()), cx);
+        }
     }
 
     /// The text field of the node `node`: the one it had, showing `value` when that changed and
@@ -836,15 +848,16 @@ impl TypeScriptCard {
         self.event(node, EventKind::Commit, json!({ "text": text }), cx);
     }
 
-    /// Shows in the field `node` what it last showed or told, gives the keys back and tells
-    /// its code.
+    /// Shows in the field `node` what it last showed or told, gives the keys back to the card
+    /// or the overlay last opened, and tells its code.
     fn revert(&mut self, node: u64, window: &mut Window, cx: &mut Context<Self>) {
         let Some((input, shown)) = self.inputs.get(&node) else {
             return;
         };
         let shown = shown.clone();
         input.update(cx, |input, cx| input.set_text(shown, cx));
-        window.focus(&self.focus, cx);
+        let back = (self.overlays.last()).map_or(&self.focus, |(_, focus)| focus);
+        window.focus(back, cx);
         self.event(node, EventKind::Cancel, json!({}), cx);
     }
 
@@ -1702,16 +1715,9 @@ enum Geometry {
     },
     Path {
         bends: Rc<[Bend<(f64, f64)>]>,
-        outline: Option<Outline>,
+        /// The width of its outline, else it is filled.
+        outline: Option<f32>,
     },
-}
-
-/// A path's outline: its width, and whether it goes back to its first point. A path without
-/// one is filled.
-#[derive(Clone, Copy)]
-struct Outline {
-    width: f32,
-    closed: bool,
 }
 
 /// A piece of a path: straight to a point, or curved to it pulled by one or two control
@@ -2001,7 +2007,7 @@ enum PaintedShape {
     Text(Point<Pixels>, SharedString, Rc<[TextPart]>, f32, Align),
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
-    Path(Rc<[Bend<Point<Pixels>>]>, Option<Outline>),
+    Path(Rc<[Bend<Point<Pixels>>]>, Option<f32>),
 }
 
 impl PaintedShape {
@@ -2023,7 +2029,7 @@ impl PaintedShape {
                     low = point(low.x.min(each.x), low.y.min(each.y));
                     high = point(high.x.max(each.x), high.y.max(each.y));
                 }
-                let pad = outline.map_or(px(0.), |outline| px(outline.width / 2. + 2.));
+                let pad = outline.map_or(px(0.), |width| px(width / 2. + 2.));
                 match bends.is_empty() {
                     true => Bounds::default(),
                     false => Bounds::from_corners(low - point(pad, pad), high + point(pad, pad)),
@@ -2102,7 +2108,7 @@ struct Drawing<'a, 'b> {
     feeds: &'a Feeds,
     indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
     inputs: &'a HashMap<u64, (Entity<TextInput>, String)>,
-    overlays: &'a HashMap<u64, (FocusHandle, Option<FocusHandle>)>,
+    overlays: &'a [(u64, FocusHandle)],
     /// The size of the window, which a dialog's backdrop covers.
     viewport: Size<Pixels>,
     embedded: &'a HashMap<u64, Embedded>,
@@ -2556,20 +2562,25 @@ impl Drawing<'_, '_> {
         let modal = props.modal == Some(true);
         let look = if modal { "dialog" } else { "popover" };
         let selector = format!("{look}-{}", props.key.as_deref().unwrap_or_default());
+        let focus = (self.overlays.iter())
+            .find(|(node, _)| *node == id)
+            .map(|(_, focus)| focus.clone());
         let panel = popover::surface(self.cx)
             .flex()
             .flex_col()
             .p(px(if modal { 16. } else { 8. }))
             .text_size(px(12.))
             .debug_selector(move || selector)
-            .when_some(self.overlays.get(&id), |panel, (focus, _)| {
-                panel.track_focus(focus)
-            })
+            .when_some(focus.clone(), |panel, focus| panel.track_focus(&focus))
             .on_key_down({
                 let close = close.clone();
-                move |event: &KeyDownEvent, _, cx| {
+                move |event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key == "escape" {
                         close(cx);
+                        cx.stop_propagation();
+                    } else if modal && !typing(window) {
+                        // The page and its global keys hear none while a dialog is open; a
+                        // text field has its keys when this stops nothing.
                         cx.stop_propagation();
                     }
                 }
@@ -2584,10 +2595,18 @@ impl Drawing<'_, '_> {
                 .items_center()
                 .justify_center()
                 .bg(hsla(0., 0., 0., 0.4))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| close(cx))
+                // A text field in it lets go of the keys on this press: the dialog takes them, to
+                // give them back as it closes.
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    if let Some(focus) = &focus {
+                        window.focus(focus, cx);
+                    }
+                    close(cx);
+                })
                 .child(panel);
             let placed = anchored().position(point(px(0.), px(0.))).child(backdrop);
-            return deferred(placed).with_priority(2).into_any_element();
+            // As menus, so what opens in it paints over it.
+            return deferred(placed).with_priority(1).into_any_element();
         }
         let hangs_from = Rc::new(Cell::new(Bounds::default()));
         let measure = canvas(
@@ -3031,7 +3050,7 @@ impl Extent {
                             (low.min(value), high.max(value))
                         })
                 };
-                let reach = outline.map_or(1.0, |outline| outline.width);
+                let reach = outline.unwrap_or(1.0);
                 extent(fold(|point| point.0), fold(|point| point.1), (reach, reach))
             }
             // A line of text is as wide as its words: a long label far off to the left may
@@ -3456,10 +3475,7 @@ impl Placing<'_> {
                             }
                         })
                         .collect(),
-                    outline: (width > 0.0).then_some(Outline {
-                        width,
-                        closed: shape.closed == Some(true),
-                    }),
+                    outline: (width > 0.0).then_some(width),
                 }
             }
             ShapeKind::Group => return None,
@@ -3729,7 +3745,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
         PaintedShape::Path(bends, outline) => {
             let mut path = match outline {
-                Some(outline) => gpui::PathBuilder::stroke(px(outline.width)),
+                Some(width) => gpui::PathBuilder::stroke(px(*width)),
                 None => gpui::PathBuilder::fill(),
             };
             for (index, bend) in bends.iter().enumerate() {
@@ -3740,7 +3756,9 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                     (_, Bend::Cubic(first, second, to)) => path.cubic_bezier_to(to, first, second),
                 }
             }
-            if outline.is_none_or(|outline| outline.closed) {
+            let ends_at_start =
+                bends.first().map(|bend| bend.end()) == bends.last().map(|bend| bend.end());
+            if outline.is_none() || ends_at_start {
                 path.close();
             }
             if let Ok(path) = path.build() {
