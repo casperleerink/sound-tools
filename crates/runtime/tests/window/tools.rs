@@ -309,7 +309,10 @@ impl Opened<'_> {
     fn until_playhead(&mut self, tick: u64) {
         let session = self.session.clone();
         self.until("the playhead moved", |window| {
-            window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(tick)
+            window
+                .cx
+                .read(|cx| session.read(cx).playhead().read(cx).tick)
+                == Ticks(tick)
         });
     }
 
