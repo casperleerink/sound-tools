@@ -2,7 +2,8 @@
 //! of what the window offers, a text field and rows dragged onto each other.
 
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
+    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
 };
 use sound_ui::{Devices, Takes};
 
@@ -31,6 +32,42 @@ fn open_rack(cx: &mut TestAppContext) -> Opened<'_> {
     let name = window.until_found("div-name-t00");
     window.click(name);
     window.until_found("div-effect-room");
+    window
+}
+
+/// The song with the devices of its first track showing, `count` effects `fx0` and on in its
+/// chain, of each kind in turn: a rack far wider than the window.
+pub(super) fn open_rack_of(cx: &mut TestAppContext, count: usize) -> Opened<'_> {
+    let kinds = [
+        "eq",
+        "compressor",
+        "reverb",
+        "delay",
+        "filter",
+        "saturator",
+        "gate",
+        "utility",
+    ];
+    let effects: Vec<String> = (0..count).map(|index| format!("fx{index}")).collect();
+    let mut files = song_files(2, 2);
+    files.retain(|(path, _)| path != "state/song/t00/chain/instance.json");
+    files.push((
+        "state/song/t00/chain/instance.json".into(),
+        serde_json::json!({ "tool": "chain", "state": { "order": effects } }).to_string(),
+    ));
+    for (name, tool) in effects.iter().zip(kinds.iter().cycle()) {
+        files.push((
+            format!("state/song/t00/chain/{name}.json"),
+            format!(r#"{{"tool": "{tool}", "state": {{}}}}"#),
+        ));
+    }
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = open(cx, &files);
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found(&format!("div-effect-fx{}", count - 1));
     window
 }
 
@@ -329,4 +366,23 @@ fn the_sidechain_picker_keys_the_compressor_from_a_track(cx: &mut TestAppContext
     window.until("no key", |window| keyed(window).is_none());
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Turn off sidechain"));
+}
+
+/// A card out of the rack's view is not drawn; scrolled into view, it is.
+#[gpui::test]
+fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
+    let mut window = open_rack_of(cx, 16);
+    let last = "card-title-song/t00/chain/fx15";
+    assert!(window.find(last).is_none());
+    let rack = window.until_found("div-rack");
+    window.until(last, |window| {
+        window.cx.simulate_event(ScrollWheelEvent {
+            position: rack,
+            delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        window.find(last).is_some()
+    });
+    assert!(window.find("card-title-song/t00/chain/fx0").is_none());
 }
