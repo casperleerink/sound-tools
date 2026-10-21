@@ -15,6 +15,7 @@ impl Opened<'_> {
 
     /// Polls once the runs of edits went quiet, so they are written and undoable.
     pub(super) fn after_the_runs(&mut self) {
+        self.wait_for_bun();
         let later = std::time::Instant::now() + RUN_QUIET;
         self.edit(|project| project.finish_quiet_runs_at(later));
         self.settle();

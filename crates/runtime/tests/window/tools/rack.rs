@@ -248,6 +248,14 @@ fn a_track_is_renamed_in_a_text_field_and_space_types_there(cx: &mut TestAppCont
     let mut window = open_rack(cx);
     let name = window.until_found("div-name-t00");
     window.double_click(name);
+    window.until("the name field has the keys", |window| {
+        window.cx.update(|window, _| {
+            window
+                .context_stack()
+                .iter()
+                .any(|context| context.contains(sound_ui::components::text_input::KEY_CONTEXT))
+        })
+    });
     window.cx.simulate_input("Bass");
     window.cx.simulate_keystrokes("space");
     assert!(
@@ -278,6 +286,7 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     let delete = window.until_found("menu-4");
     window.click(delete);
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));
+    window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
 

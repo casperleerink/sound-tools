@@ -31,6 +31,7 @@ mod takes_and_notes;
 mod template;
 mod timeline;
 mod transport;
+mod watches;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
@@ -277,14 +278,26 @@ impl Opened<'_> {
         peak(&self.render(frames))
     }
 
-    /// Settles until Bun has answered everything it was told, twice over: what it answered may
-    /// tell it more. For a test that nothing happens.
+    /// Waits for pending records, watches and behaviour answers to reach the window.
     fn wait_for_bun(&mut self) {
-        for _ in 0..2 {
-            self.until("Bun answered", |_| {
-                sound_typescript::bun_answered_everything()
-            });
-        }
+        self.until("Bun answered", |window| {
+            if !window.page_ready() {
+                return false;
+            }
+            window.poll_plugins();
+            window.page_ready()
+        });
+    }
+
+    fn page_ready(&mut self) -> bool {
+        let shell = self.shell.clone();
+        self.cx.update(|_, cx| {
+            shell
+                .read(cx)
+                .main_view()
+                .cloned()
+                .is_none_or(|page| sound_typescript::page_ready(&page, cx))
+        })
     }
 
     fn focused(&mut self) -> FocusHandle {
