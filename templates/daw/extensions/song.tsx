@@ -862,7 +862,7 @@ export const song = tool({
               </div>
             )}
           </For>
-          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5", keep: true }} onPress={addEffect}
+          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "alpha/5" }, keep: true }} onPress={addEffect}
             onDrop={({ carried }) => carried && moveBefore(carried, null)}>
             <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
             <Icon name="chevron-down" size={14} color="gray-700" />
@@ -1122,7 +1122,7 @@ export const song = tool({
           {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
         </div>
         <div style={{ height: 24, direction: "row", align: "center", paddingLeft: 4, paddingRight: 4, gap: 4 }}>
-          <Toggle key={`lanes-${each.name}`} icon="automation" label="Automation" on={() => memory.lanes.has(each.name)}
+          <Toggle key={`lanes-${each.name}`} icon="automation" tooltip="Automation" on={() => memory.lanes.has(each.name)}
             count={() => lanesOf(each).length} onPress={() => showLanes(each, !memory.lanes.has(each.name))} />
           <div style={{ grow: true }} />
           <Show when={() => each.tool === "tape"}>
@@ -1635,7 +1635,7 @@ export const song = tool({
                 {({ each, lane, add }) =>
                   add ? (
                     <div style={{ height: ADD_LANE, paddingX: 8, paddingY: 4 }}>
-                      <div key={`add-lane-${each.name}`} style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: "alpha/8" }}
+                      <div key={`add-lane-${each.name}`} style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: { background: "alpha/8" } }}
                         onPress={() => addLane(each)}>
                         <div style={{ grow: true, fontSize: 13, weight: "medium", color: "gray-950" }}>Add lane</div>
                         <Icon name="chevron-down" size={14} color="gray-700" />
@@ -1657,13 +1657,13 @@ export const song = tool({
                 }
               </For>
               <div style={{ height: ROW, direction: "row", align: "center", paddingX: 8 }}>
-                <div key="add-track" style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: "alpha/5" }}
+                <div key="add-track" style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
                   onPress={() => addTrack(0)}>
                   <Icon name="plus" size={14} color="gray-800" />
                   <div style={{ fontSize: 12, weight: "medium", color: "gray-800" }}>Add track</div>
                 </div>
                 <div style={{ width: 1, height: 12, background: "alpha/10" }} />
-                <div key="add-track-kind" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: "alpha/8" }} onPress={() => addTrack()}>
+                <div key="add-track-kind" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onPress={() => addTrack()}>
                   <Icon name="chevron-down" size={14} color="gray-700" />
                 </div>
               </div>

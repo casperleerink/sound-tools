@@ -48,9 +48,13 @@ props! {
     DivProps / DivChange {
         /// Keeps the state of the element.
         key: String,
-        style: Style,
+        style: Box<Style>,
         /// It hears a click.
         on_press: bool,
+        /// It hears no pointer and shows its disabled look.
+        disabled: bool,
+        cursor: Cursor,
+        tooltip: String,
         /// The spaces whose scroll its children move with, by their keys.
         follow: Follow,
         /// What a drag of it carries to a node that hears a drop.
@@ -124,6 +128,7 @@ props! {
         disabled: bool,
         /// Quieter than its look, 0 to 1.
         opacity: f32,
+        tooltip: String,
         on_press: bool,
     }
 }
@@ -151,6 +156,7 @@ props! {
         on: bool,
         color: Color,
         disabled: bool,
+        tooltip: String,
         on_press: bool,
     }
 }
@@ -1460,7 +1466,18 @@ pub(crate) struct Style {
     padding_bottom: Option<f32>,
     width: Option<f32>,
     height: Option<f32>,
+    min_width: Option<f32>,
+    max_width: Option<f32>,
+    min_height: Option<f32>,
+    max_height: Option<f32>,
     grow: bool,
+    /// Out of its parent's flow, placed by the insets from its parent's edges.
+    absolute: bool,
+    top: Option<f32>,
+    left: Option<f32>,
+    right: Option<f32>,
+    bottom: Option<f32>,
+    wrap: bool,
     align: Option<Place>,
     justify: Option<Justify>,
     background: Option<Color>,
@@ -1476,12 +1493,54 @@ pub(crate) struct Style {
     /// `tabular`: digits of one width, so a number that changes does not move what follows.
     font: Option<FontKind>,
     weight: Option<Weight>,
-    /// Its background while the pointer is over it.
-    hover: Option<Color>,
+    text_align: Option<TextAlign>,
+    opacity: Option<f32>,
+    shadow: bool,
+    /// Its children do not show outside it.
+    clip: bool,
+    hover: Option<Look>,
+    pressed: Option<Look>,
+    disabled: Option<Look>,
     /// It takes no more room than it needs, nor less: it does not shrink in a row too narrow.
     keep: bool,
     /// A line of text cut with an ellipsis where it does not fit.
     truncate: bool,
+}
+
+/// What a div changes of its style while the pointer is over it, pressed, or disabled.
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct Look {
+    background: Option<Color>,
+    color: Option<Color>,
+    border_color: Option<Color>,
+    opacity: Option<f32>,
+}
+
+impl Look {
+    pub(crate) fn refine<Element: Styled>(self, mut element: Element) -> Element {
+        if let Some(Color(color)) = self.background {
+            element = element.bg(color);
+        }
+        if let Some(Color(color)) = self.color {
+            element = element.text_color(color);
+        }
+        if let Some(Color(color)) = self.border_color {
+            element = element.border_color(color);
+        }
+        if let Some(opacity) = self.opacity {
+            element = element.opacity(opacity);
+        }
+        element
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TextAlign {
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1577,7 +1636,7 @@ impl Style {
             justify: self.justify.clone(),
             ..Style::default()
         };
-        lines.apply(element)
+        lines.apply(element, false)
     }
 
     /// The axis its children scroll along, if any.
@@ -1585,7 +1644,7 @@ impl Style {
         self.scroll
     }
 
-    /// Its size and how it grows, for the box its children scroll in.
+    /// Its size, how it grows and where it is placed, for the box its children scroll in.
     pub(crate) fn sized(&self, mut element: Div) -> Div {
         element = element.flex();
         if let Some(width) = self.width {
@@ -1594,10 +1653,42 @@ impl Style {
         if let Some(height) = self.height {
             element = element.h(px(height));
         }
+        if let Some(width) = self.min_width {
+            element = element.min_w(px(width));
+        }
+        if let Some(width) = self.max_width {
+            element = element.max_w(px(width));
+        }
+        if let Some(height) = self.min_height {
+            element = element.min_h(px(height));
+        }
+        if let Some(height) = self.max_height {
+            element = element.max_h(px(height));
+        }
         if self.grow {
             element = element.flex_grow(1.);
         }
+        if self.absolute {
+            element = element.absolute();
+        }
+        if let Some(inset) = self.top {
+            element = element.top(px(inset));
+        }
+        if let Some(inset) = self.left {
+            element = element.left(px(inset));
+        }
+        if let Some(inset) = self.right {
+            element = element.right(px(inset));
+        }
+        if let Some(inset) = self.bottom {
+            element = element.bottom(px(inset));
+        }
         element
+    }
+
+    /// Its look while pressed, which needs an element with an id.
+    pub(crate) fn pressed(&self) -> Option<Look> {
+        self.pressed
     }
 
     /// The height its style fixes, if any.
@@ -1613,7 +1704,8 @@ impl Style {
         }
     }
 
-    pub(crate) fn apply(&self, element: Div) -> Div {
+    /// Its layout and look, `disabled` or not.
+    pub(crate) fn apply(&self, element: Div, disabled: bool) -> Div {
         let mut element = element.flex();
         element = match self.direction {
             Some(Direction::Row) => element.flex_row(),
@@ -1647,17 +1739,10 @@ impl Style {
             // As large as its children along the axis, and as its box across it.
             Some(ScrollAxis::X) => element = element.flex_none().h_full(),
             Some(ScrollAxis::Y) => element = element.flex_none().w_full(),
-            None => {
-                if let Some(width) = self.width {
-                    element = element.w(px(width));
-                }
-                if let Some(height) = self.height {
-                    element = element.h(px(height));
-                }
-                if self.grow {
-                    element = element.flex_grow(1.);
-                }
-            }
+            None => element = self.sized(element),
+        }
+        if self.wrap {
+            element = element.flex_wrap();
         }
         element = match self.align {
             Some(Place::Start) => element.items_start(),
@@ -1702,8 +1787,32 @@ impl Style {
             Some(Weight::Semibold) => element.font_weight(gpui::FontWeight::SEMIBOLD),
             None => element,
         };
-        if let Some(Color(color)) = self.hover {
-            element = element.hover(move |style| style.bg(color));
+        element = match self.text_align {
+            Some(TextAlign::Left) => element.text_left(),
+            Some(TextAlign::Center) => element.text_center(),
+            Some(TextAlign::Right) => element.text_right(),
+            None => element,
+        };
+        if let Some(opacity) = self.opacity {
+            element = element.opacity(opacity);
+        }
+        if self.shadow {
+            element = element.shadow(sound_ui::components::popover::shadow());
+        }
+        if self.clip {
+            element = element.overflow_hidden();
+        }
+        match (disabled, self.hover) {
+            // As the app's own controls are disabled.
+            (true, _) => {
+                let look = self.disabled.unwrap_or(Look {
+                    opacity: Some(0.4),
+                    ..Look::default()
+                });
+                element = look.refine(element);
+            }
+            (false, Some(look)) => element = element.hover(move |style| look.refine(style)),
+            (false, None) => {}
         }
         if self.keep {
             element = element.flex_none();
