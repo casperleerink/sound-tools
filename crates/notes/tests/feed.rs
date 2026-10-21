@@ -385,3 +385,17 @@ fn a_gone_performer_lifts_the_pedal_it_put_down_when_the_feed_was_full() {
     harness.send(NoteFeedUpdate::PerformerGone);
     assert_eq!(harness.render(200).last(), Some(&0.0));
 }
+
+#[test]
+fn a_release_when_the_feed_is_full_lets_go_of_a_key_two_performed_notes_hold() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, Some(100_000)));
+    harness.send(note(60, 10, Some(100_000)));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    // Room for 256 waiting: the two ends, and 127 notes far ahead, an on and an off each.
+    for pitch in 0..127 {
+        harness.send(note(pitch, 1_000_000, Some(1)));
+    }
+    harness.send(release(60, 0));
+    assert_eq!(harness.render(4_800).last(), Some(&0.0));
+}

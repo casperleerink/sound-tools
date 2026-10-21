@@ -165,6 +165,10 @@ impl Processor for NoteFeed {
             }
             NoteFeedUpdate::Note(performed) => {
                 if let Some(event) = self.performed.perform(*performed) {
+                    if let NoteEvent::Off { pitch } = event {
+                        // The schedule dropped every end of the key that waited.
+                        self.held.ends_all(pitch);
+                    }
                     (self.held).pass(event, true, |event| {
                         self.now.keep(event);
                         true

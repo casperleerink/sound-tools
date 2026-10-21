@@ -62,6 +62,12 @@ impl Held {
         sent
     }
 
+    /// Makes the performer's next off of `pitch` end every on of it the performer holds.
+    pub(crate) fn ends_all(&mut self, pitch: Pitch) {
+        let performer = self.ons(pitch, true).0;
+        *performer = (*performer).min(1);
+    }
+
     /// The ons of `pitch` of the side `performed` names, and those of the other side.
     fn ons(&mut self, pitch: Pitch, performed: bool) -> (&mut u64, &mut u64) {
         let (performer, others) = &mut self.ons[usize::from(pitch.number())];
