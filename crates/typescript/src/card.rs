@@ -3778,8 +3778,9 @@ impl Render for TypeScriptCard {
                 Some((name.clone(), Rc::new(notes.clone())))
             })
             .collect();
+        let now = cx.background_executor().now();
         let session = self.session.read(cx);
-        (self.feeds).read(session, &self.id, &state, &uses, playhead.tick);
+        (self.feeds).read(session, &self.id, &state, &uses, playhead.tick, now);
         let body = match tree {
             Some(Ok(table)) => {
                 let drag = (self.held.as_ref())

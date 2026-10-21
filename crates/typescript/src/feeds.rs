@@ -132,7 +132,8 @@ pub(crate) struct Eased {
 }
 
 impl Feeds {
-    /// A new frame: reads what `uses` needs of the instance `id`. `state` is its record.
+    /// A new frame at `now` of the executor's clock: reads what `uses` needs of the instance
+    /// `id`. `state` is its record.
     pub(crate) fn read(
         &mut self,
         session: &Session,
@@ -140,8 +141,8 @@ impl Feeds {
         state: &Value,
         uses: &Uses,
         tick: Ticks,
+        now: Instant,
     ) {
-        let now = Instant::now();
         let started = *self.started.get_or_insert(now);
         self.dt = (self.last.map_or(0.0, |last| (now - last).as_secs_f64())).min(LONGEST_FRAME);
         self.last = Some(now);
