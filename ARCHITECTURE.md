@@ -217,7 +217,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** No tool, no Bun; a code change, crash or hang starts a fresh one, without code that hung until the folder changes. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang; an engine in the app (QuickJS), where an endless loop freezes the window and there is no npm.
+- **Written in TypeScript, run by Bun as a separate process.** No tool, no Bun; a code change, crash or hang starts a fresh one, without code that hung until the folder changes. The window lets go of the notes the old code held, not of the whole child: that would cut its clips at every save. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang; an engine in the app (QuickJS), where an endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
