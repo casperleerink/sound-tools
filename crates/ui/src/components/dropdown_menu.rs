@@ -1078,9 +1078,12 @@ impl DropdownMenu {
         self.highlighted = usize::MAX;
         self.pointer_on = None;
         self.set_submenu(None, cx);
-        // The open menu held the focus. Without this it would be nowhere, and keys with it.
+        // The open menu held the focus. Without this it would be nowhere, and keys with it. Focus
+        // that went elsewhere while it was open stays there.
         let back = self.focus_before.take();
-        window.focus(back.as_ref().unwrap_or(&self.trigger_focus), cx);
+        if window.focused(cx).is_none() || self.focus_handle.contains_focused(window, cx) {
+            window.focus(back.as_ref().unwrap_or(&self.trigger_focus), cx);
+        }
         cx.notify();
     }
 

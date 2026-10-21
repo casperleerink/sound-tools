@@ -931,9 +931,12 @@ function selector(instance: string) {
 /** Questions to the window, by number, which its answers settle: `openFile`, `openMenu`, `confirm`, `offers`, `numbers`. */
 const asked = new Map<number, (answer: unknown) => void>();
 let questions = Number(bunNumber) * 2 ** 32;
+/** Questions asked since the last ops, which go after them: a menu a new dialog opens belongs to it. */
+const unsaid: object[] = [];
 function ask<Answer>(message: { type: string } & Record<string, unknown>): Promise<Answer> {
   const question = ++questions;
-  say({ ...message, question });
+  unsaid.push({ ...message, question });
+  later();
   return new Promise((resolve) => asked.set(question, resolve as (answer: unknown) => void));
 }
 
@@ -1112,6 +1115,9 @@ function flushOps() {
     say({ type: "ops", card, mount: false, event: true, took: 0, ops: [] });
   }
   answering.clear();
+  for (const message of unsaid.splice(0)) {
+    say(message);
+  }
   for (const [instance, known] of stores) {
     const reads: Reads = {
       state: sdk.host.readFields(known.state),

@@ -175,7 +175,7 @@ fn a_dialog_keeps_the_keys_from_the_page_but_its_text_field_has_them(cx: &mut Te
 }
 
 /// A page that hears keys, with a dialog that holds a space a press focuses, and a div whose
-/// press opens a menu, which tells what it answered, and closes the dialog 50 ms later.
+/// press opens a menu, which tells what it answered, and closes the dialog 200 ms later.
 const DIALOG_PARTS: &str = r#"import { Dialog, h, Space, timeout, tool } from "./sdk";
 
 tool({
@@ -199,7 +199,7 @@ tool({
             style: box,
             onPress: () => {
               openMenu([{ label: "One" }]).then((picked) => (memory.heard = `picked-${picked}`));
-              timeout(() => { memory.open = false; }, 50);
+              timeout(() => { memory.open = false; }, 200);
             },
           }, "Menu"))),
     );
@@ -242,6 +242,67 @@ fn a_dialog_that_closes_while_its_menu_is_open_closes_it_and_gives_the_page_its_
     assert!(window.find("menu-0").is_none());
     window.key_down("a", false);
     window.until_found("div-heard-a");
+}
+
+#[gpui::test]
+fn a_dialog_that_closes_while_its_menu_is_open_leaves_keys_that_went_elsewhere_there(
+    cx: &mut TestAppContext,
+) {
+    let mut window = page(cx, "parts", DIALOG_PARTS);
+    let open = window.until_found("div-open");
+    window.click(open);
+    let menu = window.until_found("div-menu");
+    window.click(menu);
+    window.until_found("menu-0");
+    window.focus_the_window();
+    let elsewhere = window.focused();
+    window.until("the timer to close the dialog", |window| {
+        window.find("div-menu").is_none()
+    });
+    window.until_found("div-heard-picked-null");
+    assert!(window.focused() == elsewhere);
+    window.key_down("a", false);
+    assert!(!window.heard("a"));
+}
+
+/// A dialog whose press replaces it with a second, which opens a menu as it shows.
+const MENU_DIALOG: &str = r#"import { Dialog, h, tool } from "./sdk";
+
+tool({
+  name: "asks",
+  title: "Asks",
+  when: "Never",
+  doc: "A dialog that opens a menu as it shows.",
+  state: {},
+  memory: () => ({ open: "", heard: "" }),
+  view: ({ memory, openMenu }) => {
+    const box = { width: 80, height: 20 };
+    return h("div", { style: { padding: 40, gap: 40 } },
+      h("div", { key: "open", style: box, onPress: () => (memory.open = "first") }, "Open"),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+      h(Dialog, { open: () => memory.open === "first", onClose: () => (memory.open = "") }, () =>
+        h("div", { key: "first", style: box, onPress: () => (memory.open = "second") }, "Next")),
+      h(Dialog, { open: () => memory.open === "second", onClose: () => (memory.open = "") }, () => {
+        openMenu([{ label: "One" }]).then((picked) => (memory.heard = `picked-${picked}`));
+        return h("div", { key: "second" }, "Second");
+      }),
+    );
+  },
+});
+"#;
+
+#[gpui::test]
+fn a_menu_a_dialog_opens_as_it_replaces_another_stays_open(cx: &mut TestAppContext) {
+    let mut window = page(cx, "asks", MENU_DIALOG);
+    let open = window.until_found("div-open");
+    window.click(open);
+    let first = window.until_found("div-first");
+    window.click(first);
+    window.until_found("div-second");
+    window.until_found("menu-0");
+    window.wait_for_bun();
+    assert!(window.find("menu-0").is_some());
+    assert!(window.find("div-heard-picked-null").is_none());
 }
 
 /// An interval counts while a `Show` shows its part, and another, which a press of a node starts,
