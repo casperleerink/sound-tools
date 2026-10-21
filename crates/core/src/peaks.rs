@@ -51,6 +51,11 @@ impl Peaks {
         self.0.each_ref().map(take)
     }
 
+    /// Whether `other` shares the values of these.
+    pub fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     /// Nothing was recorded since the last take. Takes nothing.
     pub fn is_silent(&self) -> bool {
         self.0.iter().all(|peak| peak.load(Ordering::Relaxed) == 0)
