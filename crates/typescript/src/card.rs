@@ -732,7 +732,9 @@ impl TypeScriptCard {
         cx: &mut Context<Self>,
     ) -> (Entity<TextInput>, String) {
         let value = props.value.clone().unwrap_or_default();
+        let disabled = props.disabled == Some(true);
         if let Some((input, shown)) = self.inputs.remove(&node) {
+            input.update(cx, |input, cx| input.set_disabled(disabled, cx));
             if shown != value && !input.focus_handle(cx).is_focused(window) {
                 input.update(cx, |input, cx| input.set_text(value.clone(), cx));
                 return (input, value);
@@ -740,10 +742,27 @@ impl TypeScriptCard {
             return (input, shown);
         }
         let placeholder = props.placeholder.clone().unwrap_or_default();
-        let input = cx.new(|cx| TextInput::new(cx).placeholder(placeholder));
+        let input = cx.new(|cx| {
+            let input = TextInput::new(cx)
+                .placeholder(placeholder)
+                .disabled(disabled);
+            match props.rows {
+                Some(rows) => input.enter_adds_line(rows),
+                None => input,
+            }
+        });
         let card = cx.weak_entity();
         input.update(cx, |input, cx| {
             input.set_text(value.clone(), cx);
+            if props.on_change == Some(true) {
+                let card = card.clone();
+                input.set_on_change(move |text, _, cx| {
+                    (card.update(cx, |view, cx| {
+                        view.event(node, EventKind::Change, json!(text), cx)
+                    }))
+                    .ok();
+                });
+            }
             input.set_on_submit({
                 let card = card.clone();
                 move |text, _, cx| {
@@ -772,7 +791,7 @@ impl TypeScriptCard {
             }
         })
         .detach();
-        if props.focus == Some(true) {
+        if props.focus == Some(true) && !disabled {
             window.focus(&focus, cx);
             input.update(cx, TextInput::select_all_text);
         }
@@ -2378,9 +2397,10 @@ impl Drawing<'_, '_> {
                     let Ok(place) = place.parse::<usize>() else {
                         return;
                     };
-                    let picked = json!({ "value": place });
-                    (card.update(cx, |view, cx| view.event(id, EventKind::Change, picked, cx)))
-                        .ok();
+                    (card.update(cx, |view, cx| {
+                        view.event(id, EventKind::Change, json!(place), cx)
+                    }))
+                    .ok();
                 })
             });
         (div().flex_none().occlude().debug_selector(move || selector))

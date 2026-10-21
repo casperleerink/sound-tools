@@ -78,9 +78,14 @@ props! {
         width: f32,
         /// It takes the keys when it is made.
         focus: bool,
+        disabled: bool,
+        /// A text area that grows to this many rows, read when it is made.
+        rows: usize,
         on_commit: bool,
         /// Escape tells the view.
         on_cancel: bool,
+        /// Each edit tells the view.
+        on_change: bool,
     }
 }
 

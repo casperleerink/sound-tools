@@ -2052,11 +2052,12 @@ interface Made extends PointerEvents {
   onDrop?: (drop: Dropped) => void;
   onCommit?: (text: string) => void;
   onCancel?: () => void;
+  /** A field's text, or a segmented control's place. */
+  onChange?: (value: string | number) => void;
   onPower?: () => void;
   onClose?: () => void;
   onTitle?: () => void;
   onSidechain?: (select: number, option: number) => void;
-  onChange?: (changed: { value: number }) => void;
   drag?: Drag;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
@@ -2535,8 +2536,13 @@ export interface InputProps {
   width?: number;
   /** It takes the keys when it is made, with its text selected. */
   focus?: boolean;
+  disabled?: Bind<boolean>;
+  /** A text area that wraps and grows to `rows` rows: enter adds a line, cmd-enter commits. Read when it is made. */
+  rows?: number;
   onCommit: (text: string) => void;
   onCancel?: () => void;
+  /** Each edit, with the text as it is now, such as to filter a list as it is typed. */
+  onChange?: (text: string) => void;
 }
 
 /** A text field, see `InputProps`. */
@@ -3215,7 +3221,7 @@ export function SegmentedControl<const T extends string | number | boolean | nul
       return options().findIndex((option) => option.value === value);
     },
     disabled: props.disabled,
-    onChange: ({ value: place }: { value: number }) => {
+    onChange: (place: number) => {
       const option = untrack(options)[place];
       if (option && option.value !== untrack(get)) set(option.value);
     },
@@ -3487,6 +3493,8 @@ function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "co
       return made.onCommit?.((payload as { text: string }).text);
     case "cancel":
       return made.onCancel?.();
+    case "change":
+      return made.onChange?.(payload);
     case "power":
       return made.onPower?.();
     case "close":
@@ -3497,8 +3505,6 @@ function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "co
       const { select, option } = payload as { select: number; option: number };
       return made.onSidechain?.(select, option);
     }
-    case "change":
-      return made.onChange?.(payload);
     default: {
       const handler = { click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);
