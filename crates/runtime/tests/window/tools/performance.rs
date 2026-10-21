@@ -626,3 +626,42 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
         MOVES * 2,
     );
 }
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_a_rack_of_16_effects(cx: &mut TestAppContext) {
+    measure_rack(cx, 16);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_a_rack_of_2_effects(cx: &mut TestAppContext) {
+    measure_rack(cx, 2);
+}
+
+/// The devices of a track of `count` effects: frames idle and as the rack scrolls across under
+/// the wheel.
+fn measure_rack(cx: &mut TestAppContext, count: usize) {
+    let what = format!("a rack of {count} effects");
+    let mut window = super::rack::open_rack_of(cx, count);
+    window.wait_for_bun();
+    window.settle();
+    let idle: Vec<Duration> = (0..MOVES)
+        .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
+        .collect();
+    print(&format!("{what}: an idle frame"), idle);
+    let rack = window.origin("div-rack") + point(px(200.), px(100.));
+    let scrolling: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            let sign = if step < MOVES / 2 { -1. } else { 1. };
+            let event = ScrollWheelEvent {
+                position: rack,
+                delta: ScrollDelta::Pixels(point(px(sign * 30.), px(0.))),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            };
+            window.timed(|window| window.cx.simulate_event(event))
+        })
+        .collect();
+    print(&format!("{what}: a frame as the rack scrolls"), scrolling);
+}

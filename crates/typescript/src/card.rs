@@ -12,9 +12,9 @@ use gpui::{
     AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollWheelEvent, SharedString,
-    StyleRefinement, TextAlign, TextRun, WeakEntity, Window, canvas, div, fill, outline, point,
-    prelude::*, px, size,
+    MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle, ScrollWheelEvent,
+    SharedString, StyleRefinement, TextAlign, TextRun, WeakEntity, Window, canvas, div, fill,
+    outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -105,6 +105,14 @@ pub(crate) struct TypeScriptCard {
     /// Where the next menu opens: under the div, button or title last pressed with the left
     /// button. `None` opens it at the pointer, as after a press of a space or a right press.
     anchor: Rc<Cell<Option<Point<Pixels>>>>,
+    /// The scroll of each div that scrolls, by its place in the tree.
+    scrolls: RefCell<HashMap<Vec<usize>, ScrollHandle>>,
+    /// Where each embedded card in a div that scrolls was last laid out, by node, as if it
+    /// were not scrolled.
+    scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    /// Whether a mouse button is down in the window. A card out of view is drawn then too, so
+    /// a knob dragged while the rack scrolls hears its mouse up.
+    button_down: Rc<Cell<bool>>,
 }
 
 /// The view of the card of `instance` that the page `page` shows, for tests that read what a
@@ -263,6 +271,39 @@ impl Render for CardTitle {
             None => title,
         }
     }
+}
+
+/// Takes no room and writes into `down` whether a mouse button is down in the window.
+fn hears_the_button(down: Rc<Cell<bool>>) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            window.on_mouse_event({
+                let down = down.clone();
+                move |_: &MouseDownEvent, phase, _, _| {
+                    if phase == DispatchPhase::Capture {
+                        down.set(true);
+                    }
+                }
+            });
+            window.on_mouse_event({
+                let down = down.clone();
+                move |_: &MouseUpEvent, phase, _, _| {
+                    if phase == DispatchPhase::Capture {
+                        down.set(false);
+                    }
+                }
+            });
+            // A button that came up outside the window.
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, _| {
+                if phase == DispatchPhase::Capture && !event.dragging() {
+                    down.set(false);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 /// What a drag of a node carries, by its `carry`.
@@ -523,6 +564,9 @@ impl TypeScriptCard {
             meters: Rc::default(),
             placed: Rc::default(),
             anchor: Rc::default(),
+            scrolls: RefCell::default(),
+            scrolled_cards: Rc::default(),
+            button_down: Rc::default(),
         }
     }
 
@@ -567,6 +611,7 @@ impl TypeScriptCard {
             }
         }
         self.inputs = inputs;
+        (self.scrolled_cards.borrow_mut()).retain(|node, _| embedded.contains_key(node));
         self.embedded = embedded;
     }
 
@@ -1787,6 +1832,11 @@ struct Drawing<'a, 'b> {
     embedded: &'a HashMap<u64, Embedded>,
     meters: &'a RefCell<HashMap<u64, Metering>>,
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
+    scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    button_down: bool,
+    /// The scroll of the div that scrolls what it draws now, the innermost.
+    scroller: Option<ScrollHandle>,
     /// Whether it draws the title bar's div, which the body leaves out.
     in_title_bar: bool,
     /// The title bar's div the body left out.
@@ -1890,14 +1940,20 @@ impl Drawing<'_, '_> {
                     .color(color)
                     .into_any_element()
             }
-            Props::Card(_) => match self.embedded.get(&id) {
-                Some(Embedded {
-                    view: Some(view), ..
-                }) => view.clone().into_any_element(),
-                // A tool with no card shows its frame with its name.
-                Some(Embedded { frame, .. }) => frame.card().into_any_element(),
-                None => div().into_any_element(),
-            },
+            Props::Card(_) => {
+                let card = match self.embedded.get(&id) {
+                    Some(Embedded {
+                        view: Some(view), ..
+                    }) => view.clone().into_any_element(),
+                    // A tool with no card shows its frame with its name.
+                    Some(Embedded { frame, .. }) => frame.card().into_any_element(),
+                    None => div().into_any_element(),
+                };
+                match self.scroller.clone() {
+                    Some(scroller) => self.scrolled_card(id, card, scroller),
+                    None => card,
+                }
+            }
             Props::Div(DivProps {
                 key,
                 style,
@@ -1938,6 +1994,12 @@ impl Drawing<'_, '_> {
                         let top = (view.top * view.scale().1) as f32;
                         Some((heights?, gap, top..top + view.height as f32))
                     });
+                let scroller = (style.scroll()).map(|_| {
+                    (self.scrolls.borrow_mut().entry(index.to_vec()))
+                        .or_default()
+                        .clone()
+                });
+                let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
                 let mut children: Vec<AnyElement> = Vec::new();
                 let mut hidden = None::<f32>;
                 let mut at = 0.0;
@@ -1959,6 +2021,9 @@ impl Drawing<'_, '_> {
                 }
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
+                }
+                if let Some(outer) = outer {
+                    self.scroller = outer;
                 }
                 let element = match follow {
                     // Its children move with the scroll of the spaces it follows, cut off at its
@@ -1993,7 +2058,7 @@ impl Drawing<'_, '_> {
                     None => element,
                 };
                 let hears = *on_press == Some(true) || *on_drop == Some(true) || carry.is_some();
-                if let Some(axis) = style.scroll() {
+                if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
                     let name = element_name("scroll", key.as_deref(), index);
                     let inner = match hears {
@@ -2008,7 +2073,8 @@ impl Drawing<'_, '_> {
                         ),
                         false => element.into_any_element(),
                     };
-                    let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
+                    let scrolling = (style.sized(div()).id(ElementId::Name(name.into())))
+                        .track_scroll(&scroller);
                     let scrolling = match axis {
                         tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
                         tree::ScrollAxis::Y => scrolling.overflow_y_scroll(),
@@ -2021,6 +2087,42 @@ impl Drawing<'_, '_> {
                 self.heard_div(element, id, key.as_deref(), index, on_press, carry, on_drop)
             }
         }
+    }
+
+    /// A card in a div that scrolls, which writes where it lies in what scrolls. Out of view it
+    /// is an empty box of its size: a rack of many effects costs what the cards on screen cost.
+    fn scrolled_card(&self, node: u64, card: AnyElement, scroller: ScrollHandle) -> AnyElement {
+        let showing = scroller.bounds();
+        // The scroll of a wheel past the end, as its div clamps it when laid out.
+        let offset = (scroller.offset())
+            .max(&-scroller.max_offset())
+            .min(&Point::default());
+        let last = self.scrolled_cards.borrow().get(&node).copied();
+        let hidden = last.filter(|last| {
+            !self.button_down && !showing.is_empty() && !(*last + offset).intersects(&showing)
+        });
+        let shown = match hidden {
+            Some(last) => div()
+                .w(last.size.width)
+                .h(last.size.height)
+                .into_any_element(),
+            None => card,
+        };
+        let cards = self.scrolled_cards.clone();
+        let writes = canvas(
+            move |bounds, window, _| {
+                // It moved into view since the last frame, as when the cards were reordered.
+                if hidden.is_some() && bounds.intersects(&scroller.bounds()) {
+                    window.request_animation_frame();
+                }
+                cards.borrow_mut().insert(node, bounds - scroller.offset());
+            },
+            |_, _, _, _| {},
+        );
+        (div().flex().flex_none().relative())
+            .child(shown)
+            .child(writes.absolute().size_full())
+            .into_any_element()
     }
 
     /// A div that hears presses, drops or carries something when dragged.
@@ -3504,6 +3606,10 @@ impl TypeScriptCard {
             embedded: &self.embedded,
             meters: &self.meters,
             placed: self.placed.clone(),
+            scrolls: &self.scrolls,
+            scrolled_cards: self.scrolled_cards.clone(),
+            button_down: self.button_down.get(),
+            scroller: None,
             in_title_bar: true,
             title_bar: None,
             cx,
@@ -3632,6 +3738,10 @@ impl Render for TypeScriptCard {
                     embedded: &self.embedded,
                     meters: &self.meters,
                     placed: self.placed.clone(),
+                    scrolls: &self.scrolls,
+                    scrolled_cards: self.scrolled_cards.clone(),
+                    button_down: self.button_down.get(),
+                    scroller: None,
                     in_title_bar: false,
                     title_bar: None,
                     cx,
@@ -3688,6 +3798,7 @@ impl Render for TypeScriptCard {
             .text_size(px(12.))
             .text_color(text)
             .child(body)
+            .child(hears_the_button(self.button_down.clone()))
             .children(self.menu.as_ref().map(|(menu, _)| menu.clone()));
         match &self.frame {
             // At least as wide as a plain card, so the title fits.
