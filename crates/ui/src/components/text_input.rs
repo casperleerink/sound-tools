@@ -345,17 +345,17 @@ impl TextInput {
         self
     }
 
-    /// A multi-line input whose enter adds a newline and cmd-enter submits.
-    pub fn enter_adds_line(mut self, max_rows: usize) -> Self {
+    /// Enter adds a newline and cmd-enter submits, in a [`Self::multi_line`] input.
+    pub fn enter_adds_line(mut self) -> Self {
         self.enter_adds_line = true;
-        self.multi_line(max_rows)
+        self
     }
 
     /// A multi-line input as tall as its box, which scrolls past it, and whose enter adds a
     /// newline, as in a text editor.
     pub fn fill(mut self) -> Self {
         self.fills = true;
-        self.enter_adds_line(usize::MAX)
+        self.multi_line(usize::MAX).enter_adds_line()
     }
 
     /// Drop the field's own surface, border, padding and focus ring, for use inside a card
@@ -370,9 +370,14 @@ impl TextInput {
         self
     }
 
-    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+    pub fn set_disabled(&mut self, disabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.disabled != disabled {
             self.disabled = disabled;
+            if let Some(menu) = self.context_menu.clone()
+                && menu.read(cx).is_open()
+            {
+                menu.update(cx, |menu, cx| menu.close(window, cx));
+            }
             cx.notify();
         }
     }
@@ -418,8 +423,8 @@ impl TextInput {
         self.on_cancel = Some(Rc::new(f));
     }
 
-    /// Called with the new text after each edit of the composer: typing, deleting, pasting,
-    /// undo. Not after `set_text`.
+    /// Called with the new text after each edit (typing, deleting, pasting, undo), not after
+    /// `set_text`.
     pub fn set_on_change(&mut self, f: impl Fn(&str, &mut Window, &mut App) + 'static) {
         self.on_change = Some(Rc::new(f));
     }
@@ -605,23 +610,27 @@ impl TextInput {
     fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(snapshot) = self.undo_stack.pop() {
             let current = self.snapshot();
+            let before = current.content.clone();
             self.redo_stack.push(current);
             self.restore(snapshot, cx);
-            self.changed(window, cx);
+            self.changed(&before, window, cx);
         }
     }
 
     fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(snapshot) = self.redo_stack.pop() {
             let current = self.snapshot();
+            let before = current.content.clone();
             self.undo_stack.push(current);
             self.restore(snapshot, cx);
-            self.changed(window, cx);
+            self.changed(&before, window, cx);
         }
     }
 
-    fn changed(&self, window: &mut Window, cx: &mut App) {
-        if let Some(f) = self.on_change.clone() {
+    fn changed(&self, before: &str, window: &mut Window, cx: &mut App) {
+        if self.content.as_ref() != before
+            && let Some(f) = self.on_change.clone()
+        {
             f(&self.content.clone(), window, cx);
         }
     }
@@ -1184,6 +1193,7 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let before = self.content.clone();
         let Some(inserted) = self.edit(range.clone(), new_text) else {
             return;
         };
@@ -1191,7 +1201,7 @@ impl EntityInputHandler for TextInput {
         self.selected_range = cursor..cursor;
         self.marked_range.take();
         cx.notify();
-        self.changed(window, cx);
+        self.changed(&before, window, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -1207,6 +1217,7 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let before = self.content.clone();
         let Some(inserted) = self.edit(range.clone(), new_text) else {
             return;
         };
@@ -1219,7 +1230,7 @@ impl EntityInputHandler for TextInput {
                 ..range.start + utf8_from_utf16(new_text, new.end)
         });
         cx.notify();
-        self.changed(window, cx);
+        self.changed(&before, window, cx);
     }
 
     fn bounds_for_range(

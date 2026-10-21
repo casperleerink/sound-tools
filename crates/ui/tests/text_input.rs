@@ -119,7 +119,7 @@ fn shift_enter_adds_a_line_and_enter_submits(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn in_a_text_area_enter_adds_a_line_and_cmd_enter_submits(cx: &mut TestAppContext) {
-    let (input, cx) = open(cx, |cx| TextInput::new(cx).enter_adds_line(4));
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).enter_adds_line());
     let submitted: Rc<RefCell<Vec<String>>> = Rc::default();
     input.update(cx, |input, _| {
         let submitted = submitted.clone();
@@ -128,6 +128,18 @@ fn in_a_text_area_enter_adds_a_line_and_cmd_enter_submits(cx: &mut TestAppContex
     cx.simulate_keystrokes("a enter b secondary-enter");
     assert_eq!(text(&input, cx), "a\nb");
     assert_eq!(*submitted.borrow(), ["a\nb"]);
+}
+
+#[gpui::test]
+fn each_edit_is_told_and_a_backspace_in_an_empty_field_is_not(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    let changes: Rc<RefCell<Vec<String>>> = Rc::default();
+    input.update(cx, |input, _| {
+        let changes = changes.clone();
+        input.set_on_change(move |text, _, _| changes.borrow_mut().push(text.to_string()));
+    });
+    cx.simulate_keystrokes("backspace a backspace backspace");
+    assert_eq!(*changes.borrow(), ["a", ""]);
 }
 
 #[gpui::test]

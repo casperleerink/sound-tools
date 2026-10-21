@@ -734,7 +734,7 @@ impl TypeScriptCard {
         let value = props.value.clone().unwrap_or_default();
         let disabled = props.disabled == Some(true);
         if let Some((input, shown)) = self.inputs.remove(&node) {
-            input.update(cx, |input, cx| input.set_disabled(disabled, cx));
+            input.update(cx, |input, cx| input.set_disabled(disabled, window, cx));
             if shown != value && !input.focus_handle(cx).is_focused(window) {
                 input.update(cx, |input, cx| input.set_text(value.clone(), cx));
                 return (input, value);
@@ -747,7 +747,7 @@ impl TypeScriptCard {
                 .placeholder(placeholder)
                 .disabled(disabled);
             match props.rows {
-                Some(rows) => input.enter_adds_line(rows),
+                Some(rows) => input.multi_line(rows).enter_adds_line(),
                 None => input,
             }
         });
