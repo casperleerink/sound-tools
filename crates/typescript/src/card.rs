@@ -539,6 +539,13 @@ impl TypeScriptCard {
                 view.state = None;
                 cx.notify();
             }
+            // And the records of instances inside it.
+            ProjectEvent::Changed(id)
+                if id.is_inside(&view.id)
+                    && !view.live.read(cx).uses(view.card).inside.is_empty() =>
+            {
+                cx.notify();
+            }
             _ => {}
         })
         .detach();
