@@ -770,8 +770,9 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return 0;
         };
+        // Bun keeps the release of a press by its node, also while the card is made again.
         let Some(instance) = (self.cards.get(&card))
-            .filter(|entry| !entry.stale)
+            .filter(|entry| !entry.stale || kind == EventKind::Release)
             .map(|entry| entry.id.clone())
         else {
             return 0;

@@ -6,6 +6,7 @@ use gpui::{
 };
 
 use super::{ONLY_THE_TOOL, Opened, open};
+use crate::support::write_outside;
 
 impl Opened<'_> {
     /// The top left of the space of `key`, once it shows.
@@ -316,7 +317,7 @@ fn steps_on_what_code_keeps_grow_and_shrink_with_it(cx: &mut TestAppContext) {
     });
 }
 
-const POINTER: &str = r##"import { h, type PointerEvents, Rect, Show, signal, Space, text, Toggle, tool, type UiNode } from "./sdk";
+const POINTER: &str = r##"import { Button, h, type PointerEvents, Rect, Show, signal, Space, text, Toggle, tool, type UiNode } from "./sdk";
 
 tool({
   name: "pointer",
@@ -341,6 +342,7 @@ tool({
       h("div", { key: "pad", style: { width: 100, height: 40 }, ...pointer("div") }),
       vanishing("gone", (heard) => h("div", { key: "gone", style: { width: 100, height: 40 }, ...heard })),
       h(Toggle, { key: "switch", on: false, onClick: (press) => hear(`toggle-click-${press.clicks}`)() }),
+      h(Button, { key: "go", label: "Go", onClick: (press) => hear(`button-click-${press.clicks}`)() }),
       h(Space, { key: "board", width: 400, height: 100 },
         h(Rect, { x: 0, y: 0, width: 50, height: 50, color: "#ffffff", ...pointer("shape") }),
         h(Rect, { x: 100, y: 0, width: 50, height: 50, color: "#ffffff", drag: { onEnd: hear("drag-end") }, ...pointer("drag") }),
@@ -453,9 +455,101 @@ fn the_other_button_neither_clicks_a_held_press_nor_keeps_its_release(cx: &mut T
 }
 
 #[gpui::test]
-fn a_toggle_tells_how_many_clicks(cx: &mut TestAppContext) {
+fn a_toggle_and_a_button_tell_how_many_clicks(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
     let toggle = window.until_found("toggle-switch");
+    let button = window.until_found("button-go");
     window.double_click(toggle);
-    window.heard_by_the_pointer("toggle-click-1 toggle-click-2");
+    window.double_click(button);
+    window.heard_by_the_pointer("toggle-click-1 toggle-click-2 button-click-1 button-click-2");
+}
+
+#[gpui::test]
+fn the_right_button_ends_no_left_click_of_a_div_a_toggle_or_a_button(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let away = window.space("board") + point(px(350.), px(80.));
+    for selector in ["div-pad", "toggle-switch", "button-go"] {
+        let node = window.until_found(selector);
+        window.press(node);
+        window.button(node, MouseButton::Right, true);
+        window.button(node, MouseButton::Right, false);
+        window.release(away);
+    }
+    let toggle = window.until_found("toggle-switch");
+    window.click(toggle);
+    window.heard_by_the_pointer("div-press div-press div-release div-release toggle-click-1");
+}
+
+#[gpui::test]
+fn a_move_with_the_right_button_held_keeps_its_press(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pointer", POINTER));
+    let pad = window.until_found("div-pad");
+    let toggle = window.until_found("toggle-switch");
+    window.button(pad, MouseButton::Right, true);
+    window
+        .cx
+        .simulate_mouse_move(toggle, MouseButton::Right, Modifiers::default());
+    window.button(toggle, MouseButton::Left, true);
+    window.button(toggle, MouseButton::Left, false);
+    window.button(toggle, MouseButton::Right, false);
+    window.heard_by_the_pointer("div-press toggle-click-1 div-release");
+}
+
+/// A rig that shows the card of its pad until its record hides it.
+const RIG: &str = r##"import { boolean, DeviceCard, h, Show, text, tool } from "./sdk";
+
+const pad = tool({
+  name: "pad",
+  title: "Pad",
+  when: "A test",
+  doc: "Writes down its press and its release.",
+  state: { heard: text() },
+  sound: () => 0,
+  view: ({ update }) => {
+    const hear = (what: string) => () => update(what, (pad) => { pad.state.heard = `${pad.state.heard ?? ""} ${what}`.trim(); });
+    return h("div", { key: "key", style: { width: 100, height: 40 }, onPress: hear("press"), onRelease: hear("release") });
+  },
+});
+
+tool({
+  name: "rig",
+  title: "Rig",
+  when: "A test",
+  doc: "Shows the card of its pad.",
+  state: { hidden: boolean({ default: false }) },
+  children: { pad },
+  behaviour: () => ({ connections: [] }),
+  view: ({ state }) => Show({ when: () => !state.hidden, children: () => h("div", {}, DeviceCard({ path: "pad" })) }),
+});
+"##;
+
+#[gpui::test]
+fn a_card_that_goes_while_its_pad_is_held_sends_the_release(cx: &mut TestAppContext) {
+    let files = [
+        (ONLY_THE_TOOL[0].0.into(), ONLY_THE_TOOL[0].1.into()),
+        (
+            "state/rig/instance.json".into(),
+            r#"{"tool": "rig", "state": {}}"#.into(),
+        ),
+        (
+            "state/rig/pad.json".into(),
+            r#"{"tool": "pad", "state": {}}"#.into(),
+        ),
+        ("extensions/rig.ts".into(), RIG.into()),
+    ];
+    let mut window = open_project(cx, &files);
+    let key = window.until_found("div-key");
+    window.press(key);
+    window.until("the press", |window| {
+        window.record("rig/pad")["heard"] == "press"
+    });
+    write_outside(
+        &mut window,
+        "state/rig/instance.json",
+        r#"{"tool": "rig", "state": {"hidden": true}}"#,
+    );
+    window.until("the card gone", |window| window.find("div-key").is_none());
+    window.until("the release", |window| {
+        window.record("rig/pad")["heard"] == "press release"
+    });
 }
