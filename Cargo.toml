@@ -145,7 +145,7 @@ codegen-units = 16
 debug = 0
 codegen-units = 16
 
-# Fast gpui, layout and SVG keep debug UI usable.
+# Fast proc macros make derive-heavy extension builds faster. Fast gpui, layout and SVG keep debug UI usable.
 # Every crate with DSP code also gets opt-level 3: unoptimized audio glitches and hides real problems.
 [profile.dev.package]
 syn = { opt-level = 3 }
