@@ -123,15 +123,15 @@ export function Transport({ clock, record, end }: { clock: Clock; record: Transp
       }}
       <div style={{ direction: "row", align: "center" }}>
         <NumberBox key="transport-tempo" width={32} per={2} min={10} max={1000}
-          value={{ show: now.bpm.round(), get: () => clock.bpm, set: setTempo }} />
+          value={() => clock.bpm} onChange={setTempo} show={now.bpm.round()} />
         <Space key="transport-bpm" width={32} height={18}><Label x={0} y={2} text="bpm" color="gray-700" size={12} /></Space>
       </div>
       <div style={{ direction: "row", align: "center" }}>
         <NumberBox key="transport-beats" width={14} min={1} max={32} unit="beats"
-          value={{ show: now.tick, get: () => signature().beats, set: (beats) => setSignature(beats, signature().note) }} />
+          value={() => signature().beats} onChange={(beats) => setSignature(beats, signature().note)} show={now.tick} />
         <Space key="transport-slash" width={14} height={18}><Label x={3} y={2} text="/" color="gray-700" size={12} /></Space>
         <NumberBox key="transport-note" width={14} values={NOTES} unit="note"
-          value={{ show: now.tick, get: () => signature().note, set: (note) => setSignature(signature().beats, note) }} />
+          value={() => signature().note} onChange={(note) => setSignature(signature().beats, note)} show={now.tick} />
       </div>
       <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded
         onPress={() => clock.setComputerKeys(!clock.computerKeys)} />

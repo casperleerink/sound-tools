@@ -88,9 +88,9 @@ tool({
           </div>
         </div>
         <div style={row}>
-          <Knob value="density" label="Density" min={0} max={1} default={0.35} />
-          <Knob value="brightness" label="Brightness" min={0} max={1} default={0.4} />
-          <Knob value="level" label="Level" min={0} max={0.5} default={0.15} />
+          <Knob field="density" label="Density" min={0} max={1} default={0.35} />
+          <Knob field="brightness" label="Brightness" min={0} max={1} default={0.4} />
+          <Knob field="level" label="Level" min={0} max={0.5} default={0.15} />
         </div>
       </div>
     );

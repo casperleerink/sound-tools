@@ -81,15 +81,15 @@ tool({
   },
   view: ({ send }) => (
     <div style={row}>
-      <Pad x="tone" y="wild" size={160} />
+      <Pad field={{ x: "tone", y: "wild" }} size={160} />
       <div style={{ gap: 8 }}>
         <div style={button} onPress={() => send("strike")}>
           Thunder
         </div>
         <Meter value="rumble" label="Rumble" />
-        <Knob value="level" label="Level" min={-30} max={6} default={-10} unit="db" />
-        <Knob value="thunder" label="Thunder" min={0} max={1} default={0.7} unit="percent" />
-        <Knob value="thunder_decay" label="Rumble" min={500} max={8000} default={3000} unit="ms" />
+        <Knob field="level" label="Level" min={-30} max={6} default={-10} unit="db" />
+        <Knob field="thunder" label="Thunder" min={0} max={1} default={0.7} unit="percent" />
+        <Knob field="thunder_decay" label="Rumble" min={500} max={8000} default={3000} unit="ms" />
       </div>
     </div>
   ),

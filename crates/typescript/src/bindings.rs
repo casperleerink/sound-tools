@@ -19,7 +19,7 @@ tool({
   doc: "A row of steps.",
   state: { steps: pattern({ length: 4, min: 0, max: 1, default: 0 }) },
   sound: () => 0,
-  view: () => h(Steps, { path: "steps" }),
+  view: () => h(Steps, { field: "steps" }),
 });
 "#;
 

@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { h, input, number, list, notes, output, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { h, input, Knob, number, list, notes, NumberBox, output, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -431,3 +431,13 @@ const sized = { width: 120, background: "red" } satisfies Style;
 // @ts-expect-error: a width is no part of a look.
 const sizedLook: Look = sized;
 h("div", { style: { hover: look, pressed: sizedLook } });
+
+// A control names a `field`, or shows what code keeps and hears it with `onChange`.
+Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
+Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0 });
+// @ts-expect-error: a value code keeps is no field name, and needs `onChange`.
+Select({ value: "velocity", options: lanes });
+// @ts-expect-error: a field or what code keeps, not both.
+Select({ field: "mode", value: lane, onChange: (picked: "velocity" | "pedal") => picked, options: lanes });
+// @ts-expect-error: `show` is for what code keeps; a field shows itself.
+NumberBox({ field: "bpm", show: 120, key: "bpm", width: 40 });
