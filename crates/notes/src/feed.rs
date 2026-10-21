@@ -7,7 +7,8 @@ use sound_core::{
     EventInput, EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor,
 };
 
-use crate::{Amount, Bend, Controller, Held, NoteEvent, Performed, Pitch, Schedule};
+use crate::held::Held;
+use crate::{Amount, Bend, Controller, NoteEvent, Performed, Pitch, Schedule};
 
 /// The most performed events that wait for their frame: a control loop plays a little ahead.
 const WAITING: usize = 256;
@@ -40,9 +41,9 @@ pub enum NoteFeedUpdate {
     PerformerGone,
 }
 
-/// What plays at the start of the next block: the release of a change of senders, and what a
-/// performer sent that found the schedule full. On one frame only where each controller ends up
-/// counts, so it keeps that and the offs: a fixed size, whatever comes.
+/// What plays at the start of the next block, once it passed [`Held`]: the release of a change
+/// of senders, and what a performer sent that found the schedule full. On one frame only where
+/// each controller ends up counts, so it keeps that and the offs: a fixed size, whatever comes.
 struct Now {
     waits: bool,
     all_off: bool,
@@ -164,7 +165,10 @@ impl Processor for NoteFeed {
             }
             NoteFeedUpdate::Note(performed) => {
                 if let Some(event) = self.performed.perform(*performed) {
-                    self.now.keep(event);
+                    (self.held).pass(event, true, |event| {
+                        self.now.keep(event);
+                        true
+                    });
                 }
             }
         }

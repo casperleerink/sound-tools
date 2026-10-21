@@ -361,3 +361,27 @@ fn a_gone_performer_that_played_a_pitch_many_times_leaves_another_senders_note_o
     harness.send(NoteFeedUpdate::PerformerGone);
     assert_eq!(harness.render(1_000).last(), Some(&60.0));
 }
+
+#[test]
+fn an_off_of_a_key_the_performer_does_not_hold_leaves_another_senders_note() {
+    let mut harness = Harness::new();
+    let (pitch, velocity) = (Pitch::new(60).unwrap(), Velocity::new(100).unwrap());
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(release(60, 0));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+}
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_put_down_when_the_feed_was_full() {
+    let mut harness = Harness::new();
+    // Room for 256 waiting: 128 notes far ahead, an on and an off each.
+    for pitch in 0..128 {
+        harness.send(note(pitch, 1_000_000, Some(1)));
+    }
+    harness.send(send(NoteEvent::Pedal(Pedal::new(127).unwrap()), 0));
+    assert_eq!(harness.render(4_800).last(), Some(&1_000.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    assert_eq!(harness.render(200).last(), Some(&0.0));
+}
