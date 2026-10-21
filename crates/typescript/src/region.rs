@@ -190,6 +190,19 @@ fn read(
     FILES.get(path, (assets, waiter), read)
 }
 
+/// The file of a region its parent plays, or `None` while it is read for the region `waiter`,
+/// which runs again with its parent then. The read the region asked for is let go of when
+/// nothing held it by the next frame, as when its parent did not play it yet: Bun had not
+/// connected it.
+pub(crate) fn audio(
+    assets: &Assets,
+    asset: &AudioAsset,
+    waiter: &InstanceId,
+) -> Option<Arc<Audio>> {
+    sound_media::in_memory(assets, asset)
+        .or_else(|| Some(Arc::clone(&*read(assets, asset, waiter).ok()??)))
+}
+
 /// The regions of the project of `assets` whose file was read since the last call, to run
 /// their behaviour again.
 pub(crate) fn take_read(assets: &Assets) -> Vec<InstanceId> {
