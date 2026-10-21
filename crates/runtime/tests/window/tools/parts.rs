@@ -175,7 +175,7 @@ fn a_dialog_keeps_the_keys_from_the_page_but_its_text_field_has_them(cx: &mut Te
 }
 
 /// A page that hears keys, with a dialog that holds a space a press focuses, and a div whose
-/// press opens a menu and closes the dialog 50 ms later.
+/// press opens a menu, which tells what it answered, and closes the dialog 50 ms later.
 const DIALOG_PARTS: &str = r#"import { Dialog, h, Space, timeout, tool } from "./sdk";
 
 tool({
@@ -198,7 +198,7 @@ tool({
             key: "menu",
             style: box,
             onPress: () => {
-              openMenu([{ label: "One" }]);
+              openMenu([{ label: "One" }]).then((picked) => (memory.heard = `picked-${picked}`));
               timeout(() => { memory.open = false; }, 50);
             },
           }, "Menu"))),
@@ -226,7 +226,9 @@ fn a_dialog_keeps_the_keys_from_the_page_wherever_they_are(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-fn a_dialog_that_closes_while_its_menu_is_open_gives_the_page_its_keys(cx: &mut TestAppContext) {
+fn a_dialog_that_closes_while_its_menu_is_open_closes_it_and_gives_the_page_its_keys(
+    cx: &mut TestAppContext,
+) {
     let mut window = page(cx, "parts", DIALOG_PARTS);
     let open = window.until_found("div-open");
     window.click(open);
@@ -236,7 +238,8 @@ fn a_dialog_that_closes_while_its_menu_is_open_gives_the_page_its_keys(cx: &mut 
     window.until("the timer to close the dialog", |window| {
         window.find("div-menu").is_none()
     });
-    window.key_down("escape", false);
+    window.until_found("div-heard-picked-null");
+    assert!(window.find("menu-0").is_none());
     window.key_down("a", false);
     window.until_found("div-heard-a");
 }

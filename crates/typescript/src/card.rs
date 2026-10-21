@@ -105,6 +105,8 @@ pub(crate) struct TypeScriptCard {
     indexes: RefCell<HashMap<String, SpaceIndex>>,
     /// The menu its code opens where the pointer is, and the question of the open one.
     menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
+    /// The newest overlay when the menu opened, whose closing closes it.
+    menu_overlay: Option<u64>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
     inputs: HashMap<u64, (Entity<TextInput>, String)>,
     /// The nodes of its open popovers and dialogs, the last opened last.
@@ -657,6 +659,7 @@ impl TypeScriptCard {
             feeds: Feeds::default(),
             indexes: RefCell::default(),
             menu: None,
+            menu_overlay: None,
             inputs: HashMap::new(),
             overlays: Vec::new(),
             focus_before_overlays: None,
@@ -716,6 +719,18 @@ impl TypeScriptCard {
             .collect();
         let had_overlays = !self.overlays.is_empty();
         self.overlays.retain(|node| open.contains(node));
+        if let Some(owner) = self.menu_overlay
+            && !self.overlays.contains(&owner)
+        {
+            self.menu_overlay = None;
+            if let Some((menu, _)) = &self.menu {
+                menu.update(cx, |menu, cx| {
+                    if menu.is_open() {
+                        menu.close(window, cx);
+                    }
+                });
+            }
+        }
         let opened: Vec<u64> = (open.into_iter())
             .filter(|node| !self.overlays.contains(node))
             .collect();
@@ -1068,6 +1083,7 @@ impl TypeScriptCard {
             }
         });
         self.menu = Some((menu, Some(question)));
+        self.menu_overlay = self.overlays.last().copied();
     }
 
     /// Answers the open menu's question, once.
