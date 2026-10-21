@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "analyzer"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "schemars",
@@ -1169,7 +1169,7 @@ checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
 
 [[package]]
 name = "compressor"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "delay"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -1775,7 +1775,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "drum-pad"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "hound",
@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "eq"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "filter"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "gallery"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "gate"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "schemars",
@@ -3226,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "instrument"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -3605,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "limiter"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -3854,14 +3854,14 @@ dependencies = [
 
 [[package]]
 name = "metronome"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "sound-core",
 ]
 
 [[package]]
 name = "midi"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "midir",
  "rtrb",
@@ -3932,7 +3932,7 @@ dependencies = [
 
 [[package]]
 name = "modulation"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -4844,7 +4844,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "plugin-host"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "clack-extensions",
@@ -5511,7 +5511,7 @@ dependencies = [
 
 [[package]]
 name = "reverb"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -5584,7 +5584,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "analyzer",
  "anyhow",
@@ -5738,7 +5738,7 @@ dependencies = [
 
 [[package]]
 name = "sampler"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "hound",
@@ -5755,7 +5755,7 @@ dependencies = [
 
 [[package]]
 name = "saturator"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -6173,7 +6173,7 @@ dependencies = [
 
 [[package]]
 name = "sound-agent"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "ctrlc",
  "dunce",
@@ -6194,7 +6194,7 @@ dependencies = [
 
 [[package]]
 name = "sound-core"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "cpal",
  "dunce",
@@ -6220,7 +6220,7 @@ dependencies = [
 
 [[package]]
 name = "sound-media"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "claxon",
  "hound",
@@ -6237,7 +6237,7 @@ dependencies = [
 
 [[package]]
 name = "sound-notes"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "proptest 1.11.0",
  "schemars",
@@ -6249,7 +6249,7 @@ dependencies = [
 
 [[package]]
 name = "sound-signals"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6260,7 +6260,7 @@ dependencies = [
 
 [[package]]
 name = "sound-typescript"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "dunce",
  "gpui",
@@ -6281,7 +6281,7 @@ dependencies = [
 
 [[package]]
 name = "sound-ui"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "serde",
@@ -6625,7 +6625,7 @@ dependencies = [
 
 [[package]]
 name = "test-clap-plugin"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "clack-extensions",
  "clack-plugin",
@@ -6634,11 +6634,11 @@ dependencies = [
 
 [[package]]
 name = "test-plugin-support"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "test-vst3-plugin"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "test-plugin-support",
  "vst3",
@@ -6904,7 +6904,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tone"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "schemars",
  "serde",
@@ -7156,7 +7156,7 @@ dependencies = [
 
 [[package]]
 name = "utility"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "proptest 1.11.0",
@@ -7382,7 +7382,7 @@ dependencies = [
 
 [[package]]
 name = "wavetable"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "gpui",
  "realfft",
@@ -8305,7 +8305,7 @@ checksum = "2b1b1e28ac6301b1c097d21c11130090f7ecc5db9d5ef4e52595ab942f8d76d5"
 
 [[package]]
 name = "workspace-rules"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "cargo_metadata",
