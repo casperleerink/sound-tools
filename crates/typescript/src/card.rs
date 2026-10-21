@@ -147,6 +147,32 @@ pub fn node_count(page: &AnyView, cx: &App) -> usize {
     }
 }
 
+/// Flushes pending watches, and checks that the window applied Bun's replies.
+#[cfg(feature = "test-support")]
+pub fn page_ready(page: &AnyView, cx: &mut App) -> bool {
+    let Ok(page) = page.clone().downcast::<Page>() else {
+        return true;
+    };
+    let live = page.read(cx).0.read(cx).live.clone();
+    live.update(cx, |live, cx| live.flush(cx))
+}
+
+/// Whether the page has a text node that says `text`, for tests waiting for a view change.
+#[cfg(feature = "test-support")]
+pub fn page_has_text(page: &AnyView, text: &str, cx: &App) -> bool {
+    let Ok(page) = page.clone().downcast::<Page>() else {
+        return false;
+    };
+    let card = page.read(cx).0.read(cx);
+    card.live.read(cx).tree(card.card).is_some_and(|tree| {
+        tree.as_ref().is_ok_and(|table| {
+            table.entries().any(|entry| {
+                matches!(&entry.props, Props::Text(props) if props.text.as_deref() == Some(text))
+            })
+        })
+    })
+}
+
 /// What the page `page` shows in the window's title bar, see [`TitleBar`]. `None` for a view that
 /// is no page of a tool of the project.
 pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {

@@ -424,6 +424,20 @@ impl Live {
         })
     }
 
+    #[cfg(feature = "test-support")]
+    pub(crate) fn flush(&mut self, cx: &mut Context<Self>) -> bool {
+        let idle = |host: &Host| match host {
+            Host::Running { bun, .. } => bun.is_idle(),
+            Host::Starting { .. } => false,
+            Host::Stopped => true,
+        };
+        if !idle(&self.host) {
+            return false;
+        }
+        self.look_at_watches(cx);
+        idle(&self.host)
+    }
+
     /// `bun` as the Bun of the window, heard until it ends.
     fn running(bun: Arc<Bun>, cx: &mut Context<Self>) -> Host {
         let events = bun.events();
@@ -1360,24 +1374,26 @@ impl Live {
         let tools = self.tools.borrow();
         for entry in self.cards.values_mut() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
-            if watches == entry.watches {
-                continue;
+            if watches != entry.watches {
+                shown_watches_moved |= entry
+                    .tree
+                    .as_ref()
+                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
+                entry.watches = watches.clone();
             }
-            let reads = self.reads.get(&entry.id).cloned().unwrap_or_default();
-            shown_watches_moved |= entry
-                .tree
-                .as_ref()
-                .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
-            let read_moved = match &reads.watches {
-                None => true,
-                Some(names) => {
-                    (names.iter()).any(|name| watches.get(name) != entry.watches.get(name))
-                }
+            let told = self.told_watches.get(&entry.id);
+            let reads = self
+                .reads
+                .get(&entry.id)
+                .and_then(|reads| reads.watches.as_ref());
+            let read_moved = match reads {
+                None => told != Some(&watches),
+                Some(names) => (names.iter())
+                    .any(|name| watches.get(name) != told.and_then(|told| told.get(name))),
             };
             if read_moved {
-                moved.insert(entry.id.clone(), watches.clone());
+                moved.insert(entry.id.clone(), watches);
             }
-            entry.watches = watches;
         }
         drop(tools);
         for (instance, watches) in moved {

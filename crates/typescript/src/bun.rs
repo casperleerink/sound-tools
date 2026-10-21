@@ -674,8 +674,6 @@ static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
 static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
 static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
 static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
-/// What every Bun of the process was told and has not done.
-static IN_FLIGHT: AtomicU64 = AtomicU64::new(0);
 static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
 /// What the last batch of ops cost: Bun's milliseconds and the window's microseconds to apply.
 static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
@@ -694,12 +692,6 @@ pub fn sent_updates_and_events() -> (u64, u64) {
         SENT_UPDATES.load(Ordering::Relaxed),
         SENT_EVENTS.load(Ordering::Relaxed),
     )
-}
-
-/// Whether every Bun of this process did all it was told, for a test that waits for Bun before
-/// it says nothing happened.
-pub fn bun_answered_everything() -> bool {
-    IN_FLIGHT.load(Ordering::Relaxed) == 0
 }
 
 /// How many batches of ops the windows of this process applied, for a measurement of how long
@@ -820,6 +812,16 @@ impl Bun {
         Err(LoadFailure { file, why })
     }
 
+    #[cfg(feature = "test-support")]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.busy
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending
+            == 0
+            && self.events.is_empty()
+    }
+
     /// What Bun says after its load, in order, up to [`Event::Ended`].
     pub(crate) fn events(&self) -> smol::channel::Receiver<Event> {
         self.events.clone()
@@ -851,7 +853,6 @@ impl Bun {
                 busy.since = Instant::now();
             }
             busy.pending += 1;
-            IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
         }
         let length = line.len() as u64;
         let sent = self.lines.try_send(line).is_ok();
@@ -1048,7 +1049,6 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
 fn done(busy: &mut Busy) {
     if busy.pending > 0 {
         busy.pending -= 1;
-        IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

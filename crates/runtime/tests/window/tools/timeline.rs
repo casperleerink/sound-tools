@@ -21,12 +21,14 @@ impl Opened<'_> {
         starts
     }
 
-    /// A new snap makes the clips' shapes again, with drags on its grid: they are there.
-    fn snap_applied(&mut self) {
-        for _ in 0..4 {
-            self.wait_for_bun();
-            self.settle();
-        }
+    fn snap_applied(&mut self, label: &str) {
+        let shell = self.shell.clone();
+        self.until("the snap shows", |window| {
+            window.cx.read(|cx| {
+                let page = shell.read(cx).main_view().unwrap();
+                sound_typescript::page_has_text(page, label, cx)
+            })
+        });
     }
 }
 
@@ -38,7 +40,7 @@ fn with_snap_off_a_clip_moves_to_the_tick_and_with_bars_to_the_bar(cx: &mut Test
     window.click(snap);
     // Off, Bar, Beat, 1/8, 1/16, 1/32, as the arrangement's menu.
     window.pick("menu-0");
-    window.snap_applied();
+    window.snap_applied("Off");
     let at = window.on_lane(BAR / 2, 1);
     window.drag(at, at + point(px(37.), px(0.)));
     window.until("the clip moved", |window| {
@@ -51,7 +53,7 @@ fn with_snap_off_a_clip_moves_to_the_tick_and_with_bars_to_the_bar(cx: &mut Test
 
     window.click(snap);
     window.pick("menu-1");
-    window.snap_applied();
+    window.snap_applied("Bar");
     let at = window.on_lane(BAR, 1);
     window.drag(at, at + point(px(30.), px(0.)));
     window.until("the clip moved to a bar", |window| {
