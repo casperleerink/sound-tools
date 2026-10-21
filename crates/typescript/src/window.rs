@@ -1933,8 +1933,8 @@ impl Live {
         self.performer_gone(cx);
     }
 
-    /// Tells each place the code of the Bun that ended played on that it is gone, as an
-    /// instance or child gone since has nothing left to release.
+    /// Tells each place the code of the Bun that ended played on that it is gone. A place
+    /// deleted since has nothing left to release.
     fn performer_gone(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
