@@ -1149,6 +1149,62 @@ fn a_note_old_code_sent_for_after_its_off_does_not_play_with_a_new_bun(cx: &mut 
     assert_eq!(window.loudest(4_800), 0.0);
 }
 
+/// A tool `pads` whose key `f` sends its bang `hit` 5 s ahead, which starts noise that never
+/// ends. Its page is `saved` once code saved so runs.
+fn hits(saved: bool) -> String {
+    format!(
+        r#"import {{ bang, feedback, h, max, noise, number, tool }} from "./sdk";
+
+const SAVED = {saved};
+
+tool({{
+  name: "pads",
+  title: "Pads",
+  when: "You want a hit later",
+  doc: "Its key sends a hit for later.",
+  state: {{ count: number({{ min: 0, max: 1000, default: 0 }}) }},
+  inputs: {{ hit: bang() }},
+  sound: ({{ hit }}) => {{
+    const level = feedback();
+    level.set(max(hit, level));
+    return noise().times(level).times(0.2);
+  }},
+  onKey: ({{ send, time, update }}, {{ key, down }}) => {{
+    if (!down) return;
+    update("Count the key", ({{ state }}) => {{
+      state.count = (state.count ?? 0) + 1;
+    }});
+    if (key === "f") send("hit", {{ at: time + 5 }});
+  }},
+  view: ({{ size }}) =>
+    h("div", {{ key: SAVED ? "saved" : "pads", style: () => ({{ width: size.width, height: size.height }}) }}, "Pads"),
+}});
+"#
+    )
+}
+
+#[gpui::test]
+fn a_bang_old_code_sent_for_later_does_not_fire_with_a_new_bun(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let files = [
+        ("project.json", project.replace("\"keys\"", "\"pads\"")),
+        (
+            "state/pads.json",
+            r#"{"tool": "pads", "state": {}}"#.to_string(),
+        ),
+        ("extensions/pads.ts", hits(false)),
+    ];
+    let files = files.map(|(path, text)| (path.to_string(), text));
+    let mut window = open_files(cx, &files);
+    window.press_on_pads("f");
+    let root = window.folder.path().to_path_buf();
+    write(&root, "extensions/pads.ts", &hits(true));
+    window.until_found("div-saved");
+    // Past the frame the old code sent its bang for.
+    window.render(6 * OFFLINE.sample_rate as usize);
+    assert_eq!(window.loudest(4_800), 0.0);
+}
+
 /// A child deleted and made again is another instrument: the note the old code held on the
 /// first does not end what the second plays.
 #[gpui::test]

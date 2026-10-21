@@ -88,8 +88,8 @@ pub(crate) struct Live {
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
-    /// Where the code of the running Bun played notes: an instance's own voices, or the feed
-    /// of a child of it. A new Bun knows nothing of them, so each place hears it is gone.
+    /// Where the code of the running Bun played: an instance's own voices and controls, or the
+    /// feed of a child of it. A new Bun knows nothing of them, so each place hears it is gone.
     performed_on: HashSet<(InstanceId, Option<String>)>,
     /// When the control loops last ran.
     last_frame: Instant,
@@ -1026,6 +1026,7 @@ impl Live {
         cx: &mut Context<Self>,
     ) {
         let Some(child) = child else {
+            self.performed_on.insert((id.clone(), None));
             if let Err(error) = self.control(id, name, value, at, cx) {
                 eprintln!("error: {id} {error}");
             }
@@ -1043,6 +1044,7 @@ impl Live {
                 return self.record_on(id, &played, (name, value, at), &session, cx);
             }
         }
+        self.performed_on.insert((played.clone(), None));
         if let Err(error) = self.control(&played, name, value, at, cx) {
             let problem = format!("a performer plays the child {child:?}, which {error}");
             self.tool_problem(id, problem, cx);
