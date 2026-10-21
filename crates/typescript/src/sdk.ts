@@ -1714,20 +1714,63 @@ function root<T>(make: (dispose: () => void) => T, card: CardRoot | null = owner
   }
 }
 
-/** Runs `cleanup` when what runs now runs again or goes. */
-function onCleanup(cleanup: () => void) {
-  owner?.cleanups.push(cleanup);
+/** Runs `cleanup` when what runs now goes: the view, a part `Show` shows, a row of a `For`, a binding that runs again, or the node whose handler runs. */
+export function onCleanup(cleanup: () => void) {
+  if (owner?.disposed) cleanup();
+  else owner?.cleanups.push(cleanup);
+}
+
+/** Runs `run` as part of `scope`, following nothing it reads: what it makes goes when `scope` does. */
+function runIn<T>(scope: Owner | null, run: () => T): T {
+  const [lastListener, lastOwner, lastSetup] = [listener, owner, settingUp];
+  [listener, owner, settingUp] = [null, scope, 0];
+  try {
+    return run();
+  } finally {
+    [listener, owner, settingUp] = [lastListener, lastOwner, lastSetup];
+  }
 }
 
 /** Reads once, without what runs now following it: what a component takes as it first draws, such as where an editor opens. */
 export function untrack<T>(read: () => T): T {
-  const [lastListener, lastSetup] = [listener, settingUp];
-  [listener, settingUp] = [null, 0];
-  try {
-    return read();
-  } finally {
-    [listener, settingUp] = [lastListener, lastSetup];
-  }
+  return runIn(owner, read);
+}
+
+/**
+ * Runs `run` once after `ms`, unless what made it goes first, as `onCleanup` tells: a delayed
+ * hide. Made in a view, a component, or a node's handler or drag. Gives what stops it sooner.
+ */
+export function timeout(run: () => void, ms: number): () => void {
+  return timer(run, ms, false);
+}
+
+/** Runs `run` every `ms` until what made it goes, as `timeout`: a button held to repeat. Gives what stops it sooner. */
+export function interval(run: () => void, ms: number): () => void {
+  return timer(run, ms, true);
+}
+
+function timer(run: () => void, ms: number, repeats: boolean): () => void {
+  const scope = owner;
+  if (!scope) throw new Error("a timer is made in a view, a component, or a node's handler or drag");
+  if (scope.disposed) return () => {};
+  const fire = () => {
+    if (!repeats) stop();
+    try {
+      batch(() => runIn(scope, run));
+    } catch (error) {
+      failedIn(scope, error);
+      host.changed();
+    }
+  };
+  const handle = repeats ? setInterval(fire, ms) : setTimeout(fire, ms);
+  const stop = () => {
+    if (repeats) clearInterval(handle);
+    else clearTimeout(handle);
+    const at = scope.cleanups.indexOf(stop);
+    if (at >= 0) scope.cleanups.splice(at, 1);
+  };
+  scope.cleanups.push(stop);
+  return stop;
 }
 
 /** Runs the body of a component: once, reading nothing that changes. */
@@ -2037,7 +2080,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "slider" | "segmented" | "notice" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "slider" | "segmented" | "notice" | "overlay" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -2059,6 +2102,8 @@ interface Made extends PointerEvents {
   onTitle?: () => void;
   onSidechain?: (select: number, option: number) => void;
   drag?: Drag;
+  /** Where its handlers run, made at the first: what they start, such as a timer, goes with the node. */
+  scope?: Owner;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
   region?: { parent: number | null };
@@ -2119,6 +2164,7 @@ function insert(parent: number, child: Made, before: Made | null) {
 
 function forget(made: Made) {
   nodes.delete(made.id);
+  if (made.scope) dispose(made.scope);
   made.card.changes.delete(made);
   for (const child of made.children) forget(child);
 }
@@ -2374,13 +2420,66 @@ export function Fragment(props: { children?: Child }): Region {
 
 /** Shows `children` while `when` holds, else `fallback`: made again each time it shows. */
 export function Show(props: { when: Accessor<unknown>; children: () => Child; fallback?: () => Child }): Region {
+  return Switch({ fallback: props.fallback, children: Match(props) });
+}
+
+const MATCH = Symbol("match");
+type MatchProps = { when: Accessor<unknown>; children: () => Child };
+
+/** A part of a `Switch`, shown while `when` holds and no `Match` before it does. */
+export function Match(props: MatchProps): Region {
+  return {
+    [MATCH]: props,
+    mount() {
+      throw new Error("a Match goes inside a Switch");
+    },
+  } as Region;
+}
+
+/**
+ * Shows the first of its `Match` children whose `when` holds, else `fallback`: made again each
+ * time another one shows. `<Switch fallback={() => "None"}><Match when={() => state.mode === "a"}>{() => ...}</Match>...</Switch>`
+ */
+export function Switch(props: { fallback?: () => Child; children: Child }): Region {
+  const matches: MatchProps[] = [];
+  const collect = (child: Child) => {
+    if (Array.isArray(child)) return child.forEach(collect);
+    if (child === null || child === undefined || typeof child === "boolean") return;
+    const match = (child as { [MATCH]?: MatchProps })[MATCH];
+    if (!match) throw new Error("a Switch holds only Match");
+    matches.push(match);
+  };
+  collect(props.children);
   return {
     mount(into, family) {
-      const shown = memo(() => Boolean(props.when()));
-      dynamic(() => (shown() ? setup(props.children) : props.fallback ? setup(props.fallback) : null), into, family);
+      const shown = memo(() => matches.findIndex((match) => Boolean(match.when())));
+      dynamic(() => {
+        const match = matches[shown()];
+        return match ? setup(match.children) : props.fallback ? setup(props.fallback) : null;
+      }, into, family);
     },
   };
 }
+
+/** What a `Popover` and a `Dialog` take. Its code owns whether it is open: `onClose` sets what `open` reads. */
+export interface OverlayProps {
+  key?: string;
+  open: Accessor<boolean>;
+  /** Escape, or a press outside it: of a popover, outside the node it hangs from too. */
+  onClose: () => void;
+  /** Made again each time it opens, as `Show` makes its part. */
+  children: () => Child;
+}
+
+const overlay =
+  (modal: boolean) =>
+  ({ open, children, ...props }: OverlayProps): Region =>
+    Show({ when: open, children: () => element("overlay", { ...props, modal }, [children()]) });
+
+/** Content of its own under the div it is in, as the window's menus hang: a press on the div is its own, so the `onClick` of a button in it opens and closes it. */
+export const Popover = overlay(false);
+/** Content of its own over the window, which a dark backdrop covers: a press on the backdrop closes it. While it is open, the view hears no key but those of its text fields. */
+export const Dialog = overlay(true);
 
 // ---------------------------------------------------------------------------------------------
 // What a card draws.
@@ -2453,9 +2552,15 @@ export type Shape =
          * each note between the lowest pitch at its foot and the highest at its top, 12 apart at least.
          */
         | { kind: "notes"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<TakeList>; color: Bind<Paint> }
-        /** A shape filled between `points`, in order: a fade's shade, a triangle, an outline. */
-        | { kind: "path"; points: Bind<readonly (readonly [Num, Num])[]>; color: Bind<Paint> }
+        /**
+         * A shape through `points`, in order, filled, or with `width` its outline that many points
+         * wide, closed where its last point is its first: a fade's shade, a triangle, a curve.
+         */
+        | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
       ));
+
+/** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
+export type PathPoint = readonly [Num, Num] | readonly [Num, Num, Num, Num] | readonly [Num, Num, Num, Num, Num, Num];
 
 /** A colour, or one between two by a live value: see `blend`. */
 export type Paint = Color | { mix: readonly [Color, Color]; by: Num };
@@ -3472,23 +3577,29 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** The `onRelease` of each press, by node and button: a node its press took away still hears its release. */
-const releases = new Map<string, (press: Press) => void>();
+/**
+ * The `onRelease` of each press, by node and button, with the scope of its node's handlers: a
+ * node its press took away still hears its release, and what that starts goes at once.
+ */
+const releases = new Map<string, { release: (press: Press) => void; scope: Owner }>();
 
 /** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
 function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
   if (kind === "release") {
     const pressed = `${id} ${(payload as Press).button}`;
-    const release = releases.get(pressed);
+    const held = releases.get(pressed);
     releases.delete(pressed);
-    return release?.(payload);
+    return held && runIn(held.scope, () => held.release(payload));
   }
   const made = nodes.get(id);
   if (!made) return;
+  const scope = (made.scope ??= { owner: null, owned: [], cleanups: [], card: made.card, disposed: false });
+  if (kind === "press" && made.onRelease) releases.set(`${id} ${(payload as Press).button}`, { release: made.onRelease, scope });
+  return runIn(scope, () => handle(made, kind, payload));
+}
+
+function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "release">, payload: never) {
   switch (kind) {
-    case "press":
-      if (made.onRelease) releases.set(`${id} ${(payload as Press).button}`, made.onRelease);
-      return made.onPress?.(payload);
     case "commit":
       return made.onCommit?.((payload as { text: string }).text);
     case "cancel":
@@ -3506,7 +3617,7 @@ function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "co
       return made.onSidechain?.(select, option);
     }
     default: {
-      const handler = { click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
+      const handler = { press: made.onPress, click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);
     }
   }

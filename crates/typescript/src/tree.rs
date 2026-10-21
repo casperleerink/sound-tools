@@ -229,6 +229,12 @@ pub(crate) enum NoticeToned {
     Info,
 }
 
+props! {
+    /// A popover under the node it is in, or a dialog over the window: shown while it is in
+    /// the table, as its code owns whether it is open.
+    OverlayProps / OverlayChange { key: String, modal: bool, on_close: bool }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ButtonLook {
@@ -313,8 +319,8 @@ props! {
         high: f32,
         /// A wave as a band from the lowest to the highest value under each point, else a line.
         band: bool,
-        /// The corners of a path, in order.
-        points: Vec<[Num; 2]>,
+        /// The points of a path, in order.
+        points: Vec<PathPoint>,
         /// What a wave's values are multiplied by along it: `[x, factor]` from its left, straight
         /// between them.
         level: Vec<[Num; 2]>,
@@ -337,6 +343,7 @@ pub(crate) enum Props {
     Slider(SliderProps),
     Segmented(SegmentedProps),
     Notice(NoticeProps),
+    Overlay(OverlayProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -356,6 +363,7 @@ pub(crate) enum Change {
     Slider(SliderChange),
     Segmented(SegmentedChange),
     Notice(NoticeChange),
+    Overlay(OverlayChange),
     Marker,
 }
 
@@ -421,6 +429,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "slider" => Props::Slider(next(&mut seq, "props")?),
                         "segmented" => Props::Segmented(next(&mut seq, "props")?),
                         "notice" => Props::Notice(next(&mut seq, "props")?),
+                        "overlay" => Props::Overlay(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -447,6 +456,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "slider" => Change::Slider(next(&mut seq, "props")?),
                         "segmented" => Change::Segmented(next(&mut seq, "props")?),
                         "notice" => Change::Notice(next(&mut seq, "props")?),
+                        "overlay" => Change::Overlay(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -487,6 +497,7 @@ const FAMILIES: &[&str] = &[
     "slider",
     "segmented",
     "notice",
+    "overlay",
     "marker",
 ];
 
@@ -635,6 +646,13 @@ impl NodeTable {
         self.slots.get(slot)?.as_ref()
     }
 
+    /// Whether it shows a dialog.
+    pub(crate) fn shows_dialog(&self) -> bool {
+        (self.entries()).any(
+            |entry| matches!(&entry.props, Props::Overlay(overlay) if overlay.modal == Some(true)),
+        )
+    }
+
     /// Every node there is now, in the order they were made.
     pub(crate) fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.slots.iter().flatten()
@@ -727,6 +745,7 @@ impl NodeTable {
                             props.apply(change);
                         }
                         (Props::Notice(props), Change::Notice(change)) => props.apply(change),
+                        (Props::Overlay(props), Change::Overlay(change)) => props.apply(change),
                         (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}
@@ -874,7 +893,7 @@ impl ShapeProps {
         ]
         .into_iter()
         .flatten()
-        .chain(self.points.iter().flatten().flatten())
+        .chain(self.points.iter().flatten().flat_map(PathPoint::numbers))
         .all(|number| number.fixed().is_some());
         let followed = self.moves.is_none() && self.grows.is_none() && self.shrinks.is_none();
         followed && self.list.is_none() && reaches && numbers
@@ -920,11 +939,8 @@ impl ShapeProps {
             _ => None,
         };
         let clip = (self.clip.iter()).flat_map(|clip| [&clip.width, &clip.height]);
-        let corners = [&self.points, &self.level]
-            .into_iter()
-            .flatten()
-            .flatten()
-            .flatten();
+        let points = self.points.iter().flatten().flat_map(PathPoint::numbers);
+        let corners = self.level.iter().flatten().flatten();
         [
             &self.opacity,
             &self.x,
@@ -939,6 +955,7 @@ impl ShapeProps {
         .chain(reaches)
         .chain(words)
         .chain(clip)
+        .chain(points)
         .chain(corners)
     }
 
@@ -1132,6 +1149,27 @@ pub(crate) enum List {
 pub(crate) enum Reach {
     Point([Num; 2]),
     Turn(Num),
+}
+
+/// A point of a path: `[x, y]` it goes straight to, `[cx, cy, x, y]` it curves to pulled
+/// towards one control point, or `[c1x, c1y, c2x, c2y, x, y]` towards two.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum PathPoint {
+    To([Num; 2]),
+    Quadratic([Num; 4]),
+    Cubic([Num; 6]),
+}
+
+impl PathPoint {
+    /// Its numbers: the control points first, the point it ends at last.
+    pub(crate) fn numbers(&self) -> &[Num] {
+        match self {
+            Self::To(numbers) => numbers,
+            Self::Quadratic(numbers) => numbers,
+            Self::Cubic(numbers) => numbers,
+        }
+    }
 }
 
 /// The text of a shape: as it is, or a live number as a readout.

@@ -40,7 +40,7 @@ pub fn shadow() -> Vec<BoxShadow> {
 
 /// The shared overlay surface: `gray_200` with an `alpha/10` border and the
 /// dropdown [`shadow`].
-pub(crate) fn surface(cx: &App) -> Div {
+pub fn surface(cx: &App) -> Div {
     let theme = cx.theme();
     div()
         .occlude()
@@ -54,7 +54,7 @@ pub(crate) fn surface(cx: &App) -> Div {
 
 /// Zero-size box pinned to the chosen trigger edge; the deferred `anchored`
 /// content hangs off it, so alignment does not depend on the trigger's size.
-pub(crate) fn anchor(side: Side, align: Align, content: impl IntoElement) -> Div {
+pub fn anchor(side: Side, align: Align, content: impl IntoElement) -> Div {
     let corner = match (side, align) {
         (Side::Bottom, Align::Start) => Anchor::TopLeft,
         (Side::Bottom, Align::End) => Anchor::TopRight,

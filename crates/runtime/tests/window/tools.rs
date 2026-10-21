@@ -21,6 +21,7 @@ mod edits;
 mod gestures;
 mod mixer;
 mod nested;
+mod parts;
 mod performance;
 mod piano_roll;
 mod rack;

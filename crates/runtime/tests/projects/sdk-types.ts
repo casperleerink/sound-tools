@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { h, input, Knob, number, list, notes, NumberBox, output, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { h, input, Knob, number, list, notes, NumberBox, output, Path, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -441,3 +441,8 @@ Select({ value: "velocity", options: lanes });
 Select({ field: "mode", value: lane, onChange: (picked: "velocity" | "pedal") => picked, options: lanes });
 // @ts-expect-error: `show` is for what code keeps; a field shows itself.
 NumberBox({ field: "bpm", show: 120, key: "bpm", width: 40 });
+
+// A path starts at a point, not with a curve.
+Path({ points: [[0, 0], [5, 0, 10, 10]], color: "#ffffff" });
+// @ts-expect-error: its first point is `[x, y]`.
+Path({ points: [[5, 0, 10, 10]], color: "#ffffff" });

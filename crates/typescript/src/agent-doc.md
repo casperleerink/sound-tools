@@ -167,9 +167,11 @@ All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`
 A view and a component run once. A value that changes (a field, a child, an output, `clock.playing`, `memory`, `size`) goes in a function, which the window runs again when what it read changes, and only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the view fails with an error that says how: `x={note.start}` is `x={() => note.start}`. A handler reads values as it runs, so it needs no function around them.
 
 - `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. Its body runs once too: `x={() => note.start}`.
-- `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows.
+- `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows; `<Switch fallback>` of `<Match when>{() => ...}</Match>` shows the first that holds.
+- `<Popover open={open} onClose={() => setOpen(false)}>{() => ...}</Popover>` hangs under the div it is in, `<Dialog>` the same over the window, which hears no key while it is open. Escape or a press outside calls `onClose`; a press on that div is its own, so its button's `onClick` opens and closes it.
+- `timeout(run, ms)` and `interval(run, ms)` stop by themselves when what made them goes: the view, a `Show` part, a `For` row, the node whose handler or drag made them. A delayed hide, a held button that repeats. `onCleanup(run)` runs `run` then.
 - `memo(() => ...)` works a value out once for many functions. `selector(() => memory.selected)` gives `isPicked(key)`, which changes only for the keys that come or go, so a click selects one note at the cost of one.
-- Set a field of `memory` to change it, from any code. A `Set` or a `Map` is replaced, never changed in place: its type refuses `.add`.
+- Set a field of `memory` to change it, from any code. Replace a `Set` or a `Map`; its type refuses `.add`.
 
 ## Shapes that move
 
@@ -215,7 +217,7 @@ Levels, the clock and easing are live values too, so a meter or a light moves on
 - `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record.
 - `now.elapsed`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
-- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far; `<Notes list={now.take(path)}>` draws its notes. `band` from `low: -1` to `high: 1` draws a waveform; `level` scales it along its width, as a fade. `<Path points>` fills between its points. `now.input(channel)` is the level of the audio input while a recorder is armed.
+- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far; `<Notes list={now.take(path)}>` draws its notes. `band` from `low: -1` to `high: 1` draws a waveform; `level` scales it along its width, as a fade. `<Path points>` fills between its points, or with `width` draws its outline, closed when its last point is its first; `[cx, cy, x, y]` curves to `x, y`. `now.input(channel)` is the level of the audio input while a recorder is armed.
 
 ## A control loop, the keys
 
