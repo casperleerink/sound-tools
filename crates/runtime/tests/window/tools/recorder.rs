@@ -109,6 +109,14 @@ impl Opened<'_> {
         })
     }
 
+    /// Presses `selector` and waits until Bun answered: what the press sends reaches the engine
+    /// before the song plays on, so a take starts and ends where the test says.
+    fn press_found(&mut self, selector: &str) {
+        let at = self.until_found(selector);
+        self.cx.simulate_click(at, Modifiers::default());
+        self.wait_for_bun();
+    }
+
     /// The engine plays for about `frames`, the input brings what it captured meanwhile, and
     /// the window polls.
     fn record_for(&mut self, input: &SimulatedInput, frames: u64) {
@@ -124,8 +132,7 @@ impl Opened<'_> {
 fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut TestAppContext) {
     let (mut window, input) = open_studio(cx);
     // Armed from the view: the input opens before the song plays.
-    let arm = window.until_found("div-arm");
-    window.cx.simulate_click(arm, Modifiers::default());
+    window.press_found("div-arm");
     window.until("the input opens", |_| {
         input.openings.load(Ordering::Relaxed) == 1
     });
@@ -133,8 +140,7 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
     window.record_for(&input, 24_000);
     window.play_midi(60);
     window.record_for(&input, 24_000);
-    let done = window.until_found("div-done");
-    window.cx.simulate_click(done, Modifiers::default());
+    window.press_found("div-done");
     window.until("a region and a timeline", |window| {
         window.record_for(&input, 2_048);
         !window.made("region").is_empty() && !window.made("timeline").is_empty()
@@ -187,8 +193,7 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
 #[gpui::test]
 fn a_meter_shows_the_level_of_the_input_a_recorder_opened(cx: &mut TestAppContext) {
     let (mut window, input) = open_studio(cx);
-    let arm = window.until_found("div-arm");
-    window.cx.simulate_click(arm, Modifiers::default());
+    window.press_found("div-arm");
     window.until("the meter shows the right side of the tone", |window| {
         window.record_for(&input, 2_048);
         // A frame of the view, which reads the level.
@@ -228,10 +233,9 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
         window.settle();
         input.openings.load(Ordering::Relaxed) == 1
     });
-    let record = window.until_found("button-record");
-    window.cx.simulate_click(record, Modifiers::default());
+    window.press_found("button-record");
     window.record_for(&input, 48_000);
-    window.cx.simulate_click(record, Modifiers::default());
+    window.press_found("button-record");
     window.until("a region of the voice", |window| {
         window.record_for(&input, 2_048);
         window.song_regions() > 0
@@ -265,10 +269,9 @@ fn a_take_of_sound_on_a_track_is_a_problem(cx: &mut TestAppContext) {
     // The track chosen, which records what the keyboard plays.
     let name = window.until_found("div-name-t00");
     window.click(name);
-    let record = window.until_found("button-record");
-    window.cx.simulate_click(record, Modifiers::default());
+    window.press_found("button-record");
     window.record_for(&input, 48_000);
-    window.cx.simulate_click(record, Modifiers::default());
+    window.press_found("button-record");
     window.until("the take refused", |window| {
         window.record_for(&input, 2_048);
         !window.problems().is_empty()
@@ -301,14 +304,12 @@ impl Opened<'_> {
 fn a_take_whose_input_cannot_open_keeps_its_notes(cx: &mut TestAppContext) {
     let (mut window, input) = open_studio(cx);
     input.fails.store(true, Ordering::Relaxed);
-    let arm = window.until_found("div-arm");
-    window.cx.simulate_click(arm, Modifiers::default());
+    window.press_found("div-arm");
     window.start_playing();
     window.record_for(&input, 24_000);
     window.play_midi(60);
     window.record_for(&input, 24_000);
-    let done = window.until_found("div-done");
-    window.cx.simulate_click(done, Modifiers::default());
+    window.press_found("div-done");
     window.until("the notes kept", |window| {
         window.record_for(&input, 2_048);
         !window.made("timeline").is_empty()
@@ -321,8 +322,7 @@ fn a_take_whose_input_cannot_open_keeps_its_notes(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_recorder_deleted_while_it_takes_lets_go_of_the_input(cx: &mut TestAppContext) {
     let (mut window, input) = open_studio(cx);
-    let arm = window.until_found("div-arm");
-    window.cx.simulate_click(arm, Modifiers::default());
+    window.press_found("div-arm");
     window.until("the input opens", |_| {
         input.openings.load(Ordering::Relaxed) == 1
     });
@@ -346,25 +346,15 @@ fn a_recorder_deleted_while_it_takes_lets_go_of_the_input(cx: &mut TestAppContex
     });
 }
 
-impl Opened<'_> {
-    fn press_found(&mut self, selector: &str) {
-        let at = self.until_found(selector);
-        self.cx.simulate_click(at, Modifiers::default());
-    }
-}
-
 /// A second recorder that starts while the first records gets a take of its own, of the sound
 /// from where it started.
 #[gpui::test]
 fn a_recorder_that_starts_while_another_records_keeps_its_own_take(cx: &mut TestAppContext) {
     let (mut window, input) = open_studio_of(cx, &["rec-2"]);
-    // Each recorder starts when its press has reached the engine, not when Bun gets to it.
     window.press_found("div-arm");
-    window.wait_for_bun();
     window.start_playing();
     window.record_for(&input, 24_000);
     window.press_found("div-arm-2");
-    window.wait_for_bun();
     window.record_for(&input, 24_000);
     window.press_found("div-done");
     window.press_found("div-done-2");
