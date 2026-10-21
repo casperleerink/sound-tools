@@ -17,7 +17,7 @@ use sound_core::{
     Smoothed, Timed, Watch,
 };
 use sound_notes::{
-    Held, NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+    NoteEvent, Pedal, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
 };
 
 use crate::cable::{Bang, Control, Number};
@@ -138,7 +138,7 @@ pub struct Signals {
     arrays: Vec<Vec<f32>>,
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
-    held: Held,
+    holds: Holds,
     watches: Vec<Watch>,
     tap: Option<EventTap<NoteEvent>>,
     sending: Sending,
@@ -194,6 +194,49 @@ struct SignalsVoice {
 struct Sending {
     bangs: [bool; MAX_OUTPUTS],
     notes: [Option<Pitch>; MAX_OUTPUTS],
+}
+
+/// The pitches the interface holds on the voices, and those the notes that come in hold, so a
+/// gone performer ends only its own. It counts nothing and holds back no off: where several
+/// senders meet, a feed already did, and an off ends its pitch on the voices whoever holds it.
+#[derive(Default)]
+struct Holds {
+    /// By pitch number, one bit each.
+    pitches: (u128, u128),
+    pedal: (bool, bool),
+}
+
+impl Holds {
+    fn follow(&mut self, event: NoteEvent, performed: bool) {
+        let (pitches, pedal) = match performed {
+            true => (&mut self.pitches.0, &mut self.pedal.0),
+            false => (&mut self.pitches.1, &mut self.pedal.1),
+        };
+        match event {
+            NoteEvent::On { pitch, .. } => *pitches |= 1 << pitch.number(),
+            NoteEvent::Off { pitch } => {
+                let up = !(1 << pitch.number());
+                self.pitches = (self.pitches.0 & up, self.pitches.1 & up);
+            }
+            NoteEvent::AllOff => *self = Self::default(),
+            NoteEvent::Pedal(moved) => *pedal = moved.is_down(),
+            _ => {}
+        }
+    }
+
+    /// Forgets what the performer holds, and gives `release` what ends it: the pedal up when the
+    /// notes that come in do not hold it down, then an off for each pitch they do not hold.
+    fn performer_gone(&mut self, mut release: impl FnMut(NoteEvent)) {
+        if std::mem::take(&mut self.pedal.0) && !self.pedal.1 {
+            release(NoteEvent::Pedal(Pedal::UP));
+        }
+        let alone = std::mem::take(&mut self.pitches.0) & !self.pitches.1;
+        for number in (0..128).filter(|number| alone & (1 << number) != 0) {
+            release(NoteEvent::Off {
+                pitch: Pitch::nearest(number),
+            });
+        }
+    }
 }
 
 /// The keys an effect or a source follows: the newest held one plays, and the note ends when
@@ -277,7 +320,7 @@ impl Signals {
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
-            held: Held::default(),
+            holds: Holds::default(),
             watches,
             tap: None,
             sending: Sending {
@@ -397,18 +440,10 @@ impl Signals {
         }
     }
 
-    /// Follows `event`, which the interface played or not, through [`Held`].
+    /// Follows `event`, which the interface played or not.
     fn follow(&mut self, event: NoteEvent, performed: bool) {
-        let Self {
-            held,
-            players,
-            bend,
-            ..
-        } = self;
-        held.pass(event, performed, |event| {
-            play(players, bend, event);
-            true
-        });
+        self.holds.follow(event, performed);
+        play(&mut self.players, &mut self.bend, event);
     }
 }
 
@@ -761,12 +796,12 @@ impl Processor for Signals {
             SignalsUpdate::PerformerGone => {
                 self.scheduled.clear();
                 let Self {
-                    held,
+                    holds,
                     players,
                     bend,
                     ..
                 } = self;
-                held.performer_gone(|event| play(players, bend, event));
+                holds.performer_gone(|event| play(players, bend, event));
             }
             SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
         }

@@ -9,7 +9,7 @@ use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput,
     EventTap, Node, Ports, PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_notes::{NoteEvent, Pedal, Performed, Pitch, Velocity};
+use sound_notes::{NoteEvent, NoteFeed, NoteFeedUpdate, Pedal, Performed, Pitch, Velocity};
 use sound_signals::{
     Bang, Cable, Code, Control, Kind, Machine, Number, Signals, SignalsUpdate, Values,
 };
@@ -756,10 +756,10 @@ fn a_score_of_every_timing_renders_as_it_did() {
         }
     }
     let expected = [
-        (5926154012030582869, 1010679254138105471),
-        (14047036350601615105, 17939792986079062633),
-        (16880789244861997553, 1517712285991712962),
-        (13256509999253765021, 7353583470673154908),
+        (5776360306822237945, 6672061644954794190),
+        (9782693442129799630, 6622498506930331513),
+        (9453197873779793825, 1517712285991712962),
+        (16517895486679873485, 7353583470673154908),
         (7202922979984856391, 14695981039346656037),
         (8568832297698623357, 14695981039346656037),
         (9607617552142065038, 14695981039346656037),
@@ -1149,4 +1149,38 @@ fn a_gone_performer_lifts_the_pedal_it_holds() {
         .update(played.signals, SignalsUpdate::PerformerGone)
         .unwrap();
     assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
+}
+
+/// Two senders into a feed hold one key: the feed passes the off only once both let go, and the
+/// voice ends with it.
+#[test]
+fn a_key_two_senders_hold_through_a_feed_ends_when_the_feed_lets_it_go() {
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
+    let mut edit = played.control.edit();
+    let feed = edit.add_processor("feed", NoteFeed::default()).unwrap();
+    let into = Connection::new(
+        feed.id(),
+        NoteFeed::OUTPUT,
+        played.signals.id(),
+        Signals::NOTES,
+    );
+    edit.connect(into).unwrap();
+    edit.commit().unwrap();
+    let pitch = Pitch::new(60).unwrap();
+    let velocity = Velocity::new(100).unwrap();
+    for at in [0, 4_800] {
+        let note = Performed::Play {
+            pitch,
+            velocity,
+            at,
+            frames: 9_600,
+        };
+        played
+            .control
+            .update(feed, NoteFeedUpdate::Note(note))
+            .unwrap();
+    }
+    let output = played.render(24_000);
+    assert!(loudest(&output[9_600..14_400]) > 0.1);
+    assert_eq!(loudest(&output[14_500..]), 0.0);
 }
