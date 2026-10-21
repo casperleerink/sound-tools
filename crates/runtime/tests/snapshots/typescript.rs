@@ -89,8 +89,8 @@ tool({
       h("div", { style: { direction: "row", gap: 24 } },
         h("div", { style: { width: 240, height: 120, padding: 12, radius: 10, background: "gray-200", shadow: true } },
           "A card",
-          h("div", { style: { absolute: true, top: -6, right: -6, width: 20, height: 20, radius: 10, align: "center", justify: "center", background: "red", color: "gray-50", fontSize: 11 } }, "3"),
-          h("div", { style: { absolute: true, left: 0, right: 0, bottom: 0, height: 32, align: "center", justify: "center", background: "alpha/10" } }, "Overlay"),
+          h("div", { style: { absolute: { top: -6, right: -6 }, width: 20, height: 20, radius: 10, align: "center", justify: "center", background: "red", color: "gray-50", fontSize: 11 } }, "3"),
+          h("div", { style: { absolute: { left: 0, right: 0, bottom: 0 }, height: 32, align: "center", justify: "center", background: "alpha/10" } }, "Overlay"),
         ),
         h("div", { style: { width: 120, height: 60, radius: 10, background: "alpha/5", clip: true } },
           h("div", { style: { width: 200, height: 40, background: "teal/40" } }),
@@ -99,7 +99,7 @@ tool({
           Array.from({ length: 9 }, (_, index) => h("div", { style: { width: 40, height: 24, radius: 4, align: "center", justify: "center", background: "alpha/10" } }, String(index))),
         ),
       ),
-      h("div", { style: { width: 240, padding: 8, background: "alpha/5", textAlign: "right" } }, "Aligned right"),
+      h("div", { style: { width: 240, padding: 8, background: "alpha/5", textAlign: "end" } }, "Aligned right"),
     ),
 });
 "##;

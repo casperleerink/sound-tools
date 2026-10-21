@@ -152,7 +152,7 @@ tool({
 
 | Element | Does |
 | --- | --- |
-| `<div style onPress carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. `onPress` hears a click or a right click; a `disabled` div hears nothing. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
+| `<div style onPress carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. `onPress` hears a click or a right click; a `disabled` div hears no press, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
 | `<Input>` | A text field; keys typed there play nothing. |
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view; `sidechain` puts selects behind the expand of a compressor or a gate. |
 | `<Knob>`, `<Fader>`, `<Steps>`, `<Meter>`, `<Pad>` | A knob, a fader (over a meter with `meter`), a row of steps, a level, a square for the pointer, on numbers named as `now.value` names them. |

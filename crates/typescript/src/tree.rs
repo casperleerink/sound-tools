@@ -51,7 +51,7 @@ props! {
         style: Box<Style>,
         /// It hears a click.
         on_press: bool,
-        /// It hears no pointer and shows its disabled look.
+        /// It hears no press, drag or drop and shows its disabled look; it still scrolls.
         disabled: bool,
         cursor: Cursor,
         tooltip: String,
@@ -1472,11 +1472,7 @@ pub(crate) struct Style {
     max_height: Option<f32>,
     grow: bool,
     /// Out of its parent's flow, placed by the insets from its parent's edges.
-    absolute: bool,
-    top: Option<f32>,
-    left: Option<f32>,
-    right: Option<f32>,
-    bottom: Option<f32>,
+    absolute: Option<Insets>,
     wrap: bool,
     align: Option<Place>,
     justify: Option<Justify>,
@@ -1493,7 +1489,7 @@ pub(crate) struct Style {
     /// `tabular`: digits of one width, so a number that changes does not move what follows.
     font: Option<FontKind>,
     weight: Option<Weight>,
-    text_align: Option<TextAlign>,
+    text_align: Option<Place>,
     opacity: Option<f32>,
     shadow: bool,
     /// Its children do not show outside it.
@@ -1535,12 +1531,13 @@ impl Look {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TextAlign {
-    Left,
-    Center,
-    Right,
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct Insets {
+    top: Option<f32>,
+    left: Option<f32>,
+    right: Option<f32>,
+    bottom: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1644,7 +1641,8 @@ impl Style {
         self.scroll
     }
 
-    /// Its size, how it grows and where it is placed, for the box its children scroll in.
+    /// Its size, how it grows, where it is placed and its shadow, for the box its children
+    /// scroll in.
     pub(crate) fn sized(&self, mut element: Div) -> Div {
         element = element.flex();
         if let Some(width) = self.width {
@@ -1668,20 +1666,27 @@ impl Style {
         if self.grow {
             element = element.flex_grow(1.);
         }
-        if self.absolute {
+        if let Some(insets) = self.absolute {
             element = element.absolute();
+            if let Some(inset) = insets.top {
+                element = element.top(px(inset));
+            }
+            if let Some(inset) = insets.left {
+                element = element.left(px(inset));
+            }
+            if let Some(inset) = insets.right {
+                element = element.right(px(inset));
+            }
+            if let Some(inset) = insets.bottom {
+                element = element.bottom(px(inset));
+            }
         }
-        if let Some(inset) = self.top {
-            element = element.top(px(inset));
-        }
-        if let Some(inset) = self.left {
-            element = element.left(px(inset));
-        }
-        if let Some(inset) = self.right {
-            element = element.right(px(inset));
-        }
-        if let Some(inset) = self.bottom {
-            element = element.bottom(px(inset));
+        if self.shadow {
+            element = element.shadow(sound_ui::components::popover::shadow());
+            // Rounded here too, or the shadow of a scrolling div has square corners.
+            if let Some(radius) = self.radius {
+                element = element.rounded(px(radius));
+            }
         }
         element
     }
@@ -1788,16 +1793,13 @@ impl Style {
             None => element,
         };
         element = match self.text_align {
-            Some(TextAlign::Left) => element.text_left(),
-            Some(TextAlign::Center) => element.text_center(),
-            Some(TextAlign::Right) => element.text_right(),
+            Some(Place::Start) => element.text_left(),
+            Some(Place::Center) => element.text_center(),
+            Some(Place::End) => element.text_right(),
             None => element,
         };
         if let Some(opacity) = self.opacity {
             element = element.opacity(opacity);
-        }
-        if self.shadow {
-            element = element.shadow(sound_ui::components::popover::shadow());
         }
         if self.clip {
             element = element.overflow_hidden();

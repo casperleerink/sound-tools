@@ -2111,7 +2111,7 @@ impl Drawing<'_, '_> {
                             .when(follow.x.is_none(), |inside| inside.w_full())
                             .when(follow.y.is_none(), |inside| inside.h_full())
                             .children(children);
-                        (style.apply(div(), disabled).relative().overflow_hidden()).child(inside)
+                        (style.apply(div(), disabled).overflow_hidden()).child(inside)
                     }
                     None => style.apply(div(), disabled).children(children),
                 };

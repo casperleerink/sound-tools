@@ -2616,18 +2616,18 @@ export const PeakMeter = (props: { key?: string; of?: string; input?: readonly n
  * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.
  * Coloured while `on`, `color` when given; its code turns it in `onPress`.
  */
-export interface ToggleProps {
+export type ToggleProps = (
+  | { label: Bind<string>; icon?: never; count?: never; dot?: never }
+  | { icon: Bind<IconName>; count?: Bind<number>; label?: never; dot?: never }
+  | { dot: true; label?: never; icon?: never; count?: never }
+) & {
   key?: string;
-  label?: Bind<string>;
-  icon?: Bind<IconName>;
-  count?: Bind<number>;
-  dot?: boolean;
   on: Bind<boolean>;
   color?: Bind<Color>;
   disabled?: Bind<boolean>;
   tooltip?: Bind<string>;
   onPress?: (press: Press) => void;
-}
+};
 
 /** A switch, see `ToggleProps`. */
 export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
@@ -2682,12 +2682,8 @@ export interface Style {
   maxHeight?: number;
   /** Takes the room left in its parent. */
   grow?: boolean;
-  /** Out of its parent's flow, over its siblings, `top`, `left`, `right` and `bottom` from its parent's edges: a badge, an overlay. */
-  absolute?: boolean;
-  top?: number;
-  left?: number;
-  right?: number;
-  bottom?: number;
+  /** Out of its parent's flow, over its siblings, this far from its parent's edges: a badge, an overlay. */
+  absolute?: { top?: number; left?: number; right?: number; bottom?: number };
   /** Its children go on to a next line where a row is full. */
   wrap?: boolean;
   /** Where children sit across the direction. */
@@ -2707,7 +2703,7 @@ export interface Style {
   /** `tabular`: digits of one width, so a number that changes does not move what follows. */
   font?: "tabular";
   weight?: "normal" | "medium" | "semibold";
-  textAlign?: "left" | "center" | "right";
+  textAlign?: "start" | "center" | "end";
   /** 0 to 1. */
   opacity?: number;
   /** The shadow of the app's menus. */
@@ -2724,15 +2720,16 @@ export interface Style {
   truncate?: boolean;
 }
 
-/** What a look changes of a div's `Style`. */
-export type Look = Pick<Style, "background" | "color" | "borderColor" | "opacity">;
+type LookKey = "background" | "color" | "borderColor" | "opacity";
+/** What a look changes of a div's `Style`; a `Style` with more in it is no look. */
+export type Look = Pick<Style, LookKey> & { [Key in Exclude<keyof Style, LookKey>]?: never };
 
 interface DivProps {
   key?: string;
   style?: Bind<Style>;
   /** A click on it, or a press of the right button. */
   onPress?: (press: Press) => void;
-  /** It hears no pointer and shows its `disabled` look; its children still do. */
+  /** It hears no press, drag or drop and shows its `disabled` look; its children still hear theirs, and it still scrolls. */
   disabled?: Bind<boolean>;
   cursor?: Pointed["cursor"];
   tooltip?: Bind<string>;
