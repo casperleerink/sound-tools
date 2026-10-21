@@ -2155,8 +2155,8 @@ impl Drawing<'_, '_> {
                 if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
                     let name = element_name("scroll", key.as_deref(), index);
-                    let scrolling = (style.sized(div()).id(ElementId::Name(name.into())))
-                        .track_scroll(&scroller);
+                    let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
+                    let scrolling = style.fade(scrolling, disabled).track_scroll(&scroller);
                     let scrolling = match axis {
                         tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
                         tree::ScrollAxis::Y => scrolling.overflow_y_scroll(),

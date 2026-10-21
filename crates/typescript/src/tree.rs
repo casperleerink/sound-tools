@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use gpui::{Div, Hsla, prelude::*, px};
+use gpui::{Div, Hsla, Stateful, prelude::*, px};
 use serde::de::value::MapAccessDeserializer;
 use serde::de::{Error, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
@@ -1693,7 +1693,46 @@ impl Style {
 
     /// Its look while pressed, which needs an element with an id.
     pub(crate) fn pressed(&self) -> Option<Look> {
-        self.pressed
+        self.pressed.map(|look| self.own(look))
+    }
+
+    /// What its own box takes of a look: a scrolling div's opacity goes on the box it scrolls
+    /// in, which carries its shadow.
+    fn own(&self, look: Look) -> Look {
+        match self.scroll {
+            Some(_) => Look {
+                opacity: None,
+                ..look
+            },
+            None => look,
+        }
+    }
+
+    /// As the app's own controls are disabled.
+    fn disabled_look(&self) -> Look {
+        self.disabled.unwrap_or(Look {
+            opacity: Some(0.4),
+            ..Look::default()
+        })
+    }
+
+    /// Its opacity in each of its looks, for the box a scrolling div scrolls in.
+    pub(crate) fn fade(&self, mut element: Stateful<Div>, disabled: bool) -> Stateful<Div> {
+        let fade = |look: Option<Look>| Look {
+            opacity: look.and_then(|look| look.opacity),
+            ..Look::default()
+        };
+        if let Some(opacity) = self.opacity {
+            element = element.opacity(opacity);
+        }
+        match disabled {
+            true => fade(Some(self.disabled_look())).refine(element),
+            false => {
+                let (hover, pressed) = (fade(self.hover), fade(self.pressed));
+                (element.hover(move |style| hover.refine(style)))
+                    .active(move |style| pressed.refine(style))
+            }
+        }
     }
 
     /// The height its style fixes, if any.
@@ -1798,22 +1837,18 @@ impl Style {
             Some(Place::End) => element.text_right(),
             None => element,
         };
-        if let Some(opacity) = self.opacity {
+        if let Some(opacity) = self.opacity.filter(|_| self.scroll.is_none()) {
             element = element.opacity(opacity);
         }
         if self.clip {
             element = element.overflow_hidden();
         }
         match (disabled, self.hover) {
-            // As the app's own controls are disabled.
-            (true, _) => {
-                let look = self.disabled.unwrap_or(Look {
-                    opacity: Some(0.4),
-                    ..Look::default()
-                });
-                element = look.refine(element);
+            (true, _) => element = self.own(self.disabled_look()).refine(element),
+            (false, Some(look)) => {
+                let look = self.own(look);
+                element = element.hover(move |style| look.refine(style));
             }
-            (false, Some(look)) => element = element.hover(move |style| look.refine(style)),
             (false, None) => {}
         }
         if self.keep {
