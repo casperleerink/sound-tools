@@ -168,7 +168,7 @@ A view and a component run once. A value that changes (a field, a child, an outp
 
 - `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. Its body runs once too: `x={() => note.start}`.
 - `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows; `<Switch fallback>` of `<Match when>{() => ...}</Match>` shows the first that holds.
-- `<Popover open={open} onClose={() => setOpen(false)}>{() => ...}</Popover>` hangs under the div it is in, `<Dialog>` the same over the window, which hears no key while it is open. Escape or a press outside calls `onClose`; a press on that div is its own, so its button opens and closes it.
+- `<Popover open={open} onClose={() => setOpen(false)}>{() => ...}</Popover>` hangs under the div it is in, `<Dialog>` the same over the window, which hears no key while it is open. Escape or a press outside calls `onClose`; a press on that div is its own, so its button's `onClick` opens and closes it.
 - `timeout(run, ms)` and `interval(run, ms)` stop by themselves when what made them goes: the view, a `Show` part, a `For` row, the node whose handler or drag made them. A delayed hide, a held button that repeats. `onCleanup(run)` runs `run` then.
 - `memo(() => ...)` works a value out once for many functions. `selector(() => memory.selected)` gives `isPicked(key)`, which changes only for the keys that come or go, so a click selects one note at the cost of one.
 - Set a field of `memory` to change it, from any code. Replace a `Set` or a `Map`; its type refuses `.add`.

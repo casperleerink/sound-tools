@@ -19,7 +19,7 @@ fn page<'a>(cx: &'a mut TestAppContext, name: &str, code: &str) -> Opened<'a> {
     open(cx, &files)
 }
 
-/// A `Popover` under the div that holds its trigger, and a `Dialog`: each opens on a press of
+/// A `Popover` under the div that holds its trigger, and a `Dialog`: each opens on a click of
 /// its trigger and shows a div `inside`.
 const OVERLAYS: &str = r#"import { Dialog, h, Popover, signal, tool } from "./sdk";
 
@@ -35,10 +35,10 @@ tool({
     const box = { width: 80, height: 20 };
     return h("div", { style: { padding: 40, gap: 40 } },
       h("div", {},
-        h("div", { key: "popover", style: box, onPress: () => setPopover(!popover()) }, "Popover"),
+        h("div", { key: "popover", style: box, onClick: () => setPopover(!popover()) }, "Popover"),
         h(Popover, { open: popover, onClose: () => setPopover(false) }, () => h("div", { key: "inside" }, "Inside")),
       ),
-      h("div", { key: "dialog", style: box, onPress: () => setDialog(true) }, "Dialog"),
+      h("div", { key: "dialog", style: box, onClick: () => setDialog(true) }, "Dialog"),
       h(Dialog, { open: dialog, onClose: () => setDialog(false) }, () => h("div", { key: "inside" }, "Inside")),
       h("div", { key: "elsewhere", style: box }, "Elsewhere"),
     );
@@ -68,7 +68,7 @@ fn a_popover_shows_its_content_until_escape_or_a_press_outside_it_closes_it(
     window.until_found("div-inside");
     window.click(elsewhere);
     window.closes("a press outside to close it");
-    // A press of its trigger is the trigger's own, which closes it and does not open it again.
+    // A click of its trigger is the trigger's own, which closes it and does not open it again.
     window.click(trigger);
     window.until_found("div-inside");
     window.click(trigger);
@@ -90,7 +90,7 @@ fn a_dialog_shows_its_content_until_escape_or_a_press_on_its_backdrop_closes_it(
     window.closes("escape to close it");
     window.click(trigger);
     let inside = window.until_found("div-inside");
-    // A press on its content is its own.
+    // A click on its content is its own.
     window.click(inside);
     window.wait_for_bun();
     assert!(window.find("div-inside").is_some());
@@ -98,7 +98,7 @@ fn a_dialog_shows_its_content_until_escape_or_a_press_on_its_backdrop_closes_it(
     window.closes("a press on the backdrop to close it");
 }
 
-/// A page that hears keys, with a dialog a press opens. A press in it replaces it with a second
+/// A page that hears keys, with a dialog a click opens. A click in it replaces it with a second
 /// dialog, which holds a text field.
 const MODAL: &str = r#"import { Dialog, h, Input, tool } from "./sdk";
 
@@ -113,11 +113,11 @@ tool({
   view: ({ memory }) => {
     const box = { width: 80, height: 20 };
     return h("div", { style: { padding: 40, gap: 40 } },
-      h("div", { key: "open", style: box, onPress: () => (memory.open = "first") }, "Open"),
+      h("div", { key: "open", style: box, onClick: () => (memory.open = "first") }, "Open"),
       () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
       () => memory.typed && h("div", { key: `typed-${memory.typed}` }, memory.typed),
       h(Dialog, { open: () => memory.open === "first", onClose: () => (memory.open = "") }, () =>
-        h("div", { key: "first", style: box, onPress: () => (memory.open = "second") }, "Next")),
+        h("div", { key: "first", style: box, onClick: () => (memory.open = "second") }, "Next")),
       h(Dialog, { open: () => memory.open === "second", onClose: () => (memory.open = "") }, () =>
         h("div", { key: "second", style: { gap: 8 } },
           "Second",
@@ -129,7 +129,7 @@ tool({
 
 impl Opened<'_> {
     /// Whether the page heard `key` go down, once Bun answered.
-    fn heard(&mut self, key: &str) -> bool {
+    fn heard_key(&mut self, key: &str) -> bool {
         self.wait_for_bun();
         self.find(&format!("div-heard-{key}")).is_some()
     }
@@ -142,8 +142,8 @@ fn a_dialog_keeps_the_keys_from_the_page_but_its_text_field_has_them(cx: &mut Te
     window.click(open);
     let first = window.until_found("div-first");
     window.key_down("delete", false);
-    assert!(!window.heard("delete"));
-    // A press replaces it with the second, whose field takes the keys.
+    assert!(!window.heard_key("delete"));
+    // A click replaces it with the second, whose field takes the keys.
     window.click(first);
     window.until_found("div-second");
     window.cx.simulate_input("hi");
@@ -152,8 +152,8 @@ fn a_dialog_keeps_the_keys_from_the_page_but_its_text_field_has_them(cx: &mut Te
     // Escape gives the field's keys back to the dialog, which still keeps them.
     window.key_down("escape", false);
     window.key_down("delete", false);
-    assert!(!window.heard("delete"));
-    assert!(!window.heard("h"));
+    assert!(!window.heard_key("delete"));
+    assert!(!window.heard_key("h"));
     // Closed, the keys go back to the page.
     window.key_down("escape", false);
     window.until("the dialog to close", |window| {
@@ -175,7 +175,7 @@ fn a_dialog_keeps_the_keys_from_the_page_but_its_text_field_has_them(cx: &mut Te
 }
 
 /// A page that hears keys, with a dialog that holds a space a press focuses, and a div whose
-/// press opens a menu, which tells what it answered, and closes the dialog 200 ms later.
+/// click opens a menu, which tells what it answered, and closes the dialog 200 ms later.
 const DIALOG_PARTS: &str = r#"import { Dialog, h, Space, timeout, tool } from "./sdk";
 
 tool({
@@ -189,7 +189,7 @@ tool({
   view: ({ memory, openMenu }) => {
     const box = { width: 80, height: 20 };
     return h("div", { style: { padding: 40, gap: 40 } },
-      h("div", { key: "open", style: box, onPress: () => (memory.open = true) }, "Open"),
+      h("div", { key: "open", style: box, onClick: () => (memory.open = true) }, "Open"),
       () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
       h(Dialog, { open: () => memory.open, onClose: () => (memory.open = false) }, () =>
         h("div", { style: { gap: 8 } },
@@ -197,7 +197,7 @@ tool({
           h("div", {
             key: "menu",
             style: box,
-            onPress: () => {
+            onClick: () => {
               openMenu([{ label: "One" }]).then((picked) => (memory.heard = `picked-${picked}`));
               timeout(() => { memory.open = false; }, 200);
             },
@@ -216,7 +216,7 @@ fn a_dialog_keeps_the_keys_from_the_page_wherever_they_are(cx: &mut TestAppConte
     let board = window.until_found("space-board");
     window.click(board);
     window.key_down("delete", false);
-    assert!(!window.heard("delete"));
+    assert!(!window.heard_key("delete"));
     window.key_down("escape", false);
     window.until("the dialog to close", |window| {
         window.find("space-board").is_none()
@@ -262,10 +262,10 @@ fn a_dialog_that_closes_while_its_menu_is_open_leaves_keys_that_went_elsewhere_t
     window.until_found("div-heard-picked-null");
     assert!(window.focused() == elsewhere);
     window.key_down("a", false);
-    assert!(!window.heard("a"));
+    assert!(!window.heard_key("a"));
 }
 
-/// A dialog whose press replaces it with a second, which opens a menu as it shows.
+/// A dialog whose click replaces it with a second, which opens a menu as it shows.
 const MENU_DIALOG: &str = r#"import { Dialog, h, tool } from "./sdk";
 
 tool({
@@ -278,10 +278,10 @@ tool({
   view: ({ memory, openMenu }) => {
     const box = { width: 80, height: 20 };
     return h("div", { style: { padding: 40, gap: 40 } },
-      h("div", { key: "open", style: box, onPress: () => (memory.open = "first") }, "Open"),
+      h("div", { key: "open", style: box, onClick: () => (memory.open = "first") }, "Open"),
       () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
       h(Dialog, { open: () => memory.open === "first", onClose: () => (memory.open = "") }, () =>
-        h("div", { key: "first", style: box, onPress: () => (memory.open = "second") }, "Next")),
+        h("div", { key: "first", style: box, onClick: () => (memory.open = "second") }, "Next")),
       h(Dialog, { open: () => memory.open === "second", onClose: () => (memory.open = "") }, () => {
         openMenu([{ label: "One" }]).then((picked) => (memory.heard = `picked-${picked}`));
         return h("div", { key: "second" }, "Second");
@@ -305,8 +305,8 @@ fn a_menu_a_dialog_opens_as_it_replaces_another_stays_open(cx: &mut TestAppConte
     assert!(window.find("div-heard-picked-null").is_none());
 }
 
-/// An interval counts while a `Show` shows its part, and another, which a press of a node starts,
-/// while that node shows. A press hides both and, 100 ms later, says whether the count still went
+/// An interval counts while a `Show` shows its part, and another, which a click of a node starts,
+/// while that node shows. A click hides both and, 100 ms later, says whether the count still went
 /// up.
 const TICKER: &str = r#"import { h, interval, Show, timeout, tool } from "./sdk";
 
@@ -322,7 +322,7 @@ tool({
     const start = h("div", {
       key: "start",
       style: box,
-      onPress: () => {
+      onClick: () => {
         memory.started = true;
         interval(() => { memory.ticks += 1; }, 5);
       },
@@ -337,7 +337,7 @@ tool({
       h("div", {
         key: "hide",
         style: box,
-        onPress: () => {
+        onClick: () => {
           memory.shown = false;
           const ticks = memory.ticks;
           timeout(() => { memory.result = memory.ticks === ticks ? "stopped" : "counting"; }, 100);
@@ -363,7 +363,53 @@ fn a_timer_stops_when_the_part_or_the_node_that_made_it_goes(cx: &mut TestAppCon
     assert!(window.find("div-stopped").is_some());
 }
 
-/// A `Switch` of two matches that both hold at 5; a press moves the level to 2, then to 0.
+/// Two divs whose release starts a timer that counts it; a press of the second hides it first.
+const RELEASES: &str = r#"import { h, timeout, tool } from "./sdk";
+
+tool({
+  name: "releases",
+  title: "Releases",
+  when: "Never",
+  doc: "Releases that count a moment later.",
+  state: {},
+  memory: () => ({ stays: 0, hides: 0, shown: true }),
+  view: ({ memory }) => {
+    const box = { width: 80, height: 20 };
+    const hides = h("div", {
+      key: "hides",
+      style: box,
+      onPress: () => { memory.shown = false; },
+      onRelease: () => timeout(() => { memory.hides += 1; }, 5),
+    }, "Hides");
+    return h("div", {},
+      h("div", { key: "stays", style: box, onRelease: () => timeout(() => { memory.stays += 1; }, 5) }, "Stays"),
+      () => memory.shown && hides,
+      () => h("div", { key: `counted-${memory.stays}-${memory.hides}` }, "Counted"),
+    );
+  },
+});
+"#;
+
+#[gpui::test]
+fn a_release_runs_with_its_node_and_what_it_starts_goes_with_it(cx: &mut TestAppContext) {
+    let mut window = page(cx, "releases", RELEASES);
+    let stays = window.until_found("div-stays");
+    let hides = window.until_found("div-hides");
+    window.click(stays);
+    window.until_found("div-counted-1-0");
+    // Its node is gone as it hears the release, so the timer it starts never runs.
+    window.click(hides);
+    window.until("the node to go", |window| {
+        window.find("div-hides").is_none()
+    });
+    window.click(stays);
+    window.until("the second count", |window| {
+        window.find("div-counted-1-0").is_none()
+    });
+    assert!(window.find("div-counted-2-0").is_some());
+}
+
+/// A `Switch` of two matches that both hold at 5; a click moves the level to 2, then to 0.
 const LEVELS: &str = r#"import { h, Match, Switch, tool } from "./sdk";
 
 tool({
@@ -375,7 +421,7 @@ tool({
   memory: () => ({ level: 5 }),
   view: ({ memory }) =>
     h("div", {},
-      h("div", { key: "lower", style: { width: 80, height: 20 }, onPress: () => (memory.level = memory.level === 5 ? 2 : 0) }, "Lower"),
+      h("div", { key: "lower", style: { width: 80, height: 20 }, onClick: () => (memory.level = memory.level === 5 ? 2 : 0) }, "Lower"),
       h(Switch, { fallback: () => h("div", { key: "silent" }, "Silent") },
         h(Match, { when: () => memory.level > 3 }, () => h("div", { key: "loud" }, "Loud")),
         h(Match, { when: () => memory.level > 1 }, () => h("div", { key: "on" }, "On")),

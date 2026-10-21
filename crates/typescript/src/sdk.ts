@@ -1716,11 +1716,12 @@ function root<T>(make: (dispose: () => void) => T, card: CardRoot | null = owner
 
 /** Runs `cleanup` when what runs now goes: the view, a part `Show` shows, a row of a `For`, a binding that runs again, or the node whose handler runs. */
 export function onCleanup(cleanup: () => void) {
-  owner?.cleanups.push(cleanup);
+  if (owner?.disposed) cleanup();
+  else owner?.cleanups.push(cleanup);
 }
 
 /** Runs `run` as part of `scope`, following nothing it reads: what it makes goes when `scope` does. */
-function within<T>(scope: Owner | null, run: () => T): T {
+function runIn<T>(scope: Owner | null, run: () => T): T {
   const [lastListener, lastOwner, lastSetup] = [listener, owner, settingUp];
   [listener, owner, settingUp] = [null, scope, 0];
   try {
@@ -1732,7 +1733,7 @@ function within<T>(scope: Owner | null, run: () => T): T {
 
 /** Reads once, without what runs now following it: what a component takes as it first draws, such as where an editor opens. */
 export function untrack<T>(read: () => T): T {
-  return within(owner, read);
+  return runIn(owner, read);
 }
 
 /**
@@ -1751,10 +1752,11 @@ export function interval(run: () => void, ms: number): () => void {
 function timer(run: () => void, ms: number, repeats: boolean): () => void {
   const scope = owner;
   if (!scope) throw new Error("a timer is made in a view, a component, or a node's handler or drag");
+  if (scope.disposed) return () => {};
   const fire = () => {
     if (!repeats) stop();
     try {
-      batch(() => within(scope, run));
+      batch(() => runIn(scope, run));
     } catch (error) {
       failedIn(scope, error);
       host.changed();
@@ -2474,7 +2476,7 @@ const overlay =
   ({ open, children, ...props }: OverlayProps): Region =>
     Show({ when: open, children: () => element("overlay", { ...props, modal }, [children()]) });
 
-/** Content of its own under the div it is in, as the window's menus hang: the div's own press, such as of a button in it, opens and closes it. */
+/** Content of its own under the div it is in, as the window's menus hang: a press on the div is its own, so the `onClick` of a button in it opens and closes it. */
 export const Popover = overlay(false);
 /** Content of its own over the window, which a dark backdrop covers: a press on the backdrop closes it. While it is open, the view hears no key but those of its text fields. */
 export const Dialog = overlay(true);
@@ -3575,28 +3577,29 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** The `onRelease` of each press, by node and button: a node its press took away still hears its release. */
-const releases = new Map<string, (press: Press) => void>();
+/**
+ * The `onRelease` of each press, by node and button, with the scope of its node's handlers: a
+ * node its press took away still hears its release, and what that starts goes at once.
+ */
+const releases = new Map<string, { release: (press: Press) => void; scope: Owner }>();
 
 /** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
 function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
   if (kind === "release") {
     const pressed = `${id} ${(payload as Press).button}`;
-    const release = releases.get(pressed);
+    const held = releases.get(pressed);
     releases.delete(pressed);
-    return release?.(payload);
+    return held && runIn(held.scope, () => held.release(payload));
   }
   const made = nodes.get(id);
   if (!made) return;
-  made.scope ??= { owner: null, owned: [], cleanups: [], card: made.card, disposed: false };
-  return within(made.scope, () => handle(made, kind, payload));
+  const scope = (made.scope ??= { owner: null, owned: [], cleanups: [], card: made.card, disposed: false });
+  if (kind === "press" && made.onRelease) releases.set(`${id} ${(payload as Press).button}`, { release: made.onRelease, scope });
+  return runIn(scope, () => handle(made, kind, payload));
 }
 
-function handle(made: Made, kind: Parameters<typeof nodeEvent>[1], payload: never) {
+function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "release">, payload: never) {
   switch (kind) {
-    case "press":
-      if (made.onRelease) releases.set(`${id} ${(payload as Press).button}`, made.onRelease);
-      return made.onPress?.(payload);
     case "commit":
       return made.onCommit?.((payload as { text: string }).text);
     case "cancel":
@@ -3614,7 +3617,7 @@ function handle(made: Made, kind: Parameters<typeof nodeEvent>[1], payload: neve
       return made.onSidechain?.(select, option);
     }
     default: {
-      const handler = { click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
+      const handler = { press: made.onPress, click: made.onClick, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);
     }
   }
