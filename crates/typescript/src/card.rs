@@ -574,6 +574,16 @@ impl TypeScriptCard {
         }
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
             .detach();
+        // A text field in an overlay lets go of the keys on a press that nothing focusable took,
+        // such as on a space: the card takes them from the window, for escape to close it.
+        cx.on_focus_lost(window, |view, window, cx| {
+            if !view.overlays.is_empty()
+                && window.focus_lost_restore_target(cx).as_ref() == Some(&view.focus)
+            {
+                window.focus(&view.focus, cx);
+            }
+        })
+        .detach();
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Deleted(id) if *id == view.id => {
                 view.state = None;
