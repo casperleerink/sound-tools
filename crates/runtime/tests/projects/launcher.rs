@@ -8,9 +8,8 @@ use sound_core::InstanceId;
 
 /// The launcher of the doc for agents that write tools, as it is written there.
 fn doc_launcher() -> String {
-    let doc = sound_typescript::AGENT_DOC.markdown;
-    let mut blocks = doc
-        .split("```ts\n")
+    let mut blocks = (sound_typescript::AGENT_DOCS.iter())
+        .flat_map(|doc| doc.markdown.split("```ts\n"))
         .filter_map(|block| block.split("```").next());
     let block = blocks
         .find(|block| block.contains("number: \"launch\""))

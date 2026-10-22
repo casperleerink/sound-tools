@@ -201,13 +201,39 @@ const TSCONFIG: &str = r#"{
 }
 "#;
 
-/// How an agent writes a tool of the project.
-pub const AGENT_DOC: AgentDoc = AgentDoc {
-    name: "extensions",
-    group: WRITING,
-    when: "No tool does what you need: write a device for a track, or make the whole project one tool",
-    markdown: include_str!("agent-doc.md"),
-};
+/// How an agent writes a tool of the project: the first doc, then one per area.
+pub const AGENT_DOCS: [AgentDoc; 5] = [
+    AgentDoc {
+        name: "extensions",
+        group: WRITING,
+        when: "No tool does what you need: write a device for a track, or make the whole project one tool",
+        markdown: include_str!("extensions.md"),
+    },
+    AgentDoc {
+        name: "extensions-sound",
+        group: WRITING,
+        when: "A tool's sound needs feedback, buffers, files, stereo, voices or outputs",
+        markdown: include_str!("extensions-sound.md"),
+    },
+    AgentDoc {
+        name: "extensions-view",
+        group: WRITING,
+        when: "A tool has its own view, a control loop, keys or MIDI",
+        markdown: include_str!("extensions-view.md"),
+    },
+    AgentDoc {
+        name: "extensions-drawing",
+        group: WRITING,
+        when: "A tool's view draws shapes that move: a piano roll, a meter, a scope, drags",
+        markdown: include_str!("extensions-drawing.md"),
+    },
+    AgentDoc {
+        name: "extensions-children",
+        group: WRITING,
+        when: "A tool plays other tools: devices, plugins, timelines, lanes, recorders",
+        markdown: include_str!("extensions-children.md"),
+    },
+];
 const WRITING: &str = "Writing tools";
 /// The group of the docs of the built-in children.
 const BLOCKS: &str = "Blocks a parent plays";

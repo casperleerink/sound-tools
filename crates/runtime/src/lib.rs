@@ -146,7 +146,9 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
-    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
+    for doc in sound_typescript::AGENT_DOCS {
+        registry.runtime_agent_doc(doc)?;
+    }
     register_extensions(&mut registry, Some(plugins))?;
     Ok(registry)
 }

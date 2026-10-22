@@ -10,7 +10,7 @@ use crate::support::{BAR, Harness, clip, synth, write};
 
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
 fn doc_example() -> String {
-    let doc = sound_typescript::AGENT_DOC.markdown;
+    let doc = sound_typescript::AGENT_DOCS[0].markdown;
     let block = doc.split("```ts\n").nth(1).unwrap();
     block.split("```").next().unwrap().to_string()
 }
