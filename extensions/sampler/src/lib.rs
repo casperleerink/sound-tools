@@ -280,6 +280,7 @@ impl State for SamplerState {
 /// The doc of the sampler record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "sampler",
+    group: "Devices",
     when: "A track plays an audio file across the keyboard, or an SFZ instrument",
     markdown: include_str!("../agent-doc.md"),
 };
@@ -287,6 +288,7 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 /// How to write an SFZ instrument, apart, so an agent reads it only to make one.
 pub const SFZ_AGENT_DOC: AgentDoc = AgentDoc {
     name: "sfz",
+    group: "Devices",
     when: "Making an SFZ instrument from samples",
     markdown: include_str!("../sfz-agent-doc.md"),
 };
@@ -303,6 +305,7 @@ pub fn take_ready(assets: &sound_core::Assets) -> Vec<sound_core::InstanceId> {
 /// The instruments of the library, apart, so an agent reads them only to pick one.
 pub const LIBRARY_AGENT_DOC: AgentDoc = AgentDoc {
     name: "library",
+    group: "Devices",
     when: "Picking a sampled piano, strings, brass, guitar, drums and more",
     markdown: include_str!("../library-agent-doc.md"),
 };

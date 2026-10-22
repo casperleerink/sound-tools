@@ -57,6 +57,7 @@ pub(crate) fn json_tool() -> JsonTool {
         name: NAME.to_string(),
         check: Arc::new(|state| record(state).map(drop)),
         doc: Some(JsonToolDoc {
+            group: crate::BLOCKS,
             when: "A parent of this project plays an audio file at a place in the song: an audio clip or a take"
                 .to_string(),
             markdown: include_str!("region.md").to_string(),

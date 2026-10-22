@@ -165,6 +165,7 @@ impl State for UtilityState {
 /// The doc of the utility record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "utility",
+    group: "Devices",
     when: "Gain, pan, width, mono bass or polarity inside a chain",
     markdown: include_str!("../agent-doc.md"),
 };

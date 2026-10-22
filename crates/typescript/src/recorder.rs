@@ -80,6 +80,7 @@ pub(crate) fn json_tool() -> JsonTool {
         name: RECORDER.to_string(),
         check: Arc::new(|state| record(state).map(drop)),
         doc: Some(JsonToolDoc {
+            group: crate::BLOCKS,
             when: "A parent of this project records notes or the audio input into the song"
                 .to_string(),
             markdown: include_str!("recorder.md").to_string(),

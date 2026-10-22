@@ -205,6 +205,7 @@ impl State for ReverbState {
 /// The doc of the reverb record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "reverb",
+    group: "Devices",
     when: "A reverb on a track: a room, a hall, more space, a frozen pad",
     markdown: include_str!("../agent-doc.md"),
 };

@@ -821,6 +821,7 @@ impl Sounds {
                 move |state: &Value| info.check(state)
             }),
             doc: Some(JsonToolDoc {
+                group: crate::PROJECT_TOOLS,
                 when: info.when.clone(),
                 markdown: info.doc(),
             }),

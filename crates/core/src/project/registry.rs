@@ -90,6 +90,7 @@ impl ToolSchema {
 
 /// See [`AgentDoc`], whose name is the tool's.
 pub struct JsonToolDoc {
+    pub group: &'static str,
     pub when: String,
     pub markdown: String,
 }
@@ -101,6 +102,8 @@ pub struct JsonToolDoc {
 pub struct AgentDoc {
     /// The file name under `agent-docs/`, without `.md`. Lowercase letters, digits and `-`.
     pub name: &'static str,
+    /// The heading the map lists the doc under. Groups follow the order of their first doc.
+    pub group: &'static str,
     /// The one line the map shows next to the doc: when to open it. No full stop needed.
     pub when: &'static str,
     /// The doc itself, starting with a `# ` heading.
@@ -112,6 +115,7 @@ pub struct AgentDoc {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AgentDocText<'a> {
     pub name: &'a str,
+    pub group: &'a str,
     pub when: &'a str,
     pub markdown: &'a str,
 }
@@ -120,6 +124,7 @@ pub struct AgentDocText<'a> {
 pub(crate) struct RegisteredDoc {
     pub extension: Option<&'static str>,
     pub name: &'static str,
+    pub group: &'static str,
     /// Owned for the doc of a tool of the project, which is replaced at every save of it.
     pub when: Cow<'static, str>,
     pub markdown: Cow<'static, str>,
@@ -130,6 +135,7 @@ impl RegisteredDoc {
         Self {
             extension,
             name: doc.name,
+            group: doc.group,
             when: Cow::Borrowed(doc.when),
             markdown: Cow::Borrowed(doc.markdown),
         }
@@ -138,6 +144,7 @@ impl RegisteredDoc {
     fn text(&self) -> AgentDocText<'_> {
         AgentDocText {
             name: self.name,
+            group: self.group,
             when: &self.when,
             markdown: &self.markdown,
         }
@@ -297,10 +304,16 @@ impl Registry {
         // Neither a new tool nor a new doc takes the name of the other, so a doc of this name
         // is the one this tool had.
         self.agent_docs.retain(|registered| registered.name != name);
-        if let Some(JsonToolDoc { when, markdown }) = doc {
+        if let Some(JsonToolDoc {
+            group,
+            when,
+            markdown,
+        }) = doc
+        {
             self.agent_docs.push(RegisteredDoc {
                 extension: None,
                 name,
+                group,
                 when: Cow::Owned(when),
                 markdown: Cow::Owned(markdown),
             });

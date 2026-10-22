@@ -204,9 +204,15 @@ const TSCONFIG: &str = r#"{
 /// How an agent writes a tool of the project.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "extensions",
+    group: WRITING,
     when: "No tool does what you need: write a device for a track, or make the whole project one tool",
     markdown: include_str!("agent-doc.md"),
 };
+const WRITING: &str = "Writing tools";
+/// The group of the docs of the built-in children.
+const BLOCKS: &str = "Blocks a parent plays";
+/// The group of the docs of the tools a project writes.
+const PROJECT_TOOLS: &str = "Tools of this project";
 
 /// The tools of a project, from their first load.
 pub struct Extensions {

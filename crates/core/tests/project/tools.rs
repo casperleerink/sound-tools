@@ -366,6 +366,7 @@ pub(crate) const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
 
 pub(crate) const TEST_AGENT_DOC: AgentDoc = AgentDoc {
     name: "test-tools",
+    group: "Test",
     when: "You work on a test record",
     markdown: "# Test tools\n\nA record of a test tool.\n",
 };

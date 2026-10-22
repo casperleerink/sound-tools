@@ -56,7 +56,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
     let files = map_and_docs(&harness);
     for (path, text) in &files {
         assert!(
-            map.contains(&format!("| `{path}` |")) || path == AGENT_DOC_FILE,
+            map.contains(&format!("- `{path}`: ")) || path == AGENT_DOC_FILE,
             "{path}"
         );
         assert!(

@@ -32,6 +32,7 @@ pub use ports::{PortError, Ports};
 /// can be recorded into: the runtime registers it with `runtime_agent_doc`.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "takes",
+    group: "Project",
     when: "A file under `assets/takes/`, or the raw performance of a recorded clip",
     markdown: include_str!("../agent-doc.md"),
 };

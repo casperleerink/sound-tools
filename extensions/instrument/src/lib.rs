@@ -189,6 +189,7 @@ impl State for SynthState {
 /// The doc of the synth record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "instrument",
+    group: "Devices",
     when: "A track plays `instrument.synth`, or a new track needs an instrument",
     markdown: include_str!("../agent-doc.md"),
 };

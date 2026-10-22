@@ -289,6 +289,7 @@ impl State for PluginRecord {
 /// The doc of the plugin record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "plugins",
+    group: "Devices",
     when: "A third-party plugin (CLAP, VST 3) on a track: add, set or automate one, or fix its problem",
     markdown: include_str!("../agent-doc.md"),
 };

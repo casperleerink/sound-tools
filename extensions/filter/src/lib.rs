@@ -169,6 +169,7 @@ impl State for FilterState {
 /// The doc of the filter record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "filter",
+    group: "Devices",
     when: "A filter on a track: darker, thinner, a sweep, a wah",
     markdown: include_str!("../agent-doc.md"),
 };

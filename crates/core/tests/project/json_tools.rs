@@ -32,6 +32,7 @@ fn wobble(max: f64, version: u32, seen: &Seen) -> JsonTool {
             Ok(())
         }),
         doc: Some(JsonToolDoc {
+            group: "Test",
             when: format!("You want wobble {version}"),
             markdown: format!("# Wobble {version}\n"),
         }),

@@ -47,6 +47,7 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 /// being opened somewhere else. Hence no path of this executable in it.
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
+    group: "Project",
     when: "You can run commands and want to check how your work sounds, read the whole piece in one go, or write it as a WAV",
     markdown: "# Inspect, measure and render from a command line
 
@@ -140,12 +141,13 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
-    register_extensions(&mut registry, Some(plugins))?;
+    // First, as the map lists its groups in the order of their first doc.
     registry.runtime_agent_doc(INSPECT_DOC)?;
-    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
+    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
+    register_extensions(&mut registry, Some(plugins))?;
     Ok(registry)
 }
 

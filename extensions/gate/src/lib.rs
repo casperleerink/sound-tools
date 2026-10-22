@@ -147,6 +147,7 @@ impl State for GateState {
 /// The doc of the gate record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "gate",
+    group: "Devices",
     when: "A gate or transient shaper on a track: tighter drums, less bleed, more punch",
     markdown: include_str!("../agent-doc.md"),
 };
