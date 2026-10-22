@@ -575,3 +575,33 @@ fn a_row_that_wraps_puts_its_lines_one_after_another(cx: &mut TestAppContext) {
     );
     assert_eq!(third.origin.y, first.bottom());
 }
+
+/// A `grow` column in a box 200 high, holding a list 600 high that scrolls.
+const GROWN_LIST: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "grown",
+  title: "Grown",
+  when: "Never",
+  doc: "A grown column with a long list.",
+  state: {},
+  view: () =>
+    h("div", { key: "box", style: { height: 200 } },
+      h("div", { key: "grown", style: { grow: true } },
+        h("div", { style: { scroll: "y" } },
+          Array.from({ length: 30 }, (_, row) => h("div", { key: `row-${row}`, style: { height: 20 } }, `${row}`))),
+      ),
+    ),
+});
+"#;
+
+#[gpui::test]
+fn a_grown_column_takes_its_parents_height_not_its_lists(cx: &mut TestAppContext) {
+    let mut window = page(cx, "grown", GROWN_LIST);
+    window.until_found("div-row-0");
+    let (parent, grown) = (
+        window.bounds("div-box").unwrap(),
+        window.bounds("div-grown").unwrap(),
+    );
+    assert_eq!(grown.size.height, parent.size.height);
+}

@@ -2802,7 +2802,7 @@ export interface Style {
   maxWidth?: number;
   minHeight?: number;
   maxHeight?: number;
-  /** Takes the room left in its parent. */
+  /** Takes the room left in its parent, and no more: a long list in it scrolls. */
   grow?: boolean;
   /** Out of its parent's flow, over its siblings, this far from its parent's edges: a badge, an overlay. */
   absolute?: { top?: number; left?: number; right?: number; bottom?: number };

@@ -1792,6 +1792,11 @@ impl Style {
         if let Some(height) = self.height {
             element = element.h(px(height));
         }
+        // Before its own minimum, which wins: never held at its content's size, so a long list
+        // in it scrolls.
+        if self.grow {
+            element = element.flex_grow(1.).min_w_0().min_h_0();
+        }
         if let Some(width) = self.min_width {
             element = element.min_w(px(width));
         }
@@ -1803,9 +1808,6 @@ impl Style {
         }
         if let Some(height) = self.max_height {
             element = element.max_h(px(height));
-        }
-        if self.grow {
-            element = element.flex_grow(1.);
         }
         if let Some(insets) = self.absolute {
             element = element.absolute();
