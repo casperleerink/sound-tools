@@ -9,8 +9,8 @@
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
-//! - `typescript-gallery*.png`: the project `sdk-gallery`, one example of each component, look,
-//!   overlay and path of the view SDK: with a div held pressed, its popover open, its dialog open.
+//! - `typescript-gallery*.png`: the project `sdk-gallery`, the parts of the view SDK the other
+//!   snapshots do not draw: with a div held pressed, its popover open, its dialog open.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
@@ -24,6 +24,8 @@ use gpui::{
     Pixels, PlatformInput, Point, point, px,
 };
 use sound_core::Ticks;
+
+use super::look::click;
 
 const GALLERY: [(&str, &str); 3] = [
     ("project.json", include_str!("../sdk-gallery/project.json")),
@@ -46,58 +48,6 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         sound_typescript::has_bun(),
         "Bun is installed, see tooling/fetch-bun.sh"
     );
-    let opened = open_files(cx, &GALLERY)?;
-    // The div "Press" held, then the popover and the dialog each opened by its button.
-    let press = |opened: &super::Opened, cx: &mut HeadlessAppContext, at| {
-        let (modifiers, button) = (Modifiers::default(), MouseButton::Left);
-        let moved = MouseMoveEvent {
-            position: at,
-            pressed_button: None,
-            modifiers,
-        };
-        opened.event(PlatformInput::MouseMove(moved), cx)?;
-        let down = MouseDownEvent {
-            position: at,
-            modifiers,
-            button,
-            click_count: 1,
-            first_mouse: false,
-        };
-        opened.event(PlatformInput::MouseDown(down), cx)?;
-        anyhow::Ok(())
-    };
-    press(&opened, cx, point(px(833.), px(119.)))?;
-    wait_for_bun(cx);
-    save(cx, opened.window.into(), "typescript-gallery")?;
-    for (button, name) in [
-        (446., "typescript-gallery-popover"),
-        (526., "typescript-gallery-dialog"),
-    ] {
-        let at = point(px(button), px(406.));
-        press(&opened, cx, at)?;
-        let up = MouseUpEvent {
-            position: at,
-            modifiers: Modifiers::default(),
-            button: MouseButton::Left,
-            click_count: 1,
-        };
-        opened.event(PlatformInput::MouseUp(up), cx)?;
-        wait_for_bun(cx);
-        save(cx, opened.window.into(), name)?;
-    }
-    drop(opened);
-
-    let record = serde_json::json!({ "tool": "piano-roll", "state": { "notes": melody() } });
-    let opened = open_page(
-        cx,
-        "piano-roll",
-        &record.to_string(),
-        "extensions/piano-roll.tsx",
-        PIANO_ROLL,
-    )?;
-    // The roll's top left: the page's padding, the title bar and the ruler; the keys.
-    let roll = point(px(44.), px(48. + 22. + 1.));
-    let at = |tick: f32, row: f32| roll + point(px(tick * 0.1), px((row - 40.) * 12.));
     let mouse = |opened: &super::Opened, cx: &mut HeadlessAppContext, event| {
         opened.event(event, cx).map(|_| wait_for_bun(cx))
     };
@@ -117,6 +67,32 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
             first_mouse: false,
         })
     };
+    let opened = open_files(cx, &GALLERY)?;
+    // The div "Press" held, then the popover and the dialog each opened by its button.
+    let press = point(px(833.), px(119.));
+    mouse(&opened, cx, moved(press, None))?;
+    mouse(&opened, cx, down(press))?;
+    save(cx, opened.window.into(), "typescript-gallery")?;
+    for (button, name) in [
+        (446., "typescript-gallery-popover"),
+        (526., "typescript-gallery-dialog"),
+    ] {
+        click(&opened, point(px(button), px(406.)), 1, cx)?;
+        save(cx, opened.window.into(), name)?;
+    }
+    drop(opened);
+
+    let record = serde_json::json!({ "tool": "piano-roll", "state": { "notes": melody() } });
+    let opened = open_page(
+        cx,
+        "piano-roll",
+        &record.to_string(),
+        "extensions/piano-roll.tsx",
+        PIANO_ROLL,
+    )?;
+    // The roll's top left: the page's padding, the title bar and the ruler; the keys.
+    let roll = point(px(44.), px(48. + 22. + 1.));
+    let at = |tick: f32, row: f32| roll + point(px(tick * 0.1), px((row - 40.) * 12.));
     // A marquee over bar 2, between rows 44 and 56.
     let (from, to) = (at(3800., 44.), at(7600., 56.));
     mouse(&opened, cx, moved(from, None))?;
@@ -180,47 +156,25 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
                 px(row * crate::song::ROW),
             )
     };
-    let click = |opened: &super::Opened, cx: &mut HeadlessAppContext, at, clicks| {
-        for click_count in 1..=clicks {
-            let (modifiers, button) = (Modifiers::default(), MouseButton::Left);
-            mouse(opened, cx, moved(at, None))?;
-            let down = MouseDownEvent {
-                position: at,
-                modifiers,
-                button,
-                click_count,
-                first_mouse: false,
-            };
-            mouse(opened, cx, PlatformInput::MouseDown(down))?;
-            let up = MouseUpEvent {
-                position: at,
-                modifiers,
-                button,
-                click_count,
-            };
-            mouse(opened, cx, PlatformInput::MouseUp(up))?;
-        }
-        anyhow::Ok(())
-    };
     // A clip of the second track opens below; the second of the fourth is selected, which shows
     // the devices of its track. The transport of the page is above the rows.
-    click(&opened, cx, lane(crate::song::BAR / 2, 2.5), 2)?;
-    click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
+    click(&opened, lane(crate::song::BAR / 2, 2.5), 2, cx)?;
+    click(&opened, lane(3 * crate::song::BAR + 960, 4.5), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song")?;
     // The mixer's button at the right of the master's row, over the editor: a strip per track
     // and return, and the master's on the right, in place of the editor.
-    click(&opened, cx, point(px(1449.), px(547.)), 1)?;
+    click(&opened, point(px(1449.), px(547.)), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-mixer")?;
     // A track's head shows its panel in place of the mixer, and the automation of the first
     // track's head: its lane of the cutoff shows under it.
-    click(&opened, cx, point(px(60.), px(280.)), 1)?;
+    click(&opened, point(px(60.), px(280.)), 1, cx)?;
     click(
         &opened,
-        cx,
         point(px(24.), px(TOP + crate::song::TOGGLES)),
         1,
+        cx,
     )?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-lanes")?;
