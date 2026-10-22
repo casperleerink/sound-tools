@@ -499,6 +499,24 @@ tool({
 "#;
 
 #[gpui::test]
+fn a_menu_checks_only_what_its_code_says_whatever_was_picked_before(cx: &mut TestAppContext) {
+    let mut window = page(cx, "menus", MENUS_AND_WRAP);
+    let (first, second) = (
+        window.until_found("div-first"),
+        window.until_found("div-second"),
+    );
+    window.click(first);
+    let three = window.until_found("menu-2");
+    window.click(three);
+    window.until("the menu to close", |window| {
+        window.find("menu-2").is_none()
+    });
+    window.click(second);
+    window.until_found("menu-check-0");
+    assert!(window.find("menu-check-2").is_none());
+}
+
+#[gpui::test]
 fn a_row_that_wraps_puts_its_lines_one_after_another(cx: &mut TestAppContext) {
     let mut window = page(cx, "menus", MENUS_AND_WRAP);
     window.until_found("div-c");

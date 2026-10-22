@@ -588,7 +588,12 @@ fn row(
             d.child(Kbd::new(shortcut))
         })
         .when(selected, |d| {
-            d.child(Icon::new("check").size(16.).color(text))
+            let selector = item.value.clone();
+            d.child(
+                div()
+                    .debug_selector(move || format!("menu-check-{selector}"))
+                    .child(Icon::new("check").size(16.).color(text)),
+            )
         })
         .when(item.submenu.is_some(), |d| {
             d.child(Icon::new("chevron-right").size(14.).color(muted))
