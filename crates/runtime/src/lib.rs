@@ -51,7 +51,7 @@ const INSPECT_DOC: AgentDoc = AgentDoc {
     when: "You can run commands: check how your work sounds, read the whole piece, or render a WAV",
     markdown: "# Inspect, measure and render from a command line
 
-Every form works while the project is open and changes nothing.
+Every form works while the project is open and changes no record.
 
 ```sh
 sound-tools . --inspect
@@ -65,9 +65,11 @@ sound-tools . --render <wav>
 
 `--analyze` and `--render` take the same options:
 
-- `--from <at>` and `--to <at>`: a part of the piece, and its tail. `<at>` is ticks (`3840`), a time as the playhead shows it (`1:23.5`) or seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
+- `--from <at>` and `--to <at>`: a part of the piece, and its tail unless `--no-tail` follows. `<at>` is ticks (`3840`), a time as the playhead shows it (`1:23.5`) or seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
 - `--seconds <n>`: the first `n` seconds, with no tail.
 - `--only <path>`: only the sound of this instance, such as `song/bass`, before what its parents do to it.
+
+To turn a part into audio, render it alone into `assets/audio/` under a new name and play it with a `region`: `sound-tools . --render assets/audio/bass.wav --only song/bass/chain --from 0 --to 7680`.
 
 `sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`.
 
@@ -836,7 +838,7 @@ pub fn render_into(
 /// Below this every sample of a tail is silence: -90 dB.
 const SILENT: f32 = 3.2e-5;
 
-/// Plays `from..to` and then the tail: what reverbs and releases still sound after the
+/// Plays `from..to` and then, with `tail`, what reverbs and releases still sound after the
 /// transport stops at `to`. The tail ends after half a second of silence, or after ten seconds
 /// for a sound that never ends, such as the noise of a plugin. See [`render_into`].
 pub fn render_range(
@@ -845,6 +847,7 @@ pub fn render_range(
     plugins: &Plugins,
     from: Ticks,
     to: Ticks,
+    tail: bool,
     mut write: impl FnMut(&[f32]) -> Result<()>,
 ) -> Result<Vec<plugin_host::PluginProblem>> {
     let clock = project.clock();
@@ -852,12 +855,15 @@ pub fn render_range(
     project.engine().seek(from);
     project.engine().play();
     let mut problems = render_into(project, engine, plugins, frames as usize, &mut write)?;
+    if !tail {
+        return Ok(problems);
+    }
     // Stopping releases every held note, which is where the tail starts.
     project.engine().pause();
     let channels = engine.channels();
     let rate = engine.sample_rate() as usize;
-    let (mut quiet, mut tail) = (0, 0);
-    while quiet < rate / 2 && tail < rate * 10 {
+    let (mut quiet, mut played) = (0, 0);
+    while quiet < rate / 2 && played < rate * 10 {
         problems.extend(render_into(project, engine, plugins, 512, |samples| {
             let frames = samples.len() / channels;
             quiet = if samples.iter().all(|sample| sample.abs() < SILENT) {
@@ -865,7 +871,7 @@ pub fn render_range(
             } else {
                 0
             };
-            tail += frames;
+            played += frames;
             write(samples)
         })?);
     }
