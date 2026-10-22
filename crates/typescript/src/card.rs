@@ -574,6 +574,16 @@ impl TypeScriptCard {
         }
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
             .detach();
+        // A text field in an overlay lets go of the keys on a press that nothing focusable took,
+        // such as on a space: the card takes them from the window, for escape to close it.
+        cx.on_focus_lost(window, |view, window, cx| {
+            if !view.overlays.is_empty()
+                && window.focus_lost_restore_target(cx).as_ref() == Some(&view.focus)
+            {
+                window.focus(&view.focus, cx);
+            }
+        })
+        .detach();
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Deleted(id) if *id == view.id => {
                 view.state = None;
@@ -2592,15 +2602,7 @@ impl Drawing<'_, '_> {
         let modal = props.modal == Some(true);
         let look = if modal { "dialog" } else { "popover" };
         let selector = format!("{look}-{}", props.key.as_deref().unwrap_or_default());
-        let focus = self.focus.clone();
         let panel = popover::surface(self.cx)
-            // A press in it that nothing focusable took, such as on a select, makes a text field
-            // in it let go of the keys: the card takes them, for escape to close it.
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                if !window.default_prevented() {
-                    window.focus(&focus, cx);
-                }
-            })
             .flex()
             .flex_col()
             .p(px(if modal { 16. } else { 8. }))
