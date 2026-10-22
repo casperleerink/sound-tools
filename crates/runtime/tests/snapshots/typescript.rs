@@ -9,11 +9,8 @@
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
-//! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, its
-//!   slider, options and notice, and an open popover, beside a small piano roll whose notes,
-//!   labels and paths are shapes of a space.
-//! - `typescript-style.png`: the looks and layout of a div: one held pressed, two disabled, a card
-//!   with a shadow, a badge and an overlay placed on it, a clipped child, a row that wraps.
+//! - `typescript-gallery*.png`: the project `sdk-gallery`, one example of each component, look,
+//!   overlay and path of the view SDK: with a div held pressed, its popover open, its dialog open.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
@@ -28,98 +25,17 @@ use gpui::{
 };
 use sound_core::Ticks;
 
-const DEMO: &str = r##"import { Button, choice, h, number, Knob, Label, Line, Meter, Notice, Pad, Path, pattern, Popover, Rect, SegmentedControl, Slider, Space, Steps, tool } from "./sdk";
-
-const notes = [[0, 60], [480, 64], [960, 67], [1440, 72], [1920, 67], [2400, 64], [2880, 62], [3360, 60]];
-
-tool({
-  name: "demo",
-  title: "Demo",
-  when: "A snapshot",
-  doc: "Every element of the SDK.",
-  state: {
-    cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
-    level: number({ min: -30, max: 6, default: -6, unit: "db" }),
-    steps: pattern({ length: 8, min: 0, max: 1, default: 0 }),
-    mode: choice({ options: ["soft", "hard", "fold"], default: "hard" }),
-  },
-  inputs: { bend: number({ min: 0, max: 1, default: 0.3 }), drive: number({ min: 0, max: 1, default: 0.7 }) },
-  sound: () => 0,
-  view: ({ now }) =>
-    h("div", { style: { direction: "row", gap: 24 } },
-      h("div", { style: { gap: 16 } },
-        h("div", { style: { direction: "row", gap: 8 } },
-          h(Knob, { field: "cutoff", label: "Cutoff", min: 100, max: 8000, default: 1200, unit: "hz" }),
-          h(Knob, { field: "level", label: "Level", min: -30, max: 6, default: -6, unit: "db" }),
-          h(Meter, { value: "level", label: "Out" }),
-        ),
-        h(Steps, { field: "steps" }),
-        h("div", { style: { direction: "row", gap: 12, align: "center" } },
-          h(Pad, { field: { x: "bend", y: "drive" }, size: 120 }),
-          h("div", { style: { gap: 8 } },
-            h(Slider, { field: "level", min: -30, max: 6, default: -6, unit: "db" }),
-            h(SegmentedControl, { field: "mode", options: [{ value: "soft", label: "Soft" }, { value: "hard", label: "Hard" }, { value: "fold", label: "Fold" }] }),
-          ),
-        ),
-        h(Notice, { message: "The sample did not load.", action: { label: "Retry", onClick: () => {} }, onDismiss: () => {} }),
-        h("div", {},
-          h(Button, { label: "Preset", variant: "subtle" }),
-          h(Popover, { open: () => true, onClose: () => {} }, () => ["Warm pad", "Bright lead"]),
-        ),
-      ),
-      h(Space, { key: "roll", width: 640, height: 320, background: "#121317", radius: 6, unit: { x: 0.15, y: 12 }, extent: { x: [0, 3840], y: [0, 36] } },
-        Array.from({ length: 4 }, (_, beat) => h(Line, { from: [beat * 960, 0], to: [beat * 960, 36], color: "#292c34", width: 1 })),
-        notes.map(([start, pitch], index) => h(Rect, {
-          x: start, y: 84 - pitch, width: 440, height: 0.85, radius: 3,
-          color: index === 2 ? "#e9ebef" : "#a9b1ff", hover: "#e9ebef", cursor: "grab",
-        })),
-        notes.map(([start, pitch], index) => h(Label, { x: start + 30, y: 84 - pitch + 0.05, text: String(pitch), size: 9, color: "#121317" })),
-        h(Line, { from: [now.tick.plus(1200), 0], to: [now.tick.plus(1200), 36], color: "#7ee0a0", width: 2 }),
-        h(Path, { points: [[0, 8], [960, 8, 960, 2, 1920, 4], [2400, 6, 2700, 2]], color: "#f5a97f", width: 2 }),
-        h(Path, { points: [[3000, 2], [3400, 2], [3200, 6], [3000, 2]], color: "#7ee0a0", width: 1.5 }),
-        h(Path, { points: [[3000, 8], [3200, 8, 3400, 12], [3000, 12]], color: "#7ee0a0/40" }),
-      ),
+const GALLERY: [(&str, &str); 3] = [
+    ("project.json", include_str!("../sdk-gallery/project.json")),
+    (
+        "state/gallery.json",
+        include_str!("../sdk-gallery/state/gallery.json"),
     ),
-});
-"##;
-
-const STYLES: &str = r##"import { h, tool, type Style } from "./sdk";
-
-const box: Style = { width: 120, height: 40, align: "center", justify: "center", radius: 6, background: "alpha/5" };
-
-tool({
-  name: "styles",
-  title: "Styles",
-  when: "A snapshot",
-  doc: "The looks and layout of a div.",
-  state: {},
-  sound: () => 0,
-  view: () =>
-    h("div", { style: { gap: 24 } },
-      h("div", { style: { direction: "row", gap: 16 } },
-        h("div", { key: "pressed", style: { ...box, hover: { background: "alpha/10" }, pressed: { background: "lavender", color: "gray-50" } }, onClick: () => {} }, "Pressed"),
-        h("div", { key: "disabled", disabled: true, style: box, onClick: () => {} }, "Disabled"),
-        h("div", { disabled: true, style: { ...box, disabled: { background: "red/20", color: "red" } } }, "Its own look"),
-        h("div", { style: { ...box, opacity: 0.5 } }, "Half"),
-      ),
-      h("div", { style: { direction: "row", gap: 24 } },
-        h("div", { style: { width: 240, height: 120, padding: 12, radius: 10, background: "gray-200", shadow: true } },
-          "A card",
-          h("div", { style: { absolute: { top: -6, right: -6 }, width: 20, height: 20, radius: 10, align: "center", justify: "center", background: "red", color: "gray-50", fontSize: 11 } }, "3"),
-          h("div", { style: { absolute: { left: 0, right: 0, bottom: 0 }, height: 32, align: "center", justify: "center", background: "alpha/10" } }, "Overlay"),
-        ),
-        h("div", { style: { width: 120, height: 60, radius: 10, background: "alpha/5", clip: true } },
-          h("div", { style: { width: 200, height: 40, background: "teal/40" } }),
-        ),
-        h("div", { style: { direction: "row", wrap: true, gap: 4, maxWidth: 136 } },
-          Array.from({ length: 9 }, (_, index) => h("div", { style: { width: 40, height: 24, radius: 4, align: "center", justify: "center", background: "alpha/10" } }, String(index))),
-        ),
-      ),
-      h("div", { style: { width: 240, padding: 8, background: "alpha/5", textAlign: "end" } }, "Aligned right"),
+    (
+        "extensions/gallery.tsx",
+        include_str!("../sdk-gallery/extensions/gallery.tsx"),
     ),
-});
-"##;
-
+];
 const PIANO_ROLL: &str = include_str!("../../../../tooling/agent-eval/examples/piano-roll.tsx");
 const MIXER: &str = include_str!("../../../../tooling/agent-eval/examples/mixer.tsx");
 const METER: &str = r#"{"tool": "meter", "state": {}}"#;
@@ -130,37 +46,45 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         sound_typescript::has_bun(),
         "Bun is installed, see tooling/fetch-bun.sh"
     );
-    let demo = r#"{"tool": "demo", "state": {"steps": [1, 0, 0, 1, 0, 1, 0, 0], "cutoff": 2400}}"#;
-    let opened = open_page(cx, "demo", demo, "extensions/demo.ts", DEMO)?;
-    save(cx, opened.window.into(), "typescript-page")?;
-    drop(opened);
-
-    let opened = open_page(
-        cx,
-        "styles",
-        r#"{"tool": "styles", "state": {}}"#,
-        "extensions/styles.ts",
-        STYLES,
-    )?;
-    let pressed = point(px(104.), px(68.));
-    for event in [
-        PlatformInput::MouseMove(MouseMoveEvent {
-            position: pressed,
+    let opened = open_files(cx, &GALLERY)?;
+    // The div "Press" held, then the popover and the dialog each opened by its button.
+    let press = |opened: &super::Opened, cx: &mut HeadlessAppContext, at| {
+        let (modifiers, button) = (Modifiers::default(), MouseButton::Left);
+        let moved = MouseMoveEvent {
+            position: at,
             pressed_button: None,
-            modifiers: Modifiers::default(),
-        }),
-        PlatformInput::MouseDown(MouseDownEvent {
-            position: pressed,
+            modifiers,
+        };
+        opened.event(PlatformInput::MouseMove(moved), cx)?;
+        let down = MouseDownEvent {
+            position: at,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        };
+        opened.event(PlatformInput::MouseDown(down), cx)?;
+        anyhow::Ok(())
+    };
+    press(&opened, cx, point(px(833.), px(119.)))?;
+    wait_for_bun(cx);
+    save(cx, opened.window.into(), "typescript-gallery")?;
+    for (button, name) in [
+        (446., "typescript-gallery-popover"),
+        (526., "typescript-gallery-dialog"),
+    ] {
+        let at = point(px(button), px(406.));
+        press(&opened, cx, at)?;
+        let up = MouseUpEvent {
+            position: at,
             modifiers: Modifiers::default(),
             button: MouseButton::Left,
             click_count: 1,
-            first_mouse: false,
-        }),
-    ] {
-        opened.event(event, cx)?;
+        };
+        opened.event(PlatformInput::MouseUp(up), cx)?;
+        wait_for_bun(cx);
+        save(cx, opened.window.into(), name)?;
     }
-    wait_for_bun(cx);
-    save(cx, opened.window.into(), "typescript-style")?;
     drop(opened);
 
     let record = serde_json::json!({ "tool": "piano-roll", "state": { "notes": melody() } });
