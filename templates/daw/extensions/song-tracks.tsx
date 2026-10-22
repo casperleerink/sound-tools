@@ -4,6 +4,7 @@ import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
 import type { Song } from "./song";
 import { addLane, LaneHead, showLanes } from "./song-automation";
+import { copyOf } from "./song-clips";
 import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, titleOf, type Child, type Page } from "./song-page";
 import { tape } from "./tape";
 import { freeName, track } from "./track";
@@ -236,7 +237,7 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
 }
 /** A clip's and a track's menu: with the tail, what reverbs and releases sound after the end, or without. */
 export const RENDER_ITEMS = [{ label: "Render to audio track", tail: true, separator: true }, { label: "Render to audio track, no tail", tail: false }] as const;
-/** Renders the clips and regions `keys` of the track `name`, from the first to the last, after its effects and before its fader, onto a new audio track under it whose fader and sends are its, and mutes `name`: the song sounds as before. */
+/** Renders the clips and regions `keys` of the track `name`, from the first to the last, after its effects and before its fader, onto a new audio track under it that takes its fader, sends, their automation, its solo and what it keys after its fader, and mutes `name`: the song sounds as before. */
 export async function renderToTrack({ update, render, rows, itemAt, lengthAt }: Page, name: string, keys: readonly string[], tail: boolean) {
   const source = rows().find((each) => each.name === name);
   const starts = keys.flatMap((key) => itemAt(key)?.state.start ?? []);
@@ -249,14 +250,20 @@ export async function renderToTrack({ update, render, rows, itemAt, lengthAt }: 
     const owner = part.children.find((child) => child.name === name);
     if (owner?.tool !== "track" && owner?.tool !== "tape") return;
     const audio = freeName(part.children.map((child) => child.name), "audio-1") as `audio-${string}`;
-    const mixer = owner.children.flatMap((child) => (child.name === "mix" || child.name.startsWith("send-")) && child.tool === "fader" ? [{ name: child.name as "mix" | `send-${string}`, tool: "fader" as const, state: { ...child.state } }] : []);
+    const automation = owner.state.automation.filter(({ target }) => target.startsWith("mix.") || target.startsWith("send-"));
+    const faders = owner.children.flatMap((child) => (child.name === "mix" || child.name.startsWith("send-")) && child.tool === "fader" ? [{ name: child.name as "mix" | `send-${string}`, tool: "fader" as const, state: { ...child.state } }] : []);
+    const lanes = owner.children.flatMap((child) => automation.some(({ lane }) => lane === child.name) && child.tool === "lane" ? [{ name: child.name as `lane-${string}`, tool: "lane" as const, state: copyOf(child.state) }] : []);
     part.children.push({
-      name: audio, tool: tape, state: { colour: owner.state.colour, title: `${title} (audio)` },
-      children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, ...mixer, { name: "render", tool: "region", state: { asset, start: from } }],
+      name: audio, tool: tape, state: { colour: owner.state.colour, title: `${title} (audio)`, automation: copyOf(automation) },
+      children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, ...faders, ...lanes, { name: "render", tool: "region", state: { asset, start: from } }],
     });
     const order = rows().map((each) => each.name);
     order.splice(order.indexOf(name) + 1, 0, audio);
     part.state.order = order;
+    if (part.state.solo.includes(name)) part.state.solo = [...part.state.solo, audio];
+    part.state.sidechains = part.state.sidechains.map((each) => (each.from === name && each.tap === "post_fader" ? { ...each, from: audio } : each));
+    // A lane on its mute would play it again.
+    owner.state.automation = owner.state.automation.filter(({ target }) => target !== "mix.mute");
     const mix = owner.children.find((child) => child.name === "mix");
     if (mix?.tool === "fader") mix.state.mute = true;
   });

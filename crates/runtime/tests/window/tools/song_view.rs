@@ -205,16 +205,28 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     );
 }
 
-/// A track's menu renders it, after its effects, onto a new audio track under it with its fader
-/// and sends, and mutes it, so the song sounds as before: one undo step.
+/// A track's menu renders it, after its effects, onto a new audio track under it that takes its
+/// fader, sends, their automation and its solo, and mutes it, so the song sounds as before: one
+/// undo step.
 #[gpui::test]
 fn a_track_renders_onto_an_audio_track_under_it_with_its_fader_and_sends(cx: &mut TestAppContext) {
+    // The first track is soloed, and a lane turns its fader down.
     let mut files = song_files(2, 2);
     for (path, text) in &mut files {
-        if path == "state/song/t00/mix.json" {
-            *text = r#"{"tool": "fader", "state": {"gain_db": -6}}"#.to_string();
+        let mut record: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        match path.as_str() {
+            "state/song/t00/mix.json" => record["state"]["gain_db"] = (-6).into(),
+            "state/song/instance.json" => record["state"]["solo"] = serde_json::json!(["t00"]),
+            "state/song/t00/instance.json" => {
+                let lane = serde_json::json!({ "lane": "lane-volume", "target": "mix.gain_db" });
+                (record["state"]["automation"].as_array_mut().unwrap()).push(lane);
+            }
+            _ => continue,
         }
+        *text = record.to_string();
     }
+    let lane = r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -6}]}}"#;
+    files.push(("state/song/t00/lane-volume.json".into(), lane.into()));
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
@@ -241,6 +253,17 @@ fn a_track_renders_onto_an_audio_track_under_it_with_its_fader_and_sends(cx: &mu
     assert_eq!(gain(&mut window, "song/audio-1/send-ret-a"), Some(-12.0));
     assert_eq!(window.record("song/t00/mix")["mute"], true);
     assert_eq!(window.record("song")["order"][1], "audio-1");
+    assert_eq!(
+        window.record("song")["solo"],
+        serde_json::json!(["t00", "audio-1"])
+    );
+    // The lane of its fader goes along; that of its filter is in the sound.
+    let automation = &window.record("song/audio-1")["automation"];
+    assert_eq!(
+        automation,
+        &serde_json::json!([{ "lane": "lane-volume", "target": "mix.gain_db" }])
+    );
+    assert!(window.has("song/audio-1/lane-volume"));
     window.after_the_runs();
     assert_eq!(
         window.undo_label().as_deref(),
