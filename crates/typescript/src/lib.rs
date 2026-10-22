@@ -1,5 +1,5 @@
 //! The project's own tools and cards, written in TypeScript in its `extensions/` folder and run
-//! by Bun. An experiment: how far a project can make Sound Tools its own with no build.
+//! by Bun, with no build. The DAW template is made of them.
 //!
 //! A project whose `extensions/` folder has a tool file starts Bun on `host.ts` when it opens.
 //! Bun loads every `.ts` and `.tsx` file there once and says which tools they define: the
