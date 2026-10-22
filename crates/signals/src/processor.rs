@@ -17,7 +17,7 @@ use sound_core::{
     Smoothed, Timed, Watch,
 };
 use sound_notes::{
-    NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+    NoteEvent, Pedal, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
 };
 
 use crate::cable::{Bang, Control, Number};
@@ -83,6 +83,9 @@ pub enum SignalsUpdate {
     /// From the interface: a key or another note event, as if it came in on
     /// [`Signals::NOTES`]. Not saved.
     Note(Performed),
+    /// From the interface: the performer is gone, such as code that restarted. The keys it
+    /// holds come up now, and what it sent to play later does not play.
+    PerformerGone,
     /// From the behaviour: where to write what comes in on [`Signals::NOTES`], for the
     /// interface, or nowhere. The one it replaces rides back.
     Tap(Option<EventTap<NoteEvent>>),
@@ -135,6 +138,7 @@ pub struct Signals {
     arrays: Vec<Vec<f32>>,
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
+    holds: Holds,
     watches: Vec<Watch>,
     tap: Option<EventTap<NoteEvent>>,
     sending: Sending,
@@ -190,6 +194,49 @@ struct SignalsVoice {
 struct Sending {
     bangs: [bool; MAX_OUTPUTS],
     notes: [Option<Pitch>; MAX_OUTPUTS],
+}
+
+/// The pitches the interface holds on the voices, and those the notes that come in hold, so a
+/// gone performer ends only its own. It counts nothing and holds back no off: where several
+/// senders meet, a feed already did, and an off ends its pitch on the voices whoever holds it.
+#[derive(Default)]
+struct Holds {
+    /// By pitch number, one bit each.
+    pitches: (u128, u128),
+    pedal: (bool, bool),
+}
+
+impl Holds {
+    fn follow(&mut self, event: NoteEvent, performed: bool) {
+        let (pitches, pedal) = match performed {
+            true => (&mut self.pitches.0, &mut self.pedal.0),
+            false => (&mut self.pitches.1, &mut self.pedal.1),
+        };
+        match event {
+            NoteEvent::On { pitch, .. } => *pitches |= 1 << pitch.number(),
+            NoteEvent::Off { pitch } => {
+                let up = !(1 << pitch.number());
+                self.pitches = (self.pitches.0 & up, self.pitches.1 & up);
+            }
+            NoteEvent::AllOff => *self = Self::default(),
+            NoteEvent::Pedal(moved) => *pedal = moved.is_down(),
+            _ => {}
+        }
+    }
+
+    /// Forgets what the performer holds, and gives `release` what ends it: the pedal up when the
+    /// notes that come in do not hold it down, then an off for each pitch they do not hold.
+    fn performer_gone(&mut self, mut release: impl FnMut(NoteEvent)) {
+        if std::mem::take(&mut self.pedal.0) && !self.pedal.1 {
+            release(NoteEvent::Pedal(Pedal::UP));
+        }
+        let alone = std::mem::take(&mut self.pitches.0) & !self.pitches.1;
+        for number in (0..128).filter(|number| alone & (1 << number) != 0) {
+            release(NoteEvent::Off {
+                pitch: Pitch::nearest(number),
+            });
+        }
+    }
 }
 
 /// The keys an effect or a source follows: the newest held one plays, and the note ends when
@@ -273,6 +320,7 @@ impl Signals {
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
+            holds: Holds::default(),
             watches,
             tap: None,
             sending: Sending {
@@ -392,14 +440,21 @@ impl Signals {
         }
     }
 
-    fn follow(&mut self, event: NoteEvent) {
-        if let NoteEvent::Bend(bend) = event {
-            self.bend = bend.fraction() * BEND_SEMITONES;
-        }
-        match &mut self.players {
-            Players::Many(voices) => voices.handle(event, &()),
-            Players::One(single) => single.keys.follow(event, &mut single.voice.note),
-        }
+    /// Follows `event`, which the interface played or not.
+    fn follow(&mut self, event: NoteEvent, performed: bool) {
+        self.holds.follow(event, performed);
+        play(&mut self.players, &mut self.bend, event);
+    }
+}
+
+/// Plays `event` on `players`, and moves the `bend` they read.
+fn play(players: &mut Players, bend: &mut f32, event: NoteEvent) {
+    if let NoteEvent::Bend(moved) = event {
+        *bend = moved.fraction() * BEND_SEMITONES;
+    }
+    match players {
+        Players::Many(voices) => voices.handle(event, &()),
+        Players::One(single) => single.keys.follow(event, &mut single.voice.note),
     }
 }
 
@@ -735,8 +790,18 @@ impl Processor for Signals {
             }
             SignalsUpdate::Note(performed) => {
                 if let Some(now) = self.scheduled.perform(*performed) {
-                    self.follow(now);
+                    self.follow(now, true);
                 }
+            }
+            SignalsUpdate::PerformerGone => {
+                self.scheduled.clear();
+                let Self {
+                    holds,
+                    players,
+                    bend,
+                    ..
+                } = self;
+                holds.performer_gone(|event| play(players, bend, event));
             }
             SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
         }
@@ -919,12 +984,12 @@ impl Signals {
         let mut start = 0;
         while start < frames {
             while let Some(timed) = events.next_if(|timed| timed.offset <= start) {
-                self.follow(timed.event);
+                self.follow(timed.event, false);
             }
             let now = start_frame + start as u64;
             while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
-                    Played::Note(event) => self.follow(event),
+                    Played::Note(event) => self.follow(event, true),
                     Played::Trigger(index) => self.block.fire(index, start),
                     Played::Live(index, value) => self.move_live(index, value),
                 }

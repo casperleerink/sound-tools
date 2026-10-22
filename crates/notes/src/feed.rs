@@ -1,16 +1,13 @@
 //! Passes notes on to one instrument, for a sender that may go away or play elsewhere while a
 //! note sounds: such a sender sends no off where it played, so the instrument hears
 //! [`NoteEvent::AllOff`] from the feed instead. A performer plays the instrument through it
-//! too, to the frame.
-//!
-//! An off releases every note of its pitch, and several senders may hold one pitch, such as two
-//! clips that overlap, or a clip and a key. So the feed counts the ons of each pitch and passes
-//! an off on only when it ends the last of them.
+//! too, to the frame. What reaches the instrument passes [`Held`].
 
 use sound_core::{
     EventInput, EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor,
 };
 
+use crate::held::Held;
 use crate::{Amount, Bend, Controller, NoteEvent, Performed, Pitch, Schedule};
 
 /// The most performed events that wait for their frame: a control loop plays a little ahead.
@@ -21,8 +18,7 @@ const WAITING: usize = 256;
 pub struct NoteFeed {
     performed: Schedule<NoteEvent>,
     now: Now,
-    /// How many ons of each pitch reached the instrument and have not ended.
-    held: [u8; 128],
+    held: Held,
 }
 
 impl Default for NoteFeed {
@@ -30,7 +26,7 @@ impl Default for NoteFeed {
         Self {
             performed: Schedule::new(WAITING),
             now: Now::default(),
-            held: [0; 128],
+            held: Held::default(),
         }
     }
 }
@@ -40,11 +36,14 @@ pub enum NoteFeedUpdate {
     /// holds before it passes anything on.
     Senders,
     Note(Performed),
+    /// The performer is gone: what it holds ends now, and what it sent to play later does not
+    /// play.
+    PerformerGone,
 }
 
-/// What plays at the start of the next block: the release of a change of senders, and what a
-/// performer sent that found the schedule full. On one frame only where each controller ends up
-/// counts, so it keeps that and the offs: a fixed size, whatever comes.
+/// What plays at the start of the next block, once it passed [`Held`]: the release of a change
+/// of senders, and what a performer sent that found the schedule full. On one frame only where
+/// each controller ends up counts, so it keeps that and the offs: a fixed size, whatever comes.
 struct Now {
     waits: bool,
     all_off: bool,
@@ -129,27 +128,17 @@ impl NoteFeed {
     pub const INPUT: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: EventOutput<NoteEvent> = EventOutput::new(0);
 
-    /// Passes `event` on unless it is an off another on of its pitch still holds. False when it
-    /// did not fit.
-    fn pass(&mut self, outputs: &mut EventOutputs<'_>, offset: usize, event: NoteEvent) -> bool {
-        match event {
-            NoteEvent::Off { pitch } => {
-                let held = &mut self.held[usize::from(pitch.number())];
-                if *held > 1 {
-                    *held -= 1;
-                    return true;
-                }
-                *held = 0;
-            }
-            NoteEvent::AllOff => self.held = [0; 128],
-            _ => {}
-        }
-        let sent = outputs.push(Self::OUTPUT, offset, event);
-        if sent && let NoteEvent::On { pitch, .. } = event {
-            let held = &mut self.held[usize::from(pitch.number())];
-            *held = held.saturating_add(1);
-        }
-        sent
+    /// Passes `event`, from the performer or not, through [`Held`]. False when it did not fit.
+    fn pass(
+        &mut self,
+        outputs: &mut EventOutputs<'_>,
+        offset: usize,
+        event: NoteEvent,
+        performed: bool,
+    ) -> bool {
+        (self.held).pass(event, performed, |event| {
+            outputs.push(Self::OUTPUT, offset, event)
+        })
     }
 }
 
@@ -167,12 +156,23 @@ impl Processor for NoteFeed {
     fn update(&mut self, update: &mut NoteFeedUpdate) {
         match update {
             NoteFeedUpdate::Senders => {
-                self.held = [0; 128];
+                self.held = Held::default();
                 self.now.keep(NoteEvent::AllOff);
+            }
+            NoteFeedUpdate::PerformerGone => {
+                self.performed.clear();
+                self.held.performer_gone(|event| self.now.keep(event));
             }
             NoteFeedUpdate::Note(performed) => {
                 if let Some(event) = self.performed.perform(*performed) {
-                    self.now.keep(event);
+                    if let NoteEvent::Off { pitch } = event {
+                        // The schedule dropped every end of the key that waited.
+                        self.held.ends_all(pitch);
+                    }
+                    (self.held).pass(event, true, |event| {
+                        self.now.keep(event);
+                        true
+                    });
                 }
             }
         }
@@ -198,10 +198,10 @@ impl Processor for NoteFeed {
             rest = after;
             performing = performing && self.perform(outputs, start, start + offset as u64);
             for timed in frame.iter().filter(|timed| !is_on(&timed.event)) {
-                self.pass(outputs, offset, timed.event);
+                self.pass(outputs, offset, timed.event, false);
             }
             for timed in frame.iter().filter(|timed| is_on(&timed.event)) {
-                self.pass(outputs, offset, timed.event);
+                self.pass(outputs, offset, timed.event, false);
             }
         }
         if performing {
@@ -219,7 +219,7 @@ impl NoteFeed {
         };
         while let Some((at, event)) = self.performed.take(last) {
             let offset = usize::try_from(at.saturating_sub(start)).unwrap_or(0);
-            if !self.pass(outputs, offset, event) {
+            if !self.pass(outputs, offset, event, true) {
                 self.performed.put_back((at, event));
                 return false;
             }

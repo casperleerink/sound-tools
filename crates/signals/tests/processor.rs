@@ -9,7 +9,7 @@ use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput,
     EventTap, Node, Ports, PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_notes::{NoteEvent, Performed, Pitch, Velocity};
+use sound_notes::{NoteEvent, NoteFeed, NoteFeedUpdate, Pedal, Performed, Pitch, Velocity};
 use sound_signals::{
     Bang, Cable, Code, Control, Kind, Machine, Number, Signals, SignalsUpdate, Values,
 };
@@ -1111,4 +1111,76 @@ fn a_live_control_moves_at_the_frame_the_interface_says() {
     let output = played.render(9_600);
     assert_eq!(output[4_799], 0.0);
     assert_eq!(output[9_599], 1.0);
+}
+
+fn performed(event: NoteEvent) -> SignalsUpdate {
+    SignalsUpdate::Note(Performed::Send { event, at: 0 })
+}
+
+#[test]
+fn a_gone_performer_leaves_the_note_another_sender_holds_on_its_key() {
+    let notes = vec![(4_800, on(60))];
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), notes);
+    played
+        .control
+        .update(played.signals, performed(on(60)))
+        .unwrap();
+    played.render(9_600);
+    played
+        .control
+        .update(played.signals, SignalsUpdate::PerformerGone)
+        .unwrap();
+    assert!(loudest(&played.render(9_600)[4_800..]) > 0.1);
+}
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_holds() {
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
+    let down = NoteEvent::Pedal(Pedal::new(127).unwrap());
+    for event in [down, on(60), off(60)] {
+        played
+            .control
+            .update(played.signals, performed(event))
+            .unwrap();
+    }
+    assert!(loudest(&played.render(9_600)[4_800..]) > 0.1);
+    played
+        .control
+        .update(played.signals, SignalsUpdate::PerformerGone)
+        .unwrap();
+    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
+}
+
+/// Two senders into a feed hold one key: the feed passes the off only once both let go, and the
+/// voice ends with it.
+#[test]
+fn a_key_two_senders_hold_through_a_feed_ends_when_the_feed_lets_it_go() {
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
+    let mut edit = played.control.edit();
+    let feed = edit.add_processor("feed", NoteFeed::default()).unwrap();
+    let into = Connection::new(
+        feed.id(),
+        NoteFeed::OUTPUT,
+        played.signals.id(),
+        Signals::NOTES,
+    );
+    edit.connect(into).unwrap();
+    edit.commit().unwrap();
+    let pitch = Pitch::new(60).unwrap();
+    let velocity = Velocity::new(100).unwrap();
+    for at in [0, 4_800] {
+        let note = Performed::Play {
+            pitch,
+            velocity,
+            at,
+            frames: 9_600,
+        };
+        played
+            .control
+            .update(feed, NoteFeedUpdate::Note(note))
+            .unwrap();
+    }
+    let output = played.render(24_000);
+    assert!(loudest(&output[9_600..14_400]) > 0.1);
+    assert_eq!(loudest(&output[14_500..]), 0.0);
 }

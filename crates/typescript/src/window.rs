@@ -8,7 +8,7 @@
 //! Nothing here waits for Bun: what it says comes as events.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,8 +18,8 @@ use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
-    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Scale,
-    Sections, TempoMap, Ticks,
+    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectError, ProjectEvent,
+    Scale, Sections, TempoMap, Ticks,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
@@ -88,6 +88,9 @@ pub(crate) struct Live {
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
+    /// Where the code of the running Bun played: an instance's own voices and controls, or the
+    /// feed of a child of it. A new Bun knows nothing of them, so each place hears it is gone.
+    performed_on: HashSet<(InstanceId, Option<String>)>,
     /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
@@ -407,6 +410,7 @@ impl Live {
                 told_song: None,
                 told_watches: HashMap::new(),
                 taps: HashMap::new(),
+                performed_on: HashSet::new(),
                 last_frame: Instant::now(),
                 problems,
                 _watcher: watcher,
@@ -1022,6 +1026,7 @@ impl Live {
         cx: &mut Context<Self>,
     ) {
         let Some(child) = child else {
+            self.performed_on.insert((id.clone(), None));
             if let Err(error) = self.control(id, name, value, at, cx) {
                 eprintln!("error: {id} {error}");
             }
@@ -1039,6 +1044,7 @@ impl Live {
                 return self.record_on(id, &played, (name, value, at), &session, cx);
             }
         }
+        self.performed_on.insert((played.clone(), None));
         if let Err(error) = self.control(&played, name, value, at, cx) {
             let problem = format!("a performer plays the child {child:?}, which {error}");
             self.tool_problem(id, problem, cx);
@@ -1125,6 +1131,7 @@ impl Live {
         performed: Performed,
         cx: &mut Context<Self>,
     ) {
+        (self.performed_on).insert((id.clone(), child.map(str::to_string)));
         let Some(child) = child else {
             let update = |_: &ToolInfo, _: &Session| Ok(SignalsUpdate::Note(performed));
             if let Err(error) = self.send_update(id, update, cx) {
@@ -1903,6 +1910,7 @@ impl Live {
                     .spawn(async move { bun.end() })
                     .detach();
             }
+            self.performer_gone(cx);
             let message = format!(
                 "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
             );
@@ -1923,6 +1931,35 @@ impl Live {
             Host::Starting { .. } => self.host = Host::Starting { again: true },
             Host::Running { bun, .. } => self.launch(Some(bun), cx),
             Host::Stopped => self.launch(None, cx),
+        }
+        self.performer_gone(cx);
+    }
+
+    /// Tells each place the code of the Bun that ended played on that it is gone. A place
+    /// deleted since has nothing left to release.
+    fn performer_gone(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        for (id, child) in std::mem::take(&mut self.performed_on) {
+            let gone = |project: &mut Project| match &child {
+                None => {
+                    let tools = self.tools.borrow();
+                    let info = (project.tool_of(&id)).and_then(|tool| find(&tools, tool));
+                    let Some(processor) = info.map(ToolInfo::processor) else {
+                        return Ok(());
+                    };
+                    project.send::<Signals>(&id, processor, SignalsUpdate::PerformerGone)
+                }
+                Some(child) => {
+                    let feed = feed_processor(child);
+                    project.send::<NoteFeed>(&id, &feed, NoteFeedUpdate::PerformerGone)
+                }
+            };
+            session.update(cx, |session, cx| match session.background(cx, gone) {
+                Ok(()) | Err(ProjectError::MissingProcessor { .. }) => {}
+                Err(error) => session.report(error, cx),
+            });
         }
     }
 
