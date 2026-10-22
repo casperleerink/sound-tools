@@ -19,11 +19,15 @@ const Section = (props: { title: string; children?: Child }) => (
   </div>
 );
 
+const write = (memory: { log: string[]; count: number }, line: string) => {
+  memory.log = [`${++memory.count} ${line}`, ...memory.log].slice(0, 30);
+};
+
 tool({
   name: "gallery",
   title: "Gallery",
   when: "You check how every part of the view SDK looks and behaves",
-  doc: "One example of each component, style, pointer event, overlay and timer of the view SDK. The log on the right shows what code hears, newest first; the pad under Pointer holds a note while it is pressed.",
+  doc: "The components, styles, pointer events, overlays and timers of the view SDK that the other snapshots do not show. The log on the right shows what code hears, newest first; the pad under Pointer holds a note while it is pressed.",
   state: {
     cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
     level: number({ min: -30, max: 6, default: -6, unit: "db" }),
@@ -38,12 +42,10 @@ tool({
     return sine(note.freq).times(adsr(note.gate, 5, 50, 0.8, 200)).times(0.1);
   },
   onKey: ({ memory }, { key, down }) => {
-    if (down) memory.log = [`${++memory.count} key ${key}`, ...memory.log].slice(0, 30);
+    if (down) write(memory, `key ${key}`);
   },
   view: ({ memory, play, send }) => {
-    const log = (line: string) => {
-      memory.log = [`${++memory.count} ${line}`, ...memory.log].slice(0, 30);
-    };
+    const log = (line: string) => write(memory, line);
     const pointer = (what: string) => ({
       onPress: (press: Press) => log(`${what} press ${press.button}`),
       onRelease: (press: Press) => log(`${what} release ${press.button}`),
@@ -83,6 +85,7 @@ tool({
               <Knob value={() => memory.gain} onChange={(gain) => { memory.gain = gain; log(`knob end ${gain.toFixed(2)}`); }}
                 label="Kept" min={0} max={1} default={0.5} />
               <Meter value={() => memory.gain} />
+              <Pad size={64} field={{ x: "cutoff", y: "level" }} />
               <Pad size={64} value={() => memory.pad} onChange={(pad) => { memory.pad = pad; log(`pad ${pad.x.toFixed(2)} ${pad.y.toFixed(2)}`); }} />
               <Fader length={64} min={0} max={1} default={0} value={() => memory.fader}
                 onChange={(fader) => { memory.fader = fader; log(`fader end ${fader.toFixed(2)}`); }} />
