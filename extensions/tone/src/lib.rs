@@ -63,7 +63,7 @@ impl State for ToneState {
 /// The doc of the tool, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "tone",
-    when: "You work on a `tone` record: a steady sine",
+    when: "A `tone` record: a steady sine",
     markdown: include_str!("../agent-doc.md"),
 };
 

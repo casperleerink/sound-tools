@@ -535,7 +535,7 @@ impl State for DrumPadState {
 /// The doc of the Drum pad record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "drums",
-    when: "You write a drum part, or give a track the Drum pad and change its sounds",
+    when: "You write a drum part, or change the sounds of the Drum pad",
     markdown: include_str!("../agent-doc.md"),
 };
 
