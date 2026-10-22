@@ -33,14 +33,8 @@ const RACK = CARD + 23;
 const ACROSS = 0.025;
 // The ticks left of bar 1, eight points at zoom 1.
 const LEAD = 320;
-// The pitches a clip's picture spans.
-const [LOW, HIGH] = [36, 96];
 
-const COLOR = {
-  back: "#121317", lane: "#17191e", bar: "#2a2d35", text: "#7c808c", chosen: "#e9ebef", playhead: "#7ee0a0",
-  note: "#00000080", marquee: "#a9b1ff33", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", meter: "#7ee0a0", clear: "#00000000",
-  edit: "#a9b1ff", record: "#ff6b6b", repeat: "#a9b1ff55",
-} as const;
+const COLOR = { back: "#121317", text: "#7c808c", clear: "#00000000" } as const;
 const PALETTE = [
   { name: "Blue", colour: "blue" }, { name: "Peach", colour: "peach" }, { name: "Mauve", colour: "mauve" }, { name: "Teal", colour: "teal" },
   { name: "Green", colour: "green" }, { name: "Yellow", colour: "yellow" }, { name: "Pink", colour: "pink" }, { name: "Sky", colour: "sky" },
@@ -324,7 +318,6 @@ export const song = tool({
       return rec?.tool === "recorder" ? [...rec.state.channels] : [];
     };
     const clipsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
-    const recordable = (each: Child) => (each.tool === "track" || each.tool === "tape") && each.children.some((child) => child.name === "rec");
     const runs = () => clock.tempo_map.time_signatures;
     // As far as the song shows: past what it holds, and past where it repeats.
     const end = memo(() => {
@@ -1460,7 +1453,6 @@ export const song = tool({
     const roomFor = (index: number) => (index === 0 ? 1 : timeline.pointX.times(labelWidth(index - 1) + 4).plus(starts()[index - 1] ?? 0).lt(starts()[index] ?? 0));
     // A tempo change in a box after what its bar shows, as the arrangement had it.
     const tempoParts = (bpm: number, chosen?: Color): TextPart[] => [{ text: "   " }, { text: String(bpm), color: "gray-950", border: chosen ?? "alpha/10" }, { text: " bpm", border: chosen ?? "alpha/10" }];
-    /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
     /** The tick nearest `tick` on the grid of the snap in the corner. */
     const snapped = (tick: number) => Math.max(memory.snap > 0 ? Math.round(tick / memory.snap) * memory.snap : Math.round(tick), 0);
     /** The bar whose line is nearest `tick`, from 1. */
