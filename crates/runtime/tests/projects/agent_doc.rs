@@ -341,19 +341,12 @@ fn is_within(part: &serde_json::Value, whole: &serde_json::Value) -> bool {
     }
 }
 
-/// The map is what an agent reads on every task. One doc more adds one line to it, not a
-/// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
-/// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
-/// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
-/// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
-/// with the Utility about 1280, with the Modulation about 1300, with the Delay about 1320,
-/// with the Wavetable about 1340, with the doc of SFZ files about 1350, with the library
-/// about 1365, with the Script about 1390, with the doc of writing a tool for the project
-/// about 1410, and with the Gate and the Analyzer about 1435.
+/// The map is what an agent reads on every task. One doc more adds a line of about 20 words to
+/// it, not a section. It was about 1230 words once the docs for writing tools were split.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1445, "the map has {words} words");
+    assert!(words < 1250, "the map has {words} words");
 }
