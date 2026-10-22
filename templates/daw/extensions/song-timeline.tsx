@@ -3,7 +3,7 @@ import { lengthOf } from "./clip-editor";
 import { addPoint, LaneRow } from "./song-automation";
 import { itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, type Child, type Page } from "./song-page";
-import { notesTrackOf } from "./song-tracks";
+import { notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./transport";
 
@@ -80,16 +80,18 @@ export const Timeline = ({ page }: { page: Page }) => {
   });
 
   // As the arrangement's: what the keys do, and a clip's name.
-  const CLIP_MENU: { label: string; command?: ClipCommand; shortcut?: KeyName; separator?: true }[] = [
+  const CLIP_MENU: { label: string; command?: ClipCommand; tail?: boolean; shortcut?: KeyName; separator?: true }[] = [
     { label: "Cut", command: "cut", shortcut: "cmd-x" }, { label: "Copy", command: "copy", shortcut: "cmd-c" }, { label: "Duplicate", command: "duplicate", shortcut: "cmd-d" },
-    { label: "Rename", separator: true }, { label: "Delete", command: "delete", shortcut: "backspace", separator: true },
+    { label: "Rename", separator: true }, ...RENDER_ITEMS, { label: "Delete", command: "delete", shortcut: "backspace", separator: true },
   ];
   const itemMenu = async (key: string) => {
     if (!memory.selected.has(key)) choose(new Set([key]));
-    const menu = CLIP_MENU.filter(({ command }) => command || itemTool(children, key) === "timeline");
+    const menu = CLIP_MENU.filter(({ command, tail }) => command || tail !== undefined || itemTool(children, key) === "timeline");
     const picked = await openMenu(menu.map(({ label, shortcut, separator }) => ({ label, shortcut, separator })), { width: 240 });
     const item = picked === null ? undefined : menu[picked];
+    const row = key.split("/")[0]!;
     if (item?.command) itemCommand(item.command, state.order, page);
+    else if (item?.tail !== undefined) renderToTrack(page, row, [...memory.selected].filter((each) => each.startsWith(`${row}/`)), item.tail);
     else if (item) memory.renamingClip = key;
   };
   /** A press on a clip or a region: a double click opens a clip's notes, and a region chosen alone shows its card in its track's panel. */

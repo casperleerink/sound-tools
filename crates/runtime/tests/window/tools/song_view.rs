@@ -12,7 +12,7 @@ use sound_core::Ticks;
 
 use super::song::open_song;
 use super::{Opened, write_sine};
-use crate::song::{ACROSS, BAR, HEADER, LEAD};
+use crate::song::{ACROSS, BAR, HEADER, LEAD, song_files};
 
 /// The note editor's rows and lane, as `clip-editor.tsx` has them: 12 points a pitch, a lane 56
 /// tall, and as it opens on a clip, 8 points before it and 96 after it, 24 to 192 points a beat.
@@ -194,7 +194,7 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     });
     let name = window.until_found("div-name-track");
     window.click_with(name, MouseButton::Right);
-    window.pick("menu-4");
+    window.pick("menu-6");
     window.until("the track deleted", |window| !window.has("song/track"));
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Delete a track"));
@@ -203,6 +203,50 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
             .as_array()
             .is_some_and(|order| !order.iter().any(|name| name == "track"))
     );
+}
+
+/// A track's menu renders it, after its effects, onto a new audio track under it with its fader
+/// and sends, and mutes it, so the song sounds as before: one undo step.
+#[gpui::test]
+fn a_track_renders_onto_an_audio_track_under_it_with_its_fader_and_sends(cx: &mut TestAppContext) {
+    let mut files = song_files(2, 2);
+    for (path, text) in &mut files {
+        if path == "state/song/t00/mix.json" {
+            *text = r#"{"tool": "fader", "state": {"gain_db": -6}}"#.to_string();
+        }
+    }
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = super::open(cx, &files);
+    // A window test is no `sound-tools`, which a render runs.
+    let program = env!("CARGO_BIN_EXE_runtime").into();
+    (window.cx).update(|_, cx| cx.set_global(sound_ui::RenderProgram(program)));
+    window.wait_for_bun();
+    let name = window.until_found("div-name-t00");
+    window.click_with(name, MouseButton::Right);
+    window.pick("menu-4");
+    window.until("the render placed", |window| {
+        window.has("song/audio-1/render")
+    });
+    let region = window.record("song/audio-1/render");
+    assert_eq!(region["start"], 0);
+    let asset = region["asset"].as_str().unwrap();
+    let wav = window.folder.path().join("assets/audio").join(asset);
+    let samples = hound::WavReader::open(wav).unwrap().into_samples::<f32>();
+    let peak = samples.fold(0.0_f32, |peak, sample| peak.max(sample.unwrap().abs()));
+    assert!(peak > 0.01, "{peak}");
+    let gain = |window: &mut Opened, fader| window.record(fader)["gain_db"].as_f64();
+    assert_eq!(gain(&mut window, "song/audio-1/mix"), Some(-6.0));
+    assert_eq!(gain(&mut window, "song/audio-1/send-ret-a"), Some(-12.0));
+    assert_eq!(window.record("song/t00/mix")["mute"], true);
+    assert_eq!(window.record("song")["order"][1], "audio-1");
+    window.after_the_runs();
+    assert_eq!(
+        window.undo_label().as_deref(),
+        Some("Render to audio track")
+    );
+    assert_eq!(window.problems(), []);
 }
 
 #[gpui::test]

@@ -234,12 +234,43 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
   });
   if (picked === 2) memory.returnsOpen = true;
 }
+/** A clip's and a track's menu: with the tail, what reverbs and releases sound after the end, or without. */
+export const RENDER_ITEMS = [{ label: "Render to audio track", tail: true, separator: true }, { label: "Render to audio track, no tail", tail: false }] as const;
+/** Renders the clips and regions `keys` of the track `name`, from the first to the last, after its effects and before its fader, onto a new audio track under it whose fader and sends are its, and mutes `name`: the song sounds as before. */
+export async function renderToTrack({ update, render, rows, itemAt, lengthAt }: Page, name: string, keys: readonly string[], tail: boolean) {
+  const source = rows().find((each) => each.name === name);
+  const starts = keys.flatMap((key) => itemAt(key)?.state.start ?? []);
+  if (!source || starts.length === 0) return;
+  const [from, to] = [Math.min(...starts), Math.max(...keys.map((key) => (itemAt(key)?.state.start ?? 0) + lengthAt(key)))];
+  const title = titleOf(source);
+  const asset = await render(`${name}/chain`, { from, to, tail, name: title });
+  if (asset === null) return;
+  update("Render to audio track", (part) => {
+    const owner = part.children.find((child) => child.name === name);
+    if (owner?.tool !== "track" && owner?.tool !== "tape") return;
+    const audio = freeName(part.children.map((child) => child.name), "audio-1") as `audio-${string}`;
+    const mixer = owner.children.flatMap((child) => (child.name === "mix" || child.name.startsWith("send-")) && child.tool === "fader" ? [{ name: child.name as "mix" | `send-${string}`, tool: "fader" as const, state: { ...child.state } }] : []);
+    part.children.push({
+      name: audio, tool: tape, state: { colour: owner.state.colour, title: `${title} (audio)` },
+      children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, ...mixer, { name: "render", tool: "region", state: { asset, start: from } }],
+    });
+    const order = rows().map((each) => each.name);
+    order.splice(order.indexOf(name) + 1, 0, audio);
+    part.state.order = order;
+    const mix = owner.children.find((child) => child.name === "mix");
+    if (mix?.tool === "fader") mix.state.mute = true;
+  });
+}
 async function trackMenu(page: Page, each: Child) {
   const { memory, update, openMenu } = page;
   const lanesShown = memory.lanes.has(each.name);
+  const keys = each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.tool === "timeline" || child.tool === "region").map((child) => `${each.name}/${child.name}`) : [];
+  const renders = each.tool === "bus" ? [] : RENDER_ITEMS.map((item) => ({ ...item, disabled: keys.length === 0 }));
   const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation" },
-    { label: "Add automation…" }, { label: "Delete", shortcut: "backspace" as const }];
+    { label: "Add automation…" }, ...renders, { label: "Delete", shortcut: "backspace" as const, separator: renders.length > 0 }];
   const picked = await openMenu(items);
+  const item = picked === null ? undefined : items[picked];
+  if (item && "tail" in item) return renderToTrack(page, each.name, keys, item.tail);
   if (picked === 0) memory.renaming = each.name;
   else if (picked === 1) {
     const colour = await openMenu(PALETTE.map(({ name, colour }) => ({ label: name, checked: colourOf(each) === colour })));
@@ -251,7 +282,7 @@ async function trackMenu(page: Page, each: Child) {
     }
   } else if (picked === 2) showLanes(page, each, !lanesShown);
   else if (picked === 3) addLane(page, each);
-  else if (picked === 4) deleteRow(page, each.name);
+  else if (picked === items.length - 1) deleteRow(page, each.name);
 }
 
 // An armed track's input is open: its level shows, and a take has its sound from the first frame.

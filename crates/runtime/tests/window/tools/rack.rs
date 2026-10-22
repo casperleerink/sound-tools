@@ -282,8 +282,8 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 1);
     window.wait_for_bun();
     window.click_with(clip, MouseButton::Right);
-    // Cut, copy, duplicate, rename, delete.
-    let delete = window.until_found("menu-4");
+    // Cut, copy, duplicate, rename, render with and without the tail, delete.
+    let delete = window.until_found("menu-6");
     window.click(delete);
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));
     window.wait_for_bun();
