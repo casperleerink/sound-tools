@@ -1,4 +1,4 @@
-//! The part of `sdk.ts` the runtime writes: the record of each built-in tool as a TypeScript
+//! `sdk/records.ts`, the part of the SDK the runtime writes: the record of each built-in tool as a TypeScript
 //! type, made from the JSON Schema of its Rust type, and the `Tools` that names them. Each
 //! object type is written once, as a named type. What
 //! [`RecordSchema::field`] says of a field is its TSDoc, as the agent docs say it too.
@@ -8,17 +8,12 @@ use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};
 
 use crate::built_in_schemas;
 
-/// The runtime's part of `sdk.ts` for the tools of `schemas` and the built-in children.
+/// `sdk/records.ts` for the tools of `schemas` and the built-in children.
 pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
     let built_in = built_in_schemas();
     let mut tools: Vec<&ToolSchema> = schemas.iter().chain(&built_in).collect();
     tools.sort_by_key(|schema| schema.tool);
-    let mut text = String::from(
-        "
-// ---------------------------------------------------------------------------------------------
-// Built-in tools: their records, from their Rust types.
-",
-    );
+    let mut text = String::from("// Built-in tools: their records, from their Rust types.\n");
     for schema in &tools {
         text.push_str(&Writer::new(schema).types());
     }

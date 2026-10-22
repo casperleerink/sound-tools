@@ -165,12 +165,25 @@ impl NoteMessage {
 }
 
 const SDK: &str = include_str!("sdk.ts");
+/// The modules `sdk.ts` names, by their path in `extensions/`. The runtime adds
+/// `sdk/records.ts`.
+const SDK_MODULES: [(&str, &str); 9] = [
+    ("sdk/fields.ts", include_str!("sdk/fields.ts")),
+    ("sdk/sound.ts", include_str!("sdk/sound.ts")),
+    ("sdk/tools.ts", include_str!("sdk/tools.ts")),
+    ("sdk/live.ts", include_str!("sdk/live.ts")),
+    ("sdk/reactivity.ts", include_str!("sdk/reactivity.ts")),
+    ("sdk/nodes.ts", include_str!("sdk/nodes.ts")),
+    ("sdk/drawing.ts", include_str!("sdk/drawing.ts")),
+    ("sdk/components.ts", include_str!("sdk/components.ts")),
+    ("sdk/host.ts", include_str!("sdk/host.ts")),
+];
 pub const HOST: &str = include_str!("host.ts");
 /// What [`HOST`] uses of Node and Bun, for a check of its types.
 pub const HOST_TYPES: &str = include_str!("node.d.ts");
 const BUN_TYPES: &str = include_str!("bun.d.ts");
-/// What the runtime writes in `extensions/` and owns there.
-const OWNED: [&str; 3] = ["sdk.ts", "tsconfig.json", "bun.d.ts"];
+/// What the runtime writes in `extensions/` and owns there: files, and the folder `sdk`.
+const OWNED: [&str; 4] = ["sdk.ts", "sdk", "tsconfig.json", "bun.d.ts"];
 /// The sounds of a tool that do not build that its problem names; it counts the others.
 const SHOWN_FAILURES: usize = 3;
 /// JSX makes the nodes of `sdk.ts`. Also what `bun check -p extensions` checks with.
@@ -500,8 +513,15 @@ fn folder_problem(message: String) -> Problem {
 fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
-    let sdk = format!("{SDK}{}", records::sdk_records(schemas));
-    for (name, text) in OWNED.into_iter().zip([&*sdk, TSCONFIG, BUN_TYPES]) {
+    let records = records::sdk_records(schemas);
+    std::fs::create_dir_all(extensions.join("sdk"))?;
+    let files = [
+        ("sdk.ts", SDK),
+        ("sdk/records.ts", &records),
+        ("tsconfig.json", TSCONFIG),
+        ("bun.d.ts", BUN_TYPES),
+    ];
+    for (name, text) in files.into_iter().chain(SDK_MODULES) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
             match std::fs::remove_file(&path) {
@@ -610,6 +630,7 @@ mod tests {
         assert!(extensions.bun.is_none());
         assert!(extensions.problems.is_empty(), "{:?}", extensions.problems);
         assert!(project.path().join(FOLDER).join("sdk.ts").is_file());
+        assert!(project.path().join(FOLDER).join("sdk/records.ts").is_file());
         // The runtime's own files are no tool.
         assert!(tool_files(&project.path().join(FOLDER)).is_empty());
     }

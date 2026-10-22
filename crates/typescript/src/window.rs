@@ -283,7 +283,7 @@ fn watch(
         });
         // A folder that is gone is no folder any more.
         let folder = path.is_dir() || (removed && path.extension().is_none());
-        let owned = OWNED.iter().any(|owned| inside == Path::new(owned));
+        let owned = OWNED.iter().any(|owned| inside.starts_with(owned));
         !hidden && !owned && (importable || folder)
     };
     let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
