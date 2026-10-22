@@ -49,7 +49,7 @@ impl State for AnalyzerState {
 /// The doc of the analyzer record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "analyzer",
-    when: "An analyzer on a track: the composer sees its spectrum, level and pitch",
+    when: "The composer wants to see the spectrum, level or pitch of a track",
     markdown: include_str!("../agent-doc.md"),
 };
 

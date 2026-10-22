@@ -236,7 +236,7 @@ impl State for CompressorState {
 /// The doc of the compressor record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "compressor",
-    when: "A compressor on a track: evener, punchier, tamer peaks",
+    when: "A compressor on a track: evener, punchier, tamer peaks, ducking",
     markdown: include_str!("../agent-doc.md"),
 };
 
