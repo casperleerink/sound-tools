@@ -78,8 +78,8 @@ pub(crate) fn json_tool() -> JsonTool {
         name: NAME.to_string(),
         check: Arc::new(|state| record(state).map(drop)),
         doc: Some(JsonToolDoc {
-            when: "A parent of this project moves a number over the song: automation of a knob"
-                .to_string(),
+            group: crate::BLOCKS,
+            when: "Move a number over the song: automation of a knob".to_string(),
             markdown: include_str!("lane.md").to_string(),
         }),
         behaviour: Box::new(apply),

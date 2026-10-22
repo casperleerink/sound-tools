@@ -52,8 +52,8 @@ tool({
 
 /// The owner of the doc for agents that write tools, as it is written there.
 fn doc_owner() -> String {
-    let doc = sound_typescript::AGENT_DOC.markdown;
-    let mut blocks = doc.split("```ts\n");
+    let mut blocks =
+        (sound_typescript::AGENT_DOCS.iter()).flat_map(|doc| doc.markdown.split("```ts\n"));
     let block = blocks.find(|block| block.contains("behaviour:")).unwrap();
     block.split("```").next().unwrap().to_string()
 }

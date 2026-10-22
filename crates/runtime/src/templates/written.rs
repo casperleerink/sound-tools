@@ -6,6 +6,7 @@ pub(super) fn written_by_the_runtime(path: &str) -> bool {
         .any(|part| part.starts_with('.') || part == "node_modules")
         || ["AGENTS.md", "CLAUDE.md", "problems.txt"].contains(&path)
         || path.starts_with("agent-docs/")
+        || path.starts_with("extensions/sdk/")
         || [
             "extensions/sdk.ts",
             "extensions/tsconfig.json",

@@ -145,6 +145,7 @@ impl State for SaturatorState {
 /// The doc of the saturator record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "saturator",
+    group: "Devices",
     when: "A saturator on a track: warmer, denser, grit or distortion",
     markdown: include_str!("../agent-doc.md"),
 };

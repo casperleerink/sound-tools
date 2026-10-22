@@ -302,9 +302,10 @@ mod tests {
         // An empty project the window opened takes it in place.
         let opened = folder.path().join("opened");
         std::fs::create_dir_all(opened.join("state")).unwrap();
-        std::fs::create_dir_all(opened.join("extensions")).unwrap();
+        std::fs::create_dir_all(opened.join("extensions/sdk")).unwrap();
         std::fs::write(opened.join(PROJECT_FILE), "{}").unwrap();
         std::fs::write(opened.join("extensions/sdk.ts"), "").unwrap();
+        std::fs::write(opened.join("extensions/sdk/sound.ts"), "").unwrap();
         std::fs::write(opened.join("AGENTS.md"), "").unwrap();
         write(&opened, daw).unwrap();
         assert!(opened.join("state/song/instance.json").exists());

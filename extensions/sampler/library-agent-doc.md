@@ -1,6 +1,6 @@
 # The library
 
-Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds, guitar, bass, drums, percussion and synths. They are free and sound basic: when the composer has a plugin that fits (`agent-docs/plugins.md`), use it instead. If the composer asks for a real instrument and no plugin fits, use one of these before a synth. A record names one by its id with `library`, instead of `sample` or `sfz`:
+Free sampled instruments for the Sampler. They sound basic: when the composer has a plugin that fits (`agent-docs/plugins.md`), use it instead. For a real instrument with no plugin, use one of these before a synth. A record names one by its id with `library`:
 
 ```json state/song/violins/synth.json
 {
@@ -19,11 +19,11 @@ Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds
 }
 ```
 
-`{"library": "strings/violin-section"}` is enough. As with `sfz`, only `gain_db` of the record applies: the instrument has its own pitch, envelope and velocity response.
+`{"library": "strings/violin-section"}` is enough. Only `gain_db` of the record applies.
 
-When an instrument fits, use it and ask the composer to download it, with its size. It plays once they click **Download** on the Sampler card, once for every project on this machine. Until then `problems.txt` says it is not downloaded. A failed download is listed there too, and **Try again** on the card retries it.
+Then ask the composer to click **Download** on the Sampler card, and give the size. Until then `problems.txt` says it is not downloaded.
 
-Range is where the instrument has samples. Write the parts in the range of the real instrument, which is often narrower. Disk is its size once downloaded.
+Range is where the instrument has samples. Write parts in the range of the real instrument, which is often narrower.
 
 | Id | Instrument | Range | Disk |
 | --- | --- | --- | --- |
@@ -72,9 +72,9 @@ Range is where the instrument has samples. Write the parts in the range of the r
 
 ## Drum maps
 
-The kits play one sound per key. The studio and rock kits follow the General MIDI drum map, as most drum parts do.
+The kits play one sound per key. The studio and rock kits follow the General MIDI drum map.
 
-`drums/studio-kit`: 35 kick with the snares off, 36 kick, 37 cross-stick, 38 snare, 39 snare off center, 40 rimshot, 41 low tom, 42 closed hi-hat, 43 low tom off center, 44 pedal hi-hat, 45 low tom rimshot, 46 open hi-hat, 47 low tom cross-stick, 48 high tom, 49 crash, 50 high tom off center, 51 ride, 53 ride bell, 54 tambourine, 55 flat ride crashed, 56 cowbell, 57 sizzle crash, 58 vibraslap, 59 flat ride, 60 and 61 bongos, 62 and 63 congas, 64 tumba, 65 and 66 timbales, 67 and 68 agogo, 69 cabasa, 70 and 82 shaker, 71 and 72 whistle, 73 and 74 guiro, 75 claves, 76 and 77 wood blocks, 80 muted triangle, 81 triangle, 83 sleigh bells, 84 bell tree. Every hit plays its close, snare and overhead microphones together.
+`drums/studio-kit`: 35 kick with the snares off, 36 kick, 37 cross-stick, 38 snare, 39 snare off center, 40 rimshot, 41 low tom, 42 closed hi-hat, 43 low tom off center, 44 pedal hi-hat, 45 low tom rimshot, 46 open hi-hat, 47 low tom cross-stick, 48 high tom, 49 crash, 50 high tom off center, 51 ride, 53 ride bell, 54 tambourine, 55 flat ride crashed, 56 cowbell, 57 sizzle crash, 58 vibraslap, 59 flat ride, 60 and 61 bongos, 62 and 63 congas, 64 tumba, 65 and 66 timbales, 67 and 68 agogo, 69 cabasa, 70 and 82 shaker, 71 and 72 whistle, 73 and 74 guiro, 75 claves, 76 and 77 wood blocks, 80 muted triangle, 81 triangle, 83 sleigh bells, 84 bell tree.
 
 `drums/rock-kit`: 36 kick, 37 side stick, 38 snare, 39 snare edge, 40 rimshot, 42 closed hi-hat, 43 floor tom, 44 pedal hi-hat, 45 low tom, 46 and 58 open hi-hat, 47 high tom, 49 crash, 50 crash choked, 51 ride, 52 ride edge, 53 ride bell, 54 closed hi-hat tip, 55 ride edge choked, 56 hi-hat foot splash.
 

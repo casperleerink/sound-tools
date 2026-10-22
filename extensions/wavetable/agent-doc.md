@@ -1,6 +1,6 @@
 # Wavetable
 
-`wavetable` is a synth that plays wavetables: tables of single-cycle waves, called frames, that it morphs between. It plays the notes that reach its input `notes`. Each note has two wavetable oscillators, a sine sub, two filters, an amp envelope, two more envelopes, two LFOs, and a modulation matrix that ties them together.
+`wavetable` is a synth that morphs through tables of single-cycle waves. It plays the notes that reach its input `notes`.
 
 Here a pad:
 
@@ -21,11 +21,9 @@ Here a pad:
 }
 ```
 
-`"state": {}` is the default patch: two saws, the second 7 cents up, through a low pass that `env_2` opens at the start of each note, with `filter_2` off. Its `matrix` is the first four routes above: higher keys open the filter more, softer notes are quieter, and the mod wheel morphs the first saw into a square. Write only what you change. Inside an object you write, a field you leave out takes the default of the tables below. A `matrix` you write replaces the whole matrix, so this pad keeps the four routes and adds an LFO that slowly morphs the first saw.
+`"state": {}` is the default patch: two saws through a low pass that `env_2` opens, with the first four routes above as its `matrix`. Write only what you change; a field you leave out inside an object takes its default. A `matrix` you write replaces the whole matrix, so this pad repeats the four default routes and adds one.
 
-Every number here but `octave`, `semitone`, `voices`, `polyphony` and the matrix can move over time with a `lane` child of its parent (`agent-docs/lane.md`), named by its path: `filter_1.cutoff_hz`.
-
-An edit applies while notes sound, without a click: numbers and choices glide over 20 ms, and a new table or effect fades its oscillator out and in over 10 ms each way.
+Every number but `octave`, `semitone`, `voices`, `polyphony` and the matrix can move with a lane, named by its path: `filter_1.cutoff_hz`.
 
 ## The record
 
@@ -47,13 +45,13 @@ An edit applies while notes sound, without a click: numbers and choices glide ov
 
 ## Filters
 
-`filter_1` and `filter_2` are the filter of the Filter effect, per note. `routing` above says where the sound goes through them.
+`filter_1` and `filter_2`:
 
 {{fields wavetable filter_1}}
 
 ## Envelopes
 
-`amp_env`, `env_2` and `env_3`. Each goes up to 1 in the attack, down to the sustain level in the decay, and to 0 in the release after the key is let go.
+`amp_env`, `env_2` and `env_3`:
 
 {{fields wavetable amp_env}}
 
@@ -65,14 +63,10 @@ An edit applies while notes sound, without a click: numbers and choices glide ov
 
 ## Voicing
 
-Bend moves every note two semitones either way, and the mod wheel adds a vibrato, as on every built-in instrument.
-
 {{fields wavetable voicing}}
 
 ## Matrix
 
-Each route of `matrix` moves a destination by `amount` times its source; routes to the same destination add up.
-
 {{fields wavetable matrix}}
 
-Starting points: a pad is `amp_env.attack_seconds` 0.5 or more, `release_seconds` 1 or more, and an LFO on `osc_1_position`. A pluck is `amp_env.sustain` 0 with `decay_seconds` 0.2 to 0.5. A bass is `octave` -1 with `sub.gain` 0.5 and `cutoff_hz` 300 to 600. A lead is `voicing.mode` `"mono"` with `glide_seconds` 0.05 to 0.2. Morphing sounds come from routing an envelope or an LFO to a position.
+Starting points: a pad is `amp_env.attack_seconds` 0.5 or more, `release_seconds` 1 or more, and an LFO on `osc_1_position`. A pluck: `amp_env.sustain` 0, `decay_seconds` 0.2 to 0.5. A bass: `octave` -1, `sub.gain` 0.5, `cutoff_hz` 300 to 600. A lead: `voicing.mode` `"mono"`, `glide_seconds` 0.05 to 0.2. A morphing sound routes an envelope or an LFO to a position.

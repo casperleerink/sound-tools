@@ -1,6 +1,6 @@
 # Fader
 
-Turns a sound up or down on a fader's scale, pans it and mutes it, from its input `audio` to its output `audio`: a mixer strip, a send or a master volume, a child of a parent of this project (`agent-docs/extensions.md`). Every change glides over 20 ms, so nothing clicks.
+Turns a sound up or down on a fader's scale, pans it and mutes it, from its input `audio` to its output `audio`: a mixer strip, a send or a master volume.
 
 ```json state/song/bass/mix.json
 {"tool": "fader", "state": {"gain_db": -6, "pan": -0.3}}

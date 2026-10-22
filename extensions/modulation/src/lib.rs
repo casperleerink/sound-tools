@@ -153,6 +153,7 @@ impl State for ModulationState {
 /// The doc of the modulation record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "modulation",
+    group: "Devices",
     when: "A chorus, flanger or phaser on a track: wider, swirling, a jet sweep",
     markdown: include_str!("../agent-doc.md"),
 };

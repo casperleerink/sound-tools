@@ -1,6 +1,6 @@
 # Timeline
 
-Plays notes in time, to the sample, out of its output `notes`: a child of a parent of this project (`agent-docs/extensions.md`). Once at their place in the song, such as the clips of a track or the cues of a score: a parent may have many, each a record of its own, so moving one or editing its notes changes one file. Or round after round, such as the patterns of a launcher.
+Plays notes in time, to the sample, out of its output `notes`: once at their place in the song, such as the clips of a track, one record each; or round after round, such as the patterns of a launcher.
 
 ```json state/song/piano/verse.json
 {
@@ -29,6 +29,6 @@ The piece ends where the last timeline that plays once stops: a render and an ex
 
 Its parent connects it to what plays it: `{ from: { child: "verse", notes: "notes" }, to: { child: "piano", notes: "notes" } }`.
 
-A number into its input `launch` starts it at its next `quantize` point, from there: above 0 starts it, 0 or below stops it. What plays goes on until it lands. From a performer, `send({ child: "bass", number: "launch" }, 1)`; nothing saves it and a render does not hear it. A number cable to `{ child: "bass", number: "launch" }` launches each time its number changes, in a render too. A clip launcher is a set of looping timelines with `"plays": false`: start one and stop the others at the same bar.
+A number into its input `launch` starts it at its next `quantize` point: above 0 starts it, 0 or below stops it. `send({ child: "bass", number: "launch" }, 1)` is not saved and a render does not hear it; a number cable to `{ child: "bass", number: "launch" }` launches each time its number changes, in a render too. A clip launcher is a set of looping timelines with `"plays": false`: start one and stop the others at the same bar.
 
 A looping timeline shows what it plays to its parent's view: `outputs["bass.playing"]` is 1 while it plays, `queued` is 1 for a start and -1 for a stop that waits, and `phase` goes from 0 to 1 over a round.

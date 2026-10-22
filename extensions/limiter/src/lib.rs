@@ -194,6 +194,7 @@ impl State for LimiterState {
 /// The doc of the limiter record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "limiter",
+    group: "Devices",
     when: "A limiter on a track: louder, with no peak over a ceiling",
     markdown: include_str!("../agent-doc.md"),
 };

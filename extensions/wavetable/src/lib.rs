@@ -49,7 +49,8 @@ pub const EXTENSION: &str = "wavetable";
 /// The doc of the wavetable record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "wavetable",
-    when: "A track plays the Wavetable synth: morphing pads, basses and leads",
+    group: "Devices",
+    when: "A track plays the `wavetable` synth: morphing pads, basses, leads",
     markdown: include_str!("../agent-doc.md"),
 };
 

@@ -1,8 +1,6 @@
 # Drum pad: drums on 16 pads
 
-`drum-pad` is an instrument with 16 pads. Each note from 36 to 51 plays one pad, on the General MIDI drum map, so a drum part written for any other drum machine plays the right sounds. Every pad is a drum sound made by synthesis, or a sample: an audio file under `assets/audio/`. A new Drum pad is the kit below and needs no files.
-
-A drum part is a Drum pad that its parent plays notes into, from `timeline` children (`agent-docs/timeline.md`). Here the one of `beat`:
+`drum-pad` is an instrument with 16 pads: notes 36 to 51, on the General MIDI drum map. Each pad is a synthesized sound or a sample. A drum part is a Drum pad its parent plays notes into from `timeline` children (`agent-docs/timeline.md`). Here the one of `beat`:
 
 ```json state/song/beat/synth.json
 {
@@ -11,7 +9,7 @@ A drum part is a Drum pad that its parent plays notes into, from `timeline` chil
 }
 ```
 
-`"pads": {}` is the kit as it is. That is all a drum part needs: write its notes. The kit belongs to the version of the app: a later version may change how its pads sound, and a pad you wrote out keeps what you wrote.
+`"pads": {}` is the kit below, with no files. That is all a drum part needs: write its notes.
 
 ## Notes: the pads
 
@@ -34,9 +32,9 @@ A drum part is a Drum pad that its parent plays notes into, from `timeline` chil
 | 50 | Tom 6 | `tom` | 0 | 6 | 500 | -0.25 | no |
 | 51 | Ride | `ride` | 0 | 0 | 2500 | 0.25 | no |
 
-A note plays its pad once, as a hit: its `length` does not matter, write a sixteenth (240 ticks). `velocity` is how hard: 64 is a quarter as loud as 127, so ghost notes are 30 to 50 and accents 110 to 127. Another note of the same pad cuts the pad's last hit short, and so does a hit of a pad of the choke group for every other pad of it: a closed hat stops the open hat. Notes outside 36 to 51 play nothing.
+A note is one hit: its `length` does not matter, write 240. Ghost notes are `velocity` 30 to 50, accents 110 to 127. A hit cuts the last hit of its own pad, and a choke pad cuts the other choke pads: a closed hat stops the open hat. Notes outside 36 to 51 play nothing.
 
-A beat is a `timeline`. A quarter note is 960 ticks, so an eighth is 480 and a sixteenth 240. This one is two beats: the kick on 1 and the "and" of 2, the snare on 2, the hat on every eighth and the open hat on the last one:
+Two beats: the kick on 1 and the "and" of 2, the snare on 2, the hat on every eighth and the open hat on the last one:
 
 ```json state/song/beat/groove.json
 {
@@ -57,11 +55,11 @@ A beat is a `timeline`. A quarter note is 960 ticks, so an eighth is 480 and a s
 }
 ```
 
-For a longer part write one timeline of several bars, or one per bar or per pattern. Start from a steady kick, snare and hat, then add ghost notes, open hats and fills on the toms (41 low to 50 high) into a crash (49) on the next downbeat.
+Start from a steady kick, snare and hat, then add ghost notes, open hats and fills on the toms (41 low to 50 high) into a crash (49) on the next downbeat.
 
 ## Changing the pads
 
-Write only the pads you change, by note. A pad you leave out is the pad of the kit, and a field you leave out of a pad is that pad's value in the kit. The runtime writes every pad that differs from the kit with all its fields. Here the open hat rings longer and pad 48 plays a sample:
+Write only the pads you change, by note. A pad or field you leave out is the kit's. The runtime writes every changed pad with all its fields. Here the open hat rings longer and pad 48 plays a sample:
 
 ```json state/song/beat/synth.json
 {
@@ -91,8 +89,8 @@ Write only the pads you change, by note. A pad you leave out is the pad of the k
 
 {{fields drum-pad pads}}
 
-Copy the file of a sample pad in first, see `agent-docs/audio.md`. Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. The last 2 ms of a sample always fade to silence, and a sample plays at most 10 s. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
+Copy a sample's file into `assets/audio/` first. Set its `decay_ms` a little longer than the file, else its end is faded out.
 
-The volume and the pan of a pad can move over time with a `lane` child of its parent (`agent-docs/lane.md`), named by the note of the pad: `pads.42.volume_db` or `pads.42.pan`.
+A `lane` (`agent-docs/lane.md`) can move a pad's `pads.42.volume_db` or `pads.42.pan`.
 
-Starting points: a deeper, longer kick is `pitch_semitones` -2 to -4 with `decay_ms` 800 to 1200. A tight snare is `decay_ms` 150 to 200. Toms are one sound, tuned apart: keep them in steps of 2 to 3 semitones. Hats too loud in a busy part: bring the hat pads to -4 to -6 dB rather than lowering their velocities. An edit applies while the part plays. Volume and pan glide over 20 ms; sound, pitch and decay apply from the next hit once the new sound is made, a moment after the edit.
+Starting points: a deeper, longer kick is `pitch_semitones` -2 to -4 with `decay_ms` 800 to 1200. A tight snare is `decay_ms` 150 to 200. Tune the toms 2 to 3 semitones apart. Hats too loud in a busy part: bring the hat pads to -4 to -6 dB rather than lowering their velocities.

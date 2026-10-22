@@ -47,10 +47,11 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 /// being opened somewhere else. Hence no path of this executable in it.
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
-    when: "You can run commands and want to check how your work sounds, read the whole piece in one go, or write it as a WAV",
+    group: "Project",
+    when: "You can run commands: check how your work sounds, read the whole piece, or render a WAV",
     markdown: "# Inspect, measure and render from a command line
 
-When you can run commands, the Sound Tools runtime reads the project for you. Every form works while the project is open and changes nothing.
+Every form works while the project is open and changes nothing.
 
 ```sh
 sound-tools . --inspect
@@ -64,30 +65,26 @@ sound-tools . --render <wav>
 
 `--analyze` and `--render` take the same options:
 
-- `--from <at>` and `--to <at>`, together or alone: a part of the piece, and its tail. `<at>` is ticks (`3840`), or a time as the composer reads it off the playhead (`1:23.5`) or in seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
+- `--from <at>` and `--to <at>`: a part of the piece, and its tail. `<at>` is ticks (`3840`), a time as the playhead shows it (`1:23.5`) or seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
 - `--seconds <n>`: the first `n` seconds, with no tail.
-- `--only <path>`: the device plays only the sound of this instance, such as `song/bass`, before what its parents do to it. No file changes.
+- `--only <path>`: only the sound of this instance, such as `song/bass`, before what its parents do to it.
 
-`sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`, with `--from` and `--to` as times.
+`sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`.
 
 ## What `--analyze` prints
 
-The first line is the whole: its loudness (integrated, gated as streaming services measure it), the loudest 400 ms, the true peak and where it is, and its pitch and drift. Each row then starts at a tick, a bar and a time:
+The first line is the whole: loudness, the loudest 400 ms, the true peak and where it is, its pitch and drift. Each row then starts at a tick, a bar and a time:
 
-- `LUFS`: the loudness of the row, weighted like hearing. `max`: its loudest 400 ms, which shows short hits that the loudness of the row hides.
-- `peak`: the true peak in dBTP, between the samples too. Above 0 clips.
+- `LUFS`: the loudness of the row. `max`: its loudest 400 ms, which shows short hits.
+- `peak`: the true peak in dBTP. Above 0 clips.
 - `sub` under 60 Hz, `bass` 60 to 250, `lowmid` 250 to 500, `mid` 500 to 2k, `highmid` 2k to 6k, `high` above 6k: the level of each band in dB.
-- `width`: the share of the sound in the side. 0% is mono, 50% as wide as two unrelated channels; above 50% the channels cancel when summed to mono.
-- `pitch`: the middle pitch heard, as the nearest note and how far off it in cents, 100 to a semitone: `A4+3c` is 3 cents sharp. `drift`: how far the pitch moves, low to high, in cents. A steady note in tune reads `+0c` and `0c`; a vibrato of 20 cents either way about `40c`; two notes in one row their interval, `200c` for a whole tone.
-- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord, a mix, or a note under E1 or above B7.
+- `width`: the share of the sound in the side. 0% is mono; above 50% the channels cancel when summed to mono.
+- `pitch`: the middle pitch heard and how far off it in cents: `A4+3c`. `drift`: how far the pitch moves, in cents: a vibrato of 20 cents either way reads about `40c`, two notes in one row their interval.
+- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord.
 
-To check a vibrato, a wobble or the tuning, solo the track and measure one held note with `--from` and `--to`: the first line gives the drift of the whole note. A row shorter than one cycle of a slow wobble shows only part of it.
+To check a vibrato or the tuning, solo the track and measure one held note with `--from` and `--to`. A mono file measures 3 dB above what a meter of one channel shows, as it plays on both. Compare runs (before and after your change, a soloed track against the whole); the composer says whether it sounds good.
 
-A mono file is measured as it plays in a project, on both channels: 3 dB above what a meter of one channel shows.
-
-Compare rows and runs, not rules of thumb: the same part before and after your change, a soloed track against the whole, a verse against a chorus. The numbers do not say whether it sounds good; the composer does.
-
-`sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu (on Windows the installer puts it there), or skip this step: `problems.txt` tells you whether your files loaded.",
+When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
 /// The plugin host of one session: it scans this machine, keeps the plugins a project loads
@@ -140,12 +137,15 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
-    register_extensions(&mut registry, Some(plugins))?;
+    // First, as the map lists its groups in the order of their first doc.
     registry.runtime_agent_doc(INSPECT_DOC)?;
-    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
+    for doc in sound_typescript::AGENT_DOCS {
+        registry.runtime_agent_doc(doc)?;
+    }
+    register_extensions(&mut registry, Some(plugins))?;
     Ok(registry)
 }
 

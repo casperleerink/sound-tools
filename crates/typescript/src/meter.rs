@@ -31,8 +31,8 @@ pub(crate) fn json_tool() -> JsonTool {
         name: NAME.to_string(),
         check: Arc::new(|state| record(state).map(drop)),
         doc: Some(JsonToolDoc {
-            when: "A parent of this project shows the level or the sound of something it plays"
-                .to_string(),
+            group: crate::BLOCKS,
+            when: "Show the level or the sound of something a parent plays".to_string(),
             markdown: include_str!("meter.md").to_string(),
         }),
         behaviour: Box::new(apply),

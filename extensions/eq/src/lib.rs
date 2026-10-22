@@ -311,7 +311,8 @@ impl State for EqState {
 /// The doc of the EQ record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "eq",
-    when: "You put an EQ on a track, or change one: cut the lows, less boxy, more air, a notch",
+    group: "Devices",
+    when: "An EQ on a track: cut the lows, less boxy, more air, a notch",
     markdown: include_str!("../agent-doc.md"),
 };
 

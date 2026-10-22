@@ -17,8 +17,8 @@ fn the_map_is_written_on_open_and_lists_the_docs_of_the_enabled_extensions() {
     // The form of every tool, and one line per doc that says when to open it.
     assert!(map.contains("| `test.bank` | `<name>/instance.json`, children next to it |"));
     assert!(map.contains("| `test.dc` | `<name>.json` |"));
-    assert!(map.contains("| `agent-docs/project-json.md` | You change the tempo"));
-    assert!(map.contains("| `agent-docs/test-tools.md` | You work on a test record. |"));
+    assert!(map.contains("### Project\n\n- `agent-docs/project-json.md`: You change the tempo"));
+    assert!(map.contains("### Test\n\n- `agent-docs/test-tools.md`: You work on a test record."));
     assert!(!map.contains("{{"), "a placeholder is left: {map}");
     assert_eq!(harness.read("CLAUDE.md"), "@AGENTS.md\n@instructions.md\n");
 
@@ -79,6 +79,7 @@ fn only_a_stale_doc_is_taken_out_of_the_docs_folder() {
 fn a_doc_name_that_is_not_a_file_name_is_refused() {
     let doc = |name| AgentDoc {
         name,
+        group: "Test",
         when: "Never",
         markdown: "# No\n",
     };
@@ -102,6 +103,7 @@ fn a_doc_name_that_is_not_a_file_name_is_refused() {
 fn a_second_doc_of_one_name_is_refused_whoever_registered_the_first() {
     let doc = |name| AgentDoc {
         name,
+        group: "Test",
         when: "Never",
         markdown: "# No\n",
     };

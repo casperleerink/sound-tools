@@ -1,13 +1,8 @@
 # Third-party plugins
 
-A third-party plugin is a child like a built-in device: an instrument its parent plays `notes`
-into, or an effect its parent wires sound through.
-
-CLAP and VST 3 work, as instruments and as effects. AU does not.
-
-## The record
-
-A plugin is the tool `plugin`. One record serves both places. Here the instrument of `rhodes`:
+A plugin is the tool `plugin`, a child like a built-in device: an instrument its parent plays
+`notes` into, or an effect its parent wires sound through. CLAP and VST 3 work; AU does not.
+One record serves both places. Here the instrument of `rhodes`:
 
 ```json state/song/rhodes/synth.json
 {
@@ -16,8 +11,7 @@ A plugin is the tool `plugin`. One record serves both places. Here the instrumen
 }
 ```
 
-A VST 3 plugin is the same record with another `format` and the class id as its `plugin_id`.
-This is a second one, `strings`, with its own state file:
+A VST 3 plugin, with its own state file:
 
 ```json state/song/strings/synth.json
 {
@@ -29,87 +23,53 @@ This is a second one, `strings`, with its own state file:
 | Field | Meaning |
 | --- | --- |
 | `format` | `clap` or `vst3`. |
-| `plugin_id` | For `clap`, the id the plugin's maker gave it, such as `com.u-he.diva`. For `vst3`, the plugin's class id as thirty-two hex digits, such as `A1B2C3D4E5F60718293A4B5C6D7E8F90`. Neither is the file name of the plugin, and neither is in any file of the project. Get them from `sound-tools --plugins`, or ask the composer. |
-| `state_asset` | A name you choose for the file that holds the plugin's own settings: `assets/plugin-state/<name>.bin`. Lowercase letters, digits, `-` and `_`. Give every plugin its own name: two records that name one file share it, and two different plugins that name one file cannot read each other's settings. |
+| `plugin_id` | For `clap`, the maker's id, such as `com.u-he.diva`. For `vst3`, the class id as thirty-two hex digits. Not the plugin's file name. |
+| `state_asset` | A name you choose for `assets/plugin-state/<name>.bin`, the plugin's own settings. Give every plugin its own name: two records that name one file share it. |
 
-Writing the plugin record over the record of a synth replaces the synth with the plugin, live,
-as one undo step. Writing a synth record back replaces the plugin again.
-
-The same record is an effect where its parent wires sound through it. Nothing of the record
-changes: only how it is wired. A plugin that says it is an instrument can be an effect and the
-other way round; nothing checks. A plugin that takes no audio in, such as a synth, replaces the
-sound that reached it.
-
-The composer can do the same in the app, so the record may change under you. Read it before you
-write it.
+- Writing a plugin record over a synth record replaces the synth, and the other way round.
+- Nothing checks whether a plugin is an instrument or an effect: a record may name any plugin in
+  either place. A plugin that takes no audio in replaces the sound that reached it.
+- The composer can change the record in the app, pins too. Read it before you write it.
 
 ## Never edit the state asset
 
-`assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin
-understands. A VST 3 plugin keeps two states, so its file holds both. Do not open it, do not edit it, do not copy it between plugins. The app writes it
-when the plugin says its settings changed, at most once a second, and when the project closes.
-It is not part of the undo history: undo and redo never change it. Only the parameters a record
-pins, below, are in the record and in undo.
-
-Deleting a plugin's record does not delete its state file. To make the plugin start fresh,
-delete `assets/plugin-state/<name>.bin` while no app has the project open.
-
-A file that is already there is never taken up by a plugin the composer picks in the app: that
-gets a name of its own, numbered like a take (`six-sines-1`, `six-sines-2`). Reusing a name is
-for you, when you mean two records to share one sound.
+Do not open, edit or copy `assets/plugin-state/<name>.bin`. The app writes it, and undo never
+changes it. Deleting a record does not delete its file. To make a plugin start fresh, delete the
+file while no app has the project open.
 
 ## Which plugins this machine has
 
-The ids this project already uses are in its own records: every `plugin_id` under `state/` is a
-plugin this machine had when it was written. Read them before you look further; a plugin that
-plays here is one you can name again.
-
-For the rest, not from any file. When you can run commands:
+Every `plugin_id` already under `state/` is a plugin this machine had. For the rest, when you
+can run commands:
 
 ```sh
 sound-tools --plugins
 ```
 
-It prints every plugin with its format, its id and what it says it is, and it looks at every
-plugin again, so a plugin that failed once is tried again. `sound-tools` is the command line
-tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install
-command line tool** in the project menu, or ask for the id.
-
-The first word of a line is the format, which is what `format` in the record takes:
-
     clap  com.example.piano                 Example Audio Piano (instrument, instrument synthesizer)
     vst3  A1B2C3D4E5F60718293A4B5C6D7E8F90  Example Audio Strings (instrument, Instrument Synth)
-    clap  com.example.warmth                Example Audio Warmth (effect, audio-effect stereo)
 
-What a plugin says it is is what the composer's pickers offer it for, and nothing more: a
-record may name any plugin in either place.
+The first word is the `format`, the second the `plugin_id`. When `sound-tools` is not on your
+`PATH`, ask the composer to pick **Install command line tool** in the project menu, or ask for
+the id.
 
 ## The parameters of a plugin
-
-To see what a plugin's parameters are, give its format and its id:
 
 ```sh
 sound-tools --plugin-params clap com.example.synth
 ```
 
-It loads that one plugin and prints one line per parameter: its id, its name, its range, its
-default, and, for a parameter that takes only some values, how many, with the plugin's name for
-each when the plugin gives names. A read-only parameter, such as a meter, and one the plugin hides are not listed. The
-numbers are the format's own: a `clap` plugin's own values, such as `20 to 20000` for a
-frequency in hertz, and always `0 to 1` for `vst3`. They are printed to six digits; the plugin
-keeps more. A plugin can list thousands of parameters, so search the output, for example with
-`grep -i cutoff`. The plugin may print messages of its own in between.
-
     0  Cutoff  20 to 20000  default 1000
     1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable
 
+One line per parameter: id, name, range, default, and steps if any. Values are in the format's
+own units: a `clap` plugin's own value, always `0` to `1` for `vst3`. The list can be thousands
+of lines, so search it, for example with `grep -i cutoff`.
+
 ## Pinned parameters
 
-A record can hold a few of its plugin's parameters, under `parameters`, by the id
-`--plugin-params` prints. These are pins. For a pin the record wins: its value is sent to the
-plugin after the plugin's own settings load, and a value you write moves the plugin while it
-plays, with no reload. Every parameter that is not pinned stays in the state file. This pins the
-`Cutoff` of the piano of `rhodes`:
+`parameters` holds pins, by the id `--plugin-params` prints. A pin's value wins over the state
+file and moves the plugin live. This pins the `Cutoff` of `rhodes`:
 
 ```json state/song/rhodes/synth.json
 {
@@ -123,22 +83,16 @@ plays, with no reload. Every parameter that is not pinned stays in the state fil
 }
 ```
 
-- `value` is in the format's own units, as `--plugin-params` prints them: a `clap` plugin's own
-  value, `0` to `1` for `vst3`. A parameter with named steps takes the number of a step, never
-  its name.
-- `name` is for whoever reads the file. The id is what counts.
+- `value` is in the units `--plugin-params` prints. A stepped parameter takes the step's number,
+  never its name.
+- `name` is only for the reader; the id counts.
 - At most 64 pins. Leave `parameters` out for none.
-- When the composer turns a pinned knob in the plugin's own window, or the plugin moves it
-  itself, the app writes the new value into the record, one undo step per turn.
-- The composer can also pin, turn and unpin parameters on the plugin's card, so `parameters`
-  may change under you. Read the record before you write it.
 
 ## Automating a pin
 
-A `lane` child of the plugin's parent moves a pin over time, as it moves a number of a built-in
-device (`agent-docs/lane.md`): the parent connects the lane's `value` to the number
-`parameters.<id>.value` of the plugin. This lane opens the `Cutoff` pinned above over bar 1 and
-closes it again over bar 2:
+A `lane` (`agent-docs/lane.md`) moves a pin: the parent connects the lane's `value` to
+`parameters.<id>.value` of the plugin. Lane values are in the pin's units. This one opens the
+`Cutoff` above over bar 1 and closes it over bar 2:
 
 ```json state/song/rhodes/lane-cutoff.json
 {
@@ -149,46 +103,27 @@ closes it again over bar 2:
 }
 ```
 
-- Only a pinned parameter takes a lane, and only one the plugin says may be automated and that
-  takes any value in its range: `--plugin-params` prints `not automatable` or steps for the
-  others. Pin it first.
-- Values are in the format's own units, as the pin's: a `clap` plugin's own value, `0` to `1`
-  for `vst3`. Between two points the value moves in a straight line.
-- While the lane plays, the pin's `value` in the record does not, and the app never writes what
-  the lane plays into it. Take the lane out and the pin's value plays again.
+Only a pinned parameter takes a lane, and not one `--plugin-params` prints with steps or
+`not automatable`. Pin it first.
 
 ## When it does not play
 
-`problems.txt` names the record and says what is wrong. The usual lines:
+The usual lines in `problems.txt`:
 
-- `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or
-  the plugin is not installed here. The record stays as it is, while everything else plays.
-  A missing instrument is silent; a missing effect lets the sound through
-  unchanged, so the rest of the chain still plays. Correct `plugin_id` and it plays at once,
-  with no restart. While the app's window is open, a plugin installed meanwhile is found
-  within seconds and the record plays then.
-- `a vst3 plugin_id is the class id as thirty-two hex digits`: the record itself is refused.
-  You wrote something else, perhaps a CLAP-style id or the plugin's name.
-- `the plugins of this machine are still being looked at`: nothing is wrong. The app looks for
-  plugins on a thread of its own while it opens, so a project never waits for it. The plugin
-  plays as soon as the scan reaches it, which needs nothing of you. Read
+- `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or the
+  plugin is not installed. Fix `plugin_id`; it plays at once.
+- `a vst3 plugin_id is the class id as thirty-two hex digits`: you wrote a CLAP-style id or a
+  name.
+- `the plugins of this machine are still being looked at`: nothing is wrong. Read
   `problems.txt` again in a few seconds.
-- `the state of the plugin ... could not be read`: usually two records that name one
-  `state_asset` for different plugins. Give each its own name.
-- `... offers the host no way to send the sustain pedal`: the notes play, the pedal does not.
-  There is nothing to fix in the file. A CLAP plugin whose note port takes no MIDI, or a VST 3
-  plugin that maps no parameter to MIDI controller 64, says this. An effect with no note port
-  at all never says it: it has no pedal to miss.
-- `... asked to be started again, because its latency or its buses changed, and did not
-  start`: the app restarts such a plugin, and this one failed to start. Nothing in the file is
-  wrong. The slot is silent, or lets the sound through for an effect, until the record changes.
-- `... has no parameter with the id ...`: a pin names an id `--plugin-params` does not list.
-  That pin moves nothing and the rest plays. Correct the id, or take the pin out.
-- `` `parameters.<id>.value` is ..., outside the range ``: write a value inside the range the
-  line names. Until then that pin moves nothing and the rest plays.
-- On the parent, a connection to `parameters.<id>.value` that the plugin takes no number of
-  that name: the pin is missing, has steps, may not be automated, or its value is out of range.
-  The connection moves nothing and the rest plays.
+- `the state of the plugin ... could not be read`: usually two records name one `state_asset`
+  for different plugins. Give each its own name.
+- `... offers the host no way to send the sustain pedal`, or `... asked to be started again ...
+  and did not start`: nothing to fix in the file.
+- `... has no parameter with the id ...`: correct the pin's id, or take the pin out.
+- `` `parameters.<id>.value` is ..., outside the range ``: write a value inside the range.
+- On the parent, a connection to `parameters.<id>.value` that the plugin takes no number of:
+  the pin is missing, has steps, may not be automated, or is out of range.
 
 ## VST
 
