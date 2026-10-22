@@ -218,6 +218,9 @@ fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
         let text = std::fs::read_to_string(file.path()).unwrap();
         write(&extensions, file.file_name().to_str().unwrap(), &text);
     }
+    // And the gallery, which uses every part of the view SDK.
+    let gallery = include_str!("../sdk-gallery/extensions/gallery.tsx");
+    write(&extensions, "gallery.tsx", gallery);
     let checked = sound_core::process::background_command(bun)
         .args(["check", "-p", "extensions"])
         .current_dir(project.path())

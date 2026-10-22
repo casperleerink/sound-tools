@@ -1926,8 +1926,9 @@ impl Style {
             Some(ScrollAxis::Y) => element = element.flex_none().w_full(),
             None => element = self.sized(element),
         }
+        // Its lines one after another, not spread over a box taller than they are.
         if self.wrap {
-            element = element.flex_wrap();
+            element = element.flex_wrap().content_start();
         }
         element = match self.align {
             Some(Place::Start) => element.items_start(),

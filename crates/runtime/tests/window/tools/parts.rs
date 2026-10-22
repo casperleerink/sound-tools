@@ -474,3 +474,55 @@ fn the_end_of_a_drag_starts_a_timer(cx: &mut TestAppContext) {
     window.drag(block, block + point(px(20.), px(0.)));
     window.until_found("div-ended");
 }
+
+/// Two divs whose clicks open menus of three items, the second with its first checked, and a
+/// row that wraps four boxes in a box taller than their two lines.
+const MENUS_AND_WRAP: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "menus",
+  title: "Menus",
+  when: "Never",
+  doc: "Two menus and a row that wraps.",
+  state: {},
+  view: ({ openMenu }) => {
+    const box = { width: 80, height: 20 };
+    const items = (checked: boolean) => ["One", "Two", "Three"].map((label, place) => ({ label, checked: checked && place === 0 }));
+    return h("div", { style: { padding: 40, gap: 40 } },
+      h("div", { key: "first", style: box, onClick: () => openMenu(items(false)) }, "First"),
+      h("div", { key: "second", style: box, onClick: () => openMenu(items(true)) }, "Second"),
+      h("div", { style: { direction: "row", wrap: true, width: 100, height: 300 } },
+        ["a", "b", "c", "d"].map((name) => h("div", { key: name, style: { width: 40, height: 20 } }, name))),
+    );
+  },
+});
+"#;
+
+#[gpui::test]
+fn a_menu_checks_only_what_its_code_says_whatever_was_picked_before(cx: &mut TestAppContext) {
+    let mut window = page(cx, "menus", MENUS_AND_WRAP);
+    let (first, second) = (
+        window.until_found("div-first"),
+        window.until_found("div-second"),
+    );
+    window.click(first);
+    let three = window.until_found("menu-2");
+    window.click(three);
+    window.until("the menu to close", |window| {
+        window.find("menu-2").is_none()
+    });
+    window.click(second);
+    window.until_found("menu-check-0");
+    assert!(window.find("menu-check-2").is_none());
+}
+
+#[gpui::test]
+fn a_row_that_wraps_puts_its_lines_one_after_another(cx: &mut TestAppContext) {
+    let mut window = page(cx, "menus", MENUS_AND_WRAP);
+    window.until_found("div-c");
+    let (first, third) = (
+        window.bounds("div-a").unwrap(),
+        window.bounds("div-c").unwrap(),
+    );
+    assert_eq!(third.origin.y, first.bottom());
+}

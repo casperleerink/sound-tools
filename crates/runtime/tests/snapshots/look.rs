@@ -60,7 +60,7 @@ fn at(tick: u64, row: f32) -> Point<Pixels> {
 }
 
 /// `clicks` clicks at `at`, and what Bun draws after them.
-fn click(
+pub(crate) fn click(
     opened: &super::Opened,
     at: Point<Pixels>,
     clicks: usize,
