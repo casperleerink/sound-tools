@@ -67,8 +67,7 @@ pub(crate) fn json_tool() -> JsonTool {
         check: Arc::new(|state| record(state).map(drop)),
         doc: Some(JsonToolDoc {
             group: crate::BLOCKS,
-            when: "A parent of this project turns a sound up or down, pans or mutes it: a mixer strip, a send or a master volume"
-                .to_string(),
+            when: "Volume, pan or mute: a mixer strip, a send, a master".to_string(),
             markdown: include_str!("fader.md").to_string(),
         }),
         behaviour: Box::new(apply),

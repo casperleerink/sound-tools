@@ -1,6 +1,6 @@
 # Lane
 
-Moves a number over the song, out of its output `value`: automation, a child of a parent of this project (`agent-docs/extensions.md`). Its parent connects it to a number of another child, and that number follows the line, to the sample, while the song plays and while it stands still.
+Moves a number over the song, out of its output `value`: automation. Its parent connects it to a number of another child, which follows the line, to the sample.
 
 ```json state/song/bass/lane-cutoff.json
 {

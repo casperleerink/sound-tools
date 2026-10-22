@@ -90,8 +90,7 @@ pub(crate) fn json_tool() -> JsonTool {
         }),
         doc: Some(JsonToolDoc {
             group: crate::BLOCKS,
-            when: "A parent of this project plays notes in time: clips or cues in the song, or patterns that loop and launch"
-                .to_string(),
+            when: "Notes in time: clips in the song, or patterns that loop and launch".to_string(),
             markdown: include_str!("timeline.md").to_string(),
         }),
         behaviour: Box::new(apply),
