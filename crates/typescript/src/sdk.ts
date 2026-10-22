@@ -1017,7 +1017,8 @@ export interface Performer<I extends Inputs, K extends ChildTools = ChildTools> 
   send<P extends SendTo<I, K>>(input: P, ...value: SendArgs<P, I>): void;
   /**
    * Plays a note on its voices, or on `child`'s: a `noteOn` and its `noteOff` `seconds` later
-   * (0.25 when left out), or with `hold` only the `noteOn`. `velocity` is 0.8 when left out.
+   * (0.25 when left out), or with `hold` only the `noteOn`, which `send("notes", { type:
+   * "noteOff", pitch })` or a reload of the code ends. `velocity` is 0.8 when left out.
    */
   play(
     pitch: number,
@@ -2476,16 +2477,19 @@ const overlay =
   ({ open, children, ...props }: OverlayProps): Region =>
     Show({ when: open, children: () => element("overlay", { ...props, modal }, [children()]) });
 
-/** Content of its own under the div it is in, as the window's menus hang: a press on the div is its own, so the `onClick` of a button in it opens and closes it. */
+/** Content of its own in a panel 8 points in, under the div it is in, as the window's menus hang: a press on the div is its own, so the `onClick` of a button in it opens and closes it. */
 export const Popover = overlay(false);
-/** Content of its own over the window, which a dark backdrop covers: a press on the backdrop closes it. While it is open, the view hears no key but those of its text fields. */
+/** Content of its own in a panel 16 points in, over the window, which a dark backdrop covers: a press on the backdrop closes it. While it is open, the view hears no key but those of its text fields. */
 export const Dialog = overlay(true);
 
 // ---------------------------------------------------------------------------------------------
 // What a card draws.
 
-/** A colour as `#rrggbb` or `#rrggbbaa`. */
-/** A colour of the app's theme, as the window draws its own controls. */
+/**
+ * A colour of the app's theme, as the window draws its own controls. Gray goes from the window's
+ * background, `gray-50`, to text, `gray-950`; a card is `gray-200`. `alpha` is white, so
+ * `alpha/10` lifts a surface off whatever is under it.
+ */
 export type ThemeColor =
   | "gray-50" | "gray-100" | "gray-200" | "gray-300" | "gray-400" | "gray-500" | "gray-600" | "gray-700" | "gray-800" | "gray-900" | "gray-950"
   | "alpha" | "blue" | "sapphire" | "sky" | "teal" | "green" | "yellow" | "peach" | "red" | "maroon" | "mauve" | "pink" | "lavender" | "rosewater" | "flamingo";
@@ -2554,7 +2558,8 @@ export type Shape =
         | { kind: "notes"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<TakeList>; color: Bind<Paint> }
         /**
          * A shape through `points`, in order, filled, or with `width` its outline that many points
-         * wide, closed where its last point is its first: a fade's shade, a triangle, a curve.
+         * wide, closed where its last point is its first: a fade's shade, a triangle, a curve. Give
+         * them in the binding, `points={() => [...]}`, where TypeScript reads a list as points.
          */
         | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
       ));
@@ -2582,8 +2587,7 @@ export const Rect = shape("rect");
 export const Circle = shape("circle");
 export const Line = shape("line");
 export const Arc = shape("arc");
-/** A part of a `Label`'s line: in the label's colour and weight unless it names its own. */
-/** A run of a label's text; with `border`, in a rounded box of that colour, as a mark in a ruler: give it room with spaces around. */
+/** A run of a label's text, in its colour and weight unless it names its own; with `border`, in a rounded box of that colour, as a mark in a ruler: give it room with spaces around. */
 export type TextPart = { text: string; color?: Color; weight?: "normal" | "medium" | "semibold"; border?: Color };
 export const Label = shape("text");
 export const Wave = shape("wave");
@@ -2632,7 +2636,11 @@ export interface SpaceProps extends PointerEvents {
 /** A space, see `SpaceProps`. */
 export const Space = ({ children, ...props }: SpaceProps): UiNode => element("space", props, [children]);
 
-/** A text field: it shows `value` until it is typed in, and calls `onCommit` with its text on enter or when it loses the keys. Escape shows `value` again and calls `onCancel`. */
+/**
+ * A text field: it shows `value`, and what `value` changes to while it does not have the keys.
+ * It calls `onCommit` with its text on enter or when it loses the keys; a click on a button does
+ * not take them. Escape shows `value` again and calls `onCancel`.
+ */
 export interface InputProps {
   key?: string;
   value: Bind<string>;
@@ -2644,7 +2652,7 @@ export interface InputProps {
   disabled?: Bind<boolean>;
   /** A text area that wraps and grows to `rows` rows: enter adds a line, cmd-enter commits. Read when it is made. */
   rows?: number;
-  onCommit: (text: string) => void;
+  onCommit?: (text: string) => void;
   onCancel?: () => void;
   /** Each edit, with the text as it is now, such as to filter a list as it is typed. */
   onChange?: (text: string) => void;

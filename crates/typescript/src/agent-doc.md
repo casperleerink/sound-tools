@@ -152,13 +152,14 @@ tool({
 
 | Element | Does |
 | --- | --- |
-| `<div style onClick carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. A `disabled` div hears no pointer, drag or drop itself, though its children do, and still scrolls. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
-| `<Input>` | A text field, or with `rows` a text area; keys typed there play nothing. |
+| `<div style onClick carry? onDrop? disabled? cursor? tooltip?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`, `absolute`, and the `hover`, `pressed` and `disabled` looks. Text goes inside. `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`; a `Space` hears those too, in its units. |
+| `<Input>` | A text field, or with `rows` a text area; keys typed there play nothing. A dialog's OK reads what `onChange` kept: its click leaves the field the keys, so nothing commits. |
+| `<Button>`, `<Toggle>`, `<Icon>` | The app's button, with a `label`, an `icon`, a `tooltip`; a switch lit while `on`, as a tool pressed in; an icon by name. |
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view; `sidechain` puts selects behind the expand of a compressor or a gate. |
-| `<Knob>`, `<Fader>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>`, `<Slider>` | A knob, a fader (over a meter with `meter`), a number to drag or type, a row of steps, a square for the pointer, a list, options side by side, a slider. `field` names a field as `now.value` does; or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag at its end. A `Slider` takes only a `field`. |
+| `<Knob>`, `<Fader>`, `<NumberBox>`, `<Steps>`, `<Pad>`, `<Select>`, `<SegmentedControl>`, `<Slider>` | A knob, a fader (over a meter with `meter`), a number to drag or type, a row of steps, a square for the pointer, a list, options side by side, a slider. `field` names a field as `now.value` does; or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag at its end: to draw along with the drag, turn a number input and draw from `now.value`. A `Slider` takes only a `field`. |
 | `<Meter>`, `<Notice>` | A level of any live value; a quiet message. |
 
-A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up (wherever the pointer went, unless the code reloads: a note off), and `onClick` after a left press and release on it with no drag, on the innermost node that hears it.
+A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up, wherever the pointer went (a note off), and `onClick` after a left press and release on it with no drag, on the innermost node that hears it.
 
 All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `confirm` (the system's yes-or-no question), `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 
@@ -169,7 +170,7 @@ A view and a component run once. A value that changes (a field, a child, an outp
 - `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. Its body runs once too: `x={() => note.start}`.
 - `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows; `<Switch fallback>` of `<Match when>{() => ...}</Match>` shows the first that holds.
 - `<Popover open={open} onClose={() => setOpen(false)}>{() => ...}</Popover>` hangs under the div it is in, `<Dialog>` the same over the window, which hears no key while it is open. Escape or a press outside calls `onClose`; a press on that div is its own, so its button's `onClick` opens and closes it.
-- `timeout(run, ms)` and `interval(run, ms)` stop by themselves when what made them goes: the view, a `Show` part, a `For` row, the node whose handler or drag made them. A delayed hide, a held button that repeats. `onCleanup(run)` runs `run` then.
+- `timeout(run, ms)` and `interval(run, ms)` stop when what made them goes: the view, a `Show` part, a `For` row, the node whose handler or drag made them; or when what they give is called, as a held button's `onRelease` ends its repeat. `onCleanup(run)` runs `run` then.
 - `memo(() => ...)` works a value out once for many functions. `selector(() => memory.selected)` gives `isPicked(key)`, which changes only for the keys that come or go, so a click selects one note at the cost of one.
 - Set a field of `memory` to change it, from any code. Replace a `Set` or a `Map`; its type refuses `.add`.
 
@@ -237,7 +238,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
   },
   ```
 
-- `send("notes", event, { at })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
+- `send("notes", event, { at })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`; `{ type: "noteOff", pitch }` ends it, and so does a reload of the code.
 - `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its view, or at once on a view at the top that opens with the window: those `keys: ["delete", "cmd-d"]` names, else every plain key. A view at the top also hears its `globalKeys: ["space"]` wherever the focus is, outside a text field. A key with cmd, ctrl or alt only goes down; undo, opening, quitting and the panel stay the app's. Nothing else plays a key: space plays only where a tool takes it. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; its sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
 
 ## Changing records
