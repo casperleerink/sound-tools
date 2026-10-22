@@ -200,6 +200,7 @@ fn the_song_ends_where_its_last_clip_stops_and_a_loop_or_a_cue_adds_nothing() {
         &plugins,
         Ticks(0),
         end,
+        true,
         |samples| {
             output.extend_from_slice(samples);
             Ok(())

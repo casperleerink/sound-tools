@@ -6283,9 +6283,11 @@ dependencies = [
 name = "sound-ui"
 version = "0.13.1"
 dependencies = [
+ "anyhow",
  "gpui",
  "serde",
  "serde_json",
+ "smol",
  "sound-core",
  "sound-media",
  "tempfile",

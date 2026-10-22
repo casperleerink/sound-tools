@@ -447,6 +447,14 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    */
   openFile(options?: { title?: string }): Promise<string | null>;
   /**
+   * Renders the sound of the child at `path`, such as `"bass/chain"`, alone: from `from` to `to`,
+   * in ticks, and then what still sounds, such as a reverb, unless `tail` is `false`. Its own
+   * output, before what its parents do to it. The file goes into `assets/audio/` named after
+   * `name`, `path` when left out: its name there, for a `file` field, or `null` when it failed,
+   * which the window says. It reads the records as they are saved.
+   */
+  render(path: string, options: { from: number; to: number; tail?: boolean; name?: string }): Promise<string | null>;
+  /**
    * Tells the window what the composer works on: the child at `path`, such as `"bass"` or
    * `"bass/verse"`, or nothing with `null`. The MIDI keyboard and the computer keys play the
    * `notes` of the nearest of it and its parents that has them; `span`, in ticks, is what Export

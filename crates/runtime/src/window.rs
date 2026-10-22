@@ -291,8 +291,7 @@ impl Shell {
             .is_none_or(crate::app::left_panel_was_open);
         let project_menu =
             cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
-        // For the notice of an export, and of an update.
-        cx.observe(&project_menu, |_, _, cx| cx.notify()).detach();
+        // For the notice of an update.
         cx.observe_global::<update::Ready>(|_, cx| cx.notify())
             .detach();
         let other_apps = app_sounds.map(|sounds| {
@@ -580,21 +579,17 @@ impl Shell {
         cx.notify();
     }
 
-    /// What is wrong, in one line each: the last error, and files that are not live. And an
-    /// export while it runs.
+    /// What is wrong, in one line each: the last error, and files that are not live. And a
+    /// render while it runs.
     fn notices(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let exporting = self
-            .project_menu
-            .read(cx)
-            .exporting()
-            .map(|(file, progress)| {
-                Notice::new("export", format!("Exporting {file}"))
-                    .tone(NoticeTone::Info)
-                    .progress(progress)
-                    .max_w_full()
-            });
         let update = cx.try_global::<update::Ready>().map(update_notice);
         let session = self.session.read(cx);
+        let rendering = session.rendering().map(|(notice, progress)| {
+            Notice::new("render", notice.clone())
+                .tone(NoticeTone::Info)
+                .progress(progress)
+                .max_w_full()
+        });
         let problems = session.project().problems().len();
         let files = match problems {
             0 => None,
@@ -617,7 +612,7 @@ impl Shell {
             .flex_col()
             .items_end()
             .gap(px(8.))
-            .children(exporting)
+            .children(rendering)
             .children(update)
             .children(self.template_notice(cx))
             .children(files.map(|files| {

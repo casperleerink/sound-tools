@@ -1529,6 +1529,14 @@ impl Live {
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::OpenFile { question, title } => self.open_file(question, title, cx),
+            Event::Render {
+                question,
+                instance,
+                path,
+                span,
+                tail,
+                name,
+            } => self.render(question, &instance, &path, span, tail, &name, cx),
             Event::Confirm {
                 question,
                 message,
@@ -1823,6 +1831,105 @@ impl Live {
                     question,
                     answer: Answer::Asset(asset),
                 });
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Renders the child `path` of `instance` over `span`, see [`sound_ui::render`], into a new
+    /// file of `assets/audio/` named after `name`, and answers the `render` `question` of Bun
+    /// with its name there, or with none. What the render left out, such as a plugin that did
+    /// not load, is a notice.
+    #[expect(clippy::too_many_arguments, reason = "the fields of one event")]
+    fn render(
+        &mut self,
+        question: u64,
+        instance: &InstanceId,
+        path: &str,
+        [from, to]: [u64; 2],
+        tail: bool,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = move |live: &mut Self, asset: Option<&str>| {
+            let answer = Answer::Asset(asset);
+            live.host.send(&Request::Answer { question, answer });
+        };
+        let Some(session) = self.session.upgrade() else {
+            return answer(self, None);
+        };
+        let project = session.read(cx).project();
+        let id = InstanceId::new(&format!("{instance}/{path}")).ok();
+        let Some(id) = id.filter(|id| project.tool_of(id).is_some()) else {
+            let problem = format!("it renders {path:?}, which {instance} does not own");
+            self.tool_problem(instance, problem, cx);
+            return answer(self, None);
+        };
+        if to <= from {
+            let problem = format!("it renders {path:?} from {from} to {to}, which is no span");
+            self.tool_problem(instance, problem, cx);
+            return answer(self, None);
+        }
+        let folder = match tempfile::tempdir() {
+            Ok(folder) => folder,
+            Err(error) => {
+                session.update(cx, |session, cx| session.report(error, cx));
+                return answer(self, None);
+            }
+        };
+        // The file's name becomes the asset's: `import` makes it one an asset may have.
+        let stem: String = (name.chars())
+            .map(|letter| match letter.is_alphanumeric() {
+                true => letter,
+                false => '-',
+            })
+            .collect();
+        let wav = folder.path().join(format!("{stem}.wav"));
+        let mut arguments = vec![
+            "--from".to_string(),
+            from.to_string(),
+            "--to".to_string(),
+            to.to_string(),
+            "--only".to_string(),
+            id.to_string(),
+        ];
+        if !tail {
+            arguments.push("--no-tail".to_string());
+        }
+        let assets = project.assets().clone();
+        let notice = format!("Rendering {name}").into();
+        let rendered = sound_ui::render(&session, notice, wav.clone(), arguments, cx);
+        let name = name.to_string();
+        cx.spawn(async move |live, cx| {
+            let imported = match rendered.await {
+                Ok(left_out) => cx
+                    .background_spawn(async move {
+                        let imported = sound_media::import(&assets, &wav);
+                        drop(folder);
+                        imported.map(|file| (file.asset.to_string(), left_out))
+                    })
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            // Gone with the window: there is nothing left to answer.
+            live.update(cx, |live, cx| match imported {
+                Ok((asset, left_out)) => {
+                    if !left_out.is_empty() {
+                        let message = format!(
+                            "The render of {name} may be incomplete: {}",
+                            left_out.join("; ")
+                        );
+                        session.update(cx, |session, cx| session.report(message, cx));
+                    }
+                    answer(live, Some(&asset));
+                }
+                Err(error) => {
+                    let message = format!("The render of {name} failed: {error}");
+                    session.update(cx, |session, cx| session.report(message, cx));
+                    answer(live, None);
+                }
             })
             .ok();
         })

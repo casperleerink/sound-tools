@@ -138,7 +138,8 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
-    /// The answer to a question of a tool: `openFile`, `openMenu`, `confirm`, `offers` or `numbers`.
+    /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `confirm`, `offers`
+    /// or `numbers`.
     Answer {
         question: u64,
         answer: Answer<'a>,
@@ -199,7 +200,7 @@ pub(crate) struct Moved {
 #[serde(untagged)]
 pub(crate) enum Answer<'a> {
     /// The name under `assets/audio/` of the file the composer chose and the runtime copied
-    /// there, or none.
+    /// there, or that a render wrote, or none.
     Asset(Option<&'a str>),
     /// The place of the item the composer picked in a menu, or none.
     Item(Option<usize>),
@@ -434,6 +435,17 @@ pub(crate) enum Event {
     },
     /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
     OpenFile { question: u64, title: String },
+    /// Code renders the sound of the child `path` of `instance` over `span`, in ticks, and
+    /// with `tail` what still sounds after it, into a new file of `assets/audio/` named after
+    /// `name`: the answer goes to its `question`.
+    Render {
+        question: u64,
+        instance: InstanceId,
+        path: String,
+        span: [u64; 2],
+        tail: bool,
+        name: String,
+    },
     /// Code asks the composer `message` with the system's question, its buttons `confirm` and
     /// Cancel: the answer goes to its `question`.
     Confirm {

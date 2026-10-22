@@ -85,6 +85,8 @@ pub struct Session {
     click_on: bool,
     /// Whether the computer keys play notes, which the window's live input follows.
     computer_keys_on: bool,
+    /// See [`Self::rendering`].
+    rendering: Option<(SharedString, u8)>,
     _polling: Task<()>,
 }
 
@@ -127,6 +129,7 @@ impl Session {
             click: None,
             click_on: false,
             computer_keys_on: false,
+            rendering: None,
             _polling: polling,
         }
     }
@@ -209,6 +212,23 @@ impl Session {
                 *current = looped;
                 cx.notify();
             });
+        }
+    }
+
+    /// The notice of the render that runs ([`crate::render`]) and how far it is, from 0 to 1.
+    pub fn rendering(&self) -> Option<(&SharedString, f32)> {
+        let (notice, percent) = self.rendering.as_ref()?;
+        Some((notice, f32::from(*percent) / 100.))
+    }
+
+    pub(crate) fn set_rendering(
+        &mut self,
+        rendering: Option<(SharedString, u8)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rendering != rendering {
+            self.rendering = rendering;
+            cx.notify();
         }
     }
 

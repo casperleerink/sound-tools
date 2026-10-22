@@ -1,5 +1,6 @@
 //! Exporting audio: a render of the whole project, or of a range, runs on past its end until
-//! the reverbs and releases have died away, and is the same every time.
+//! the reverbs and releases have died away, unless it leaves the tail out, and is the same
+//! every time.
 
 use sound_core::Ticks;
 
@@ -19,7 +20,7 @@ fn chord_through_reverb() -> Harness {
     harness
 }
 
-fn export(harness: &mut Harness, from: Ticks, to: Ticks) -> Vec<f32> {
+fn export(harness: &mut Harness, from: Ticks, to: Ticks, tail: bool) -> Vec<f32> {
     let mut output = Vec::new();
     let problems = runtime::render_range(
         &mut harness.project,
@@ -27,6 +28,7 @@ fn export(harness: &mut Harness, from: Ticks, to: Ticks) -> Vec<f32> {
         &harness.plugins,
         from,
         to,
+        tail,
         |samples| {
             output.extend_from_slice(samples);
             Ok(())
@@ -49,7 +51,7 @@ fn the_whole_project_renders_to_the_end_of_the_last_timeline_and_its_tail() {
     let end = harness.project.end().unwrap();
     assert_eq!(end, Ticks(2 * BAR_TICKS));
 
-    let rendered = export(&mut harness, Ticks(0), end);
+    let rendered = export(&mut harness, Ticks(0), end, true);
     let frames = rendered.len() / 2;
     // The reverb still sounds at the end of the clip, so the render goes on past it, and it
     // stops once half a second is silent, well before the ten seconds a tail may take.
@@ -60,7 +62,7 @@ fn the_whole_project_renders_to_the_end_of_the_last_timeline_and_its_tail() {
 
     // The same bytes every time.
     let mut again = harness.reopen();
-    assert_eq!(export(&mut again, Ticks(0), end), rendered);
+    assert_eq!(export(&mut again, Ticks(0), end, true), rendered);
 }
 
 #[test]
@@ -71,7 +73,7 @@ fn a_range_renders_from_its_start_and_stops_the_notes_at_its_end() {
     let (synth, long) = (synth(0.3), clip(0, 4 * BAR_TICKS, &long));
     let mut harness = Harness::rack(&[("instrument", &synth), ("long", &long)]);
 
-    let rendered = export(&mut harness, Ticks(BAR_TICKS), Ticks(2 * BAR_TICKS));
+    let rendered = export(&mut harness, Ticks(BAR_TICKS), Ticks(2 * BAR_TICKS), true);
     let frames = rendered.len() / 2;
     // The note sounds from the first frame of the range.
     assert!(peak(&rendered[..2 * 4_800]) > 1e-3);
@@ -79,6 +81,14 @@ fn a_range_renders_from_its_start_and_stops_the_notes_at_its_end() {
     // note would still have played.
     assert!(frames > BAR + 24_000, "{frames}");
     assert!(frames < BAR + 48_000, "{frames}");
+}
+
+#[test]
+fn a_range_without_its_tail_stops_at_its_end_while_the_reverb_still_sounds() {
+    let mut harness = chord_through_reverb();
+    let rendered = export(&mut harness, Ticks(0), Ticks(2 * BAR_TICKS), false);
+    assert_eq!(rendered.len(), 2 * 2 * BAR);
+    assert!(peak(&rendered[rendered.len() - 2 * 4_800..]) > 1e-3);
 }
 
 #[test]

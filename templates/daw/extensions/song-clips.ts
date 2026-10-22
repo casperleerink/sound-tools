@@ -72,7 +72,7 @@ function laid(points: readonly LanePoint[], scale: Scale, line: readonly LanePoi
 }
 
 /** A copy of a record to change, from a view's or a key's. */
-const copyOf = <T,>(state: Frozen<T>) => JSON.parse(JSON.stringify(state)) as T;
+export const copyOf = <T,>(state: Frozen<T>) => JSON.parse(JSON.stringify(state)) as T;
 
 /**
  * A clip or a region as it was taken: its row of the timeline and its track, its name, its
