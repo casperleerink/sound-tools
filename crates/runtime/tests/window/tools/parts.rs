@@ -305,6 +305,50 @@ fn a_menu_a_dialog_opens_as_it_replaces_another_stays_open(cx: &mut TestAppConte
     assert!(window.find("div-heard-picked-null").is_none());
 }
 
+/// A dialog with a text field that opens with the keys, and a select.
+const FORM_DIALOG: &str = r#"import { Dialog, h, Input, Select, tool } from "./sdk";
+
+tool({
+  name: "form",
+  title: "Form",
+  when: "Never",
+  doc: "A dialog with a text field and a select.",
+  state: {},
+  memory: () => ({ open: false, kind: "a" }),
+  view: ({ memory }) => {
+    return h("div", { style: { padding: 40 } },
+      h("div", { key: "open", style: { width: 80, height: 20 }, onClick: () => (memory.open = true) }, "Open"),
+      h(Dialog, { open: () => memory.open, onClose: () => (memory.open = false) }, () =>
+        h("div", { key: "form", style: { gap: 8 } },
+          h(Input, { value: "", focus: true }),
+          h(Select, {
+            key: "kind",
+            value: () => memory.kind,
+            onChange: (kind) => (memory.kind = kind),
+            options: [{ value: "a", label: "A" }, { value: "b", label: "B" }],
+          }))),
+    );
+  },
+});
+"#;
+
+#[gpui::test]
+fn a_dialog_keeps_the_keys_after_a_pick_from_a_menu_in_it(cx: &mut TestAppContext) {
+    let mut window = page(cx, "form", FORM_DIALOG);
+    let open = window.until_found("div-open");
+    window.click(open);
+    // A press on the select takes the keys from the field.
+    let select = window.until_found("div-kind");
+    window.click(select);
+    let pick = window.until_found("menu-1");
+    window.click(pick);
+    window.wait_for_bun();
+    window.key_down("escape", false);
+    window.until("escape to close the dialog", |window| {
+        window.find("div-form").is_none()
+    });
+}
+
 /// An interval counts while a `Show` shows its part, and another, which a click of a node starts,
 /// while that node shows. A click hides both and, 100 ms later, says whether the count still went
 /// up.

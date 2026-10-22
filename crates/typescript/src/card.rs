@@ -2592,7 +2592,15 @@ impl Drawing<'_, '_> {
         let modal = props.modal == Some(true);
         let look = if modal { "dialog" } else { "popover" };
         let selector = format!("{look}-{}", props.key.as_deref().unwrap_or_default());
+        let focus = self.focus.clone();
         let panel = popover::surface(self.cx)
+            // A press in it that nothing focusable took, such as on a select, makes a text field
+            // in it let go of the keys: the card takes them, for escape to close it.
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if !window.default_prevented() {
+                    window.focus(&focus, cx);
+                }
+            })
             .flex()
             .flex_col()
             .p(px(if modal { 16. } else { 8. }))
