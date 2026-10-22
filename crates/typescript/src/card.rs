@@ -991,7 +991,6 @@ impl TypeScriptCard {
         // A group a run of items of one `group`, under its heading; `None` a separator.
         let mut entries: Vec<(Option<String>, Option<MenuGroup>)> = Vec::new();
         for (index, spec) in items.into_iter().enumerate() {
-            // Its code says what is checked: a pick of another menu leaves no check here.
             let mut item = MenuItem::new(index.to_string(), spec.label)
                 .disabled(spec.disabled)
                 .checked(spec.checked)
