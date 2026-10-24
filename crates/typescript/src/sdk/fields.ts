@@ -1,7 +1,7 @@
 // Fields of a record: saved, undoable, and what an agent writes. Whatever reads a field follows
 // it: a sound that reads a number glides to it, a behaviour or a view that reads it runs again.
 
-import { Param, SoundInput, Table } from "./sound";
+import { Param, Sample, SoundInput, Table } from "./sound";
 
 /** What a readout shows after the number. */
 export type Unit = "hz" | "ms" | "db" | "percent";
@@ -51,7 +51,7 @@ export interface TextField {
 
 /**
  * A sound file: the name of a file under `assets/audio/`, or "" for none. A sound hears it as a
- * `Table` at the rate of the engine, mixed to one channel, up to 60 seconds.
+ * `Sample` at the rate of the engine, in stereo, up to 10 minutes.
  */
 export interface FileField {
   kind: "file";
@@ -199,14 +199,16 @@ export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<
  */
 export type ValuesOf<S extends Fields> = { -readonly [Name in keyof S]: ValueOf<S[Name], true> };
 
-/** What a sound hears of a field: a number or a boolean as a `Param`, a choice as its value, a file or a list of numbers as a `Table`. */
+/** What a sound hears of a field: a number or a boolean as a `Param`, a choice as its value, a file as a `Sample`, a list of numbers as a `Table`. */
 type Heard<F> = F extends NumberField | BooleanField
   ? Param
   : F extends ChoiceField<infer Option>
     ? Option
-    : F extends FileField | ListField<NumberField>
-      ? Table
-      : never;
+    : F extends FileField
+      ? Sample
+      : F extends ListField<NumberField>
+        ? Table
+        : never;
 
 /** What `sound` gets: the fields it can hear, and every input, a bang as a `Param` that is 1 for one sample. */
 export type SoundOf<S extends Fields, I extends Inputs> = {
