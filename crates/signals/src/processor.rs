@@ -761,6 +761,10 @@ impl Processor for Signals {
         self.fade_frames = ((FADE_SECONDS * self.sample_rate) as usize).max(1);
     }
 
+    fn latency(&self) -> u32 {
+        self.players.code().map_or(0, |code| code.latency)
+    }
+
     fn update(&mut self, update: &mut SignalsUpdate) {
         match update {
             SignalsUpdate::Set {

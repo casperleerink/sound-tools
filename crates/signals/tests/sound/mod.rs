@@ -18,6 +18,8 @@ struct Building {
     numbers: Vec<Value>,
     bangs: Vec<Value>,
     notes: Vec<Value>,
+    /// Of the bins of a `spectral`: the node of the sound around it each capture reads.
+    captures: Vec<usize>,
     declarations: Declarations,
 }
 
@@ -320,6 +322,56 @@ pub(crate) fn output_bang(name: &str, when: impl Into<Signal>) {
 pub(crate) fn output_notes(name: &str, gate: Signal, pitch: Signal, velocity: Signal) {
     let notes = json!({ "name": name, "gate": gate.0, "pitch": pitch.0, "velocity": velocity.0 });
     BUILDING.with_borrow_mut(|building| building.notes.push(notes));
+}
+
+/// What a bin of a `spectral` is.
+pub(crate) struct Bin {
+    pub(crate) magnitude: Signal,
+    pub(crate) phase: Signal,
+    pub(crate) hz: Signal,
+    pub(crate) index: Signal,
+}
+
+/// Inside the bins of a `spectral`: `outer`, a signal of the sound around it.
+pub(crate) fn capture(outer: Signal) -> Signal {
+    let index = BUILDING.with_borrow_mut(|building| {
+        building.captures.push(outer.0);
+        building.captures.len() - 1
+    });
+    add(json!({ "op": "capture", "index": index }))
+}
+
+/// `x` through a spectrum of `size`, each bin as `bins` makes its magnitude and phase. A
+/// signal of the sound around it reaches the bins through `capture`.
+pub(crate) fn spectral(
+    x: impl Into<Signal>,
+    size: usize,
+    bins: impl FnOnce(Bin) -> (Signal, Signal),
+) -> Signal {
+    let x = x.into();
+    let around = BUILDING.take();
+    let bin = Bin {
+        magnitude: node("magnitude", &[]),
+        phase: node("phase", &[]),
+        hz: node("hz", &[]),
+        index: node("index", &[]),
+    };
+    let (magnitude, phase) = bins(bin);
+    let inside = BUILDING.replace(around);
+    let feedbacks: Vec<usize> = (inside.feedbacks.iter())
+        .map(|value| value.expect("a feedback is never set"))
+        .collect();
+    add(json!({
+        "op": "spectral",
+        "x": x.0,
+        "size": size,
+        "bins": {
+            "nodes": inside.nodes,
+            "feedbacks": feedbacks,
+            "captures": inside.captures,
+            "output": { "magnitude": magnitude.0, "phase": phase.0 },
+        },
+    }))
 }
 
 /// What leaves a sound: one signal, or a pair for a sound in stereo.

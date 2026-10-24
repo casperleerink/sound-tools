@@ -20,6 +20,40 @@ A signal used twice is one: `const lfo = phasor(2)` heard in two places is one o
 - `buffer(seconds)`: memory to `.write(index, value)` every sample and read with `.at` or `lookup`, for loops and grains.
 - `output(name, ...)`: sends out what a parent connects to another child (`agent-docs/extensions-children.md`). A signal is a number, once per 64 samples, which its view also reads as `now.value(name)`: a meter, a step light. `{ bang: when }` is a bang on the sample `when` goes above 0, such as an onset. `{ gate, pitch, velocity? }` are notes: one starts where `gate` goes above 0, at the MIDI `pitch` and `velocity` (0 to 1) of that sample, and ends where the gate falls or the pitch moves. Up to 16 numbers and 8 of the others; a sound of more voices than one sends only numbers, its newest note's.
 
+## The spectrum
+
+`spectral(x, size, (bin) => ({ mag, phase }))` takes `x` apart into bins of frequency and runs the function once per bin, every `size / 4` samples; what it returns is the bin that goes out. `bin.mag` is how loud the bin is (1 for a sine of 1), `bin.phase` where its wave is, in radians, and `bin.hz` and `bin.index` which bin it is. `size` is a power of two from 256 to 8192: 2048 for most uses, smaller to follow quick changes, larger to tell close notes apart.
+
+- Each bin has its own memory, so `feedback`, `hold` and `smooth` work per bin. A `feedback` gives what it was set to in the spectrum before.
+- A signal from outside, such as a field, is read once per spectrum. No `delay`, `buffer` or `output` inside.
+- The sound comes out `size` samples late. The project makes up for it, but not inside the sound: mix in the dry sound in the bins, where `bin.mag` and `bin.phase` as they come give `x` back.
+- In a tool of one voice only.
+
+A freeze: the bins hold their level, and each wave turns on by its last step.
+
+```ts
+import { boolean, feedback, hold, input, mix, spectral, tool } from "./sdk";
+
+tool({
+  name: "freeze",
+  title: "Freeze",
+  when: "You want to hold a sound and let it ring on",
+  doc: "While `frozen` is on, the sound of that moment rings on; off, the sound passes.",
+  state: { frozen: boolean({ default: false }) },
+  sound: ({ frozen }) =>
+    spectral(input, 2048, (bin) => {
+      const live = frozen.lt(0.5);
+      const last = feedback();
+      last.set(bin.phase);
+      const step = hold(bin.phase.minus(last), live);
+      const turned = feedback();
+      const phase = mix(turned.plus(step), bin.phase, live);
+      turned.set(phase);
+      return { mag: hold(bin.mag, live), phase };
+    }),
+});
+```
+
 ## Limits
 
 A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. With more voices than one, a voice ends when its gate is 0 and it has been silent for 50 ms with nothing left in its `delay`s, so multiply it by an `adsr` of `note.gate`.

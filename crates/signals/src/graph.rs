@@ -12,10 +12,12 @@ use serde::Deserialize;
 use sound_core::SvfShape;
 
 use crate::code::{
-    ArraySpec, Binary, Code, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS, MAX_DELAYS,
-    MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_WATCHES, Operation,
-    Output, ParameterSpec, Register, Slots, Table, Unary,
+    ArraySpec, BinValue, Binary, Code, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
+    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SPECTRA,
+    MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Slots, SpectrumSpec,
+    Table, Unary,
 };
+use crate::program;
 
 /// A sound as the SDK sends it.
 #[derive(Debug, Deserialize)]
@@ -137,6 +139,32 @@ pub(crate) enum Node {
     Lookup(Lookup),
     Length(Length),
     Write(Write),
+    Spectral(Spectral),
+    /// What a bin is, in the graph of a `spectral`.
+    Magnitude,
+    Phase,
+    Hz,
+    Index,
+    /// A signal of the sound around a `spectral`, by its place in [`Bins::captures`].
+    Capture(Capture),
+}
+
+/// The graph that runs once per bin of a `spectral`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Bins {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) feedbacks: Vec<usize>,
+    /// The node of the sound around it that each capture reads.
+    pub(crate) captures: Vec<usize>,
+    pub(crate) output: BinOutput,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BinOutput {
+    pub(crate) magnitude: usize,
+    pub(crate) phase: usize,
 }
 
 /// The fields of the nodes, as the SDK names them.
@@ -168,6 +196,8 @@ fields! {
     Lookup { table: TableNode, phase: usize }
     Length { table: TableNode }
     Write { buffer: usize, index: usize, value: usize }
+    Spectral { x: usize, size: usize, bins: Bins }
+    Capture { index: usize }
 }
 
 /// What the record and the interface give a sound, in the order of the tool's fields and
@@ -260,19 +290,7 @@ impl Graph {
                 "a sound has at most {MAX_OPERATIONS} feedbacks and buffers"
             ));
         }
-        let mut lowering = Lowering {
-            graph: self,
-            arrays: &declarations.arrays,
-            operations: Vec::new(),
-            slots: Slots {
-                histories: self.feedbacks.len() as u16,
-                ..Slots::default()
-            },
-            lives: Vec::new(),
-            triggers: Vec::new(),
-            names: HashMap::new(),
-            registers: Vec::with_capacity(self.nodes.len()),
-        };
+        let mut lowering = Lowering::new(&self.nodes, self.feedbacks.len(), &declarations.arrays);
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
             let total = lowering.slots.buffers.iter().sum::<f32>() + seconds;
@@ -331,7 +349,7 @@ impl Graph {
         };
         let mut hasher = DefaultHasher::new();
         format!("{self:?}{declarations:?}").hash(&mut hasher);
-        Ok(Code {
+        let mut code = Code {
             parameters: declarations.parameters.clone(),
             arrays: declarations.arrays.clone(),
             lives: lowering.lives,
@@ -341,6 +359,7 @@ impl Graph {
             bangs,
             notes,
             hash: hasher.finish(),
+            latency: 0,
             operations: lowering.operations,
             output,
             feedbacks,
@@ -348,13 +367,61 @@ impl Graph {
             number_registers,
             event_registers,
             slots: lowering.slots,
+        };
+        code.latency = program::latency(&code);
+        Ok(code)
+    }
+}
+
+impl Bins {
+    /// The code of one bin. It reads the lists of the tool, but no buffer: each bin would hold
+    /// its own.
+    fn compile(&self, arrays: &[ArraySpec]) -> Result<Code, GraphError> {
+        if self.captures.len() > MAX_PARAMETERS {
+            return error(format!(
+                "spectral: the bins read at most {MAX_PARAMETERS} signals of the sound around them"
+            ));
+        }
+        let mut lowering = Lowering::new(&self.nodes, self.feedbacks.len(), arrays);
+        lowering.captures = Some(self.captures.len());
+        for node in &self.nodes {
+            let register = lowering.node(node)?;
+            lowering.registers.push(register);
+        }
+        let feedbacks = (self.feedbacks.iter())
+            .map(|node| lowering.read(*node))
+            .collect::<Result<_, _>>()?;
+        let BinOutput { magnitude, phase } = self.output;
+        Ok(Code {
+            parameters: Vec::new(),
+            arrays: Vec::new(),
+            lives: Vec::new(),
+            triggers: Vec::new(),
+            watches: Vec::new(),
+            numbers: Vec::new(),
+            bangs: Vec::new(),
+            notes: Vec::new(),
+            hash: 0,
+            latency: 0,
+            output: Output::Bin(lowering.read(magnitude)?, lowering.read(phase)?),
+            operations: lowering.operations,
+            feedbacks,
+            watch_registers: Vec::new(),
+            number_registers: Vec::new(),
+            event_registers: Vec::new(),
+            slots: lowering.slots,
         })
     }
 }
 
 struct Lowering<'a> {
-    graph: &'a Graph,
+    nodes: &'a [Node],
+    /// How many feedbacks the graph sets.
+    feedbacks: usize,
     arrays: &'a [ArraySpec],
+    /// In the graph of the bins of a `spectral`, how many signals of the sound around it they
+    /// read.
+    captures: Option<usize>,
     operations: Vec<Operation>,
     slots: Slots,
     lives: Vec<ParameterSpec>,
@@ -366,6 +433,24 @@ struct Lowering<'a> {
 }
 
 impl<'a> Lowering<'a> {
+    fn new(nodes: &'a [Node], feedbacks: usize, arrays: &'a [ArraySpec]) -> Self {
+        Self {
+            nodes,
+            feedbacks,
+            arrays,
+            captures: None,
+            operations: Vec::new(),
+            slots: Slots {
+                histories: feedbacks as u16,
+                ..Slots::default()
+            },
+            lives: Vec::new(),
+            triggers: Vec::new(),
+            names: HashMap::new(),
+            registers: Vec::with_capacity(nodes.len()),
+        }
+    }
+
     /// The operations of the fields and controls, which come first.
     fn declare(&mut self, declarations: &'a Declarations) -> Result<(), GraphError> {
         declarations.check()?;
@@ -487,7 +572,7 @@ impl<'a> Lowering<'a> {
             return Ok(MAX_DELAY_MS);
         };
         self.read(longest)?;
-        match self.graph.nodes.get(longest) {
+        match self.nodes.get(longest) {
             Some(Node::Constant(Constant { value })) if *value > 0.0 && *value <= MAX_DELAY_MS => {
                 Ok(*value)
             }
@@ -497,8 +582,66 @@ impl<'a> Lowering<'a> {
         }
     }
 
+    /// Whether `node` may be where it is: what reads the sound around it only around the bins,
+    /// what reads a bin only in them.
+    fn check_place(&self, node: &Node) -> Result<(), GraphError> {
+        let around = match node {
+            Node::Input => Some("input"),
+            Node::InputLeft | Node::InputRight => Some("inputLeft and inputRight"),
+            Node::Channel => Some("channel"),
+            Node::SampleRate => Some("sampleRate"),
+            Node::Beat | Node::Bpm | Node::Playing => Some("the transport"),
+            Node::Frequency | Node::Pitch | Node::Gate | Node::Velocity | Node::Onset => {
+                Some("the note")
+            }
+            Node::Param(_) => Some("a field"),
+            Node::Delay(_) => Some("delay"),
+            Node::Spectral(_) => Some("spectral"),
+            _ => None,
+        };
+        let in_bins = matches!(
+            node,
+            Node::Magnitude | Node::Phase | Node::Hz | Node::Index | Node::Capture(_)
+        );
+        match (self.captures.is_some(), around, in_bins) {
+            (true, Some(what), _) => error(format!(
+                "spectral: a bin reads {what} only as a signal of the sound around it"
+            )),
+            (false, _, true) => error("a bin is read only inside its spectral"),
+            _ => Ok(()),
+        }
+    }
+
+    fn spectral(&mut self, spectral: &Spectral) -> Result<Operation, GraphError> {
+        let Spectral { x, size, bins } = spectral;
+        let input = self.read(*x)?;
+        if !SPECTRUM_SIZES.contains(size) || !size.is_power_of_two() {
+            return error(format!(
+                "spectral(x, {size}): the size is a power of two from {} to {}",
+                SPECTRUM_SIZES.start(),
+                SPECTRUM_SIZES.end()
+            ));
+        }
+        if self.slots.spectra.len() == MAX_SPECTRA {
+            return error(format!(
+                "a sound calls spectral at most {MAX_SPECTRA} times"
+            ));
+        }
+        let captures = (bins.captures.iter())
+            .map(|node| self.read(*node))
+            .collect::<Result<_, _>>()?;
+        let slot = self.slots.spectra.len() as u16;
+        self.slots.spectra.push(SpectrumSpec {
+            size: *size,
+            code: bins.compile(self.arrays)?,
+            captures,
+        });
+        Ok(Operation::Spectral { input, slot })
+    }
+
     /// The register of `node`: of the operation it makes, or of its field or control.
     fn node(&mut self, node: &Node) -> Result<Register, GraphError> {
+        self.check_place(node)?;
         let operation = match node {
             // JSON gives an f64; one beyond f32 arrives as infinity.
             Node::Constant(Constant { value }) if !value.is_finite() => {
@@ -527,7 +670,7 @@ impl<'a> Lowering<'a> {
                     None => error(format!("`{name}` is no field or control of the tool")),
                 };
             }
-            Node::Feedback(Feedback { slot }) if *slot < self.graph.feedbacks.len() => {
+            Node::Feedback(Feedback { slot }) if *slot < self.feedbacks => {
                 Operation::History(*slot as u16)
             }
             Node::Feedback(Feedback { slot }) => {
@@ -639,6 +782,15 @@ impl<'a> Lowering<'a> {
                 buffer: self.buffer(*buffer)?,
                 index: self.read(*index)?,
                 value: self.read(*value)?,
+            },
+            Node::Spectral(spectral) => self.spectral(spectral)?,
+            Node::Magnitude => Operation::Bin(BinValue::Magnitude),
+            Node::Phase => Operation::Bin(BinValue::Phase),
+            Node::Hz => Operation::Bin(BinValue::Hz),
+            Node::Index => Operation::Bin(BinValue::Index),
+            Node::Capture(Capture { index }) => match index < &self.captures.unwrap_or(0) {
+                true => Operation::Parameter(*index as u16),
+                false => return error(format!("capture {index} is not made")),
             },
         };
         self.emit(operation)

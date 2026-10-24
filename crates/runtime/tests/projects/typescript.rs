@@ -10,9 +10,21 @@ use crate::support::{BAR, Harness, clip, synth, write};
 
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
 fn doc_example() -> String {
-    let doc = sound_typescript::AGENT_DOCS[0].markdown;
-    let block = doc.split("```ts\n").nth(1).unwrap();
-    block.split("```").next().unwrap().to_string()
+    example_of("extensions", "")
+}
+
+/// The first TypeScript example of the agent doc `doc` that holds `holding`.
+fn example_of(doc: &str, holding: &str) -> String {
+    let doc = (sound_typescript::AGENT_DOCS.iter())
+        .find(|each| each.name == doc)
+        .unwrap()
+        .markdown;
+    let blocks = doc.split("```ts\n").skip(1);
+    let mut examples = blocks.map(|block| block.split("```").next().unwrap());
+    examples
+        .find(|example| example.contains(holding))
+        .unwrap()
+        .to_string()
 }
 
 /// Combs whose number is a choice: `sound` builds a different graph for each.
@@ -42,8 +54,9 @@ tool({
 });
 "#;
 
-/// A project whose `extensions/` holds the first example of the doc, `wobble`, `COMBS` and `LEVEL`,
-/// with a rack `pad` that plays a held chord through `effects`.
+/// A project whose `extensions/` holds the first example of the doc, `wobble`, the freeze of the
+/// doc of sounds, `COMBS` and `LEVEL`, with a rack `pad` that plays a held chord through
+/// `effects`.
 fn pad_through(effects: &[(&str, &str)]) -> Harness {
     pad_through_with(effects, &[])
 }
@@ -57,6 +70,8 @@ fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> H
     );
     let folder = tempfile::tempdir().unwrap();
     write(folder.path(), "extensions/wobble.ts", &doc_example());
+    let freeze = example_of("extensions-sound", "spectral(");
+    write(folder.path(), "extensions/freeze.ts", &freeze);
     write(folder.path(), "extensions/combs.ts", COMBS);
     write(folder.path(), "extensions/level.ts", LEVEL);
     let (synth, chord) = (
@@ -134,6 +149,19 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
             "{combs} combs do not ring on"
         );
     }
+}
+
+#[test]
+fn the_freeze_of_the_doc_passes_the_sound_and_once_frozen_rings_on_after_it() {
+    let mut harness = pad_through(&[("freeze", r#"{"frozen": false}"#)]);
+    // The chord plays for 8 s.
+    let passed = harness.play_from_the_start(BAR);
+    assert!(loudness_at(&passed, 1.0) > 0.01);
+    let frozen = r#"{"tool": "freeze", "state": {"frozen": true}}"#;
+    harness.write_and_apply("state/pad/freeze.json", frozen);
+    let after = harness.play(4 * BAR);
+    let rings = loudness_at(&after, 7.5);
+    assert!(rings > 0.3 * loudness_at(&passed, 1.0), "{rings} at 9.5 s");
 }
 
 #[test]
@@ -234,6 +262,60 @@ tool({
 }
 
 #[test]
+fn a_spectral_of_many_voices_or_a_bin_heard_outside_its_spectral_is_a_problem() {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
+    let tool = |name: &str, voices: u8, sound: &str| {
+        format!(
+            r#"import {{ input, note, spectral, tool, type Signal }} from "./sdk";
+
+tool({{
+  name: "{name}",
+  title: "{name}",
+  when: "Never",
+  doc: "A spectrum.",
+  state: {{}},
+  voices: {voices},
+  sound: () => {{ {sound} }},
+}});
+"#
+        )
+    };
+    let folder = tempfile::tempdir().unwrap();
+    let voices = tool(
+        "voices",
+        4,
+        "return spectral(note.gate, 256, (bin) => ({ mag: bin.mag, phase: bin.phase }));",
+    );
+    let leak = tool(
+        "leak",
+        1,
+        "let heard: Signal = input; spectral(input, 256, (bin) => { heard = bin.mag; return { mag: bin.mag, phase: bin.phase }; }); return heard;",
+    );
+    crate::support::write(folder.path(), "extensions/voices.ts", &voices);
+    crate::support::write(folder.path(), "extensions/leak.ts", &leak);
+    let harness = Harness::open(folder);
+    let messages: Vec<String> = (harness.project.problems().into_iter())
+        .map(|problem| format!("{}: {}", problem.path, problem.message))
+        .collect();
+    let [leak, voices] = messages.as_slice() else {
+        panic!("{messages:?}");
+    };
+    assert!(
+        leak.starts_with("extensions/leak.ts")
+            && leak.contains("a signal of the bins of a spectral is used outside it"),
+        "{leak}"
+    );
+    assert!(
+        voices.starts_with("extensions/voices.ts")
+            && voices.contains("spectral works in a tool of one voice"),
+        "{voices}"
+    );
+}
+
+#[test]
 fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
     assert!(
         sound_typescript::has_bun(),
@@ -316,6 +398,11 @@ s.tool({
       s.smooth(level, 10), s.adsr(n.gate, 1, 1, 0.5, 1),
       s.hold(level, hit), s.rise(hit), s.change(level), steps.at(0), steps.length,
       s.lookup(steps, 0.5), tape.at(0), s.lookup(tape, 0.5),
+      s.spectral(s.input, 256, (bin) => {
+        const turned = s.feedback();
+        turned.set(bin.phase.plus(bin.hz.times(0)).plus(bin.index.times(0)));
+        return { mag: s.hold(bin.mag, hit).times(level), phase: turned };
+      }),
     ];
     const sum = all.reduce<s.Signal>((total, each) => total.plus(each), s.input);
     return out === "mono" ? sum.times(0) : { left: sum.times(0), right: s.input };

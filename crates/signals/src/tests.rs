@@ -516,4 +516,84 @@ fn a_graph_that_does_not_hold_says_what_is_wrong_in_the_words_of_the_sdk() {
         .collect();
     let nodes = [vec![json!({ "op": "input" })], delays].concat();
     assert_eq!(error(graph(json!(nodes))), "a sound has at most 16 delays");
+    let bins = json!({ "nodes": [{ "op": "magnitude" }], "feedbacks": [], "captures": [], "output": { "magnitude": 0, "phase": 0 } });
+    let spectral =
+        json!([{ "op": "input" }, { "op": "spectral", "x": 0, "size": 1000, "bins": bins }]);
+    assert_eq!(
+        error(graph(spectral)),
+        "spectral(x, 1000): the size is a power of two from 256 to 8192"
+    );
+}
+
+#[test]
+fn a_sine_through_bins_left_as_they_are_comes_out_as_it_went_in_as_late_as_the_code_says() {
+    let through_feedback = compile(|| {
+        let late = feedback();
+        late.set(spectral(input(), 256, |bin| (bin.magnitude, bin.phase)));
+        late.read()
+    });
+    assert_eq!(through_feedback.latency, 255);
+    let code = compile(|| spectral(input(), 1024, |bin| (bin.magnitude, bin.phase)));
+    assert_eq!(code.latency, 1023);
+    let mut through = machine(code);
+    let sine = |frame: usize| 0.5 * (TAU * 440.0 * frame as f32 / SAMPLE_RATE).sin();
+    let [left, right] = render_in_spans(&mut through, sine, 100, MAX_BLOCK);
+    for (frame, (left, right)) in left.iter().zip(&right).enumerate().skip(1023) {
+        let expected = sine(frame - 1023);
+        assert!(
+            (left - expected).abs() < 1e-4,
+            "frame {frame}: {left} for {expected}"
+        );
+        assert_eq!(left, right, "frame {frame}");
+    }
+}
+
+#[test]
+fn bins_read_a_signal_of_the_sound_around_them() {
+    let mut quieter = machine(compile(|| {
+        let gain = param("gain", 0.25, [0.0, 1.0]);
+        spectral(input(), 256, |bin| {
+            (bin.magnitude * capture(gain), bin.phase)
+        })
+    }));
+    let sine = |frame: usize| (TAU * 1000.0 * frame as f32 / SAMPLE_RATE).sin();
+    let output = run(&mut quieter, sine, 4_800);
+    assert!((loudest(&output[1_000..]) - 0.25).abs() < 1e-3);
+}
+
+#[test]
+fn a_freeze_holds_each_bin_and_plays_on_after_the_sound_stops() {
+    // Frozen after 0.1 s, the sine stops at 0.2 s.
+    let freeze = |at: f32| {
+        compile(move || {
+            let frames = feedback();
+            frames.set(frames.read() + 1.0);
+            let frozen = 1.0 - frames.read().lt(at);
+            spectral(input(), 2048, |bin| {
+                let live = 1.0 - capture(frozen);
+                let magnitude = hold(bin.magnitude, live);
+                let before = feedback();
+                before.set(bin.phase);
+                let step = hold(bin.phase - before.read(), live);
+                let turned = feedback();
+                let phase = mix(turned.read() + step, bin.phase, live);
+                turned.set(phase);
+                (magnitude, phase)
+            })
+        })
+    };
+    let sine = |frame: usize| match frame < 9_600 {
+        true => 0.5 * (TAU * 440.0 * frame as f32 / SAMPLE_RATE).sin(),
+        false => 0.0,
+    };
+    let after = 24_000..48_000;
+    let output = run(&mut machine(freeze(4_800.0)), sine, after.end);
+    let held = &output[after.clone()];
+    assert!((loudest(held) - 0.5).abs() < 0.05, "{}", loudest(held));
+    let crossings = held
+        .windows(2)
+        .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0);
+    assert!((219..=221).contains(&crossings.count()), "not 440 Hz");
+    let never = run(&mut machine(freeze(f32::MAX)), sine, after.end);
+    assert!(loudest(&never[after]) < 1e-4);
 }

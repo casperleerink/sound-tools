@@ -786,6 +786,9 @@ impl Sounds {
                     if events && info.voices > 1 {
                         return Err("a sound of more voices than one sends no bangs or notes, as each of its voices would: give it one voice, which follows the newest note".to_string());
                     }
+                    if code.has_spectra() && info.voices > 1 {
+                        return Err("spectral works in a tool of one voice: give it one voice, which follows the newest note".to_string());
+                    }
                     Ok(Arc::new(code))
                 });
                 let code = code.map_err(|error| match info.has_choices() {

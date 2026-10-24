@@ -296,6 +296,25 @@ fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
 }
 
 #[test]
+fn a_spectral_says_how_late_it_plays_and_plays_that_late() {
+    let tone = |frame: usize| 0.5 * (TAU * 440.0 * frame as f32 / SAMPLE_RATE as f32).sin();
+    let code = compile(|| {
+        let tone = 0.5 * sin(phasor(440.0) * TAU);
+        spectral(tone, 256, |bin| (bin.magnitude, bin.phase))
+    });
+    let mut played = play(Kind::One, code, Vec::new());
+    let output = played.render(4096);
+    assert_eq!(played.control.poll().unwrap().latency, 255);
+    for (frame, sample) in output.iter().enumerate().skip(255) {
+        let expected = tone(frame - 255);
+        assert!(
+            (sample - expected).abs() < 1e-3,
+            "frame {frame}: {sample} for {expected}"
+        );
+    }
+}
+
+#[test]
 fn a_source_sounds_with_no_note_and_follows_the_newest_held_one() {
     // Before any note `gate` is 0, so this drone plays 110 Hz until a note comes.
     let code = compile(|| 0.2 * sin(phasor(mix(110.0, freq(), gate())) * TAU));
