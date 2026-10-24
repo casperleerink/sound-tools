@@ -178,7 +178,8 @@ fn every_filter_sounds_as_its_response_says() {
                 _ => filter(op, input(), CUTOFF, Q),
             }));
             let angle = |frame: usize| TAU as f64 * f64::from(hz) * frame as f64 / 48_000.0;
-            let output = run(&mut filter, |frame| angle(frame).sin() as f32, 2 * WINDOW);
+            let sine = |frame| angle(frame).sin() as f32;
+            let [output, _] = render_in_spans(&mut filter, sine, 2 * WINDOW / MAX_BLOCK, MAX_BLOCK);
             // The output is `real sin + imaginary cos` of the input's angle.
             let (real, imaginary) =
                 (WINDOW..2 * WINDOW).fold((0.0, 0.0), |(real, imaginary), frame| {
@@ -196,6 +197,17 @@ fn every_filter_sounds_as_its_response_says() {
             );
         }
     }
+}
+
+/// When only the gain differs between the channels, each channel hears its own.
+#[test]
+fn a_filter_hears_the_gain_of_its_channel() {
+    let peak =
+        |db: fn() -> Signal| machine(compile(|| gained_filter("peak", 0.1, 1_000.0, db(), 1.0)));
+    let [left, right] = render_in_spans(&mut peak(|| channel() * 6.0), |_| 0.0, 1, MAX_BLOCK);
+    let [flat, _] = render_in_spans(&mut peak(|| 0.0.into()), |_| 0.0, 1, MAX_BLOCK);
+    let [raised, _] = render_in_spans(&mut peak(|| 6.0.into()), |_| 0.0, 1, MAX_BLOCK);
+    assert_eq!((left, right), (flat, raised));
 }
 
 #[test]

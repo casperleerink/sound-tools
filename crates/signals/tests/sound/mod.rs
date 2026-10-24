@@ -164,7 +164,13 @@ pub(crate) fn filter(op: &str, x: impl Into<Signal>, hz: impl Into<Signal>, q: f
     node(op, &[("x", x.into()), ("hz", hz.into()), ("q", q.into())])
 }
 /// `peak`, `lowshelf` or `highshelf`.
-pub(crate) fn gained_filter(op: &str, x: impl Into<Signal>, hz: f32, db: f32, q: f32) -> Signal {
+pub(crate) fn gained_filter(
+    op: &str,
+    x: impl Into<Signal>,
+    hz: f32,
+    db: impl Into<Signal>,
+    q: f32,
+) -> Signal {
     let operands = [
         ("x", x.into()),
         ("hz", hz.into()),
