@@ -1,6 +1,8 @@
 //! A short-time Fourier transform, for an effect that works on the spectrum of a sound: it
 //! takes one sample in and gives one out, and every hop hands the spectrum of the last
-//! `size` samples to the caller to change, in magnitude and phase.
+//! `size` samples to the caller to change, in magnitude and phase. One made
+//! [`with_side`](Stft::with_side) also hands over the spectrum of a second input, such as the
+//! voice of a vocoder.
 //!
 //! A Hann window of `size` samples, moved on by a quarter of it, both before the transform and
 //! after the inverse: the windows then add up to the same in every sample, so a spectrum left
@@ -29,6 +31,9 @@ pub struct Stft {
     synthesis: Box<[f32]>,
     /// The last `size` samples in, a ring that `write` goes round.
     input: Box<[f32]>,
+    /// The same of the side input, empty without one.
+    side: Box<[f32]>,
+    side_bins: Box<[SpectralBin]>,
     write: usize,
     /// Samples in since the last hop.
     count: usize,
@@ -46,6 +51,15 @@ pub struct Stft {
 impl Stft {
     /// `size` is a power of two of at least 4. Allocates: make it on the control thread.
     pub fn new(size: usize) -> Self {
+        Self::make(size, false)
+    }
+
+    /// As [`Stft::new`], with a side input for [`Stft::next_with_side`].
+    pub fn with_side(size: usize) -> Self {
+        Self::make(size, true)
+    }
+
+    fn make(size: usize, side: bool) -> Self {
         let size = size.max(4).next_power_of_two();
         let mut planner = RealFftPlanner::<f32>::new();
         let forward = planner.plan_fft_forward(size);
@@ -61,6 +75,8 @@ impl Stft {
             hop: size / 4,
             synthesis,
             input: vec![0.0; size].into(),
+            side: vec![0.0; if side { size } else { 0 }].into(),
+            side_bins: vec![SpectralBin::default(); if side { size / 2 + 1 } else { 0 }].into(),
             write: 0,
             count: 0,
             output: vec![0.0; size].into(),
@@ -99,9 +115,24 @@ impl Stft {
     /// spectrum of the last `size` samples first.
     #[inline]
     pub fn next(&mut self, sample: f32, change: impl FnOnce(&mut [SpectralBin])) -> f32 {
+        self.next_with_side(sample, 0.0, |bins, _| change(bins))
+    }
+
+    /// As [`Stft::next`], with `side` into the side input: `change` also gets the spectrum of
+    /// the side input, which is empty in an `Stft` made without one.
+    #[inline]
+    pub fn next_with_side(
+        &mut self,
+        sample: f32,
+        side: f32,
+        change: impl FnOnce(&mut [SpectralBin], &[SpectralBin]),
+    ) -> f32 {
         let mask = self.input.len() - 1;
         if let Some(slot) = self.input.get_mut(self.write) {
             *slot = sample;
+        }
+        if let Some(slot) = self.side.get_mut(self.write) {
+            *slot = side;
         }
         self.write = (self.write + 1) & mask;
         self.count += 1;
@@ -115,29 +146,15 @@ impl Stft {
         out
     }
 
-    fn transform(&mut self, change: impl FnOnce(&mut [SpectralBin])) {
+    fn transform(&mut self, change: impl FnOnce(&mut [SpectralBin], &[SpectralBin])) {
         let size = self.input.len();
-        let oldest = self.input.iter().cycle().skip(self.write);
-        for ((frame, input), window) in self.frame.iter_mut().zip(oldest).zip(&self.window) {
-            *frame = input * window;
-        }
-        let forward = (self.forward).process_with_scratch(
-            &mut self.frame,
-            &mut self.spectrum,
-            &mut self.scratch,
-        );
-        if forward.is_err() {
+        if !self.side.is_empty() && !self.analyse(Ring::Side) {
             return;
         }
-        let scale = 4.0 / size as f32;
-        for (bin, complex) in self.bins.iter_mut().zip(self.spectrum.iter()) {
-            let (magnitude, phase) = complex.to_polar();
-            *bin = SpectralBin {
-                magnitude: magnitude * scale,
-                phase,
-            };
+        if !self.analyse(Ring::Input) {
+            return;
         }
-        change(&mut self.bins);
+        change(&mut self.bins, &self.side_bins);
         for (complex, bin) in self.spectrum.iter_mut().zip(self.bins.iter()) {
             *complex = Complex::from_polar(finite(bin.magnitude), finite(bin.phase));
         }
@@ -165,6 +182,42 @@ impl Stft {
             *output += finite(frame * window);
         }
     }
+
+    /// Puts the spectrum of the last `size` samples of `ring` in its bins. False when the
+    /// transform fails, which it does only for buffers of the wrong length.
+    fn analyse(&mut self, ring: Ring) -> bool {
+        let (input, bins) = match ring {
+            Ring::Input => (&self.input, &mut self.bins),
+            Ring::Side => (&self.side, &mut self.side_bins),
+        };
+        let oldest = input.iter().cycle().skip(self.write);
+        for ((frame, input), window) in self.frame.iter_mut().zip(oldest).zip(&self.window) {
+            *frame = input * window;
+        }
+        let forward = (self.forward).process_with_scratch(
+            &mut self.frame,
+            &mut self.spectrum,
+            &mut self.scratch,
+        );
+        if forward.is_err() {
+            return false;
+        }
+        let scale = 4.0 / input.len() as f32;
+        for (bin, complex) in bins.iter_mut().zip(self.spectrum.iter()) {
+            let (magnitude, phase) = complex.to_polar();
+            *bin = SpectralBin {
+                magnitude: magnitude * scale,
+                phase,
+            };
+        }
+        true
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Ring {
+    Input,
+    Side,
 }
 
 fn finite(value: f32) -> f32 {
@@ -209,5 +262,30 @@ mod tests {
         }
         assert!((magnitudes[32] - 0.25).abs() < 1e-4, "{}", magnitudes[32]);
         assert!(magnitudes[40] < 1e-4, "{}", magnitudes[40]);
+    }
+
+    #[test]
+    fn the_side_spectrum_is_of_the_side_input_and_shapes_the_input() {
+        let mut stft = Stft::with_side(1024);
+        let hz = |bin: f32| bin * 48_000.0 / 1024.0;
+        let sine = |hz: f32, frame: usize| (TAU * hz * frame as f32 / 48_000.0).sin();
+        let mut output = Vec::new();
+        for frame in 0..4096 {
+            let input = sine(hz(32.0), frame) + sine(hz(64.0), frame);
+            let side = 0.5 * sine(hz(64.0), frame);
+            output.push(stft.next_with_side(input, side, |bins, side| {
+                for (bin, side) in bins.iter_mut().zip(side) {
+                    if side.magnitude < 0.1 {
+                        bin.magnitude = 0.0;
+                    }
+                }
+            }));
+        }
+        // Only the sine the side has is left.
+        let late = stft.latency();
+        for (frame, sample) in output.iter().enumerate().skip(2048) {
+            let expected = sine(hz(64.0), frame - late);
+            assert!((sample - expected).abs() < 1e-3, "frame {frame}: {sample} for {expected}");
+        }
     }
 }
