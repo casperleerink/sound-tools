@@ -20,6 +20,9 @@ pub(crate) const MAX_OUTPUTS: usize = 8;
 /// The most numbers a sound sends out: each is an event port of every processor, and a watch a
 /// view reads.
 pub(crate) const MAX_NUMBERS: usize = MAX_WATCHES;
+/// The most sound inputs, and the most sound outputs, of a sound, its `audio` among them: each
+/// is a port of every processor.
+pub(crate) const MAX_SOUNDS: usize = 4;
 /// The longest a `delay` can be.
 pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
 /// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
@@ -76,12 +79,16 @@ pub struct Code {
     pub numbers: Vec<String>,
     pub bangs: Vec<String>,
     pub notes: Vec<String>,
+    /// Names of the sound outputs besides `audio`, in the order of [`Self::sound_outputs`].
+    pub sounds: Vec<String>,
     /// Of the graph and what it reads, so a behaviour tells new code from new values.
     pub hash: u64,
     /// How many samples late its sound comes out: of the spectra on the way.
     pub latency: u32,
     pub(crate) operations: Vec<Operation>,
     pub(crate) output: Output,
+    /// What leaves each sound output besides `audio`, in the same form as [`Self::output`].
+    pub(crate) sound_outputs: Vec<Output>,
     /// The register each feedback takes for the next frame, by its slot.
     pub(crate) feedbacks: Vec<Register>,
     /// The register of each watch, in the order of [`Self::watches`].
@@ -100,6 +107,11 @@ impl Code {
         !self.slots.spectra.is_empty()
     }
 
+    /// How many sound outputs it has, its `audio` among them.
+    pub(crate) fn outputs(&self) -> usize {
+        1 + self.sound_outputs.len()
+    }
+
     /// Whether what leaves it is what comes in, on each channel, and nothing else leaves: the
     /// code of a tool with no sound.
     pub(crate) fn passes_input(&self) -> bool {
@@ -107,7 +119,8 @@ impl Code {
             return false;
         };
         let input = self.operations.get(usize::from(register));
-        matches!(input, Some(Operation::Input))
+        matches!(input, Some(Operation::Input(0)))
+            && self.sound_outputs.is_empty()
             && self.watch_registers.is_empty()
             && self.number_registers.is_empty()
             && self.event_registers.is_empty()
@@ -163,9 +176,10 @@ pub(crate) enum Table {
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Operation {
     Constant(f32),
-    Input,
-    InputLeft,
-    InputRight,
+    /// Of a sound input: 0 is `audio`.
+    Input(u8),
+    InputLeft(u8),
+    InputRight(u8),
     Channel,
     SampleRate,
     Beat,
