@@ -17,7 +17,7 @@ use sound_core::{
 
 use crate::code::{
     BinValue, Binary, Code, MAX_LIVES, MAX_PARAMETERS, MAX_SOUNDS, Operation, Output, Register,
-    SpectrumSpec, Table, Unary,
+    Side, SpectrumSpec, Table, Unary,
 };
 use crate::program::{self, Run, Step};
 
@@ -28,10 +28,18 @@ pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
     /// `None` leaves the lists the processor has: a sample is long, so it is sent only when
     /// it or another list changed, not at every turn of a knob.
-    pub arrays: Option<Vec<Vec<f32>>>,
+    pub arrays: Option<Vec<List>>,
     /// For each number an automation lane can move, in the order of its index, the param it
     /// moves.
     pub automated: Vec<u16>,
+}
+
+/// A list of the record: a pattern or a sample of one channel, or the left and right of a
+/// sample in stereo, as long as each other.
+#[derive(Clone, Debug, PartialEq)]
+pub enum List {
+    One(Vec<f32>),
+    Stereo(Vec<f32>, Vec<f32>),
 }
 
 /// What leaves the code, and the processor, is held to this, about 12 dB over full scale, so
@@ -106,7 +114,7 @@ impl Block {
 /// What one voice reads over a span of frames.
 pub(crate) struct Inputs<'a> {
     pub(crate) block: &'a Block,
-    pub(crate) arrays: &'a [Vec<f32>],
+    pub(crate) arrays: &'a [List],
     pub(crate) note: Note,
 }
 
@@ -316,7 +324,7 @@ impl Machine {
                     Some(Operation::Constant(value)) => Some(*value),
                     Some(Operation::SampleRate) => Some(sample_rate),
                     Some(Operation::Length(table @ Table::Buffer(_))) => {
-                        Some(table_of(*table, &[], buffers).len() as f32)
+                        Some(table_of(*table, &[], buffers, 0).len() as f32)
                     }
                     _ => None,
                 };
@@ -454,7 +462,7 @@ impl Machine {
     fn run_bins(
         &mut self,
         block: &Block,
-        arrays: &[Vec<f32>],
+        arrays: &[List],
         first: usize,
         spectrum: &mut [SpectralBin],
         hz: f32,
@@ -643,7 +651,7 @@ impl Machine {
 /// What the operations of one channel read over a span of frames.
 struct Span<'a> {
     block: &'a Block,
-    arrays: &'a [Vec<f32>],
+    arrays: &'a [List],
     note: Note,
     channel: usize,
     /// In the code of a `spectral`, the bin of each frame.
@@ -873,15 +881,16 @@ impl Span<'_> {
                 None => out.fill(0.0),
             },
             Operation::Read { table, index } => {
-                let values = table_of(table, self.arrays, &memory.buffers);
-                map(out, read(index), |index| read_at(values, index));
+                let values = table_of(table, self.arrays, &memory.buffers, self.channel);
+                map(out, read(index), |index| values.at(index));
             }
             Operation::Lookup { table, phase } => {
-                let values = table_of(table, self.arrays, &memory.buffers);
-                map(out, read(phase), |phase| look_up(values, phase));
+                let values = table_of(table, self.arrays, &memory.buffers, self.channel);
+                map(out, read(phase), |phase| values.look_up(phase));
             }
             Operation::Length(table) => {
-                out.fill(table_of(table, self.arrays, &memory.buffers).len() as f32);
+                let values = table_of(table, self.arrays, &memory.buffers, self.channel);
+                out.fill(values.len() as f32);
             }
             Operation::Write {
                 buffer,
@@ -964,7 +973,7 @@ impl Span<'_> {
             }
             Operation::Live(index) => row_of(&block.lives, block.steady_lives, index),
             Operation::Length(table) => {
-                Some(table_of(table, self.arrays, &memory.buffers).len() as f32)
+                Some(table_of(table, self.arrays, &memory.buffers, self.channel).len() as f32)
             }
             Operation::Unary(op, x) => Some(unary(op, one(x)?)),
             Operation::Binary(op, a, b) => Some(binary(op, one(a)?, one(b)?)),
@@ -1129,10 +1138,10 @@ impl Span<'_> {
             Operation::Change { input, slot } => (memory.memories.get_mut(usize::from(slot)))
                 .map_or(0.0, |before| change(before, at(input))),
             Operation::Read { table, index } => {
-                read_at(table_of(table, self.arrays, &memory.buffers), at(index))
+                table_of(table, self.arrays, &memory.buffers, self.channel).at(at(index))
             }
             Operation::Lookup { table, phase } => {
-                look_up(table_of(table, self.arrays, &memory.buffers), at(phase))
+                table_of(table, self.arrays, &memory.buffers, self.channel).look_up(at(phase))
             }
             Operation::Write {
                 buffer,
@@ -1284,12 +1293,66 @@ fn map3(out: &mut [f32], a: &[f32], b: &[f32], c: &[f32], f: impl Fn(f32, f32, f
     }
 }
 
-fn table_of<'a>(table: Table, arrays: &'a [Vec<f32>], buffers: &'a [Vec<f32>]) -> &'a [f32] {
-    let values = match table {
-        Table::Array(index) => arrays.get(usize::from(index)),
-        Table::Buffer(index) => buffers.get(usize::from(index)),
+/// What a read of `table` hears on `channel`.
+fn table_of<'a>(
+    table: Table,
+    arrays: &'a [List],
+    buffers: &'a [Vec<f32>],
+    channel: usize,
+) -> View<'a> {
+    let (index, side) = match table {
+        Table::Buffer(index) => {
+            let values = buffers.get(usize::from(index));
+            return View::One(values.map_or(&[], Vec::as_slice));
+        }
+        Table::Array(index) => (index, Side::Both),
+        Table::Sample(index, side) => (index, side),
     };
-    values.map_or(&[], Vec::as_slice)
+    match (arrays.get(usize::from(index)), side) {
+        (None, _) => View::One(&[]),
+        (Some(List::One(values)), _) => View::One(values),
+        (Some(List::Stereo(left, right)), side) => match (side, channel) {
+            (Side::Left, _) | (Side::Channel, 0) => View::One(left),
+            (Side::Right, _) | (Side::Channel, _) => View::One(right),
+            (Side::Both, _) => View::Both(left, right),
+        },
+    }
+}
+
+/// What a table read hears: one list, or both sides of a sample in stereo, mixed.
+#[derive(Copy, Clone)]
+enum View<'a> {
+    One(&'a [f32]),
+    Both(&'a [f32], &'a [f32]),
+}
+
+impl View<'_> {
+    fn len(self) -> usize {
+        match self {
+            Self::One(values) | Self::Both(values, _) => values.len(),
+        }
+    }
+
+    fn at(self, index: f32) -> f32 {
+        match self {
+            Self::One(values) => read_at(values, index),
+            Self::Both(left, right) => (read_at(left, index) + read_at(right, index)) * 0.5,
+        }
+    }
+
+    /// The table read at `phase` from 0 to 1 over its whole length, wrapped, with a straight
+    /// line between two values, as a wavetable or a sample is played.
+    fn look_up(self, phase: f32) -> f32 {
+        let length = self.len();
+        if length == 0 || !phase.is_finite() {
+            return 0.0;
+        }
+        let position = (phase - phase.floor()) * length as f32;
+        let fraction = position - position.floor();
+        let first = self.at(position);
+        let second = self.at(position + 1.0);
+        first + (second - first) * fraction
+    }
 }
 
 /// The slot of `index` in a table of `length`: the whole part, wrapped, so any index reads.
@@ -1307,19 +1370,6 @@ fn read_at(values: &[f32], index: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// The table read at `phase` from 0 to 1 over its whole length, wrapped, with a straight line
-/// between two values, as a wavetable or a sample is played.
-fn look_up(values: &[f32], phase: f32) -> f32 {
-    let length = values.len();
-    if length == 0 || !phase.is_finite() {
-        return 0.0;
-    }
-    let position = (phase - phase.floor()) * length as f32;
-    let fraction = position - position.floor();
-    let first = read_at(values, position);
-    let second = read_at(values, position + 1.0);
-    first + (second - first) * fraction
-}
 
 impl Spectrum {
     fn new(spectrum: &SpectrumSpec, sample_rate: f32) -> Self {
@@ -1340,7 +1390,7 @@ impl Spectrum {
     /// Takes `sample` in and gives one out. On the last sample of a hop the bins run, and read
     /// each of their captures as `capture` gives it.
     #[inline(always)]
-    fn next(&mut self, sample: f32, capture: impl Fn(Register) -> f32, arrays: &[Vec<f32>]) -> f32 {
+    fn next(&mut self, sample: f32, capture: impl Fn(Register) -> f32, arrays: &[List]) -> f32 {
         let Self {
             stft,
             bins,

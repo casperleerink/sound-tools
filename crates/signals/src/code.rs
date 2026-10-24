@@ -166,11 +166,23 @@ pub(crate) struct SpectrumSpec {
     pub(crate) captures: Vec<Register>,
 }
 
-/// Where `lookup`, `length` and `at` read: a list of the record, or a buffer.
+/// Where `lookup`, `length` and `at` read: a pattern, a side of a sample, or a buffer.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Table {
     Array(u16),
+    Sample(u16, Side),
     Buffer(u16),
+}
+
+/// What a read of a sample hears. A sample of one channel is the same on every side.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Side {
+    /// The side of the channel the code runs on, in code that runs on each channel apart.
+    Channel,
+    Left,
+    Right,
+    /// Both sides mixed, where the code runs once for both channels or once per bin.
+    Both,
 }
 
 #[derive(Copy, Clone, Debug)]
