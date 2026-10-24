@@ -116,47 +116,54 @@ impl Turn {
     }
 
     /// What its steps did, as in "Changed 2 files and ran 1 command", or `None` when it took no
-    /// step. A denied step never ran, so it is not counted. Changes and commands say the most,
-    /// so they come first; past two kinds the rest are counted together.
+    /// step. A denied step never ran, so it is not counted. A file counts once, and only when
+    /// its step was done: a failed edit changed nothing. Changes and commands say the most, so
+    /// they come first; past two kinds the steps of the rest are counted together.
     pub fn summary(&self) -> Option<String> {
-        let ran = || {
+        let ran = |matches: fn(&StepKind) -> bool| -> Vec<&Step> {
             self.steps
                 .iter()
-                .filter(|step| step.outcome != Some(StepOutcome::Denied))
+                .filter(|step| step.outcome != Some(StepOutcome::Denied) && matches(&step.kind))
+                .collect()
         };
-        let files = |read: bool| {
-            ran()
-                .filter_map(|step| match (&step.kind, read) {
-                    (StepKind::Read { path }, true) | (StepKind::Change { path }, false) => {
-                        Some(path)
-                    }
-                    _ => None,
+        let files = |steps: &[&Step]| {
+            steps
+                .iter()
+                .filter(|step| step.outcome == Some(StepOutcome::Done))
+                .filter_map(|step| match &step.kind {
+                    StepKind::Read { path } | StepKind::Change { path } => Some(path),
+                    StepKind::Run | StepKind::Search | StepKind::Other => None,
                 })
                 .collect::<BTreeSet<_>>()
                 .len()
         };
-        let count = |kind: &StepKind| ran().filter(|step| &step.kind == kind).count();
         let plural = |count: usize, one: &str| match count {
             1 => format!("1 {one}"),
             count => format!("{count} {one}s"),
         };
-        let mut parts: Vec<(usize, String)> = [
-            (files(false), "changed", "file"),
-            (count(&StepKind::Run), "ran", "command"),
-            (files(true), "read", "file"),
-            (count(&StepKind::Search), "searched", "time"),
-            (count(&StepKind::Other), "used", "tool"),
+        let changes = ran(|kind| matches!(kind, StepKind::Change { .. }));
+        let runs = ran(|kind| *kind == StepKind::Run);
+        let reads = ran(|kind| matches!(kind, StepKind::Read { .. }));
+        let searches = ran(|kind| *kind == StepKind::Search);
+        let others = ran(|kind| *kind == StepKind::Other);
+        // The steps of each kind, and the number its words say.
+        let kinds: Vec<(usize, usize, &str, &str)> = [
+            (changes.len(), files(&changes), "changed", "file"),
+            (runs.len(), runs.len(), "ran", "command"),
+            (reads.len(), files(&reads), "read", "file"),
+            (searches.len(), searches.len(), "searched", "time"),
+            (others.len(), others.len(), "used", "tool"),
         ]
         .into_iter()
-        .filter(|(count, _, _)| *count > 0)
-        .map(|(count, verb, noun)| (count, format!("{verb} {}", plural(count, noun))))
+        .filter(|(_, said, _, _)| *said > 0)
         .collect();
-        let more: usize = parts.iter().skip(2).map(|(count, _)| count).sum();
-        parts.truncate(2);
-        let mut words: Vec<String> = parts.into_iter().map(|(_, part)| part).collect();
-        if more > 0 {
-            words.push(plural(more, "more step"));
-        }
+        let more: usize = kinds.iter().skip(2).map(|(steps, _, _, _)| steps).sum();
+        let words: Vec<String> = kinds
+            .iter()
+            .take(2)
+            .map(|(_, said, verb, noun)| format!("{verb} {}", plural(*said, noun)))
+            .chain((more > 0).then(|| plural(more, "more step")))
+            .collect();
         let line = match words.as_slice() {
             [] => return None,
             [only] => only.clone(),
@@ -386,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn a_summary_counts_files_once_puts_changes_first_and_skips_denied_steps() {
+    fn a_summary_counts_files_done_once_puts_changes_first_and_skips_denied_steps() {
         let start = SystemTime::now();
         let summary = |steps: &[(StepKind, StepOutcome)]| {
             let mut conversation = Conversation::default();
@@ -432,9 +439,19 @@ mod tests {
                 (read("b.json"), done.clone()),
                 (StepKind::Search, done.clone()),
                 (StepKind::Run, StepOutcome::Failed),
-                (StepKind::Other, done),
+                (StepKind::Other, done.clone()),
             ]),
             Some("Ran 1 command, read 2 files and 2 more steps".to_string())
+        );
+        assert_eq!(
+            summary(&[
+                (change("a.json"), StepOutcome::Failed),
+                (change("b.json"), done.clone()),
+                (StepKind::Run, done.clone()),
+                (read("c.json"), done.clone()),
+                (read("c.json"), done),
+            ]),
+            Some("Changed 1 file, ran 1 command and 2 more steps".to_string())
         );
     }
 
