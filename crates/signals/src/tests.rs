@@ -10,7 +10,7 @@ pub(crate) mod sound;
 use sound_core::{MAX_BLOCK, SvfShape};
 
 use crate::machine::{Block, Inputs, List, Machine, Note};
-use crate::{Code, Declarations, Graph};
+use crate::{ArraySpec, Code, Declarations, Graph};
 use sound::*;
 
 const SAMPLE_RATE: f32 = 48_000.0;
@@ -448,6 +448,36 @@ fn a_sample_in_stereo_plays_each_side_on_its_channel_and_both_mixed_where_the_co
         (sound.at(0.0), lookup(&sound, 0.0))
     };
     assert_eq!(read(compile(mixed), &stereo), [0.75, 0.75]);
+}
+
+#[test]
+fn a_second_output_hears_a_sample_in_stereo_on_each_channel() {
+    let nodes = json!([
+        { "op": "constant", "value": 0.0 },
+        { "op": "at", "table": { "list": "sound" }, "index": 0 },
+    ]);
+    let outputs = json!([{ "name": "low", "output": { "mono": 1 } }]);
+    let graph = json!({ "nodes": nodes, "feedbacks": [], "buffers": [], "watches": [], "numbers": [], "bangs": [], "notes": [], "output": { "mono": 0 }, "outputs": outputs });
+    let graph: Graph = serde_json::from_value(graph).unwrap();
+    let mut declarations = Declarations::default();
+    declarations.arrays.push(ArraySpec {
+        name: "sound".to_string(),
+        length: None,
+        default: 0.0,
+        min: -1.0,
+        max: 1.0,
+    });
+    let mut machine = machine(graph.compile(&declarations).unwrap());
+    let block = defaults(&machine);
+    let inputs = Inputs {
+        block: &block,
+        arrays: &[List::Stereo(vec![1.0], vec![0.5])],
+        note: Note::default(),
+    };
+    let mut outputs = [[[0.0; MAX_BLOCK]; 2]; 2];
+    machine.render(&inputs, 0..1, &mut outputs);
+    let [_, low] = outputs.map(|output| output.map(|channel| channel[0]));
+    assert_eq!(low, [1.0, 0.5]);
 }
 
 #[test]
