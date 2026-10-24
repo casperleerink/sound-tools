@@ -30,6 +30,7 @@ A signal used twice is one: `const lfo = phasor(2)` heard in two places is one o
 - A signal from outside, such as a field, is read once per spectrum. No `delay`, `buffer` or `output` inside.
 - The sound comes out `size` samples late. The project makes up for it, but not inside the sound: mix in the dry sound in the bins, where `bin.mag` and `bin.phase` as they come give `x` back.
 - In a tool of one voice only.
+- `spectral([x, other], size, (bin, other) => ...)` also gets the bin of `other`, such as a `sidechain`, at the same frequency; what goes out is still the spectrum of `x`.
 
 A freeze: the bins hold their level, and each wave turns on by its last step.
 

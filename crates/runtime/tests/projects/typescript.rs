@@ -403,6 +403,10 @@ s.tool({
         turned.set(bin.phase.plus(bin.hz.times(0)).plus(bin.index.times(0)));
         return { mag: s.hold(bin.mag, hit).times(level), phase: turned };
       }),
+      s.spectral([s.input, level], 256, (bin, other) => ({
+        mag: bin.mag.times(other.mag),
+        phase: other.phase.plus(other.hz.times(0)),
+      })),
     ];
     const sum = all.reduce<s.Signal>((total, each) => total.plus(each), s.input);
     return out === "mono" ? sum.times(0) : { left: sum.times(0), right: s.input };

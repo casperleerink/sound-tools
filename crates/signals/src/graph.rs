@@ -155,6 +155,9 @@ pub(crate) enum Node {
     Phase,
     Hz,
     Index,
+    /// What the bin of the second input is, in a `spectral` of two.
+    SideMagnitude,
+    SidePhase,
     /// A signal of the sound around a `spectral`, by its place in [`Bins::captures`].
     Capture(Capture),
 }
@@ -208,7 +211,7 @@ fields! {
     Lookup { table: TableNode, phase: usize }
     Length { table: TableNode }
     Write { buffer: usize, index: usize, value: usize }
-    Spectral { x: usize, size: usize, bins: Bins }
+    Spectral { x: usize, side: Option<usize>, size: usize, bins: Bins }
     Capture { index: usize }
 }
 
@@ -668,7 +671,13 @@ impl<'a> Lowering<'a> {
         };
         let in_bins = matches!(
             node,
-            Node::Magnitude | Node::Phase | Node::Hz | Node::Index | Node::Capture(_)
+            Node::Magnitude
+                | Node::Phase
+                | Node::Hz
+                | Node::Index
+                | Node::SideMagnitude
+                | Node::SidePhase
+                | Node::Capture(_)
         );
         match (self.captures.is_some(), around, in_bins) {
             (true, Some(what), _) => error(format!(
@@ -680,8 +689,14 @@ impl<'a> Lowering<'a> {
     }
 
     fn spectral(&mut self, spectral: &Spectral) -> Result<Operation, GraphError> {
-        let Spectral { x, size, bins } = spectral;
+        let Spectral {
+            x,
+            side,
+            size,
+            bins,
+        } = spectral;
         let input = self.read(*x)?;
+        let side = side.map(|side| self.read(side)).transpose()?;
         if !SPECTRUM_SIZES.contains(size) || !size.is_power_of_two() {
             return error(format!(
                 "spectral(x, {size}): the size is a power of two from {} to {}",
@@ -700,10 +715,11 @@ impl<'a> Lowering<'a> {
         let slot = self.slots.spectra.len() as u16;
         self.slots.spectra.push(SpectrumSpec {
             size: *size,
+            side: side.is_some(),
             code: bins.compile(self.arrays)?,
             captures,
         });
-        Ok(Operation::Spectral { input, slot })
+        Ok(Operation::Spectral { input, side, slot })
     }
 
     /// The register of `node`: of the operation it makes, or of its field or control.
@@ -855,6 +871,8 @@ impl<'a> Lowering<'a> {
             Node::Phase => Operation::Bin(BinValue::Phase),
             Node::Hz => Operation::Bin(BinValue::Hz),
             Node::Index => Operation::Bin(BinValue::Index),
+            Node::SideMagnitude => Operation::Bin(BinValue::SideMagnitude),
+            Node::SidePhase => Operation::Bin(BinValue::SidePhase),
             Node::Capture(Capture { index }) => match index < &self.captures.unwrap_or(0) {
                 true => Operation::Parameter(*index as u16),
                 false => return error(format!("capture {index} is not made")),
