@@ -28,6 +28,11 @@ pub(crate) const MAX_DELAYS: usize = 16;
 pub(crate) const MAX_BUFFER_SECONDS: f32 = 30.0;
 /// The longest a pattern can be.
 pub const MAX_ARRAY_LENGTH: usize = 1024;
+/// The sizes a `spectral` can be, powers of two: each bin keeps a memory, and a spectrum comes
+/// that many samples late.
+pub(crate) const SPECTRUM_SIZES: std::ops::RangeInclusive<usize> = 256..=8192;
+/// The most spectra one sound has, as each costs a transform both ways and its bins.
+pub(crate) const MAX_SPECTRA: usize = 8;
 pub(crate) const MAX_OPERATIONS: usize = 4096;
 
 /// The index of an operation, and of the register it writes.
@@ -73,6 +78,8 @@ pub struct Code {
     pub notes: Vec<String>,
     /// Of the graph and what it reads, so a behaviour tells new code from new values.
     pub hash: u64,
+    /// How many samples late its sound comes out: of the spectra on the way.
+    pub latency: u32,
     pub(crate) operations: Vec<Operation>,
     pub(crate) output: Output,
     /// The register each feedback takes for the next frame, by its slot.
@@ -109,6 +116,8 @@ pub(crate) enum Output {
     Mono(Register),
     /// The code runs once for both channels, and hears both.
     Stereo(Register, Register),
+    /// The magnitude and the phase of one bin, of the code of a `spectral`.
+    Bin(Register, Register),
 }
 
 /// How much of each kind of memory the operations use, per channel.
@@ -126,6 +135,17 @@ pub(crate) struct Slots {
     pub(crate) memories: u16,
     /// The seconds of each buffer.
     pub(crate) buffers: Vec<f32>,
+    pub(crate) spectra: Vec<SpectrumSpec>,
+}
+
+/// A `spectral`: the code that runs once per bin of each spectrum, and what it reads of the
+/// sound around it. In that code a `Parameter` is one of those captures, as it was in the
+/// last sample of the hop.
+#[derive(Clone, Debug)]
+pub(crate) struct SpectrumSpec {
+    pub(crate) size: usize,
+    pub(crate) code: Code,
+    pub(crate) captures: Vec<Register>,
 }
 
 /// Where `lookup`, `length` and `at` read: a list of the record, or a buffer.
@@ -220,6 +240,20 @@ pub(crate) enum Operation {
         index: Register,
         value: Register,
     },
+    Spectral {
+        input: Register,
+        slot: u16,
+    },
+    /// What a bin of a spectrum is, in the code of a `spectral`.
+    Bin(BinValue),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BinValue {
+    Magnitude,
+    Phase,
+    Hz,
+    Index,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

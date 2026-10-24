@@ -31,6 +31,7 @@ mod ring;
 mod saturation;
 mod scope;
 mod sections;
+mod stft;
 mod svf;
 pub mod testing;
 mod thru;
@@ -90,6 +91,7 @@ pub use project::{
 pub use saturation::soft_clip;
 pub use scope::Scope;
 pub use sections::{Section, SectionError, SectionName, Sections};
+pub use stft::{SpectralBin, Stft};
 pub use svf::{
     FilterCharacter, FilterSlope, FilterType, SHELF_MAX_Q, SVF_MAX_Q, ShapedSvf, SvfFactors,
     SvfSection, SvfShape, svf_response,

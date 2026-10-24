@@ -18,10 +18,10 @@ export {
   exp, Feedback, feedback, floor, graphToJson, highpass, highshelf, hold, input, inputLeft,
   inputRight, log, lookup, lowpass, lowshelf, max, min, mix, mtof, noise, notch, note, output,
   Param, peak, phasor, PI, playing, pow, rise, sampleRate, saturate, saw, Signal, sin, sine,
-  smooth, sqrt, square, Table, tan, tanh, TAU, triangle, wrap
+  smooth, spectral, sqrt, square, Table, tan, tanh, TAU, triangle, wrap
 } from "./sdk/sound";
 export type {
-  Graph, GraphNode, Operand, Stereo, TableRef
+  Bin, Bins, Graph, GraphNode, Operand, Stereo, TableRef
 } from "./sdk/sound";
 // `tool`, its `Context`, children and connections
 export {

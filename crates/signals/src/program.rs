@@ -15,7 +15,9 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use crate::code::{Code, Operation, Register, Table};
+use sound_core::Stft;
+
+use crate::code::{Code, Operation, Output, Register, Table};
 
 #[derive(Clone, Debug)]
 pub(crate) enum Step {
@@ -223,6 +225,13 @@ pub(crate) fn edges(code: &Code) -> Vec<Vec<usize>> {
         {
             add(usize::from(*source), index);
         }
+        if let Operation::Spectral { slot, .. } = operation
+            && let Some(spectrum) = code.slots.spectra.get(usize::from(*slot))
+        {
+            for capture in &spectrum.captures {
+                add(usize::from(*capture), index);
+            }
+        }
         if let Some(buffer) = buffer_of(*operation)
             && let Some(operations) = on_buffers.get_mut(usize::from(buffer))
         {
@@ -253,7 +262,8 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Rise { input: x, .. }
         | Operation::Change { input: x, .. }
         | Operation::Read { index: x, .. }
-        | Operation::Lookup { phase: x, .. } => vec![x],
+        | Operation::Lookup { phase: x, .. }
+        | Operation::Spectral { input: x, .. } => vec![x],
         Operation::Binary(_, a, b)
         | Operation::Delay {
             input: a, ms: b, ..
@@ -298,8 +308,33 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Trigger(_)
         | Operation::History(_)
         | Operation::Noise { .. }
-        | Operation::Length(_) => Vec::new(),
+        | Operation::Length(_)
+        | Operation::Bin(_) => Vec::new(),
     }
+}
+
+/// How many samples late what leaves `code` comes out: the most of the spectra on any way to
+/// it. A feedback adds none: it hears the frame before.
+pub(crate) fn latency(code: &Code) -> u32 {
+    let mut latencies: Vec<usize> = Vec::with_capacity(code.operations.len());
+    for operation in &code.operations {
+        let before = (operands(*operation).into_iter())
+            .filter_map(|operand| latencies.get(usize::from(operand)).copied())
+            .max()
+            .unwrap_or(0);
+        let own = match operation {
+            Operation::Spectral { slot, .. } => (code.slots.spectra.get(usize::from(*slot)))
+                .map_or(0, |spectrum| Stft::latency_of(spectrum.size)),
+            _ => 0,
+        };
+        latencies.push(before + own);
+    }
+    let of = |register: Register| latencies.get(usize::from(register)).copied();
+    let latency = match code.output {
+        Output::Mono(register) => of(register),
+        Output::Stereo(left, right) | Output::Bin(left, right) => of(left).max(of(right)),
+    };
+    u32::try_from(latency.unwrap_or(0)).unwrap_or(u32::MAX)
 }
 
 /// Whether `operation` gives each channel of mono code its own result whatever it reads: the
@@ -307,7 +342,7 @@ fn operands(operation: Operation) -> Vec<Register> {
 /// seed is of its channel.
 fn varies_by_channel(operation: Operation) -> bool {
     match operation {
-        Operation::Input | Operation::Channel | Operation::Noise { .. } => true,
+        Operation::Input | Operation::Channel | Operation::Noise { .. } | Operation::Bin(_) => true,
         Operation::Constant(_)
         | Operation::InputLeft
         | Operation::InputRight
@@ -339,7 +374,8 @@ fn varies_by_channel(operation: Operation) -> bool {
         | Operation::Read { .. }
         | Operation::Lookup { .. }
         | Operation::Length(_)
-        | Operation::Write { .. } => false,
+        | Operation::Write { .. }
+        | Operation::Spectral { .. } => false,
     }
 }
 

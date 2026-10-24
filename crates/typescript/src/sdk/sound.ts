@@ -15,8 +15,21 @@ type Binary =
   | "add" | "subtract" | "multiply" | "divide" | "remainder" | "less" | "greater" | "lessOrEqual"
   | "greaterOrEqual" | "equal" | "notEqual" | "min" | "max" | "pow";
 
+type BinSource = "magnitude" | "phase" | "hz" | "index";
+
 /** Where a table reads: a list or file field by name, or a `buffer` by its number. */
 export type TableRef = { list: string } | { buffer: number };
+
+/**
+ * The bins of a `spectral` as the runtime gets them: a graph of their own, which reads each
+ * signal of the sound around it that it uses as one of `captures`.
+ */
+export interface Bins<R = number> {
+  nodes: GraphNode[];
+  feedbacks: number[];
+  captures: R[];
+  output: { magnitude: number; phase: number };
+}
 
 /** A node of the sound graph, with `R` for each signal it reads. */
 type SignalNode<R> =
@@ -39,13 +52,16 @@ type SignalNode<R> =
   | { op: "rise" | "change"; x: R }
   | { op: "at"; table: TableRef; index: R }
   | { op: "lookup"; table: TableRef; phase: R }
-  | { op: "length"; table: TableRef };
+  | { op: "length"; table: TableRef }
+  | { op: "spectral"; x: R; size: number; bins: Bins<R> }
+  | { op: BinSource };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
 export type GraphNode =
   | SignalNode<number>
   | { op: "constant"; value: number }
-  | { op: "write"; buffer: number; index: number; value: number };
+  | { op: "write"; buffer: number; index: number; value: number }
+  | { op: "capture"; index: number };
 
 /** A sound as the runtime gets it. */
 export interface Graph {
@@ -67,6 +83,8 @@ export interface Graph {
  * heard twice, with one memory.
  */
 export class Signal {
+  /** 0 in the sound, else the `spectral` whose bins made it. */
+  readonly scope: number = scope;
   constructor(readonly node: SignalNode<Operand>) {}
   plus(other: Operand): Signal { return new Signal({ op: "add", a: this, b: other }); }
   minus(other: Operand): Signal { return new Signal({ op: "subtract", a: this, b: other }); }
@@ -86,7 +104,7 @@ export class Signal {
 
 /** A value read where it is used, with no memory: a source, a field, an input, a feedback. */
 class Named extends Signal {
-  declare readonly node: Extract<SignalNode<Operand>, { op: Source | "param" | "feedback" }>;
+  declare readonly node: Extract<SignalNode<Operand>, { op: Source | BinSource | "param" | "feedback" }>;
 }
 
 /**
@@ -104,12 +122,18 @@ export class Table {
   constructor(readonly ref: TableRef) {}
   /** The value at `index`: its whole part, wrapped, so any index reads. */
   at(index: Operand): Signal {
-    return new Signal({ op: "at", table: this.ref, index });
+    return new Signal({ op: "at", table: readable(this.ref), index });
   }
   /** How many values it holds. */
   get length(): Signal {
-    return new Signal({ op: "length", table: this.ref });
+    return new Signal({ op: "length", table: readable(this.ref) });
   }
+}
+
+/** `ref`, where a table may be read: a bin of a `spectral` reads no `buffer`. */
+function readable(ref: TableRef): TableRef {
+  if (scope !== 0 && "buffer" in ref) throw new Error("a buffer is not read inside spectral");
+  return ref;
 }
 
 /** Memory to write and read, such as a loop or a grain cloud: all 0 at first. */
@@ -119,7 +143,7 @@ export class Buffer extends Table {
   }
   /** Writes `value` at `index`, every sample. */
   write(index: Operand, value: Operand): void {
-    building().writes.push({ buffer: this.slot, index, value });
+    outside("write").writes.push({ buffer: this.slot, index, value });
   }
 }
 
@@ -147,10 +171,20 @@ interface Building {
 }
 
 let current: Building | undefined;
+/** See `Signal.scope`, and how many `spectral` there were. */
+let scope = 0;
+let scopes = 0;
 
 function building(): Building {
-  if (!current) throw new Error("feedback, buffer, write and output belong inside `sound`");
+  if (!current) throw new Error("feedback, buffer, write, output and spectral belong inside `sound`");
   return current;
+}
+
+/** What `sound` declares, where `what` is not inside the bins of a `spectral`. */
+function outside(what: string): Building {
+  const declared = building();
+  if (scope !== 0) throw new Error(`${what} is not used inside spectral`);
+  return declared;
 }
 
 /** The sample that comes in, in an effect. 0 in an instrument or a source. */
@@ -304,9 +338,68 @@ export function feedback(): Feedback {
 
 /** Memory of `seconds`, see `Buffer`. Inside `sound` only. */
 export function buffer(seconds: number): Buffer {
-  const made = new Buffer(building().buffers.length);
-  building().buffers.push(seconds);
+  const declared = outside("buffer");
+  const made = new Buffer(declared.buffers.length);
+  declared.buffers.push(seconds);
   return made;
+}
+
+/** One bin of a spectrum, in `spectral`. */
+export interface Bin {
+  /** How loud it is: 1 for a sine of 1 at its frequency. */
+  mag: Signal;
+  /** Where its wave is, in radians from -PI to PI. */
+  phase: Signal;
+  /** The frequency at its middle. */
+  hz: Signal;
+  /** Its number, from 0 at 0 Hz to `size / 2` at half the sample rate. */
+  index: Signal;
+}
+
+/**
+ * `x` through its spectrum: `each` runs once per bin of the last `size` samples, a power of
+ * two from 256 to 8192, a quarter of `size` apart, and gives the bin as it goes out. Each bin
+ * keeps its own memory from one spectrum to the next, so `feedback`, `hold` and `smooth` work
+ * per bin; a signal from outside is read as it is at each spectrum. The sound comes out `size`
+ * samples late. Inside `sound` only, in a tool of one voice.
+ */
+export function spectral(
+  x: Operand,
+  size: number,
+  each: (bin: Bin) => { mag: Operand; phase: Operand },
+): Signal {
+  const around = outside("spectral");
+  const own = ++scopes;
+  current = { feedbacks: [], buffers: [], writes: [], numbers: [], bangs: [], notes: [] };
+  scope = own;
+  let bins: Bins<Operand>;
+  try {
+    const inside = current;
+    const { mag, phase } = each({
+      mag: new Named({ op: "magnitude" }),
+      phase: new Named({ op: "phase" }),
+      hz: new Named({ op: "hz" }),
+      index: new Named({ op: "index" }),
+    });
+    const captures: Signal[] = [];
+    const captured = new Map<Signal, number>();
+    const { nodes, prepare, use } = layout(own, (outer) => {
+      let index = captured.get(outer);
+      if (index === undefined) {
+        index = captures.push(outer) - 1;
+        captured.set(outer, index);
+      }
+      return { op: "capture", index };
+    });
+    prepare(mag);
+    prepare(phase);
+    const feedbacks = inside.feedbacks.map((feedback) => use(set(feedback)));
+    bins = { nodes, feedbacks, captures, output: { magnitude: use(mag), phase: use(phase) } };
+  } finally {
+    current = around;
+    scope = 0;
+  }
+  return new Signal({ op: "spectral", x, size, bins });
 }
 
 /** Notes from signals: one sounds while `gate` is above 0, at the MIDI `pitch` it starts with. */
@@ -325,7 +418,7 @@ export interface Notes {
  * the pitch moves. Inside `sound` only; a sound with more than one voice sends only numbers.
  */
 export function output(name: string, value: Operand | { bang: Operand; gate?: never } | Notes): void {
-  const declared = building();
+  const declared = outside("output");
   if (typeof value === "number" || value instanceof Signal) {
     declared.numbers.push({ name, value });
   } else if (value.bang === undefined) {
@@ -337,33 +430,15 @@ export function output(name: string, value: Operand | { bang: Operand; gate?: ne
 
 /**
  * For the host: the graph of a sound. `build` makes the output; what it declares is kept
- * meanwhile. A signal is one node, after the nodes it reads; a number or a `Named` is a node
- * of its own wherever it is read.
+ * meanwhile.
  */
 export function graphToJson(build: () => Operand | Stereo): Graph {
   current = { feedbacks: [], buffers: [], writes: [], numbers: [], bangs: [], notes: [] };
   try {
     const declared = current;
     const output = build();
-    const nodes: GraphNode[] = [];
-    const made = new Map<Signal, number>();
+    const { nodes, prepare, use } = layout(0);
     const add = (node: GraphNode) => nodes.push(node) - 1;
-    /** Adds the nodes of `operand` that are made once, the signals it reads first. */
-    const prepare = (operand: Operand) => {
-      if (typeof operand === "number" || operand instanceof Named || made.has(operand)) return;
-      const operands = Object.entries(operand.node).filter((entry): entry is [string, Operand] =>
-        isOperand(entry[1]),
-      );
-      for (const [, each] of operands) prepare(each);
-      const read = Object.fromEntries(operands.map(([key, each]) => [key, use(each)]));
-      made.set(operand, add({ ...operand.node, ...read } as GraphNode));
-    };
-    /** The node of `operand` where it is used, made now when it is a number or a `Named`. */
-    const use = (operand: Operand): number => {
-      prepare(operand);
-      if (typeof operand === "number") return add({ op: "constant", value: quantize(operand) });
-      return operand instanceof Named ? add(operand.node) : (made.get(operand) as number);
-    };
     const outputs = typeof output === "object" && !(output instanceof Signal) ? [output.left, output.right] : [output];
     outputs.forEach(prepare);
     const numbers = declared.numbers.map(({ name, value }) => ({ name, node: use(value) }));
@@ -381,12 +456,7 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
       prepare(value);
       add({ op: "write", buffer, index: use(index), value: use(value) });
     }
-    const feedbacks = declared.feedbacks.map((feedback) => {
-      if (feedback.value === undefined) {
-        throw new Error("a feedback is never set: call .set(value) on it");
-      }
-      return use(feedback.value);
-    });
+    const feedbacks = declared.feedbacks.map((feedback) => use(set(feedback)));
     const [first, second] = outputs.map(use);
     return {
       nodes,
@@ -401,6 +471,56 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
   } finally {
     current = undefined;
   }
+}
+
+/**
+ * The nodes of the signals of `own` scope, in order: a signal is one node, after the nodes it
+ * reads; a number or a `Named` is a node of its own wherever it is read. A signal of the sound
+ * around the bins of a `spectral` is a node `capture` makes.
+ */
+function layout(own: number, capture?: (outer: Signal) => GraphNode) {
+  const nodes: GraphNode[] = [];
+  const made = new Map<Signal, number>();
+  const add = (node: GraphNode) => nodes.push(node) - 1;
+  /** Adds the nodes of `operand` that are made once, the signals it reads first. */
+  const prepare = (operand: Operand) => {
+    if (typeof operand === "number" || made.has(operand)) return;
+    if (operand.scope !== own) {
+      if (capture) return;
+      throw new Error("a signal of the bins of a spectral is used outside it");
+    }
+    if (operand instanceof Named) return;
+    const node = operand.node;
+    if (node.op === "spectral") {
+      prepare(node.x);
+      node.bins.captures.forEach(prepare);
+      const bins = { ...node.bins, captures: node.bins.captures.map(use) };
+      made.set(operand, add({ op: "spectral", x: use(node.x), size: node.size, bins }));
+      return;
+    }
+    const operands = Object.entries(node).filter((entry): entry is [string, Operand] =>
+      isOperand(entry[1]),
+    );
+    for (const [, each] of operands) prepare(each);
+    const read = Object.fromEntries(operands.map(([key, each]) => [key, use(each)]));
+    made.set(operand, add({ ...node, ...read } as GraphNode));
+  };
+  /** The node of `operand` where it is used, made now when it is a number, a `Named` or a capture. */
+  const use = (operand: Operand): number => {
+    prepare(operand);
+    if (typeof operand === "number") return add({ op: "constant", value: quantize(operand) });
+    if (operand.scope !== own && capture) return add(capture(operand));
+    return operand instanceof Named ? add(operand.node) : (made.get(operand) as number);
+  };
+  return { nodes, prepare, use };
+}
+
+/** What `feedback` is set to. */
+function set(feedback: Feedback): Operand {
+  if (feedback.value === undefined) {
+    throw new Error("a feedback is never set: call .set(value) on it");
+  }
+  return feedback.value;
 }
 
 function isOperand(value: unknown): value is Operand {
