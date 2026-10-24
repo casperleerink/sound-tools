@@ -414,6 +414,16 @@ tool({
   // @ts-expect-error: it gives each of its outputs.
   sound: () => ({ audio: input }),
 });
+tool({
+  name: "mixed",
+  title: "Mixed",
+  when: "Never",
+  doc: "A sound whose outputs are one stereo and one not.",
+  state: {},
+  outputs: { low: audio() },
+  // @ts-expect-error: its outputs are each one signal or each { left, right }.
+  sound: () => ({ audio: { left: input, right: input }, low: input }),
+});
 const ported = { duck, split } as const;
 
 tool({

@@ -37,7 +37,7 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    * that reads `input` has an audio input. `input` when left out, which passes the sound through.
    * With `outputs`, an object of its `audio` and each of them, all signals or all `Stereo`.
    */
-  sound?: (fields: SoundOf<S, I>) => keyof NoInfer<O> extends never ? Sound : { [Name in "audio" | keyof NoInfer<O>]: Sound };
+  sound?: (fields: SoundOf<S, I>) => keyof NoInfer<O> extends never ? Sound : Each<"audio" | keyof NoInfer<O>, Operand> | Each<"audio" | keyof NoInfer<O>, Stereo>;
   /**
    * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they and
@@ -277,6 +277,8 @@ type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } 
 
 /** What a sound gives out: a `Signal`, or a `Stereo` pair. */
 type Sound = Operand | Stereo;
+/** `T` for each of `Names`. */
+type Each<Names extends PropertyKey, T> = { [Name in Names]: T };
 
 /** The sound ports a child of tool `T` has, its inputs or with `Out` its outputs: any where its entry says none. */
 type SoundPortName<T, Out extends boolean> = EntryOf<T> extends { port: infer In extends string; sound: infer Sent extends string } ? (Out extends true ? Sent : In) : string;

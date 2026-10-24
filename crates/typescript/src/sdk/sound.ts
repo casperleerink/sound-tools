@@ -454,7 +454,7 @@ export function graphToJson(build: () => unknown, outputs: readonly string[] = [
   try {
     const declared = current;
     const built = build();
-    if (outputs.length > 0 && (typeof built !== "object" || built === null || built instanceof Signal || "left" in built)) {
+    if (outputs.length > 0 && (typeof built !== "object" || built === null || built instanceof Signal)) {
       throw new Error("a sound with `outputs` returns an object of its `audio` and each of them");
     }
     const sounds = outputs.length === 0 ? { audio: built } : (built as Record<string, unknown>);
