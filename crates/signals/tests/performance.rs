@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-//! How much faster than realtime many `Signals` processors render: effects, a spectral one too,
+//! How much faster than realtime many `Signals` processors render: effects, spectral ones too,
 //! and instruments with every voice playing.
 
 use std::time::Instant;
@@ -59,6 +59,20 @@ fn freeze() -> Code {
     })
 }
 
+/// The vocoder of the doc of sounds: a chord of saws, as loud in each bin of 512 as the input.
+fn vocoder() -> Code {
+    compile(|| {
+        let saw = |hz: f32| phasor(hz) * 2.0 - 1.0;
+        let chord = saw(130.8) + saw(196.0) + saw(261.6);
+        spectral_of_two(chord, input(), 512, |saws, voice| {
+            (
+                saws.magnitude * smooth(voice.magnitude, 20.0) * 2.0,
+                saws.phase,
+            )
+        })
+    })
+}
+
 /// Run with
 /// `cargo nextest run -p sound-signals --run-ignored only realtime_ratio --no-capture`.
 #[test]
@@ -68,6 +82,7 @@ fn realtime_ratio_of_one_hundred_processors() {
         ("echo effect", echo(), Kind::One),
         ("saw source", voice(), Kind::One),
         ("spectral freeze effect", freeze(), Kind::One),
+        ("spectral vocoder effect", vocoder(), Kind::One),
     ] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();
