@@ -11,6 +11,7 @@ pub(super) fn written_by_the_runtime(path: &str) -> bool {
             "extensions/sdk.ts",
             "extensions/tsconfig.json",
             "extensions/bun.d.ts",
+            "extensions/log.txt",
         ]
         .contains(&path)
 }

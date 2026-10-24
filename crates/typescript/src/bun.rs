@@ -5,8 +5,8 @@
 //! Bun does one thing at a time and says which tool's code it runs before it runs it, so a
 //! thread here that hears it knows what hangs, without the window: the window may be busy.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,6 +38,13 @@ const QUEUED_LINES: usize = 1024;
 /// What Bun said that may wait for the window to hear it. More, and the code of a tool says
 /// things in a loop that never ends: the window would not catch up.
 const MAX_EVENTS: usize = 4096;
+
+/// What the code of the tools printed since Bun started, in `extensions/`, for an agent that
+/// debugs a tool it wrote.
+pub(crate) const LOG_FILE: &str = "log.txt";
+
+/// The lines the log keeps: the last ones, between half of these and all.
+const LOG_LINES: usize = 200;
 
 /// The files of `extensions/` Bun runs without, because their code hung or stopped it, with
 /// what to tell the composer. A change in the folder clears it.
@@ -742,13 +749,15 @@ pub(crate) fn new_opening() -> u64 {
 
 impl Bun {
     /// Starts Bun on `host_script` in `folder`, to load `files` of it for the project's
-    /// `opening`, and waits for its load. Blocks for as long as the load takes: never call it
-    /// on the thread that draws.
+    /// `opening`, and waits for its load. What its code prints goes to [`LOG_FILE`] too when
+    /// it `logs`: only a runtime that holds the project writes it. Blocks for as long as the
+    /// load takes: never call it on the thread that draws.
     pub(crate) fn start(
         program: &Path,
         host_script: &Path,
         (folder, opening): (&Path, u64),
         files: &[&str],
+        logs: bool,
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
         let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
@@ -762,11 +771,22 @@ impl Bun {
             .current_dir(folder)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| failure(format!("did not start: {error}")))?;
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
             return Err(failure("started without pipes".to_string()));
+        };
+        // The tools run without a log they cannot write.
+        let log = match logs.then(|| std::fs::File::create(folder.join(LOG_FILE))) {
+            Some(Ok(file)) => Some(file),
+            Some(Err(error)) => {
+                eprintln!("error: could not write {LOG_FILE}: {error}");
+                None
+            }
+            None => None,
         };
         let (events, received) = smol::channel::unbounded();
         let (said, heard) = mpsc::channel();
@@ -789,6 +809,10 @@ impl Bun {
         std::thread::Builder::new()
             .name("bun".into())
             .spawn(move || read(stdout, &said))
+            .map_err(|error| failure(error.to_string()))?;
+        std::thread::Builder::new()
+            .name("bun-log".into())
+            .spawn(move || print(stderr, log))
             .map_err(|error| failure(error.to_string()))?;
         std::thread::Builder::new()
             .name("bun-input".into())
@@ -1059,6 +1083,44 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     }
 }
 
+/// Passes what the code of the tools prints on to the runtime's own stderr, and keeps its
+/// last lines in `log`, until Bun stops.
+fn print(printed: impl Read, mut log: Option<std::fs::File>) {
+    let mut printed = BufReader::new(printed);
+    let mut kept: VecDeque<Vec<u8>> = VecDeque::new();
+    loop {
+        let mut line = Vec::new();
+        match printed.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        if !line.ends_with(b"\n") {
+            line.push(b'\n');
+        }
+        std::io::stderr().write_all(&line).ok();
+        let Some(file) = &mut log else {
+            continue;
+        };
+        let written = if kept.len() < LOG_LINES {
+            let written = file.write_all(&line);
+            kept.push_back(line);
+            written
+        } else {
+            // Cut to the last half at once: a tool that prints on every frame does not write
+            // the whole log again for each line.
+            kept.drain(..LOG_LINES / 2);
+            kept.push_back(line);
+            (file.set_len(0))
+                .and_then(|()| file.rewind())
+                .and_then(|()| kept.iter().try_for_each(|line| file.write_all(line)))
+        };
+        if let Err(error) = written {
+            eprintln!("error: could not write {LOG_FILE}: {error}");
+            log = None;
+        }
+    }
+}
+
 /// Hears what Bun `number` says after its load and passes its events on to `events`, and the
 /// answers of behaviours to them, until it hangs or stops, which [`Event::Ended`] says.
 /// One thing Bun was told is done, or will never be.
@@ -1178,6 +1240,28 @@ impl Drop for Bun {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_of_a_tool_that_prints_on_and_on_keeps_its_last_lines() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join(LOG_FILE);
+        let printed: String = (0..1000).map(|line| format!("line {line}\n")).collect();
+        print(
+            printed.as_bytes(),
+            Some(std::fs::File::create(&path).unwrap()),
+        );
+        let log = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(
+            (LOG_LINES / 2..=LOG_LINES).contains(&lines.len()),
+            "{} lines",
+            lines.len()
+        );
+        let last: Vec<String> = (1000 - lines.len()..1000)
+            .map(|line| format!("line {line}"))
+            .collect();
+        assert_eq!(lines, last);
+    }
 
     #[test]
     fn a_tool_this_side_cannot_read_is_an_error_of_its_file_and_the_others_load() {

@@ -93,6 +93,7 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
         &host,
         (folder.path(), new_opening()),
         &["grid.ts"],
+        false,
     )
     .unwrap_or_else(|failure| panic!("{}", failure.why));
     let id = InstanceId::new("grid").unwrap();

@@ -178,4 +178,5 @@ One clock plays the project, `clock` in all code. Nothing plays it but a tool: n
 
 1. `bun check -p extensions` checks the types.
 2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: what does not load or build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
-3. Use the tool as the composer will: write its record (`"state": {}` is its defaults) where a parent plays it; the parent's doc says which children it plays, such as the `order` of a `chain`. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
+3. To see what your code does, `console.log` it: while the window is open, `extensions/log.txt` holds the last lines printed since the tools started; `--inspect` prints them too.
+4. Use the tool as the composer will: write its record (`"state": {}` is its defaults) where a parent plays it; the parent's doc says which children it plays, such as the `order` of a `chain`. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
