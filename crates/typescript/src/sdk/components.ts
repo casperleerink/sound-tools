@@ -648,7 +648,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
     for (const [name, input] of Object.entries(inputs)) {
       if (input.kind === "number") {
         knobs.push(knob(name, input));
-      } else {
+      } else if (input.kind === "bang") {
         buttons.push(Button({ label: input.label ?? words(name), variant: "subtle", size: "sm", onClick: () => (send as (input: string) => void)(name) }));
       }
     }

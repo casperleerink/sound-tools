@@ -807,6 +807,20 @@ impl Bindings {
         self.by_instance.get(instance)?.inputs.get(port).copied()
     }
 
+    /// The names of the sound inputs and outputs that the behaviour of `instance` named.
+    pub(super) fn sound_ports(&self, instance: &InstanceId) -> (Vec<&str>, Vec<&str>) {
+        let Some(binding) = self.by_instance.get(instance) else {
+            return (Vec::new(), Vec::new());
+        };
+        let inputs = (binding.inputs.iter())
+            .filter(|(_, input)| matches!(input.port, InputPort::Audio(_)))
+            .map(|(name, _)| name.as_str());
+        let outputs = (binding.outputs.iter())
+            .filter(|(_, output)| matches!(output.port, OutputPort::Audio(_)))
+            .map(|(name, _)| name.as_str());
+        (inputs.collect(), outputs.collect())
+    }
+
     /// Runs the whole change as one engine edit: one batch and at most one compile. On an
     /// error the engine and the bindings stay as they were.
     ///

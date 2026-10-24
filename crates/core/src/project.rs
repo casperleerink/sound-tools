@@ -323,6 +323,12 @@ impl Project {
         self.bindings.input(instance, port)
     }
 
+    /// The names of the sound inputs and outputs that the behaviour of `instance` named the
+    /// last time it ran, such as `audio` and `sidechain`.
+    pub fn sound_ports(&self, instance: &InstanceId) -> (Vec<&str>, Vec<&str>) {
+        self.bindings.sound_ports(instance)
+    }
+
     /// The number `field` that `instance` takes automation for, as its behaviour named it the
     /// last time it ran. `None` while it takes none of that name. For an owner that edits its
     /// lanes, such as a view that shows what a lane plays.

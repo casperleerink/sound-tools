@@ -290,9 +290,9 @@ fn operands(operation: Operation) -> Vec<Register> {
             ..
         } => vec![gate, attack, decay, sustain, release],
         Operation::Constant(_)
-        | Operation::Input
-        | Operation::InputLeft
-        | Operation::InputRight
+        | Operation::Input(_)
+        | Operation::InputLeft(_)
+        | Operation::InputRight(_)
         | Operation::Channel
         | Operation::SampleRate
         | Operation::Beat
@@ -320,10 +320,12 @@ pub(crate) fn latency(code: &Code) -> u32 {
     let of_sources = latencies(code, &[]);
     let latencies = latencies(code, &of_sources);
     let of = |register: Register| latencies.get(usize::from(register)).copied();
-    let latency = match code.output {
+    let of_output = |output: &Output| match *output {
         Output::Mono(register) => of(register),
         Output::Stereo(left, right) | Output::Bin(left, right) => of(left).max(of(right)),
     };
+    let outputs = std::iter::once(&code.output).chain(&code.sound_outputs);
+    let latency = outputs.map(of_output).max().flatten();
     u32::try_from(latency.unwrap_or(0)).unwrap_or(u32::MAX)
 }
 
@@ -354,10 +356,12 @@ fn latencies(code: &Code, before: &[usize]) -> Vec<usize> {
 /// seed is of its channel.
 fn varies_by_channel(operation: Operation) -> bool {
     match operation {
-        Operation::Input | Operation::Channel | Operation::Noise { .. } | Operation::Bin(_) => true,
+        Operation::Input(_) | Operation::Channel | Operation::Noise { .. } | Operation::Bin(_) => {
+            true
+        }
         Operation::Constant(_)
-        | Operation::InputLeft
-        | Operation::InputRight
+        | Operation::InputLeft(_)
+        | Operation::InputRight(_)
         | Operation::SampleRate
         | Operation::Beat
         | Operation::Bpm

@@ -21,7 +21,7 @@ use sound_notes::{
 };
 
 use crate::cable::{Bang, Control, Number};
-use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_OUTPUTS, MAX_PARAMETERS};
+use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS};
 use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values, held};
 
 /// How long the old code fades out while the new one fades in.
@@ -129,10 +129,10 @@ pub struct Signals {
     lives: [Smoothed; MAX_LIVES],
     /// What every voice reads in this block.
     block: Box<Block>,
-    /// What the voices play in this block, added up.
-    mix: Frames,
+    /// What the voices play in this block, added up, for each sound output.
+    mix: [Frames; MAX_SOUNDS],
     /// What one voice plays in a span, and what its old code plays while it fades out.
-    voice_frames: [Frames; 2],
+    voice_frames: [[Frames; MAX_SOUNDS]; 2],
     /// How many params and live controls the code has, so a block moves only those.
     counts: (usize, usize),
     arrays: Vec<Vec<f32>>,
@@ -255,6 +255,16 @@ impl Signals {
     /// The live controls and the triggers, as cables reach them.
     pub const CONTROLS: EventInput<Control> = EventInput::new(2);
 
+    /// The sound input `index`: 0 is [`Self::INPUT`], then those the tool names.
+    pub const fn sound_input(index: usize) -> AudioInput {
+        AudioInput::new(index)
+    }
+
+    /// The sound output `index`: 0 is [`Self::OUTPUT`], then those of [`Code::sounds`].
+    pub const fn sound_output(index: usize) -> AudioOutput {
+        AudioOutput::new(index)
+    }
+
     /// The port of the number at `index` of [`Code::numbers`].
     pub const fn number(index: usize) -> EventOutput<Number> {
         EventOutput::new(index)
@@ -315,8 +325,8 @@ impl Signals {
             followed: false,
             lives,
             block: Box::new(Block::new()),
-            mix: [[0.0; MAX_BLOCK]; CHANNELS],
-            voice_frames: [[[0.0; MAX_BLOCK]; CHANNELS]; 2],
+            mix: [[[0.0; MAX_BLOCK]; CHANNELS]; MAX_SOUNDS],
+            voice_frames: [[[[0.0; MAX_BLOCK]; CHANNELS]; MAX_SOUNDS]; 2],
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
@@ -609,10 +619,11 @@ impl SignalsVoice {
         &mut self,
         shared: &Shared<'_>,
         frames: Range<usize>,
-        voice_frames: &mut [Frames; 2],
-        mix: &mut Frames,
+        voice_frames: &mut [[Frames; MAX_SOUNDS]; 2],
+        mix: &mut [Frames; MAX_SOUNDS],
     ) {
         let [sound, old] = voice_frames;
+        let outputs = self.machine.code().outputs();
         let mut start = frames.start;
         while start < frames.end && !self.is_idle() {
             // Cut where the fade ends, and, after the release, where the voice may go idle,
@@ -642,10 +653,17 @@ impl SignalsVoice {
             if self.fade_left > 0
                 && let Some(fading) = &mut self.fading
             {
+                // A sound output the old code does not have fades in from silence.
+                let old_outputs = old.iter_mut().take(outputs).skip(fading.code().outputs());
+                for channel in old_outputs.flatten() {
+                    in_part_mut(channel, &part).fill(0.0);
+                }
                 fading.render(&inputs, part.clone(), old);
                 for frame in part.clone() {
                     let new = 1.0 - self.fade_left as f32 / shared.fade_frames as f32;
-                    for (sound, old) in sound.iter_mut().zip(old.iter()) {
+                    let outputs = sound.iter_mut().zip(old.iter()).take(outputs);
+                    let channels = outputs.flat_map(|(sound, old)| sound.iter_mut().zip(old));
+                    for (sound, old) in channels {
                         if let (Some(sample), Some(old)) = (sound.get_mut(frame), old.get(frame)) {
                             *sample = old + (*sample - old) * new;
                         }
@@ -654,16 +672,29 @@ impl SignalsVoice {
                 }
             }
             self.note.onset = false;
-            let [left, right] = &*sound;
-            let [mix_left, mix_right] = &mut *mix;
+            // A voice sounds while any of its outputs does.
+            let mut others = [0.0_f32; MAX_BLOCK];
+            let other_outputs = sound.iter().zip(mix.iter_mut()).take(outputs).skip(1);
+            for (sound, mix) in other_outputs.flat_map(|(sound, mix)| sound.iter().zip(mix)) {
+                let frames = (in_part(sound, &part).iter())
+                    .zip(in_part_mut(mix, &part))
+                    .zip(in_part_mut(&mut others, &part));
+                for ((sample, mixed), loudest) in frames {
+                    *mixed += sample;
+                    *loudest = loudest.max(sample.abs());
+                }
+            }
+            let [[left, right], ..] = &*sound;
+            let [[mix_left, mix_right], ..] = &mut *mix;
             let played = (in_part(left, &part).iter())
                 .zip(in_part(right, &part))
                 .zip(in_part_mut(mix_left, &part))
-                .zip(in_part_mut(mix_right, &part));
-            for (((left, right), mix_left), mix_right) in played {
+                .zip(in_part_mut(mix_right, &part))
+                .zip(in_part(&others, &part));
+            for ((((left, right), mix_left), mix_right), others) in played {
                 self.loudness = [left, right]
                     .iter()
-                    .fold(0.0_f32, |loudest, sample| loudest.max(sample.abs()));
+                    .fold(*others, |loudest, sample| loudest.max(sample.abs()));
                 if ending {
                     if self.loudness < QUIET {
                         self.quiet_frames += 1;
@@ -696,9 +727,12 @@ impl Signals {
     /// params, the live controls and the beat.
     fn fill(&mut self, inputs: &AudioInputs<'_>, frames: usize, bpm: f64, playing: bool) {
         let block = &mut *self.block;
-        for (row, samples) in block.input.iter_mut().zip(inputs.get(Self::INPUT)) {
-            for (frame, sample) in row.iter_mut().take(frames).enumerate() {
-                *sample = samples.get(frame).copied().unwrap_or(0.0);
+        let sounds = std::iter::once(&mut block.input).chain(&mut block.sounds);
+        for (port, sound) in sounds.enumerate() {
+            for (row, samples) in sound.iter_mut().zip(inputs.get(Self::sound_input(port))) {
+                for (frame, sample) in row.iter_mut().take(frames).enumerate() {
+                    *sample = samples.get(frame).copied().unwrap_or(0.0);
+                }
             }
         }
         block.triggers.fill(0);
@@ -742,9 +776,10 @@ impl Processor for Signals {
     type Update = SignalsUpdate;
 
     fn ports(&self) -> Ports {
-        let ports = Ports::new()
-            .audio_input(Self::INPUT)
-            .audio_output(Self::OUTPUT)
+        let ports = (0..MAX_SOUNDS).fold(Ports::new(), |ports, index| {
+            (ports.audio_input(Self::sound_input(index))).audio_output(Self::sound_output(index))
+        });
+        let ports = ports
             .event_input(Self::NOTES)
             .event_input(Self::AUTOMATION)
             .event_input(Self::CONTROLS);
@@ -865,7 +900,7 @@ impl Processor for Signals {
             frames,
         );
         block.steady_lives = advance_rows(&mut block.lives, &mut self.lives, lives, frames);
-        let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
+        let outputs = self.players.code().map_or(1, Code::outputs);
         // An instrument with no voice that sounds, and no note in this block, plays silence.
         let silent = match &self.players {
             Players::Many(voices) => voices.is_idle(),
@@ -876,8 +911,11 @@ impl Processor for Signals {
             && context.event_inputs.get(Self::NOTES).is_empty()
             && self.scheduled.next().is_none_or(|at| at >= next)
         {
-            left_out.fill(0.0);
-            right_out.fill(0.0);
+            for port in 0..outputs {
+                for channel in context.audio_outputs.get(Self::sound_output(port)) {
+                    channel.fill(0.0);
+                }
+            }
             return;
         }
         self.fill(&context.audio_inputs, frames, bpm, playing);
@@ -887,16 +925,19 @@ impl Processor for Signals {
                 self.block.fire(usize::from(index), timed.offset);
             }
         }
-        for channel in &mut self.mix {
+        for channel in self.mix.iter_mut().take(outputs).flatten() {
             channel.fill(0.0);
         }
 
         let notes = context.event_inputs.get(Self::NOTES);
         self.spans((notes, context.start_frame), frames, Some(quiet_limit));
 
-        for (out, channel) in [left_out, right_out].into_iter().zip(&self.mix) {
-            for (sample, mixed) in out.iter_mut().zip(channel) {
-                *sample = mixed.clamp(-LIMIT, LIMIT);
+        for (port, mix) in self.mix.iter().enumerate().take(outputs) {
+            let out = context.audio_outputs.get(Self::sound_output(port));
+            for (out, channel) in out.into_iter().zip(mix) {
+                for (sample, mixed) in out.iter_mut().zip(channel) {
+                    *sample = mixed.clamp(-LIMIT, LIMIT);
+                }
             }
         }
         let shown = match &self.players {

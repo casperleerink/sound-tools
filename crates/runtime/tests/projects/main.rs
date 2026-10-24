@@ -42,6 +42,7 @@ mod shared_song;
 mod song;
 mod song_mixer;
 mod song_sound;
+mod sound_ports;
 mod summary;
 mod support;
 mod typescript;

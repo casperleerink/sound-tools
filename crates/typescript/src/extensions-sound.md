@@ -12,6 +12,8 @@ Read `agent-docs/extensions.md` first. Every function here has its doc in `exten
 
 A sound that returns one signal runs on each channel apart. One that returns `{ left, right }` runs once for both and hears both through `inputLeft` and `inputRight`, as a ping-pong delay does.
 
+Up to 3 more sound inputs and outputs: `inputs: { sidechain: audio() }` is read as `sidechain`, like `input`, and `sidechain.left`, `.right`; the DAW's sidechain picker keys any effect with a `sidechain`. With `outputs: { low: audio() }`, `sound` returns `{ audio, low }`, each a signal or each `{ left, right }`.
+
 A signal used twice is one: `const lfo = phasor(2)` heard in two places is one oscillator with one memory; call `phasor(2)` twice for two.
 
 ## Inside `sound` only

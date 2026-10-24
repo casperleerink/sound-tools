@@ -1,7 +1,7 @@
 // Fields of a record: saved, undoable, and what an agent writes. Whatever reads a field follows
 // it: a sound that reads a number glides to it, a behaviour or a view that reads it runs again.
 
-import { Param, Table } from "./sound";
+import { Param, SoundInput, Table } from "./sound";
 
 /** What a readout shows after the number. */
 export type Unit = "hz" | "ms" | "db" | "percent";
@@ -156,11 +156,19 @@ export interface BangInput {
   label?: string;
 }
 
+/** A sound in stereo, in `inputs` such as a `sidechain`, or in `outputs`. */
+export interface AudioPort {
+  kind: "audio";
+}
+
 /** A number input is a `number(...)` that nothing saves: it starts at its default, and glides. */
-export type Input = NumberField | BangInput;
+export type Input = NumberField | BangInput | AudioPort;
 export type Inputs = Record<string, Input>;
+/** The sound outputs of a tool besides `audio`. */
+export type Outputs = Record<string, AudioPort>;
 
 export const bang = (input: Omit<BangInput, "kind"> = {}): BangInput => ({ kind: "bang", ...input });
+export const audio = (): AudioPort => ({ kind: "audio" });
 
 /** The names of the inputs in `I` of kind `K`. */
 export type InputNames<I extends Inputs, K extends Input["kind"]> = {
@@ -203,4 +211,4 @@ type Heard<F> = F extends NumberField | BooleanField
 /** What `sound` gets: the fields it can hear, and every input, a bang as a `Param` that is 1 for one sample. */
 export type SoundOf<S extends Fields, I extends Inputs> = {
   [Name in keyof S as [Heard<S[Name]>] extends [never] ? never : Name]: Heard<S[Name]>;
-} & { [Name in keyof I]: Param };
+} & { [Name in keyof I]: I[Name] extends AudioPort ? SoundInput : Param };

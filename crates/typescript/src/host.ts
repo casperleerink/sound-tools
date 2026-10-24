@@ -92,7 +92,7 @@ const NAME = /^[a-z][a-z0-9_]*$/;
 const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
 const KEYS = {
-  name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, sound: true,
+  name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, outputs: true, sound: true,
   behaviour: true, children: true, memory: true, tick: true, view: true, onKey: true,
   keys: true, globalKeys: true, onNotes: true, onTake: true,
 } satisfies Record<keyof Spec, true>;
@@ -127,9 +127,14 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${name}: a field and an input cannot share a name`);
       }
     }
-    for (const name of Object.keys(spec.inputs ?? {})) {
+    for (const name of [...Object.keys(spec.inputs ?? {}), ...Object.keys(spec.outputs ?? {})]) {
       if (name === "audio" || name === "notes") {
-        problems.push(`${name}: an input is not named ${name}, an input every sound has`);
+        problems.push(`${name}: an input or an output is not named ${name}, which every sound has`);
+      }
+    }
+    for (const name of Object.keys(spec.outputs ?? {})) {
+      if (!NAME.test(name)) {
+        problems.push(`${name}: an output name is lowercase letters, digits and _, starting with a letter`);
       }
     }
     const voices = spec.voices ?? 1;
@@ -210,6 +215,7 @@ async function load() {
  * once. A function of the wrong type is called anyway, so it fails as a problem of its tool.
  */
 function described(spec: Spec, file: string) {
+  const inputs = Object.entries(spec.inputs ?? {});
   const sounds = combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))] as const);
   return {
     info: {
@@ -222,7 +228,8 @@ function described(spec: Spec, file: string) {
       input: sounds.some(([, graph]) => "Ok" in graph && readsInput(graph.Ok)),
       sound: spec.sound !== undefined,
       fields: spec.state,
-      inputs: spec.inputs ?? {},
+      inputs: Object.fromEntries(inputs.filter(([, input]) => input.kind !== "audio")),
+      sound_inputs: inputs.filter(([, input]) => input.kind === "audio").map(([name]) => name),
       tick: spec.tick !== undefined,
       view: spec.view !== undefined,
       keys: spec.onKey !== undefined,
@@ -238,9 +245,9 @@ function described(spec: Spec, file: string) {
   };
 }
 
-/** Whether a sound hears what comes in, so its tool has an audio input. */
+/** Whether a sound hears what comes in to its `audio`, so its tool has an audio input. */
 function readsInput(graph: Graph): boolean {
-  return graph.nodes.some((node) => node.op === "input" || node.op === "inputLeft" || node.op === "inputRight");
+  return graph.nodes.some((node) => (node.op === "input" || node.op === "inputLeft" || node.op === "inputRight") && node.name === undefined);
 }
 
 /** What `make` gives, or why it failed, as the runtime reads a `Result`. */
@@ -286,11 +293,11 @@ function sound(spec: Spec, choices: Choices): Graph {
       fields[name] = new sdk.Table({ list: name });
     }
   }
-  for (const name of Object.keys(spec.inputs ?? {})) {
-    fields[name] = new sdk.Param(name);
+  for (const [name, input] of Object.entries(spec.inputs ?? {})) {
+    fields[name] = input.kind === "audio" ? new sdk.SoundInput(name) : new sdk.Param(name);
   }
   const build = spec.sound ?? (() => sdk.input);
-  return sdk.graphToJson(() => build(fields as never));
+  return sdk.graphToJson(() => build(fields as never), Object.keys(spec.outputs ?? {}));
 }
 
 /**

@@ -53,6 +53,9 @@ pub(crate) struct ToolInfo {
     pub fields: Named<Field>,
     /// What plays it and nothing saves.
     pub inputs: Named<Input>,
+    /// Its sound inputs besides `audio`, such as `sidechain`.
+    #[serde(default)]
+    pub sound_inputs: Vec<String>,
     /// It has a control loop, which runs while the window is open.
     pub tick: bool,
     /// It draws its own view; without one, its default view is a card, and it has no page.
@@ -501,6 +504,7 @@ impl ToolInfo {
                 Input::Bang { .. } => ControlSpec::Trigger(name.clone()),
             });
         }
+        declarations.sounds = self.sound_inputs.clone();
         declarations
     }
 
@@ -1029,6 +1033,14 @@ impl Sounds {
             context.input(NOTES_INPUT, InputEndpoint::new(signals, Signals::NOTES));
         }
         context.output(AUDIO_OUTPUT, OutputEndpoint::new(signals, Signals::OUTPUT));
+        for (index, name) in self.info.sound_inputs.iter().enumerate() {
+            let input = InputEndpoint::new(signals, Signals::sound_input(index + 1));
+            context.input(name, input);
+        }
+        for (index, name) in code.sounds.iter().enumerate() {
+            let output = OutputEndpoint::new(signals, Signals::sound_output(index + 1));
+            context.output(name, output);
+        }
         for (index, name) in code.numbers.iter().enumerate() {
             context.output(name, OutputEndpoint::new(signals, Signals::number(index)));
         }
