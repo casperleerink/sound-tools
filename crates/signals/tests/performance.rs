@@ -42,7 +42,7 @@ fn voice() -> Code {
 }
 
 /// A freeze of a spectrum of 2048: each bin holds its magnitude and turns on by its last step
-/// of phase while frozen, the freeze of the agent doc.
+/// of phase while frozen.
 fn freeze() -> Code {
     compile(|| {
         let frozen = param("frozen", 1.0, [0.0, 1.0]);

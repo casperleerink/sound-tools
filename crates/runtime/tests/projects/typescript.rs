@@ -10,9 +10,21 @@ use crate::support::{BAR, Harness, clip, synth, write};
 
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
 fn doc_example() -> String {
-    let doc = sound_typescript::AGENT_DOCS[0].markdown;
-    let block = doc.split("```ts\n").nth(1).unwrap();
-    block.split("```").next().unwrap().to_string()
+    example_of("extensions", "")
+}
+
+/// The first TypeScript example of the agent doc `doc` that holds `holding`.
+fn example_of(doc: &str, holding: &str) -> String {
+    let doc = (sound_typescript::AGENT_DOCS.iter())
+        .find(|each| each.name == doc)
+        .unwrap()
+        .markdown;
+    let blocks = doc.split("```ts\n").skip(1);
+    let mut examples = blocks.map(|block| block.split("```").next().unwrap());
+    examples
+        .find(|example| example.contains(holding))
+        .unwrap()
+        .to_string()
 }
 
 /// Combs whose number is a choice: `sound` builds a different graph for each.
@@ -42,8 +54,9 @@ tool({
 });
 "#;
 
-/// A project whose `extensions/` holds the first example of the doc, `wobble`, `COMBS` and `LEVEL`,
-/// with a rack `pad` that plays a held chord through `effects`.
+/// A project whose `extensions/` holds the first example of the doc, `wobble`, the freeze of the
+/// doc of sounds, `COMBS` and `LEVEL`, with a rack `pad` that plays a held chord through
+/// `effects`.
 fn pad_through(effects: &[(&str, &str)]) -> Harness {
     pad_through_with(effects, &[])
 }
@@ -57,6 +70,8 @@ fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> H
     );
     let folder = tempfile::tempdir().unwrap();
     write(folder.path(), "extensions/wobble.ts", &doc_example());
+    let freeze = example_of("extensions-sound", "spectral(");
+    write(folder.path(), "extensions/freeze.ts", &freeze);
     write(folder.path(), "extensions/combs.ts", COMBS);
     write(folder.path(), "extensions/level.ts", LEVEL);
     let (synth, chord) = (
@@ -134,6 +149,19 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
             "{combs} combs do not ring on"
         );
     }
+}
+
+#[test]
+fn the_freeze_of_the_doc_passes_the_sound_and_once_frozen_rings_on_after_it() {
+    let mut harness = pad_through(&[("freeze", r#"{"frozen": false}"#)]);
+    // The chord plays for 8 s.
+    let passed = harness.play_from_the_start(BAR);
+    assert!(loudness_at(&passed, 1.0) > 0.01);
+    let frozen = r#"{"tool": "freeze", "state": {"frozen": true}}"#;
+    harness.write_and_apply("state/pad/freeze.json", frozen);
+    let after = harness.play(4 * BAR);
+    let rings = loudness_at(&after, 7.5);
+    assert!(rings > 0.3 * loudness_at(&passed, 1.0), "{rings} at 9.5 s");
 }
 
 #[test]

@@ -212,7 +212,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-sound",
         group: WRITING,
-        when: "A tool's sound needs feedback, buffers, files, stereo, voices or outputs",
+        when: "A tool's sound needs feedback, buffers, files, stereo, voices, outputs or its spectrum",
         markdown: include_str!("extensions-sound.md"),
     },
     AgentDoc {

@@ -404,7 +404,7 @@ impl Machine {
         let runs = match self.code.output {
             Output::Mono(_) => CHANNELS,
             Output::Stereo(..) => 1,
-            // Its bins run through `bin`.
+            // Its bins run through `run_bins`.
             Output::Bin(..) => 0,
         };
         for channel in 0..runs {
