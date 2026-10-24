@@ -101,7 +101,7 @@ impl Analysis {
             silence: 0,
             bins: vec![0.0; bins],
             columns,
-            power: PowerSpectrum::new(),
+            power: PowerSpectrum::new(WINDOW),
             pitch: PitchFinder::new(rate, WINDOW),
             found: Pitch::Quiet,
             momentary: Momentary::new(sample_rate),
