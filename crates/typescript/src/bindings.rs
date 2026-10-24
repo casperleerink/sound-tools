@@ -41,8 +41,14 @@ fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join("row.ts"), ROW).unwrap();
     let host = host_script().unwrap();
-    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &["row.ts"])
-        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    let (bun, _) = Bun::start(
+        &program,
+        &host,
+        (folder.path(), new_opening()),
+        &["row.ts"],
+        false,
+    )
+    .unwrap_or_else(|failure| panic!("{}", failure.why));
     let id = InstanceId::new("row").unwrap();
     let state = json!({ "steps": [0, 0, 0, 0] }).to_string();
     assert!(bun.tell([(
@@ -125,6 +131,7 @@ fn an_update_reads_the_defaults_of_a_child_and_sets_only_what_it_changed() {
         &host,
         (folder.path(), new_opening()),
         &["holder.ts"],
+        false,
     )
     .unwrap_or_else(|failure| panic!("{}", failure.why));
     let (id, clip) = (
@@ -233,8 +240,14 @@ fn mounted(file: &str, code: &str, name: &str) -> Bun {
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join(file), code).unwrap();
     let host = host_script().unwrap();
-    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &[file])
-        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    let (bun, _) = Bun::start(
+        &program,
+        &host,
+        (folder.path(), new_opening()),
+        &[file],
+        false,
+    )
+    .unwrap_or_else(|failure| panic!("{}", failure.why));
     // Bun reads its files at the start; the folder may go.
     drop(folder);
     let id = InstanceId::new(name).unwrap();

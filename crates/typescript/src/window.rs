@@ -2081,7 +2081,8 @@ impl Live {
                     if let Some(old) = old {
                         old.end();
                     }
-                    crate::launch((&folder, opening), skipped)
+                    // Only a runtime that holds the project has a window.
+                    crate::launch((&folder, opening), skipped, true)
                 })
                 .await;
             live.update(cx, |live, cx| live.launched(launched, cx)).ok();

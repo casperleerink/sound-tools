@@ -398,7 +398,7 @@ pub(crate) fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
     if let Err(error) = templates::update(folder) {
         eprintln!("error: {error:#}");
     }
-    Ok(Extensions::load(folder, &tool_schemas()?))
+    Ok(Extensions::load(folder, &tool_schemas()?, true))
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
@@ -465,7 +465,8 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let extensions = Extensions::load(folder, &tool_schemas()?);
+    // A runtime that holds the project may be writing its log.
+    let extensions = Extensions::load(folder, &tool_schemas()?, false);
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {

@@ -103,7 +103,6 @@ my-piece/
 - A map, `AGENTS.md`, plus one file per doc in `agent-docs/`, because one big doc stopped scaling; agents read only the docs their task needs. Rejected: Claude Code skills, no better in an eval and needing settings agents run without.
 - A doc never outlives its tools and holds nothing of the machine, nor what an agent reads in the SDK, a field table or a problem.
 - Writing tools is an entry doc and deeper docs it names. Rejected: docs by area alone: nearly every tool crosses areas.
-- A runtime test loads every JSON example in every doc, so none drifts from the formats.
 - The composer's instructions are plain text: `instructions.md` in the project travels with the piece; one file in the support folder is for every project. Both are edited in the sidebar, so a composer needs no text editor.
 - The sidebar runs Claude Code with no settings source and no MCP servers, so a settings file the agent writes in the project gives it no more access. The project's `CLAUDE.md` is loaded back in on purpose.
 
@@ -134,7 +133,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - A new project starts from a template: a folder of `templates/` copied into it, with what its `template.json` says of it. A new template is a new folder; `build.rs` embeds them. Bare is an empty project.
 - A project keeps the template's code as it wrote it, with its name and release. A later release updates each `extensions/` file the project never changed; for one it changed, the agent gets the old, the new and the project's to merge. Records and `project.json` are the project's from the start. Rejected: the template loaded from the app, which updates by itself but makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which leave a merge nothing to merge from.
-- The DAW is a template of tools of the project, written with the SDK. The Rust arrangement that was the home of the product is gone: a song, a track, a mixer and a transport are a project's choice, so they can be changed like any tool. Rejected: keeping it next to the template, two DAWs to maintain.
+- The DAW is a template of tools of the project, written with the SDK: a song, a track, a mixer and a transport are a project's choice, so they can be changed like any tool. Rejected: keeping the Rust arrangement next to it, two DAWs to maintain.
 
 ## Audio files and the Sampler
 
@@ -238,4 +237,5 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A child's notes pass its own feed**, which releases the child when its senders change (a removed or moved sender sends no off there) and holds a pitch until its last sender lets go. The code of a tool is one sender: a new Bun ends only what the old one held. Rejected: a reset in the core, for every instrument to declare; releasing the whole child, which cuts its clips at every save.
 - **Regions into one place play through one player of their parent**: a crossfade where they meet, the last by name where they overlap. Rejected: a player per region, which dips at a join and sums an overlap.
 - **A tool sends and hears the note events a cable carries**, its `notes` to the sample, whatever plays them. Rejected: tapping the MIDI device thread, deaf to clips and cables.
+- **What the tools print goes to `extensions/log.txt` too**, its last lines since Bun started, only from a runtime that holds the project. It outlives a close.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

@@ -268,8 +268,9 @@ impl Extensions {
     /// has no `extensions/` folder, which is every project that has not asked for its own
     /// tools. Bun starts only when the folder has a tool file; the SDK is written either way,
     /// for the agent that writes the first one, with the records of the built-in tools of
-    /// `schemas`. Waits for Bun, up to a timeout for each file: not on the thread that draws.
-    pub fn load(folder: &Path, schemas: &[ToolSchema]) -> Option<FirstLoad> {
+    /// `schemas`. Bun `logs` for a runtime that holds the project, see [`Bun::start`]. Waits
+    /// for Bun, up to a timeout for each file: not on the thread that draws.
+    pub fn load(folder: &Path, schemas: &[ToolSchema], logs: bool) -> Option<FirstLoad> {
         let folder = folder.join(FOLDER);
         if !folder.is_dir() {
             return None;
@@ -277,7 +278,7 @@ impl Extensions {
         let opening = bun::new_opening();
         let launched = write_sdk(&folder, schemas)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch((&folder, opening), Skipped::new()));
+            .and_then(|()| launch((&folder, opening), Skipped::new(), logs));
         Some(FirstLoad {
             folder,
             opening,
@@ -477,6 +478,7 @@ struct Launched {
 fn launch(
     (extensions, opening): (&Path, u64),
     mut skipped: Skipped,
+    logs: bool,
 ) -> Result<Option<Launched>, String> {
     let files = tool_files(extensions);
     if files.is_empty() {
@@ -493,7 +495,7 @@ fn launch(
             .filter(|file| !skipped.contains_key(*file))
             .map(String::as_str)
             .collect();
-        match Bun::start(&program, &host, (extensions, opening), &loading) {
+        match Bun::start(&program, &host, (extensions, opening), &loading, logs) {
             Ok((bun, loaded)) => {
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.
@@ -553,6 +555,11 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
         ("tsconfig.json", TSCONFIG),
         ("bun.d.ts", BUN_TYPES),
     ];
+    // Keeps the log out of git. One the project has already is its own.
+    let ignore = extensions.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
+    }
     for (name, text) in files.into_iter().chain(SDK_MODULES) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
@@ -656,7 +663,7 @@ mod tests {
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();
         std::fs::create_dir(project.path().join(FOLDER)).unwrap();
-        let extensions = Extensions::load(project.path(), &[])
+        let extensions = Extensions::load(project.path(), &[], true)
             .unwrap()
             .register(&mut Registry::new());
         assert!(extensions.bun.is_none());

@@ -203,7 +203,7 @@ fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
     let extensions = project.path().join("extensions");
     std::fs::create_dir(&extensions).unwrap();
     let schemas = runtime::tool_schemas().unwrap();
-    assert!(sound_typescript::Extensions::load(project.path(), &schemas).is_some());
+    assert!(sound_typescript::Extensions::load(project.path(), &schemas, false).is_some());
     write(&extensions, "types.ts", include_str!("sdk-types.ts"));
     // The host checks with the SDK it runs next to.
     write(&extensions, "host.ts", sound_typescript::HOST);
