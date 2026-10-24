@@ -447,7 +447,10 @@ impl ToolInfo {
     /// them. Only the numbers it reads, so a tool may hold any number of numbers it does not.
     pub(crate) fn declarations(&self, graph: &Graph) -> Declarations {
         let read = graph.params();
-        let mut declarations = Declarations::default();
+        let mut declarations = Declarations {
+            voices: self.kind().machines(),
+            ..Declarations::default()
+        };
         let number = |name: &str, default, min, max| ParameterSpec {
             name: name.to_string(),
             default,

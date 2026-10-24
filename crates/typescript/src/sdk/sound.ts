@@ -284,9 +284,9 @@ export const phasor = (hz: Operand): Signal => new Signal({ op: "phasor", hz });
 /** White noise from -1 to 1, different on each channel. */
 export const noise = (): Signal => new Signal({ op: "noise" });
 /**
- * `x` as it was `ms` milliseconds ago, up to 4000. `ms` may move every sample, smoothly, for a
- * chorus or a tape wobble. `longest` is the most it holds, a number; give it in an instrument,
- * where every voice keeps its own.
+ * `x` as it was `ms` milliseconds ago, up to `longest`, a number: 4000 when left out. `ms` may
+ * move every sample, smoothly, for a chorus or a tape wobble. A longer `longest` holds more of
+ * the memory of the tool, see `buffer`.
  */
 export const delay = (x: Operand, ms: Operand, longest?: number): Signal =>
   new Signal(longest === undefined ? { op: "delay", x, ms } : { op: "delay", x, ms, longest });
@@ -353,7 +353,11 @@ export function feedback(): Feedback {
   return made;
 }
 
-/** Memory of `seconds`, see `Buffer`. Inside `sound` only. */
+/**
+ * Memory of `seconds`, see `Buffer`. Inside `sound` only. The buffers and delays of a tool hold
+ * up to 16 minutes together; in a tool of more voices than one, 2 minutes, as each voice keeps its
+ * own.
+ */
 export function buffer(seconds: number): Buffer {
   const declared = outside("buffer");
   const made = new Buffer(declared.buffers.length);

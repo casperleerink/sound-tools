@@ -12,12 +12,13 @@ use serde::Deserialize;
 use sound_core::SvfShape;
 
 use crate::code::{
-    ArraySpec, BinValue, Binary, Code, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS,
+    ArraySpec, BinValue, Binary, Code, DEFAULT_DELAY_MS, MAX_ARRAY_LENGTH, MAX_LIVES,
+    MAX_MEMORY_SECONDS, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS,
     MAX_SPECTRA, MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Slots,
     SpectrumSpec, Table, Unary,
 };
 use crate::program;
+use crate::processor::MAX_VOICES;
 
 /// A sound as the SDK sends it.
 #[derive(Debug, Deserialize)]
@@ -223,6 +224,9 @@ pub struct Declarations {
     pub controls: Vec<ControlSpec>,
     /// The names of the sound inputs besides `audio`.
     pub sounds: Vec<String>,
+    /// How many voices it keeps, each with delays and buffers of its own: of
+    /// [`Kind::machines`](crate::Kind::machines). 0 is one.
+    pub voices: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -313,11 +317,8 @@ impl Graph {
         let mut lowering = Lowering::new(&self.nodes, self.feedbacks.len(), &declarations.arrays);
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
-            let total = lowering.slots.buffers.iter().sum::<f32>() + seconds;
-            if seconds <= 0.0 || total > MAX_BUFFER_SECONDS {
-                return error(format!(
-                    "buffer({seconds}): a buffer holds more than 0 s, and the buffers of a sound up to {MAX_BUFFER_SECONDS} s together"
-                ));
+            if !(seconds > 0.0) {
+                return error(format!("buffer({seconds}): a buffer holds more than 0 s"));
             }
             lowering.slots.buffers.push(seconds);
         }
@@ -371,6 +372,15 @@ impl Graph {
         outputs.sort();
         if let Some(twice) = outputs.windows(2).find(|pair| pair[0] == pair[1]) {
             return error(format!("output `{}` is given twice", twice[0]));
+        }
+        let slots = &lowering.slots;
+        let held = slots.delays.iter().sum::<f32>() / 1000.0 + slots.buffers.iter().sum::<f32>();
+        let most = MAX_MEMORY_SECONDS / declarations.voices.max(1) as f32;
+        if held > most {
+            let each = MAX_MEMORY_SECONDS / MAX_VOICES as f32;
+            return error(format!(
+                "the delays and buffers of a sound hold up to {MAX_MEMORY_SECONDS} s together, and {each} s in a tool of more voices than one: these hold {held:.1} s. Shorten a buffer, or give a delay a shorter longest"
+            ));
         }
         let output = lowering.output(self.output)?;
         let sound_outputs = (self.outputs.iter())
@@ -634,19 +644,15 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// The longest a delay holds: what it says, or the most any delay holds.
+    /// The longest a delay holds, in ms: what it says, or [`DEFAULT_DELAY_MS`].
     fn longest(&self, longest: Option<usize>) -> Result<f32, GraphError> {
         let Some(longest) = longest else {
-            return Ok(MAX_DELAY_MS);
+            return Ok(DEFAULT_DELAY_MS);
         };
         self.read(longest)?;
         match self.nodes.get(longest) {
-            Some(Node::Constant(Constant { value })) if *value > 0.0 && *value <= MAX_DELAY_MS => {
-                Ok(*value)
-            }
-            _ => error(format!(
-                "delay(x, ms, longest): longest is a number of ms above 0 and up to {MAX_DELAY_MS}"
-            )),
+            Some(Node::Constant(Constant { value })) if *value > 0.0 => Ok(*value),
+            _ => error("delay(x, ms, longest): longest is a number of ms above 0"),
         }
     }
 
@@ -785,9 +791,6 @@ impl<'a> Lowering<'a> {
             },
             Node::Delay(Delay { x, ms, longest }) => {
                 let (input, ms) = (self.read(*x)?, self.read(*ms)?);
-                if self.slots.delays.len() == MAX_DELAYS {
-                    return error(format!("a sound has at most {MAX_DELAYS} delays"));
-                }
                 let slot = self.slots.delays.len() as u16;
                 self.slots.delays.push(self.longest(*longest)?);
                 Operation::Delay { input, ms, slot }
