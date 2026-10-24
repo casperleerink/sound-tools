@@ -14,6 +14,7 @@
 //! - [`Resampler`] plays it at another sample rate than the engine's.
 //! - [`Varispeed`] plays it at any speed, for an instrument that plays a sample at the pitch of
 //!   a key.
+//! - [`Shifter`] moves the pitch of one voice and keeps its length, for pitch correction.
 //! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
 //! - [`TakeFile`] is a recording on its way in: a WAV file that grows while it records.
 //! - [`analysis`] measures a sound: its loudness, peaks, spectrum and pitch.
@@ -29,6 +30,7 @@ mod loader;
 mod overview;
 mod player;
 mod resample;
+mod shifter;
 mod stream;
 mod take;
 mod varispeed;
@@ -53,6 +55,7 @@ pub use player::{
     AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS, Region, file_frames, snapshot,
 };
 pub use resample::{Resampler, SCRATCH_FRAMES};
+pub use shifter::{Shift, Shifter};
 pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use take::{TakeFile, TakeOverview};
 pub use varispeed::{MAX_STEP, Varispeed, varispeed};

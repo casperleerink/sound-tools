@@ -233,6 +233,17 @@ impl PitchTracker {
         self.ring.len()
     }
 
+    /// How many frames before the newest one heard [`Self::pitch`] describes, on average until
+    /// the next look. A look measures the period on its older half and the lag after it, so a
+    /// reading sits about three quarters of [`Self::length`] back, not in its middle.
+    pub fn age(&self) -> f64 {
+        let period = match self.pitch {
+            Pitch::Note(_) => self.followed.unwrap_or(0.0),
+            _ => 0.0,
+        };
+        1.5 * self.longest as f64 - period / 2.0 + self.look_frames as f64 / 2.0
+    }
+
     /// The pitch of the last [`Self::length`] frames, looked at in the last few milliseconds.
     pub fn pitch(&self) -> Pitch {
         self.pitch
@@ -593,6 +604,27 @@ mod tests {
                 .unwrap();
             assert!(delay <= tracker.length() + tracker.look_frames, "{delay}");
             assert!(tracker.confidence() > 0.5, "{}", tracker.confidence());
+        }
+    }
+
+    #[test]
+    fn a_reading_on_a_glide_is_the_note_sung_its_age_back() {
+        // Six semitones a second, read every frame.
+        let note = |time: f64| 57.0 + 6.0 * time;
+        let sound = tone(1.5, note, bright);
+        for settings in [VOICE, PitchSettings::FULL] {
+            let mut tracker = PitchTracker::new(RATE, settings);
+            let mut errors = Vec::new();
+            for (frame, sample) in sound.iter().enumerate() {
+                tracker.push([*sample]);
+                if let (Pitch::Note(read), true) = (tracker.pitch(), frame as f64 > 0.3 * RATE) {
+                    let described = (frame as f64 + 1.0 - tracker.age()) / RATE;
+                    errors.push(read - note(described));
+                }
+            }
+            let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+            // A cent is 80 frames of this glide; half of what a look hears is 600 or more.
+            assert!(mean.abs() < 0.01, "{mean} semitones off on average");
         }
     }
 }
