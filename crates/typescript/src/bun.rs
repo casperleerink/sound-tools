@@ -6,7 +6,7 @@
 //! thread here that hears it knows what hangs, without the window: the window may be busy.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -662,6 +662,8 @@ pub(crate) struct Bun {
     /// Ended by [`Bun::end`], or when the runtime lets go of it. `None` once ended. The tools
     /// it loaded hold it too, so their records keep asking it outside the window.
     child: Mutex<Option<Child>>,
+    /// Disconnected once the thread that passes on what Bun prints is done.
+    printed: Mutex<mpsc::Receiver<()>>,
     told: Mutex<Told>,
 }
 
@@ -780,7 +782,7 @@ impl Bun {
             return Err(failure("started without pipes".to_string()));
         };
         // The tools run without a log they cannot write.
-        let log = match logs.then(|| empty_log(folder)) {
+        let log = match logs.then(|| std::fs::File::create(folder.join(LOG_FILE))) {
             Some(Ok(file)) => Some(file),
             Some(Err(error)) => {
                 eprintln!("error: could not write {LOG_FILE}: {error}");
@@ -791,6 +793,7 @@ impl Bun {
         let (events, received) = smol::channel::unbounded();
         let (said, heard) = mpsc::channel();
         let (lines, to_write) = mpsc::sync_channel::<String>(QUEUED_LINES);
+        let (printing, printed) = mpsc::channel::<()>();
         let busy = Arc::new(Mutex::new(Busy {
             pending: 0,
             since: Instant::now(),
@@ -804,6 +807,7 @@ impl Bun {
             busy: busy.clone(),
             events: received,
             child: Mutex::new(Some(child)),
+            printed: Mutex::new(printed),
             told: Mutex::default(),
         };
         std::thread::Builder::new()
@@ -812,7 +816,10 @@ impl Bun {
             .map_err(|error| failure(error.to_string()))?;
         std::thread::Builder::new()
             .name("bun-log".into())
-            .spawn(move || print(stderr, log))
+            .spawn(move || {
+                let _printing = printing;
+                print(stderr, log);
+            })
             .map_err(|error| failure(error.to_string()))?;
         std::thread::Builder::new()
             .name("bun-input".into())
@@ -1083,14 +1090,6 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     }
 }
 
-/// The log in `folder`, emptied. Appended to, so a last line of the Bun before, after this one
-/// emptied it, leaves no gap of zeros.
-fn empty_log(folder: &Path) -> std::io::Result<std::fs::File> {
-    let path = folder.join(LOG_FILE);
-    std::fs::write(&path, "")?;
-    std::fs::OpenOptions::new().append(true).open(path)
-}
-
 /// Passes what the code of the tools prints on to the runtime's own stderr, and keeps its
 /// last lines in `log`, until Bun stops.
 fn print(printed: impl Read, mut log: Option<std::fs::File>) {
@@ -1118,7 +1117,9 @@ fn print(printed: impl Read, mut log: Option<std::fs::File>) {
             // the whole log again for each line.
             kept.drain(..LOG_LINES / 2);
             kept.push_back(line);
-            (file.set_len(0)).and_then(|()| kept.iter().try_for_each(|line| file.write_all(line)))
+            (file.set_len(0))
+                .and_then(|()| file.rewind())
+                .and_then(|()| kept.iter().try_for_each(|line| file.write_all(line)))
         };
         if let Err(error) = written {
             eprintln!("error: could not write {LOG_FILE}: {error}");
@@ -1219,6 +1220,11 @@ impl Bun {
             child.kill().ok();
             child.wait().ok();
         }
+        // So its last lines are in the log before a new Bun empties it. Not for ever: a
+        // process its code started may still hold the pipe.
+        (self.printed.lock().unwrap_or_else(PoisonError::into_inner))
+            .recv_timeout(Duration::from_secs(1))
+            .ok();
     }
 }
 
@@ -1251,8 +1257,12 @@ mod tests {
     fn the_log_of_a_tool_that_prints_on_and_on_keeps_its_last_lines() {
         let folder = tempfile::tempdir().unwrap();
         let printed: String = (0..1000).map(|line| format!("line {line}\n")).collect();
-        print(printed.as_bytes(), Some(empty_log(folder.path()).unwrap()));
-        let log = std::fs::read_to_string(folder.path().join(LOG_FILE)).unwrap();
+        let path = folder.path().join(LOG_FILE);
+        print(
+            printed.as_bytes(),
+            Some(std::fs::File::create(&path).unwrap()),
+        );
+        let log = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = log.lines().collect();
         assert!(
             (LOG_LINES / 2..=LOG_LINES).contains(&lines.len()),
