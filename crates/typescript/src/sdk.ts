@@ -6,11 +6,11 @@
 
 // the fields of a record and the inputs of a tool
 export {
-  bang, boolean, choice, file, list, noteFields, notes, number, pattern, text
+  audio, bang, boolean, choice, file, list, noteFields, notes, number, pattern, text
 } from "./sdk/fields";
 export type {
-  BangInput, BooleanField, ChoiceField, Field, Fields, FileField, Inputs, ListField, Note,
-  NumberField, ObjectItem, SoundOf, StateOf, TextField, Unit, ValuesOf
+  AudioPort, BangInput, BooleanField, ChoiceField, Field, Fields, FileField, Inputs, ListField,
+  Note, NumberField, ObjectItem, Outputs, SoundOf, StateOf, TextField, Unit, ValuesOf
 } from "./sdk/fields";
 // signals: what a sound is made of
 export {
@@ -18,7 +18,7 @@ export {
   exp, Feedback, feedback, floor, graphToJson, highpass, highshelf, hold, input, inputLeft,
   inputRight, log, lookup, lowpass, lowshelf, max, min, mix, mtof, noise, notch, note, output,
   Param, peak, phasor, PI, playing, pow, rise, sampleRate, saturate, saw, Signal, sin, sine,
-  smooth, spectral, sqrt, square, Table, tan, tanh, TAU, triangle, wrap
+  smooth, SoundInput, spectral, sqrt, square, Table, tan, tanh, TAU, triangle, wrap
 } from "./sdk/sound";
 export type {
   Bin, Bins, Graph, GraphNode, Operand, Stereo, TableRef

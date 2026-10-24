@@ -16,8 +16,8 @@ use sound_core::{
 };
 
 use crate::code::{
-    BinValue, Binary, Code, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, SpectrumSpec,
-    Table, Unary,
+    BinValue, Binary, Code, MAX_LIVES, MAX_PARAMETERS, MAX_SOUNDS, Operation, Output, Register,
+    SpectrumSpec, Table, Unary,
 };
 use crate::program::{self, Run, Step};
 
@@ -62,6 +62,8 @@ pub(crate) type Frames = [[f32; MAX_BLOCK]; CHANNELS];
 #[derive(Clone)]
 pub(crate) struct Block {
     pub(crate) input: Frames,
+    /// Of each sound input besides `audio`.
+    pub(crate) sounds: [Frames; MAX_SOUNDS - 1],
     pub(crate) parameters: [[f32; MAX_BLOCK]; MAX_PARAMETERS],
     pub(crate) lives: [[f32; MAX_BLOCK]; MAX_LIVES],
     /// One bit per param, and per live control, whose row is one value in every frame of the
@@ -79,6 +81,7 @@ impl Block {
     pub(crate) fn new() -> Self {
         Self {
             input: [[0.0; MAX_BLOCK]; CHANNELS],
+            sounds: [[[0.0; MAX_BLOCK]; CHANNELS]; MAX_SOUNDS - 1],
             parameters: [[0.0; MAX_BLOCK]; MAX_PARAMETERS],
             lives: [[0.0; MAX_BLOCK]; MAX_LIVES],
             steady_parameters: 0,
@@ -390,12 +393,13 @@ impl Machine {
         &self.events
     }
 
-    /// The `frames` of a block, both channels, into the same frames of `output`.
+    /// The `frames` of a block, both channels, into the same frames of `outputs`: its `audio`
+    /// first, then its other sound outputs.
     pub(crate) fn render(
         &mut self,
         inputs: &Inputs<'_>,
         frames: Range<usize>,
-        output: &mut Frames,
+        outputs: &mut [Frames],
     ) {
         let Some(last) = frames.clone().last() else {
             return;
@@ -423,18 +427,21 @@ impl Machine {
                     copy(events.get_mut(frames.clone()).unwrap_or_default(), values);
                 }
             }
-            match self.code.output {
-                Output::Mono(register) => {
-                    if let Some(output) = output.get_mut(channel) {
-                        held_into(output, registers, register, &frames);
+            let code = std::iter::once(&self.code.output).chain(&self.code.sound_outputs);
+            for (output, code) in outputs.iter_mut().zip(code) {
+                match *code {
+                    Output::Mono(register) => {
+                        if let Some(output) = output.get_mut(channel) {
+                            held_into(output, registers, register, &frames);
+                        }
                     }
-                }
-                Output::Stereo(left, right) => {
-                    for (output, register) in output.iter_mut().zip([left, right]) {
-                        held_into(output, registers, register, &frames);
+                    Output::Stereo(left, right) => {
+                        for (output, register) in output.iter_mut().zip([left, right]) {
+                            held_into(output, registers, register, &frames);
+                        }
                     }
+                    Output::Bin(..) => {}
                 }
-                Output::Bin(..) => {}
             }
         }
         self.position = self.position.wrapping_add(frames.len());
@@ -700,9 +707,9 @@ impl Span<'_> {
         let sample_rate = self.sample_rate;
         match operation {
             Operation::Constant(value) => out.fill(value),
-            Operation::Input => copy(out, row(&block.input, self.channel, &frames)),
-            Operation::InputLeft => copy(out, row(&block.input, 0, &frames)),
-            Operation::InputRight => copy(out, row(&block.input, 1, &frames)),
+            Operation::Input(port) => copy(out, row(sound(block, port), self.channel, &frames)),
+            Operation::InputLeft(port) => copy(out, row(sound(block, port), 0, &frames)),
+            Operation::InputRight(port) => copy(out, row(sound(block, port), 1, &frames)),
             Operation::Channel => out.fill(self.channel as f32),
             Operation::SampleRate => out.fill(sample_rate),
             Operation::Beat => copy(out, part(&block.beat, &frames)),
@@ -970,9 +977,9 @@ impl Span<'_> {
                 (memory.memories.get(usize::from(slot)).copied()).filter(|_| !fires)
             }
             // What moves within a span, or keeps a memory.
-            Operation::Input
-            | Operation::InputLeft
-            | Operation::InputRight
+            Operation::Input(_)
+            | Operation::InputLeft(_)
+            | Operation::InputRight(_)
             | Operation::Beat
             | Operation::Onset
             | Operation::Trigger(_)
@@ -1142,9 +1149,9 @@ impl Span<'_> {
             // one frame with `run` either: a second call of `run` keeps it from being inlined
             // where a span runs it, which made code without loops slower.
             Operation::Constant(_)
-            | Operation::Input
-            | Operation::InputLeft
-            | Operation::InputRight
+            | Operation::Input(_)
+            | Operation::InputLeft(_)
+            | Operation::InputRight(_)
             | Operation::Channel
             | Operation::SampleRate
             | Operation::Beat
@@ -1198,6 +1205,14 @@ fn part<'a>(samples: &'a [f32; MAX_BLOCK], frames: &Range<usize>) -> &'a [f32] {
     samples
         .get(frames.clone())
         .unwrap_or_else(|| ZEROS.get(..frames.len()).unwrap_or_default())
+}
+
+/// Both channels of the sound input `port` in `block`.
+fn sound(block: &Block, port: u8) -> &[[f32; MAX_BLOCK]] {
+    match usize::from(port).checked_sub(1) {
+        None => &block.input,
+        Some(index) => block.sounds.get(index).map_or(&[], |frames| frames),
+    }
 }
 
 /// The `frames` of the row `index` of `rows`: of a register, an input, a param or a live

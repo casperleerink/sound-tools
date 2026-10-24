@@ -1,6 +1,6 @@
 // Tools
 
-import { BangInput, Fields, InputNames, Inputs, NumberField, SoundOf, StateOf, ValuesOf } from "./fields";
+import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
 import { host } from "./host";
 import { AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Offers, PlainKey, View } from "./live";
 import { Child } from "./nodes";
@@ -8,7 +8,7 @@ import { Memory } from "./reactivity";
 import { Tools } from "./records";
 import { Operand, Stereo } from "./sound";
 
-export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends ChildTools = ChildTools> {
+export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends ChildTools = ChildTools, O extends Outputs = {}> {
   /** The `tool` of its records and the name of its doc: lowercase letters, digits, `-`, `_`. */
   name: string;
   /** What its view and the picker call it. */
@@ -25,13 +25,19 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
   voices?: number;
   /** The fields of its record. Field names are lowercase letters, digits and `_`. */
   state: S;
-  /** What plays it and nothing saves: `number(...)` and `bang()`. Names are as field names. */
+  /**
+   * What plays it and nothing saves: `number(...)`, `bang()` and `audio()`, a sound input such
+   * as a `sidechain`, which `sound` reads as a `SoundInput`. Names are as field names.
+   */
   inputs?: I;
+  /** Its sound outputs besides `audio`, each `audio()`: `sound` gives each by name. */
+  outputs?: O;
   /**
    * Its sound: a `Signal` made with the functions of the sound graph, or a `Stereo` pair. A sound
    * that reads `input` has an audio input. `input` when left out, which passes the sound through.
+   * With `outputs`, an object of its `audio` and each of them, all signals or all `Stereo`.
    */
-  sound?: (fields: SoundOf<S, I>) => Operand | Stereo;
+  sound?: (fields: SoundOf<S, I>) => keyof NoInfer<O> extends never ? Sound : Each<"audio" | keyof NoInfer<O>, Operand> | Each<"audio" | keyof NoInfer<O>, Stereo>;
   /**
    * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they and
@@ -269,8 +275,23 @@ type DeepName<K extends ChildTools> = `${ChildName<K>}/${string}`;
 /** A port of the parent itself under the key `K`: no `child`. */
 type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
 
-/** A sound port of a child, or of a child of a child as `"bass/mix"`: `audio` when left out. A sound that reads `input` has an `audio` input; every sound an `audio` output. */
-export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> | DeepName<K> };
+/** What a sound gives out: a `Signal`, or a `Stereo` pair. */
+type Sound = Operand | Stereo;
+/** `T` for each of `Names`. */
+type Each<Names extends PropertyKey, T> = { [Name in Names]: T };
+
+/** The sound ports a child of tool `T` has, its inputs or with `Out` its outputs: any where its entry says none. */
+type SoundPortName<T, Out extends boolean> = EntryOf<T> extends { port: infer In extends string; sound: infer Sent extends string } ? (Out extends true ? Sent : In) : string;
+/**
+ * A sound port of a child, or of a child of a child as `"bass/mix"`: `audio` when left out, else
+ * an input or with `Out` an output its tool names. A sound that reads `input` has an `audio`
+ * input; every sound an `audio` output.
+ */
+export type ChildPort<K extends ChildTools = ChildTools, Out extends boolean = false> =
+  | {
+      [Name in keyof K & string]: { child: ChildNamed<Name> } & Partial<Keyed<"port", SoundPortName<K[Name], Out>>>;
+    }[keyof K & string]
+  | ({ child: DeepName<K> } & Partial<Keyed<"port">>);
 /** Notes of a child: its input `notes`, which plays its voices, or with `Out` notes it sends out. */
 export type ChildNotes<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"notes", K, Out>;
 /**
@@ -295,7 +316,7 @@ export type OwnNotes = OwnOf<"notes", "notes">;
  * is an output of the parent of that name, which passes what reaches it on to its parent.
  */
 export type Connection<K extends ChildTools = ChildTools> =
-  | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio }
+  | { from: ChildPort<K, true> | OwnAudio; to: ChildPort<K> | OwnAudio }
   | { from: ChildNotes<K, true> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
   | { from: ChildNumber<K, true>; to: ChildNumber<K> | OwnOf<"number"> }
   | { from: ChildBang<K, true>; to: ChildBang<K> | OwnOf<"bang"> };
@@ -336,9 +357,12 @@ export type HeardEvent = NoteEvent & { at: number };
 /** The names of the numbers in `S` a lane or a cable moves: those that are not whole numbers. */
 type MovedNames<S extends Fields> = { [Name in keyof S]: S[Name] extends { kind: "number"; integer: true } ? never : S[Name] extends NumberField ? Name : never }[keyof S] & string;
 
-/** The entry of a tool of the project with fields `S`, inputs `I` and children `K`. */
-type ProjectEntry<S extends Fields, I extends Inputs, K extends ChildTools> = {
+/** The entry of a tool of the project with fields `S`, inputs `I`, children `K` and sound outputs `O`. */
+type ProjectEntry<S extends Fields, I extends Inputs, K extends ChildTools, O extends Outputs> = {
   state: StateOf<S>;
+  /** Its sound inputs and outputs. */
+  port: "audio" | InputNames<I, "audio">;
+  sound: "audio" | (keyof O & string);
   filled: ValuesOf<S>;
   /** What a number cable moves: a number field or a number input. */
   number: MovedNames<S> | InputNames<I, "number">;
@@ -356,13 +380,14 @@ export function tool<
   const I extends Inputs = {},
   M = {},
   const K extends ChildTools = ChildTools,
->(spec: ToolSpec<S, I, M, K> & { name: Name }): ProjectTool<Name, ProjectEntry<S, I, K>> {
+  const O extends Outputs = {},
+>(spec: ToolSpec<S, I, M, K, O> & { name: Name }): ProjectTool<Name, ProjectEntry<S, I, K, O>> {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
   host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Inputs, unknown>);
   host.stacks.set(spec.name, new Error().stack ?? "");
-  return spec.name as ProjectTool<Name, ProjectEntry<S, I, K>>;
+  return spec.name as ProjectTool<Name, ProjectEntry<S, I, K, O>>;
 }
 
 /** When what `send` plays happens: at `at`, a `time` of the control loop at most 10 s ahead, or at once. */

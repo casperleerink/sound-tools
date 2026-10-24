@@ -13,9 +13,9 @@ use sound_core::SvfShape;
 
 use crate::code::{
     ArraySpec, BinValue, Binary, Code, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SPECTRA,
-    MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Slots, SpectrumSpec,
-    Table, Unary,
+    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS,
+    MAX_SPECTRA, MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Slots,
+    SpectrumSpec, Table, Unary,
 };
 use crate::program;
 
@@ -32,6 +32,16 @@ pub struct Graph {
     pub(crate) numbers: Vec<NamedNode>,
     pub(crate) bangs: Vec<NamedNode>,
     pub(crate) notes: Vec<NotesNode>,
+    pub(crate) output: OutputNode,
+    /// The sound outputs besides `audio`.
+    #[serde(default)]
+    pub(crate) outputs: Vec<SoundNode>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SoundNode {
+    pub(crate) name: String,
     pub(crate) output: OutputNode,
 }
 
@@ -74,9 +84,9 @@ pub(crate) enum TableNode {
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Node {
     Constant(Constant),
-    Input,
-    InputLeft,
-    InputRight,
+    Input(Input),
+    InputLeft(Input),
+    InputRight(Input),
     Channel,
     SampleRate,
     Beat,
@@ -178,6 +188,8 @@ macro_rules! fields {
 
 fields! {
     Constant { value: f32 }
+    // A sound input by name, `audio` when there is none.
+    Input { name: Option<String> }
     Param { name: String }
     Feedback { slot: usize }
     One { x: usize }
@@ -209,6 +221,8 @@ pub struct Declarations {
     /// The patterns and samples.
     pub arrays: Vec<ArraySpec>,
     pub controls: Vec<ControlSpec>,
+    /// The names of the sound inputs besides `audio`.
+    pub sounds: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -252,6 +266,12 @@ impl Declarations {
                 }
                 ControlSpec::Trigger(_) => triggers += 1,
             }
+        }
+        if self.sounds.len() >= MAX_SOUNDS {
+            return error(format!(
+                "a tool has at most {} sound inputs besides `audio`",
+                MAX_SOUNDS - 1
+            ));
         }
         if lives > MAX_LIVES {
             return error(format!("a tool has at most {MAX_LIVES} live controls"));
@@ -330,8 +350,19 @@ impl Graph {
                 event_registers.push(lowering.read(*node)?);
             }
         }
+        if self.outputs.len() >= MAX_SOUNDS {
+            return error(format!(
+                "a sound has at most {} sound outputs besides `audio`",
+                MAX_SOUNDS - 1
+            ));
+        }
+        let sounds: Vec<String> = self
+            .outputs
+            .iter()
+            .map(|sound| sound.name.clone())
+            .collect();
         // They are the outputs of one tool, next to its sound.
-        let mut outputs: Vec<&str> = (numbers.iter().chain(&bangs).chain(&notes))
+        let mut outputs: Vec<&str> = (numbers.iter().chain(&bangs).chain(&notes).chain(&sounds))
             .map(String::as_str)
             .collect();
         if outputs.contains(&"audio") {
@@ -341,12 +372,20 @@ impl Graph {
         if let Some(twice) = outputs.windows(2).find(|pair| pair[0] == pair[1]) {
             return error(format!("output `{}` is given twice", twice[0]));
         }
-        let output = match self.output {
-            OutputNode::Mono { mono } => Output::Mono(lowering.read(mono)?),
-            OutputNode::Stereo { left, right } => {
-                Output::Stereo(lowering.read(left)?, lowering.read(right)?)
-            }
-        };
+        let output = lowering.output(self.output)?;
+        let sound_outputs = (self.outputs.iter())
+            .map(|sound| lowering.output(sound.output))
+            .collect::<Result<Vec<_>, _>>()?;
+        // The code runs once for both channels or on each apart, so for every output alike.
+        let stereo = |output: &Output| matches!(output, Output::Stereo(..));
+        if let Some(other) = (self.outputs.iter().zip(&sound_outputs))
+            .find(|(_, other)| stereo(other) != stereo(&output))
+        {
+            return error(format!(
+                "the sound outputs `audio` and `{}` are each one signal or each {{ left, right }}, not one of each",
+                other.0.name
+            ));
+        }
         let mut hasher = DefaultHasher::new();
         format!("{self:?}{declarations:?}").hash(&mut hasher);
         let mut code = Code {
@@ -358,10 +397,12 @@ impl Graph {
             numbers,
             bangs,
             notes,
+            sounds,
             hash: hasher.finish(),
             latency: 0,
             operations: lowering.operations,
             output,
+            sound_outputs,
             feedbacks,
             watch_registers,
             number_registers,
@@ -401,9 +442,11 @@ impl Bins {
             numbers: Vec::new(),
             bangs: Vec::new(),
             notes: Vec::new(),
+            sounds: Vec::new(),
             hash: 0,
             latency: 0,
             output: Output::Bin(lowering.read(magnitude)?, lowering.read(phase)?),
+            sound_outputs: Vec::new(),
             operations: lowering.operations,
             feedbacks,
             watch_registers: Vec::new(),
@@ -426,6 +469,8 @@ struct Lowering<'a> {
     slots: Slots,
     lives: Vec<ParameterSpec>,
     triggers: Vec<String>,
+    /// The names of the sound inputs besides `audio`.
+    sounds: &'a [String],
     /// The register of each field and control.
     names: HashMap<&'a str, Register>,
     /// The register of each node lowered so far.
@@ -446,6 +491,7 @@ impl<'a> Lowering<'a> {
             },
             lives: Vec::new(),
             triggers: Vec::new(),
+            sounds: &[],
             names: HashMap::new(),
             registers: Vec::with_capacity(nodes.len()),
         }
@@ -454,6 +500,7 @@ impl<'a> Lowering<'a> {
     /// The operations of the fields and controls, which come first.
     fn declare(&mut self, declarations: &'a Declarations) -> Result<(), GraphError> {
         declarations.check()?;
+        self.sounds = &declarations.sounds;
         for (index, parameter) in declarations.parameters.iter().enumerate() {
             let register = self.emit(Operation::Parameter(index as u16))?;
             self.names.insert(&parameter.name, register);
@@ -506,6 +553,27 @@ impl<'a> Lowering<'a> {
         }
         let registers = nodes.iter().map(|node| self.read(node.node));
         Ok((names, registers.collect::<Result<_, _>>()?))
+    }
+
+    fn output(&self, output: OutputNode) -> Result<Output, GraphError> {
+        Ok(match output {
+            OutputNode::Mono { mono } => Output::Mono(self.read(mono)?),
+            OutputNode::Stereo { left, right } => {
+                Output::Stereo(self.read(left)?, self.read(right)?)
+            }
+        })
+    }
+
+    /// The sound input `name`: 0 for `audio`, then those the tool names.
+    fn sound(&self, Input { name }: &Input) -> Result<u8, GraphError> {
+        let Some(name) = name else {
+            return Ok(0);
+        };
+        match self.sounds.iter().position(|sound| sound == name) {
+            // At most `MAX_SOUNDS`.
+            Some(index) => Ok(index as u8 + 1),
+            None => error(format!("`{name}` is no sound input of the tool")),
+        }
     }
 
     /// The register of a node lowered before.
@@ -586,8 +654,7 @@ impl<'a> Lowering<'a> {
     /// what reads a bin only in them.
     fn check_place(&self, node: &Node) -> Result<(), GraphError> {
         let around = match node {
-            Node::Input => Some("input"),
-            Node::InputLeft | Node::InputRight => Some("inputLeft and inputRight"),
+            Node::Input(_) | Node::InputLeft(_) | Node::InputRight(_) => Some("a sound input"),
             Node::Channel => Some("channel"),
             Node::SampleRate => Some("sampleRate"),
             Node::Beat | Node::Bpm | Node::Playing => Some("the transport"),
@@ -651,9 +718,9 @@ impl<'a> Lowering<'a> {
                 ));
             }
             Node::Constant(Constant { value }) => Operation::Constant(*value),
-            Node::Input => Operation::Input,
-            Node::InputLeft => Operation::InputLeft,
-            Node::InputRight => Operation::InputRight,
+            Node::Input(input) => Operation::Input(self.sound(input)?),
+            Node::InputLeft(input) => Operation::InputLeft(self.sound(input)?),
+            Node::InputRight(input) => Operation::InputRight(self.sound(input)?),
             Node::Channel => Operation::Channel,
             Node::SampleRate => Operation::SampleRate,
             Node::Beat => Operation::Beat,

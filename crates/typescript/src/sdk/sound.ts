@@ -6,8 +6,9 @@ export type Operand = Signal | number;
 
 /** What a sound reads from outside: what comes in, the transport, the note of the voice. */
 type Source =
-  | "input" | "inputLeft" | "inputRight" | "channel" | "sampleRate" | "beat" | "bpm" | "playing"
-  | "frequency" | "pitch" | "gate" | "velocity" | "onset";
+  | "channel" | "sampleRate" | "beat" | "bpm" | "playing" | "frequency" | "pitch" | "gate" | "velocity" | "onset";
+/** What comes in: the `audio` input, or a sound input by `name`. */
+type InputOp = "input" | "inputLeft" | "inputRight";
 type Unary =
   | "negate" | "sin" | "cos" | "tan" | "tanh" | "abs" | "sqrt" | "exp" | "log" | "floor" | "wrap"
   | "db" | "saturate";
@@ -34,6 +35,7 @@ export interface Bins<R = number> {
 /** A node of the sound graph, with `R` for each signal it reads. */
 type SignalNode<R> =
   | { op: Source }
+  | { op: InputOp; name?: string }
   /** A field or an input. */
   | { op: "param"; name: string }
   | { op: "feedback"; slot: number }
@@ -74,8 +76,12 @@ export interface Graph {
   numbers: Array<{ name: string; node: number }>;
   bangs: Array<{ name: string; node: number }>;
   notes: Array<{ name: string; gate: number; pitch: number; velocity: number }>;
-  output: { mono: number } | { left: number; right: number };
+  output: GraphOutput;
+  /** The sound outputs besides `audio`. */
+  outputs: Array<{ name: string; output: GraphOutput }>;
 }
+
+type GraphOutput = { mono: number } | { left: number; right: number };
 
 /**
  * A stream of samples: one value per sample, per channel, per voice. Combine signals with the
@@ -104,7 +110,7 @@ export class Signal {
 
 /** A value read where it is used, with no memory: a source, a field, an input, a feedback. */
 class Named extends Signal {
-  declare readonly node: Extract<SignalNode<Operand>, { op: Source | BinSource | "param" | "feedback" }>;
+  declare readonly node: Extract<SignalNode<Operand>, { op: Source | InputOp | BinSource | "param" | "feedback" }>;
 }
 
 /**
@@ -192,6 +198,17 @@ export const input: Signal = new Named({ op: "input" });
 /** Both channels of what comes in, for a sound that returns `{ left, right }`. */
 export const inputLeft: Signal = new Named({ op: "inputLeft" });
 export const inputRight: Signal = new Named({ op: "inputRight" });
+
+/** A sound input of the tool, such as a `sidechain`: as `input`, and both its channels as `left` and `right`. */
+export class SoundInput extends Named {
+  readonly left: Signal;
+  readonly right: Signal;
+  constructor(name: string) {
+    super({ op: "input", name });
+    this.left = new Named({ op: "inputLeft", name });
+    this.right = new Named({ op: "inputRight", name });
+  }
+}
 
 /**
  * A sound in stereo: it runs once per sample for both channels and hears both, for a ping-pong,
@@ -429,18 +446,33 @@ export function output(name: string, value: Operand | { bang: Operand; gate?: ne
 }
 
 /**
- * For the host: the graph of a sound. `build` makes the output; what it declares is kept
- * meanwhile.
+ * For the host: the graph of a sound. `build` makes the output, of its `audio` and each of
+ * `outputs` by name when there are some; what it declares is kept meanwhile.
  */
-export function graphToJson(build: () => Operand | Stereo): Graph {
+export function graphToJson(build: () => unknown, outputs: readonly string[] = []): Graph {
   current = { feedbacks: [], buffers: [], writes: [], numbers: [], bangs: [], notes: [] };
   try {
     const declared = current;
-    const output = build();
+    const built = build();
+    if (outputs.length > 0 && (typeof built !== "object" || built === null || built instanceof Signal)) {
+      throw new Error("a sound with `outputs` returns an object of its `audio` and each of them");
+    }
+    const sounds = outputs.length === 0 ? { audio: built } : (built as Record<string, unknown>);
+    const named = ["audio", ...outputs];
+    for (const name of Object.keys(sounds)) {
+      if (!named.includes(name)) throw new Error(`sound gives \`${name}\`, which is not in \`outputs\``);
+    }
+    const channels = named.map((name) => {
+      const sound = sounds[name];
+      if (isOperand(sound)) return [sound];
+      if (typeof sound === "object" && sound !== null && "left" in sound && "right" in sound) {
+        return [sound.left, sound.right] as Operand[];
+      }
+      throw new Error(`sound gives no \`${name}\`: give a signal or { left, right }`);
+    });
     const { nodes, prepare, use } = layout(0);
     const add = (node: GraphNode) => nodes.push(node) - 1;
-    const outputs = typeof output === "object" && !(output instanceof Signal) ? [output.left, output.right] : [output];
-    outputs.forEach(prepare);
+    channels.flat().forEach(prepare);
     const numbers = declared.numbers.map(({ name, value }) => ({ name, node: use(value) }));
     // A view reads a number output as the window reads a watch.
     const watches = numbers;
@@ -457,7 +489,10 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
       add({ op: "write", buffer, index: use(index), value: use(value) });
     }
     const feedbacks = declared.feedbacks.map((feedback) => use(set(feedback)));
-    const [first, second] = outputs.map(use);
+    const [output, ...others] = channels.map((sound): GraphOutput => {
+      const [first, second] = sound.map(use);
+      return second === undefined ? { mono: first! } : { left: first!, right: second };
+    });
     return {
       nodes,
       feedbacks,
@@ -466,7 +501,8 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
       numbers,
       bangs,
       notes,
-      output: second === undefined ? { mono: first } : { left: first, right: second },
+      output: output!,
+      outputs: others.map((output, index) => ({ name: outputs[index]!, output })),
     };
   } finally {
     current = undefined;

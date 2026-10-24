@@ -476,8 +476,8 @@ pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, 
     Ok((project, engine))
 }
 
-/// What `--inspect` prints: the time, the sections, every instance with its record, the
-/// connections and the problems.
+/// What `--inspect` prints: the time, the sections, every instance with its record and sound
+/// ports beyond `audio`, the connections and the problems.
 pub fn summary(project: &Project) -> String {
     let project_file = project.project_file();
     let tempo_map = &project_file.tempo_map;
@@ -511,6 +511,12 @@ pub fn summary(project: &Project) -> String {
         let indent = "  ".repeat(id.as_str().matches('/').count());
         let state = project.state_json(id).unwrap_or_default();
         lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
+        // Only sound ports a connection names beyond `audio`, such as a sidechain.
+        let (inputs, outputs) = project.sound_ports(id);
+        if inputs.iter().chain(&outputs).any(|port| *port != "audio") {
+            let (inputs, outputs) = (inputs.join(", "), outputs.join(", "));
+            lines.push(format!("{indent}  sound ports: in {inputs}; out {outputs}"));
+        }
     }
 
     lines.push(format!("connections: {}", project_file.connections.len()));
