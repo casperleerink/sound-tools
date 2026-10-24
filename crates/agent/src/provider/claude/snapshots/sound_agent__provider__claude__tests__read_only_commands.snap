@@ -29,6 +29,7 @@ expression: events
         title: "Ran `ls`",
         running_title: "Running `ls`",
         request_title: "Run `ls`",
+        kind: Run,
     },
     StepStarted {
         id: StepId(
@@ -37,6 +38,7 @@ expression: events
         title: "Ran `cat notes.txt | wc -l`",
         running_title: "Running `cat notes.txt | wc -l`",
         request_title: "Run `cat notes.txt | wc -l`",
+        kind: Run,
     },
     StepStarted {
         id: StepId(
@@ -45,6 +47,7 @@ expression: events
         title: "Ran `for f in $(ls); do cat \"$f\"; done`",
         running_title: "Running `for f in $(ls); do cat \"$f\"; done`",
         request_title: "Run `for f in $(ls); do cat \"$f\"; done`",
+        kind: Run,
     },
     StepDone {
         id: StepId(

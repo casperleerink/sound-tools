@@ -29,6 +29,7 @@ expression: "replay(\"interrupt_approval\")"
         title: "Ran `git init`",
         running_title: "Running `git init`",
         request_title: "Run `git init`",
+        kind: Run,
     },
     ApprovalRequested {
         id: ApprovalId(

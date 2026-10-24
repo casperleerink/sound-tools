@@ -2,17 +2,20 @@
 //! markdown with its meta line, and quiet lines.
 
 use std::collections::BTreeSet;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use gpui::{AnyElement, App, ClickEvent, ElementId, SharedString, Window, div, prelude::*, px};
+use gpui::{
+    Animation, AnimationExt, AnyElement, App, ClickEvent, ElementId, HighlightStyle, Hsla,
+    SharedString, StyledText, Window, div, ease_out_quint, prelude::*, px, relative,
+};
 use sound_core::Problem;
 use sound_ui::ActiveTheme;
+use sound_ui::components::icon::Icon;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 
 use super::markdown::{Markdown, MarkdownText};
-use crate::StepOutcome;
-use crate::TurnOutcome;
 use crate::conversation::Turn;
+use crate::{StepKind, StepOutcome, TurnOutcome};
 
 /// The text of the thread: 15 on 22, as the mockup.
 const TEXT_SIZE: f32 = 15.;
@@ -20,15 +23,27 @@ const LINE_HEIGHT: f32 = 22.;
 /// Meta lines and steps.
 const SMALL_TEXT_SIZE: f32 = 12.;
 const SMALL_LINE_HEIGHT: f32 = 16.;
+/// How long a new block of a streaming answer takes to fade in.
+const FADE_IN: Duration = Duration::from_millis(600);
+/// One sweep of the bright band across the working line.
+const SHIMMER: Duration = Duration::from_millis(2200);
+/// How wide the band is, in characters.
+const SHIMMER_WIDTH: f32 = 8.;
 
 pub(super) fn message(text: &str, cx: &App) -> AnyElement {
     div()
-        .p(px(14.))
-        .rounded(px(12.))
-        .bg(cx.theme().alpha_at(0.05))
-        .text_size(px(TEXT_SIZE))
-        .line_height(px(LINE_HEIGHT))
-        .child(SharedString::from(text.to_string()))
+        .flex()
+        .justify_end()
+        .child(
+            div()
+                .max_w(relative(0.8))
+                .p(px(14.))
+                .rounded(px(12.))
+                .bg(cx.theme().alpha_at(0.05))
+                .text_size(px(TEXT_SIZE))
+                .line_height(px(LINE_HEIGHT))
+                .child(SharedString::from(text.to_string())),
+        )
         .into_any_element()
 }
 
@@ -76,34 +91,66 @@ pub(super) fn turn(
         theme.lavender,
     );
     let meta = turn.end.as_ref().map(|end| {
-        let (line, color) = match &end.outcome {
-            TurnOutcome::Completed => (format!("Worked for {}", duration(end.worked)), muted),
-            TurnOutcome::Interrupted => (format!("Stopped after {}", duration(end.worked)), muted),
+        let (line, color, summary) = match &end.outcome {
+            TurnOutcome::Completed => (
+                format!("Worked for {}", duration(end.worked)),
+                muted,
+                turn.summary(),
+            ),
+            TurnOutcome::Interrupted => (
+                format!("Stopped after {}", duration(end.worked)),
+                muted,
+                turn.summary(),
+            ),
             TurnOutcome::Failed { message } if message.is_empty() => {
-                ("The turn failed".to_string(), red)
+                ("The turn failed".to_string(), red, None)
             }
-            TurnOutcome::Failed { message } => (message.clone(), red),
+            TurnOutcome::Failed { message } => (message.clone(), red, None),
         };
         let has_steps = !turn.steps.is_empty();
+        let chevron = if steps_open {
+            "chevron-down"
+        } else {
+            "chevron-right"
+        };
         div()
             .id("worked-for")
             .debug_selector(move || format!("agent-worked-for-{index}"))
+            .flex()
+            .items_start()
+            .gap(px(4.))
             .text_size(px(SMALL_TEXT_SIZE))
+            .line_height(px(SMALL_LINE_HEIGHT))
             .text_color(color)
-            .child(line)
             .when(has_steps, |line| {
                 line.cursor_pointer()
                     .hover(move |style| style.text_color(bright))
                     .on_click(on_toggle_steps)
+                    .child(Icon::new(chevron).size(12.).mt(px(2.)))
             })
+            // A failure has no summary and may wrap; with a summary, the summary is cut.
+            .child(
+                div()
+                    .min_w_0()
+                    .when(summary.is_some(), |line| line.flex_none())
+                    .child(line),
+            )
+            .children(summary.map(|summary| {
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(dim)
+                    .child(format!("· {summary}"))
+            }))
     });
     let steps = steps_open.then(|| {
         div()
             .flex()
             .flex_col()
-            .gap(px(4.))
+            .text_size(px(SMALL_TEXT_SIZE))
+            .line_height(px(SMALL_LINE_HEIGHT))
             .text_color(dim)
-            .children(turn.steps.iter().enumerate().map(|(step_index, step)| {
+            .children(turn.steps.iter().map(|step| {
                 // A step that did not do what it says says so in words, a failure in red.
                 let outcome = match step.outcome {
                     Some(StepOutcome::Failed) => Some(("· failed", red)),
@@ -112,56 +159,71 @@ pub(super) fn turn(
                 };
                 div()
                     .flex()
+                    .items_center()
                     .gap(px(6.))
+                    .h(px(20.))
+                    .child(Icon::new(icon(&step.kind)).size(12.))
                     .child(
-                        title(("step", step_index), step.finished_title())
-                            .min_w_0()
-                            .text_size(px(SMALL_TEXT_SIZE))
-                            .line_height(px(SMALL_LINE_HEIGHT)),
-                    )
-                    .children(outcome.map(|(word, color)| {
                         div()
-                            .flex_none()
-                            .text_size(px(SMALL_TEXT_SIZE))
-                            .line_height(px(SMALL_LINE_HEIGHT))
-                            .text_color(color)
-                            .child(word)
-                    }))
+                            .min_w_0()
+                            .truncate()
+                            .child(plain(step.finished_title())),
+                    )
+                    .children(
+                        outcome
+                            .map(|(word, color)| div().flex_none().text_color(color).child(word)),
+                    )
             }))
     });
-    let text = answer
-        .iter()
-        .enumerate()
-        .map(|(block, markdown)| MarkdownText::new(("answer", block), markdown.clone()));
+    let working = turn.end.is_none();
+    let text = answer.iter().enumerate().map(|(block, markdown)| {
+        let text = MarkdownText::new(("answer", block), markdown.clone());
+        // Only while it streams, so a thread that opens shows its answers at once.
+        if !working {
+            return text.into_any_element();
+        }
+        div()
+            .child(text)
+            .with_animation(
+                ("answer-fade-in", block),
+                Animation::new(FADE_IN).with_easing(ease_out_quint()),
+                |block, delta| block.opacity(delta),
+            )
+            .into_any_element()
+    });
     // While a question waits, the question is what the agent does.
-    let working = (turn.end.is_none() && turn.approvals.is_empty()).then(|| {
-        let line = turn
-            .current_step()
-            .map_or("Working", |step| match step.outcome {
-                None => step.running_title.as_str(),
-                Some(_) => step.finished_title(),
-            });
+    let working = (working && turn.approvals.is_empty()).then(|| {
+        let step = turn.current_step();
+        let line = step.map_or("Working", |step| match step.outcome {
+            None => step.running_title.as_str(),
+            Some(_) => step.finished_title(),
+        });
+        let mark = match step {
+            Some(step) => Icon::new(icon(&step.kind))
+                .size(14.)
+                .color(lavender)
+                .into_any_element(),
+            None => Indicator::new("agent-working")
+                .size(IndicatorSize::Sm)
+                .color(lavender)
+                .pulse(true)
+                .into_any_element(),
+        };
+        let worked = duration(turn.working_for(SystemTime::now()));
         div()
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(
-                Indicator::new("agent-working")
-                    .size(IndicatorSize::Sm)
-                    .color(lavender)
-                    .pulse(true),
-            )
+            .text_size(px(TEXT_SIZE))
+            .line_height(px(LINE_HEIGHT))
+            .child(mark)
+            .child(shimmer(plain(line), lavender, bright))
             .child(
                 div()
-                    .min_w_0()
-                    .flex_1()
-                    .truncate()
-                    .text_size(px(TEXT_SIZE))
-                    .line_height(px(LINE_HEIGHT))
-                    .text_color(lavender)
-                    // One line, a long command cut with an ellipsis. Plain text, as gpui cuts
-                    // only a text that is the direct child of the line, not markdown's blocks.
-                    .child(SharedString::from(line.replace('`', ""))),
+                    .flex_none()
+                    .text_size(px(SMALL_TEXT_SIZE))
+                    .text_color(muted)
+                    .child(worked),
             )
     });
     // Ids inside are the turn's own, so two turns never share one.
@@ -222,6 +284,66 @@ pub(super) fn problems(
             }))
         })
         .into_any_element()
+}
+
+/// The icon of a step's line.
+fn icon(kind: &StepKind) -> &'static str {
+    match kind {
+        StepKind::Read { .. } => "eye",
+        StepKind::Change { .. } => "pencil",
+        StepKind::Run => "terminal",
+        StepKind::Search => "search",
+        StepKind::Other => "wrench",
+    }
+}
+
+/// A title with its commands as plain text, for a line that is cut with an ellipsis: gpui cuts
+/// only a text that is the direct child of the line, not markdown's blocks.
+fn plain(title: &str) -> SharedString {
+    title.replace('`', "").into()
+}
+
+/// One line in `color` that a band of `bright` sweeps across, again and again, while the agent
+/// works on it.
+fn shimmer(text: SharedString, color: Hsla, bright: Hsla) -> impl IntoElement {
+    div()
+        .min_w_0()
+        .flex_1()
+        .truncate()
+        .text_color(color)
+        .with_animation(
+            "agent-working-line",
+            Animation::new(SHIMMER).repeat(),
+            move |line, delta| {
+                let highlights = band(&text, delta, color, bright);
+                line.child(StyledText::new(text.clone()).with_highlights(highlights))
+            },
+        )
+}
+
+/// The colour of each character the band lights at `delta` of its sweep. It starts and ends
+/// beyond the text, so each sweep begins on the plain line.
+fn band(
+    text: &str,
+    delta: f32,
+    color: Hsla,
+    bright: Hsla,
+) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+    let length = text.chars().count() as f32;
+    let center = delta * (length + 2. * SHIMMER_WIDTH) - SHIMMER_WIDTH;
+    text.char_indices()
+        .enumerate()
+        .filter_map(|(number, (start, character))| {
+            let light = 1. - (number as f32 - center).abs() / SHIMMER_WIDTH;
+            (light > 0.).then(|| {
+                let style = HighlightStyle {
+                    color: Some(color.blend(bright.opacity(light))),
+                    ..HighlightStyle::default()
+                };
+                (start..start + character.len_utf8(), style)
+            })
+        })
+        .collect()
 }
 
 /// "12 s", or "2 min 5 s" from a minute on.

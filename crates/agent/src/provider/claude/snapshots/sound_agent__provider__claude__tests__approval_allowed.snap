@@ -29,6 +29,7 @@ expression: "replay(\"approval_allowed\")"
         title: "Ran `touch marker.txt`",
         running_title: "Running `touch marker.txt`",
         request_title: "Run `touch marker.txt`",
+        kind: Run,
     },
     ApprovalRequested {
         id: ApprovalId(

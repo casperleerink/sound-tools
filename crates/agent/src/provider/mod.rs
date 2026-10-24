@@ -245,6 +245,10 @@ pub enum AgentEvent {
         /// it never ran. Empty in a thread saved before it came.
         #[serde(default)]
         request_title: String,
+        /// What it does, for its icon and the summary of a finished turn. `Other` in a thread
+        /// saved before it came.
+        #[serde(default)]
+        kind: StepKind,
     },
     StepDone {
         id: StepId,
@@ -268,6 +272,23 @@ pub enum AgentEvent {
     Exited {
         reason: ExitReason,
     },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    /// The path is as the title says it, so two steps on one file name the same path.
+    Read {
+        path: String,
+    },
+    /// An edit or a write.
+    Change {
+        path: String,
+    },
+    Run,
+    Search,
+    #[default]
+    Other,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

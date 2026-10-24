@@ -10,7 +10,7 @@ use gpui::{AppContext, Entity, Focusable, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
-    Installed, Model, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
+    Installed, Model, Sidebar, StepId, StepKind, StepOutcome, Thread, TurnOutcome,
 };
 use tempfile::TempDir;
 
@@ -128,6 +128,9 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
             title: "Wrote state/bass.json".to_string(),
             request_title: "Write state/bass.json".to_string(),
             running_title: "Writing state/bass.json".to_string(),
+            kind: StepKind::Change {
+                path: "state/bass.json".to_string(),
+            },
         },
     ]);
     assert!(opened.panel_open());
@@ -147,6 +150,9 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
             title: "Edited state/bass.json".to_string(),
             request_title: "Edit state/bass.json".to_string(),
             running_title: "Editing state/bass.json".to_string(),
+            kind: StepKind::Change {
+                path: "state/bass.json".to_string(),
+            },
         },
     ]);
     write_outside(&mut opened, "state/bass.json", BASS_CLIP);
@@ -515,6 +521,9 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
             title: "Wrote state/bass.json".to_string(),
             request_title: "Write state/bass.json".to_string(),
             running_title: "Writing state/bass.json".to_string(),
+            kind: StepKind::Change {
+                path: "state/bass.json".to_string(),
+            },
         },
     ]);
     opened.receive([
