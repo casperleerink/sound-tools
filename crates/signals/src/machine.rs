@@ -174,6 +174,8 @@ pub(crate) struct Bin {
     pub(crate) phase: f32,
     pub(crate) hz: f32,
     pub(crate) index: f32,
+    pub(crate) side_magnitude: f32,
+    pub(crate) side_phase: f32,
 }
 
 #[derive(Clone)]
@@ -457,17 +459,21 @@ impl Machine {
         arrays: &[Vec<f32>],
         first: usize,
         spectrum: &mut [SpectralBin],
+        side: &[SpectralBin],
         hz: f32,
     ) {
         let count = spectrum.len().min(MAX_BLOCK);
         let mut bins = [Bin::default(); MAX_BLOCK];
         for (index, (bin, spectral)) in bins.iter_mut().zip(spectrum.iter()).enumerate() {
+            let side = side.get(index).copied().unwrap_or_default();
             let index = (first + index) as f32;
             *bin = Bin {
                 magnitude: spectral.magnitude,
                 phase: spectral.phase,
                 hz: index * hz,
                 index,
+                side_magnitude: side.magnitude,
+                side_phase: side.phase,
             };
         }
         let Self {
@@ -892,13 +898,14 @@ impl Span<'_> {
                     *out = write(memory.buffers.get_mut(usize::from(buffer)), *index, *value);
                 }
             }
-            Operation::Spectral { input, slot } => {
+            Operation::Spectral { input, side, slot } => {
                 match memory.spectra.get_mut(usize::from(slot)) {
                     Some(spectrum) => {
                         let outs = out.iter_mut().zip(read(input)).zip(frames.clone());
                         for ((out, input), frame) in outs {
                             let capture = |register| value_at(before, register, frame);
-                            *out = spectrum.next(*input, capture, self.arrays);
+                            let side = side.map_or(0.0, capture);
+                            *out = spectrum.next(*input, side, capture, self.arrays);
                         }
                     }
                     None => out.fill(0.0),
@@ -1143,8 +1150,11 @@ impl Span<'_> {
                 at(index),
                 at(value),
             ),
-            Operation::Spectral { input, slot } => (memory.spectra.get_mut(usize::from(slot)))
-                .map_or(0.0, |spectrum| spectrum.next(at(input), at, self.arrays)),
+            Operation::Spectral { input, side, slot } => {
+                (memory.spectra.get_mut(usize::from(slot))).map_or(0.0, |spectrum| {
+                    spectrum.next(at(input), side.map_or(0.0, at), at, self.arrays)
+                })
+            }
             // These read no register, feedback or buffer, so they are in no loop. Not run over
             // one frame with `run` either: a second call of `run` keeps it from being inlined
             // where a span runs it, which made code without loops slower.
@@ -1323,7 +1333,10 @@ fn look_up(values: &[f32], phase: f32) -> f32 {
 
 impl Spectrum {
     fn new(spectrum: &SpectrumSpec, sample_rate: f32) -> Self {
-        let stft = Stft::new(spectrum.size);
+        let stft = match spectrum.side {
+            true => Stft::with_side(spectrum.size),
+            false => Stft::new(spectrum.size),
+        };
         let rate = sample_rate / stft.hop() as f32;
         let bins = Machine::with_channels(spectrum.code.clone(), rate, stft.bins());
         let mut block = Box::new(Block::new());
@@ -1340,7 +1353,13 @@ impl Spectrum {
     /// Takes `sample` in and gives one out. On the last sample of a hop the bins run, and read
     /// each of their captures as `capture` gives it.
     #[inline(always)]
-    fn next(&mut self, sample: f32, capture: impl Fn(Register) -> f32, arrays: &[Vec<f32>]) -> f32 {
+    fn next(
+        &mut self,
+        sample: f32,
+        side: f32,
+        capture: impl Fn(Register) -> f32,
+        arrays: &[Vec<f32>],
+    ) -> f32 {
         let Self {
             stft,
             bins,
@@ -1348,12 +1367,14 @@ impl Spectrum {
             captures,
             hz,
         } = self;
-        stft.next(sample, |spectrum| {
+        stft.next_with_side(sample, side, |spectrum, side| {
             for (row, register) in block.parameters.iter_mut().zip(captures.iter()) {
                 row[0] = capture(*register);
             }
             for (chunk, spectrum) in spectrum.chunks_mut(MAX_BLOCK).enumerate() {
-                bins.run_bins(block, arrays, chunk * MAX_BLOCK, spectrum, *hz);
+                let first = chunk * MAX_BLOCK;
+                let side = side.get(first..).unwrap_or_default();
+                bins.run_bins(block, arrays, first, spectrum, side, *hz);
             }
         })
     }
@@ -1366,6 +1387,8 @@ impl Bin {
             BinValue::Phase => self.phase,
             BinValue::Hz => self.hz,
             BinValue::Index => self.index,
+            BinValue::SideMagnitude => self.side_magnitude,
+            BinValue::SidePhase => self.side_phase,
         }
     }
 }

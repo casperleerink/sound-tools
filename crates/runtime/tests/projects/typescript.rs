@@ -54,8 +54,8 @@ tool({
 });
 "#;
 
-/// A project whose `extensions/` holds the first example of the doc, `wobble`, the freeze of the
-/// doc of sounds, `COMBS` and `LEVEL`, with a rack `pad` that plays a held chord through
+/// A project whose `extensions/` holds the first example of the doc, `wobble`, the freeze and the
+/// vocoder of the doc of sounds, `COMBS` and `LEVEL`, with a rack `pad` that plays a held chord through
 /// `effects`.
 fn pad_through(effects: &[(&str, &str)]) -> Harness {
     pad_through_with(effects, &[])
@@ -72,6 +72,8 @@ fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> H
     write(folder.path(), "extensions/wobble.ts", &doc_example());
     let freeze = example_of("extensions-sound", "spectral(");
     write(folder.path(), "extensions/freeze.ts", &freeze);
+    let vocoder = example_of("extensions-sound", "spectral([");
+    write(folder.path(), "extensions/vocoder.ts", &vocoder);
     write(folder.path(), "extensions/combs.ts", COMBS);
     write(folder.path(), "extensions/level.ts", LEVEL);
     let (synth, chord) = (
@@ -162,6 +164,17 @@ fn the_freeze_of_the_doc_passes_the_sound_and_once_frozen_rings_on_after_it() {
     let after = harness.play(4 * BAR);
     let rings = loudness_at(&after, 7.5);
     assert!(rings > 0.3 * loudness_at(&passed, 1.0), "{rings} at 9.5 s");
+}
+
+#[test]
+fn the_vocoder_of_the_doc_plays_its_chord_only_while_the_sound_comes_in() {
+    let mut harness = pad_through(&[("vocoder", r#"{"root": 48}"#)]);
+    // The chord plays for 8 s.
+    let output = harness.play_from_the_start(5 * BAR);
+    let playing = loudness_at(&output, 1.0);
+    assert!((0.02..0.2).contains(&playing), "{playing} at 1 s");
+    let after = loudness_at(&output, 9.5);
+    assert!(after < 1e-3, "{after} at 9.5 s");
 }
 
 #[test]
@@ -403,6 +416,10 @@ s.tool({
         turned.set(bin.phase.plus(bin.hz.times(0)).plus(bin.index.times(0)));
         return { mag: s.hold(bin.mag, hit).times(level), phase: turned };
       }),
+      s.spectral([s.input, level], 256, (bin, other) => ({
+        mag: bin.mag.times(other.mag),
+        phase: other.phase.plus(other.hz.times(0)),
+      })),
     ];
     const sum = all.reduce<s.Signal>((total, each) => total.plus(each), s.input);
     return out === "mono" ? sum.times(0) : { left: sum.times(0), right: s.input };
