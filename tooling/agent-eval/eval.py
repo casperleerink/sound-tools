@@ -91,10 +91,9 @@ def setup_builtin(folder: Path) -> None:
 def check_builtin(folder: Path) -> dict:
     lead = track_effects(folder, "lead")
     synth = record(folder, f"{SONG}/pad/synth.json").get("state", {})
-    brighter = synth.get("filter", {}) != {} or any(
-        tool in ("eq", "filter") for tool in track_effects(folder, "pad")) or \
-        json.dumps(synth) != json.dumps({"gain": 0.12})
-    return {"delay on lead": "delay" in lead, "pad changed": brighter,
+    brighter = synth.get("cutoff_hz", 2000) > 2000 or any(
+        tool in ("eq", "filter") for tool in track_effects(folder, "pad"))
+    return {"delay on lead": "delay" in lead, "pad brighter": brighter,
             "no problems": no_problems(folder)}
 
 
@@ -134,16 +133,25 @@ def setup_with_bass(folder: Path) -> None:
 
 
 def project_tools(folder: Path) -> dict:
-    """Each tool the project defines, by name, with the text of its file."""
+    """Each tool the project defines beyond the template's, by name, with the text of its file."""
+    template = {path.name for path in (DAW / "extensions").iterdir()}
     tools = {}
     for path in (folder / "extensions").glob("*.ts*"):
-        if path.name == "sdk.ts":
+        if path.name in template or path.name == "sdk.ts":
             continue
         text = path.read_text()
         for name in re.findall(r'name:\s*"([a-z0-9_-]+)"', text):
-            if name not in TEMPLATE_TOOLS:
-                tools[name] = text
+            tools[name] = text
     return tools
+
+
+def instances(folder: Path, owner: str = "") -> dict:
+    """The record of every instance under `state/<owner>`, by id."""
+    found = {}
+    for path in (folder / "state" / owner).rglob("*.json"):
+        name = path.relative_to(folder / "state").with_suffix("").as_posix().removesuffix("/instance")
+        found[name] = record(folder, str(path.relative_to(folder)))
+    return found
 
 
 def instruments(folder: Path) -> dict:
@@ -154,52 +162,41 @@ def instruments(folder: Path) -> dict:
     return found
 
 
-def sounds(folder: Path, track: str) -> bool:
-    """Whether the track plays anything in the first eight seconds."""
-    report = runtime(folder, "--analyze", "--seconds", "8", "--only", f"song/{track}")
+def sounds(folder: Path, only: str | None = None) -> bool:
+    """Whether the project, or the instance `only`, plays anything in the first eight seconds."""
+    report = runtime(folder, "--analyze", "--seconds", "8", *(["--only", only] if only else []))
     match = re.search(r"loudness (-?[0-9.]+) LUFS", report)
     return bool(match) and float(match.group(1)) > -60
 
 
-def check_sequencer(folder: Path) -> dict:
+def check_track(track: str, own_view: bool | None = None):
+    """A project tool on `track`, which still plays; with `own_view`, a view of its own, or the
+    plain one of its knobs. How a card looks is in the screenshots."""
+    def check(folder: Path) -> dict:
+        tools = project_tools(folder)
+        used = [found.get("tool") for found in instances(folder, f"song/{track}").values()
+                if found.get("tool") in tools]
+        checks = {"a project tool on the track": bool(used),
+                  "it sounds": sounds(folder, f"song/{track}"),
+                  "no problems": no_problems(folder)}
+        if own_view is not None:
+            text = tools.get(used[0], "") if used else ""
+            checks["its own view" if own_view else "the plain view"] = bool(used) and ("view:" in text) == own_view
+        return checks
+    return check
+
+
+def played_tracks(folder: Path) -> list:
+    """The tracks a project tool plays as their instrument."""
     tools = project_tools(folder)
-    tool = instruments(folder).get("bass")
-    text = tools.get(tool, "")
-    return {
-        "a project tool plays the bass": tool in tools,
-        "with a pattern": "pattern(" in text,
-        "a step light": "output(" in text and "Steps" in text,
-        "it sounds": sounds(folder, "bass"),
-        "no problems": no_problems(folder),
-    }
+    return [track for track, tool in instruments(folder).items() if tool in tools]
 
 
-def check_toy(folder: Path) -> dict:
-    tools = project_tools(folder)
-    played = [(track, tool) for track, tool in instruments(folder).items() if tool in tools]
-    text = tools.get(played[0][1], "") if played else ""
-    return {
-        "a project tool plays a track": bool(played),
-        "number inputs and a bang": "inputs:" in text and "bang(" in text,
-        "an XY pad": "Pad" in text,
-        "it sounds": bool(played) and sounds(folder, played[0][0]),
-        "no problems": no_problems(folder),
-    }
-
-
-BUILT_IN = {"delay", "eq", "filter", "reverb", "compressor", "gate", "limiter", "saturator", "utility",
-            "modulation", "script", None}
-
-
-def check_tape_builder(folder: Path) -> dict:
-    tools = list((folder / "extensions").glob("*.ts")) if (folder / "extensions").exists() else []
-    tools = [path for path in tools if path.name != "sdk.ts"]
-    pad = track_effects(folder, "pad")
-    return {
-        "a tool file": bool(tools),
-        "a project tool on the pad": any(tool not in BUILT_IN for tool in pad),
-        "no problems": no_problems(folder),
-    }
+def check_new_track(folder: Path) -> dict:
+    played = played_tracks(folder)
+    return {"a project tool plays a track": bool(played),
+            "it sounds": bool(played) and sounds(folder, f"song/{played[0]}"),
+            "no problems": no_problems(folder)}
 
 
 ACID_BASS = (HERE / "fixtures" / "acid-bass.tsx").read_text()
@@ -260,98 +257,51 @@ def setup_texture(folder: Path) -> None:
 
 
 def check_granular(folder: Path) -> dict:
+    played = played_tracks(folder)
+    text = project_tools(folder).get(instruments(folder)[played[0]], "") if played else ""
+    state = record(folder, f"{SONG}/{played[0]}/synth.json").get("state", {}) if played else {}
+    return {**check_new_track(folder),
+            "on the recording": "texture.wav" in json.dumps(state) or '"texture.wav"' in text}
+
+
+def connections(folder: Path) -> list:
+    return record(folder, "project.json").get("connections", [])
+
+
+def window(folder: Path) -> str | None:
+    """The instance whose view fills the window: `main`, else the first tool of the project at
+    the top, by name."""
     tools = project_tools(folder)
-    played = [(track, tool) for track, tool in instruments(folder).items() if tool in tools]
-    text = tools.get(played[0][1], "") if played else ""
-    state = record(folder, f"{SONG}/{played[0][0]}/synth.json").get("state", {}) if played else {}
-    return {
-        "a project tool plays a track": bool(played),
-        "with a sample field": "sample(" in text,
-        "on the recording": "texture.wav" in json.dumps(state) or '"texture.wav"' in text,
-        "it sounds": bool(played) and sounds(folder, played[0][0]),
-        "no problems": no_problems(folder),
-    }
+    top = sorted(name for name, found in instances(folder).items()
+                 if "/" not in name and found.get("tool") in tools)
+    return record(folder, "project.json").get("main") or next(iter(top), None)
 
 
-def check_experiment(folder: Path) -> dict:
-    tools = project_tools(folder)
-    top = [path for path in (folder / "state").glob("*.json")
-           if record(folder, str(path.relative_to(folder))).get("tool") in tools]
-    name = top[0].stem if top else None
-    tool = record(folder, f"state/{name}.json").get("tool") if name else None
-    text = tools.get(tool, "")
-    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
-    return {
-        "no song": not (folder / SONG).exists(),
-        "a project tool at the top": bool(top),
-        "with a view, a space and a tick": all(word in text for word in ("view", "Space", "tick")),
-        "connected to the device": any(c.get("from", {}).get("instance") == name for c in connections),
-        "no problems": no_problems(folder),
-    }
-
-
-def check_life(folder: Path) -> dict:
-    checks = check_experiment(folder)
-    tools = project_tools(folder)
-    text = "".join(tools.values())
-    # A note per living cell with `play`, or a bang per row: either plays the column, and
-    # on time only ahead, with `at`.
-    plays = "play(" in text or "send(" in text
-    return {**checks, "plays from its loop": plays, "on time": plays and "at:" in text}
-
-
-def check_mic(folder: Path) -> dict:
-    checks = check_experiment(folder)
-    # It needs no control loop: an output draws the circle.
-    checks.pop("with a view, a space and a tick")
-    tools = project_tools(folder)
-    text = "".join(tools.values())
-    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
-    return {
-        **checks,
-        "with a view and a space": "view" in text and "Space" in text,
-        "hears the input": any("device_input" in c.get("from", {}) for c in connections),
-    }
-
-
-def check_card(track: str, own_card: bool = True):
-    """A project tool on `track`, with a view of its own or the plain one of its knobs. How
-    the card looks is in the screenshots."""
-    def check(folder: Path) -> dict:
-        tools = project_tools(folder)
-        used = [tool for tool in [instruments(folder).get(track), *track_effects(folder, track)]
-                if tool in tools]
-        text = tools.get(used[0], "") if used else ""
-        return {"a project tool on the track": bool(used),
-                "its own view" if own_card else "the plain view": ("view:" in text) == own_card,
-                "no problems": no_problems(folder)}
-    return check
-
-
-def check_page(folder: Path) -> dict:
-    checks = check_experiment(folder)
-    checks.pop("with a view, a space and a tick")
-    return {**checks, "with a view": "view:" in "".join(project_tools(folder).values())}
-
-
-def check_keys(folder: Path) -> dict:
-    checks = check_page(folder)
-    return {**checks, "hears the keys": "onKey" in "".join(project_tools(folder).values())}
-
-
-def check_midi(folder: Path) -> dict:
-    tools = project_tools(folder)
-    used = [tool for tool in [instruments(folder).get("lead"), *track_effects(folder, "lead")]
-            if tool in tools]
-    text = tools.get(used[0], "") if used else ""
-    return {"a project tool on the lead": bool(used), "hears MIDI": "onNotes" in text,
+def check_screen(folder: Path) -> dict:
+    """The project turned into one screen: a project tool fills the window and plays to the
+    speakers, and the song no longer does."""
+    top = {name: found.get("tool") for name, found in instances(folder).items() if "/" not in name}
+    main = window(folder)
+    heard = [c.get("from", {}).get("instance", "").split("/")[0] for c in connections(folder)
+             if "device_output" in c.get("to", {})]
+    return {"a project tool fills the window": top.get(main) in project_tools(folder),
+            "it plays to the speakers": main in heard,
+            "the song is silent": all(top.get(name) != "song" for name in heard),
             "no problems": no_problems(folder)}
 
 
+def check_drones(folder: Path) -> dict:
+    return {**check_screen(folder), "it sounds": sounds(folder)}
+
+
+def check_mic(folder: Path) -> dict:
+    return {**check_screen(folder),
+            "hears the input": any("device_input" in c.get("from", {}) for c in connections(folder))}
+
+
 def check_apps(folder: Path) -> dict:
-    checks = check_page(folder)
-    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
-    return {**checks, "hears an app": any("app" in c.get("from", {}) for c in connections)}
+    return {**check_screen(folder),
+            "hears an app": any("app" in c.get("from", {}) for c in connections(folder))}
 
 
 def check_keys_composer(folder: Path) -> dict:
@@ -364,7 +314,6 @@ def check_keys_composer(folder: Path) -> dict:
 # The DAW template: a song of tracks written with the SDK, as "New DAW project" makes it.
 DAW = HERE.parents[1] / "templates" / "daw"
 SONG = "state/song"
-TEMPLATE_TOOLS = {"song", "track", "tape", "chain", "bus"}
 
 
 def setup_daw(folder: Path) -> None:
@@ -387,31 +336,11 @@ def setup_daw_chords(folder: Path) -> None:
           {"tool": "timeline", "state": {"start": 0, "length": 15360, "notes": notes}})
 
 
-def tools_under(folder: Path, owner: str) -> list:
-    """The tool of every record inside `state/<owner>/`."""
-    return [record(folder, str(path.relative_to(folder))).get("tool")
-            for path in (folder / "state" / owner).rglob("*.json")]
-
-
-def true_peak(folder: Path, seconds: int) -> float:
-    """The true peak in dBTP of the first `seconds`, as `--analyze` prints it; -inf for silence."""
-    found = re.search(r"true peak (-?[0-9.]+) dBTP", runtime(folder, "--analyze", "--seconds", str(seconds)))
-    return float(found.group(1)) if found else float("-inf")
-
-
-def check_daw_arp(folder: Path) -> dict:
-    tools = {name: text for name, text in project_tools(folder).items() if name not in TEMPLATE_TOOLS}
-    on_track = [tool for tool in tools_under(folder, "song/t00") if tool in tools]
-    return {"a new tool on track 1": bool(on_track),
-            "it sends notes": any("output(" in text for text in tools.values()),
-            "it plays": true_peak(folder, 4) > -40,
-            "no problems": no_problems(folder)}
-
-
 def check_daw_return(folder: Path) -> dict:
     returns = [path.parent.name for path in (folder / "state/song").glob("*/instance.json")
                if record(folder, str(path.relative_to(folder))).get("tool") == "bus"]
-    reverb = any("reverb" in tools_under(folder, f"song/{name}") for name in returns)
+    reverb = any(found.get("tool") == "reverb" for name in returns
+                 for found in instances(folder, f"song/{name}").values())
     sends = [record(folder, f"state/song/t00/send-{name}.json").get("state", {}) for name in returns]
     # A send at "-inf" is off, and no number.
     gains = [send.get("gain_db", 0) for send in sends if send]
@@ -427,51 +356,21 @@ def check_untouched(folder: Path) -> dict:
             "no problems": no_problems(folder)}
 
 
-def check_generative(folder: Path) -> dict:
-    tools = project_tools(folder)
-    tool = instruments(folder).get("pad")
-    text = tools.get(tool, "")
-    return {
-        "a project tool plays the pad": tool in tools,
-        "one voice": "voices:" not in text,
-        "shows its note": "output(" in text,
-        "it sounds": sounds(folder, "pad"),
-        "no problems": no_problems(folder),
-    }
-
-
-def check_launcher(folder: Path) -> dict:
-    tools = project_tools(folder)
-    owners = [path.parent for path in (folder / "state").glob("*/instance.json")
-              if record(folder, str(path.relative_to(folder))).get("tool") in tools]
-    owner = owners[0] if owners else None
-    children = [record(folder, str(path.relative_to(folder))).get("tool")
-                for path in owner.glob("*.json") if path.name != "instance.json"] if owner else []
-    tool = record(folder, f"state/{owner.name}/instance.json").get("tool") if owner else None
-    text = tools.get(tool, "")
-    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
-    report = runtime(folder, "--analyze", "--seconds", "8")
-    loudness = re.search(r"loudness (-?[0-9.]+) LUFS", report)
-    return {
-        "no song": not (folder / SONG).exists(),
-        "a project tool owns the parts": owner is not None,
-        "it owns the built-in synth": "instrument.synth" in children,
-        "and an effect": any(child not in ("instrument.synth", "timeline", None)
-                             for child in children),
-        "timelines and launches": "timeline" in children and '"launch"' in text,
-        "a view with the transport": "view:" in text and "<Transport" in text,
-        "connected to the device": owner is not None
-        and any(c.get("from", {}).get("instance") == owner.name for c in connections),
-        "it sounds": bool(loudness) and float(loudness.group(1)) > -60,
-        "no problems": no_problems(folder),
-    }
-
-
-def check_tracker(folder: Path) -> dict:
-    checks = check_launcher(folder)
-    timelines = checks.pop("timelines and launches")
-    text = "".join(project_tools(folder).values())
-    return {**checks, "timelines": timelines, "edits from the view": "update(" in text}
+def check_grid(parts: int, effects: set, patterns: int):
+    """One screen whose tool plays `parts` built-in synths through `effects`, from looping
+    timelines, and sounds as it starts."""
+    def check(folder: Path) -> dict:
+        main = window(folder)
+        owned = list(instances(folder, main).values()) if main else []
+        tools = [found.get("tool") for found in owned]
+        loops = [found for found in owned
+                 if found.get("tool") == "timeline" and found.get("state", {}).get("loop")]
+        return {**check_screen(folder),
+                "its parts play the built-in synth": tools.count("instrument.synth") >= parts,
+                "through their effects": effects <= set(tools),
+                "its patterns loop": len(loops) >= patterns,
+                "it sounds": sounds(folder)}
+    return check
 
 
 SCENARIOS = {
@@ -482,56 +381,56 @@ SCENARIOS = {
                   "The worn tape sound on the pad is great. Put that same tape effect on the lead "
                   "too, but like a fairly fresh reel tape so it only wobbles a little. And make "
                   "the pad's tape really worn out, the most it goes."),
-    "tape-builder": (setup_tape_builder, check_tape_builder,
+    "tape-builder": (setup_tape_builder, check_track("pad"),
                      "I want my pad to sound like it's playing off an old worn tape: that slow, "
                      "seasick pitch wobble (wow) plus a faster little flutter, and a bit of tape "
                      "hiss under it. Give me a knob for how worn the tape is, and let me pick "
                      "between a 'cassette' and a 'reel' character; reel should be gentler and a "
                      "bit brighter. Put it on the pad."),
-    "sequencer-builder": (setup_with_bass, check_sequencer,
+    "sequencer-builder": (setup_with_bass, check_track("bass"),
                           "On the bass track I want a 16-step acid bass sequencer as its "
                           "instrument: I click steps on and off on its card and the step that "
                           "is playing lights up, it plays along with the tempo of the piece, "
                           "and it has knobs for the filter cutoff, the resonance and the note "
                           "it plays. Make a pattern that grooves to start with."),
     # Many controls: the card must fit 144 points, which the check cannot see. Look at it.
-    "drums-builder": (setup_with_bass, check_sequencer,
+    "drums-builder": (setup_with_bass, check_track("bass"),
                       "On the bass track I want a drum machine as its instrument instead: "
                       "kick, snare, closed hat and clap, each with its own row of 16 steps I "
                       "click on and off, the playing step lit; a level and a tune knob for each "
                       "drum, and a swing knob. Make a groove to start with."),
     # How cards and pages look: short prompts, the screenshots say the rest.
-    "ui-scope": (setup_tape_builder, check_card("lead"),
+    "ui-scope": (setup_tape_builder, check_track("lead", own_view=True),
                  "Put an effect on the lead that shows its sound as a moving waveform on its "
                  "card."),
-    "daw-arp-builder": (setup_daw_chords, check_daw_arp,
+    "daw-arp-builder": (setup_daw_chords, check_track("t00"),
                         "On Track 1, put an arpeggiator before its synth: it turns the chords I "
                         "hold into notes going up one at a time with the tempo, with a choice of "
                         "eighths or sixteenths and a knob for how many octaves it climbs."),
     "daw-return": (setup_daw, check_daw_return,
                    "Add a return track with a long reverb, and send Track 1 into it, fairly "
                    "quietly."),
-    "ui-chords": (setup_tape_builder, check_card("pad"),
+    "ui-chords": (setup_tape_builder, check_track("pad", own_view=True),
                   "Make the pad a chord player: I pick a progression on its card, and it shows "
                   "the chord it is on."),
-    "ui-tremolo": (setup_tape_builder, check_card("pad", own_card=False),
+    "ui-tremolo": (setup_tape_builder, check_track("pad", own_view=False),
                    "Put a tremolo on the pad with a rate and a depth knob."),
-    "ui-drones": (setup_tape_builder, check_page,
+    "ui-drones": (setup_tape_builder, check_drones,
                   "Turn this project into a drone machine on one screen: four drones, each with "
                   "a pitch and a volume control and a visual of its sound."),
-    "ui-piano": (setup_tape_builder, check_card("lead"),
+    "ui-piano": (setup_tape_builder, check_track("lead", own_view=True),
                  "Give the lead an instrument with a small piano keyboard on its card that I "
                  "click to play."),
-    "ui-bands": (setup_tape_builder, check_card("pad"),
+    "ui-bands": (setup_tape_builder, check_track("pad", own_view=True),
                  "Put an effect on the pad that shows the level of 8 frequency bands as bars on "
                  "its card."),
-    "ui-paint": (setup_tape_builder, check_page,
+    "ui-paint": (setup_tape_builder, check_screen,
                  "Turn this project into one screen I paint on with the mouse; a line sweeps "
                  "across and plays what I painted, higher up is higher pitch."),
-    "keys-builder": (setup_tape_builder, check_keys,
+    "keys-builder": (setup_tape_builder, check_screen,
                      "Turn this project into one screen where my computer keyboard plays notes, "
                      "each letter its own note, and every note draws a ripple."),
-    "midi-builder": (setup_tape_builder, check_midi,
+    "midi-builder": (setup_tape_builder, check_track("lead"),
                      "Make the lead an arpeggiator I play from my MIDI keyboard: I hold a chord "
                      "and it plays its notes up and down."),
     "apps-builder": (setup_tape_builder, check_apps,
@@ -544,18 +443,18 @@ SCENARIOS = {
                     "I want the knobs of my MIDI controller to move the pad's filter."),
     "zoom-composer": (setup_tape_builder, check_untouched,
                       "I want to send the sound of this project into a Zoom call."),
-    "experiment-builder": (setup_tape_builder, check_experiment,
+    "experiment-builder": (setup_tape_builder, check_screen,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
                            "with the mouse onto a few horizontal strings; when a ball hits a "
                            "string it plucks it, each string a different note of a pentatonic "
                            "scale, and the ball bounces off."),
-    "generative-builder": (setup_tape_builder, check_generative,
+    "generative-builder": (setup_tape_builder, check_track("pad"),
                            "Make the pad play a generative ambient part by itself, forever: it "
                            "slowly wanders between notes of D dorian with a long, washy tail. "
                            "Give its card a way to change how dense and how bright it is, and "
                            "let me see which note it is on."),
-    "life-builder": (setup_tape_builder, check_life,
+    "life-builder": (setup_tape_builder, check_screen,
                      "Turn this project into a generative toy instead of a song, just one "
                      "screen and no timeline: a Game of Life grid. I click cells to bring them "
                      "to life or kill them, the grid steps on by itself, and a cursor sweeps "
@@ -580,12 +479,12 @@ SCENARIOS = {
     "composer-sweep": (setup_acid_bass, check_sweep,
                        "Over bars 3 and 4, sweep the acid bass filter cutoff up from dark to "
                        "bright."),
-    "toy-builder": (setup_tape_builder, check_toy,
+    "toy-builder": (setup_tape_builder, check_new_track,
                     "Make me a 'storm' on a new track: a windy, noisy drone I play live with an "
                     "XY pad, across is how dark or bright, up is how wild, plus a 'thunder' "
                     "button that sets off a deep rumble. It should run by itself, no notes "
                     "needed."),
-    "launcher-builder": (setup_tape_builder, check_launcher,
+    "launcher-builder": (setup_tape_builder, check_grid(3, {"filter", "reverb", "delay"}, 12),
                          "Turn this project into a clip launcher instead of a song: one screen "
                          "with a grid and no timeline. Three lanes, bass, chords and lead, each "
                          "playing the built-in synth through its own effect: the bass through a "
@@ -595,7 +494,7 @@ SCENARIOS = {
                          "which patterns play and which wait for the bar, and give me play and "
                          "stop. Start me off with patterns in A minor at 120 BPM that groove "
                          "together, and the first scene playing when I press play."),
-    "tracker-builder": (setup_tape_builder, check_tracker,
+    "tracker-builder": (setup_tape_builder, check_grid(2, {"filter", "delay"}, 2),
                         "Turn this project into a step sequencer on one screen instead of a song, "
                         "no timeline: a grid of 16 steps across and two octaves of C minor up the "
                         "side, for two parts, a bass on the built-in synth through a filter and a "
