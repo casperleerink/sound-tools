@@ -6,7 +6,7 @@
 use std::ops::Range;
 
 use sound_media::analysis::{
-    Momentary, Pitch, PitchFinder, PowerSpectrum, WINDOW, lufs, nearest_note,
+    Momentary, Pitch, PitchSettings, PitchTracker, PowerSpectrum, WINDOW, lufs, nearest_note,
 };
 use sound_ui::components::curves::RESPONSE_ACROSS;
 
@@ -69,9 +69,8 @@ pub(crate) struct Analysis {
     bins: Vec<f64>,
     columns: Vec<Range<usize>>,
     power: PowerSpectrum,
-    pitch: PitchFinder,
-    /// What the pitch finder found in the history.
-    found: Pitch,
+    /// Hears both channels mixed.
+    pitch: PitchTracker,
     momentary: Momentary,
     reading: Reading,
     /// Seconds since a look found a clear note.
@@ -102,8 +101,7 @@ impl Analysis {
             bins: vec![0.0; bins],
             columns,
             power: PowerSpectrum::new(WINDOW),
-            pitch: PitchFinder::new(rate, WINDOW),
-            found: Pitch::Quiet,
+            pitch: PitchTracker::new(rate, PitchSettings::FULL),
             momentary: Momentary::new(sample_rate),
             reading: Reading::default(),
             unclear: f32::INFINITY,
@@ -128,6 +126,8 @@ impl Analysis {
                 self.reading.loudness = lufs(power).map(|loudness| loudness as f32);
             }
         }
+        self.pitch
+            .push(frames.iter().map(|[left, right]| (left + right) / 2.0));
         let new = frames.len().min(WINDOW);
         let frames = frames.iter().skip(frames.len() - new);
         for (channel, history) in self.history.iter_mut().enumerate() {
@@ -164,7 +164,7 @@ impl Analysis {
         if !self.heard {
             self.hear_silence(seconds);
         }
-        // A history that did not change has the bins and the pitch it had.
+        // A history that did not change has the bins it had.
         if std::mem::take(&mut self.heard) {
             self.bins.fill(0.0);
             // The power of both channels, so sounds that cancel in a mix still show.
@@ -173,11 +173,6 @@ impl Analysis {
                     *bin += power / 2.0;
                 }
             }
-            let [left, right] = self.history.each_ref().map(|history| {
-                let last = history.get(WINDOW - self.pitch.length()..);
-                last.unwrap_or_default()
-            });
-            self.found = self.pitch.find(left, right);
         }
         let fall = FALL_DB_PER_SECOND * seconds;
         for (shown, bins) in self.reading.spectrum.iter_mut().zip(&self.columns) {
@@ -185,7 +180,7 @@ impl Analysis {
             let db = (10.0 * (SINE * power).log10()) as f32;
             *shown = db.max(*shown - fall).max(FLOOR_DB);
         }
-        match self.found {
+        match self.pitch.pitch() {
             Pitch::Note(note) => {
                 self.reading.note = Some(note);
                 self.unclear = 0.0;

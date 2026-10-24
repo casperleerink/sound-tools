@@ -1,7 +1,7 @@
 //! What a sound is at each moment, a hundred times a second: its level, its pitch and how much
 //! new sound comes in. [`super::notes`] finds the notes in them.
 
-use super::pitch::{Pitch, PitchFinder};
+use super::pitch::{Pitch, PitchSettings, PitchTracker};
 use super::{CHANNELS, PowerSpectrum, decibels};
 
 /// Moments per second.
@@ -32,7 +32,8 @@ pub(super) struct MomentFinder {
     since: usize,
     /// The frames pushed after the start.
     measured: u64,
-    pitch: PitchFinder,
+    /// Hears both channels mixed.
+    pitch: PitchTracker,
     spectrum: PowerSpectrum,
     onset_length: usize,
     /// The power of each bin, both channels together, so channels of opposite polarity do not
@@ -45,7 +46,7 @@ pub(super) struct MomentFinder {
 
 impl MomentFinder {
     pub(super) fn new(rate: f64) -> Self {
-        let pitch = PitchFinder::new(rate, usize::MAX);
+        let pitch = PitchTracker::new(rate, PitchSettings::FULL);
         let onset_length = (rate * ONSET_SECONDS) as usize;
         let length = pitch.length().max(onset_length);
         let bins = onset_length / 2 + 1;
@@ -77,6 +78,11 @@ impl MomentFinder {
                 *slot = value;
             }
         }
+        // The tracker hears as many frames as the history holds, since two periods of the
+        // lowest note are longer than the onset spectrum, so its pitch is that of the middle,
+        // as of its last look a few milliseconds ago.
+        self.pitch
+            .push([values.iter().sum::<f32>() / CHANNELS as f32]);
         self.since += 1;
         if measured {
             self.measured += 1;
@@ -97,13 +103,6 @@ impl MomentFinder {
         let length = self.history[0].len();
         let middle = |part: usize| (length - part) / 2..(length + part) / 2;
         let [left, right] = &self.history;
-        let pitch = match (
-            left.get(middle(self.pitch.length())),
-            right.get(middle(self.pitch.length())),
-        ) {
-            (Some(left), Some(right)) => self.pitch.find(left, right),
-            _ => Pitch::Unclear,
-        };
         let power: f64 = [left, right]
             .iter()
             .filter_map(|history| history.get(middle(self.hop)))
@@ -133,7 +132,7 @@ impl MomentFinder {
         Moment {
             frame: 0,
             level,
-            pitch,
+            pitch: self.pitch.pitch(),
             rise,
         }
     }

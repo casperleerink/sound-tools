@@ -9,7 +9,7 @@
 //! of each row are what catch that. The true peak is the highest sample at four times the rate,
 //! the peak a converter or an encoder meets between the samples.
 //!
-//! The parts that measure a moment, [`Momentary`], [`PowerSpectrum`] and [`PitchFinder`], are
+//! The parts that measure a moment, [`Momentary`], [`PowerSpectrum`] and [`PitchTracker`], are
 //! public for a live display, such as the Analyzer card.
 
 mod moments;
@@ -26,7 +26,7 @@ pub use moments::Moment;
 use moments::MomentFinder;
 pub use notes::{Events, Note, NotePitch, Phrase, Tuning};
 use pitch::Pitches;
-pub use pitch::{MeasuredPitch, Pitch, PitchFinder, nearest_note};
+pub use pitch::{MeasuredPitch, Pitch, PitchSettings, PitchTracker, nearest_note};
 
 /// Every render is stereo, and a file is read as stereo.
 const CHANNELS: usize = 2;

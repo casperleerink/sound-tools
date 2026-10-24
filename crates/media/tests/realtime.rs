@@ -1,12 +1,13 @@
 #![allow(clippy::unwrap_used)]
-//! Reading and resampling inside `Engine::process_block`, which the realtime sanitizer checks
-//! when the build sets `RTSAN_ENABLE=1`: no allocation, lock or system call.
+//! Reading, resampling and tracking pitch inside `Engine::process_block`, which the realtime
+//! sanitizer checks when the build sets `RTSAN_ENABLE=1`: no allocation, lock or system call.
 
 use std::sync::Arc;
 
 use sound_core::{
     AudioOutput, Connection, Engine, EngineConfig, Ports, PrepareConfig, ProcessContext, Processor,
 };
+use sound_media::analysis::{Pitch, PitchSettings, PitchTracker};
 use sound_media::{Audio, Resampler, SCRATCH_FRAMES, varispeed};
 
 /// Plays a file from its start through a resampler, as a clip would, or at a speed of its own
@@ -116,5 +117,73 @@ fn reading_and_resampling_run_on_the_audio_thread_without_allocating_locking_or_
                 "{rate} {step:?}"
             );
         }
+    }
+}
+
+/// Tracks the pitch of a sine it makes, and plays the note it reads.
+struct Tracker {
+    tracker: PitchTracker,
+    phase: f64,
+}
+
+impl Tracker {
+    const OUTPUT: AudioOutput = AudioOutput::new(0);
+}
+
+impl Processor for Tracker {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().audio_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, (): &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let step = std::f64::consts::TAU * 220.0 / 48_000.0;
+        let phase = &mut self.phase;
+        self.tracker.push((0..context.frames).map(|_| {
+            *phase += step;
+            (0.5 * phase.sin()) as f32
+        }));
+        let note = match self.tracker.pitch() {
+            Pitch::Note(note) => note as f32,
+            Pitch::Quiet | Pitch::Unclear => 0.0,
+        };
+        let [left, _] = context.audio_outputs.get(Self::OUTPUT);
+        left.fill(note);
+    }
+}
+
+#[test]
+fn tracking_pitch_runs_on_the_audio_thread_without_allocating_locking_or_calling_the_system() {
+    for settings in [
+        PitchSettings::FULL,
+        PitchSettings {
+            lowest: 80.0,
+            highest: 1_000.0,
+            tolerance: 0.5,
+        },
+    ] {
+        let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
+        let tracker = Tracker {
+            tracker: PitchTracker::new(48_000.0, settings),
+            phase: 0.0,
+        };
+        let mut edit = control.edit();
+        let node = edit.add_processor("tracker", tracker).unwrap();
+        edit.connect(Connection::to_device(node.id(), Tracker::OUTPUT, 0))
+            .unwrap();
+        edit.commit().unwrap();
+        let mut output = vec![0.0_f32; 2 * 48_000];
+        for buffer in output.chunks_mut(2 * 512) {
+            engine.process_block(buffer);
+        }
+        control.poll().unwrap();
+        // A3.
+        let note = output[output.len() - 2];
+        assert!((note - 57.0).abs() < 0.01, "{note}");
     }
 }
