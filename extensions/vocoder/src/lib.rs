@@ -111,7 +111,7 @@ impl State for VocoderState {
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "vocoder",
     group: "Devices",
-    when: "A vocoder on a track: a synth that speaks or sings with the voice of another track",
+    when: "A vocoder on a track: a talking synth",
     markdown: include_str!("../agent-doc.md"),
 };
 

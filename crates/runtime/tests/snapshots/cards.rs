@@ -115,7 +115,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
             "utility",
             record("utility", r#"{"width": 1.5, "bass_mono": true}"#),
         ),
-        ("vocoder", record("vocoder", r#"{"bands": 32, "formant": 3.0}"#)),
+        (
+            "vocoder",
+            record("vocoder", r#"{"bands": 32, "formant": 3.0}"#),
+        ),
     ];
     let tools: Vec<(&str, &str)> = (tools.iter())
         .map(|(name, record)| (*name, record.as_str()))
