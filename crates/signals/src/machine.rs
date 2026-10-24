@@ -124,7 +124,7 @@ pub struct Machine {
     steps: Box<[Step]>,
     /// The steps the right channel of mono code runs again; it shares the results of the others
     /// with the left.
-    per_channel: Box<[Step]>,
+    pub(crate) per_channel: Box<[Step]>,
     sample_rate: f32,
     /// What each operation gave in each frame of the span: of the left channel, and then of the
     /// right where it differs.

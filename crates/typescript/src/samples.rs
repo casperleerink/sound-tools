@@ -16,7 +16,7 @@ use sound_signals::List;
 
 /// The longest sample a tool holds: a list of the record is held in memory whole, here and in
 /// the copy that plays.
-const MAX_SECONDS: f64 = 600.0;
+const MAX_SECONDS: f64 = 180.0;
 
 /// What a list of a record holds, so only copies of it play: kept for the process.
 static SAMPLES: Loader<(PathBuf, u32), List> = Loader::new("sample", Keep::Always);
@@ -52,9 +52,10 @@ fn read(assets: &Assets, asset: &AudioAsset, sample_rate: u32) -> Result<List, S
     let audio = load(assets, asset).map_err(|error| error.to_string())?;
     if audio.seconds() > MAX_SECONDS {
         return Err(format!(
-            "{} is {:.0} s long; a sample holds up to {MAX_SECONDS:.0} s",
+            "{} is {:.0} s long; a sample holds up to {:.0} minutes",
             asset.project_path(),
-            audio.seconds()
+            audio.seconds(),
+            MAX_SECONDS / 60.0
         ));
     }
     let frames = engine_frames(audio.frames(), audio.sample_rate(), sample_rate);

@@ -922,15 +922,16 @@ impl Sounds {
 
     /// What the lists of `state` are made of: the lists of numbers, and the files with whether
     /// each could be read, so a file that arrives after its record is sent then. With a problem
-    /// for each file that cannot be read.
+    /// for each file that cannot be read, and whether a file read is in stereo.
     fn lists_key(
         &self,
         code: &Code,
         state: &Value,
         (assets, rate, id): Read<'_>,
-    ) -> (u64, Vec<String>) {
+    ) -> (u64, Vec<String>, bool) {
         let mut hasher = DefaultHasher::new();
         let mut problems = Vec::new();
+        let mut stereo = false;
         for array in &code.arrays {
             let value = state.get(&array.name);
             value.map(Value::to_string).hash(&mut hasher);
@@ -944,12 +945,14 @@ impl Sounds {
                     .map(|sound| sound.as_ref().map(|sound| Arc::as_ptr(sound).addr()))
                     .ok()
                     .hash(&mut hasher);
-                if let Err(problem) = read {
-                    problems.push(format!("state.{}: {problem}", array.name));
+                match read {
+                    Ok(Some(sound)) => stereo |= matches!(*sound, List::Stereo(..)),
+                    Ok(None) => {}
+                    Err(problem) => problems.push(format!("state.{}: {problem}", array.name)),
                 }
             }
         }
-        (hasher.finish(), problems)
+        (hasher.finish(), problems, stereo)
     }
 
     fn apply(
@@ -977,7 +980,7 @@ impl Sounds {
         );
         let reading = (&assets, rate, &id);
         // A list, a sample most of all, is sent only when it changed: not at every knob turn.
-        let (lists_key, problems) = self.lists_key(&code, state, reading);
+        let (lists_key, problems, stereo) = self.lists_key(&code, state, reading);
         for problem in problems {
             context.problem(problem);
         }
@@ -992,11 +995,19 @@ impl Sounds {
         let tap = (self.info.notes).then(|| context.tap::<NoteEvent>(NOTES_TAP));
         let new_tap = context.changed("tap", u64::from(tap.is_some()));
         let sample_rate = context.prepare_config().sample_rate as f32;
-        let new_code = context.changed("code", code.hash);
+        // A sound that reads no file in stereo runs a sample read once for both channels.
+        let new_code =
+            context.changed("code", code.hash) | context.changed("stereo", stereo.into());
         if new_code || new_lists {
             values.arrays = Some(self.lists(&code, state, reading));
         }
-        let made = || Box::new(Machine::new(code.clone(), sample_rate));
+        let made = || {
+            let code = match stereo {
+                true => code.clone(),
+                false => code.clone().with_samples_of_one_channel(),
+            };
+            Box::new(Machine::new(code, sample_rate))
+        };
         // Made once and cloned for every voice: scheduling the code is not free.
         let mut machines: Vec<Option<Box<Machine>>> = match new_code {
             true => vec![Some(made()); kind.machines()],

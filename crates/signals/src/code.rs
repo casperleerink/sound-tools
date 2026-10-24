@@ -112,6 +112,20 @@ impl Code {
         1 + self.sound_outputs.len()
     }
 
+    /// This code for samples of one channel: a read on the side of its channel is then the same
+    /// on both channels, so it runs once for both, as cheap as before samples were in stereo. A
+    /// sample in stereo is heard mixed.
+    pub fn with_samples_of_one_channel(mut self) -> Self {
+        for operation in &mut self.operations {
+            if let Operation::Read { table, .. } | Operation::Lookup { table, .. } = operation
+                && let Table::Sample(_, side @ Side::Channel) = table
+            {
+                *side = Side::Both;
+            }
+        }
+        self
+    }
+
     /// Whether what leaves it is what comes in, on each channel, and nothing else leaves: the
     /// code of a tool with no sound.
     pub(crate) fn passes_input(&self) -> bool {

@@ -451,6 +451,22 @@ fn a_sample_in_stereo_plays_each_side_on_its_channel_and_both_mixed_where_the_co
 }
 
 #[test]
+fn a_sample_read_for_samples_of_one_channel_runs_once_for_both_channels() {
+    let own = compile(|| sample("sound").at(0.0) * 2.0);
+    assert!(!machine(own.clone()).per_channel.is_empty());
+    let mut once = machine(own.with_samples_of_one_channel());
+    assert!(once.per_channel.is_empty());
+    let block = defaults(&once);
+    let one = [List::One(vec![0.25])];
+    assert_eq!(frame(&mut once, &block, &one, Note::default()), [0.5, 0.5]);
+    let stereo = [List::Stereo(vec![1.0], vec![0.5])];
+    assert_eq!(
+        frame(&mut once, &block, &stereo, Note::default()),
+        [1.5, 1.5]
+    );
+}
+
+#[test]
 fn an_adsr_rises_holds_at_its_sustain_and_falls_to_silence_after_the_gate() {
     let mut envelope = machine(compile(|| adsr(gate(), 10.0, 10.0, 0.5, 20.0)));
     // 10 ms is 480 frames. The gate is up for 2400 frames.

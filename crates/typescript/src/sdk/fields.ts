@@ -51,7 +51,7 @@ export interface TextField {
 
 /**
  * A sound file: the name of a file under `assets/audio/`, or "" for none. A sound hears it as a
- * `Sample` at the rate of the engine, in stereo, up to 10 minutes.
+ * `Sample` at the rate of the engine, in stereo, up to 3 minutes.
  */
 export interface FileField {
   kind: "file";
