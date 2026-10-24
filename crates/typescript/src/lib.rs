@@ -515,7 +515,7 @@ fn launch(
                 skipped.insert(file, message);
             }
             Err(LoadFailure { file: None, why }) => {
-                return Err(format!("the TypeScript host {why}"));
+                return Err(format!("the code of the project {why}"));
             }
         }
     }

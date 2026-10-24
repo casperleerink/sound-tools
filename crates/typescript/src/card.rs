@@ -4329,7 +4329,9 @@ impl Render for TypeScriptCard {
             }
             Some(Err(error)) => div()
                 .text_color(cx.theme().red)
-                .child(format!("ui: {error}"))
+                .child(format!(
+                    "This view did not draw. Ask the agent to fix it: {error}"
+                ))
                 .into_any_element(),
             // Until its first nodes arrive, a moment after the card opens.
             None => div().into_any_element(),

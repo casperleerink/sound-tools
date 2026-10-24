@@ -268,7 +268,7 @@ fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
     if shown == 0 && !query.is_empty() {
         found.push(MenuEntry::Note("Nothing matches.".into()));
     } else if more > 0 {
-        let note = format!("{more} more. Type a name or an id to find them.");
+        let note = format!("{more} more. Type a name to find them.");
         found.push(MenuEntry::Note(note.into()));
     }
     found.extend(notes);
@@ -1455,10 +1455,7 @@ mod tests {
 
         let everything = found(&entries, "");
         assert_eq!(labels(&everything).len(), MAX_FOUND);
-        assert_eq!(
-            notes(&everything),
-            ["150 more. Type a name or an id to find them."]
-        );
+        assert_eq!(notes(&everything), ["150 more. Type a name to find them."]);
 
         let some = found(&entries, "KNOB 24");
         let tens: Vec<String> = (240..250).map(|index| format!("Knob {index}")).collect();

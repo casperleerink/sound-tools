@@ -257,7 +257,7 @@ pub(crate) fn declared(
     }
     if let Some(why) = gone.get(&bun.number()) {
         return last(format!(
-            "its behaviour did not run: the TypeScript host {why}"
+            "its behaviour did not run: the code of the project {why}"
         ));
     }
     if owner.asking.is_none() {
@@ -268,7 +268,9 @@ pub(crate) fn declared(
             instance,
         };
         if !tell() || !bun.send(&request) {
-            return last("its behaviour did not run: the TypeScript host does not read".into());
+            return last(
+                "its behaviour did not run: the code of the project does not answer".into(),
+            );
         }
         *next_question += 1;
         owner.asking = Some(key);
@@ -326,7 +328,7 @@ pub(crate) fn ended(number: u64, why: &str) {
         .map(|(question, _)| *question)
         .collect();
     for question in questions {
-        let problem = format!("its behaviour did not run: the TypeScript host {why}");
+        let problem = format!("its behaviour did not run: the code of the project {why}");
         answer_in(&mut store, question, Err(problem), None);
     }
     STORE.1.notify_all();

@@ -51,7 +51,7 @@ pub enum TakeError {
     Invalid { name: String, message: String },
     #[error("{0}")]
     Asset(String),
-    #[error("the take could not be written as JSON: {0}")]
+    #[error("the take could not be saved: {0}")]
     Encode(String),
 }
 

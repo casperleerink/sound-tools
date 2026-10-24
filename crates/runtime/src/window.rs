@@ -520,7 +520,7 @@ impl Shell {
         if self.session.read(cx).project().instances().next().is_some() {
             return EmptyState::new(
                 "Nothing to show",
-                "None of the tools of this project has a view.",
+                "Nothing in this project has a view yet. Ask the agent for one.",
             );
         }
         let templates = (TEMPLATES.iter())
@@ -593,8 +593,10 @@ impl Shell {
         let problems = session.project().problems().len();
         let files = match problems {
             0 => None,
-            1 => Some("1 file is not live, see problems.txt".to_string()),
-            count => Some(format!("{count} files are not live, see problems.txt")),
+            1 => Some("1 file is not live. Ask the agent to fix it.".to_string()),
+            count => Some(format!(
+                "{count} files are not live. Ask the agent to fix them."
+            )),
         };
         let error = session.notice().cloned();
         // Top-right, under the title row: clear of the transport, and of the left panel and the

@@ -2,7 +2,9 @@
 
 # This folder is a Sound Tools project
 
-A piece of music saved as small JSON files. You work on it by editing these files. While the runtime has the project open, every change applies live, about 0.2 s later, with no build. All the files of one request are one undo step for the composer, as long as you leave less than 15 s between two writes.
+A piece of music saved as small JSON files, which you edit. While the runtime has the project open, every change applies live, about 0.2 s later, with no build. All the files of one request are one undo step for the composer, as long as you leave less than 15 s between two writes.
+
+The composer is a musician, not a programmer: in your replies and in what tools show, use musical words, not names of code, formats or files.
 
 This file is the map. Open the docs your task needs and leave the others closed.
 
@@ -56,7 +58,7 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 - Touch only the files your task needs. Do not reformat the others.
 - Leave no temporary, backup or scratch files under `state/`.
 - Pick ids that say what the thing is, unique in their folder: `bass-verse`, not `clip-1`, `Bass Line` or `bass-bars-5-8`.
-- To delete, remove the file or the folder. To move, move the file. The composer can undo your change: keep no copies.
+- To delete or move, delete or move the file or folder. The composer can undo: keep no copies.
 - `AGENTS.md`, `CLAUDE.md`, `problems.txt` and `agent-docs/` are written by the runtime. Editing them changes nothing.
 
 ## Check your work

@@ -378,9 +378,12 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     Notice::new("n-error", "instance song/bass-2 does not exist")
                         .on_dismiss(|_, _, _| {})
                         .into_any_element(),
-                    Notice::new("n-warning", "2 files are not live, see problems.txt")
-                        .tone(NoticeTone::Warning)
-                        .into_any_element(),
+                    Notice::new(
+                        "n-warning",
+                        "2 files are not live. Ask the agent to fix them.",
+                    )
+                    .tone(NoticeTone::Warning)
+                    .into_any_element(),
                     Notice::new("n-progress", "Exporting song.wav")
                         .tone(NoticeTone::Info)
                         .progress(0.4)

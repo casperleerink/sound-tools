@@ -741,7 +741,7 @@ impl Render for PluginView {
         let id = self.device.instance.id();
         // `None`: this machine has the plugin but it did not load, which is reported already.
         let Some(has_window) = plugins.window_offered(id) else {
-            let text = "This plugin did not load, so there is nothing to open. See problems.txt.";
+            let text = "This plugin did not load, so there is nothing to open.";
             return plain
                 .child(left(line(text.to_string()), Some(detail)))
                 .into_any_element();

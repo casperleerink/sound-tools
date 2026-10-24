@@ -822,7 +822,7 @@ impl Bun {
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     break format!("did not finish loading within {LOAD_TIMEOUT:?}");
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break "stopped Bun".to_string(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break "stopped".to_string(),
             }
         };
         Err(LoadFailure { file, why })
@@ -1126,7 +1126,7 @@ fn hear(
             }
             // Bun loads once.
             Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped".to_string()),
         }
         // Also while it says things: a loop that never ends may.
         let busy = lock();
