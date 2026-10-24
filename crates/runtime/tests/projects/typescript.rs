@@ -14,7 +14,7 @@ fn doc_example() -> String {
 }
 
 /// The first TypeScript example of the agent doc `doc` that holds `holding`.
-pub(crate) fn example_of(doc: &str, holding: &str) -> String {
+fn example_of(doc: &str, holding: &str) -> String {
     let doc = (sound_typescript::AGENT_DOCS.iter())
         .find(|each| each.name == doc)
         .unwrap()

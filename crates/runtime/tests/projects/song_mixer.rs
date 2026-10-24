@@ -240,30 +240,29 @@ tool({
 });
 "#;
 
-/// The tool `tool` of this project, from `code`, in the chain of `t00`, keyed by `t01` after
-/// its fader when `keyed`, as the card's sidechain picker writes it into the song's
-/// `sidechains`.
-fn keyed_by_t01(tool: &str, code: &str, keyed: bool) -> (Harness, Vec<f32>) {
+/// A ducker of this project in the chain of `t00`, keyed by `t01` after its fader when `keyed`,
+/// as the card's sidechain picker writes it into the song's `sidechains`.
+fn ducked_by_a_tool_of_the_project(keyed: bool) -> (Harness, Vec<f32>) {
     let folder = tempfile::tempdir().unwrap();
     for (path, text) in song_files(2, 2) {
         write(folder.path(), &path, &text);
     }
-    write(folder.path(), &format!("extensions/{tool}.ts"), code);
+    write(folder.path(), "extensions/ducker.ts", DUCKER);
     write(
         folder.path(),
-        &format!("state/song/t00/chain/{tool}.json"),
-        &format!(r#"{{"tool": "{tool}", "state": {{}}}}"#),
+        "state/song/t00/chain/duck.json",
+        r#"{"tool": "ducker", "state": {}}"#,
     );
-    let chain = format!(r#"{{"tool": "chain", "state": {{"order": ["{tool}"]}}}}"#);
-    write(folder.path(), "state/song/t00/chain/instance.json", &chain);
+    let chain = r#"{"tool": "chain", "state": {"order": ["duck"]}}"#;
+    write(folder.path(), "state/song/t00/chain/instance.json", chain);
     write(
         folder.path(),
         "state/song/t01/mix.json",
         &fader(r#""-inf""#),
     );
     let sidechains = match keyed {
-        true => format!(r#"[{{"effect": "t00/chain/{tool}", "from": "t01", "tap": "pre_fx"}}]"#),
-        false => "[]".to_string(),
+        true => r#"[{"effect": "t00/chain/duck", "from": "t01", "tap": "pre_fx"}]"#,
+        false => "[]",
     };
     let song = format!(r#"{{"tool": "song", "state": {{"sidechains": {sidechains}}}}}"#);
     write(folder.path(), "state/song/instance.json", &song);
@@ -277,10 +276,10 @@ fn keyed_by_t01(tool: &str, code: &str, keyed: bool) -> (Harness, Vec<f32>) {
 /// compressor, and the card offers its picker. `t01`'s fader is down, so only the key hears it.
 #[test]
 fn a_sidechain_keys_an_effect_of_the_project() {
-    let (harness, keyed) = keyed_by_t01("ducker", DUCKER, true);
-    let duck = sound_core::InstanceId::new("song/t00/chain/ducker").unwrap();
+    let (harness, keyed) = ducked_by_a_tool_of_the_project(true);
+    let duck = sound_core::InstanceId::new("song/t00/chain/duck").unwrap();
     assert!(harness.project.input_port(&duck, "sidechain").is_some());
-    let (_, open) = keyed_by_t01("ducker", DUCKER, false);
+    let (_, open) = ducked_by_a_tool_of_the_project(false);
     assert!(energy(&open) > 0.0);
     assert!(
         energy(&keyed) < 0.5 * energy(&open),
@@ -288,14 +287,4 @@ fn a_sidechain_keys_an_effect_of_the_project() {
         energy(&keyed),
         energy(&open)
     );
-}
-
-/// The vocoder of the doc of sounds on `t00`, keyed by `t01`: `t00` sounds only through the key.
-#[test]
-fn the_vocoder_of_the_doc_plays_its_track_in_the_shape_of_the_key() {
-    let vocoder = crate::typescript::example_of("extensions-sound", "spectral([");
-    let (_, keyed) = keyed_by_t01("talkbox", &vocoder, true);
-    let (_, unkeyed) = keyed_by_t01("talkbox", &vocoder, false);
-    assert!(energy(&keyed) > 0.0);
-    assert_eq!(energy(&unkeyed), 0.0);
 }

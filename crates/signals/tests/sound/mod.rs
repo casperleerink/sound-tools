@@ -123,12 +123,6 @@ pub(crate) fn noise() -> Signal {
 fn one(op: &str, x: impl Into<Signal>) -> Signal {
     node(op, &[("x", x.into())])
 }
-pub(crate) fn abs(x: impl Into<Signal>) -> Signal {
-    one("abs", x)
-}
-pub(crate) fn max(a: impl Into<Signal>, b: impl Into<Signal>) -> Signal {
-    node("max", &[("a", a.into()), ("b", b.into())])
-}
 pub(crate) fn sin(x: impl Into<Signal>) -> Signal {
     one("sin", x)
 }
@@ -146,9 +140,6 @@ pub(crate) fn phasor(hz: impl Into<Signal>) -> Signal {
 }
 pub(crate) fn hold(x: impl Into<Signal>, when: impl Into<Signal>) -> Signal {
     node("hold", &[("x", x.into()), ("when", when.into())])
-}
-pub(crate) fn smooth(x: impl Into<Signal>, ms: impl Into<Signal>) -> Signal {
-    node("smooth", &[("x", x.into()), ("ms", ms.into())])
 }
 pub(crate) fn mix(a: impl Into<Signal>, b: impl Into<Signal>, amount: impl Into<Signal>) -> Signal {
     node(

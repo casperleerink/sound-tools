@@ -59,16 +59,9 @@ fn freeze() -> Code {
     })
 }
 
-/// The vocoder of the doc of sounds, keyed by its own input: the test plays no sidechain, and
-/// what it hears does not change the work.
-fn vocoder() -> Code {
-    compile(|| {
-        let loudness = max(smooth(abs(input()), 50.0), 0.001);
-        spectral_of_two(input(), input(), 512, |synth, voice| {
-            let shaped = synth.magnitude * smooth(voice.magnitude, 20.0);
-            (shaped / capture(loudness) * 8.0, synth.phase)
-        })
-    })
+/// Bins of a spectrum of 2048 with a second input, left as they are.
+fn two_inputs() -> Code {
+    compile(|| spectral_of_two(input(), input(), 2048, |bin, _| (bin.magnitude, bin.phase)))
 }
 
 /// Run with
@@ -80,7 +73,7 @@ fn realtime_ratio_of_one_hundred_processors() {
         ("echo effect", echo(), Kind::One),
         ("saw source", voice(), Kind::One),
         ("spectral freeze effect", freeze(), Kind::One),
-        ("spectral vocoder effect", vocoder(), Kind::One),
+        ("spectral of two inputs", two_inputs(), Kind::One),
     ] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();

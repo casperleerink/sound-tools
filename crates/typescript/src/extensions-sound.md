@@ -30,6 +30,7 @@ A signal used twice is one: `const lfo = phasor(2)` heard in two places is one o
 - A signal from outside, such as a field, is read once per spectrum. No `delay`, `buffer` or `output` inside.
 - The sound comes out `size` samples late. The project makes up for it, but not inside the sound: mix in the dry sound in the bins, where `bin.mag` and `bin.phase` as they come give `x` back.
 - In a tool of one voice only.
+- `spectral([x, other], size, (bin, other) => ...)` also gets the bin of `other`, such as a `sidechain`, at the same frequency; what goes out is still the spectrum of `x`.
 
 A freeze: the bins hold their level, and each wave turns on by its last step.
 
@@ -53,28 +54,6 @@ tool({
       turned.set(phase);
       return { mag: hold(bin.mag, live), phase };
     }),
-});
-```
-
-Given two inputs, `spectral([x, other], size, (bin, other) => ...)` also gets the bin of `other` at the same frequency; what goes out is still the spectrum of `x`. A vocoder: on a synth, keyed by a voice, each bin of the synth is as loud as that bin of the voice. Over the voice's loudness, it keeps the synth's level whatever the voice's.
-
-```ts
-import { abs, audio, input, max, smooth, spectral, tool } from "./sdk";
-
-tool({
-  name: "talkbox",
-  title: "Talk box",
-  when: "You want a synth to talk or sing with a voice",
-  doc: "Key it with a voice: the sound that comes in takes the shape of the voice.",
-  state: {},
-  inputs: { sidechain: audio() },
-  sound: ({ sidechain }) => {
-    const loudness = max(smooth(abs(sidechain), 50), 0.001);
-    return spectral([input, sidechain], 512, (synth, voice) => ({
-      mag: synth.mag.times(smooth(voice.mag, 20)).over(loudness).times(8),
-      phase: synth.phase,
-    }));
-  },
 });
 ```
 
