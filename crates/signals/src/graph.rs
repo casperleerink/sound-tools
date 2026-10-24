@@ -14,8 +14,8 @@ use sound_core::SvfShape;
 use crate::code::{
     ArraySpec, BinValue, Binary, Code, DEFAULT_DELAY_MS, MAX_ARRAY_LENGTH, MAX_LIVES,
     MAX_MEMORY_SECONDS, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SPECTRA,
-    MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Slots, SpectrumSpec,
-    Table, Unary,
+    MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Side, Slots,
+    SpectrumSpec, Table, Unary,
 };
 use crate::program;
 use crate::processor::MAX_VOICES;
@@ -62,11 +62,14 @@ pub(crate) enum OutputNode {
     Stereo { left: usize, right: usize },
 }
 
-/// Where a table reads: a pattern or sample field by name, or a buffer by its number.
+/// Where a table reads: a pattern or sample field by name, one side of a sample, or a buffer
+/// by its number.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum TableNode {
     List(String),
+    Left(String),
+    Right(String),
     Buffer(usize),
 }
 
@@ -295,6 +298,7 @@ impl Graph {
             ));
         }
         let mut lowering = Lowering::new(&self.nodes, self.feedbacks.len(), &declarations.arrays);
+        lowering.stereo = matches!(self.output, OutputNode::Stereo { .. });
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
             if !(seconds > 0.0) {
@@ -432,6 +436,8 @@ struct Lowering<'a> {
     /// In the graph of the bins of a `spectral`, how many signals of the sound around it they
     /// read.
     captures: Option<usize>,
+    /// Whether the code runs once for both channels.
+    stereo: bool,
     operations: Vec<Operation>,
     slots: Slots,
     lives: Vec<ParameterSpec>,
@@ -449,6 +455,7 @@ impl<'a> Lowering<'a> {
             feedbacks,
             arrays,
             captures: None,
+            stereo: false,
             operations: Vec::new(),
             slots: Slots {
                 histories: feedbacks as u16,
@@ -558,14 +565,26 @@ impl<'a> Lowering<'a> {
     }
 
     fn table(&self, table: &TableNode) -> Result<Table, GraphError> {
-        match table {
-            TableNode::List(name) => match self.arrays.iter().position(|a| a.name == *name) {
-                Some(index) => Ok(Table::Array(index as u16)),
-                None => error(format!(
-                    "`{name}` is no pattern or sample field of the tool"
-                )),
+        let (name, side) = match table {
+            TableNode::Buffer(index) => return Ok(Table::Buffer(self.buffer(*index)?)),
+            TableNode::List(name) => match self.stereo || self.captures.is_some() {
+                true => (name, Side::Both),
+                false => (name, Side::Channel),
             },
-            TableNode::Buffer(index) => Ok(Table::Buffer(self.buffer(*index)?)),
+            TableNode::Left(name) => (name, Side::Left),
+            TableNode::Right(name) => (name, Side::Right),
+        };
+        let found = self.arrays.iter().enumerate().find(|(_, a)| a.name == *name);
+        match (found, table) {
+            // A sample is as long as its sound; a pattern has a length.
+            (Some((index, array)), _) if array.length.is_none() => {
+                Ok(Table::Sample(index as u16, side))
+            }
+            (Some((index, _)), TableNode::List(_)) => Ok(Table::Array(index as u16)),
+            (None, TableNode::List(_)) => error(format!(
+                "`{name}` is no pattern or sample field of the tool"
+            )),
+            _ => error(format!("`{name}` is no sample field of the tool")),
         }
     }
 

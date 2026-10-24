@@ -22,7 +22,7 @@ use sound_notes::{
 
 use crate::cable::{Bang, Control, Number};
 use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_OUTPUTS, MAX_PARAMETERS};
-use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values, held};
+use crate::machine::{Block, Frames, Inputs, LIMIT, List, Machine, Note, QUIET, Values, held};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
@@ -135,7 +135,7 @@ pub struct Signals {
     voice_frames: [Frames; 2],
     /// How many params and live controls the code has, so a block moves only those.
     counts: (usize, usize),
-    arrays: Vec<Vec<f32>>,
+    arrays: Vec<List>,
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
     holds: Holds,
@@ -596,7 +596,7 @@ impl Voice for SignalsVoice {
 /// What a voice reads in a span besides its note.
 struct Shared<'a> {
     block: &'a Block,
-    arrays: &'a [Vec<f32>],
+    arrays: &'a [List],
     bend: f32,
     fade_frames: usize,
     quiet_limit: usize,

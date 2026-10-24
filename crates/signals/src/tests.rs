@@ -9,7 +9,7 @@ pub(crate) mod sound;
 
 use sound_core::{MAX_BLOCK, SvfShape};
 
-use crate::machine::{Block, Inputs, Machine, Note};
+use crate::machine::{Block, Inputs, List, Machine, Note};
 use crate::{Code, Declarations, Graph};
 use sound::*;
 
@@ -29,7 +29,7 @@ fn defaults(machine: &Machine) -> Box<Block> {
 }
 
 /// One frame of both channels, the first of `block`.
-fn frame(machine: &mut Machine, block: &Block, arrays: &[Vec<f32>], note: Note) -> [f32; 2] {
+fn frame(machine: &mut Machine, block: &Block, arrays: &[List], note: Note) -> [f32; 2] {
     let mut output = [[0.0; MAX_BLOCK]; 2];
     let inputs = Inputs {
         block,
@@ -44,7 +44,7 @@ fn frame(machine: &mut Machine, block: &Block, arrays: &[Vec<f32>], note: Note) 
 /// record.
 fn run_with(
     machine: &mut Machine,
-    arrays: &[Vec<f32>],
+    arrays: &[List],
     note: impl Fn(usize) -> Note,
     input: impl Fn(usize) -> f32,
     frames: usize,
@@ -362,13 +362,13 @@ fn a_list_of_the_record_is_read_by_index_and_looked_up_between_its_values() {
         // `position` reads what it was in the frame before: 0, 1, 2 ...
         steps.at(position.read())
     }));
-    let arrays = vec![vec![1.0, 0.0, 0.5, 0.25]];
+    let arrays = vec![List::One(vec![1.0, 0.0, 0.5, 0.25])];
     let output = run_with(&mut steps, &arrays, |_| Note::default(), |_| 0.0, 6);
     // The index is the whole part, and wraps.
     assert_eq!(output, [1.0, 0.0, 0.5, 0.25, 1.0, 0.0]);
 
     let mut table = machine(compile(|| lookup(&pattern("wave", 2), input())));
-    let arrays = vec![vec![0.0, 1.0]];
+    let arrays = vec![List::One(vec![0.0, 1.0])];
     let phases = [0.0, 0.25, 0.5, 0.75];
     let output = run_with(
         &mut table,
@@ -379,6 +379,74 @@ fn a_list_of_the_record_is_read_by_index_and_looked_up_between_its_values() {
     );
     // Between the values in a straight line, and from the last back to the first.
     assert_eq!(output, [0.0, 0.5, 1.0, 0.5]);
+}
+
+#[test]
+fn a_looper_plays_two_minutes_of_its_input_back_bit_for_bit_on_each_channel() {
+    const LOOP: usize = 120 * SAMPLE_RATE as usize;
+    let mut looper = machine(compile(|| {
+        let tape = buffer(120.0);
+        let count = feedback();
+        let frame = count.read();
+        count.set(frame + 1.0);
+        let recording = frame.lt(LOOP as f32);
+        let old = tape.at(frame);
+        tape.write(frame, input() * recording + old * (1.0 - recording));
+        old
+    }));
+    // A different noise on each channel.
+    let input = |channel: usize, frame: usize| {
+        let seed = (frame * 2 + channel + 1) as u32;
+        seed.wrapping_mul(2_654_435_761) as f32 / u32::MAX as f32 * 2.0 - 1.0
+    };
+    let mut block = defaults(&looper);
+    let mut output = [[0.0; MAX_BLOCK]; 2];
+    for start in (0..2 * LOOP).step_by(MAX_BLOCK) {
+        for (channel, row) in block.input.iter_mut().enumerate() {
+            for (offset, sample) in row.iter_mut().enumerate() {
+                *sample = input(channel, start + offset);
+            }
+        }
+        let inputs = Inputs {
+            block: &block,
+            arrays: &[],
+            note: Note::default(),
+        };
+        looper.render(&inputs, 0..MAX_BLOCK, &mut output);
+        for (channel, row) in output.iter().enumerate() {
+            for (offset, sample) in row.iter().enumerate() {
+                let frame = start + offset;
+                let expected = frame.checked_sub(LOOP).map_or(0.0, |at| input(channel, at));
+                assert_eq!(sample.to_bits(), expected.to_bits(), "frame {frame}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_sample_in_stereo_plays_each_side_on_its_channel_and_both_mixed_where_the_code_runs_once() {
+    let read = |code: Code, arrays: &[List]| {
+        let mut machine = machine(code);
+        let block = defaults(&machine);
+        frame(&mut machine, &block, arrays, Note::default())
+    };
+    let stereo = [List::Stereo(vec![1.0, 0.0], vec![0.5, 0.0])];
+    let own = || sample("sound").at(0.0) * 2.0;
+    assert_eq!(read(compile(own), &stereo), [2.0, 1.0]);
+    let looked_up = || lookup(&sample("sound"), 0.0);
+    assert_eq!(read(compile(looked_up), &stereo), [1.0, 0.5]);
+    // A sample of one channel is the same on both.
+    assert_eq!(read(compile(own), &[List::One(vec![0.25])]), [0.5, 0.5]);
+    let crossed = || {
+        let sound = sample("sound");
+        (sound.side("right").at(0.0), sound.side("left").at(0.0))
+    };
+    assert_eq!(read(compile(crossed), &stereo), [0.5, 1.0]);
+    let mixed = || {
+        let sound = sample("sound");
+        (sound.at(0.0), lookup(&sound, 0.0))
+    };
+    assert_eq!(read(compile(mixed), &stereo), [0.75, 0.75]);
 }
 
 #[test]
