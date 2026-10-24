@@ -15,9 +15,11 @@
 //! head plays each part at the ratio and with the period of that part. The latency leaves the
 //! head room for that and for its window.
 //!
-//! A head that reads faster folds what lies above the new Nyquist frequency down, so what goes
-//! into the ring passes a low pass under it first, worked out again when the ratio moves by
-//! more than [`REDESIGN`].
+//! The head reads between frames with a windowed sinc. Reading faster would fold what lies
+//! above the new Nyquist frequency down, so there the sinc is stretched by the ratio over
+//! [`CUTOFF`], and cuts under it. Both are symmetric, so the sound read keeps its phase and
+//! lines up with the sound as it came, for a mix of the two. A low pass in front of the ring
+//! would not.
 //!
 //! Reading faster also moves the envelope of the spectrum up, the formants that make a voice
 //! sound like that voice. With formants kept, a second ring holds the sound with its envelope
@@ -29,11 +31,24 @@
 use std::f64::consts::PI;
 use std::sync::LazyLock;
 
-use crate::resample::SincTable;
+use crate::resample::{SincTable, kaiser, sinc};
+use sound_core::bessel_i0;
 
-/// Taps each side of a place of the head.
+/// Taps each side of a place of the head, at a ratio up to 1.
 const HALF: usize = 8;
-static TABLE: LazyLock<SincTable> = LazyLock::new(|| SincTable::new(HALF, 256, 1.0, 7.0));
+const PHASES: usize = 256;
+/// The Kaiser window of the sinc, about 70 dB down outside its main lobe.
+const BETA: f64 = 7.0;
+static TABLE: LazyLock<SincTable> = LazyLock::new(|| SincTable::new(HALF, PHASES, 1.0, BETA));
+/// The same sinc at every `1 / PHASES` from `-HALF` to `HALF`, for the stretched one.
+static CURVE: LazyLock<Box<[f32]>> = LazyLock::new(|| {
+    let normal = bessel_i0(BETA);
+    let curve = (0..=2 * HALF * PHASES).map(|index| {
+        let distance = index as f64 / PHASES as f64 - HALF as f64;
+        (sinc(distance) * kaiser(distance / HALF as f64, BETA, normal)) as f32
+    });
+    curve.collect()
+});
 
 /// How far the head may be from where it should be, as a part of the period, before it jumps.
 const WINDOW: f64 = 0.6;
@@ -47,10 +62,9 @@ const HOLD_SECONDS: f64 = 0.05;
 const SHORTEST_PERIOD: f64 = 16.0;
 /// The ratios the head reads at.
 const RATIOS: (f64, f64) = (0.5, 2.0);
-/// The low pass before the ring is worked out again when the ratio moves by more than this.
-const REDESIGN: f64 = 0.02;
-/// Where the low pass cuts, as a part of the sample rate over the ratio.
-const CUTOFF: f64 = 0.45;
+/// Above a ratio of 1, where the stretched sinc cuts, as a part of the Nyquist frequency over
+/// the ratio: its transition then ends under that frequency.
+const CUTOFF: f64 = 0.9;
 /// How long a change of formants takes.
 const KEEP_SECONDS: f64 = 0.02;
 
@@ -113,7 +127,6 @@ pub struct Shifter {
     /// The last period, and for how many more frames it holds.
     held: f64,
     holding: usize,
-    low_pass: LowPass,
     formants: Formants,
     /// Whether formants are kept, how far a change of it is, 0 to 1, and how many frames the
     /// flat ring has been filled for.
@@ -127,14 +140,15 @@ impl Shifter {
     /// readings at most `oldest` frames old.
     pub fn new(rate: f64, longest: f64, oldest: f64) -> Self {
         LazyLock::force(&TABLE);
+        LazyLock::force(&CURVE);
         let longest = longest.max(SHORTEST_PERIOD);
         // The head is where it should be once a reading of a period describes it, and the head it
         // fades from stays clear of the newest frame at a ratio of 2.
         let latency = (oldest + longest * WINDOW)
             .max(longest * (1.0 + WINDOW) + (HALF + 1) as f64)
             .ceil();
-        // The head behind by its window and a fade at a ratio of a half, and its taps.
-        let length = (latency + longest * 2.0) as usize + 4 * HALF;
+        // The head behind by its window and a fade at a ratio of a half, and its widest taps.
+        let length = (latency + longest * 2.0) as usize + 8 * HALF;
         Self {
             latency,
             longest,
@@ -153,7 +167,6 @@ impl Shifter {
             fade_step: 0.0,
             held: 0.0,
             holding: 0,
-            low_pass: LowPass::new(),
             formants: Formants::new(rate, length),
             keeping: false,
             keep: 0.0,
@@ -178,14 +191,10 @@ impl Shifter {
     /// Hears the next frame, with what the tracker read last.
     pub fn push(&mut self, frame: [f32; 2], shift: Shift) {
         let ratio = shift.ratio.clamp(RATIOS.0, RATIOS.1);
-        self.low_pass.aim(ratio);
-        let flat = self.keeping || self.keep > 0.0;
-        let low = self.low_pass.filter(0, frame);
-        self.sound.write(self.written, low);
-        if flat {
-            let flattened = self.formants.flatten(self.written, frame);
-            let low = self.low_pass.filter(1, flattened);
-            self.flat.write(self.written, low);
+        self.sound.write(self.written, frame);
+        if self.keeping || self.keep > 0.0 {
+            let flat = self.formants.flatten(self.written, frame);
+            self.flat.write(self.written, flat);
             self.filled = self.filled.saturating_add(1);
         }
         let described = self.written - shift.age.round() as i64;
@@ -233,9 +242,12 @@ impl Shifter {
             true => (0.5 - 0.5 * (PI * self.fade).cos()) as f32,
             false => 1.0,
         };
-        let both = |ring: &Ring| match weight >= 1.0 {
-            true => ring.read(self.head),
-            false => between(ring.read(self.fading_from), ring.read(self.head), weight),
+        let both = |ring: &Ring| {
+            let now = ring.read(self.head, ratio);
+            match weight >= 1.0 {
+                true => now,
+                false => between(ring.read(self.fading_from, ratio), now, weight),
+            }
         };
         let mut out = both(&self.sound);
         if self.keep > 0.0 {
@@ -313,73 +325,51 @@ impl Ring {
         }
     }
 
-    /// The sound at `place`, between its frames by the windowed sinc.
-    fn read(&self, place: f64) -> [f32; 2] {
+    /// The sound at `place`, between its frames by the windowed sinc, stretched to cut under
+    /// what a head at `ratio` would fold.
+    fn read(&self, place: f64, ratio: f64) -> [f32; 2] {
         let whole = place.floor();
-        let first = whole as i64 - HALF as i64 + 1;
+        if ratio <= 1.0 {
+            let first = whole as i64 - HALF as i64 + 1;
+            let start = first.rem_euclid(self.length as i64) as usize;
+            let frames = self.frames.get(start..).unwrap_or_default();
+            return TABLE.apply(frames, 0, place - whole);
+        }
+        let stretch = ratio / CUTOFF;
+        let reach = (HALF as f64 * stretch).ceil() as i64;
+        let first = whole as i64 - reach + 1;
         let start = first.rem_euclid(self.length as i64) as usize;
-        let frames = self.frames.get(start..).unwrap_or_default();
-        TABLE.apply(frames, 0, place - whole)
+        let Some(frames) = self.frames.get(start..start + 2 * reach as usize) else {
+            return [0.0; 2];
+        };
+        let (inverse, past) = ((1.0 / stretch) as f32, (place - whole) as f32);
+        let (mut sum, mut weights) = ([0.0_f32; 2], 0.0_f32);
+        for (tap, frame) in frames.iter().enumerate() {
+            let weight = kernel((tap as i64 - reach + 1) as f32 - past, inverse);
+            sum = [sum[0] + weight * frame[0], sum[1] + weight * frame[1]];
+            weights += weight;
+        }
+        // A steady level comes out at that level.
+        match weights > 0.0 {
+            true => sum.map(|sample| sample / weights),
+            false => [0.0; 2],
+        }
     }
 }
 
-/// Two sections of a fourth-order Butterworth low pass, for the sound and the flat sound of
-/// each channel.
-struct LowPass {
-    ratio: f64,
-    factors: [Biquad; 2],
-    states: [[[[f32; 2]; 2]; 2]; 2],
-}
-
-/// The factors of one section: `b0`, `b1`, `b2`, `a1`, `a2`.
-#[derive(Clone, Copy, Default)]
-struct Biquad([f32; 5]);
-
-impl LowPass {
-    fn new() -> Self {
-        let mut low_pass = Self {
-            ratio: f64::NAN,
-            factors: [Biquad::default(); 2],
-            states: [[[[0.0; 2]; 2]; 2]; 2],
-        };
-        low_pass.aim(1.0);
-        low_pass
+/// The stretched sinc at `distance` frames, `inverse` the inverse of its stretch.
+#[inline]
+fn kernel(distance: f32, inverse: f32) -> f32 {
+    let place = (distance * inverse + HALF as f32) * PHASES as f32;
+    // Before the kernel, and a place that is not a number, weigh nothing.
+    if place.is_nan() || place <= 0.0 {
+        return 0.0;
     }
-
-    fn aim(&mut self, ratio: f64) {
-        let ratio = ratio.max(1.0);
-        if (ratio / self.ratio - 1.0).abs() <= REDESIGN {
-            return;
-        }
-        self.ratio = ratio;
-        let angle = 2.0 * PI * CUTOFF / ratio;
-        let (sin, cos) = angle.sin_cos();
-        for (factors, q) in self.factors.iter_mut().zip([0.541_196_1, 1.306_563]) {
-            let alpha = sin / (2.0 * q);
-            let a0 = 1.0 + alpha;
-            let b = (1.0 - cos) / 2.0 / a0;
-            *factors = Biquad(
-                [b, 2.0 * b, b, -2.0 * cos / a0, (1.0 - alpha) / a0].map(|factor| factor as f32),
-            );
-        }
-    }
-
-    /// One frame of the sound (`ring` 0) or the flat sound (1) through both sections.
-    fn filter(&mut self, ring: usize, frame: [f32; 2]) -> [f32; 2] {
-        let mut out = frame;
-        let Some(states) = self.states.get_mut(ring) else {
-            return out;
-        };
-        for (sample, states) in out.iter_mut().zip(states) {
-            for (Biquad([b0, b1, b2, a1, a2]), state) in self.factors.iter().zip(states) {
-                let input = *sample;
-                let output = b0 * input + state[0];
-                state[0] = b1 * input - a1 * output + state[1];
-                state[1] = b2 * input - a2 * output;
-                *sample = output;
-            }
-        }
-        out
+    let index = place as usize;
+    let between = place - index as f32;
+    match (CURVE.get(index), CURVE.get(index + 1)) {
+        (Some(lower), Some(upper)) => lower + between * (upper - lower),
+        _ => 0.0,
     }
 }
 
@@ -653,7 +643,7 @@ mod tests {
 
     #[test]
     fn with_no_shift_the_sound_comes_out_as_it_went_in_as_late_as_it_says() {
-        let sound = tone(0.5, 440.0, &[0.5], |_| true);
+        let sound = tone(0.5, 440.0, &[0.5, 0.2], |_| true);
         let mut shifter = Shifter::new(RATE, 600.0, 1_000.0);
         let output: Vec<f32> = (sound.iter())
             .map(|sample| {
@@ -662,14 +652,21 @@ mod tests {
             })
             .collect();
         let latency = shifter.latency();
-        // The low pass in front of the ring is a little late at the top and nowhere else.
-        for (frame, sample) in output.iter().enumerate().skip(latency + 1_000) {
-            let expected = sound[frame - latency];
-            assert!(
-                (sample - expected).abs() < 0.03,
-                "{frame}: {sample} for {expected}"
-            );
-        }
+        assert_eq!(output[..latency], vec![0.0; latency]);
+        assert_eq!(output[latency..], sound[..sound.len() - latency]);
+    }
+
+    #[test]
+    fn a_head_that_reads_faster_folds_nothing_down() {
+        // A voice at 220 Hz with air at 18 kHz, a fifth up: the air would land at 27 kHz, above
+        // the Nyquist frequency, and fold down to 21 kHz.
+        let voice = tone(1.0, 220.0, &[0.3, 0.1], |_| true);
+        let air = tone(1.0, 18_000.0, &[0.1], |_| true);
+        let sound: Vec<f32> = voice.iter().zip(&air).map(|(voice, air)| voice + air).collect();
+        let (output, _) = shift(&sound, 1.5, false);
+        let steady = &output[(0.5 * RATE) as usize..];
+        let folded = power_at(steady, 48_000.0 - 27_000.0) / power_at(&air, 18_000.0);
+        assert!(10.0 * folded.log10() < -50.0, "folded at {} dB", 10.0 * folded.log10());
     }
 
     #[test]

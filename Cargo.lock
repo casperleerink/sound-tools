@@ -4837,6 +4837,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pitch-correction"
+version = "0.13.1"
+dependencies = [
+ "gpui",
+ "schemars",
+ "serde",
+ "sound-core",
+ "sound-media",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5606,6 +5619,7 @@ dependencies = [
  "metronome",
  "midi",
  "modulation",
+ "pitch-correction",
  "plugin-host",
  "reverb",
  "sampler",

@@ -6,7 +6,7 @@
 
 A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent sidebar runs Claude Code in the project folder. Any coding agent in a terminal works too.
 
-What a new project can start from: Bare, an empty project, or a DAW written in TypeScript as any tool of a project, with instrument and audio tracks, clips with notes or audio, a synth, a Wavetable, a Sampler, a Drum pad, CLAP and VST 3 plugins, eleven effects (Filter, Compressor, Gate with a transient shaper, Limiter, EQ, Delay, Reverb, Saturator, Utility, Modulation: a chorus, flanger and phaser, and a Vocoder that another track's voice keys), an Analyzer that shows the spectrum, level and pitch of a track, a mixer with a limited master, and MIDI and audio recording. Change any of it, or ask the agent to.
+What a new project can start from: Bare, an empty project, or a DAW written in TypeScript as any tool of a project, with instrument and audio tracks, clips with notes or audio, a synth, a Wavetable, a Sampler, a Drum pad, CLAP and VST 3 plugins, twelve effects (Filter, Compressor, Gate with a transient shaper, Limiter, EQ, Delay, Reverb, Saturator, Utility, Modulation: a chorus, flanger and phaser, a Vocoder that another track's voice keys, and Pitch correction), an Analyzer that shows the spectrum, level and pitch of a track, a mixer with a limited master, and MIDI and audio recording. Change any of it, or ask the agent to.
 
 ## Requirements
 
