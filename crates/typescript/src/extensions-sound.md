@@ -54,6 +54,27 @@ tool({
 });
 ```
 
+Given two inputs, `spectral([x, other], size, (bin, other) => ...)` also gets the bin of `other` at the same frequency; what goes out is still the spectrum of `x`. A vocoder: a chord of saws, as loud in each bin as the sound that comes in.
+
+```ts
+import { input, mtof, number, saw, smooth, spectral, tool } from "./sdk";
+
+tool({
+  name: "vocoder",
+  title: "Vocoder",
+  when: "You want a voice or a beat to play a chord",
+  doc: "The sound that comes in shapes a chord of saws on `root`, so a voice sings the chord.",
+  state: { root: number({ min: 36, max: 72, default: 48, integer: true }) },
+  sound: ({ root }) => {
+    const chord = saw(mtof(root)).plus(saw(mtof(root.plus(7)))).plus(saw(mtof(root.plus(12))));
+    return spectral([chord, input], 512, (saws, voice) => ({
+      mag: saws.mag.times(smooth(voice.mag, 20)).times(2),
+      phase: saws.phase,
+    }));
+  },
+});
+```
+
 ## Limits
 
 A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. With more voices than one, a voice ends when its gate is 0 and it has been silent for 50 ms with nothing left in its `delay`s, so multiply it by an `adsr` of `note.gate`.

@@ -149,6 +149,8 @@ pub(crate) struct Slots {
 #[derive(Clone, Debug)]
 pub(crate) struct SpectrumSpec {
     pub(crate) size: usize,
+    /// It takes a second input, see [`Operation::Spectral`].
+    pub(crate) side: bool,
     pub(crate) code: Code,
     pub(crate) captures: Vec<Register>,
 }
@@ -247,6 +249,8 @@ pub(crate) enum Operation {
     },
     Spectral {
         input: Register,
+        /// A second input, whose bins the code reads beside those of `input`.
+        side: Option<Register>,
         slot: u16,
     },
     /// What a bin of a spectrum is, in the code of a `spectral`.
@@ -259,6 +263,8 @@ pub(crate) enum BinValue {
     Phase,
     Hz,
     Index,
+    SideMagnitude,
+    SidePhase,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
