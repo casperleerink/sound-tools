@@ -1,5 +1,5 @@
 //! The sounds a `sample` field of a tool names, as its sound reads them: a file under
-//! `assets/audio/`, mixed to one channel at the rate of the engine. One cache for the process,
+//! `assets/audio/`, in stereo or one channel at the rate of the engine. One cache for the process,
 //! by file and rate: a file is read once while it stays the same, a failure too, so a turn of a
 //! knob or a save of the tool reads nothing again. In the window a file is read on a thread of
 //! its own, as a minute of sound takes about half a second: the tool plays without it until it
@@ -12,12 +12,14 @@ use sound_core::{Assets, InstanceId};
 use sound_media::{
     AudioAsset, Keep, Loader, SCRATCH_FRAMES, Stamp, engine_frames, load, resampler,
 };
+use sound_signals::List;
 
-/// The longest sample a tool holds: a list of the record is held in memory whole.
-const MAX_SECONDS: f64 = 60.0;
+/// The longest sample a tool holds: a list of the record is held in memory whole, here and in
+/// the copy that plays.
+const MAX_SECONDS: f64 = 600.0;
 
 /// What a list of a record holds, so only copies of it play: kept for the process.
-static SAMPLES: Loader<(PathBuf, u32), Vec<f32>> = Loader::new("sample", Keep::Always);
+static SAMPLES: Loader<(PathBuf, u32), List> = Loader::new("sample", Keep::Always);
 
 /// The instances of the project of `assets` whose sample was read since the last call, to run
 /// their behaviour again.
@@ -26,14 +28,14 @@ pub(crate) fn take_read(assets: &Assets) -> Vec<InstanceId> {
 }
 
 /// The sound of `file`, a file name under `assets/audio/` such as `voice.wav`, at
-/// `sample_rate`, one channel. `None` while it is read on its thread for `waiter`. The message
+/// `sample_rate`. `None` while it is read on its thread for `waiter`. The message
 /// says what to do when it cannot be read.
 pub(crate) fn sample(
     assets: &Assets,
     file: &str,
     sample_rate: u32,
     waiter: &InstanceId,
-) -> Result<Option<Arc<Vec<f32>>>, String> {
+) -> Result<Option<Arc<List>>, String> {
     let asset = AudioAsset::new(file).map_err(|error| format!("{file:?}: {error}"))?;
     let path = assets.path(asset.asset_name());
     let read = {
@@ -46,7 +48,7 @@ pub(crate) fn sample(
     SAMPLES.get((path, sample_rate), (assets, waiter), read)
 }
 
-fn read(assets: &Assets, asset: &AudioAsset, sample_rate: u32) -> Result<Vec<f32>, String> {
+fn read(assets: &Assets, asset: &AudioAsset, sample_rate: u32) -> Result<List, String> {
     let audio = load(assets, asset).map_err(|error| error.to_string())?;
     if audio.seconds() > MAX_SECONDS {
         return Err(format!(
@@ -59,50 +61,72 @@ fn read(assets: &Assets, asset: &AudioAsset, sample_rate: u32) -> Result<Vec<f32
     let mut stereo = vec![[0.0_f32; 2]; usize::try_from(frames).unwrap_or(0)];
     let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
     resampler(audio.sample_rate(), sample_rate).render(&audio, 0, 0, &mut stereo, &mut scratch);
-    Ok(stereo
-        .iter()
-        .map(|[left, right]| (left + right) * 0.5)
-        .collect())
+    let side = |side: fn(&[f32; 2]) -> f32| stereo.iter().map(side).collect();
+    Ok(match audio.channels() {
+        1 => List::One(side(|[left, right]| (left + right) * 0.5)),
+        _ => List::Stereo(side(|[left, _]| *left), side(|[_, right]| *right)),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A second of a 441 Hz sine at 44.1 kHz, mono.
-    fn write_sine(folder: &std::path::Path) {
+    /// A second of a 441 Hz sine at 44.1 kHz, as `name`: of one channel, or on the left of two
+    /// with the right silent.
+    fn write_sine(folder: &std::path::Path, name: &str, channels: u16) {
         let audio = folder.join("assets/audio");
         std::fs::create_dir_all(&audio).unwrap();
         let spec = hound::WavSpec {
-            channels: 1,
+            channels,
             sample_rate: 44_100,
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
         };
-        let mut writer = hound::WavWriter::create(audio.join("sine.wav"), spec).unwrap();
+        let mut writer = hound::WavWriter::create(audio.join(name), spec).unwrap();
         for frame in 0..44_100 {
             let phase = frame as f32 * 441.0 / 44_100.0;
             let sample = (phase * std::f32::consts::TAU).sin() * 0.5;
             writer
                 .write_sample((sample * f32::from(i16::MAX)) as i16)
                 .unwrap();
+            if channels == 2 {
+                writer.write_sample(0_i16).unwrap();
+            }
         }
         writer.finalize().unwrap();
+    }
+
+    fn loudest(values: &[f32]) -> f32 {
+        values.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()))
     }
 
     #[test]
     fn a_sample_is_read_at_the_rate_of_the_engine_and_kept() {
         let folder = tempfile::tempdir().unwrap();
-        write_sine(folder.path());
+        write_sine(folder.path(), "sine.wav", 1);
+        write_sine(folder.path(), "left.wav", 2);
         let assets = Assets::new(folder.path());
         let id = InstanceId::new("sine").unwrap();
         let sound = sample(&assets, "sine.wav", 48_000, &id).unwrap().unwrap();
+        let List::One(values) = &*sound else {
+            panic!("a file of one channel is a list of one");
+        };
         // A second at 48 kHz, with its level.
-        assert!((sound.len() as i64 - 48_000).abs() <= 1, "{}", sound.len());
-        let loudest = sound[1_000..47_000]
-            .iter()
-            .fold(0.0_f32, |peak, s| peak.max(s.abs()));
-        assert!((loudest - 0.5).abs() < 0.01, "{loudest}");
+        assert!(
+            (values.len() as i64 - 48_000).abs() <= 1,
+            "{}",
+            values.len()
+        );
+        let level = loudest(&values[1_000..47_000]);
+        assert!((level - 0.5).abs() < 0.01, "{level}");
+        // A file of two keeps them apart.
+        let stereo = sample(&assets, "left.wav", 48_000, &id).unwrap().unwrap();
+        let List::Stereo(left, right) = &*stereo else {
+            panic!("a file of two channels is a list in stereo");
+        };
+        assert_eq!(left.len(), right.len());
+        assert!((loudest(left) - 0.5).abs() < 0.01 && loudest(right) == 0.0);
         // Kept: the same list, not read again.
         let again = sample(&assets, "sine.wav", 48_000, &id).unwrap().unwrap();
         assert!(Arc::ptr_eq(&sound, &again));

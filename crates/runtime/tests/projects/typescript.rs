@@ -448,12 +448,13 @@ tool({
 });
 "#;
 
-/// A second of a 441 Hz sine at 44.1 kHz.
-fn write_sine(root: &Path) {
+/// A second of a 441 Hz sine at 44.1 kHz: of one channel, or on the left of two with the right
+/// silent.
+fn write_sine(root: &Path, channels: u16) {
     let audio = root.join("assets/audio");
     std::fs::create_dir_all(&audio).unwrap();
     let spec = hound::WavSpec {
-        channels: 1,
+        channels,
         sample_rate: 44_100,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
@@ -464,8 +465,19 @@ fn write_sine(root: &Path) {
         writer
             .write_sample((sample * f32::from(i16::MAX)) as i16)
             .unwrap();
+        if channels == 2 {
+            writer.write_sample(0_i16).unwrap();
+        }
     }
     writer.finalize().unwrap();
+}
+
+/// How often `samples` rises through 0.
+fn rises(samples: impl Iterator<Item = f32>) -> usize {
+    let samples: Vec<f32> = samples.collect();
+    (samples.windows(2))
+        .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+        .count()
 }
 
 #[test]
@@ -490,16 +502,38 @@ fn a_sample_plays_once_its_file_is_there() {
     let silent = harness.play_from_the_start(4_800);
     assert!(silent.iter().all(|sample| *sample == 0.0));
 
-    write_sine(harness.project.root());
+    write_sine(harness.project.root(), 1);
     let audio = harness.path("assets/audio/sine.wav");
     harness.apply(&[audio]);
     assert_eq!(harness.project.problems(), []);
     let played = harness.play_from_the_start(48_000);
-    let left: Vec<f32> = played.iter().step_by(2).copied().collect();
-    let rises = left
-        .windows(2)
-        .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
-        .count();
+    let rises = rises(played.iter().step_by(2).copied());
     // 441 Hz for a second, give or take the edges.
     assert!((rises as i64 - 441).abs() <= 2, "{rises} rises");
+}
+
+#[test]
+fn a_sample_in_stereo_plays_its_left_and_right_apart() {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/player.ts", PLAYER);
+    write_sine(folder.path(), 2);
+    let player = r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#;
+    for (path, contents) in racks_files(&[("player", &[("instrument", player)])]) {
+        write(folder.path(), &path, &contents);
+    }
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.play_from_the_start(48_000);
+    let rises = rises(played.iter().step_by(2).copied());
+    assert!((rises as i64 - 441).abs() <= 2, "{rises} rises on the left");
+    let right = played.iter().skip(1).step_by(2);
+    assert!(
+        right.clone().all(|sample| *sample == 0.0),
+        "{:?}",
+        right.max_by(|a, b| a.total_cmp(b))
+    );
 }
