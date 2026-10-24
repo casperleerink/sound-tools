@@ -490,6 +490,12 @@ impl Machine {
             match operation {
                 // Set when the machine was made.
                 Operation::Constant(_) | Operation::SampleRate => continue,
+                Operation::Noise { slot } => {
+                    let out = registers.get_mut(register).into_iter().flatten();
+                    for (out, lane) in out.zip(lanes.iter_mut()) {
+                        *out = (lane.noises.get_mut(usize::from(*slot))).map_or(0.0, noise);
+                    }
+                }
                 Operation::History(slot) => {
                     let out = registers.get_mut(register).into_iter().flatten();
                     for (out, lane) in out.zip(lanes.iter()) {
@@ -518,7 +524,7 @@ impl Machine {
                         }
                     }
                 }
-                // What reads no memory, but a noise: one sequence over the bins.
+                // What reads no memory.
                 _ => {
                     let Some(memory) = lanes.first_mut() else {
                         return;
@@ -753,8 +759,7 @@ impl Span<'_> {
                 Some(kept) => {
                     let mut state = *kept;
                     for out in out.iter_mut() {
-                        state = xorshift32(state);
-                        *out = state as f32 / u32::MAX as f32 * 2.0 - 1.0;
+                        *out = noise(&mut state);
                     }
                     *kept = state;
                 }
@@ -1575,6 +1580,13 @@ fn write(buffer: Option<&mut Vec<f32>>, index: f32, value: f32) -> f32 {
         *sample = value;
     }
     value
+}
+
+/// The next value of a white noise from -1 to 1, and moves its `state` on.
+#[inline(always)]
+fn noise(state: &mut u32) -> f32 {
+    *state = xorshift32(*state);
+    *state as f32 / u32::MAX as f32 * 2.0 - 1.0
 }
 
 /// What leaves the code: held to [`LIMIT`], and 0 where it is not a number.

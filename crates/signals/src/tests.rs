@@ -527,6 +527,12 @@ fn a_graph_that_does_not_hold_says_what_is_wrong_in_the_words_of_the_sdk() {
 
 #[test]
 fn a_sine_through_bins_left_as_they_are_comes_out_as_it_went_in_as_late_as_the_code_says() {
+    let through_feedback = compile(|| {
+        let late = feedback();
+        late.set(spectral(input(), 256, |bin| (bin.magnitude, bin.phase)));
+        late.read()
+    });
+    assert_eq!(through_feedback.latency, 255);
     let code = compile(|| spectral(input(), 1024, |bin| (bin.magnitude, bin.phase)));
     assert_eq!(code.latency, 1023);
     let mut through = machine(code);

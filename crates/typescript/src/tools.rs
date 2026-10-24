@@ -786,8 +786,7 @@ impl Sounds {
                     if events && info.voices > 1 {
                         return Err("a sound of more voices than one sends no bangs or notes, as each of its voices would: give it one voice, which follows the newest note".to_string());
                     }
-                    // Only a spectrum makes a sound late.
-                    if code.latency > 0 && info.voices > 1 {
+                    if code.has_spectra() && info.voices > 1 {
                         return Err("spectral works in a tool of one voice: give it one voice, which follows the newest note".to_string());
                     }
                     Ok(Arc::new(code))

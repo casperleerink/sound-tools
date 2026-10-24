@@ -95,6 +95,11 @@ pub struct Code {
 }
 
 impl Code {
+    /// Whether it calls `spectral`, which costs a transform per voice.
+    pub fn has_spectra(&self) -> bool {
+        !self.slots.spectra.is_empty()
+    }
+
     /// Whether what leaves it is what comes in, on each channel, and nothing else leaves: the
     /// code of a tool with no sound.
     pub(crate) fn passes_input(&self) -> bool {

@@ -314,27 +314,39 @@ fn operands(operation: Operation) -> Vec<Register> {
 }
 
 /// How many samples late what leaves `code` comes out: the most of the spectra on any way to
-/// it. A feedback adds none: it hears the frame before.
+/// it. A feedback is as late as what it is set to, one feedback deep, so a loop through a
+/// spectrum does not grow without end.
 pub(crate) fn latency(code: &Code) -> u32 {
-    let mut latencies: Vec<usize> = Vec::with_capacity(code.operations.len());
-    for operation in &code.operations {
-        let before = (operands(*operation).into_iter())
-            .filter_map(|operand| latencies.get(usize::from(operand)).copied())
-            .max()
-            .unwrap_or(0);
-        let own = match operation {
-            Operation::Spectral { slot, .. } => (code.slots.spectra.get(usize::from(*slot)))
-                .map_or(0, |spectrum| Stft::latency_of(spectrum.size)),
-            _ => 0,
-        };
-        latencies.push(before + own);
-    }
+    let of_sources = latencies(code, &[]);
+    let latencies = latencies(code, &of_sources);
     let of = |register: Register| latencies.get(usize::from(register)).copied();
     let latency = match code.output {
         Output::Mono(register) => of(register),
         Output::Stereo(left, right) | Output::Bin(left, right) => of(left).max(of(right)),
     };
     u32::try_from(latency.unwrap_or(0)).unwrap_or(u32::MAX)
+}
+
+/// The latency of each operation, a feedback as late as its source is in `before`.
+fn latencies(code: &Code, before: &[usize]) -> Vec<usize> {
+    let mut latencies: Vec<usize> = Vec::with_capacity(code.operations.len());
+    for operation in &code.operations {
+        let read = (operands(*operation).into_iter())
+            .filter_map(|operand| latencies.get(usize::from(operand)).copied())
+            .max()
+            .unwrap_or(0);
+        let own = match operation {
+            Operation::Spectral { slot, .. } => (code.slots.spectra.get(usize::from(*slot)))
+                .map_or(0, |spectrum| Stft::latency_of(spectrum.size)),
+            Operation::History(slot) => (code.feedbacks.get(usize::from(*slot)))
+                .and_then(|source| before.get(usize::from(*source)))
+                .copied()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        latencies.push(read + own);
+    }
+    latencies
 }
 
 /// Whether `operation` gives each channel of mono code its own result whatever it reads: the
