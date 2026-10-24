@@ -263,7 +263,16 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Change { input: x, .. }
         | Operation::Read { index: x, .. }
         | Operation::Lookup { phase: x, .. }
-        | Operation::Spectral { input: x, .. } => vec![x],
+        | Operation::Spectral {
+            input: x,
+            side: None,
+            ..
+        } => vec![x],
+        Operation::Spectral {
+            input,
+            side: Some(side),
+            ..
+        } => vec![input, side],
         Operation::Binary(_, a, b)
         | Operation::Delay {
             input: a, ms: b, ..
