@@ -289,7 +289,9 @@ function sound(spec: Spec, choices: Choices): Graph {
       fields[name] = new sdk.Param(name);
     } else if (field.kind === "choice") {
       fields[name] = choices[name] ?? field.default;
-    } else if (field.kind === "file" || (field.kind === "list" && field.item.kind === "number")) {
+    } else if (field.kind === "file") {
+      fields[name] = new sdk.Sample(name);
+    } else if (field.kind === "list" && field.item.kind === "number") {
       fields[name] = new sdk.Table({ list: name });
     }
   }

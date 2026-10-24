@@ -17,7 +17,7 @@ use std::collections::BinaryHeap;
 
 use sound_core::Stft;
 
-use crate::code::{Code, Operation, Output, Register, Table};
+use crate::code::{Code, Operation, Output, Register, Side, Table};
 
 #[derive(Clone, Debug)]
 pub(crate) enum Step {
@@ -361,13 +361,21 @@ fn latencies(code: &Code, before: &[usize]) -> Vec<usize> {
 }
 
 /// Whether `operation` gives each channel of mono code its own result whatever it reads: the
-/// input of its channel, the index of its channel, or a noise, whose
-/// seed is of its channel.
+/// input of its channel, the index of its channel, a noise, whose seed is of its channel, or
+/// the side of a sample of its channel.
 fn varies_by_channel(operation: Operation) -> bool {
     match operation {
         Operation::Input(_) | Operation::Channel | Operation::Noise { .. } | Operation::Bin(_) => {
             true
         }
+        Operation::Read {
+            table: Table::Sample(_, side),
+            ..
+        }
+        | Operation::Lookup {
+            table: Table::Sample(_, side),
+            ..
+        } => side == Side::Channel,
         Operation::Constant(_)
         | Operation::InputLeft(_)
         | Operation::InputRight(_)

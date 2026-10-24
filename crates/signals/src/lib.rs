@@ -17,7 +17,7 @@ mod program;
 pub use cable::{Bang, Cable, Control, Number, Placed, Shown};
 pub use code::{ArraySpec, Code, MAX_ARRAY_LENGTH, ParameterSpec};
 pub use graph::{ControlSpec, Declarations, Graph, GraphError};
-pub use machine::{Machine, Values};
+pub use machine::{List, Machine, Values};
 pub use processor::{Kind, MAX_VOICES, Signals, SignalsUpdate};
 
 // The tests build sounds with the helpers of `tests/sound`, which name this crate.

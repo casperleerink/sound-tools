@@ -12,11 +12,12 @@ use serde::Deserialize;
 use sound_core::SvfShape;
 
 use crate::code::{
-    ArraySpec, BinValue, Binary, Code, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS,
-    MAX_SPECTRA, MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Slots,
-    SpectrumSpec, Table, Unary,
+    ArraySpec, BinValue, Binary, Code, DEFAULT_DELAY_MS, MAX_ARRAY_LENGTH, MAX_LIVES,
+    MAX_MEMORY_SECONDS, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS,
+    MAX_SPECTRA, MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Side,
+    Slots, SpectrumSpec, Table, Unary,
 };
+use crate::processor::MAX_VOICES;
 use crate::program;
 
 /// A sound as the SDK sends it.
@@ -71,11 +72,14 @@ pub(crate) enum OutputNode {
     Stereo { left: usize, right: usize },
 }
 
-/// Where a table reads: a pattern or sample field by name, or a buffer by its number.
+/// Where a table reads: a pattern or sample field by name, one side of a sample, or a buffer
+/// by its number.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum TableNode {
     List(String),
+    Left(String),
+    Right(String),
     Buffer(usize),
 }
 
@@ -226,6 +230,9 @@ pub struct Declarations {
     pub controls: Vec<ControlSpec>,
     /// The names of the sound inputs besides `audio`.
     pub sounds: Vec<String>,
+    /// How many voices it keeps, each with delays and buffers of its own: of
+    /// [`Kind::machines`](crate::Kind::machines). 0 is one.
+    pub voices: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -314,13 +321,11 @@ impl Graph {
             ));
         }
         let mut lowering = Lowering::new(&self.nodes, self.feedbacks.len(), &declarations.arrays);
+        lowering.stereo = matches!(self.output, OutputNode::Stereo { .. });
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
-            let total = lowering.slots.buffers.iter().sum::<f32>() + seconds;
-            if seconds <= 0.0 || total > MAX_BUFFER_SECONDS {
-                return error(format!(
-                    "buffer({seconds}): a buffer holds more than 0 s, and the buffers of a sound up to {MAX_BUFFER_SECONDS} s together"
-                ));
+            if seconds <= 0.0 {
+                return error(format!("buffer({seconds}): a buffer holds more than 0 s"));
             }
             lowering.slots.buffers.push(seconds);
         }
@@ -374,6 +379,15 @@ impl Graph {
         outputs.sort();
         if let Some(twice) = outputs.windows(2).find(|pair| pair[0] == pair[1]) {
             return error(format!("output `{}` is given twice", twice[0]));
+        }
+        let slots = &lowering.slots;
+        let held = slots.delays.iter().sum::<f32>() / 1000.0 + slots.buffers.iter().sum::<f32>();
+        let most = MAX_MEMORY_SECONDS / declarations.voices.max(1) as f32;
+        if held > most {
+            let each = MAX_MEMORY_SECONDS / MAX_VOICES as f32;
+            return error(format!(
+                "the delays and buffers of a sound hold up to {MAX_MEMORY_SECONDS} s together, and {each} s in a tool of more voices than one: these hold {held:.1} s. Shorten a buffer, or give a delay a shorter longest"
+            ));
         }
         let output = lowering.output(self.output)?;
         let sound_outputs = (self.outputs.iter())
@@ -468,6 +482,8 @@ struct Lowering<'a> {
     /// In the graph of the bins of a `spectral`, how many signals of the sound around it they
     /// read.
     captures: Option<usize>,
+    /// Whether the code runs once for both channels.
+    stereo: bool,
     operations: Vec<Operation>,
     slots: Slots,
     lives: Vec<ParameterSpec>,
@@ -487,6 +503,7 @@ impl<'a> Lowering<'a> {
             feedbacks,
             arrays,
             captures: None,
+            stereo: false,
             operations: Vec::new(),
             slots: Slots {
                 histories: feedbacks as u16,
@@ -619,14 +636,30 @@ impl<'a> Lowering<'a> {
     }
 
     fn table(&self, table: &TableNode) -> Result<Table, GraphError> {
-        match table {
-            TableNode::List(name) => match self.arrays.iter().position(|a| a.name == *name) {
-                Some(index) => Ok(Table::Array(index as u16)),
-                None => error(format!(
-                    "`{name}` is no pattern or sample field of the tool"
-                )),
+        let (name, side) = match table {
+            TableNode::Buffer(index) => return Ok(Table::Buffer(self.buffer(*index)?)),
+            TableNode::List(name) => match self.stereo || self.captures.is_some() {
+                true => (name, Side::Both),
+                false => (name, Side::Channel),
             },
-            TableNode::Buffer(index) => Ok(Table::Buffer(self.buffer(*index)?)),
+            TableNode::Left(name) => (name, Side::Left),
+            TableNode::Right(name) => (name, Side::Right),
+        };
+        let found = self
+            .arrays
+            .iter()
+            .enumerate()
+            .find(|(_, a)| a.name == *name);
+        match (found, table) {
+            // A sample is as long as its sound; a pattern has a length.
+            (Some((index, array)), _) if array.length.is_none() => {
+                Ok(Table::Sample(index as u16, side))
+            }
+            (Some((index, _)), TableNode::List(_)) => Ok(Table::Array(index as u16)),
+            (None, TableNode::List(_)) => error(format!(
+                "`{name}` is no pattern or sample field of the tool"
+            )),
+            _ => error(format!("`{name}` is no sample field of the tool")),
         }
     }
 
@@ -637,19 +670,15 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// The longest a delay holds: what it says, or the most any delay holds.
+    /// The longest a delay holds, in ms: what it says, or [`DEFAULT_DELAY_MS`].
     fn longest(&self, longest: Option<usize>) -> Result<f32, GraphError> {
         let Some(longest) = longest else {
-            return Ok(MAX_DELAY_MS);
+            return Ok(DEFAULT_DELAY_MS);
         };
         self.read(longest)?;
         match self.nodes.get(longest) {
-            Some(Node::Constant(Constant { value })) if *value > 0.0 && *value <= MAX_DELAY_MS => {
-                Ok(*value)
-            }
-            _ => error(format!(
-                "delay(x, ms, longest): longest is a number of ms above 0 and up to {MAX_DELAY_MS}"
-            )),
+            Some(Node::Constant(Constant { value })) if *value > 0.0 => Ok(*value),
+            _ => error("delay(x, ms, longest): longest is a number of ms above 0"),
         }
     }
 
@@ -801,9 +830,6 @@ impl<'a> Lowering<'a> {
             },
             Node::Delay(Delay { x, ms, longest }) => {
                 let (input, ms) = (self.read(*x)?, self.read(*ms)?);
-                if self.slots.delays.len() == MAX_DELAYS {
-                    return error(format!("a sound has at most {MAX_DELAYS} delays"));
-                }
                 let slot = self.slots.delays.len() as u16;
                 self.slots.delays.push(self.longest(*longest)?);
                 Operation::Delay { input, ms, slot }

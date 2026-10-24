@@ -22,7 +22,7 @@ use sound_core::{
 use sound_media::{AudioPlayer, AudioUpdate, Region};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
-    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, Number,
+    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, List, Machine, Number,
     ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
@@ -447,7 +447,10 @@ impl ToolInfo {
     /// them. Only the numbers it reads, so a tool may hold any number of numbers it does not.
     pub(crate) fn declarations(&self, graph: &Graph) -> Declarations {
         let read = graph.params();
-        let mut declarations = Declarations::default();
+        let mut declarations = Declarations {
+            voices: self.kind().machines(),
+            ..Declarations::default()
+        };
         let number = |name: &str, default, min, max| ParameterSpec {
             name: name.to_string(),
             default,
@@ -891,19 +894,20 @@ impl Sounds {
 
     /// The lists of `code` from `state`: a list of numbers as the record holds it, a file as its
     /// sound, which is silence while it cannot be read.
-    fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<Vec<f32>> {
+    fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<List> {
         let list = |array: &ArraySpec| {
             if let Some(Field::File { .. }) = self.info.field(&array.name) {
                 let file = state
                     .get(&array.name)
                     .and_then(Value::as_str)
                     .unwrap_or_default();
+                let silence = || List::One(Vec::new());
                 if file.is_empty() {
-                    return Vec::new();
+                    return silence();
                 }
                 let sound = samples::sample(assets, file, rate, id);
                 // Silent while it is read, or when it cannot be.
-                return (sound.ok().flatten()).map_or_else(Vec::new, |sound| sound.to_vec());
+                return (sound.ok().flatten()).map_or_else(silence, |sound| (*sound).clone());
             };
             let items = state.get(&array.name).and_then(Value::as_array);
             let numbers = items
@@ -911,22 +915,23 @@ impl Sounds {
                 .flatten()
                 .take(sound_signals::MAX_ARRAY_LENGTH);
             let numbers = numbers.map(|item| item.as_f64().map_or(array.default, |n| n as f32));
-            numbers.collect()
+            List::One(numbers.collect())
         };
         code.arrays.iter().map(list).collect()
     }
 
     /// What the lists of `state` are made of: the lists of numbers, and the files with whether
     /// each could be read, so a file that arrives after its record is sent then. With a problem
-    /// for each file that cannot be read.
+    /// for each file that cannot be read, and whether a file read is in stereo.
     fn lists_key(
         &self,
         code: &Code,
         state: &Value,
         (assets, rate, id): Read<'_>,
-    ) -> (u64, Vec<String>) {
+    ) -> (u64, Vec<String>, bool) {
         let mut hasher = DefaultHasher::new();
         let mut problems = Vec::new();
+        let mut stereo = false;
         for array in &code.arrays {
             let value = state.get(&array.name);
             value.map(Value::to_string).hash(&mut hasher);
@@ -940,12 +945,14 @@ impl Sounds {
                     .map(|sound| sound.as_ref().map(|sound| Arc::as_ptr(sound).addr()))
                     .ok()
                     .hash(&mut hasher);
-                if let Err(problem) = read {
-                    problems.push(format!("state.{}: {problem}", array.name));
+                match read {
+                    Ok(Some(sound)) => stereo |= matches!(*sound, List::Stereo(..)),
+                    Ok(None) => {}
+                    Err(problem) => problems.push(format!("state.{}: {problem}", array.name)),
                 }
             }
         }
-        (hasher.finish(), problems)
+        (hasher.finish(), problems, stereo)
     }
 
     fn apply(
@@ -973,7 +980,7 @@ impl Sounds {
         );
         let reading = (&assets, rate, &id);
         // A list, a sample most of all, is sent only when it changed: not at every knob turn.
-        let (lists_key, problems) = self.lists_key(&code, state, reading);
+        let (lists_key, problems, stereo) = self.lists_key(&code, state, reading);
         for problem in problems {
             context.problem(problem);
         }
@@ -988,11 +995,19 @@ impl Sounds {
         let tap = (self.info.notes).then(|| context.tap::<NoteEvent>(NOTES_TAP));
         let new_tap = context.changed("tap", u64::from(tap.is_some()));
         let sample_rate = context.prepare_config().sample_rate as f32;
-        let new_code = context.changed("code", code.hash);
+        // A sound that reads no file in stereo runs a sample read once for both channels.
+        let new_code =
+            context.changed("code", code.hash) | context.changed("stereo", stereo.into());
         if new_code || new_lists {
             values.arrays = Some(self.lists(&code, state, reading));
         }
-        let made = || Box::new(Machine::new(code.clone(), sample_rate));
+        let made = || {
+            let code = match stereo {
+                true => code.clone(),
+                false => code.clone().with_samples_of_one_channel(),
+            };
+            Box::new(Machine::new(code, sample_rate))
+        };
         // Made once and cloned for every voice: scheduling the code is not free.
         let mut machines: Vec<Option<Box<Machine>>> = match new_code {
             true => vec![Some(made()); kind.machines()],

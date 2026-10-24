@@ -73,7 +73,7 @@ Whatever reads a field follows it: a sound that reads a number glides to it at o
 | `boolean({ default, label? })` | `true` or `false` | a `Signal`, 1 or 0 |
 | `choice({ options, default, label? })` | one of `options` | the option itself: a change switches to the sound of that option, fading over 10 ms |
 | `text({ default?, label? })` | text | nothing |
-| `file({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound: one channel, up to 60 s |
+| `file({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound in stereo, up to 3 minutes |
 | `list(item, { max?, default?, label? })` | a list of `item`: a field, or an object of fields such as `{ name: text(), notes: notes() }` | a list of numbers is a table: `.at(index)` |
 
 `pattern({ length, min, max, default })` is a list of `length` numbers, such as the steps of a sequence. `notes()` is a list of `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter). A knob in `unit: "hz"` turns on a log scale; one in `"percent"` still holds 0 to 1. A sound reads at most 32 numbers and booleans.

@@ -9,8 +9,8 @@ pub(crate) mod sound;
 
 use sound_core::{MAX_BLOCK, SvfShape};
 
-use crate::machine::{Block, Inputs, Machine, Note};
-use crate::{Code, Declarations, Graph};
+use crate::machine::{Block, Inputs, List, Machine, Note};
+use crate::{ArraySpec, Code, Declarations, Graph};
 use sound::*;
 
 const SAMPLE_RATE: f32 = 48_000.0;
@@ -29,7 +29,7 @@ fn defaults(machine: &Machine) -> Box<Block> {
 }
 
 /// One frame of both channels, the first of `block`.
-fn frame(machine: &mut Machine, block: &Block, arrays: &[Vec<f32>], note: Note) -> [f32; 2] {
+fn frame(machine: &mut Machine, block: &Block, arrays: &[List], note: Note) -> [f32; 2] {
     let mut output = [[0.0; MAX_BLOCK]; 2];
     let inputs = Inputs {
         block,
@@ -44,7 +44,7 @@ fn frame(machine: &mut Machine, block: &Block, arrays: &[Vec<f32>], note: Note) 
 /// record.
 fn run_with(
     machine: &mut Machine,
-    arrays: &[Vec<f32>],
+    arrays: &[List],
     note: impl Fn(usize) -> Note,
     input: impl Fn(usize) -> f32,
     frames: usize,
@@ -363,13 +363,13 @@ fn a_list_of_the_record_is_read_by_index_and_looked_up_between_its_values() {
         // `position` reads what it was in the frame before: 0, 1, 2 ...
         steps.at(position.read())
     }));
-    let arrays = vec![vec![1.0, 0.0, 0.5, 0.25]];
+    let arrays = vec![List::One(vec![1.0, 0.0, 0.5, 0.25])];
     let output = run_with(&mut steps, &arrays, |_| Note::default(), |_| 0.0, 6);
     // The index is the whole part, and wraps.
     assert_eq!(output, [1.0, 0.0, 0.5, 0.25, 1.0, 0.0]);
 
     let mut table = machine(compile(|| lookup(&pattern("wave", 2), input())));
-    let arrays = vec![vec![0.0, 1.0]];
+    let arrays = vec![List::One(vec![0.0, 1.0])];
     let phases = [0.0, 0.25, 0.5, 0.75];
     let output = run_with(
         &mut table,
@@ -380,6 +380,120 @@ fn a_list_of_the_record_is_read_by_index_and_looked_up_between_its_values() {
     );
     // Between the values in a straight line, and from the last back to the first.
     assert_eq!(output, [0.0, 0.5, 1.0, 0.5]);
+}
+
+#[test]
+fn a_looper_plays_two_minutes_of_its_input_back_bit_for_bit_on_each_channel() {
+    const LOOP: usize = 120 * SAMPLE_RATE as usize;
+    let mut looper = machine(compile(|| {
+        let tape = buffer(120.0);
+        let count = feedback();
+        let frame = count.read();
+        count.set(frame + 1.0);
+        let recording = frame.lt(LOOP as f32);
+        let old = tape.at(frame);
+        tape.write(frame, input() * recording + old * (1.0 - recording));
+        old
+    }));
+    // A different noise on each channel.
+    let input = |channel: usize, frame: usize| {
+        let seed = (frame * 2 + channel + 1) as u32;
+        seed.wrapping_mul(2_654_435_761) as f32 / u32::MAX as f32 * 2.0 - 1.0
+    };
+    let mut block = defaults(&looper);
+    let mut output = [[0.0; MAX_BLOCK]; 2];
+    for start in (0..2 * LOOP).step_by(MAX_BLOCK) {
+        for (channel, row) in block.input.iter_mut().enumerate() {
+            for (offset, sample) in row.iter_mut().enumerate() {
+                *sample = input(channel, start + offset);
+            }
+        }
+        let inputs = Inputs {
+            block: &block,
+            arrays: &[],
+            note: Note::default(),
+        };
+        looper.render(&inputs, 0..MAX_BLOCK, std::slice::from_mut(&mut output));
+        for (channel, row) in output.iter().enumerate() {
+            for (offset, sample) in row.iter().enumerate() {
+                let frame = start + offset;
+                let expected = frame.checked_sub(LOOP).map_or(0.0, |at| input(channel, at));
+                assert_eq!(sample.to_bits(), expected.to_bits(), "frame {frame}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_sample_in_stereo_plays_each_side_on_its_channel_and_both_mixed_where_the_code_runs_once() {
+    let read = |code: Code, arrays: &[List]| {
+        let mut machine = machine(code);
+        let block = defaults(&machine);
+        frame(&mut machine, &block, arrays, Note::default())
+    };
+    let stereo = [List::Stereo(vec![1.0, 0.0], vec![0.5, 0.0])];
+    let own = || sample("sound").at(0.0) * 2.0;
+    assert_eq!(read(compile(own), &stereo), [2.0, 1.0]);
+    let looked_up = || lookup(&sample("sound"), 0.0);
+    assert_eq!(read(compile(looked_up), &stereo), [1.0, 0.5]);
+    // A sample of one channel is the same on both.
+    assert_eq!(read(compile(own), &[List::One(vec![0.25])]), [0.5, 0.5]);
+    let crossed = || {
+        let sound = sample("sound");
+        (sound.side("right").at(0.0), sound.side("left").at(0.0))
+    };
+    assert_eq!(read(compile(crossed), &stereo), [0.5, 1.0]);
+    let mixed = || {
+        let sound = sample("sound");
+        (sound.at(0.0), lookup(&sound, 0.0))
+    };
+    assert_eq!(read(compile(mixed), &stereo), [0.75, 0.75]);
+}
+
+#[test]
+fn a_second_output_hears_a_sample_in_stereo_on_each_channel() {
+    let nodes = json!([
+        { "op": "constant", "value": 0.0 },
+        { "op": "at", "table": { "list": "sound" }, "index": 0 },
+    ]);
+    let outputs = json!([{ "name": "low", "output": { "mono": 1 } }]);
+    let graph = json!({ "nodes": nodes, "feedbacks": [], "buffers": [], "watches": [], "numbers": [], "bangs": [], "notes": [], "output": { "mono": 0 }, "outputs": outputs });
+    let graph: Graph = serde_json::from_value(graph).unwrap();
+    let mut declarations = Declarations::default();
+    declarations.arrays.push(ArraySpec {
+        name: "sound".to_string(),
+        length: None,
+        default: 0.0,
+        min: -1.0,
+        max: 1.0,
+    });
+    let mut machine = machine(graph.compile(&declarations).unwrap());
+    let block = defaults(&machine);
+    let inputs = Inputs {
+        block: &block,
+        arrays: &[List::Stereo(vec![1.0], vec![0.5])],
+        note: Note::default(),
+    };
+    let mut outputs = [[[0.0; MAX_BLOCK]; 2]; 2];
+    machine.render(&inputs, 0..1, &mut outputs);
+    let [_, low] = outputs.map(|output| output.map(|channel| channel[0]));
+    assert_eq!(low, [1.0, 0.5]);
+}
+
+#[test]
+fn a_sample_read_for_samples_of_one_channel_runs_once_for_both_channels() {
+    let own = compile(|| sample("sound").at(0.0) * 2.0);
+    assert!(!machine(own.clone()).per_channel.is_empty());
+    let mut once = machine(own.with_samples_of_one_channel());
+    assert!(once.per_channel.is_empty());
+    let block = defaults(&once);
+    let one = [List::One(vec![0.25])];
+    assert_eq!(frame(&mut once, &block, &one, Note::default()), [0.5, 0.5]);
+    let stereo = [List::Stereo(vec![1.0], vec![0.5])];
+    assert_eq!(
+        frame(&mut once, &block, &stereo, Note::default()),
+        [1.5, 1.5]
+    );
 }
 
 #[test]
@@ -512,17 +626,34 @@ fn a_graph_that_does_not_hold_says_what_is_wrong_in_the_words_of_the_sdk() {
         { "op": "delay", "x": 0, "ms": 0, "longest": 0 },
     ]);
     assert!(error(graph(longest)).starts_with("delay(x, ms, longest): longest is a number"));
-    let delays: Vec<_> = (0..17)
-        .map(|_| json!({ "op": "delay", "x": 0, "ms": 0 }))
-        .collect();
-    let nodes = [vec![json!({ "op": "input" })], delays].concat();
-    assert_eq!(error(graph(json!(nodes))), "a sound has at most 16 delays");
     let bins = json!({ "nodes": [{ "op": "magnitude" }], "feedbacks": [], "captures": [], "output": { "magnitude": 0, "phase": 0 } });
     let spectral =
         json!([{ "op": "input" }, { "op": "spectral", "x": 0, "size": 1000, "bins": bins }]);
     assert_eq!(
         error(graph(spectral)),
         "spectral(x, 1000): the size is a power of two from 256 to 8192"
+    );
+}
+
+#[test]
+fn a_tool_of_one_voice_holds_16_minutes_of_delays_and_buffers_and_each_of_more_voices_2() {
+    let compile = |buffer: f32, voices| {
+        // A delay that gives no longest holds 4 s.
+        let nodes = json!([{ "op": "input" }, { "op": "delay", "x": 0, "ms": 0 }]);
+        let graph = json!({ "nodes": nodes, "feedbacks": [], "buffers": [buffer], "watches": [], "numbers": [], "bangs": [], "notes": [], "output": { "mono": 1 } });
+        let graph: Graph = serde_json::from_value(graph).unwrap();
+        let declarations = Declarations {
+            voices,
+            ..Declarations::default()
+        };
+        graph.compile(&declarations).map(|_| ())
+    };
+    assert!(compile(956.0, 1).is_ok());
+    assert!(compile(956.5, 1).is_err());
+    assert!(compile(116.0, 8).is_ok());
+    assert_eq!(
+        compile(116.5, 8).unwrap_err().to_string(),
+        "the delays and buffers of a sound hold up to 960 s together, and 120 s in a tool of more voices than one: these hold 120.5 s. Shorten a buffer, or give a delay a shorter longest"
     );
 }
 

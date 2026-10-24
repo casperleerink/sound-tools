@@ -18,8 +18,8 @@ type Binary =
 
 type BinSource = "magnitude" | "phase" | "hz" | "index" | "sideMagnitude" | "sidePhase";
 
-/** Where a table reads: a list or file field by name, or a `buffer` by its number. */
-export type TableRef = { list: string } | { buffer: number };
+/** Where a table reads: a list or file field by name, one side of a file, or a `buffer` by its number. */
+export type TableRef = { list: string } | { left: string } | { right: string } | { buffer: number };
 
 /**
  * The bins of a `spectral` as the runtime gets them: a graph of their own, which reads each
@@ -133,6 +133,25 @@ export class Table {
   /** How many values it holds. */
   get length(): Signal {
     return new Signal({ op: "length", table: readable(this.ref) });
+  }
+}
+
+/**
+ * The sound of a file field. A sound that returns one signal hears its left on the left channel
+ * and its right on the right; one that returns `{ left, right }`, and a bin of `spectral`, hear
+ * both mixed. A file of one channel is the same on both.
+ */
+export class Sample extends Table {
+  constructor(private readonly name: string) {
+    super({ list: name });
+  }
+  /** Its left channel only. */
+  get left(): Table {
+    return new Table({ left: this.name });
+  }
+  /** Its right channel only. */
+  get right(): Table {
+    return new Table({ right: this.name });
   }
 }
 
@@ -284,9 +303,9 @@ export const phasor = (hz: Operand): Signal => new Signal({ op: "phasor", hz });
 /** White noise from -1 to 1, different on each channel. */
 export const noise = (): Signal => new Signal({ op: "noise" });
 /**
- * `x` as it was `ms` milliseconds ago, up to 4000. `ms` may move every sample, smoothly, for a
- * chorus or a tape wobble. `longest` is the most it holds, a number; give it in an instrument,
- * where every voice keeps its own.
+ * `x` as it was `ms` milliseconds ago, up to `longest`, a number: 4000 when left out. `ms` may
+ * move every sample, smoothly, for a chorus or a tape wobble. A longer `longest` holds more of
+ * the memory of the tool, see `buffer`.
  */
 export const delay = (x: Operand, ms: Operand, longest?: number): Signal =>
   new Signal(longest === undefined ? { op: "delay", x, ms } : { op: "delay", x, ms, longest });
@@ -353,7 +372,11 @@ export function feedback(): Feedback {
   return made;
 }
 
-/** Memory of `seconds`, see `Buffer`. Inside `sound` only. */
+/**
+ * Memory of `seconds`, see `Buffer`. Inside `sound` only. The buffers and delays of a tool hold
+ * up to 16 minutes together; in a tool of more voices than one, 2 minutes, as each voice keeps its
+ * own.
+ */
 export function buffer(seconds: number): Buffer {
   const declared = outside("buffer");
   const made = new Buffer(declared.buffers.length);

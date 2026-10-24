@@ -250,6 +250,19 @@ pub(crate) fn pattern(name: &str, length: usize) -> Table {
     Table(json!({ "list": name }))
 }
 
+/// A sample field, as long as its sound.
+pub(crate) fn sample(name: &str) -> Table {
+    let array = ArraySpec {
+        name: name.to_string(),
+        length: None,
+        default: 0.0,
+        min: -1.0,
+        max: 1.0,
+    };
+    declare(|declarations| declarations.arrays.push(array));
+    Table(json!({ "list": name }))
+}
+
 pub(crate) fn buffer(seconds: f32) -> Table {
     BUILDING.with_borrow_mut(|building| {
         building.buffers.push(seconds);
@@ -258,6 +271,11 @@ pub(crate) fn buffer(seconds: f32) -> Table {
 }
 
 impl Table {
+    /// One side of a sample: `"left"` or `"right"`.
+    pub(crate) fn side(&self, side: &str) -> Self {
+        Self(json!({ side: self.0["list"] }))
+    }
+
     pub(crate) fn at(&self, index: impl Into<Signal>) -> Signal {
         let index = index.into();
         add(json!({ "op": "at", "table": self.0, "index": index.0 }))
