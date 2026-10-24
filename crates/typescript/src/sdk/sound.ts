@@ -17,8 +17,8 @@ type Binary =
 
 type BinSource = "magnitude" | "phase" | "hz" | "index";
 
-/** Where a table reads: a list or file field by name, or a `buffer` by its number. */
-export type TableRef = { list: string } | { buffer: number };
+/** Where a table reads: a list or file field by name, one side of a file, or a `buffer` by its number. */
+export type TableRef = { list: string } | { left: string } | { right: string } | { buffer: number };
 
 /**
  * The bins of a `spectral` as the runtime gets them: a graph of their own, which reads each
@@ -127,6 +127,25 @@ export class Table {
   /** How many values it holds. */
   get length(): Signal {
     return new Signal({ op: "length", table: readable(this.ref) });
+  }
+}
+
+/**
+ * The sound of a file field. A sound that returns one signal hears its left on the left channel
+ * and its right on the right; one that returns `{ left, right }`, and a bin of `spectral`, hear
+ * both mixed. A file of one channel is the same on both.
+ */
+export class Sample extends Table {
+  constructor(private readonly name: string) {
+    super({ list: name });
+  }
+  /** Its left channel only. */
+  get left(): Table {
+    return new Table({ left: this.name });
+  }
+  /** Its right channel only. */
+  get right(): Table {
+    return new Table({ right: this.name });
   }
 }
 

@@ -8,7 +8,7 @@ Read `agent-docs/extensions.md` first. Every function here has its doc in `exten
 - Filters: `lowpass`, `highpass`, `bandpass`, `notch`, `allpass` take `(x, hz, q?)`; `peak`, `lowshelf`, `highshelf` take `(x, hz, db, q?)`.
 - `delay(x, ms, longest?)` goes up to `longest`, 4000 ms when left out, smooth when `ms` moves (chorus, tape wobble).
 - `rise(x)` is 1 where `x` goes above 0, a clock: `rise(wrap(beat.times(4)).lt(0.5))` ticks every sixteenth. `hold(x, when)` samples and holds.
-- A table is a list of numbers such as a `pattern`, a `file` field or a `buffer`: `.at(index)` reads its whole part, wrapped; `lookup(table, phase)` reads 0 to 1 over the table, smooth. A file plays at its own speed with `lookup(sound, phasor(sampleRate.over(sound.length)))`; grains read short stretches of it.
+- A table is a list of numbers such as a `pattern`, a `file` field or a `buffer`: `.at(index)` reads its whole part, wrapped; `lookup(table, phase)` reads 0 to 1 over the table, smooth. A file plays at its own speed with `lookup(sound, phasor(sampleRate.over(sound.length)))`, in stereo: a sound that returns `{ left, right }` hears it mixed, or one side as `sound.left` and `sound.right`.
 
 A sound that returns one signal runs on each channel apart. One that returns `{ left, right }` runs once for both and hears both through `inputLeft` and `inputRight`, as a ping-pong delay does.
 

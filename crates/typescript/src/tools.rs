@@ -22,7 +22,7 @@ use sound_core::{
 use sound_media::{AudioPlayer, AudioUpdate, Region};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
-    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, Number,
+    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, List, Machine, Number,
     ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
@@ -890,19 +890,20 @@ impl Sounds {
 
     /// The lists of `code` from `state`: a list of numbers as the record holds it, a file as its
     /// sound, which is silence while it cannot be read.
-    fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<Vec<f32>> {
+    fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<List> {
         let list = |array: &ArraySpec| {
             if let Some(Field::File { .. }) = self.info.field(&array.name) {
                 let file = state
                     .get(&array.name)
                     .and_then(Value::as_str)
                     .unwrap_or_default();
+                let silence = || List::One(Vec::new());
                 if file.is_empty() {
-                    return Vec::new();
+                    return silence();
                 }
                 let sound = samples::sample(assets, file, rate, id);
                 // Silent while it is read, or when it cannot be.
-                return (sound.ok().flatten()).map_or_else(Vec::new, |sound| sound.to_vec());
+                return (sound.ok().flatten()).map_or_else(silence, |sound| (*sound).clone());
             };
             let items = state.get(&array.name).and_then(Value::as_array);
             let numbers = items
@@ -910,7 +911,7 @@ impl Sounds {
                 .flatten()
                 .take(sound_signals::MAX_ARRAY_LENGTH);
             let numbers = numbers.map(|item| item.as_f64().map_or(array.default, |n| n as f32));
-            numbers.collect()
+            List::One(numbers.collect())
         };
         code.arrays.iter().map(list).collect()
     }

@@ -17,8 +17,8 @@ use crate::code::{
     MAX_WATCHES, Operation, Output, ParameterSpec, Register, SPECTRUM_SIZES, Side, Slots,
     SpectrumSpec, Table, Unary,
 };
-use crate::program;
 use crate::processor::MAX_VOICES;
+use crate::program;
 
 /// A sound as the SDK sends it.
 #[derive(Debug, Deserialize)]
@@ -301,7 +301,7 @@ impl Graph {
         lowering.stereo = matches!(self.output, OutputNode::Stereo { .. });
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
-            if !(seconds > 0.0) {
+            if seconds <= 0.0 {
                 return error(format!("buffer({seconds}): a buffer holds more than 0 s"));
             }
             lowering.slots.buffers.push(seconds);
@@ -574,7 +574,11 @@ impl<'a> Lowering<'a> {
             TableNode::Left(name) => (name, Side::Left),
             TableNode::Right(name) => (name, Side::Right),
         };
-        let found = self.arrays.iter().enumerate().find(|(_, a)| a.name == *name);
+        let found = self
+            .arrays
+            .iter()
+            .enumerate()
+            .find(|(_, a)| a.name == *name);
         match (found, table) {
             // A sample is as long as its sound; a pattern has a length.
             (Some((index, array)), _) if array.length.is_none() => {

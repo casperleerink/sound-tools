@@ -1355,7 +1355,6 @@ fn read_at(values: &[f32], index: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
-
 impl Spectrum {
     fn new(spectrum: &SpectrumSpec, sample_rate: f32) -> Self {
         let stft = Stft::new(spectrum.size);
