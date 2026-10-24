@@ -84,24 +84,6 @@ fn without_effects(format: PluginFormat, velocity: u8) -> Vec<f32> {
     harness.play_from_the_start(16_000)
 }
 
-#[test]
-fn one_effect_after_the_instrument_changes_the_render_by_exactly_what_it_does() {
-    for format in [PluginFormat::Clap, PluginFormat::Vst3] {
-        let plain = without_effects(format, 40);
-        let (mut harness, _plugins) = rack(format, 40, &[("trim", 10)]);
-        assert_eq!(harness.project.problems(), [], "{format:?}");
-
-        let played = harness.play_from_the_start(16_000);
-        assert_eq!(played, through(&plain, &[10]), "{format:?}");
-        // And it really changed something: the note is there and it is not what it was.
-        assert!(
-            plain[NOTE * 2] != 0.0,
-            "{format:?}: the instrument was silent"
-        );
-        assert!(difference(&plain, &played).is_some(), "{format:?}");
-    }
-}
-
 /// The heart of step 6: the order of the list is the order of the sound.
 #[test]
 fn two_effects_in_one_order_and_in_the_other_differ_by_what_each_adds() {

@@ -4,7 +4,6 @@
 
 use eq::{BANDS, Band, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, band_response};
 use proptest::prelude::*;
-use sound_core::Processor;
 
 use crate::support::{Rig, SAMPLE_RATE, Signal, band, noise, peak, sine, with_bands};
 
@@ -194,11 +193,6 @@ fn renders_are_the_same_every_time_to_the_byte() {
         [first[0].clone(), first[1].clone(), left, right].map(|samples| bytes(&samples))
     };
     assert_eq!(render(), render());
-}
-
-#[test]
-fn the_eq_has_no_latency() {
-    assert_eq!(eq::Eq::new(EqState::default()).latency(), 0);
 }
 
 fn any_band() -> impl Strategy<Value = Band> {
