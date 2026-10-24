@@ -41,6 +41,9 @@ fn main() -> Result<ExitCode> {
     let changed = changed_files(root, base.as_deref().unwrap_or("origin/main"))?;
 
     let mut tested = BTreeSet::from([ALWAYS_TESTED.to_string()]);
+    // The crates whose code other crates use changed: a change only in a crate's `tests/` does
+    // not reach the crates that use it.
+    let mut used = BTreeSet::new();
     let mut whole_workspace = false;
     for file in &changed {
         if WORKSPACE_FILES.iter().any(|name| file.starts_with(name)) {
@@ -49,14 +52,24 @@ fn main() -> Result<ExitCode> {
             FOLDERS.iter().find(|(folder, _)| file.starts_with(folder))
         {
             tested.insert(package.to_string());
+            used.insert(package.to_string());
         } else if let Some(package) = package_of(&metadata, &root.join(file)) {
             tested.insert(package.name.to_string());
+            let tests = package.manifest_path.with_file_name("tests");
+            if !root.join(file).starts_with(tests) {
+                used.insert(package.name.to_string());
+            }
         }
     }
     let checked = if whole_workspace {
         vec!["--workspace".to_string()]
     } else {
-        package_arguments(&with_dependents(&metadata, &tested))
+        package_arguments(
+            &with_dependents(&metadata, &used)
+                .union(&tested)
+                .cloned()
+                .collect(),
+        )
     };
 
     println!(
