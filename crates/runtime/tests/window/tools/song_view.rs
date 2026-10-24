@@ -430,6 +430,49 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     );
 }
 
+/// A press where a lane has no point adds one that the same drag moves, as one undo step, and
+/// an alt-drag erases the points it covers.
+#[gpui::test]
+fn a_press_in_a_lane_adds_a_point_its_drag_moves_and_an_alt_drag_erases(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let lanes = window.until_found("toggle-lanes-t00");
+    window.click(lanes);
+    window.until_found("div-lane-name-t00-lane-cutoff");
+    let ticks = |window: &mut Opened<'_>| {
+        (window.record("song/t00/lane-cutoff")["points"].as_array()).map(|points| {
+            points
+                .iter()
+                .filter_map(|point| point["tick"].as_u64())
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = crate::support::mark(&mut window);
+    let [two, three, four, five] = [2, 3, 4, 5].map(|bar| window.on_lane(bar * BAR, 1));
+    window.drag(two, four);
+    window.until("a point added and moved", |window| {
+        ticks(window) == Some(vec![0, 4 * BAR, 64 * BAR])
+    });
+    window.after_the_runs();
+    crate::support::one_undo_step(&mut window, "Add a point", &before);
+    assert_eq!(window.problems(), []);
+
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    window.press_with(three, 1, alt);
+    window.drag_to(four);
+    window.drag_to(five);
+    window.release(five);
+    window.until("the point erased", |window| {
+        ticks(window) == Some(vec![0, 64 * BAR])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Erase points"));
+    assert_eq!(window.problems(), []);
+}
+
 /// An audio track has lanes as a track has, as the arrangement's had: its volume plays from one.
 #[gpui::test]
 fn an_audio_track_has_a_lane_for_its_volume(cx: &mut TestAppContext) {

@@ -284,6 +284,8 @@ props! {
     /// out by `sdk.ts`'s types; a prop no kind has is still an error.
     ShapeProps / ShapeChange {
         kind: ShapeKind,
+        /// What `now.hover(key)` names it by.
+        key: String,
         on_press: bool,
         on_release: bool,
         on_click: bool,
@@ -656,6 +658,14 @@ impl NodeTable {
     /// Every node there is now, in the order they were made.
     pub(crate) fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.slots.iter().flatten()
+    }
+
+    /// The key of the shape of node `id`, for `now.hover`.
+    pub(crate) fn shape_key(&self, id: u64) -> Option<&str> {
+        match &self.get(*self.ids.get(&id)?)?.props {
+            Props::Shape(shape) => shape.key.as_deref(),
+            _ => None,
+        }
     }
 
     pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Drag> {
@@ -1300,6 +1310,10 @@ pub(crate) enum Live {
         key: String,
         part: SpacePart,
     },
+    /// 1 while the pointer is over the shape of `key`.
+    Hover {
+        key: String,
+    },
     Plus {
         a: Num,
         b: Num,
@@ -1430,7 +1444,7 @@ impl Live {
                 // It may be an output, which moves with the watches.
                 uses.watches = true;
             }
-            Self::Drag { .. } | Self::Space { .. } => {}
+            Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
             | Self::Times { a, b }

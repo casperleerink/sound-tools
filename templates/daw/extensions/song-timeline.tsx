@@ -1,6 +1,6 @@
 import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Color, type Drag, type Dropped, type FilledStateOfTool, type KeyName, type Live, type Press } from "./sdk";
 import { lengthOf } from "./clip-editor";
-import { addPoint, LaneRow } from "./song-automation";
+import { LaneRow } from "./song-automation";
 import { itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, type Child, type Page } from "./song-page";
 import { notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
@@ -110,13 +110,8 @@ export const Timeline = ({ page }: { page: Page }) => {
     }
     if (region && memory.selected.size === 1 && memory.selected.has(key)) memory.below = { kind: "track", name: key.split("/")[0]! };
   };
-  const pressTimeline = ({ clicks, x, y, cmd }: Press) => {
-    const index = rowAt(y);
-    const row = layout()[index];
-    if (row?.lane) {
-      if (clicks === 1) addPoint(page, row.each.name, row.lane, x, 1 - (y - topOf(index) - 0.1) / 0.8, cmd);
-      return;
-    }
+  const pressTimeline = ({ clicks, x, y }: Press) => {
+    const row = layout()[rowAt(y)];
     if (clicks !== 2 || row?.add || row?.each.tool !== "track") {
       choose(new Set());
       return;
@@ -341,7 +336,10 @@ export const Timeline = ({ page }: { page: Page }) => {
       <For each={layout}>
         {({ each, lane, add }, row) =>
           add ? null : lane ? (
-            <LaneRow page={page} track={each.name} lane={lane} row={row} colour={() => colourOf(each)} />
+            () => {
+              const snap = memory.snap;
+              return <LaneRow page={page} track={each.name} lane={lane} row={row} colour={() => colourOf(each)} snap={snap} />;
+            }
           ) : (
             <>
               {() => {

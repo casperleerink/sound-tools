@@ -98,6 +98,8 @@ pub(crate) struct Sources<'a> {
     pub played: Option<&'a BTreeMap<String, f32>>,
     pub drag: Option<(&'a str, DragNumbers)>,
     pub spaces: &'a HashMap<String, SpaceView>,
+    /// The key of the shape the pointer is over.
+    pub hovered: Option<&'a str>,
     pub feeds: &'a Feeds,
 }
 
@@ -213,6 +215,7 @@ impl Sources<'_> {
                 .copied()
                 .unwrap_or_default()
                 .part(*part),
+            Live::Hover { key } => truth(self.hovered == Some(key.as_str())),
             Live::Plus { a, b } => self.number(a) + self.number(b),
             Live::Minus { a, b } => self.number(a) - self.number(b),
             Live::Times { a, b } => self.number(a) * self.number(b),
@@ -327,6 +330,7 @@ mod tests {
             played: None,
             drag: Some(("move", numbers)),
             spaces: &spaces,
+            hovered: None,
             feeds: &Feeds::default(),
         };
         let moved = live(serde_json::json!({

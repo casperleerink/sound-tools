@@ -7,7 +7,8 @@
 //! - `look-editor.png`: the note editor on the first clip of the melody.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
-//! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, with its readout.
+//! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, under the pointer
+//!   with its readout.
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
 //! - `look-sidechain.png`: the panel of the bass with a filter and a compressor keyed by Track 1,
 //!   expanded with its sidechain picker.
@@ -97,8 +98,16 @@ pub(crate) fn click(
 /// The pointer off what a snapshot shows, as the arrangement's snapshots opened their menus
 /// without one.
 fn away(opened: &super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    pointer_to(opened, point(px(1400.), px(80.)), cx)
+}
+
+fn pointer_to(
+    opened: &super::Opened,
+    at: Point<Pixels>,
+    cx: &mut HeadlessAppContext,
+) -> Result<()> {
     let moved = MouseMoveEvent {
-        position: point(px(1400.), px(80.)),
+        position: at,
         pressed_button: None,
         modifiers: Modifiers::default(),
     };
@@ -295,9 +304,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     )?;
     click(&opened, point(px(32.), px(TOP + ROW + 41.)), 1, cx)?;
     save(cx, opened.window.into(), "look-lanes")?;
-    // A click on the cutoff's lane adds a point there, chosen, with its readout.
+    // A click on the cutoff's lane adds a point there, chosen, and under the pointer it shows its
+    // readout.
     click(&opened, at(6 * BAR, 3.), 1, cx)?;
-    away(&opened, cx)?;
+    pointer_to(&opened, at(6 * BAR, 3.) + point(px(1.), px(0.)), cx)?;
     save(cx, opened.window.into(), "look-point")?;
     // The row under the lanes of the bass adds one: its numbers by device.
     click(&opened, point(px(60.), px(TOP + 4. * ROW + 20.)), 1, cx)?;

@@ -175,6 +175,7 @@ fn live_values() {
         played: None,
         drag: Some(("move", numbers)),
         spaces: &spaces,
+        hovered: None,
         feeds: &Feeds::default(),
     };
     for count in SIZES {
