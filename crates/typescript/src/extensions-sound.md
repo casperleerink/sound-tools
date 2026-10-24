@@ -56,22 +56,23 @@ tool({
 });
 ```
 
-Given two inputs, `spectral([x, other], size, (bin, other) => ...)` also gets the bin of `other` at the same frequency; what goes out is still the spectrum of `x`. A vocoder: a chord of saws, as loud in each bin as the sound that comes in.
+Given two inputs, `spectral([x, other], size, (bin, other) => ...)` also gets the bin of `other` at the same frequency; what goes out is still the spectrum of `x`. A vocoder: on a synth, keyed by a voice, each bin of the synth is as loud as that bin of the voice. Over the voice's loudness, it keeps the synth's level whatever the voice's.
 
 ```ts
-import { input, mtof, number, saw, smooth, spectral, tool } from "./sdk";
+import { abs, audio, input, max, smooth, spectral, tool } from "./sdk";
 
 tool({
   name: "vocoder",
   title: "Vocoder",
-  when: "You want a voice or a beat to play a chord",
-  doc: "The sound that comes in shapes a chord of saws on `root`, so a voice sings the chord.",
-  state: { root: number({ min: 36, max: 72, default: 48, integer: true }) },
-  sound: ({ root }) => {
-    const chord = saw(mtof(root)).plus(saw(mtof(root.plus(7)))).plus(saw(mtof(root.plus(12))));
-    return spectral([chord, input], 512, (saws, voice) => ({
-      mag: saws.mag.times(smooth(voice.mag, 20)).times(2),
-      phase: saws.phase,
+  when: "You want a synth to talk or sing with a voice",
+  doc: "Key it with a voice: the sound that comes in takes the shape of the voice.",
+  state: {},
+  inputs: { sidechain: audio() },
+  sound: ({ sidechain }) => {
+    const loudness = max(smooth(abs(sidechain), 50), 0.001);
+    return spectral([input, sidechain], 512, (synth, voice) => ({
+      mag: synth.mag.times(smooth(voice.mag, 20)).over(loudness).times(8),
+      phase: synth.phase,
     }));
   },
 });

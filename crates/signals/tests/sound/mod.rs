@@ -123,6 +123,12 @@ pub(crate) fn noise() -> Signal {
 fn one(op: &str, x: impl Into<Signal>) -> Signal {
     node(op, &[("x", x.into())])
 }
+pub(crate) fn abs(x: impl Into<Signal>) -> Signal {
+    one("abs", x)
+}
+pub(crate) fn max(a: impl Into<Signal>, b: impl Into<Signal>) -> Signal {
+    node("max", &[("a", a.into()), ("b", b.into())])
+}
 pub(crate) fn sin(x: impl Into<Signal>) -> Signal {
     one("sin", x)
 }

@@ -59,16 +59,14 @@ fn freeze() -> Code {
     })
 }
 
-/// The vocoder of the doc of sounds: a chord of saws, as loud in each bin of 512 as the input.
+/// The vocoder of the doc of sounds, keyed by its own input: the test plays no sidechain, and
+/// what it hears does not change the work.
 fn vocoder() -> Code {
     compile(|| {
-        let saw = |hz: f32| phasor(hz) * 2.0 - 1.0;
-        let chord = saw(130.8) + saw(196.0) + saw(261.6);
-        spectral_of_two(chord, input(), 512, |saws, voice| {
-            (
-                saws.magnitude * smooth(voice.magnitude, 20.0) * 2.0,
-                saws.phase,
-            )
+        let loudness = max(smooth(abs(input()), 50.0), 0.001);
+        spectral_of_two(input(), input(), 512, |synth, voice| {
+            let shaped = synth.magnitude * smooth(voice.magnitude, 20.0);
+            (shaped / capture(loudness) * 8.0, synth.phase)
         })
     })
 }
