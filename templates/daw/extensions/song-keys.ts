@@ -1,5 +1,6 @@
 import type { FilledStateOfTool, Key } from "./sdk";
 import { editorKey } from "./clip-editor";
+import { editPoints } from "./song-automation";
 import type { Song } from "./song";
 import { itemCommand, moveItems, placing, putTaken, take, type ClipCommand } from "./song-clips";
 import { BEAT, clamp, itemTool, ITEMS, rowsOf } from "./song-page";
@@ -56,18 +57,7 @@ export function songKey(tool: Song, key: Key) {
     const { track: owner, lane, tick } = memory.point;
     memory.point = null;
     if (key.key === "escape") return;
-    // The last point takes its lane along.
-    update("Remove a point", ({ children }) => {
-      const row = children.find((child) => child.name === owner);
-      const points = row?.tool === "track" || row?.tool === "tape" ? row.children.find((child) => child.name === lane) : undefined;
-      if ((row?.tool !== "track" && row?.tool !== "tape") || points?.tool !== "lane") return;
-      const rest = points.state.points.filter((point) => point.tick !== tick);
-      if (rest.length > 0) points.state.points = rest;
-      else {
-        row.children.splice(row.children.findIndex((child) => child.name === lane), 1);
-        row.state.automation = row.state.automation.filter((each) => each.lane !== lane);
-      }
-    });
+    editPoints(tool, "Remove a point", owner, lane, (points) => points.filter((point) => point.tick !== tick));
     return;
   }
   // Alt-up and alt-down step the chosen regions' gain by a decibel.

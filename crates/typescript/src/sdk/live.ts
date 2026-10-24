@@ -81,6 +81,7 @@ type LiveNode =
   | { op: "input"; channel: number }
   | { op: "drag"; id: string; part: keyof DragValues }
   | { op: "space"; key: string; part: keyof SpaceValues }
+  | { op: "hover"; key: string }
   | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
   | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels"; x: Num }
   | { op: "ease"; x: Num; ease: EaseNode; key: string };
@@ -237,6 +238,8 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   drag(id: string): DragValues;
   /** The space of `key`, see `Space`. */
   space(key: string): SpaceValues;
+  /** 1 while the pointer is over the shape of `key`, and while it drags it: the readout of a point shows. */
+  hover(key: string): Live;
 }
 
 function sources(): Now<Record<string, number>> {
@@ -261,6 +264,7 @@ function sources(): Now<Record<string, number>> {
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
     space: (key) =>
       part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
+    hover: (key) => new Live({ op: "hover", key }),
   };
 }
 

@@ -161,8 +161,19 @@ export function positionOf({ min, max, scale }: Travel, value: number): number {
   return (value - min) / (max - min);
 }
 
-/** The value at `position` along `travel`, as `positionOf` puts it: a fader gives -Infinity at 0. */
-export function valueAt({ min, max, scale }: Travel, position: number): number {
+/**
+ * The value at `position` along `travel`, as `positionOf` puts it: a fader gives -Infinity at 0.
+ * Of a live position, a live value, such as the readout of a point as a drag moves it; a fader's
+ * gives -120 dB and less near 0.
+ */
+export function valueAt(travel: Travel, position: number): number;
+export function valueAt(travel: Travel, position: Live): Live;
+export function valueAt({ min, max, scale }: Travel, position: Num): Num {
+  if (typeof position !== "number") {
+    if (scale === "log") return position.times(0).plus(max / min).pow(position).times(min);
+    if (scale === "fader") return position.over(FADER.unity).decibels().times(FADER.decade / 20).min(FADER.top);
+    return position.times(max - min).plus(min);
+  }
   if (scale === "log") return min * (max / min) ** position;
   if (scale === "fader") return position <= 0 ? -Infinity : Math.min(FADER.decade * Math.log10(position / FADER.unity), FADER.top);
   return min + position * (max - min);

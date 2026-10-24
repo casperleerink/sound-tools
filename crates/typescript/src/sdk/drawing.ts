@@ -25,6 +25,8 @@ export type Color = `#${string}` | ThemeColor | `${ThemeColor}/${number}`;
 
 /** What a shape the pointer reaches can do. */
 interface Pointed extends PointerEvents {
+  /** Names it for `now.hover(key)`. */
+  key?: Bind<string>;
   /** A drag, made once and given to every shape it drags. */
   drag?: Drag;
   /** Its colour while the pointer is over it. */

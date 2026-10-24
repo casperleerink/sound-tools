@@ -1343,6 +1343,7 @@ impl TypeScriptCard {
             played: played.as_ref(),
             drag: None,
             spaces: &HashMap::new(),
+            hovered: None,
             feeds: &self.feeds,
         };
         let from = turns.map(|turns| {
@@ -2177,6 +2178,7 @@ impl Drawing<'_, '_> {
             played: self.played.as_ref(),
             drag: (self.drag.as_ref()).map(|(id, numbers)| (id.as_str(), *numbers)),
             spaces: &self.spaces,
+            hovered: (self.hovered.as_ref()).and_then(|(_, node)| self.table.shape_key(*node)),
             feeds: self.feeds,
         }
     }
