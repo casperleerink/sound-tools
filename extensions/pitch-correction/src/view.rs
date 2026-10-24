@@ -1,7 +1,7 @@
 //! The card of the pitch correction: across its display, a semitone around the note the voice
 //! is moved to, at the middle line. A thin line is what the voice sings, and a block from it
-//! to a bright line is how far it is moved, to where it plays. Then Key, Scale, Retune and
-//! Humanize, and behind expand the voice range, formants and Mix. The rack gives the view a
+//! to a bright line is how far it is moved, to where it plays. Key and Scale sit at its top,
+//! Retune and Humanize at its right, and behind expand the voice range, formants and Mix. The rack gives the view a
 //! [`CardFrame`].
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
@@ -31,7 +31,7 @@ use crate::{
 /// The name the rack puts on the card of a pitch correction.
 pub const NAME: &str = "Pitch correction";
 
-/// The width of the display: with two columns of cells the card is as wide as the filter's.
+/// The width of the display, as the filter's.
 const DISPLAY_WIDTH: f32 = 200.;
 /// The display reaches this far each side of the note moved to, in cents.
 const REACH_CENTS: f32 = 50.;
@@ -83,9 +83,9 @@ const SCALES: [(Scale, &str); 5] = [
     (Scale::MinorPentatonic, "Minor pentatonic"),
 ];
 const VOICES: [(Voice, &str); 4] = [
-    (Voice::High, "High voice"),
-    (Voice::Middle, "Middle voice"),
-    (Voice::Low, "Low voice"),
+    (Voice::High, "High"),
+    (Voice::Middle, "Middle"),
+    (Voice::Low, "Low"),
     (Voice::Instrument, "Instrument"),
 ];
 
@@ -222,9 +222,10 @@ impl PitchCorrectionView {
         ))
     }
 
-    fn display(&self) -> Display {
+    fn display(&self, choices: impl IntoElement) -> Display {
         let reading = self.reading;
         let display = Display::new("display", DISPLAY_WIDTH)
+            .child(choices)
             .grid([0.25, 0.5, 0.75].to_vec(), Vec::new())
             .curve(moved(reading))
             .caption(caption(reading));
@@ -278,27 +279,22 @@ impl Render for PitchCorrectionView {
             |state, voice| state.voice = voice,
             cx,
         );
-        let columns = [
-            Column::new()
-                .top(Cell::new(key).label("Key"))
-                .bottom(Cell::new(scale).label("Scale")),
-            Column::new()
-                .top(knob(RETUNE_KNOB, cx))
-                .bottom(knob(HUMANIZE_KNOB, cx)),
-        ];
+        let choices = div().flex().gap_1().child(key).child(scale);
+        let retune = Column::new()
+            .top(knob(RETUNE_KNOB, cx))
+            .bottom(knob(HUMANIZE_KNOB, cx));
         let hidden = [
             Column::new()
-                .top(Cell::new(voice).label("Voice"))
+                .span(2)
+                .top(Cell::new(voice).span(2).label("Voice"))
                 .bottom(Cell::new(self.formants(&state, cx)).label("Formants")),
             Column::new().top(knob(MIX_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = (self.frame.card())
             .expand(self.expanded, expand)
-            .display(self.display());
-        let card = columns
-            .into_iter()
-            .fold(card, |card, column| card.column(column));
+            .display(self.display(choices))
+            .column(retune);
         hidden
             .into_iter()
             .fold(card, |card, column| card.hidden_column(column))
