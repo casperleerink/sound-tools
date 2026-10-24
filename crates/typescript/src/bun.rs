@@ -6,7 +6,7 @@
 //! thread here that hears it knows what hangs, without the window: the window may be busy.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufRead, BufReader, Read, Seek, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -780,7 +780,7 @@ impl Bun {
             return Err(failure("started without pipes".to_string()));
         };
         // The tools run without a log they cannot write.
-        let log = match logs.then(|| std::fs::File::create(folder.join(LOG_FILE))) {
+        let log = match logs.then(|| empty_log(folder)) {
             Some(Ok(file)) => Some(file),
             Some(Err(error)) => {
                 eprintln!("error: could not write {LOG_FILE}: {error}");
@@ -1083,6 +1083,14 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     }
 }
 
+/// The log in `folder`, emptied. Appended to, so a last line of the Bun before, after this one
+/// emptied it, leaves no gap of zeros.
+fn empty_log(folder: &Path) -> std::io::Result<std::fs::File> {
+    let path = folder.join(LOG_FILE);
+    std::fs::write(&path, "")?;
+    std::fs::OpenOptions::new().append(true).open(path)
+}
+
 /// Passes what the code of the tools prints on to the runtime's own stderr, and keeps its
 /// last lines in `log`, until Bun stops.
 fn print(printed: impl Read, mut log: Option<std::fs::File>) {
@@ -1110,9 +1118,7 @@ fn print(printed: impl Read, mut log: Option<std::fs::File>) {
             // the whole log again for each line.
             kept.drain(..LOG_LINES / 2);
             kept.push_back(line);
-            (file.set_len(0))
-                .and_then(|()| file.rewind())
-                .and_then(|()| kept.iter().try_for_each(|line| file.write_all(line)))
+            (file.set_len(0)).and_then(|()| kept.iter().try_for_each(|line| file.write_all(line)))
         };
         if let Err(error) = written {
             eprintln!("error: could not write {LOG_FILE}: {error}");
@@ -1244,13 +1250,9 @@ mod tests {
     #[test]
     fn the_log_of_a_tool_that_prints_on_and_on_keeps_its_last_lines() {
         let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join(LOG_FILE);
         let printed: String = (0..1000).map(|line| format!("line {line}\n")).collect();
-        print(
-            printed.as_bytes(),
-            Some(std::fs::File::create(&path).unwrap()),
-        );
-        let log = std::fs::read_to_string(&path).unwrap();
+        print(printed.as_bytes(), Some(empty_log(folder.path()).unwrap()));
+        let log = std::fs::read_to_string(folder.path().join(LOG_FILE)).unwrap();
         let lines: Vec<&str> = log.lines().collect();
         assert!(
             (LOG_LINES / 2..=LOG_LINES).contains(&lines.len()),

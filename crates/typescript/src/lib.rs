@@ -659,32 +659,6 @@ mod tests {
         assert!(!extensions.path().join("bun.d.ts").exists());
     }
 
-    /// So an agent can print-debug a tool it wrote while the app has the project open.
-    #[test]
-    fn what_the_code_of_a_tool_prints_reaches_the_log() {
-        let project = tempfile::tempdir().unwrap();
-        let folder = project.path().join(FOLDER);
-        std::fs::create_dir(&folder).unwrap();
-        std::fs::write(folder.join("loud.ts"), "console.log(\"cutoff\", 440);\n").unwrap();
-        let _extensions = Extensions::load(project.path(), &[], true)
-            .unwrap()
-            .register(&mut Registry::new());
-        // Bun prints it before it says it loaded, but on another pipe, which another thread
-        // reads.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            let log = std::fs::read_to_string(folder.join(bun::LOG_FILE)).unwrap();
-            if log.contains("cutoff 440\n") {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the log holds {log:?}"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-
     #[test]
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();

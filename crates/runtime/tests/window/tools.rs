@@ -984,6 +984,45 @@ tool({
     });
 }
 
+/// So an agent can print-debug a tool it wrote while the window has the project open.
+#[gpui::test]
+fn what_the_code_of_a_tool_prints_is_in_the_log_until_its_code_is_saved_again(
+    cx: &mut TestAppContext,
+) {
+    let hum = |level: &str| {
+        format!(
+            r#"import {{ sine, tool }} from "./sdk";
+
+console.log("level", {level});
+
+tool({{
+  name: "hum",
+  title: "Hum",
+  when: "You want a hum",
+  doc: "A sine.",
+  state: {{}},
+  sound: () => sine(441).times({level}),
+}});
+"#
+        )
+    };
+    let files = [
+        TWO_LISTENERS[0],
+        ("state/hum.json", r#"{"tool": "hum", "state": {}}"#),
+        ("extensions/hum.ts", &hum("0.5")),
+    ];
+    let mut window = open(cx, &files);
+    let root = window.folder.path().to_path_buf();
+    let log = || std::fs::read_to_string(root.join("extensions/log.txt")).unwrap_or_default();
+    window.until("the line of the code", |_| log().contains("level 0.5\n"));
+
+    write(&root, "extensions/hum.ts", &hum("0.25"));
+    window.until("only the line of the new code", |_| {
+        let log = log();
+        log.contains("level 0.25\n") && !log.contains("level 0.5")
+    });
+}
+
 /// A tool whose keys play pitch 60 on its child `synth`, or on its own voices, and count in its
 /// record: `a` holds it with `send`, `b` holds 64 with `play` and `hold`, `c` holds 60 twice,
 /// `d` sends it 5 s ahead, `e` too with its off 2.5 s ahead. Its page is `saved` once code
