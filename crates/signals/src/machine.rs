@@ -11,12 +11,12 @@ use std::iter::repeat;
 use std::ops::Range;
 
 use sound_core::{
-    CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip,
-    xorshift32,
+    CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SvfFactors, SvfSection, SvfShape, amplitude,
+    soft_clip, xorshift32,
 };
 
 use crate::code::{
-    Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
+    Binary, Code, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
 };
 use crate::program::{self, Run, Step};
 
@@ -39,6 +39,9 @@ pub(crate) const LIMIT: f32 = 4.0;
 
 /// Quieter than this is silence: of a voice that ends, and of what a delay holds.
 pub(crate) const QUIET: f32 = 1e-4;
+
+/// The most a peak or a shelf raises or lowers, in dB.
+const MAX_FILTER_GAIN_DB: f32 = 24.0;
 
 /// The note a voice plays. A source and an effect follow the newest held note.
 #[derive(Copy, Clone, Debug, Default)]
@@ -156,11 +159,10 @@ struct Delay {
 struct Filter {
     section: SvfSection,
     factors: SvfFactors,
-    /// The damping, `1 / Q`, which a band and a high pass need too.
-    k: f32,
-    /// The cutoff and Q the factors are for, so a `tan` runs only when they move.
-    hz: f32,
-    q: f32,
+    /// How much of the input, the band pass and the low pass it adds up.
+    mix: [f32; 3],
+    /// The cutoff, Q and gain the factors are for, so a `tan` runs only when they move.
+    settings: [f32; 3],
 }
 
 #[derive(Clone, Default)]
@@ -245,7 +247,7 @@ impl Machine {
                 .collect(),
             filters: (0..slots.filters)
                 .map(|_| Filter {
-                    hz: f32::NAN,
+                    settings: [f32::NAN; 3],
                     ..Filter::default()
                 })
                 .collect(),
@@ -616,13 +618,14 @@ impl Span<'_> {
                 input,
                 hz,
                 q,
+                gain,
                 slot,
             } => match memory.filters.get_mut(usize::from(slot)) {
-                Some(kept) => settled!([hz, q], {
+                Some(kept) => settled!([hz, q, gain], {
                     let mut filter = kept.clone();
-                    let values = read(input).iter().zip(hz).zip(q);
-                    for (out, ((input, hz), q)) in out.iter_mut().zip(values) {
-                        *out = filter.next(kind, *input, hz, q, sample_rate);
+                    let values = read(input).iter().zip(hz).zip(q).zip(gain);
+                    for (out, (((input, hz), q), gain)) in out.iter_mut().zip(values) {
+                        *out = filter.next(kind, *input, [hz, q, gain], sample_rate);
                     }
                     *kept = filter;
                 }),
@@ -906,9 +909,10 @@ impl Span<'_> {
                 input,
                 hz,
                 q,
+                gain,
                 slot,
             } => (memory.filters.get_mut(usize::from(slot))).map_or(0.0, |filter| {
-                filter.next(kind, at(input), at(hz), at(q), sample_rate)
+                filter.next(kind, at(input), [at(hz), at(q), at(gain)], sample_rate)
             }),
             Operation::Smooth { input, ms, slot } => (memory.smooths.get_mut(usize::from(slot)))
                 .map_or(0.0, |smooth| smooth.next(at(input), at(ms), sample_rate)),
@@ -1114,13 +1118,18 @@ fn look_up(values: &[f32], phase: f32) -> f32 {
 
 impl Filter {
     #[inline(always)]
-    fn next(&mut self, kind: FilterKind, input: f32, hz: f32, q: f32, sample_rate: f32) -> f32 {
-        if (hz != self.hz || q != self.q) && hz.is_finite() && q.is_finite() {
-            let g = SvfFactors::cutoff_factor(hz.max(1.0), sample_rate);
-            self.k = 1.0 / q.clamp(0.1, SVF_MAX_Q);
-            self.factors = SvfFactors::new(g, self.k);
-            self.hz = hz;
-            self.q = q;
+    fn next(&mut self, kind: SvfShape, input: f32, settings: [f32; 3], sample_rate: f32) -> f32 {
+        if settings != self.settings && settings.iter().all(|setting| setting.is_finite()) {
+            let [hz, q, gain_db] = settings;
+            let shaped = kind.shaped(
+                hz,
+                gain_db.clamp(-MAX_FILTER_GAIN_DB, MAX_FILTER_GAIN_DB),
+                q.clamp(0.1, SVF_MAX_Q),
+                sample_rate,
+            );
+            self.factors = SvfFactors::new(shaped.g, shaped.k);
+            self.mix = shaped.mix;
+            self.settings = settings;
         }
         let input = finite(input);
         let (band, low) = self.section.band_and_low(&self.factors, input);
@@ -1129,12 +1138,8 @@ impl Filter {
             // again from silence, as a feedback without a filter does.
             self.section = SvfSection::default();
         }
-        let k = self.k;
-        match kind {
-            FilterKind::LowPass => low,
-            FilterKind::BandPass => k * band,
-            FilterKind::HighPass => input - k * band - low,
-        }
+        let [dry, band_mix, low_mix] = self.mix;
+        dry * input + band_mix * band + low_mix * low
     }
 }
 

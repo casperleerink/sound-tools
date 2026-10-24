@@ -9,11 +9,12 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde::Deserialize;
+use sound_core::SvfShape;
 
 use crate::code::{
-    ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_WATCHES,
-    Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
+    ArraySpec, Binary, Code, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS, MAX_DELAYS,
+    MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_WATCHES, Operation,
+    Output, ParameterSpec, Register, Slots, Table, Unary,
 };
 
 /// A sound as the SDK sends it.
@@ -122,6 +123,11 @@ pub(crate) enum Node {
     Lowpass(Filter),
     Highpass(Filter),
     Bandpass(Filter),
+    Notch(Filter),
+    Allpass(Filter),
+    Peak(Gained),
+    Lowshelf(Gained),
+    Highshelf(Gained),
     Smooth(Smooth),
     Adsr(Adsr),
     Hold(Hold),
@@ -154,6 +160,7 @@ fields! {
     // `longest` is a constant node.
     Delay { x: usize, ms: usize, longest: Option<usize> }
     Filter { x: usize, hz: usize, q: usize }
+    Gained { x: usize, hz: usize, db: usize, q: usize }
     Smooth { x: usize, ms: usize }
     Adsr { gate: usize, attack: usize, decay: usize, sustain: usize, release: usize }
     Hold { x: usize, when: usize }
@@ -432,12 +439,25 @@ impl<'a> Lowering<'a> {
         Ok(Operation::Binary(binary, self.read(*a)?, self.read(*b)?))
     }
 
-    fn filter(&mut self, kind: FilterKind, filter: &Filter) -> Result<Operation, GraphError> {
+    fn filter(&mut self, kind: SvfShape, filter: &Filter) -> Result<Operation, GraphError> {
+        let q = self.read(filter.q)?;
         Ok(Operation::Filter {
             kind,
             input: self.read(filter.x)?,
             hz: self.read(filter.hz)?,
-            q: self.read(filter.q)?,
+            q,
+            gain: q,
+            slot: next(&mut self.slots.filters),
+        })
+    }
+
+    fn gained(&mut self, kind: SvfShape, gained: &Gained) -> Result<Operation, GraphError> {
+        Ok(Operation::Filter {
+            kind,
+            input: self.read(gained.x)?,
+            hz: self.read(gained.hz)?,
+            q: self.read(gained.q)?,
+            gain: self.read(gained.db)?,
             slot: next(&mut self.slots.filters),
         })
     }
@@ -562,9 +582,14 @@ impl<'a> Lowering<'a> {
                 self.slots.delays.push(self.longest(*longest)?);
                 Operation::Delay { input, ms, slot }
             }
-            Node::Lowpass(filter) => self.filter(FilterKind::LowPass, filter)?,
-            Node::Highpass(filter) => self.filter(FilterKind::HighPass, filter)?,
-            Node::Bandpass(filter) => self.filter(FilterKind::BandPass, filter)?,
+            Node::Lowpass(filter) => self.filter(SvfShape::LowPass, filter)?,
+            Node::Highpass(filter) => self.filter(SvfShape::HighPass, filter)?,
+            Node::Bandpass(filter) => self.filter(SvfShape::BandPass, filter)?,
+            Node::Notch(filter) => self.filter(SvfShape::Notch, filter)?,
+            Node::Allpass(filter) => self.filter(SvfShape::AllPass, filter)?,
+            Node::Peak(gained) => self.gained(SvfShape::Peak, gained)?,
+            Node::Lowshelf(gained) => self.gained(SvfShape::LowShelf, gained)?,
+            Node::Highshelf(gained) => self.gained(SvfShape::HighShelf, gained)?,
             Node::Smooth(Smooth { x, ms }) => Operation::Smooth {
                 input: self.read(*x)?,
                 ms: self.read(*ms)?,

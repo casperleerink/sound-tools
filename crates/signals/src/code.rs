@@ -5,6 +5,8 @@
 //! so one pass in order computes a frame. A `History` reads what a feedback was set to in the
 //! frame before.
 
+use sound_core::SvfShape;
+
 /// The most params, and so the most knobs and toggles: the update carries their values in a
 /// fixed array.
 pub(crate) const MAX_PARAMETERS: usize = 32;
@@ -170,10 +172,12 @@ pub(crate) enum Operation {
         slot: u16,
     },
     Filter {
-        kind: FilterKind,
+        kind: SvfShape,
         input: Register,
         hz: Register,
         q: Register,
+        /// In dB. A shape without a gain ignores it.
+        gain: Register,
         slot: u16,
     },
     Smooth {
@@ -251,11 +255,4 @@ pub(crate) enum Binary {
     Min,
     Max,
     Power,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub(crate) enum FilterKind {
-    LowPass,
-    HighPass,
-    BandPass,
 }

@@ -267,14 +267,10 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Write {
             index: a, value: b, ..
         } => vec![a, b],
-        Operation::Clamp(a, b, c)
-        | Operation::Mix(a, b, c)
-        | Operation::Filter {
-            input: a,
-            hz: b,
-            q: c,
-            ..
-        } => vec![a, b, c],
+        Operation::Clamp(a, b, c) | Operation::Mix(a, b, c) => vec![a, b, c],
+        Operation::Filter {
+            input, hz, q, gain, ..
+        } => vec![input, hz, q, gain],
         Operation::Envelope {
             gate,
             attack,

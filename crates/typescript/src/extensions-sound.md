@@ -4,7 +4,8 @@ Read `agent-docs/extensions.md` first. Every function here has its doc in `exten
 
 - Methods take a signal or a number: `.plus`, `.minus`, `.times`, `.over`, `.mod`, `.negate()`; the comparisons `.lt`, `.gt`, `.le`, `.ge`, `.eq`, `.ne` give 1 for true and 0 for false.
 - `channel` is 0 left, 1 right, 0 in a stereo sound. `note.freq` (Hz, with bend), `note.pitch`, `note.gate` (1 while held), `note.velocity` and `note.onset` are the note of a voice. `beat` counts quarter notes from the start while the piece plays.
-- Oscillators go from -1 to 1. `phasor(hz)` is a ramp from 0 to 1 to build others.
+- Oscillators go from -1 to 1; `phasor(hz)`, a ramp from 0 to 1, builds others.
+- Filters: `lowpass`, `highpass`, `bandpass`, `notch`, `allpass` take `(x, hz, q?)`; `peak`, `lowshelf`, `highshelf` take `(x, hz, db, q?)`.
 - `delay(x, ms, longest?)` goes up to 4000 ms, smooth when `ms` moves (chorus, tape wobble); give `longest` when the tool has more voices than one.
 - `rise(x)` is 1 where `x` goes above 0, a clock: `rise(wrap(beat.times(4)).lt(0.5))` ticks every sixteenth. `hold(x, when)` samples and holds.
 - A table is a list of numbers such as a `pattern`, a `file` field or a `buffer`: `.at(index)` reads its whole part, wrapped; `lookup(table, phase)` reads 0 to 1 over the table, smooth. A file plays at its own speed with `lookup(sound, phasor(sampleRate.over(sound.length)))`; grains read short stretches of it.

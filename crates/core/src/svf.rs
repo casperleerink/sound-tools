@@ -1,6 +1,7 @@
 //! The state variable filter of the built-in Filter effect, the Synth and the Wavetable: low, band,
-//! high pass and notch, at 12 or 24 dB per octave, with resonance. The EQ and the Utility mix
-//! its raw outputs in their own shapes ([`SvfSection::band_and_low`]). Next to
+//! high pass and notch, at 12 or 24 dB per octave, with resonance. The EQ and the filters of a
+//! tool's sound mix its raw outputs in the shapes of [`SvfShape`], and the Utility in its own
+//! ([`SvfSection::band_and_low`]). Next to
 //! [`Smoothed`](crate::Smoothed), a helper a processor uses per frame. The core itself filters
 //! nothing.
 //!
@@ -253,6 +254,105 @@ fn multiply(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
 }
 
+/// A shape of one section that mixes the input, its band pass and its low pass, each with its
+/// own cutoff factor `g` and damping `k` (Simper, "Linear trapezoidal integrated state variable
+/// filter", 2016):
+///
+/// | Shape | `g` | `k` | input, band, low |
+/// | --- | --- | --- | --- |
+/// | Low pass | `t` | `1/q` | `0, 0, 1` |
+/// | High pass | `t` | `1/q` | `1, -k, -1` |
+/// | Band pass | `t` | `1/q` | `0, k, 0` |
+/// | Notch | `t` | `1/q` | `1, -k, 0` |
+/// | All pass | `t` | `1/q` | `1, -2k, 0` |
+/// | Peak | `t` | `1/(q a)` | `1, k (a² - 1), 0` |
+/// | Low shelf | `t/√a` | `1/min(q, 1.5)` | `1, k (a - 1), a² - 1` |
+/// | High shelf | `t √a` | `1/min(q, 1.5)` | `a², k (1 - a) a, 1 - a²` |
+///
+/// with `t = tan(π f / sample rate)` and `a = 10^(gain / 40)`. At 0 dB a peak and a shelf are
+/// the mix `1, 0, 0`: the input, exactly.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SvfShape {
+    LowPass,
+    HighPass,
+    BandPass,
+    Notch,
+    AllPass,
+    Peak,
+    LowShelf,
+    HighShelf,
+}
+
+/// The highest Q a shelf uses. Above 0.71 a shelf gets a bump at its frequency and a dip on its
+/// other side, and the bump grows fast: at Q 18 a shelf of +15 dB would peak at +38 dB. At 1.5
+/// the bump is at most 3.2 dB past the gain.
+pub const SHELF_MAX_Q: f32 = 1.5;
+
+impl SvfShape {
+    /// The table of [`SvfShape`] at a frequency, a gain in dB, which only a peak and a shelf
+    /// read, and a Q. A `tan` and a `powf`: work it out when something moves, not per frame.
+    pub fn shaped(self, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> ShapedSvf {
+        let g = SvfFactors::cutoff_factor(hz, sample_rate);
+        let a = 10_f32.powf(gain_db / 40.0);
+        let k = 1.0 / q;
+        let shelf_k = 1.0 / q.min(SHELF_MAX_Q);
+        let (g, k, mix) = match self {
+            Self::LowPass => (g, k, [0.0, 0.0, 1.0]),
+            Self::HighPass => (g, k, [1.0, -k, -1.0]),
+            Self::BandPass => (g, k, [0.0, k, 0.0]),
+            Self::Notch => (g, k, [1.0, -k, 0.0]),
+            Self::AllPass => (g, k, [1.0, -2.0 * k, 0.0]),
+            Self::Peak => {
+                let k = 1.0 / (q * a);
+                (g, k, [1.0, k * (a * a - 1.0), 0.0])
+            }
+            Self::LowShelf => (
+                g / a.sqrt(),
+                shelf_k,
+                [1.0, shelf_k * (a - 1.0), a * a - 1.0],
+            ),
+            Self::HighShelf => (
+                g * a.sqrt(),
+                shelf_k,
+                [a * a, shelf_k * (1.0 - a) * a, 1.0 - a * a],
+            ),
+        };
+        ShapedSvf { g, k, mix }
+    }
+}
+
+/// One section at one setting of an [`SvfShape`]: its cutoff factor, its damping, and how much
+/// of the input, the band pass and the low pass of [`SvfSection::band_and_low`] it adds up.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ShapedSvf {
+    pub g: f32,
+    pub k: f32,
+    pub mix: [f32; 3],
+}
+
+impl ShapedSvf {
+    /// The gain at `hz`, as a complex number: what a quiet steady sine comes out with.
+    ///
+    /// The trapezoidal form is the analog filter with its frequencies bent by `tan(π f / sample
+    /// rate)`, so this is the analog response at the bent frequency: `input + (band s + low) /
+    /// (s² + k s + 1)` with `s = j tan(π f / sample rate) / g`. Exact, not a drawing.
+    pub fn response(&self, hz: f32, sample_rate: f32) -> (f64, f64) {
+        let [input, band, low] = self.mix.map(f64::from);
+        let (g, k) = (f64::from(self.g), f64::from(self.k));
+        let bent = (std::f64::consts::PI * f64::from(hz.min(0.499 * sample_rate))
+            / f64::from(sample_rate))
+        .tan();
+        let at = bent / g;
+        // (low + j band at) / (1 - at² + j k at)
+        let (numerator, denominator) = ((low, band * at), (1.0 - at * at, k * at));
+        let size = denominator.0 * denominator.0 + denominator.1 * denominator.1;
+        (
+            input + (numerator.0 * denominator.0 + numerator.1 * denominator.1) / size,
+            (numerator.1 * denominator.0 - numerator.0 * denominator.1) / size,
+        )
+    }
+}
+
 /// The factors of one section for one cutoff and Q.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SvfFactors {
@@ -427,6 +527,25 @@ mod tests {
             FilterSlope::try_from(18),
             Err("slope must be 12 or 24, not 18".to_string())
         );
+    }
+
+    /// The shapes the EQ does not hold to its own formulas: an all pass keeps every level and
+    /// turns the phase half a turn at its frequency, a band pass is 1 there, and a peak is
+    /// exactly its gain there.
+    #[test]
+    fn an_all_pass_band_pass_and_peak_meet_their_definitions() {
+        let at = |shape: SvfShape, hz: f32| {
+            let (real, imaginary) = shape
+                .shaped(1_000.0, 6.0, 2.0, 48_000.0)
+                .response(hz, 48_000.0);
+            (real.hypot(imaginary), imaginary.atan2(real))
+        };
+        for hz in [50.0, 500.0, 1_000.0, 5_000.0, 20_000.0] {
+            assert!((at(SvfShape::AllPass, hz).0 - 1.0).abs() < 1e-9);
+        }
+        assert!((at(SvfShape::AllPass, 1_000.0).1.abs() - std::f64::consts::PI).abs() < 1e-6);
+        assert!((at(SvfShape::BandPass, 1_000.0).0 - 1.0).abs() < 1e-6);
+        assert!((at(SvfShape::Peak, 1_000.0).0 - 10_f64.powf(6.0 / 20.0)).abs() < 1e-5);
     }
 
     /// Full resonance: the Q of the first section is `SVF_MAX_Q` and its level takes half of
