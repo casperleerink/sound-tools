@@ -25,7 +25,7 @@ use gpui::{AppContext, Entity, HeadlessAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ExitReason, Installed, Model, Sidebar, StepId,
-    StepOutcome, TurnOutcome,
+    StepKind, StepOutcome, TurnOutcome,
 };
 use sound_ui::components::dropdown_menu::MenuPicked;
 
@@ -82,6 +82,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         title: "Read state/song/piano/verse.json".to_string(),
                         request_title: "Read state/song/piano/verse.json".to_string(),
                         running_title: "Reading state/song/piano/verse.json".to_string(),
+                        kind: StepKind::Read {
+                            path: "state/song/piano/verse.json".to_string(),
+                        },
                     },
                     AgentEvent::StepDone {
                         id: step("read"),
@@ -92,6 +95,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         title: "Wrote state/song/bass/clip-005.json".to_string(),
                         request_title: "Write state/song/bass/clip-005.json".to_string(),
                         running_title: "Writing state/song/bass/clip-005.json".to_string(),
+                        kind: StepKind::Change {
+                            path: "state/song/bass/clip-005.json".to_string(),
+                        },
                     },
                     AgentEvent::StepDone {
                         id: step("write"),
@@ -116,6 +122,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         request_title: "Run `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
                         // Longer than the line: it ends in an ellipsis.
                         running_title: "Running `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
+                        kind: StepKind::Run,
                     },
                 ],
                 cx,
@@ -185,6 +192,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         title: "Edited state/song/drums/clip-001.json".to_string(),
                         request_title: "Edit state/song/drums/clip-001.json".to_string(),
                         running_title: "Editing state/song/drums/clip-001.json".to_string(),
+                        kind: StepKind::Change {
+                            path: "state/song/drums/clip-001.json".to_string(),
+                        },
                     },
                     AgentEvent::StepDone {
                         id: step("edit"),
@@ -195,6 +205,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         title: "Ran `cargo test -p drums`".to_string(),
                         request_title: "Run `cargo test -p drums`".to_string(),
                         running_title: "Running `cargo test -p drums`".to_string(),
+                        kind: StepKind::Run,
                     },
                     AgentEvent::StepDone {
                         id: step("test"),

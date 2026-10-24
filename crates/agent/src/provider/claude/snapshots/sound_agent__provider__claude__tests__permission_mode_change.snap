@@ -29,6 +29,9 @@ expression: "replay(\"permission_mode\")"
         title: "Wrote a.txt",
         running_title: "Writing a.txt",
         request_title: "Write a.txt",
+        kind: Change {
+            path: "a.txt",
+        },
     },
     ApprovalRequested {
         id: ApprovalId(
@@ -59,6 +62,9 @@ expression: "replay(\"permission_mode\")"
         title: "Wrote b.txt",
         running_title: "Writing b.txt",
         request_title: "Write b.txt",
+        kind: Change {
+            path: "b.txt",
+        },
     },
     StepDone {
         id: StepId(

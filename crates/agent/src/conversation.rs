@@ -6,10 +6,10 @@
 //! Times are the wall clock, not `Instant`: a saved thread replays its events with the times
 //! they came at, and gets the same conversation back, "Worked for" included.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::time::{Duration, SystemTime};
 
-use crate::{AgentEvent, ApprovalId, ExitReason, StepId, StepOutcome, TurnOutcome};
+use crate::{AgentEvent, ApprovalId, ExitReason, StepId, StepKind, StepOutcome, TurnOutcome};
 
 /// The longest undo label a message gives, in characters. The project menu says "Undo …" with
 /// it, so a long message must not make the menu wide.
@@ -60,6 +60,7 @@ pub struct Step {
     pub running_title: String,
     /// As it was asked for, for a step the composer denied. Empty in an older saved thread.
     pub request_title: String,
+    pub kind: StepKind,
     /// `None` while it runs.
     pub outcome: Option<StepOutcome>,
 }
@@ -107,6 +108,65 @@ impl Turn {
     /// The newest step, which the working line shows.
     pub fn current_step(&self) -> Option<&Step> {
         self.steps.last()
+    }
+
+    /// How long it has worked so far, for the working line.
+    pub fn working_for(&self, now: SystemTime) -> Duration {
+        now.duration_since(self.started).unwrap_or_default()
+    }
+
+    /// What its steps did, as in "Changed 2 files and ran 1 command", or `None` when it took no
+    /// step. A denied step never ran, so it is not counted. Changes and commands say the most,
+    /// so they come first; past two kinds the rest are counted together.
+    pub fn summary(&self) -> Option<String> {
+        let ran = || {
+            self.steps
+                .iter()
+                .filter(|step| step.outcome != Some(StepOutcome::Denied))
+        };
+        let files = |read: bool| {
+            ran()
+                .filter_map(|step| match (&step.kind, read) {
+                    (StepKind::Read { path }, true) | (StepKind::Change { path }, false) => {
+                        Some(path)
+                    }
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>()
+                .len()
+        };
+        let count = |kind: &StepKind| ran().filter(|step| &step.kind == kind).count();
+        let plural = |count: usize, one: &str| match count {
+            1 => format!("1 {one}"),
+            count => format!("{count} {one}s"),
+        };
+        let mut parts: Vec<(usize, String)> = [
+            (files(false), "changed", "file"),
+            (count(&StepKind::Run), "ran", "command"),
+            (files(true), "read", "file"),
+            (count(&StepKind::Search), "searched", "time"),
+            (count(&StepKind::Other), "used", "tool"),
+        ]
+        .into_iter()
+        .filter(|(count, _, _)| *count > 0)
+        .map(|(count, verb, noun)| (count, format!("{verb} {}", plural(count, noun))))
+        .collect();
+        let more: usize = parts.iter().skip(2).map(|(count, _)| count).sum();
+        parts.truncate(2);
+        let mut words: Vec<String> = parts.into_iter().map(|(_, part)| part).collect();
+        if more > 0 {
+            words.push(plural(more, "more step"));
+        }
+        let line = match words.as_slice() {
+            [] => return None,
+            [only] => only.clone(),
+            [first, last] => format!("{first} and {last}"),
+            [first, second, last, ..] => format!("{first}, {second} and {last}"),
+        };
+        let mut letters = line.chars();
+        letters
+            .next()
+            .map(|first| first.to_uppercase().chain(letters).collect())
     }
 
     fn finish(&mut self, outcome: TurnOutcome, now: SystemTime) {
@@ -215,12 +275,14 @@ impl Conversation {
                 title,
                 running_title,
                 request_title,
+                kind,
             } => self.update_open_turn(|turn| {
                 turn.steps.push(Step {
                     id,
                     title,
                     running_title,
                     request_title,
+                    kind,
                     outcome: None,
                 });
             }),
@@ -324,6 +386,59 @@ mod tests {
     }
 
     #[test]
+    fn a_summary_counts_files_once_puts_changes_first_and_skips_denied_steps() {
+        let start = SystemTime::now();
+        let summary = |steps: &[(StepKind, StepOutcome)]| {
+            let mut conversation = Conversation::default();
+            conversation.send("Go", start);
+            for (number, (kind, outcome)) in steps.iter().enumerate() {
+                let id = step(&number.to_string());
+                let started = AgentEvent::StepStarted {
+                    id: id.clone(),
+                    title: String::new(),
+                    running_title: String::new(),
+                    request_title: String::new(),
+                    kind: kind.clone(),
+                };
+                let done = AgentEvent::StepDone {
+                    id,
+                    outcome: outcome.clone(),
+                };
+                conversation.apply(started, start);
+                conversation.apply(done, start);
+            }
+            turn(&conversation).summary()
+        };
+        let read = |path: &str| StepKind::Read {
+            path: path.to_string(),
+        };
+        let change = |path: &str| StepKind::Change {
+            path: path.to_string(),
+        };
+        let done = StepOutcome::Done;
+        assert_eq!(summary(&[]), None);
+        assert_eq!(
+            summary(&[
+                (read("a.json"), done.clone()),
+                (change("a.json"), done.clone()),
+                (change("a.json"), done.clone()),
+                (StepKind::Run, StepOutcome::Denied),
+            ]),
+            Some("Changed 1 file and read 1 file".to_string())
+        );
+        assert_eq!(
+            summary(&[
+                (read("a.json"), done.clone()),
+                (read("b.json"), done.clone()),
+                (StepKind::Search, done.clone()),
+                (StepKind::Run, StepOutcome::Failed),
+                (StepKind::Other, done),
+            ]),
+            Some("Ran 1 command, read 2 files and 2 more steps".to_string())
+        );
+    }
+
+    #[test]
     fn a_turn_streams_its_text_and_ends_with_how_long_it_worked() {
         let start = SystemTime::now();
         let mut conversation = Conversation::default();
@@ -336,6 +451,9 @@ mod tests {
                 title: "Wrote state/song/track-1/clip.json".to_string(),
                 request_title: "Write state/song/track-1/clip.json".to_string(),
                 running_title: "Writing state/song/track-1/clip.json".to_string(),
+                kind: StepKind::Change {
+                    path: "state/song/track-1/clip.json".to_string(),
+                },
             },
             AgentEvent::StepDone {
                 id: step("one"),
