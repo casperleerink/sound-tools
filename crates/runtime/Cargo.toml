@@ -42,6 +42,7 @@ sound-ui.workspace = true
 thiserror.workspace = true
 tone.workspace = true
 utility.workspace = true
+vocoder.workspace = true
 wavetable.workspace = true
 
 [target.'cfg(unix)'.dependencies]
