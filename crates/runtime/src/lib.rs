@@ -73,6 +73,8 @@ To turn a part into audio, render it alone into `assets/audio/` under a new name
 
 `sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`.
 
+To work with a recording or check a melody, add `--notes`, `--pitch` or both. They print the notes or the pitch instead of the rows.
+
 ## What `--analyze` prints
 
 The first line is the whole: loudness, the loudest 400 ms, the true peak and where it is, its pitch and drift. Each row then starts at a tick, a bar and a time:
@@ -83,6 +85,14 @@ The first line is the whole: loudness, the loudest 400 ms, the true peak and whe
 - `width`: the share of the sound in the side. 0% is mono; above 50% the channels cancel when summed to mono.
 - `pitch`: the middle pitch heard and how far off it in cents: `A4+3c`. `drift`: how far the pitch moves, in cents: a vibrato of 20 cents either way reads about `40c`, two notes in one row their interval.
 - `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord.
+
+`--notes` lists where each note starts, by an attack, a syllable or a change of pitch:
+
+- The first line: how many notes and phrases, the tuning the notes share and how far they spread around it (`+20c ±3c`; a speaking voice spreads 20c or more), and how far apart notes start, as the tempos that gap is a beat or a part of at.
+- `phrase`: notes with no silence of a quarter second or more between them, with where each starts and its `length` in seconds. Cut a recording into regions there.
+- Each note: its `length` in seconds, the `level` of its loudest 10 ms in dB, its middle `pitch`, and its `glide` in cents from its start to its end.
+
+`--pitch` prints the level and the pitch every 10 ms. Silence is 40 dB under the loudest moment, or 10 dB over the noise of a recording. Which key and which bar the notes belong to is for you and the composer to decide.
 
 To check a vibrato or the tuning, solo the track and measure one held note with `--from` and `--to`. A mono file measures 3 dB above what a meter of one channel shows, as it plays on both. Compare runs (before and after your change, a soloed track against the whole); the composer says whether it sounds good.
 

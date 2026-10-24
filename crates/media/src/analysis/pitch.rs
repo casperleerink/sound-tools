@@ -5,7 +5,7 @@
 //!
 //! A chord can repeat too: C, E and G together repeat at the period of a C two octaves under
 //! them, a note nobody plays. So a period counts only when the sound has power at its
-//! frequency.
+//! frequency or the octave above: a voice through a small microphone has little at its own.
 
 use std::sync::Arc;
 
@@ -21,12 +21,12 @@ const HIGHEST: f64 = 4_000.0;
 const THRESHOLD: f64 = 0.1;
 /// Under this mean square, -60 dB, a window is too quiet to tell a pitch in.
 const QUIET: f64 = 1e-6;
-/// The least share of the power of a window at the frequency of its period. A sawtooth has 61%
-/// there, a bright tone a few; a chord read as its root has almost nothing.
+/// The least share of the power of a window at the frequency of its period, or at twice it. A
+/// sawtooth has 61% there, a bright tone a few; a chord read as its root has almost nothing.
 const FUNDAMENTAL: f64 = 0.02;
 
 /// What one window sounds like.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Pitch {
     Quiet,
     /// Sound with no clear period: noise, drums, a chord.
@@ -190,7 +190,8 @@ impl PitchFinder {
             return Pitch::Unclear;
         };
         let hz = self.rate / period;
-        match self.power_at(hz) >= FUNDAMENTAL * power {
+        let heard = self.power_at(hz).max(self.power_at(2.0 * hz));
+        match heard >= FUNDAMENTAL * power {
             true => Pitch::Note(69.0 + 12.0 * (hz / 440.0).log2()),
             false => Pitch::Unclear,
         }
