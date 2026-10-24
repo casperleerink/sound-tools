@@ -163,7 +163,7 @@ pub enum ApprovalMode {
     /// Edits the project freely, asks before commands.
     #[default]
     AskBeforeCommands,
-    /// Does anything without asking. Undo and git are the safety net.
+    /// Does anything without asking. Undo is the safety net.
     NeverAsk,
 }
 

@@ -1262,7 +1262,7 @@ impl Live {
             .is_some_and(|tool| find(&self.tools.borrow(), tool).is_some_and(|info| info.on_take));
         let (Some(parent), true) = (parent, keeps) else {
             let message = format!(
-                "The take of {} was not kept: its parent has no `onTake`. Its files are under assets/.",
+                "The take of {} was not kept: nothing keeps what it records yet. Ask the agent for it.",
                 take.recorder
             );
             return session.update(cx, |session, cx| session.report(message, cx));
@@ -2019,7 +2019,7 @@ impl Live {
             }
             self.performer_gone(cx);
             let message = format!(
-                "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
+                "the code of the project {why} with no tool to blame, so the tools do not run: fix them and save"
             );
             self.problems.push(crate::folder_problem(message));
             return self.report(cx);

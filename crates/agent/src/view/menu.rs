@@ -81,17 +81,17 @@ fn approval_text(mode: ApprovalMode) -> (&'static str, &'static str, &'static st
         ApprovalMode::AskForEverything => (
             "ask-for-everything",
             "Ask always",
-            "Asks before every edit and command, except plain reads like ls.",
+            "Asks before every edit and command, except reading the project.",
         ),
         ApprovalMode::AskBeforeCommands => (
             "ask-before-commands",
             "Ask for commands",
-            "Edits freely, asks before commands, except plain reads.",
+            "Edits freely, asks before commands, except reading the project.",
         ),
         ApprovalMode::NeverAsk => (
             "never-ask",
             "Full access",
-            "Does anything without asking. Undo and git are your safety net.",
+            "Does anything without asking. Undo is your safety net.",
         ),
     }
 }
