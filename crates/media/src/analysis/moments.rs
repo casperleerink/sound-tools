@@ -35,7 +35,9 @@ pub(super) struct MomentFinder {
     pitch: PitchFinder,
     spectrum: PowerSpectrum,
     onset_length: usize,
-    mixed: Vec<f32>,
+    /// The power of each bin, both channels together, so channels of opposite polarity do not
+    /// cancel.
+    powers: Vec<f64>,
     /// The compressed spectrum of this moment and of the two before it, oldest first.
     weighed: Vec<f64>,
     earlier: [Vec<f64>; 2],
@@ -55,7 +57,7 @@ impl MomentFinder {
             pitch,
             spectrum: PowerSpectrum::new(onset_length),
             onset_length,
-            mixed: vec![0.0; onset_length],
+            powers: vec![0.0; bins],
             weighed: vec![0.0; bins],
             earlier: [vec![0.0; bins], vec![0.0; bins]],
         }
@@ -109,17 +111,14 @@ impl MomentFinder {
             .map(|value| f64::from(*value).powi(2))
             .sum();
         let level = decibels(power / (CHANNELS * self.hop) as f64);
-        let onset = middle(self.onset_length);
-        let both = left.get(onset.clone()).into_iter().flatten();
-        let both = both.zip(right.get(onset).into_iter().flatten());
-        for (mixed, (left, right)) in self.mixed.iter_mut().zip(both) {
-            *mixed = (left + right) / 2.0;
+        self.powers.fill(0.0);
+        for history in [left, right] {
+            let samples = history.get(middle(self.onset_length)).unwrap_or_default();
+            for (sum, power) in self.powers.iter_mut().zip(self.spectrum.powers(samples)) {
+                *sum += power / CHANNELS as f64;
+            }
         }
-        for (weighed, power) in self
-            .weighed
-            .iter_mut()
-            .zip(self.spectrum.powers(&self.mixed))
-        {
+        for (weighed, power) in self.weighed.iter_mut().zip(&self.powers) {
             *weighed = (1.0 + COMPRESSION * power.sqrt()).ln();
         }
         let rise = self

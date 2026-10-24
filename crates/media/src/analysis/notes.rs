@@ -184,7 +184,8 @@ fn hop(moments: &[Moment]) -> u64 {
 }
 
 /// The moments where a note starts: a peak of the rise, where the sound soon sounds. A sound
-/// that comes in too slowly to rise anywhere starts where it is first heard.
+/// that comes in too slowly to rise anywhere starts where it is first heard, and so does one
+/// whose rise peaks just after that, such as at the click of a short note's end.
 fn starts(moments: &[Moment], level: &impl Fn(usize) -> Option<f64>) -> Vec<usize> {
     let rises: Vec<f64> = moments.iter().map(|moment| moment.rise).collect();
     let highest = rises.iter().copied().fold(0.0, f64::max);
@@ -208,11 +209,18 @@ fn starts(moments: &[Moment], level: &impl Fn(usize) -> Option<f64>) -> Vec<usiz
     let mut heard = Vec::new();
     for at in 0..moments.len() {
         let comes_in = level(at).is_some() && (at == 0 || level(at - 1).is_none());
-        let started = starts
+        let rose = starts
             .iter()
-            .any(|start| start.abs_diff(at) < SOUNDS_WITHIN);
-        if comes_in && !started {
-            heard.push(at);
+            .any(|start| *start <= at && at - start < SOUNDS_WITHIN);
+        if !comes_in || rose {
+            continue;
+        }
+        let later = starts
+            .iter_mut()
+            .find(|start| (at..at + SOUNDS_WITHIN).contains(*start));
+        match later {
+            Some(later) => *later = at,
+            None => heard.push(at),
         }
     }
     starts.extend(heard);
@@ -333,8 +341,16 @@ mod tests {
     }
 
     fn events(mono: &[f64]) -> Events {
+        stereo_events(mono, 1.0)
+    }
+
+    /// With `right` times the sound on the right.
+    fn stereo_events(mono: &[f64], right: f64) -> Events {
         let mut meter = Meter::new(RATE as u32, vec![]);
-        let samples: Vec<f32> = mono.iter().flat_map(|value| [*value as f32; 2]).collect();
+        let samples: Vec<f32> = mono
+            .iter()
+            .flat_map(|value| [*value as f32, (right * value) as f32])
+            .collect();
         for piece in samples.chunks(2 * 333) {
             meter.push(piece);
         }
@@ -420,6 +436,30 @@ mod tests {
         let events = events(&sound);
         assert_played(&events, &played);
         assert_eq!(events.phrases.len(), 1);
+    }
+
+    #[test]
+    fn notes_on_channels_of_opposite_polarity_still_start() {
+        let mut phase = 0.0;
+        let mut sound = Vec::new();
+        for note in [57.0, 59.0, 60.0, 62.0] {
+            sound.extend(tone(note, note, 0.4, &mut phase, |_| 1.0));
+        }
+        assert_eq!(stereo_events(&sound, -1.0).notes.len(), 4);
+    }
+
+    #[test]
+    fn a_note_shorter_than_the_click_of_its_end_is_still_a_note() {
+        // A sine at A4 for 40 ms, cut off.
+        let mut sound: Vec<f64> = (0..(0.04 * RATE) as usize)
+            .map(|frame| 0.3 * (std::f64::consts::TAU * 440.0 * frame as f64 / RATE).sin())
+            .collect();
+        sound.extend(rest(0.1));
+        let events = events(&sound);
+        let [note] = events.notes[..] else {
+            panic!("{:#?}", events.notes);
+        };
+        assert!(note.start < (0.01 * RATE) as u64, "{note:?}");
     }
 
     #[test]

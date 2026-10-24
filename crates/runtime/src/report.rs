@@ -1,5 +1,5 @@
-//! The text `--analyze` prints: which rows a report has and where they start, and the table of
-//! what was measured in them, or of the notes and the pitch moment by moment.
+//! The report of `--analyze`: which rows it has and where they start, the table of what was
+//! measured in them, the notes and the pitch moment by moment.
 
 use sound_core::{Clock, Frames, Ticks, TimeSignatures};
 
@@ -214,21 +214,44 @@ fn shortest<Name>(sizes: impl Iterator<Item = (u64, Name)>, span: u64) -> Option
     sizes.find(|(size, _)| span.div_ceil(*size) <= MOST_ROWS)
 }
 
-/// What a report shows after the line of the whole: rows, or with either flag, the notes and
-/// the pitch moment by moment.
-#[derive(Clone, Copy, Default)]
-pub struct Shown {
-    pub notes: bool,
-    pub pitch: bool,
-}
-
 fn value(value: Option<f64>) -> String {
     value.map_or("-".to_string(), |value| format!("{value:.1}"))
 }
 
-/// The text of the report.
-pub fn report(timeline: &Timeline, measures: &Measures, shown: Shown) -> String {
-    let mut lines = vec![format!(
+/// Writes the whole report to a new file in the temporary folder and gives what to print: the
+/// lines of the whole, where the file is, and the line each part of it starts on. The file can
+/// be long, so an agent reads only the part it needs.
+pub fn write(timeline: &Timeline, measures: &Measures) -> anyhow::Result<String> {
+    let mut summary = vec![whole(timeline, measures)];
+    if let Some(frame) = measures.not_a_number {
+        summary.push(format!(
+            "samples that are not a number from {}, measured as silence",
+            timeline.place(frame)
+        ));
+    }
+    summary.push(events(timeline, &measures.events));
+    let mut file = summary.join("\n");
+    let mut starts = Vec::new();
+    for (heading, table) in parts(timeline, measures) {
+        file.push_str("\n\n");
+        starts.push(format!("  line {}: {heading}", file.lines().count() + 1));
+        file.push_str(&format!("{heading}\n{table}"));
+    }
+    file.push('\n');
+    let (mut written, path) = tempfile::Builder::new()
+        .prefix("sound-tools-analysis-")
+        .suffix(".txt")
+        .tempfile()?
+        .keep()?;
+    std::io::Write::write_all(&mut written, file.as_bytes())?;
+    summary.push(format!("the whole report is in {}:", path.display()));
+    summary.extend(starts);
+    Ok(summary.join("\n"))
+}
+
+/// The line of the whole: loudness, peak and pitch.
+fn whole(timeline: &Timeline, measures: &Measures) -> String {
+    format!(
         "loudness {} LUFS, loudest 400 ms {} LUFS, true peak {} dBTP{}, {}",
         value(measures.integrated),
         value(measures.max_momentary),
@@ -246,27 +269,27 @@ pub fn report(timeline: &Timeline, measures: &Measures, shown: Shown) -> String 
                 name(pitch.note),
                 drift(pitch)
             )),
-    )];
-    if let Some(frame) = measures.not_a_number {
-        lines.push(format!(
-            "samples that are not a number from {}, measured as silence",
-            timeline.place(frame)
-        ));
-    }
-    if shown.notes {
-        lines.extend(notes(timeline, &measures.events));
-    }
-    if shown.pitch {
-        lines.extend(pitch_by_moment(timeline, measures));
-    }
-    if !shown.notes && !shown.pitch {
-        lines.push(rows(timeline, measures));
-    }
-    lines.join("\n")
+    )
 }
 
-/// The rows of the same size and what each measures.
-fn rows(timeline: &Timeline, measures: &Measures) -> String {
+/// The parts of the file after the lines of the whole, each a heading and a table.
+fn parts(timeline: &Timeline, measures: &Measures) -> Vec<(String, String)> {
+    let (size, rows) = rows(timeline, measures);
+    let mut parts = vec![(size, rows)];
+    if !measures.events.notes.is_empty() {
+        let (phrases, notes) = notes(timeline, &measures.events);
+        parts.push(("phrases".to_string(), phrases));
+        parts.push(("notes".to_string(), notes));
+    }
+    parts.push((
+        "pitch every 10 ms".to_string(),
+        pitch_by_moment(timeline, measures),
+    ));
+    parts
+}
+
+/// The size of the rows, and what each measures.
+fn rows(timeline: &Timeline, measures: &Measures) -> (String, String) {
     let (size, rows) = timeline.rows();
 
     let mut after = vec!["LUFS", "max", "peak"];
@@ -294,16 +317,15 @@ fn rows(timeline: &Timeline, measures: &Measures) -> String {
         cells.push(measured.pitch.map_or("-".to_string(), drift));
         table.push(cells);
     }
-    format!("{size}\n{}", aligned(&table))
+    (size, aligned(&table))
 }
 
 /// The tempos, from 50 to 200 BPM, at which notes `gap` seconds apart are a beat or a part of
 /// one. The composer knows which it is.
 const TEMPO_RANGE: std::ops::RangeInclusive<f64> = 50.0..=200.0;
 
-/// What the notes have in common, the phrases, and every note.
-fn notes(timeline: &Timeline, events: &Events) -> Vec<String> {
-    let seconds = |frames: u64| format!("{:.2}", timeline.seconds(frames));
+/// What the notes have in common.
+fn events(timeline: &Timeline, events: &Events) -> String {
     let tuning = events.tuning.map_or("-".to_string(), |tuning| {
         let (cents, spread) = (tuning.cents.round() as i64, tuning.spread.round() as i64);
         format!("{cents:+}c ±{spread}c")
@@ -331,10 +353,12 @@ fn notes(timeline: &Timeline, events: &Events) -> Vec<String> {
             summary.push_str(&format!(": {}", tempos.join(", ")));
         }
     }
-    let mut lines = vec![summary];
-    if events.notes.is_empty() {
-        return lines;
-    }
+    summary
+}
+
+/// The table of the phrases and the table of the notes.
+fn notes(timeline: &Timeline, events: &Events) -> (String, String) {
+    let seconds = |frames: u64| format!("{:.2}", timeline.seconds(frames));
     let mut table = vec![headings(timeline, &["phrase"], &["length", "notes"])];
     for (number, phrase) in events.phrases.iter().enumerate() {
         let mut cells = vec![(number + 1).to_string()];
@@ -342,7 +366,7 @@ fn notes(timeline: &Timeline, events: &Events) -> Vec<String> {
         cells.extend([seconds(phrase.end - phrase.start), phrase.notes.to_string()]);
         table.push(cells);
     }
-    lines.push(aligned(&table));
+    let phrases = aligned(&table);
     let mut table = vec![headings(
         timeline,
         &[],
@@ -360,12 +384,11 @@ fn notes(timeline: &Timeline, events: &Events) -> Vec<String> {
         ]);
         table.push(cells);
     }
-    lines.push(aligned(&table));
-    lines
+    (phrases, aligned(&table))
 }
 
 /// The level and pitch of every moment that is not silence.
-fn pitch_by_moment(timeline: &Timeline, measures: &Measures) -> Vec<String> {
+fn pitch_by_moment(timeline: &Timeline, measures: &Measures) -> String {
     let mut table = vec![headings(timeline, &[], &["level", "pitch"])];
     for moment in &measures.moments {
         let Some(level) = moment.level else {
@@ -379,7 +402,7 @@ fn pitch_by_moment(timeline: &Timeline, measures: &Measures) -> Vec<String> {
         });
         table.push(cells);
     }
-    vec!["pitch every 10 ms".to_string(), aligned(&table)]
+    aligned(&table)
 }
 
 /// The headings of a table with `before` and `after` around where its rows are.
@@ -533,6 +556,48 @@ mod tests {
         assert_eq!(cells[3], ["1:00.30"]);
         let starts = file(60.0, 61.0).row_starts();
         assert_eq!(starts[3], 13_230);
+    }
+
+    #[test]
+    fn the_printed_lines_say_where_each_part_of_the_file_starts() {
+        // Two plucks of A4.
+        let samples: Vec<f32> = (0..48_000)
+            .flat_map(|frame| {
+                let time = f64::from(frame % 24_000) / 48_000.0;
+                let value = (std::f64::consts::TAU * 440.0 * time).sin() * (-8.0 * time).exp();
+                [value as f32 * 0.5; 2]
+            })
+            .collect();
+        let timeline = Timeline::File {
+            sample_rate: 48_000,
+            from: 0.0,
+            to: 1.0,
+        };
+        let mut meter = sound_media::analysis::Meter::new(48_000, timeline.row_starts());
+        meter.push(&samples);
+        let printed = write(&timeline, &meter.finish()).unwrap();
+        let path = printed
+            .lines()
+            .find_map(|line| line.strip_prefix("the whole report is in "))
+            .and_then(|path| path.strip_suffix(':'))
+            .unwrap();
+        let file = std::fs::read_to_string(path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let file: Vec<&str> = file.lines().collect();
+        let starts: Vec<(usize, &str)> = printed
+            .lines()
+            .filter_map(|line| line.strip_prefix("  line ")?.split_once(": "))
+            .map(|(number, heading)| (number.parse().unwrap(), heading))
+            .collect();
+        let headings: Vec<&str> = starts.iter().map(|(_, heading)| *heading).collect();
+        assert_eq!(
+            headings,
+            ["rows of 0.1 s", "phrases", "notes", "pitch every 10 ms"]
+        );
+        for (number, heading) in starts {
+            assert_eq!(file[number - 1], heading);
+        }
+        assert!(file[1].starts_with("2 notes in 1 phrases"), "{}", file[1]);
     }
 
     #[test]

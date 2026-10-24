@@ -21,8 +21,6 @@
 //! seconds (`83.5s`). A render and an analysis of a project take `--from` and `--to`, either
 //! one alone, or `--seconds`, and `--only <path>`, the one instance whose sound the device plays,
 //! which changes no file. `--no-tail` stops a range at its end. An analysis of a file takes times only.
-//! An analysis with `--notes` lists the notes instead of rows, and with `--pitch` the pitch every
-//! 10 ms.
 //!
 //! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
 //! progress bar of the window's export.
@@ -47,7 +45,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
-use runtime::report::{Shown, Timeline, report};
+use runtime::report::Timeline;
 use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
@@ -303,21 +301,14 @@ struct Options {
     to: Option<Position>,
     only: Option<String>,
     no_tail: bool,
-    shown: Shown,
 }
 
 impl Options {
     fn parse(mut arguments: &[&str]) -> Result<Self> {
         let mut options = Self::default();
         while let [flag, rest @ ..] = arguments {
-            let switch = match *flag {
-                "--no-tail" => Some(&mut options.no_tail),
-                "--notes" => Some(&mut options.shown.notes),
-                "--pitch" => Some(&mut options.shown.pitch),
-                _ => None,
-            };
-            if let Some(switch) = switch {
-                *switch = true;
+            if *flag == "--no-tail" {
+                options.no_tail = true;
                 arguments = rest;
                 continue;
             }
@@ -443,9 +434,6 @@ fn print_event_overflows(project: &mut Project) -> Result<()> {
 /// Renders the span of `options` to `wav`. With `progress` it prints each whole percent of the
 /// span it reaches.
 fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Result<()> {
-    if options.shown.notes || options.shown.pitch {
-        bail!("--notes and --pitch are for --analyze");
-    }
     let (mut project, mut engine, plugins) = open_for_render(folder, options)?;
     // Before the file is made, so a render that cannot happen leaves no empty file behind.
     let span = options.span(&project)?;
@@ -544,7 +532,7 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
         Ok(())
     };
     play(&mut project, &mut engine, &plugins, &span, measure)?;
-    println!("{}", report(&timeline, &meter.finish(), options.shown));
+    println!("{}", runtime::report::write(&timeline, &meter.finish())?);
     print_event_overflows(&mut project)
 }
 
@@ -588,7 +576,7 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
         meter.warm_up(before);
         meter.push(after);
     }
-    println!("{}", report(&timeline, &meter.finish(), options.shown));
+    println!("{}", runtime::report::write(&timeline, &meter.finish())?);
     Ok(())
 }
 
@@ -671,7 +659,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] [--notes] [--pitch]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>] [--notes] [--pitch]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
