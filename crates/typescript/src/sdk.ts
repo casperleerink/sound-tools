@@ -14,11 +14,11 @@ export type {
 } from "./sdk/fields";
 // signals: what a sound is made of
 export {
-  abs, adsr, bandpass, beat, bpm, Buffer, buffer, change, channel, clamp, cos, db, delay, exp,
-  Feedback, feedback, floor, graphToJson, highpass, hold, input, inputLeft, inputRight, log,
-  lookup, lowpass, max, min, mix, mtof, noise, note, output, Param, phasor, PI, playing, pow,
-  rise, sampleRate, saturate, saw, Signal, sin, sine, smooth, sqrt, square, Table, tan, tanh, TAU,
-  triangle, wrap
+  abs, adsr, allpass, bandpass, beat, bpm, Buffer, buffer, change, channel, clamp, cos, db, delay,
+  exp, Feedback, feedback, floor, graphToJson, highpass, highshelf, hold, input, inputLeft,
+  inputRight, log, lookup, lowpass, lowshelf, max, min, mix, mtof, noise, notch, note, output,
+  Param, peak, phasor, PI, playing, pow, rise, sampleRate, saturate, saw, Signal, sin, sine,
+  smooth, sqrt, square, Table, tan, tanh, TAU, triangle, wrap
 } from "./sdk/sound";
 export type {
   Graph, GraphNode, Operand, Stereo, TableRef

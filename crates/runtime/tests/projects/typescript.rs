@@ -311,7 +311,9 @@ s.tool({
       level.ge(1), level.eq(1), level.ne(1), s.min(level, 1), s.max(level, 1), s.pow(level, 2),
       s.clamp(level, 0, 1), s.mix(level, 1, 0.5), s.noise(), s.delay(s.input, 10),
       s.delay(s.input, 10, 20), s.lowpass(s.input, 1000, 1), s.highpass(s.input, 1000, 1),
-      s.bandpass(s.input, 1000, 1), s.smooth(level, 10), s.adsr(n.gate, 1, 1, 0.5, 1),
+      s.bandpass(s.input, 1000, 1), s.notch(s.input, 1000), s.allpass(s.input, 1000, 2),
+      s.peak(s.input, 1000, 6, 2), s.lowshelf(s.input, 200, -6), s.highshelf(s.input, 5000, 3),
+      s.smooth(level, 10), s.adsr(n.gate, 1, 1, 0.5, 1),
       s.hold(level, hit), s.rise(hit), s.change(level), steps.at(0), steps.length,
       s.lookup(steps, 0.5), tape.at(0), s.lookup(tape, 0.5),
     ];

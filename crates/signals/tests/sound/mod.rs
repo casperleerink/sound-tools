@@ -157,10 +157,21 @@ pub(crate) fn delay_up_to(x: impl Into<Signal>, ms: impl Into<Signal>, longest: 
     node("delay", &operands)
 }
 pub(crate) fn lowpass(x: impl Into<Signal>, hz: impl Into<Signal>, q: f32) -> Signal {
-    node(
-        "lowpass",
-        &[("x", x.into()), ("hz", hz.into()), ("q", q.into())],
-    )
+    filter("lowpass", x, hz, q)
+}
+/// `lowpass`, `highpass`, `bandpass`, `notch` or `allpass`.
+pub(crate) fn filter(op: &str, x: impl Into<Signal>, hz: impl Into<Signal>, q: f32) -> Signal {
+    node(op, &[("x", x.into()), ("hz", hz.into()), ("q", q.into())])
+}
+/// `peak`, `lowshelf` or `highshelf`.
+pub(crate) fn gained_filter(op: &str, x: impl Into<Signal>, hz: f32, db: f32, q: f32) -> Signal {
+    let operands = [
+        ("x", x.into()),
+        ("hz", hz.into()),
+        ("db", db.into()),
+        ("q", q.into()),
+    ];
+    node(op, &operands)
 }
 pub(crate) fn adsr(
     gate: impl Into<Signal>,

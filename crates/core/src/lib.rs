@@ -91,7 +91,8 @@ pub use saturation::soft_clip;
 pub use scope::Scope;
 pub use sections::{Section, SectionError, SectionName, Sections};
 pub use svf::{
-    FilterCharacter, FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response,
+    FilterCharacter, FilterSlope, FilterType, SHELF_MAX_Q, SVF_MAX_Q, ShapedSvf, SvfFactors,
+    SvfSection, SvfShape, svf_response,
 };
 pub use thru::{AudioThru, EventThru};
 pub use transport::Transport;

@@ -7,7 +7,7 @@ use serde_json::json;
 #[path = "../tests/sound/mod.rs"]
 pub(crate) mod sound;
 
-use sound_core::MAX_BLOCK;
+use sound_core::{MAX_BLOCK, SvfShape};
 
 use crate::machine::{Block, Inputs, Machine, Note};
 use crate::{Code, Declarations, Graph};
@@ -147,6 +147,55 @@ fn a_lowpass_lets_the_lows_through_and_takes_the_highs_out() {
     assert!(level(100.0) > 0.99);
     assert!((level(1000.0) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
     assert!(level(10_000.0) < 0.02);
+}
+
+/// Each filter of the SDK, measured with a steady sine, gives what [`ShapedSvf::response`]
+/// says, in level and in phase.
+#[test]
+fn every_filter_sounds_as_its_response_says() {
+    const CUTOFF: f32 = 1_000.0;
+    const Q: f32 = 2.0;
+    const GAIN_DB: f32 = 6.0;
+    let filters = [
+        ("lowpass", SvfShape::LowPass),
+        ("highpass", SvfShape::HighPass),
+        ("bandpass", SvfShape::BandPass),
+        ("notch", SvfShape::Notch),
+        ("allpass", SvfShape::AllPass),
+        ("peak", SvfShape::Peak),
+        ("lowshelf", SvfShape::LowShelf),
+        ("highshelf", SvfShape::HighShelf),
+    ];
+    // Whole periods of each fit in the window, so the sums below measure one frequency.
+    const WINDOW: usize = 4_800;
+    for (op, shape) in filters {
+        let shaped = shape.shaped(CUTOFF, GAIN_DB, Q, SAMPLE_RATE);
+        for hz in [100.0, 700.0, 1_000.0, 1_400.0, 6_000.0] {
+            let mut filter = machine(compile(|| match shape {
+                SvfShape::Peak | SvfShape::LowShelf | SvfShape::HighShelf => {
+                    gained_filter(op, input(), CUTOFF, GAIN_DB, Q)
+                }
+                _ => filter(op, input(), CUTOFF, Q),
+            }));
+            let angle = |frame: usize| TAU as f64 * f64::from(hz) * frame as f64 / 48_000.0;
+            let output = run(&mut filter, |frame| angle(frame).sin() as f32, 2 * WINDOW);
+            // The output is `real sin + imaginary cos` of the input's angle.
+            let (real, imaginary) =
+                (WINDOW..2 * WINDOW).fold((0.0, 0.0), |(real, imaginary), frame| {
+                    let sample = f64::from(output[frame]) * 2.0 / WINDOW as f64;
+                    (
+                        real + sample * angle(frame).sin(),
+                        imaginary + sample * angle(frame).cos(),
+                    )
+                });
+            let (expected_real, expected_imaginary) = shaped.response(hz, SAMPLE_RATE);
+            assert!(
+                (real - expected_real).abs() < 1e-3
+                    && (imaginary - expected_imaginary).abs() < 1e-3,
+                "{op} at {hz} Hz: ({real}, {imaginary}), not ({expected_real}, {expected_imaginary})"
+            );
+        }
+    }
 }
 
 #[test]

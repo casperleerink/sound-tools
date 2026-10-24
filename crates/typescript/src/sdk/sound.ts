@@ -31,7 +31,8 @@ type SignalNode<R> =
   | { op: "phasor"; hz: R }
   | { op: "noise" }
   | { op: "delay"; x: R; ms: R; longest?: R }
-  | { op: "lowpass" | "highpass" | "bandpass"; x: R; hz: R; q: R }
+  | { op: "lowpass" | "highpass" | "bandpass" | "notch" | "allpass"; x: R; hz: R; q: R }
+  | { op: "peak" | "lowshelf" | "highshelf"; x: R; hz: R; db: R; q: R }
   | { op: "smooth"; x: R; ms: R }
   | { op: "adsr"; gate: R; attack: R; decay: R; sustain: R; release: R }
   | { op: "hold"; x: R; when: R }
@@ -239,13 +240,27 @@ export const noise = (): Signal => new Signal({ op: "noise" });
 export const delay = (x: Operand, ms: Operand, longest?: number): Signal =>
   new Signal(longest === undefined ? { op: "delay", x, ms } : { op: "delay", x, ms, longest });
 const filter =
-  (op: "lowpass" | "highpass" | "bandpass") =>
+  (op: "lowpass" | "highpass" | "bandpass" | "notch" | "allpass") =>
   (x: Operand, hz: Operand, q: Operand = Math.SQRT1_2): Signal =>
     new Signal({ op, x, hz, q });
 /** Filters. `q` is 0.707 when left out: no peak; higher rings at `hz`, up to 20. */
 export const lowpass = filter("lowpass");
 export const highpass = filter("highpass");
 export const bandpass = filter("bandpass");
+/** Takes out a band around `hz`, all of it at `hz`. Higher `q` is narrower. */
+export const notch = filter("notch");
+/** Keeps every level and shifts the phase around `hz`, for a phaser. */
+export const allpass = filter("allpass");
+const gained =
+  (op: "peak" | "lowshelf" | "highshelf") =>
+  (x: Operand, hz: Operand, db: Operand, q: Operand = Math.SQRT1_2): Signal =>
+    new Signal({ op, x, hz, db, q });
+/** Raises or lowers a band around `hz` by `db`, -24 to 24. Higher `q` is narrower. */
+export const peak = gained("peak");
+/** Raises or lowers what is below `hz` by `db`, -24 to 24, half of it at `hz`; `q` up to 1.5. */
+export const lowshelf = gained("lowshelf");
+/** Raises or lowers what is above `hz` by `db`, -24 to 24, half of it at `hz`; `q` up to 1.5. */
+export const highshelf = gained("highshelf");
 /** `x` that follows changes slowly, in about `ms` milliseconds. */
 export const smooth = (x: Operand, ms: Operand): Signal => new Signal({ op: "smooth", x, ms });
 /** An envelope from 0 to 1 that follows `gate`; times in ms, `sustain` 0 to 1. */
