@@ -129,8 +129,12 @@ impl PitchSettings {
 /// [`Self::push`] may run on the audio thread.
 pub struct PitchTracker {
     rate: f64,
-    /// The lags looked at, in frames: the periods of the highest to the lowest note. The
-    /// difference at each lag is summed over `longest` frames, so a look is twice as long.
+    /// The lowest and the highest fundamental read, in Hz.
+    lowest: f64,
+    highest: f64,
+    /// The lags looked at, in frames: the periods of the highest, with one more for the
+    /// parabola, to the lowest note. The difference at each lag is summed over `longest`
+    /// frames, so a look is twice as long.
     shortest: usize,
     longest: usize,
     finding: f64,
@@ -169,8 +173,10 @@ impl PitchTracker {
     /// A tracker for one channel at `rate`. It reads a note about one period of the lowest note
     /// after it starts.
     pub fn new(rate: f64, settings: PitchSettings) -> Self {
-        let longest = ((rate / settings.lowest).ceil() as usize).max(4);
-        let shortest = ((rate / settings.highest).floor() as usize).max(2);
+        // Under 1 Hz a look would grow without bound.
+        let lowest = settings.lowest.max(1.0);
+        let longest = ((rate / lowest).ceil() as usize).max(4);
+        let shortest = ((rate / settings.highest).floor() as usize).max(3) - 1;
         let mut planner = RealFftPlanner::<f64>::new();
         let forward = planner.plan_fft_forward(2 * longest);
         let inverse = planner.plan_fft_inverse(2 * longest);
@@ -178,6 +184,8 @@ impl PitchTracker {
         let finding = settings.finding();
         Self {
             rate,
+            lowest,
+            highest: settings.highest,
             shortest,
             longest,
             finding,
@@ -317,10 +325,14 @@ impl PitchTracker {
         let highest = ((period * reach).ceil() as usize).min(self.longest - 1);
         let lag = (lowest..=highest)
             .min_by(|a, b| self.normalized(*a).total_cmp(&self.normalized(*b)))?;
-        match self.normalized(lag) < self.keeping {
-            true => self.period(lag, power),
-            false => None,
+        if self.normalized(lag) >= self.keeping {
+            return None;
         }
+        // The bottom of the dip can be far off, at a period a chord shares.
+        let found = self.period(lag, power)?;
+        (period / reach..=period * reach)
+            .contains(&found.0)
+            .then_some(found)
     }
 
     fn normalized(&self, lag: usize) -> f64 {
@@ -329,8 +341,7 @@ impl PitchTracker {
 
     /// The period of the dip `lag` is in, between the frames by a parabola through the
     /// difference, and its normalized difference. `None` when the sound has no power at its
-    /// frequency, or the bottom of the dip is out of range: a note outside it would read as
-    /// its edge.
+    /// frequency, or it is out of range.
     fn period(&self, mut lag: usize, power: f64) -> Option<(f64, f64)> {
         loop {
             let here = self.normalized(lag);
@@ -354,6 +365,9 @@ impl PitchTracker {
         };
         let period = lag as f64 + offset;
         let hz = self.rate / period;
+        if !(self.lowest..=self.highest).contains(&hz) {
+            return None;
+        }
         let least = FUNDAMENTAL * power;
         let heard = self.power_at(hz) >= least
             || (self.power_at(2.0 * hz) >= least && !self.repeats_at(period / 2.0));
@@ -540,22 +554,24 @@ mod tests {
     fn noise_and_a_chord_have_no_pitch_even_after_a_note() {
         let readings = track(PitchSettings::FULL, &noise(1.0));
         assert_eq!(notes(&readings, 0.0), []);
-        // C4 alone, then E4 and G4 join it.
-        let mut sound = tone(1.0, |_| 60.0, |_| vec![0.3]);
-        for note in [64.0, 67.0] {
-            let joining = tone(
-                1.0,
-                |_| note,
-                |time| vec![if time < 0.5 { 0.0 } else { 0.3 }],
-            );
-            for (sample, joining) in sound.iter_mut().zip(joining) {
-                *sample += joining;
+        // C4 alone, then E4 and G4 join it; A2, then C#3.
+        for (root, joining) in [(60.0, vec![64.0, 67.0]), (45.0, vec![49.0])] {
+            let mut sound = tone(1.0, |_| root, |_| vec![0.3]);
+            for note in joining {
+                let joining = tone(
+                    1.0,
+                    |_| note,
+                    |time| vec![if time < 0.5 { 0.0 } else { 0.3 }],
+                );
+                for (sample, joining) in sound.iter_mut().zip(joining) {
+                    *sample += joining;
+                }
             }
+            let readings = track(PitchSettings::FULL, &sound);
+            assert!((notes(&readings, 0.0)[0].1 - root).abs() < 0.05);
+            // Past the hold and the length of a look.
+            assert_eq!(notes(&readings, 0.6), [], "{root}");
         }
-        let readings = track(PitchSettings::FULL, &sound);
-        assert!((notes(&readings, 0.0)[0].1 - 60.0).abs() < 0.05);
-        // Past the hold and the length of a look.
-        assert_eq!(notes(&readings, 0.6), []);
     }
 
     #[test]
