@@ -265,7 +265,10 @@ impl Processor for Vocoder {
             true => inputs.get(Self::SIDECHAIN),
             false => input,
         };
-        let silent = input.iter().chain(&key).all(|samples| all_held_silent(samples));
+        let silent = input
+            .iter()
+            .chain(&key)
+            .all(|samples| all_held_silent(samples));
         if !silent {
             if self.quiet >= REST_FRAMES {
                 self.rest();

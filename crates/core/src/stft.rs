@@ -285,7 +285,10 @@ mod tests {
         let late = stft.latency();
         for (frame, sample) in output.iter().enumerate().skip(2048) {
             let expected = sine(hz(64.0), frame - late);
-            assert!((sample - expected).abs() < 1e-3, "frame {frame}: {sample} for {expected}");
+            assert!(
+                (sample - expected).abs() < 1e-3,
+                "frame {frame}: {sample} for {expected}"
+            );
         }
     }
 }

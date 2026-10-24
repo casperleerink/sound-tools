@@ -7,7 +7,7 @@ Here the pad plays through a vocoder named `talk`:
 ```json state/song/pad/chain/talk.json
 {
   "tool": "vocoder",
-  "state": {"bands": 32, "release_ms": 40.0}
+  "state": {"bands": 32.0, "release_ms": 40.0}
 }
 ```
 

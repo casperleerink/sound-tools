@@ -6,11 +6,11 @@ A piece of music saved as small JSON files, which you edit. While the runtime ha
 
 The composer is a musician, not a programmer: in your replies and in what tools show, use musical words, not names of code, formats or files.
 
-This file is the map. Open the docs your task needs and leave the others closed.
+This file is the map: open only the docs your task needs.
 
 ## The composer's instructions
 
-`instructions.md`, when it exists, holds the composer's instructions for this project. Read it before you start and follow it; where it disagrees with the docs, it wins. When the composer asks you to remember something for this project, or corrects a mistake you might make again, add a short line to it, as a plain rule.
+`instructions.md`, when it exists, holds the composer's instructions for this project. Read and follow it before you start; it wins over the docs. When the composer asks you to remember something, or corrects a mistake you might repeat, add a short plain rule to it.
 
 ## Docs
 

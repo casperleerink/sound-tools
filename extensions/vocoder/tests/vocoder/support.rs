@@ -89,9 +89,7 @@ impl Rig {
             Engine::new(EngineConfig::new(SAMPLE_RATE, 2).rendering_offline());
         let mut edit = control.edit();
         let source = edit.add_processor("track", Source::new(track)).unwrap();
-        let vocoder = edit
-            .add_processor("vocoder", Vocoder::new(state))
-            .unwrap();
+        let vocoder = edit.add_processor("vocoder", Vocoder::new(state)).unwrap();
         let input = Connection::new(source.id(), Source::OUTPUT, vocoder.id(), Vocoder::INPUT);
         edit.connect(input).unwrap();
         edit.connect(Connection::to_device(vocoder.id(), Vocoder::OUTPUT, 0))
