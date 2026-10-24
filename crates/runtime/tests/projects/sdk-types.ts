@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { h, input, Knob, number, list, notes, NumberBox, output, Path, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Path, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -381,6 +381,56 @@ tool({
       { from: { child: "drop", number: "level" }, to: { child: "counter", number: "level" } },
       // @ts-expect-error: a whole number moves by no cable.
       { from: { child: "drop", number: "level" }, to: { child: "counter", number: "count" } },
+    ],
+  }),
+});
+
+// Sound ports beyond `audio`: a parent's connections name them, checked against each tool.
+const duck = tool({
+  name: "duck",
+  title: "Duck",
+  when: "Never",
+  doc: "Turns down what comes in while its sidechain plays.",
+  state: {},
+  inputs: { sidechain: audio() },
+  sound: ({ sidechain }) => input.times(abs(sidechain.left).lt(0.1)),
+});
+const split = tool({
+  name: "split",
+  title: "Split",
+  when: "Never",
+  doc: "Its lows out of `low`.",
+  state: {},
+  outputs: { low: audio() },
+  sound: () => ({ audio: highpass(input, 200), low: lowpass(input, 200) }),
+});
+tool({
+  name: "unsplit",
+  title: "Unsplit",
+  when: "Never",
+  doc: "A sound that gives no `low`.",
+  state: {},
+  outputs: { low: audio() },
+  // @ts-expect-error: it gives each of its outputs.
+  sound: () => ({ audio: input }),
+});
+const ported = { duck, split } as const;
+
+tool({
+  name: "ported",
+  title: "Ported",
+  when: "Never",
+  doc: "Keys its duck with the lows of its split.",
+  state: {},
+  children: ported,
+  behaviour: (): Declaration<typeof ported> => ({
+    connections: [
+      { from: { child: "split", port: "low" }, to: { child: "duck", port: "sidechain" } },
+      { from: { child: "duck" }, to: { port: "audio" } },
+      // @ts-expect-error: the duck has no input `sidechian`.
+      { from: { child: "split" }, to: { child: "duck", port: "sidechian" } },
+      // @ts-expect-error: and `low` is an output of the split, not an input.
+      { from: { child: "duck" }, to: { child: "split", port: "low" } },
     ],
   }),
 });

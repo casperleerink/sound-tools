@@ -225,3 +225,66 @@ fn a_track_plays_any_instrument_and_names_a_tool_that_takes_no_notes() {
         "{problems:?}"
     );
 }
+
+/// Silences what comes in while its `sidechain` sounds.
+const DUCKER: &str = r#"import { abs, audio, input, smooth, tool } from "./sdk";
+
+tool({
+  name: "ducker",
+  title: "Ducker",
+  when: "Never",
+  doc: "Silences what comes in while its sidechain sounds.",
+  state: {},
+  inputs: { sidechain: audio() },
+  sound: ({ sidechain }) => input.times(smooth(abs(sidechain), 10).lt(1e-3)),
+});
+"#;
+
+/// A ducker of this project in the chain of `t00`, keyed by `t01` after its fader when `keyed`,
+/// as the card's sidechain picker writes it into the song's `sidechains`.
+fn ducked_by_a_tool_of_the_project(keyed: bool) -> (Harness, Vec<f32>) {
+    let folder = tempfile::tempdir().unwrap();
+    for (path, text) in song_files(2, 2) {
+        write(folder.path(), &path, &text);
+    }
+    write(folder.path(), "extensions/ducker.ts", DUCKER);
+    write(
+        folder.path(),
+        "state/song/t00/chain/duck.json",
+        r#"{"tool": "ducker", "state": {}}"#,
+    );
+    let chain = r#"{"tool": "chain", "state": {"order": ["duck"]}}"#;
+    write(folder.path(), "state/song/t00/chain/instance.json", chain);
+    write(
+        folder.path(),
+        "state/song/t01/mix.json",
+        &fader(r#""-inf""#),
+    );
+    let sidechains = match keyed {
+        true => r#"[{"effect": "t00/chain/duck", "from": "t01", "tap": "pre_fx"}]"#,
+        false => "[]",
+    };
+    let song = format!(r#"{{"tool": "song", "state": {{"sidechains": {sidechains}}}}}"#);
+    write(folder.path(), "state/song/instance.json", &song);
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    let played = play(&mut harness, BAR);
+    (harness, played)
+}
+
+/// The song keys an effect of this project that has a `sidechain` input as it keys a
+/// compressor, and the card offers its picker. `t01`'s fader is down, so only the key hears it.
+#[test]
+fn a_sidechain_keys_an_effect_of_the_project() {
+    let (harness, keyed) = ducked_by_a_tool_of_the_project(true);
+    let duck = sound_core::InstanceId::new("song/t00/chain/duck").unwrap();
+    assert!(harness.project.input_port(&duck, "sidechain").is_some());
+    let (_, open) = ducked_by_a_tool_of_the_project(false);
+    assert!(energy(&open) > 0.0);
+    assert!(
+        energy(&keyed) < 0.5 * energy(&open),
+        "{} {}",
+        energy(&keyed),
+        energy(&open)
+    );
+}
