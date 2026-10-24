@@ -39,6 +39,7 @@ sound-media.workspace = true
 sound-notes.workspace = true
 sound-typescript.workspace = true
 sound-ui.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tone.workspace = true
 utility.workspace = true
@@ -65,7 +66,6 @@ sound-typescript = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
 sha2.workspace = true
-tempfile.workspace = true
 test-clap-plugin.workspace = true
 test-plugin-support.workspace = true
 test-vst3-plugin.workspace = true

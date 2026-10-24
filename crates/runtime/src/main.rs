@@ -45,7 +45,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
-use runtime::report::{Timeline, report};
+use runtime::report::Timeline;
 use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
@@ -532,7 +532,7 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
         Ok(())
     };
     play(&mut project, &mut engine, &plugins, &span, measure)?;
-    println!("{}", report(&timeline, &meter.finish()));
+    println!("{}", runtime::report::write(&timeline, &meter.finish())?);
     print_event_overflows(&mut project)
 }
 
@@ -576,7 +576,7 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
         meter.warm_up(before);
         meter.push(after);
     }
-    println!("{}", report(&timeline, &meter.finish()));
+    println!("{}", runtime::report::write(&timeline, &meter.finish())?);
     Ok(())
 }
 
