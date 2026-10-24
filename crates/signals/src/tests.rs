@@ -511,17 +511,34 @@ fn a_graph_that_does_not_hold_says_what_is_wrong_in_the_words_of_the_sdk() {
         { "op": "delay", "x": 0, "ms": 0, "longest": 0 },
     ]);
     assert!(error(graph(longest)).starts_with("delay(x, ms, longest): longest is a number"));
-    let delays: Vec<_> = (0..17)
-        .map(|_| json!({ "op": "delay", "x": 0, "ms": 0 }))
-        .collect();
-    let nodes = [vec![json!({ "op": "input" })], delays].concat();
-    assert_eq!(error(graph(json!(nodes))), "a sound has at most 16 delays");
     let bins = json!({ "nodes": [{ "op": "magnitude" }], "feedbacks": [], "captures": [], "output": { "magnitude": 0, "phase": 0 } });
     let spectral =
         json!([{ "op": "input" }, { "op": "spectral", "x": 0, "size": 1000, "bins": bins }]);
     assert_eq!(
         error(graph(spectral)),
         "spectral(x, 1000): the size is a power of two from 256 to 8192"
+    );
+}
+
+#[test]
+fn a_tool_of_one_voice_holds_16_minutes_of_delays_and_buffers_and_each_of_more_voices_2() {
+    let compile = |buffer: f32, voices| {
+        // A delay that gives no longest holds 4 s.
+        let nodes = json!([{ "op": "input" }, { "op": "delay", "x": 0, "ms": 0 }]);
+        let graph = json!({ "nodes": nodes, "feedbacks": [], "buffers": [buffer], "watches": [], "numbers": [], "bangs": [], "notes": [], "output": { "mono": 1 } });
+        let graph: Graph = serde_json::from_value(graph).unwrap();
+        let declarations = Declarations {
+            voices,
+            ..Declarations::default()
+        };
+        graph.compile(&declarations).map(|_| ())
+    };
+    assert!(compile(956.0, 1).is_ok());
+    assert!(compile(956.5, 1).is_err());
+    assert!(compile(116.0, 8).is_ok());
+    assert_eq!(
+        compile(116.5, 8).unwrap_err().to_string(),
+        "the delays and buffers of a sound hold up to 960 s together, and 120 s in a tool of more voices than one: these hold 120.5 s. Shorten a buffer, or give a delay a shorter longest"
     );
 }
 

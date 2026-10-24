@@ -20,12 +20,12 @@ pub(crate) const MAX_OUTPUTS: usize = 8;
 /// The most numbers a sound sends out: each is an event port of every processor, and a watch a
 /// view reads.
 pub(crate) const MAX_NUMBERS: usize = MAX_WATCHES;
-/// The longest a `delay` can be.
-pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
-/// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
-pub(crate) const MAX_DELAYS: usize = 16;
-/// The seconds of all the buffers of one code together, per channel and voice.
-pub(crate) const MAX_BUFFER_SECONDS: f32 = 30.0;
+/// What a `delay` holds when it gives no `longest`.
+pub(crate) const DEFAULT_DELAY_MS: f32 = 4000.0;
+/// The seconds the delays and buffers of a tool hold together, per channel. An instrument keeps
+/// [`MAX_VOICES`](crate::MAX_VOICES) voices whatever it plays, so each holds an eighth, 2
+/// minutes: more than any sound could hold before.
+pub(crate) const MAX_MEMORY_SECONDS: f32 = 960.0;
 /// The longest a pattern can be.
 pub const MAX_ARRAY_LENGTH: usize = 1024;
 /// The sizes a `spectral` can be, powers of two: each bin keeps a memory, and a spectrum comes
