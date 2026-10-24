@@ -44,6 +44,7 @@ icons!(
     "device-saturator",
     "device-synth",
     "device-utility",
+    "device-vocoder",
     "device-wavetable",
     "ellipsis",
     "eq-bell",

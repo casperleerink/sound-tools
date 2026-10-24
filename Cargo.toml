@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -41,6 +41,7 @@ sound-typescript = { path = "crates/typescript" }
 sound-ui = { path = "crates/ui" }
 tone = { path = "extensions/tone" }
 utility = { path = "extensions/utility" }
+vocoder = { path = "extensions/vocoder" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
 cargo_metadata = "0.23"
@@ -187,6 +188,7 @@ test-clap-plugin = { opt-level = 3 }
 test-vst3-plugin = { opt-level = 3 }
 tone = { opt-level = 3 }
 utility = { opt-level = 3 }
+vocoder = { opt-level = 3 }
 wavetable = { opt-level = 3 }
 # The FFT of the wavetables runs in the behaviour when a table is picked. Unoptimized it takes
 # a large part of a second.

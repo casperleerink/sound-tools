@@ -6,8 +6,8 @@
 //! - `cards-dynamics.png`: the Saturator driven 18 dB into its tube curve, the Limiter pushing
 //!   the chord into a ceiling of -6 dB, and the Gate.
 //! - `cards-time.png`, `cards-time-expanded.png`: the Delay synced and dotted, and the Reverb.
-//! - `cards-tools.png`, `cards-tools-expanded.png`: the Modulation, and the Utility with bass
-//!   mono on.
+//! - `cards-tools.png`, `cards-tools-expanded.png`: the Modulation, the Utility with bass mono
+//!   on, and the Vocoder with its formant moved.
 //! - `cards-analyzer.png`: the Analyzer hearing the chord.
 //! - `cards-drums.png`, `cards-drums-expanded.png`: the Drum pad playing a beat.
 //! - `cards-sampler.png`, `cards-sampler-expanded.png`: the Sampler playing a file.
@@ -114,6 +114,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
         (
             "utility",
             record("utility", r#"{"width": 1.5, "bass_mono": true}"#),
+        ),
+        (
+            "vocoder",
+            record("vocoder", r#"{"bands": 32, "formant": 3.0}"#),
         ),
     ];
     let tools: Vec<(&str, &str)> = (tools.iter())
