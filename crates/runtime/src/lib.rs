@@ -171,6 +171,7 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     saturator::register(registry)?;
     tone::register(registry)?;
     utility::register(registry)?;
+    vocoder::register(registry)?;
     wavetable::register(registry)?;
     Ok(())
 }
@@ -212,6 +213,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     gate::view::register(&mut views, &mut devices);
     limiter::view::register(&mut views, &mut devices);
     modulation::view::register(&mut views, &mut devices);
+    vocoder::view::register(&mut views, &mut devices);
     delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
