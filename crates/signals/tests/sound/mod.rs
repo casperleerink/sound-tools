@@ -366,15 +366,40 @@ pub(crate) fn spectral(
     size: usize,
     bins: impl FnOnce(Bin) -> (Signal, Signal),
 ) -> Signal {
-    let x = x.into();
+    spectrum(x.into(), None, size, |bin, _| bins(bin))
+}
+
+/// As [`spectral`], where `bins` also gets the bin of `other` at the same frequency.
+pub(crate) fn spectral_of_two(
+    x: impl Into<Signal>,
+    other: impl Into<Signal>,
+    size: usize,
+    bins: impl FnOnce(Bin, Bin) -> (Signal, Signal),
+) -> Signal {
+    spectrum(x.into(), Some(other.into()), size, bins)
+}
+
+fn spectrum(
+    x: Signal,
+    side: Option<Signal>,
+    size: usize,
+    bins: impl FnOnce(Bin, Bin) -> (Signal, Signal),
+) -> Signal {
     let around = BUILDING.take();
+    let (hz, index) = (node("hz", &[]), node("index", &[]));
     let bin = Bin {
         magnitude: node("magnitude", &[]),
         phase: node("phase", &[]),
-        hz: node("hz", &[]),
-        index: node("index", &[]),
+        hz,
+        index,
     };
-    let (magnitude, phase) = bins(bin);
+    let other = Bin {
+        magnitude: node("sideMagnitude", &[]),
+        phase: node("sidePhase", &[]),
+        hz,
+        index,
+    };
+    let (magnitude, phase) = bins(bin, other);
     let inside = BUILDING.replace(around);
     let feedbacks: Vec<usize> = (inside.feedbacks.iter())
         .map(|value| value.expect("a feedback is never set"))
@@ -382,6 +407,7 @@ pub(crate) fn spectral(
     add(json!({
         "op": "spectral",
         "x": x.0,
+        "side": side.map(|side| side.0),
         "size": size,
         "bins": {
             "nodes": inside.nodes,

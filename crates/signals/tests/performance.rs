@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-//! How much faster than realtime many `Signals` processors render: effects, a spectral one too,
+//! How much faster than realtime many `Signals` processors render: effects, spectral ones too,
 //! and instruments with every voice playing.
 
 use std::time::Instant;
@@ -59,6 +59,11 @@ fn freeze() -> Code {
     })
 }
 
+/// Bins of a spectrum of 2048 with a second input, left as they are.
+fn two_inputs() -> Code {
+    compile(|| spectral_of_two(input(), input(), 2048, |bin, _| (bin.magnitude, bin.phase)))
+}
+
 /// Run with
 /// `cargo nextest run -p sound-signals --run-ignored only realtime_ratio --no-capture`.
 #[test]
@@ -68,6 +73,7 @@ fn realtime_ratio_of_one_hundred_processors() {
         ("echo effect", echo(), Kind::One),
         ("saw source", voice(), Kind::One),
         ("spectral freeze effect", freeze(), Kind::One),
+        ("spectral of two inputs", two_inputs(), Kind::One),
     ] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();

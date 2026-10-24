@@ -16,7 +16,7 @@ type Binary =
   | "add" | "subtract" | "multiply" | "divide" | "remainder" | "less" | "greater" | "lessOrEqual"
   | "greaterOrEqual" | "equal" | "notEqual" | "min" | "max" | "pow";
 
-type BinSource = "magnitude" | "phase" | "hz" | "index";
+type BinSource = "magnitude" | "phase" | "hz" | "index" | "sideMagnitude" | "sidePhase";
 
 /** Where a table reads: a list or file field by name, one side of a file, or a `buffer` by its number. */
 export type TableRef = { list: string } | { left: string } | { right: string } | { buffer: number };
@@ -55,7 +55,7 @@ type SignalNode<R> =
   | { op: "at"; table: TableRef; index: R }
   | { op: "lookup"; table: TableRef; phase: R }
   | { op: "length"; table: TableRef }
-  | { op: "spectral"; x: R; size: number; bins: Bins<R> }
+  | { op: "spectral"; x: R; side?: R; size: number; bins: Bins<R> }
   | { op: BinSource };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
@@ -396,18 +396,34 @@ export interface Bin {
   index: Signal;
 }
 
+/** What `spectral` gives back for each bin: the bin as it goes out. */
+export interface BinOut {
+  mag: Operand;
+  phase: Operand;
+}
+
 /**
  * `x` through its spectrum: `each` runs once per bin of the last `size` samples, a power of
  * two from 256 to 8192, a quarter of `size` apart, and gives the bin as it goes out. Each bin
  * keeps its own memory from one spectrum to the next, so `feedback`, `hold` and `smooth` work
  * per bin; a signal from outside is read as it is at each spectrum. The sound comes out `size`
  * samples late. Inside `sound` only, in a tool of one voice.
+ *
+ * Given `[x, other]`, `each` also gets the bin of `other` at the same frequency, such as the
+ * voice that shapes a synth in a vocoder; what goes out is still the spectrum of `x`.
  */
+export function spectral(x: Operand, size: number, each: (bin: Bin) => BinOut): Signal;
 export function spectral(
-  x: Operand,
+  x: [Operand, Operand],
   size: number,
-  each: (bin: Bin) => { mag: Operand; phase: Operand },
+  each: (bin: Bin, other: Bin) => BinOut,
+): Signal;
+export function spectral(
+  inputs: Operand | [Operand, Operand],
+  size: number,
+  each: (bin: Bin, other: Bin) => BinOut,
 ): Signal {
+  const [x, side] = Array.isArray(inputs) ? inputs : [inputs];
   const around = outside("spectral");
   const own = ++scopes;
   current = { feedbacks: [], buffers: [], writes: [], numbers: [], bangs: [], notes: [] };
@@ -415,12 +431,12 @@ export function spectral(
   let bins: Bins<Operand>;
   try {
     const inside = current;
-    const { mag, phase } = each({
-      mag: new Named({ op: "magnitude" }),
-      phase: new Named({ op: "phase" }),
-      hz: new Named({ op: "hz" }),
-      index: new Named({ op: "index" }),
-    });
+    const hz = new Named({ op: "hz" });
+    const index = new Named({ op: "index" });
+    const { mag, phase } = each(
+      { mag: new Named({ op: "magnitude" }), phase: new Named({ op: "phase" }), hz, index },
+      { mag: new Named({ op: "sideMagnitude" }), phase: new Named({ op: "sidePhase" }), hz, index },
+    );
     const captures: Signal[] = [];
     const captured = new Map<Signal, number>();
     const { nodes, prepare, use } = layout(own, (outer) => {
@@ -439,7 +455,7 @@ export function spectral(
     current = around;
     scope = 0;
   }
-  return new Signal({ op: "spectral", x, size, bins });
+  return new Signal(side === undefined ? { op: "spectral", x, size, bins } : { op: "spectral", x, side, size, bins });
 }
 
 /** Notes from signals: one sounds while `gate` is above 0, at the MIDI `pitch` it starts with. */
@@ -552,9 +568,12 @@ function layout(own: number, capture?: (outer: Signal) => GraphNode) {
     const node = operand.node;
     if (node.op === "spectral") {
       prepare(node.x);
+      if (node.side !== undefined) prepare(node.side);
       node.bins.captures.forEach(prepare);
       const bins = { ...node.bins, captures: node.bins.captures.map(use) };
-      made.set(operand, add({ op: "spectral", x: use(node.x), size: node.size, bins }));
+      const x = use(node.x);
+      const side = node.side === undefined ? {} : { side: use(node.side) };
+      made.set(operand, add({ op: "spectral", x, ...side, size: node.size, bins }));
       return;
     }
     const operands = Object.entries(node).filter((entry): entry is [string, Operand] =>

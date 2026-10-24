@@ -729,3 +729,33 @@ fn a_freeze_holds_each_bin_and_plays_on_after_the_sound_stops() {
     let never = run(&mut machine(freeze(f32::MAX)), sine, after.end);
     assert!(loudest(&never[after]) < 1e-4);
 }
+
+#[test]
+fn bins_of_two_inputs_meet_at_each_frequency_and_the_spectrum_of_the_first_goes_out() {
+    let hz = |bin: f32| bin * SAMPLE_RATE / 1024.0;
+    let sine = |hz: f32, frame: usize| (TAU * hz * frame as f32 / SAMPLE_RATE).sin();
+    // A vocoder's core: the first input goes out where the second sounds.
+    let code = compile(move || {
+        let other = 0.5 * sin(phasor(hz(64.0)) * TAU);
+        spectral_of_two(input(), other, 1024, |bin, other| {
+            (bin.magnitude * (1.0 - other.magnitude.lt(0.1)), bin.phase)
+        })
+    });
+    assert_eq!(code.latency, 1023);
+    let both = move |frame: usize| sine(hz(32.0), frame) + sine(hz(64.0), frame);
+    for span in [1, MAX_BLOCK] {
+        let [left, _] = render_in_spans(&mut machine(code.clone()), both, 64, span);
+        for (frame, sample) in left.iter().enumerate().skip(2048) {
+            let expected = sine(hz(64.0), frame - 1023);
+            assert!(
+                (sample - expected).abs() < 1e-3,
+                "span {span}, frame {frame}: {sample} for {expected}"
+            );
+        }
+    }
+    let late_other = compile(|| {
+        let other = spectral(input(), 256, |bin| (bin.magnitude, bin.phase));
+        spectral_of_two(input(), other, 1024, |bin, _| (bin.magnitude, bin.phase))
+    });
+    assert_eq!(late_other.latency, 1023 + 255);
+}
