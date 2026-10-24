@@ -5,4 +5,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod correction;
+mod performance;
+mod playing;
+mod realtime;
 mod support;

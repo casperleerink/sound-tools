@@ -42,6 +42,9 @@ const RETUNE_PARTS: f64 = 3.0;
 const HUMANIZE_SECONDS: f64 = 0.4;
 /// How much nearer, in semitones, another allowed note must be than the target to take over.
 const STICK: f64 = 0.1;
+/// The frames from one working out of how fast the correction moves to the next, counted from
+/// the start, so a render is the same in any buffers.
+const KEEPING_FRAMES: u64 = 64;
 /// The changes of held notes that may wait for the readings at once.
 const WAITING: usize = 32;
 
@@ -95,9 +98,11 @@ pub struct PitchCorrection {
     target_frames: u64,
     unclear_frames: usize,
     heard: Option<f64>,
-    /// Where the correction goes, and where it is, in semitones.
+    /// Where the correction goes, where it is, in semitones, and the part of its distance to
+    /// the goal it keeps per frame.
     goal: f64,
     correction: f64,
+    keeping: f64,
     /// Frames in a row of silent input.
     quiet: usize,
     rest_frames: usize,
@@ -141,6 +146,7 @@ impl PitchCorrection {
             heard: None,
             goal: 0.0,
             correction: 0.0,
+            keeping: 0.0,
             quiet: 0,
         };
         correction.shifter.keep_formants(state.keep_formants);
@@ -181,6 +187,7 @@ impl PitchCorrection {
             self.mix.snap();
         }
         self.shifter.keep_formants(state.keep_formants);
+        self.keeping = self.keeping_now();
         let wanted = voice_index(state.voice);
         let starting = self.starting.map(|(index, _)| index);
         if wanted == self.listening {
@@ -253,7 +260,7 @@ impl PitchCorrection {
 
     /// The factor the correction keeps of its distance to the goal per frame, for a target held
     /// so long.
-    fn keeping(&self) -> f64 {
+    fn keeping_now(&self) -> f64 {
         let state = *self.state;
         let held = self.target_frames as f64 / self.rate;
         let seconds = f64::from(state.retune_ms) / 1_000.0
@@ -265,9 +272,9 @@ impl PitchCorrection {
         }
     }
 
-    /// Reads the tracker after a frame: the goal, the correction a frame on towards it with
-    /// `keeping`, and how to shift the sound the reading describes.
-    fn read(&mut self, offset: usize, keeping: f64) -> Shift {
+    /// Reads the tracker after a frame: the goal, the correction a frame on towards it, and how
+    /// to shift the sound the reading describes.
+    fn read(&mut self, offset: usize) -> Shift {
         let Some(tracker) = self.trackers.get(self.listening) else {
             return Shift::NONE;
         };
@@ -296,7 +303,7 @@ impl PitchCorrection {
                 None
             }
         };
-        self.correction = self.goal + keeping * (self.correction - self.goal);
+        self.correction = self.goal + self.keeping * (self.correction - self.goal);
         Shift {
             period,
             ratio: 2_f64.powf(self.correction / 12.0),
@@ -337,7 +344,10 @@ impl PitchCorrection {
 
 /// The index of `voice` in [`Voice::ALL`].
 fn voice_index(voice: Voice) -> usize {
-    Voice::ALL.iter().position(|each| *each == voice).unwrap_or(0)
+    Voice::ALL
+        .iter()
+        .position(|each| *each == voice)
+        .unwrap_or(0)
 }
 
 /// The note `allowed` (one bit per semitone above C) holds nearest to `note`, a MIDI note
@@ -404,26 +414,32 @@ impl Processor for PitchCorrection {
         self.hear_notes(context);
         let frames = context.frames;
         let [left, right] = context.audio_inputs.get(Self::INPUT);
-        if all_held_silent(left) && all_held_silent(right) {
-            if self.quiet >= self.rest_frames {
-                // Everything holds silence: so does the output.
-                self.frame += frames as u64;
-                self.mix.snap();
-                return;
-            }
-            self.quiet += frames;
-        } else {
-            self.quiet = 0;
+        if all_held_silent(left) && all_held_silent(right) && self.quiet >= self.rest_frames {
+            // Everything holds silence: so does the output.
+            self.frame += frames as u64;
+            self.mix.snap();
+            return;
         }
-        let keeping = self.keeping();
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
         let outputs = left_out.iter_mut().zip(right_out.iter_mut());
         for (offset, ((left, right), (left_out, right_out))) in
             left.iter().zip(right).zip(outputs).enumerate()
         {
             let frame = [held(*left), held(*right)];
+            // Counted per frame, not per block, so where the rest starts and ends, and so the
+            // render, is the same in any buffers.
+            self.quiet = match frame == [0.0; 2] {
+                true => self.quiet.saturating_add(1),
+                false => 0,
+            };
+            if self.quiet > self.rest_frames {
+                continue;
+            }
+            if (self.frame + offset as u64) % KEEPING_FRAMES == 0 {
+                self.keeping = self.keeping_now();
+            }
             self.listen(0.5 * (frame[0] + frame[1]));
-            let shift = self.read(offset, keeping);
+            let shift = self.read(offset);
             self.shifter.push(frame, shift);
             let wet = self.shifter.pull();
             let position = (self.frame + offset as u64) as usize;

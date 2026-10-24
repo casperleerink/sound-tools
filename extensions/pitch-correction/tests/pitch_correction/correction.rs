@@ -43,21 +43,26 @@ fn a_retune_of_zero_takes_the_note_at_once() {
 #[test]
 fn hard_tuning_flattens_a_vibrato_and_a_slow_retune_keeps_it() {
     // 30 cents each way six times a second, around A3 10 cents sharp.
-    let vibrato =
-        |time: f64| Some(57.1 + 0.3 * (std::f64::consts::TAU * 6.0 * time).sin());
+    let vibrato = |time: f64| Some(57.1 + 0.3 * (std::f64::consts::TAU * 6.0 * time).sin());
     let width = |retune_ms| {
         let output = Rig::new(retune(retune_ms), voice(vibrato)).render(2 * SECOND);
         let notes = between(&heard(&output, latency()), 0.5, 1.9);
         let (low, high) = (notes.iter()).fold((f64::MAX, f64::MIN), |(low, high), note| {
             (low.min(*note), high.max(*note))
         });
-        (100.0 * (high - low), notes.iter().sum::<f64>() / notes.len() as f64)
+        (
+            100.0 * (high - low),
+            notes.iter().sum::<f64>() / notes.len() as f64,
+        )
     };
     let (hard, hard_middle) = width(0.0);
     assert!(hard < 15.0, "hard tuning leaves {hard} cents of vibrato");
     assert!((hard_middle - 57.0).abs() < 0.03, "{hard_middle}");
     let (slow, slow_middle) = width(300.0);
-    assert!(slow > 40.0, "a slow retune leaves only {slow} cents of vibrato");
+    assert!(
+        slow > 40.0,
+        "a slow retune leaves only {slow} cents of vibrato"
+    );
     assert!((slow_middle - 57.0).abs() < 0.05, "{slow_middle}");
 }
 
@@ -97,7 +102,9 @@ fn notes_keep_their_place_in_time_and_the_sound_its_length() {
     let latency = latency() as usize;
     let input: Vec<f32> = {
         let mut signal = voice(phrase);
-        (0..3 * SECOND).map(|frame| signal(frame as u64)[0]).collect()
+        (0..3 * SECOND)
+            .map(|frame| signal(frame as u64)[0])
+            .collect()
     };
     let output = Rig::new(retune(20.0), voice(phrase)).render(3 * SECOND);
     let (before, after) = (onsets(&input), onsets(&output));
@@ -114,7 +121,11 @@ fn what_has_no_pitch_passes_as_it_came_as_late_as_reported() {
     let latency = latency() as usize;
     for (name, signal, again) in [
         ("noise", noise(), noise()),
-        ("a chord", chord(&[57.0, 61.0, 64.0]), chord(&[57.0, 61.0, 64.0])),
+        (
+            "a chord",
+            chord(&[57.0, 61.0, 64.0]),
+            chord(&[57.0, 61.0, 64.0]),
+        ),
     ] {
         let mut dry = again;
         let input: Vec<f32> = (0..SECOND).map(|frame| dry(frame as u64)[0]).collect();
@@ -124,7 +135,9 @@ fn what_has_no_pitch_passes_as_it_came_as_late_as_reported() {
             let pairs = || output.iter().skip(lag).zip(&input).skip(SECOND / 4);
             let product: f64 = pairs().map(|(out, input)| f64::from(out * input)).sum();
             let power = |side: fn(&(&f32, &f32)) -> f32| {
-                pairs().map(|pair| f64::from(side(&pair)).powi(2)).sum::<f64>()
+                pairs()
+                    .map(|pair| f64::from(side(&pair)).powi(2))
+                    .sum::<f64>()
             };
             product / (power(|pair| *pair.0) * power(|pair| *pair.1)).sqrt()
         };
@@ -136,4 +149,3 @@ fn what_has_no_pitch_passes_as_it_came_as_late_as_reported() {
         assert!(alike > 0.999, "{name}: alike by {alike}");
     }
 }
-

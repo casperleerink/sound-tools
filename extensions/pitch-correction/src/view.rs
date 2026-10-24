@@ -55,8 +55,7 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<PitchCorrectionState>;
 
-const RETUNE_KNOB: Control =
-    Control::new(&RETUNE, "Retune", "Change retune", milliseconds_readout);
+const RETUNE_KNOB: Control = Control::new(&RETUNE, "Retune", "Change retune", milliseconds_readout);
 const HUMANIZE_KNOB: Control =
     Control::new(&HUMANIZE, "Humanize", "Change humanize", percent_readout);
 const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);

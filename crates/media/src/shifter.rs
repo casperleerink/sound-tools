@@ -17,9 +17,8 @@
 //!
 //! The head reads between frames with a windowed sinc. Reading faster would fold what lies
 //! above the new Nyquist frequency down, so there the sinc is stretched by the ratio over
-//! [`CUTOFF`], and cuts under it. Both are symmetric, so the sound read keeps its phase and
-//! lines up with the sound as it came, for a mix of the two. A low pass in front of the ring
-//! would not.
+//! [`CUTOFF`]: its transition then ends under that frequency, as in [`Varispeed`]. The sinc is symmetric, so the sound read keeps its phase and lines up with the
+//! sound as it came, for a mix of the two. A low pass in front of the ring would not.
 //!
 //! Reading faster also moves the envelope of the spectrum up, the formants that make a voice
 //! sound like that voice. With formants kept, a second ring holds the sound with its envelope
@@ -31,6 +30,8 @@
 use std::f64::consts::PI;
 use std::sync::LazyLock;
 
+#[cfg(doc)]
+use crate::Varispeed;
 use crate::resample::{SincTable, kaiser, sinc};
 use sound_core::bessel_i0;
 
@@ -62,9 +63,8 @@ const HOLD_SECONDS: f64 = 0.05;
 const SHORTEST_PERIOD: f64 = 16.0;
 /// The ratios the head reads at.
 const RATIOS: (f64, f64) = (0.5, 2.0);
-/// Above a ratio of 1, where the stretched sinc cuts, as a part of the Nyquist frequency over
-/// the ratio: its transition then ends under that frequency.
-const CUTOFF: f64 = 0.9;
+/// Where the stretched sinc cuts, as a part of the Nyquist frequency over the ratio.
+const CUTOFF: f64 = 0.85;
 /// How long a change of formants takes.
 const KEEP_SECONDS: f64 = 0.02;
 
@@ -329,13 +329,13 @@ impl Ring {
     /// what a head at `ratio` would fold.
     fn read(&self, place: f64, ratio: f64) -> [f32; 2] {
         let whole = place.floor();
+        let stretch = ratio / CUTOFF;
         if ratio <= 1.0 {
             let first = whole as i64 - HALF as i64 + 1;
             let start = first.rem_euclid(self.length as i64) as usize;
             let frames = self.frames.get(start..).unwrap_or_default();
             return TABLE.apply(frames, 0, place - whole);
         }
-        let stretch = ratio / CUTOFF;
         let reach = (HALF as f64 * stretch).ceil() as i64;
         let first = whole as i64 - reach + 1;
         let start = first.rem_euclid(self.length as i64) as usize;
@@ -658,15 +658,23 @@ mod tests {
 
     #[test]
     fn a_head_that_reads_faster_folds_nothing_down() {
-        // A voice at 220 Hz with air at 18 kHz, a fifth up: the air would land at 27 kHz, above
-        // the Nyquist frequency, and fold down to 21 kHz.
+        // A voice at 220 Hz with air at 20 kHz, a fifth up: the air would land at 30 kHz, above
+        // the Nyquist frequency, and fold down to 18 kHz.
         let voice = tone(1.0, 220.0, &[0.3, 0.1], |_| true);
-        let air = tone(1.0, 18_000.0, &[0.1], |_| true);
-        let sound: Vec<f32> = voice.iter().zip(&air).map(|(voice, air)| voice + air).collect();
+        let air = tone(1.0, 20_000.0, &[0.1], |_| true);
+        let sound: Vec<f32> = voice
+            .iter()
+            .zip(&air)
+            .map(|(voice, air)| voice + air)
+            .collect();
         let (output, _) = shift(&sound, 1.5, false);
         let steady = &output[(0.5 * RATE) as usize..];
-        let folded = power_at(steady, 48_000.0 - 27_000.0) / power_at(&air, 18_000.0);
-        assert!(10.0 * folded.log10() < -50.0, "folded at {} dB", 10.0 * folded.log10());
+        let folded = power_at(steady, 48_000.0 - 30_000.0) / power_at(&air, 20_000.0);
+        assert!(
+            10.0 * folded.log10() < -50.0,
+            "folded at {} dB",
+            10.0 * folded.log10()
+        );
     }
 
     #[test]

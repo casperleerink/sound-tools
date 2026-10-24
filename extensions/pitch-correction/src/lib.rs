@@ -294,7 +294,9 @@ mod tests {
     fn a_scale_on_a_key_holds_the_notes_of_that_key() {
         // A major: A, B, C#, D, E, F#, G#.
         let notes = Scale::Major.notes(Key::A);
-        let expected = [9, 11, 1, 2, 4, 6, 8].iter().fold(0, |notes, note| notes | 1 << note);
+        let expected = [9, 11, 1, 2, 4, 6, 8]
+            .iter()
+            .fold(0, |notes, note| notes | 1 << note);
         assert_eq!(notes, expected);
         assert_eq!(Scale::Chromatic.notes(Key::FSharp), 0xfff);
     }

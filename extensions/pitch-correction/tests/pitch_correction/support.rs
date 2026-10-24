@@ -136,7 +136,9 @@ impl Rig {
             follows_song,
         };
         let source = edit.add_processor("source", source).unwrap();
-        let notes = edit.add_processor("notes", Notes { events: notes }).unwrap();
+        let notes = edit
+            .add_processor("notes", Notes { events: notes })
+            .unwrap();
         let correction = PitchCorrection::new(state, meters.clone());
         let correction = edit.add_processor("correction", correction).unwrap();
         let connections = [
@@ -207,7 +209,10 @@ pub(crate) fn voice(note: impl Fn(f64) -> Option<f64> + Send + 'static) -> Signa
 pub(crate) fn chord(notes: &'static [f64]) -> Signal {
     Box::new(move |frame| {
         let time = frame as f64 / RATE;
-        let sample: f64 = notes.iter().map(|note| 0.15 * (TAU * hz(*note) * time).sin()).sum();
+        let sample: f64 = notes
+            .iter()
+            .map(|note| 0.15 * (TAU * hz(*note) * time).sin())
+            .sum();
         [sample as f32; 2]
     })
 }
@@ -259,7 +264,10 @@ pub(crate) fn between(heard: &[(f64, f64)], from: f64, to: f64) -> Vec<f64> {
 /// The farthest any of `notes` is from `note`, in cents.
 pub(crate) fn farthest_cents(notes: &[f64], note: f64) -> f64 {
     assert!(!notes.is_empty(), "no note heard");
-    let far = notes.iter().map(|each| (each - note).abs()).fold(0.0, f64::max);
+    let far = notes
+        .iter()
+        .map(|each| (each - note).abs())
+        .fold(0.0, f64::max);
     100.0 * far
 }
 
