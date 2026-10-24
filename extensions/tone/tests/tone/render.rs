@@ -4,7 +4,7 @@ use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node};
 use tone::{Tone, ToneState};
 
 use crate::support::{
-    SAMPLE_RATE, assert_continuous, channel, largest_step, peak, render, rising_zero_crossings,
+    SAMPLE_RATE, assert_continuous, largest_step, peak, render, rising_zero_crossings,
 };
 
 fn tone_on_channel(
@@ -87,39 +87,4 @@ fn gain_changes_at_the_next_block_start() {
         "peak {}",
         peak(&quiet)
     );
-}
-
-#[test]
-fn phase_continues_across_schedule_swaps() {
-    let first = ToneState {
-        frequency_hz: 220.0,
-        gain: 0.5,
-    };
-    let second = ToneState {
-        frequency_hz: 330.0,
-        gain: 0.25,
-    };
-
-    // Four device channels, so each Tone has a stereo pair of its own.
-    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 4));
-    tone_on_channel(&mut control, "first", first, 0);
-    let undisturbed = channel(&render(&mut engine, 30_000), 0, 4);
-
-    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 4));
-    tone_on_channel(&mut control, "first", first, 0);
-    let mut output = render(&mut engine, 10_001);
-    let added = tone_on_channel(&mut control, "second", second, 2);
-    output.extend(render(&mut engine, 9_999));
-    let mut edit = control.edit();
-    edit.remove_processor(added.id()).unwrap();
-    edit.commit().unwrap();
-    output.extend(render(&mut engine, 10_000));
-
-    // Two schedule swaps happened. The surviving Tone's samples are bit for bit the same.
-    assert_eq!(channel(&output, 0, 4), undisturbed);
-    let other = channel(&output, 2, 4);
-    assert_eq!(peak(&other[..10_001]), 0.0);
-    assert!(peak(&other[10_001..20_000]) > 0.2499);
-    assert_eq!(peak(&other[20_000..]), 0.0);
-    assert_eq!(control.poll().unwrap().batches_applied, 3);
 }

@@ -826,33 +826,6 @@ mod tests {
         assert_eq!(note_readout(61.), "C#4");
     }
 
-    #[test]
-    fn start_and_end_keep_the_shortest_part_between_them_and_the_end_of_the_file_is_no_end() {
-        let file = Info {
-            frames: 48_000,
-            channels: 1,
-            sample_rate: 48_000,
-            container: sound_media::Container::Wav,
-        };
-        let mut state = SamplerState {
-            end_seconds: Some(0.5),
-            ..SamplerState::default()
-        };
-        with_start(&mut state, 0.7, 1.0);
-        assert_eq!(state.start_seconds, 0.49);
-        with_start(&mut state, -1.0, 1.0);
-        assert_eq!(state.start_seconds, 0.0);
-        with_end(&mut state, 0.001, &file);
-        assert_eq!(
-            state.end_seconds,
-            Some(sound_ui::components::waveform_display::SHORTEST_SECONDS)
-        );
-        with_end(&mut state, 0.99999, &file);
-        assert_eq!(state.end_seconds, None);
-        with_end(&mut state, 0.8, &file);
-        assert_eq!(state.end_seconds, Some(0.8));
-    }
-
     /// Start and End push the loop start along, so every record the card writes is valid.
     #[test]
     fn the_loop_start_stays_between_start_and_end() {

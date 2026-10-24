@@ -151,7 +151,7 @@ cargo shear
 cargo deny check
 ```
 
-CI runs the same on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`.
+Locally, `cargo verify` runs fmt, clippy and the tests for what a branch changed. CI runs them all on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`.
 
 The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to; look at the PNGs after a UI change. `cargo run -p runtime --example screenshot -- <project> <out-folder>` does the same for a project folder, its TypeScript cards and pages included: `window.png` as it opens. It works on a copy and plays nothing. `cargo run -p gallery` opens the component gallery in a window, and `cp -R crates/runtime/tests/sdk-gallery /tmp && cargo run -p runtime -- /tmp/sdk-gallery` a copy of the project that tries every part of the view SDK; the app writes into the project it opens.
 

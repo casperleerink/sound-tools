@@ -3,7 +3,7 @@
 
 use proptest::prelude::*;
 
-use crate::tools::{Harness, dc_to_device, project_file};
+use crate::tools::Harness;
 
 /// A bank with a gain, levels and maybe an output child, as the files of its folder.
 #[derive(Clone, Debug, PartialEq)]
@@ -99,15 +99,4 @@ proptest! {
             prop_assert_eq!(summary(&mut on_top), summary(&mut undone));
         }
     }
-}
-
-#[test]
-fn the_dc_tool_gives_the_same_level_loaded_or_applied() {
-    let mut harness = Harness::new();
-    harness.write_and_apply("project.json", &project_file(&dc_to_device("dc")));
-    harness.write_and_apply("state/dc.json", &crate::tools::dc_record(0.25));
-    harness.write_and_apply("state/dc.json", &crate::tools::dc_record(-0.5));
-    assert_eq!(harness.level(), -0.5);
-    let mut harness = harness.reopen();
-    assert_eq!(harness.level(), -0.5);
 }

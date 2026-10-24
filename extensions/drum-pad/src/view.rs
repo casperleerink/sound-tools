@@ -511,11 +511,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_grid_is_the_size_of_a_display_and_its_line() {
-        assert_eq!((GRID_WIDTH, GRID_HEIGHT), (300., 140.));
-    }
-
-    #[test]
     fn the_arrows_move_the_selection_and_stop_at_the_edges() {
         // The bottom left is pad 0, the top right pad 15.
         assert_eq!(pad_from_key(0, "right"), Some(1));

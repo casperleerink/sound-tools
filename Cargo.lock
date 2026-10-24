@@ -7237,6 +7237,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "verify"
+version = "0.13.1"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -89,7 +89,7 @@ How the engine keeps to that:
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
-- Test the crates you changed and the crates that use what you changed: `cargo nextest run -p <crate>`. Don't run the whole workspace locally: the pull request's Linux job runs every test, and main runs them on all three systems.
+- Verify with `cargo verify`, never the whole workspace: it tests the crates the branch changed and runs clippy on those and every crate that uses them, one run at a time per machine, so parallel agents fit in 8 GB. Its arguments go to nextest: `-E 'test(name)'` while iterating, `-p runtime -E 'test(song)'` when you changed behaviour a dependent tests. The pull request's Linux job runs every test, and main runs them on all three systems.
 
 CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux, Windows) run side by side. Lint and test run on macOS; the Linux and Windows jobs build and run the tests on Ubuntu and Windows. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
 

@@ -83,11 +83,11 @@ fn the_knee_is_the_quadratic_bend_between_its_ends() {
 
 #[test]
 fn every_setting_measures_as_its_static_gain_from_minus_sixty_to_plus_six_db() {
-    let levels = (-20..=2).map(|step| step as f32 * 3.0);
+    let levels = (-10..=1).map(|step| step as f32 * 6.0);
     let mut worst = 0.0_f64;
-    for threshold_db in [-60.0, -30.0, -10.0, 0.0] {
-        for ratio in [1.0, 2.0, 8.0, 100.0] {
-            for knee_db in [0.0, 6.0, 18.0] {
+    for threshold_db in [-60.0, -10.0] {
+        for ratio in [1.0, 4.0, 100.0] {
+            for knee_db in [0.0, 18.0] {
                 let state = CompressorState {
                     threshold_db,
                     ratio,

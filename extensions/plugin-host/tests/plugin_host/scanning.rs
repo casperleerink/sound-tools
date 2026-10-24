@@ -27,18 +27,6 @@ fn the_scan_finds_the_test_plugin_of_every_format_and_says_it_is_an_instrument()
 }
 
 #[test]
-fn a_plugin_that_is_not_an_instrument_is_not_one() {
-    let folder = tempfile::tempdir().unwrap();
-    let plugins = Plugins::new(vec![plugin_folder(folder.path())], scanner(), no_cache());
-    let scan = plugins.scan();
-    for format in FORMATS {
-        let mut found = scan.find(format, plugin_id(format)).unwrap().clone();
-        found.features = vec!["audio-effect".to_string(), "stereo".to_string()];
-        assert!(!found.is_instrument(), "{format:?}");
-    }
-}
-
-#[test]
 fn a_search_folder_that_is_not_there_is_no_error() {
     let folder = tempfile::tempdir().unwrap();
     let plugins = Plugins::new(

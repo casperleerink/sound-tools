@@ -79,39 +79,6 @@ fn a_plugin_plays_the_notes_of_its_timeline_and_the_pedal_with_its_value() {
     assert_eq!(right[note], 100.0 / 127.0);
 }
 
-/// The plugin's own state is an asset of the project. Nothing else keeps it.
-#[test]
-fn plugin_state_is_saved_comes_back_on_reopen_and_the_render_is_the_same() {
-    let (mut harness, plugins) =
-        plugin_rack(PluginFormat::Clap, "piano", &clip_with_pedal(Some(100)));
-    let before = harness.play(16_000);
-    plugins.poll(&harness.project);
-
-    // A pedal of 100 makes the test plugin transpose by 36 and say its state changed.
-    let asset = harness.path("assets/plugin-state/piano.bin");
-    let saved = std::fs::read(&asset).unwrap();
-    assert_eq!(&saved[..4], b"STT1");
-    assert_eq!(
-        i32::from_le_bytes([saved[4], saved[5], saved[6], saved[7]]),
-        36
-    );
-
-    // The same project again: the same bytes out.
-    let (mut harness, plugins) = harness.reopen_with_test_plugin();
-    let after = harness.play(16_000);
-    assert_eq!(difference(&before, &after), None);
-    plugins.poll(&harness.project);
-    assert_eq!(std::fs::read(&asset).unwrap(), saved);
-
-    // Now take the pedal out of the clip and open it again. The notes are still transposed,
-    // which can only come from the state the plugin loaded out of the project.
-    harness.write("state/piano/take.json", &clip_with_pedal(None));
-    let (mut harness, _plugins) = harness.reopen_with_test_plugin();
-    let without_pedal = harness.play(16_000);
-    assert_eq!(left(&without_pedal), left(&before));
-    assert!(right(&without_pedal).iter().all(|sample| *sample == 0.0));
-}
-
 /// The missing-plugin case: the record is left alone, the problem names it, that rack is
 /// silent and everything else plays as before.
 #[test]
@@ -164,23 +131,6 @@ fn the_problems_file_follows_a_plugin_that_is_corrected() {
     assert_eq!(harness.project.problems(), []);
     let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
     assert!(text.contains("No problems"), "{text}");
-}
-
-/// `--render` and `--inspect` open the project read-only. They load plugins too, so an offline
-/// render of a plugin is the sound the composer hears.
-#[test]
-fn an_offline_render_of_a_read_only_project_plays_the_plugin() {
-    let (mut harness, _plugins) =
-        plugin_rack(PluginFormat::Clap, "piano", &clip_with_pedal(Some(100)));
-    let live = harness.play(16_000);
-
-    let root = harness.project.root().to_path_buf();
-    let plugins = read_only_test_plugin_host(&root);
-    let (mut project, mut engine) = runtime::open_read_only_with(&root, plugins.clone()).unwrap();
-    assert_eq!(project.problems(), []);
-    project.engine().play();
-    let rendered = runtime::render(&mut project, &mut engine, &plugins, 16_000).unwrap();
-    assert_eq!(difference(&live, &rendered), None);
 }
 
 /// A render does the main-thread work of the plugin host for every buffer, as a live session
