@@ -62,8 +62,8 @@ Given two inputs, `spectral([x, other], size, (bin, other) => ...)` also gets th
 import { abs, audio, input, max, smooth, spectral, tool } from "./sdk";
 
 tool({
-  name: "vocoder",
-  title: "Vocoder",
+  name: "talkbox",
+  title: "Talk box",
   when: "You want a synth to talk or sing with a voice",
   doc: "Key it with a voice: the sound that comes in takes the shape of the voice.",
   state: {},

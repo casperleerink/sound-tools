@@ -294,8 +294,8 @@ fn a_sidechain_keys_an_effect_of_the_project() {
 #[test]
 fn the_vocoder_of_the_doc_plays_its_track_in_the_shape_of_the_key() {
     let vocoder = crate::typescript::example_of("extensions-sound", "spectral([");
-    let (_, keyed) = keyed_by_t01("vocoder", &vocoder, true);
-    let (_, unkeyed) = keyed_by_t01("vocoder", &vocoder, false);
+    let (_, keyed) = keyed_by_t01("talkbox", &vocoder, true);
+    let (_, unkeyed) = keyed_by_t01("talkbox", &vocoder, false);
     assert!(energy(&keyed) > 0.0);
     assert_eq!(energy(&unkeyed), 0.0);
 }
