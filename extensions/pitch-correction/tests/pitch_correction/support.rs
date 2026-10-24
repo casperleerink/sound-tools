@@ -107,7 +107,6 @@ pub(crate) struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub correction: Node<PitchCorrection>,
-    pub meters: Meters,
 }
 
 impl Rig {
@@ -129,7 +128,6 @@ impl Rig {
             config
         };
         let (mut control, engine) = Engine::new(config);
-        let meters = Meters::default();
         let mut edit = control.edit();
         let source = Source {
             signal,
@@ -139,7 +137,7 @@ impl Rig {
         let notes = edit
             .add_processor("notes", Notes { events: notes })
             .unwrap();
-        let correction = PitchCorrection::new(state, meters.clone());
+        let correction = PitchCorrection::new(state, Meters::default());
         let correction = edit.add_processor("correction", correction).unwrap();
         let connections = [
             Connection::new(
@@ -164,7 +162,6 @@ impl Rig {
             control,
             engine,
             correction,
-            meters,
         }
     }
 
@@ -245,7 +242,7 @@ pub(crate) fn heard(output: &[f32], latency: u32) -> Vec<(f64, f64)> {
     let mut notes = Vec::new();
     for (frame, sample) in output.iter().enumerate() {
         tracker.push([*sample]);
-        if frame % 48 == 0
+        if frame.is_multiple_of(48)
             && let Reading::Note(note) = tracker.pitch()
         {
             let time = (frame as f64 + 1.0 - tracker.age() - f64::from(latency)) / RATE;

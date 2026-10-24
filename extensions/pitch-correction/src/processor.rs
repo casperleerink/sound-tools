@@ -435,7 +435,7 @@ impl Processor for PitchCorrection {
             if self.quiet > self.rest_frames {
                 continue;
             }
-            if (self.frame + offset as u64) % KEEPING_FRAMES == 0 {
+            if (self.frame + offset as u64).is_multiple_of(KEEPING_FRAMES) {
                 self.keeping = self.keeping_now();
             }
             self.listen(0.5 * (frame[0] + frame[1]));

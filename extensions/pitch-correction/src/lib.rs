@@ -231,7 +231,7 @@ impl State for PitchCorrectionState {
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "pitch-correction",
     group: "Devices",
-    when: "Pitch correction on a voice or a melodic instrument: in tune, hard tuned, or to held notes",
+    when: "Pitch correction or hard tuning on a voice",
     markdown: include_str!("../agent-doc.md"),
 };
 
