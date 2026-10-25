@@ -4,11 +4,12 @@
 //! The sound goes into a ring and a head reads it back at `ratio` times its speed, 2 an octave
 //! up. A head that reads faster than the sound comes in would catch up with it, and a slower
 //! one would fall behind. So when the head is more than [`WINDOW`] of a period from where it
-//! should be, it jumps one period of the sound back or ahead, and fades over one period from
-//! where it was. A jump of one period lands on the same part of the wave, so the fade joins two
-//! nearly equal sounds: whole periods play twice or not at all, and the length stays. Without a
-//! period, in a consonant, a breath or silence, the head plays on at its ratio and jumps back to
-//! where it should be when it is more than [`SLACK_SECONDS`] off.
+//! should be, it jumps one period of the sound back or ahead, and fades in a straight line
+//! from where it was over [`FADE`] of a period. A jump of one period lands on the same part of
+//! the wave, so the fade joins two nearly equal sounds: whole periods play twice or not at all,
+//! and the length stays. When the readings lose the period, it holds for [`HOLD_PERIODS`] of
+//! itself, as through a short consonant; after that a jump takes the last period heard, 440 Hz
+//! before any.
 //!
 //! Every frame comes with what a pitch tracker read, which describes the sound some frames
 //! back ([`Shift::age`]). The shifter keeps each reading with the frame it describes, so a
@@ -18,15 +19,21 @@
 //! The head reads between frames with a windowed sinc. Reading faster would fold what lies
 //! above the new Nyquist frequency down, so there the sinc is stretched by the ratio over
 //! [`CUTOFF`]: its transition then ends under that frequency, as in [`Varispeed`]. Just above
-//! 1 the stretch eases in, so a correction that crosses 0 does not switch the highs. The sinc is symmetric, so the sound read keeps its phase and lines up with the
-//! sound as it came, for a mix of the two. A low pass in front of the ring would not.
+//! 1 the stretch eases in, so a correction that crosses 0 does not switch the highs. The sinc
+//! is symmetric, so the sound read keeps its phase and lines up with the sound as it came, for
+//! a mix of the two. A low pass in front of the ring would not.
+//!
+//! Around the head, a first-order tilt with its pole at [`TILT_HZ`] is taken out before the
+//! ring and put back after it, so the two cancel where nothing moves. Without formants it
+//! lifts the lows and lowers the highs before the ring; with them, the other way round.
 //!
 //! Reading faster also moves the envelope of the spectrum up, the formants that make a voice
 //! sound like that voice. With formants kept, a second ring holds the sound with its envelope
-//! taken out by linear prediction, worked out every [`HOP_SECONDS`] from the last
-//! [`ANALYSIS_SECONDS`], and after the head the envelope of the part it reads is put back. Both
-//! filters are lattices of reflection factors under 1, so a factor read between two analyses
-//! never makes them ring.
+//! taken out by linear prediction, and after the head the envelope of the part it reads is put
+//! back. The envelope is worked out every [`DESIGN_FRAMES`] from the last period of the voice
+//! as one seamless loop, so the harmonics of the voice do not pass for formants, and averaged
+//! over the last [`DESIGNS`]. Both filters are lattices of reflection factors under 1, so a
+//! factor read between two analyses never makes them ring.
 
 use std::f64::consts::PI;
 use std::sync::LazyLock;
@@ -54,12 +61,12 @@ static CURVE: LazyLock<Box<[f32]>> = LazyLock::new(|| {
 
 /// How far the head may be from where it should be, as a part of the period, before it jumps.
 const WINDOW: f64 = 0.6;
-/// How far the head may be off without a period before it jumps back.
-const SLACK_SECONDS: f64 = 0.0005;
-/// The fade of a jump without a period.
-const UNVOICED_FADE_SECONDS: f64 = 0.005;
-/// How long a period is kept once the readings have none, as through a short consonant.
-const HOLD_SECONDS: f64 = 0.05;
+/// The fade of a jump, as a part of the period.
+const FADE: f64 = 0.2;
+/// How many of its own periods a period holds once the readings lose it.
+const HOLD_PERIODS: f64 = 8.0;
+/// The period a jump takes before any was heard, in Hz.
+const UNHEARD_HZ: f64 = 440.0;
 /// The shortest period a jump takes, in frames.
 const SHORTEST_PERIOD: f64 = 16.0;
 /// The ratios the head reads at.
@@ -70,19 +77,21 @@ const CUTOFF: f64 = 0.85;
 const EASE: f64 = 0.2;
 /// How long a change of formants takes.
 const KEEP_SECONDS: f64 = 0.02;
+/// The pole of the tilt around the head, in Hz.
+const TILT_HZ: f64 = 360.0;
 
-/// Reflection factors of the envelope.
-const ORDER: usize = 24;
-const HOP_SECONDS: f64 = 0.005;
-const ANALYSIS_SECONDS: f64 = 0.02;
-/// The tilt taken out before the envelope and put back after it, so the envelope fits the
-/// formants and not the fall of a voice to the highs.
-const EMPHASIS: f32 = 0.95;
-/// Added to the power of the analysis, -40 dB: a floor, so a pure tone does not make the
-/// envelope a needle.
-const FLOOR: f64 = 1e-4;
-/// The bandwidth each peak of the envelope is widened to, in Hz.
-const WIDENING_HZ: f64 = 80.0;
+/// Reflection factors of the envelope, and frames from one envelope to the next, per step of
+/// the rate: 1 under 50 kHz, 2 under 100 kHz, else 4. So both are the same in time.
+const ORDER: usize = 50;
+const DESIGN_FRAMES: usize = 128;
+/// How many envelopes are averaged.
+const DESIGNS: usize = 10;
+/// The part of a period past the last one that is faded into its start, so the period loops
+/// without a step.
+const LOOPED: f64 = 0.1;
+/// The pole of the tilt an envelope is worked out without, in Hz, so it fits the formants and
+/// not the fall of a voice to the highs.
+const ANALYSIS_TILT_HZ: f64 = 140.0;
 
 /// How to shift a part of the sound, from what a pitch tracker read: pushed with each frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -109,16 +118,14 @@ impl Shift {
 pub struct Shifter {
     latency: f64,
     longest: f64,
-    slack: f64,
-    unvoiced_fade: f64,
-    hold_frames: usize,
     keep_step: f32,
     /// The next frame pushed.
     written: i64,
     sound: Ring,
     /// The sound with its envelope taken out.
     flat: Ring,
-    /// The period and ratio of each frame, and the frames before which every frame has one.
+    /// The period a jump takes and the ratio of each frame, and the frames before which every
+    /// frame has them.
     readings: Box<[(f32, f32)]>,
     noted: i64,
     /// Where the head reads, in frames pushed, and the head it fades from.
@@ -127,9 +134,12 @@ pub struct Shifter {
     /// How far the fade is, 0 to 1, and how far it goes per frame.
     fade: f64,
     fade_step: f64,
-    /// The last period, and for how many more frames it holds.
+    /// The period while the readings have one or it holds, 0 after; the frames it still holds
+    /// for; and the last period heard.
     held: f64,
-    holding: usize,
+    holding: f64,
+    last: f64,
+    tilt: Tilt,
     formants: Formants,
     /// Whether formants are kept, how far a change of it is, 0 to 1, and how many frames the
     /// flat ring has been filled for.
@@ -145,9 +155,8 @@ impl Shifter {
         LazyLock::force(&TABLE);
         LazyLock::force(&CURVE);
         let longest = longest.max(SHORTEST_PERIOD);
-        let unvoiced_fade = (UNVOICED_FADE_SECONDS * rate).max(1.0);
         // How far a head may go past its window in a fade, and the widest taps of a read.
-        let travel = longest.max(unvoiced_fade);
+        let travel = FADE * longest;
         let reach = (HALF as f64 * stretch(RATIOS.1)).ceil();
         // The head is where it should be once a reading of a period describes it, and every
         // head reads only frames that came in.
@@ -155,12 +164,10 @@ impl Shifter {
             .max(longest * WINDOW + travel + reach + 1.0)
             .ceil();
         let length = (latency + longest * WINDOW + travel + 2.0 * reach) as usize + 2;
+        let tilt = (-2.0 * PI * TILT_HZ / rate).exp() as f32;
         Self {
             latency,
             longest,
-            slack: (SLACK_SECONDS * rate).max(1.0),
-            unvoiced_fade,
-            hold_frames: (HOLD_SECONDS * rate) as usize,
             keep_step: (1.0 / (KEEP_SECONDS * rate).max(1.0)) as f32,
             written: 0,
             sound: Ring::new(length),
@@ -172,8 +179,10 @@ impl Shifter {
             fade: 1.0,
             fade_step: 0.0,
             held: 0.0,
-            holding: 0,
-            formants: Formants::new(rate, length),
+            holding: 0.0,
+            last: (rate / UNHEARD_HZ).min(longest),
+            tilt: Tilt::new(-tilt),
+            formants: Formants::new(rate, longest, length, tilt),
             keeping: false,
             keep: 0.0,
             filled: 0,
@@ -181,7 +190,7 @@ impl Shifter {
     }
 
     /// How many frames late the sound comes out, on average: the head stays within its window
-    /// around it, and jumps to it after a part without a period.
+    /// around it.
     pub fn latency(&self) -> usize {
         self.latency as usize
     }
@@ -202,22 +211,35 @@ impl Shifter {
             true => shift.ratio.clamp(RATIOS.0, RATIOS.1),
             false => 1.0,
         };
-        let period = shift
-            .period
-            .filter(|period| period.is_finite() && *period > 0.0);
+        let period = (shift.period)
+            .filter(|period| period.is_finite() && *period > 0.0)
+            .map(|period| period.clamp(SHORTEST_PERIOD, self.longest));
+        match period {
+            Some(period) => {
+                (self.held, self.last) = (period, period);
+                self.holding = HOLD_PERIODS * period;
+            }
+            None => {
+                self.holding -= 1.0;
+                if self.holding <= 0.0 {
+                    self.held = 0.0;
+                }
+            }
+        }
+        let heard = (self.held > 0.0).then_some(self.held);
+        self.sound.write(self.written, self.tilt.take_out(frame));
+        if self.keeping || self.keep > 0.0 {
+            let flat = self.formants.flatten(self.written, frame, heard, self.last);
+            self.flat.write(self.written, flat);
+            self.filled = self.filled.saturating_add(1);
+        }
         let length = self.readings.len() as f64;
         let age = match shift.age.is_finite() {
             true => shift.age.clamp(0.0, length),
             false => 0.0,
         };
-        self.sound.write(self.written, frame);
-        if self.keeping || self.keep > 0.0 {
-            let flat = self.formants.flatten(self.written, frame);
-            self.flat.write(self.written, flat);
-            self.filled = self.filled.saturating_add(1);
-        }
         let described = self.written - age.round() as i64;
-        let noted = (period.unwrap_or(0.0) as f32, ratio as f32);
+        let noted = (heard.unwrap_or(self.last) as f32, ratio as f32);
         let length = self.readings.len() as i64;
         let from = match described >= self.noted {
             true => self.noted.max(described - length + 1),
@@ -237,19 +259,8 @@ impl Shifter {
     /// The next frame out.
     pub fn pull(&mut self) -> [f32; 2] {
         let (period, ratio) = self.reading_at(self.head);
-        let period = match period {
-            Some(period) => {
-                (self.held, self.holding) = (period, self.hold_frames);
-                Some(period)
-            }
-            None if self.holding > 0 => {
-                self.holding -= 1;
-                Some(self.held)
-            }
-            None => None,
-        };
         if self.fade >= 1.0 {
-            self.jump(period, ratio);
+            self.jump(period);
         }
         let ready = self.filled >= self.flat.length;
         let target = if self.keeping && ready { 1.0 } else { 0.0 };
@@ -257,10 +268,7 @@ impl Shifter {
             true => (self.keep + self.keep_step).min(target),
             false => (self.keep - self.keep_step).max(target),
         };
-        let weight = match self.fade < 1.0 {
-            true => (0.5 - 0.5 * (PI * self.fade).cos()) as f32,
-            false => 1.0,
-        };
+        let weight = self.fade as f32;
         let both = |ring: &Ring| {
             let now = ring.read(self.head, ratio);
             match weight >= 1.0 {
@@ -268,7 +276,7 @@ impl Shifter {
                 false => between(ring.read(self.fading_from, ratio), now, weight),
             }
         };
-        let mut out = both(&self.sound);
+        let mut out = self.tilt.put_back(both(&self.sound));
         if self.keep > 0.0 {
             let flat = both(&self.flat);
             let kept = self.formants.restore(self.head.floor() as i64, flat);
@@ -281,35 +289,30 @@ impl Shifter {
     }
 
     /// The period and the ratio of the frame at `place`, from its reading or else the newest.
-    fn reading_at(&self, place: f64) -> (Option<f64>, f64) {
+    fn reading_at(&self, place: f64) -> (f64, f64) {
         if self.noted == 0 {
-            return (None, 1.0);
+            return (self.last, 1.0);
         }
         let frame = (place.floor() as i64).min(self.noted - 1);
         let at = frame.rem_euclid(self.readings.len() as i64) as usize;
-        let (period, ratio) = self.readings.get(at).copied().unwrap_or((0.0, 1.0));
-        let period = (period > 0.0).then(|| f64::from(period).clamp(SHORTEST_PERIOD, self.longest));
-        (period, f64::from(ratio))
+        let (period, ratio) = (self.readings.get(at).copied()).unwrap_or((self.last as f32, 1.0));
+        (f64::from(period), f64::from(ratio))
     }
 
-    /// Jumps the head when it is too far from where it should be, and starts the fade.
-    fn jump(&mut self, period: Option<f64>, ratio: f64) {
+    /// Jumps the head a period when it is too far from where it should be, and starts the fade.
+    fn jump(&mut self, period: f64) {
         let should = (self.written - 1) as f64 - self.latency;
         let off = self.head - should;
-        let (to, fade) = match period {
-            // Behind, its ratio would take it further behind: a period ahead. Ahead, a period back.
-            Some(period) if off < -WINDOW * period => (self.head + period, period),
-            Some(period) if off > WINDOW * period => (self.head - period, period),
-            Some(_) => return,
-            None if off.abs() > self.slack => (should, self.unvoiced_fade),
-            None => return,
+        // Behind, its ratio would take it further behind: a period ahead. Ahead, a period back.
+        let to = match off {
+            off if off < -WINDOW * period => self.head + period,
+            off if off > WINDOW * period => self.head - period,
+            _ => return,
         };
-        // A fade that ends before the head could jump again.
-        let fade = fade.min(0.9 * fade / (ratio - 1.0).abs().max(1e-9));
         self.fading_from = self.head;
         self.head = to;
         self.fade = 0.0;
-        self.fade_step = 1.0 / fade.max(1.0);
+        self.fade_step = 1.0 / (FADE * period).max(1.0);
     }
 }
 
@@ -319,6 +322,50 @@ fn between(from: [f32; 2], to: [f32; 2], weight: f32) -> [f32; 2] {
         from[0] + weight * (to[0] - from[0]),
         from[1] + weight * (to[1] - from[1]),
     ]
+}
+
+/// The steps of the rate the envelope counts in: 1 under 50 kHz, 2 under 100 kHz, else 4.
+fn rate_steps(rate: f64) -> usize {
+    match rate {
+        rate if rate < 50_000.0 => 1,
+        rate if rate < 100_000.0 => 2,
+        _ => 4,
+    }
+}
+
+/// A first-order tilt of each channel, taken out as `x[n] - factor x[n-1]` and put back as
+/// `y[n] = x[n] + factor y[n-1]`.
+struct Tilt {
+    factor: f32,
+    before: [f32; 2],
+    after: [f32; 2],
+}
+
+impl Tilt {
+    fn new(factor: f32) -> Self {
+        Self {
+            factor,
+            before: [0.0; 2],
+            after: [0.0; 2],
+        }
+    }
+
+    fn take_out(&mut self, frame: [f32; 2]) -> [f32; 2] {
+        let out = [
+            frame[0] - self.factor * self.before[0],
+            frame[1] - self.factor * self.before[1],
+        ];
+        self.before = frame;
+        out
+    }
+
+    fn put_back(&mut self, frame: [f32; 2]) -> [f32; 2] {
+        self.after = [
+            frame[0] + self.factor * self.after[0],
+            frame[1] + self.factor * self.after[1],
+        ];
+        self.after
+    }
 }
 
 /// Frames of stereo sound, each written twice, so the taps of any place are one slice.
@@ -403,130 +450,181 @@ fn kernel(distance: f32, inverse: f32) -> f32 {
 /// The envelope of the sound: what takes it out before the ring and puts it back after the
 /// head.
 struct Formants {
+    order: usize,
     hop: usize,
-    /// The window of an analysis, the last frames of the sound in one channel, tilted, and
-    /// those frames in order under the window.
-    window: Box<[f32]>,
+    analysis_tilt: f64,
+    /// The last frames of the sound in one channel, and where the next goes.
     heard: Box<[f32]>,
-    windowed: Box<[f64]>,
     next: usize,
-    tilted: f32,
-    /// The reflection factors of each analysis, by its number: analysis `n` ends before frame
-    /// `n * hop`.
-    analyses: Box<[[f32; ORDER]]>,
-    /// The widening of each lag of the analysis.
-    widening: [f64; ORDER + 1],
-    /// The tilt and the lattice of each channel, on the way in and on the way out.
-    tilt_in: [f32; 2],
-    flatten: [[f32; ORDER]; 2],
-    restore: [[f32; ORDER]; 2],
-    tilt_out: [f32; 2],
+    /// The period the envelope is worked out from, looped and tilted, with room for the lags.
+    looped: Box<[f64]>,
+    /// The power of each lag of the last [`DESIGNS`] envelopes, their sum, which of them goes
+    /// next, and how many there are.
+    designs: Box<[f64]>,
+    sum: Box<[f64]>,
+    oldest: usize,
+    count: usize,
+    /// The reflection factors of each envelope, by its number: envelope `n` ends before frame
+    /// `n * hop`. Then the factors at one frame, and the predictions Levinson and Durbin work
+    /// with.
+    analyses: Box<[f32]>,
+    factors: Box<[f32]>,
+    prediction: Box<[f64]>,
+    before: Box<[f64]>,
+    tilt: Tilt,
+    /// The backward sound of each stage of the lattice of each channel, on the way in and on
+    /// the way out.
+    flatten: [Box<[f32]>; 2],
+    restore: [Box<[f32]>; 2],
 }
 
 impl Formants {
-    fn new(rate: f64, length: usize) -> Self {
-        let hop = ((HOP_SECONDS * rate).round() as usize).max(1);
-        let size = ((ANALYSIS_SECONDS * rate).round() as usize).max(ORDER + 1);
-        let window = (0..size).map(|frame| {
-            let place = (frame as f64 + 0.5) / size as f64;
-            (0.5 - 0.5 * (2.0 * PI * place).cos()) as f32
-        });
-        let widening = std::array::from_fn(|lag| {
-            let spread = 2.0 * PI * WIDENING_HZ * lag as f64 / rate;
-            (-0.5 * spread * spread).exp()
-        });
+    fn new(rate: f64, longest: f64, length: usize, tilt: f32) -> Self {
+        let steps = rate_steps(rate);
+        let order = ORDER * steps;
+        let hop = DESIGN_FRAMES * steps;
+        let heard = (longest * (1.0 + LOOPED)).ceil() as usize + 2;
         Self {
+            order,
             hop,
-            window: window.collect(),
-            heard: vec![0.0; size].into(),
-            windowed: vec![0.0; size].into(),
+            analysis_tilt: (-2.0 * PI * ANALYSIS_TILT_HZ / rate).exp(),
+            heard: vec![0.0; heard].into(),
             next: 0,
-            tilted: 0.0,
-            analyses: vec![[0.0; ORDER]; length / hop + 4].into(),
-            widening,
-            tilt_in: [0.0; 2],
-            flatten: [[0.0; ORDER]; 2],
-            restore: [[0.0; ORDER]; 2],
-            tilt_out: [0.0; 2],
+            looped: vec![0.0; heard + order].into(),
+            designs: vec![0.0; DESIGNS * (order + 1)].into(),
+            sum: vec![0.0; order + 1].into(),
+            oldest: 0,
+            count: 0,
+            analyses: vec![0.0; (length / hop + 4) * order].into(),
+            factors: vec![0.0; order].into(),
+            prediction: vec![0.0; order + 1].into(),
+            before: vec![0.0; order + 1].into(),
+            tilt: Tilt::new(tilt),
+            flatten: [vec![0.0; order].into(), vec![0.0; order].into()],
+            restore: [vec![0.0; order].into(), vec![0.0; order].into()],
         }
     }
 
-    /// The reflection factors at `frame`: from the analysis before it towards the last one.
-    fn factors(&self, frame: i64) -> [f32; ORDER] {
+    /// The reflection factors at `frame` into `self.factors`: from the envelope before it
+    /// towards the last one.
+    fn factors_at(&mut self, frame: i64) {
         let hop = self.hop as i64;
         let number = frame.div_euclid(hop);
         let along = frame.rem_euclid(hop) as f32 / hop as f32;
-        let length = self.analyses.len() as i64;
-        let at = |number: i64| {
-            let at = number.rem_euclid(length) as usize;
-            self.analyses.get(at).copied().unwrap_or([0.0; ORDER])
+        let count = (self.analyses.len() / self.order) as i64;
+        let at = |number: i64| number.rem_euclid(count) as usize * self.order;
+        let (before, last) = (at(number - 1), at(number));
+        let before = self.analyses.get(before..before + self.order);
+        let last = self.analyses.get(last..last + self.order);
+        let (Some(before), Some(last)) = (before, last) else {
+            return;
         };
-        let (mut factors, last) = (at(number - 1), at(number));
-        for (factor, last) in factors.iter_mut().zip(last) {
-            *factor += along * (last - *factor);
+        for ((factor, before), last) in self.factors.iter_mut().zip(before).zip(last) {
+            *factor = before + along * (last - before);
         }
-        factors
     }
 
     /// Frame `frame` with its envelope taken out. It also hears the frame for the next
-    /// analysis.
-    fn flatten(&mut self, frame: i64, sound: [f32; 2]) -> [f32; 2] {
-        let mono = 0.5 * (sound[0] + sound[1]);
+    /// envelope, which is worked out from `heard`, the period of the voice now, or else from
+    /// `last`, the last one heard.
+    fn flatten(&mut self, frame: i64, sound: [f32; 2], heard: Option<f64>, last: f64) -> [f32; 2] {
         if let Some(slot) = self.heard.get_mut(self.next) {
-            *slot = mono - EMPHASIS * self.tilted;
+            *slot = 0.5 * (sound[0] + sound[1]);
         }
-        self.tilted = mono;
         self.next = (self.next + 1) % self.heard.len();
         if (frame + 1).rem_euclid(self.hop as i64) == 0 {
-            self.analyse((frame + 1) / self.hop as i64);
+            self.design((frame + 1) / self.hop as i64, heard.unwrap_or(last), last);
         }
-        let factors = self.factors(frame);
-        let mut out = sound;
-        let lattices = self.tilt_in.iter_mut().zip(&mut self.flatten);
-        for (sample, (tilt, state)) in out.iter_mut().zip(lattices) {
-            let tilted = *sample - EMPHASIS * *tilt;
-            *tilt = *sample;
-            *sample = flatten(&factors, state, tilted);
+        self.factors_at(frame);
+        let mut out = self.tilt.take_out(sound);
+        for (sample, state) in out.iter_mut().zip(&mut self.flatten) {
+            *sample = flatten(&self.factors, state, *sample);
         }
         out
     }
 
     /// The flat sound read at `frame` with the envelope of that frame put back.
     fn restore(&mut self, frame: i64, flat: [f32; 2]) -> [f32; 2] {
-        let factors = self.factors(frame);
+        self.factors_at(frame);
         let mut out = flat;
-        let lattices = self.tilt_out.iter_mut().zip(&mut self.restore);
-        for (sample, (tilt, state)) in out.iter_mut().zip(lattices) {
-            *sample = restore(&factors, state, *sample) + EMPHASIS * *tilt;
-            *tilt = *sample;
+        for (sample, state) in out.iter_mut().zip(&mut self.restore) {
+            *sample = restore(&self.factors, state, *sample);
         }
-        out
+        self.tilt.put_back(out)
     }
 
-    /// The reflection factors of the last frames heard, by Levinson and Durbin, as analysis
-    /// `number`.
-    fn analyse(&mut self, number: i64) {
-        let (newer, older) = self.heard.split_at(self.next.min(self.heard.len()));
-        let heard = older.iter().chain(newer.iter());
-        for ((windowed, sample), window) in self.windowed.iter_mut().zip(heard).zip(&self.window) {
-            *windowed = f64::from(sample * window);
+    /// Envelope `number`: the newest `period` of the sound, its next part faded into its start
+    /// so it loops, tilted and correlated with itself around the loop, each lag weighed by how
+    /// the harmonics `last` apart blur together, averaged with the envelopes before it and
+    /// turned into reflection factors by Levinson and Durbin.
+    fn design(&mut self, number: i64, period: f64, last: f64) {
+        let size = self.heard.len();
+        let looped = ((LOOPED * period) as usize).min(size / 2);
+        let length = (period.round() as usize).clamp(2, size - looped);
+        // Newest first.
+        let newest = (0..length + looped).map(|back| (self.next + size - 1 - back) % size);
+        for (slot, at) in self.looped.iter_mut().zip(newest) {
+            *slot = f64::from(self.heard.get(at).copied().unwrap_or(0.0));
         }
-        let mut lags = [0.0_f64; ORDER + 1];
-        for (lag, (sum, widening)) in lags.iter_mut().zip(&self.widening).enumerate() {
-            let pairs = self.windowed.iter().zip(self.windowed.iter().skip(lag));
-            *sum = widening * pairs.map(|(early, late)| early * late).sum::<f64>();
+        for at in 0..looped {
+            let weight = 1.0 - at as f64 / looped as f64;
+            let earlier = self.looped.get(at + length).copied().unwrap_or(0.0);
+            if let Some(slot) = self.looped.get_mut(at) {
+                *slot += weight * (earlier - *slot);
+            }
         }
-        lags[0] *= 1.0 + FLOOR;
-        let length = self.analyses.len() as i64;
-        let Some(factors) = self.analyses.get_mut(number.rem_euclid(length) as usize) else {
+        for at in length..length + self.order {
+            let wrapped = self.looped.get(at % length).copied().unwrap_or(0.0);
+            if let Some(slot) = self.looped.get_mut(at) {
+                *slot = wrapped;
+            }
+        }
+        let mut previous = self.looped.get(length - 1).copied().unwrap_or(0.0);
+        for slot in self.looped.iter_mut().take(length + self.order) {
+            (*slot, previous) = (*slot - self.analysis_tilt * previous, *slot);
+        }
+        let row = self.oldest * (self.order + 1);
+        let Some(lags) = self.designs.get_mut(row..row + self.order + 1) else {
             return;
         };
-        *factors = [0.0; ORDER];
-        let mut prediction = [0.0_f64; ORDER + 1];
-        prediction[0] = 1.0;
-        let mut error = lags[0];
-        for stage in 1..=ORDER {
-            let (Some(taps), Some(lagged)) = (prediction.get(..stage), lags.get(1..=stage)) else {
+        for ((lag, power), sum) in lags.iter_mut().enumerate().zip(&mut self.sum) {
+            *sum -= *power;
+            let pairs = self.looped.iter().take(length);
+            let product: f64 = (pairs.zip(self.looped.iter().skip(lag)))
+                .map(|(early, late)| early * late)
+                .sum();
+            let blur = match lag {
+                0 => 1.0,
+                _ => {
+                    let angle = PI * lag as f64 / last;
+                    (angle.sin() / angle).powi(2)
+                }
+            };
+            *power = product * blur;
+            *sum += *power;
+        }
+        self.oldest = (self.oldest + 1) % DESIGNS;
+        self.count = (self.count + 1).min(DESIGNS);
+        self.levinson(number);
+    }
+
+    /// The reflection factors of the averaged lags, as envelope `number`.
+    fn levinson(&mut self, number: i64) {
+        let count = (self.analyses.len() / self.order) as i64;
+        let row = number.rem_euclid(count) as usize * self.order;
+        let Some(factors) = self.analyses.get_mut(row..row + self.order) else {
+            return;
+        };
+        factors.fill(0.0);
+        let lags = &self.sum;
+        self.prediction.fill(0.0);
+        if let Some(first) = self.prediction.first_mut() {
+            *first = 1.0;
+        }
+        let mut error = lags.first().copied().unwrap_or(0.0);
+        for stage in 1..=self.order {
+            let (Some(taps), Some(lagged)) = (self.prediction.get(..stage), lags.get(1..=stage))
+            else {
                 break;
             };
             if error <= 1e-12 {
@@ -536,15 +634,15 @@ impl Formants {
                 .map(|(tap, lag)| tap * lag)
                 .sum();
             let factor = (-sum / error).clamp(-0.999, 0.999);
-            let before = prediction;
-            if let (Some(now), Some(mirrored)) =
-                (prediction.get_mut(1..stage), before.get(1..stage))
-            {
+            self.before.copy_from_slice(&self.prediction);
+            let mirrored = self.before.get(1..stage).unwrap_or_default();
+            if let Some(now) = self.prediction.get_mut(1..stage) {
                 for (now, mirrored) in now.iter_mut().zip(mirrored.iter().rev()) {
                     *now += factor * mirrored;
                 }
             }
-            if let (Some(tap), Some(slot)) = (prediction.get_mut(stage), factors.get_mut(stage - 1))
+            if let (Some(tap), Some(slot)) =
+                (self.prediction.get_mut(stage), factors.get_mut(stage - 1))
             {
                 (*tap, *slot) = (factor, factor as f32);
             }
@@ -556,7 +654,7 @@ impl Formants {
 /// One sample through the lattice that takes the envelope out. `state` holds the backward
 /// sound of each stage at the frame before.
 #[inline]
-fn flatten(factors: &[f32; ORDER], state: &mut [f32; ORDER], sample: f32) -> f32 {
+fn flatten(factors: &[f32], state: &mut [f32], sample: f32) -> f32 {
     let (mut forward, mut backward) = (sample, sample);
     for (factor, before) in factors.iter().zip(state.iter_mut()) {
         let older = std::mem::replace(before, backward);
@@ -567,11 +665,12 @@ fn flatten(factors: &[f32; ORDER], state: &mut [f32; ORDER], sample: f32) -> f32
 }
 
 /// One sample through the lattice that puts the envelope back, the inverse of [`flatten`]:
-/// down the stages for the forward sound, then up them for the backward sound.
+/// down the stages for the forward sound, then up them for the backward sound. Each stage
+/// keeps its forward sound in `state` until the way up, which writes the backward sound.
 #[inline]
-fn restore(factors: &[f32; ORDER], state: &mut [f32; ORDER], sample: f32) -> f32 {
-    let mut forwards = [0.0; ORDER];
+fn restore(factors: &[f32], state: &mut [f32], sample: f32) -> f32 {
     let mut forward = sample;
+    let mut forwards = [0.0_f32; 4 * ORDER];
     let stages = factors.iter().zip(state.iter()).zip(forwards.iter_mut());
     for ((factor, before), at) in stages.rev() {
         forward -= factor * before;
@@ -680,7 +779,10 @@ mod tests {
             .collect();
         let latency = shifter.latency();
         assert_eq!(output[..latency], vec![0.0; latency]);
-        assert_eq!(output[latency..], sound[..sound.len() - latency]);
+        // The tilt around the head cancels to within rounding.
+        for (out, sample) in output[latency..].iter().zip(&sound) {
+            assert!((out - sample).abs() < 1e-5, "{out} for {sample}");
+        }
     }
 
     #[test]
@@ -720,9 +822,12 @@ mod tests {
             );
             let (before, after) = (onsets(&sound), onsets(&output));
             assert_eq!(before.len(), after.len(), "{semitones}: {after:?}");
+            // The head stays within its window of a period around the latency, also through a
+            // rest, where nothing moves it back.
+            let window = (WINDOW * RATE / 220.0).ceil() as i64;
             for (before, after) in before.iter().zip(&after) {
                 let late = *after as i64 - (*before + latency) as i64;
-                assert!(late.abs() < 48, "{semitones}: {late} frames off");
+                assert!(late.abs() <= window, "{semitones}: {late} frames off");
             }
         }
     }
