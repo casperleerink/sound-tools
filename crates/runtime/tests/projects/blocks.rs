@@ -302,6 +302,25 @@ fn a_region_plays_its_file_at_its_place_with_its_fade_gain_and_trim() {
     assert!((BAR + 24_000 + 200..2 * BAR).all(|frame| played[2 * frame] == 0.0));
 }
 
+/// A region with warp points plays its file over the ticks they say, through the player of
+/// its parent, once the periods of its file are read.
+#[test]
+fn a_region_with_warp_points_plays_its_file_over_the_ticks_they_say() {
+    let region = format!(
+        r#"{{"tool": "region", "state": {{"asset": "level.wav", "start": {BAR_TICKS}, "warp": [{{"ticks": {BAR_TICKS}, "seconds": 1.0}}]}}}}"#
+    );
+    let mut harness = project("tape", &[("take.json", region)]);
+    write_samples(&harness, "level.wav", 48_000, 1.0, |_| 0.5);
+    let file = harness.path("assets/audio/level.wav");
+    harness.apply(&[file]);
+    assert_eq!(harness.project.problems(), []);
+    // A second of the file over a bar, two seconds at 120 bpm.
+    let played = harness.play_from_the_start(3 * BAR);
+    let left = |frame: usize| played[2 * frame];
+    assert!((BAR + 1_000..2 * BAR - 1_000).all(|frame| (left(frame) - 0.5).abs() < 1e-3));
+    assert!((2 * BAR + 200..3 * BAR).all(|frame| left(frame) == 0.0));
+}
+
 /// A region whose file is not there is a problem that names the file; it plays once the file
 /// arrives, without a change of its record.
 #[test]

@@ -1621,13 +1621,28 @@ fn region_players(
             let Some(file) = region::audio(context.assets(), &region.asset, &id) else {
                 continue;
             };
+            let periods = match region.warp.is_empty() {
+                true => None,
+                false => match region::periods(context.assets(), &region.asset, &id) {
+                    Some(periods) => Some(periods),
+                    None => continue,
+                },
+            };
             // The file itself: one read again is another, as the player holds the one before.
             files.push(Arc::as_ptr(&file) as usize);
-            regions.push((format!("the region {name:?}"), region));
+            files.extend(
+                periods
+                    .as_ref()
+                    .map(|periods| Arc::as_ptr(periods) as usize),
+            );
+            regions.push((format!("the region {name:?}"), region, periods));
         }
+        let shown: Vec<_> = (regions.iter())
+            .map(|(what, region, _)| (what, region))
+            .collect();
         if context.changed(
             &format!("regions>{to}"),
-            key(&(format!("{regions:?}"), files)),
+            key(&(format!("{shown:?}"), files)),
         ) {
             // Each region says what is wrong with it.
             let (snapshot, _) = sound_media::snapshot(regions, context.assets(), rate);
