@@ -74,7 +74,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                 model("haiku", "Haiku 4.5", "Fastest for quick answers"),
             ];
             let message = "Add a bass line in bars 5 to 8 that follows the piano";
-            sidebar.begin_at(message, started, cx);
+            sidebar.begin_at(message, Vec::new(), started, cx);
             sidebar.receive(
                 [
                     AgentEvent::Started { account, models },
@@ -185,7 +185,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
         .collect();
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
-            sidebar.begin_at("Make the drums swing", drums_started, cx);
+            sidebar.begin_at("Make the drums swing", Vec::new(), drums_started, cx);
             sidebar.receive(
                 [
                     AgentEvent::TurnStarted,

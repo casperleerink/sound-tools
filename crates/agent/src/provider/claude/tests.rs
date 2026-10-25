@@ -157,12 +157,6 @@ fn read_only_commands() {
     insta::assert_debug_snapshot!(events);
 }
 
-/// The agent sees the picture, and reads the file's name from its path.
-#[test]
-fn attachments() {
-    insta::assert_debug_snapshot!(replay("attachments"));
-}
-
 /// What [`Outgoing::user`] writes for a picture and a file is the line the CLI took.
 #[test]
 fn writes_attachments_as_the_cli_accepted() {

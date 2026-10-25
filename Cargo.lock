@@ -6194,6 +6194,7 @@ dependencies = [
  "ctrlc",
  "dunce",
  "gpui",
+ "image",
  "insta",
  "libc",
  "pulldown-cmark",

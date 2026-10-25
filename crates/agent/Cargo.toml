@@ -10,6 +10,8 @@ workspace = true
 [dependencies]
 base64.workspace = true
 dunce.workspace = true
+# Pictures on the clipboard that the agent cannot see as they are, sent as PNG.
+image = { workspace = true, features = ["bmp", "tiff"] }
 gpui.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true

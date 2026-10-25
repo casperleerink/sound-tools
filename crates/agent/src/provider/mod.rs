@@ -351,7 +351,7 @@ fn new_session_id() -> String {
 }
 
 /// What the composer sends: the text, and what is attached to it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
     pub text: String,
     pub attachments: Vec<Attachment>,

@@ -23,17 +23,12 @@ impl Sidebar {
     /// Shows the composer's message and opens its request. [`Self::send`] calls it before the
     /// message goes to the agent; a test calls it to replay a recorded turn with no process.
     pub fn begin(&mut self, message: &str, cx: &mut Context<Self>) {
-        self.begin_at(message, SystemTime::now(), cx);
+        self.begin_at(message, Vec::new(), SystemTime::now(), cx);
     }
 
-    /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
-    /// worked.
-    pub fn begin_at(&mut self, message: &str, started: SystemTime, cx: &mut Context<Self>) {
-        self.begin_with(message, Vec::new(), started, cx);
-    }
-
-    /// [`Self::begin_at`] with the names of what the message has attached.
-    fn begin_with(
+    /// [`Self::begin`] with the names of what the message has attached, and the turn started
+    /// at `started`, so a snapshot shows how long it worked.
+    pub fn begin_at(
         &mut self,
         message: &str,
         attachments: Vec<String>,
@@ -170,6 +165,7 @@ impl Sidebar {
         let message = self.input.read(cx).text().trim().to_string();
         let ready = self.loading.is_none()
             && self.opening.is_none()
+            && self.attachments_reading == 0
             && self.settings.read(cx).is_read()
             && self.conversation.can_continue();
         if message.is_empty() || self.conversation.is_working() || !ready {
@@ -194,9 +190,9 @@ impl Sidebar {
         self.history.reset();
         let (names, attachments) = std::mem::take(&mut self.attachments)
             .into_iter()
-            .map(|attached| (attached.name, attached.attachment))
+            .map(|attached| (attached.read.name, attached.read.attachment))
             .unzip();
-        self.begin_with(&message, names, SystemTime::now(), cx);
+        self.begin_at(&message, names, SystemTime::now(), cx);
         let message = Message {
             text: message,
             attachments,

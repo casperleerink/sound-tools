@@ -26,24 +26,11 @@ fn keep(
     sent: u64,
     events: Vec<AgentEvent>,
 ) {
-    keep_attached(store, thread, conversation, (message, &[]), sent, events);
-}
-
-/// [`keep`] with a message that has attachments, by name.
-fn keep_attached(
-    store: &ThreadStore,
-    thread: &SavedThread,
-    conversation: &mut Conversation,
-    (message, attachments): (&str, &[&str]),
-    sent: u64,
-    events: Vec<AgentEvent>,
-) {
-    let attachments: Vec<String> = attachments.iter().map(|name| name.to_string()).collect();
-    conversation.send(message, attachments.clone(), at(sent));
+    conversation.send(message, Vec::new(), at(sent));
     let mut lines = vec![Line::Sent {
         at: at(sent),
         message: message.to_string(),
-        attachments,
+        attachments: Vec::new(),
     }];
     for (event, second) in events.into_iter().zip(sent + 1..) {
         lines.extend(Line::of(&event, at(second)));
@@ -88,11 +75,11 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
     };
     let mut conversation = Conversation::default();
     let step = StepId("write".to_string());
-    keep_attached(
+    keep(
         &store,
         &thread,
         &mut conversation,
-        ("Add a bass line like this", &["Pasted image", "take.wav"]),
+        "Add a bass line",
         0,
         vec![
             AgentEvent::TurnStarted,

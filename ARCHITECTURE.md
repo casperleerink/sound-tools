@@ -204,15 +204,15 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/agent`.
 
 - The sidebar runs Claude Code in the project folder, as a terminal agent would. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is how more agents come later.
-- The window has a generic left panel and names no agent type.
+- The window's generic left panel names no agent type.
 - Each message is one request: one undo step.
 - The thread is built from provider-neutral events with no process, so tests feed it events.
 - Threads, settings and the panel's state are kept per machine, so an agent cannot change the interface or raise its own access by editing a file.
-- The provider keeps the conversation; the app keeps its session id and a log to show.
+- The provider keeps the conversation; the app keeps only its session id and a log to show it.
 - The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling it: 215 MB more per download, and a release per version.
-- Sign-in is Claude Code's own; the app never keeps a credential.
+- Sign-in is Claude Code's own; the app never reads or keeps a credential.
 - New problems after a turn show to the composer, not the agent: its docs tell it to read `problems.txt`.
-- An attached picture goes as a picture, any other file as its path: nothing is copied in. A saved thread keeps their names only.
+- A picture goes as a picture, any other file as its path; nothing is copied in. Saved threads keep only their names.
 
 ## Tools of the project
 

@@ -587,9 +587,15 @@ const PNG: [u8; 69] = [
     1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
 
+/// One red pixel, as the clipboard of Windows holds a screenshot.
+const BMP: [u8; 58] = [
+    66, 77, 58, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0,
+    0, 0, 0, 0, 4, 0, 0, 0, 19, 11, 0, 0, 19, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0,
+];
+
 /// A picture pasted and files dropped on the composer go with the next message: a picture as
-/// itself, any other file as its path. One taken out stays behind. The message shows their
-/// names, also when the thread opens again.
+/// itself, or as PNG when the agent cannot see its format, and any other file as its path. One
+/// taken out stays behind. The message shows their names, also when the thread opens again.
 #[gpui::test]
 fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
@@ -608,7 +614,7 @@ fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
     });
 
     opened.keys("secondary-l");
-    let pasted = gpui::Image::from_bytes(gpui::ImageFormat::Png, PNG.to_vec());
+    let pasted = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, BMP.to_vec());
     opened
         .cx
         .write_to_clipboard(ClipboardItem::new_image(&pasted));
@@ -625,15 +631,30 @@ fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
     opened.cx.simulate_input("Make the bass follow this");
     opened.keys("enter");
 
+    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+        panic!("no message went");
+    };
+    assert_eq!(text, "Make the bass follow this");
+    let [
+        Attachment::Image(Image {
+            format: ImageFormat::Png,
+            bytes: pasted,
+        }),
+        score,
+        file,
+    ] = attachments.as_slice()
+    else {
+        panic!("{attachments:?}");
+    };
+    assert!(
+        pasted.starts_with(&PNG[..8]),
+        "the pasted picture is no PNG"
+    );
     let picture = Attachment::Image(Image {
         format: ImageFormat::Png,
         bytes: PNG.to_vec(),
     });
-    let message = Message {
-        text: "Make the bass follow this".to_string(),
-        attachments: vec![picture.clone(), picture, Attachment::File(take)],
-    };
-    assert_eq!(commands.try_recv().ok(), Some(Command::Send(message)));
+    assert_eq!((score, file), (&picture, &Attachment::File(take)));
     assert_eq!(opened.find("agent-remove-attachment-0"), None);
     opened.cx.read(|cx| {
         let entries = sidebar.read(cx).conversation().entries();
@@ -654,6 +675,44 @@ fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
 
     let mut opened = open_again(cx, folder);
     assert_eq!(entries(&mut opened), shown);
+}
+
+/// A message sent while a dropped file is still being read waits for it, so the file never goes
+/// with the next message instead.
+#[gpui::test]
+fn a_message_waits_for_a_file_still_being_read(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    let outside = tempfile::tempdir().unwrap();
+    let take = outside.path().join("take.wav");
+    std::fs::write(&take, "").unwrap();
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Tune the bass to this");
+
+    let attach = vec![take.clone()];
+    opened.cx.update(|_, cx| {
+        sidebar.update(cx, |sidebar, cx| sidebar.attach_files(attach, cx));
+    });
+    opened
+        .cx
+        .dispatch_action(sound_ui::components::text_input::Submit);
+    assert!(
+        commands.try_recv().is_err(),
+        "it went before the file was in"
+    );
+    opened.cx.run_until_parked();
+    opened.keys("enter");
+    let message = Message {
+        text: "Tune the bass to this".to_string(),
+        attachments: vec![Attachment::File(take)],
+    };
+    assert_eq!(commands.try_recv().ok(), Some(Command::Send(message)));
 }
 
 /// The thread the sidebar shows, by its id in the index of the project's threads.

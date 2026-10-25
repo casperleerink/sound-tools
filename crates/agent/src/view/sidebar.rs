@@ -122,6 +122,8 @@ pub struct Sidebar {
     input: Entity<TextInput>,
     /// What goes with the next message.
     attachments: Vec<Attached>,
+    /// Reads of attachments not in yet. No message goes until they are.
+    attachments_reading: usize,
     /// Where up and down in the composer are among the earlier messages.
     history: History,
     /// The sidebar itself, for when it has no composer.
@@ -318,6 +320,7 @@ impl Sidebar {
             problems_open: HashSet::new(),
             input,
             attachments: Vec::new(),
+            attachments_reading: 0,
             history: History::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
@@ -686,7 +689,8 @@ impl Sidebar {
         let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
         let (blue, stop, lavender) = (theme.blue, theme.gray_950, theme.lavender);
         let working = self.conversation.is_working();
-        let can_send = !self.input.read(cx).text().trim().is_empty();
+        let can_send =
+            !self.input.read(cx).text().trim().is_empty() && self.attachments_reading == 0;
         // While a turn runs the send button stops it: one turn at a time.
         let button = if working {
             Button::icon_only("stop", "square")

@@ -216,7 +216,6 @@ pub(super) enum Outgoing {
 }
 
 impl Outgoing {
-    /// Pictures go as image blocks. A file goes as its path, after the text.
     pub(super) fn user(message: provider::Message) -> Self {
         let provider::Message {
             mut text,
