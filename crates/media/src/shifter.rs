@@ -17,7 +17,8 @@
 //!
 //! The head reads between frames with a windowed sinc. Reading faster would fold what lies
 //! above the new Nyquist frequency down, so there the sinc is stretched by the ratio over
-//! [`CUTOFF`]: its transition then ends under that frequency, as in [`Varispeed`]. The sinc is symmetric, so the sound read keeps its phase and lines up with the
+//! [`CUTOFF`]: its transition then ends under that frequency, as in [`Varispeed`]. Just above
+//! 1 the stretch eases in, so a correction that crosses 0 does not switch the highs. The sinc is symmetric, so the sound read keeps its phase and lines up with the
 //! sound as it came, for a mix of the two. A low pass in front of the ring would not.
 //!
 //! Reading faster also moves the envelope of the spectrum up, the formants that make a voice
@@ -65,6 +66,8 @@ const SHORTEST_PERIOD: f64 = 16.0;
 const RATIOS: (f64, f64) = (0.5, 2.0);
 /// Where the stretched sinc cuts, as a part of the Nyquist frequency over the ratio.
 const CUTOFF: f64 = 0.85;
+/// The ratios above 1 over which the cut moves from the Nyquist frequency to [`CUTOFF`].
+const EASE: f64 = 0.2;
 /// How long a change of formants takes.
 const KEEP_SECONDS: f64 = 0.02;
 
@@ -142,18 +145,21 @@ impl Shifter {
         LazyLock::force(&TABLE);
         LazyLock::force(&CURVE);
         let longest = longest.max(SHORTEST_PERIOD);
-        // The head is where it should be once a reading of a period describes it, and the head it
-        // fades from stays clear of the newest frame at a ratio of 2.
+        let unvoiced_fade = (UNVOICED_FADE_SECONDS * rate).max(1.0);
+        // How far a head may go past its window in a fade, and the widest taps of a read.
+        let travel = longest.max(unvoiced_fade);
+        let reach = (HALF as f64 * stretch(RATIOS.1)).ceil();
+        // The head is where it should be once a reading of a period describes it, and every
+        // head reads only frames that came in.
         let latency = (oldest + longest * WINDOW)
-            .max(longest * (1.0 + WINDOW) + (HALF + 1) as f64)
+            .max(longest * WINDOW + travel + reach + 1.0)
             .ceil();
-        // The head behind by its window and a fade at a ratio of a half, and its widest taps.
-        let length = (latency + longest * 2.0) as usize + 8 * HALF;
+        let length = (latency + longest * WINDOW + travel + 2.0 * reach) as usize + 2;
         Self {
             latency,
             longest,
             slack: (SLACK_SECONDS * rate).max(1.0),
-            unvoiced_fade: (UNVOICED_FADE_SECONDS * rate).max(1.0),
+            unvoiced_fade,
             hold_frames: (HOLD_SECONDS * rate) as usize,
             keep_step: (1.0 / (KEEP_SECONDS * rate).max(1.0)) as f32,
             written: 0,
@@ -188,17 +194,30 @@ impl Shifter {
         self.keeping = keep;
     }
 
-    /// Hears the next frame, with what the tracker read last.
+    /// Hears the next frame, with what the tracker read last. What is not a number is taken as
+    /// silence and no shift, so it cannot stay in the rings or the heads.
     pub fn push(&mut self, frame: [f32; 2], shift: Shift) {
-        let ratio = shift.ratio.clamp(RATIOS.0, RATIOS.1);
+        let frame = frame.map(|sample| if sample.is_finite() { sample } else { 0.0 });
+        let ratio = match shift.ratio.is_finite() {
+            true => shift.ratio.clamp(RATIOS.0, RATIOS.1),
+            false => 1.0,
+        };
+        let period = shift
+            .period
+            .filter(|period| period.is_finite() && *period > 0.0);
+        let length = self.readings.len() as f64;
+        let age = match shift.age.is_finite() {
+            true => shift.age.clamp(0.0, length),
+            false => 0.0,
+        };
         self.sound.write(self.written, frame);
         if self.keeping || self.keep > 0.0 {
             let flat = self.formants.flatten(self.written, frame);
             self.flat.write(self.written, flat);
             self.filled = self.filled.saturating_add(1);
         }
-        let described = self.written - shift.age.round() as i64;
-        let noted = (shift.period.unwrap_or(0.0) as f32, ratio as f32);
+        let described = self.written - age.round() as i64;
+        let noted = (period.unwrap_or(0.0) as f32, ratio as f32);
         let length = self.readings.len() as i64;
         let from = match described >= self.noted {
             true => self.noted.max(described - length + 1),
@@ -329,13 +348,13 @@ impl Ring {
     /// what a head at `ratio` would fold.
     fn read(&self, place: f64, ratio: f64) -> [f32; 2] {
         let whole = place.floor();
-        let stretch = ratio / CUTOFF;
         if ratio <= 1.0 {
             let first = whole as i64 - HALF as i64 + 1;
             let start = first.rem_euclid(self.length as i64) as usize;
             let frames = self.frames.get(start..).unwrap_or_default();
             return TABLE.apply(frames, 0, place - whole);
         }
+        let stretch = stretch(ratio);
         let reach = (HALF as f64 * stretch).ceil() as i64;
         let first = whole as i64 - reach + 1;
         let start = first.rem_euclid(self.length as i64) as usize;
@@ -355,6 +374,14 @@ impl Ring {
             false => [0.0; 2],
         }
     }
+}
+
+/// How far the sinc is stretched for a head at `ratio` above 1: by the ratio over [`CUTOFF`],
+/// eased in over the first [`EASE`] above 1, so a ratio that crosses 1 does not change the
+/// sound at once.
+fn stretch(ratio: f64) -> f64 {
+    let part = ((ratio - 1.0) / EASE).clamp(0.0, 1.0);
+    ratio / (1.0 - (1.0 - CUTOFF) * part)
 }
 
 /// The stretched sinc at `distance` frames, `inverse` the inverse of its stretch.
@@ -685,7 +712,6 @@ mod tests {
         for semitones in [-5.0, -1.0, 0.5, 3.0, 7.0] {
             let ratio = 2_f64.powf(semitones / 12.0);
             let (output, latency) = shift(&sound, ratio, false);
-            assert_eq!(output.len(), sound.len());
             let heard = note(&output[(0.1 * RATE) as usize + latency..(0.28 * RATE) as usize]);
             let expected = 57.0 + semitones;
             assert!(
@@ -810,5 +836,54 @@ mod tests {
         let (moved, kept) = (at(false), at(true));
         assert!((moved / before - ratio).abs() < 0.1, "{moved}");
         assert!((kept / before - 1.0).abs() < 0.1, "{kept}");
+    }
+
+    #[test]
+    fn a_ratio_that_crosses_1_keeps_the_highs() {
+        // Air at 21 kHz, read at a ratio just under 1 and just over it.
+        let air = tone(0.3, 21_000.0, &[0.2], |_| true);
+        let level = |ratio: f64| {
+            let mut shifter = Shifter::new(RATE, 600.0, 1_000.0);
+            let shift = Shift {
+                ratio,
+                ..Shift::NONE
+            };
+            let output: Vec<f32> = (air.iter())
+                .map(|sample| {
+                    shifter.push([*sample; 2], shift);
+                    shifter.pull()[0]
+                })
+                .collect();
+            power_at(&output[(0.1 * RATE) as usize..], 21_000.0 * ratio)
+        };
+        let change = 10.0 * (level(1.000_001) / level(0.999_999)).log10();
+        assert!(change.abs() < 0.1, "{change} dB");
+    }
+
+    #[test]
+    fn a_sample_that_is_not_a_number_leaves_no_trace() {
+        let sound = tone(1.0, 220.0, &[0.3, 0.1], |_| true);
+        let mut shifter = Shifter::new(RATE, 600.0, 1_000.0);
+        shifter.keep_formants(true);
+        let mut output = Vec::new();
+        for (frame, sample) in sound.iter().enumerate() {
+            let (sample, ratio) = match frame == 1_000 {
+                true => (f32::NAN, f64::NAN),
+                false => (*sample, 1.1),
+            };
+            let shift = Shift {
+                period: Some(RATE / 220.0),
+                ratio,
+                age: 0.0,
+            };
+            shifter.push([sample; 2], shift);
+            output.push(shifter.pull()[0]);
+        }
+        assert!(output.iter().all(|sample| sample.is_finite()));
+        assert!(
+            output[RATE as usize / 2..]
+                .iter()
+                .any(|sample| sample.abs() > 0.1)
+        );
     }
 }

@@ -197,40 +197,39 @@ impl PitchCorrection {
         }
     }
 
-    /// Hears the notes of this block: each change of the held pitch classes waits for the
-    /// readings of its frame.
-    fn hear_notes(&mut self, context: &ProcessContext<'_>) {
-        for timed in context.event_inputs.get(Self::NOTES) {
-            match timed.event {
-                NoteEvent::On { pitch, .. } => {
-                    if let Some(ons) = self.ons.get_mut(usize::from(pitch.number())) {
-                        *ons = ons.saturating_add(1);
-                    }
+    /// Hears a note at `frame`: a change of the held pitch classes waits for the readings of
+    /// its frame. Heard frame by frame, so which changes wait at once, and so the render, is the
+    /// same in any buffers.
+    fn hear_note(&mut self, event: NoteEvent, frame: u64) {
+        match event {
+            NoteEvent::On { pitch, .. } => {
+                if let Some(ons) = self.ons.get_mut(usize::from(pitch.number())) {
+                    *ons = ons.saturating_add(1);
                 }
-                NoteEvent::Off { pitch } => {
-                    if let Some(ons) = self.ons.get_mut(usize::from(pitch.number())) {
-                        *ons = ons.saturating_sub(1);
-                    }
+            }
+            NoteEvent::Off { pitch } => {
+                if let Some(ons) = self.ons.get_mut(usize::from(pitch.number())) {
+                    *ons = ons.saturating_sub(1);
                 }
-                NoteEvent::AllOff => self.ons = [0; 128],
-                _ => continue,
             }
-            let held = (self.ons.iter().enumerate())
-                .filter(|(_, ons)| **ons > 0)
-                .fold(0_u16, |held, (pitch, _)| held | 1 << (pitch % 12));
-            if held == self.held {
-                continue;
-            }
-            self.held = held;
-            if self.waiting_count == WAITING {
-                // More changes than wait at once: the oldest applies now.
-                self.reach_oldest();
-            }
-            let at = (self.waiting_from + self.waiting_count) % WAITING;
-            if let Some(slot) = self.waiting.get_mut(at) {
-                *slot = (self.frame + timed.offset as u64, held);
-                self.waiting_count += 1;
-            }
+            NoteEvent::AllOff => self.ons = [0; 128],
+            _ => return,
+        }
+        let held = (self.ons.iter().enumerate())
+            .filter(|(_, ons)| **ons > 0)
+            .fold(0_u16, |held, (pitch, _)| held | 1 << (pitch % 12));
+        if held == self.held {
+            return;
+        }
+        self.held = held;
+        if self.waiting_count == WAITING {
+            // More changes than wait at once: the oldest applies now.
+            self.reach_oldest();
+        }
+        let at = (self.waiting_from + self.waiting_count) % WAITING;
+        if let Some(slot) = self.waiting.get_mut(at) {
+            *slot = (frame, held);
+            self.waiting_count += 1;
         }
     }
 
@@ -411,11 +410,14 @@ impl Processor for PitchCorrection {
         if let Some(targets) = self.state.follow(context, self.ramp_frames) {
             self.aim(&targets);
         }
-        self.hear_notes(context);
         let frames = context.frames;
+        let notes = context.event_inputs.get(Self::NOTES);
         let [left, right] = context.audio_inputs.get(Self::INPUT);
         if all_held_silent(left) && all_held_silent(right) && self.quiet >= self.rest_frames {
             // Everything holds silence: so does the output.
+            for timed in notes {
+                self.hear_note(timed.event, self.frame + timed.offset as u64);
+            }
             self.frame += frames as u64;
             self.mix.snap();
             return;
@@ -425,6 +427,10 @@ impl Processor for PitchCorrection {
         for (offset, ((left, right), (left_out, right_out))) in
             left.iter().zip(right).zip(outputs).enumerate()
         {
+            let now = self.frame + offset as u64;
+            for timed in notes.iter().filter(|timed| timed.offset == offset) {
+                self.hear_note(timed.event, now);
+            }
             let frame = [held(*left), held(*right)];
             // Counted per frame, not per block, so where the rest starts and ends, and so the
             // render, is the same in any buffers.
