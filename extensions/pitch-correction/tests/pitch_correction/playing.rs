@@ -3,7 +3,7 @@
 use pitch_correction::PitchCorrectionState;
 use sound_core::Ticks;
 
-use crate::support::{Rig, SAMPLE_RATE, between, farthest_cents, heard, held, onsets, voice};
+use crate::support::{Rig, SAMPLE_RATE, between, farthest_cents, heard, held, hz, onsets, voice};
 
 const SECOND: usize = SAMPLE_RATE as usize;
 
@@ -50,10 +50,12 @@ fn each_pass_of_a_loop_is_in_time_and_in_tune() {
     let output = rig.render(4 * SECOND);
     let onsets = onsets(&output);
     assert_eq!(onsets.len(), 4, "{onsets:?}");
+    // Each start within 0.6 of a period of where it belongs, as the head stays.
+    let window = (0.6 * f64::from(SAMPLE_RATE) / hz(57.3)).ceil() as i64;
     for pair in onsets.windows(2) {
         let pass = pair[1] as i64 - pair[0] as i64;
         assert!(
-            (pass - SECOND as i64).abs() <= 24,
+            (pass - SECOND as i64).abs() <= 2 * window,
             "a pass of {pass} frames"
         );
     }

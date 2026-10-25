@@ -4,7 +4,7 @@ use pitch_correction::{Key, PitchCorrection, PitchCorrectionState, Scale};
 use sound_core::Processor;
 
 use crate::support::{
-    Rig, SAMPLE_RATE, between, chord, farthest_cents, heard, held, noise, onsets, voice,
+    Rig, SAMPLE_RATE, Signal, between, chord, farthest_cents, heard, held, hz, noise, onsets, voice,
 };
 
 const SECOND: usize = SAMPLE_RATE as usize;
@@ -21,15 +21,22 @@ fn latency() -> u32 {
 }
 
 #[test]
-fn a_note_sung_off_reaches_its_note_in_about_the_retune_time() {
-    // A3 30 cents sharp, from a quarter of a second on.
+fn a_note_sung_off_is_half_way_to_its_note_after_the_retune_time() {
+    // A3 30 cents sharp, from a quarter of a second on, a retune of 100 ms.
     let sharp = voice(|time| (time >= 0.25).then_some(57.3));
     let output = Rig::new(retune(100.0), sharp).render(SECOND);
     let heard = heard(&output, latency());
-    let early = between(&heard, 0.27, 0.29);
-    assert!(farthest_cents(&early, 57.0) > 10.0, "{early:?}");
-    let late = between(&heard, 0.38, 0.95);
-    assert!(farthest_cents(&late, 57.0) < 3.0, "{late:?}");
+    let off = |from: f64, to: f64| {
+        let notes = between(&heard, from, to);
+        100.0 * (notes.iter().sum::<f64>() / notes.len() as f64 - 57.0)
+    };
+    // Half the 30 cents after one retune time, a quarter after two.
+    let one = off(0.34, 0.36);
+    assert!((10.0..20.0).contains(&one), "{one} cents off after 100 ms");
+    let two = off(0.44, 0.46);
+    assert!((4.0..11.0).contains(&two), "{two} cents off after 200 ms");
+    let late = between(&heard, 0.9, 0.95);
+    assert!(farthest_cents(&late, 57.0) < 2.0, "{late:?}");
 }
 
 #[test]
@@ -110,9 +117,12 @@ fn notes_keep_their_place_in_time_and_the_sound_its_length() {
     let (before, after) = (onsets(&input), onsets(&output));
     assert_eq!(before.len(), 5);
     assert_eq!(before.len(), after.len(), "{after:?}");
+    // The head stays within 0.6 of a period of the latency, also through a rest, where
+    // nothing moves it back: 0.6 of the period of the lowest note.
+    let window = (0.6 * f64::from(SAMPLE_RATE) / hz(57.3)).ceil() as i64;
     for (before, after) in before.iter().zip(&after) {
         let late = *after as i64 - (*before + latency) as i64;
-        assert!(late.abs() <= 24, "a note {late} frames off");
+        assert!(late.abs() <= window, "a note {late} frames off");
     }
 }
 
@@ -148,4 +158,51 @@ fn what_has_no_pitch_passes_as_it_came_as_late_as_reported() {
         let alike = likeness(lag);
         assert!(alike > 0.999, "{name}: alike by {alike}");
     }
+}
+
+#[test]
+fn each_side_of_a_sudden_note_change_gets_its_own_correction() {
+    // A pure tone, so each cycle out can be timed: A3 30 cents sharp, then from 0.5 s on C4
+    // 40 cents sharp. A reading lined up with the wrong frames would move the end of the first
+    // note by the second's correction, or the other way round.
+    let mut phase = 0.0;
+    let change = 0.5 * f64::from(SAMPLE_RATE);
+    let sine: Signal = Box::new(move |frame| {
+        let note = if (frame as f64) < change { 57.3 } else { 60.4 };
+        phase += std::f64::consts::TAU * hz(note) / f64::from(SAMPLE_RATE);
+        [(0.4 * phase.sin()) as f32; 2]
+    });
+    let output = Rig::new(retune(0.0), sine).render(SECOND);
+    let latency = f64::from(latency());
+    let mut crossings = Vec::new();
+    for (frame, pair) in output.windows(2).enumerate() {
+        if pair[0] < 0.0 && pair[1] >= 0.0 {
+            let between = f64::from(pair[0] / (pair[0] - pair[1]));
+            crossings.push(frame as f64 + between);
+        }
+    }
+    let cycles = crossings.windows(2).map(|pair| {
+        let hz = f64::from(SAMPLE_RATE) / (pair[1] - pair[0]);
+        let input = ((pair[0] + pair[1]) / 2.0 - latency) / f64::from(SAMPLE_RATE);
+        (input, 69.0 + 12.0 * (hz / 440.0).log2())
+    });
+    // Each cycle from 0.2 s on, but those within 10 ms of the change, about two cycles.
+    let (mut first, mut second) = (0, 0);
+    for (input, note) in cycles.filter(|(input, _)| *input > 0.2) {
+        let expected = match input {
+            input if input < 0.49 => {
+                first += 1;
+                57.0
+            }
+            input if input > 0.51 => {
+                second += 1;
+                60.0
+            }
+            _ => continue,
+        };
+        assert!((note - expected).abs() < 0.03, "{note} at {input} s");
+    }
+    // Every cycle of both notes was there to check: 0.29 s of A3, and the rest of C4.
+    assert!(first >= 60, "{first} cycles of the first note");
+    assert!(second >= 100, "{second} cycles of the second note");
 }

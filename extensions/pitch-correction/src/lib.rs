@@ -37,13 +37,14 @@ pub struct PitchCorrectionState {
     /// Which notes of the key the voice is moved to. Notes held on the `notes` input take
     /// their place while they are held.
     pub scale: Scale,
-    /// How long the voice takes to reach its note. 0 is hard tuning; 50 to 150 is a natural
-    /// correction that keeps most of a vibrato.
+    /// How long the voice takes to get half way to its note, and half the rest in as long
+    /// again. 0 is hard tuning; 50 to 150 is a natural correction that keeps most of a
+    /// vibrato.
     pub retune_ms: f32,
-    /// How much gentler a long note gets: its retune time grows by this part of how long it
-    /// has been held, up to 0.4 s. Short notes stay in tune, long ones keep their life.
+    /// How much gentler a long note gets: over the first 0.4 s of a note, its retune time grows
+    /// by up to 100 ms, all of it at 1. Short notes stay in tune, long ones keep their life.
     pub humanize: f32,
-    /// The range of the voice, so its pitch is found and nothing outside it.
+    /// The range of the voice, so its pitch is found.
     pub voice: Voice,
     /// Keeps the tone of the voice, so a note moved up does not sound smaller.
     pub keep_formants: bool,
@@ -139,32 +140,41 @@ impl Scale {
     }
 }
 
-/// The range a voice sings in, from its lowest note to its highest, so the pitch is found in
-/// it and nothing outside it counts.
+/// The range a voice sings in, from its lowest note to its highest, so the pitch is found.
+/// Pitches under 60 Hz, about B1, are not found yet: following them needs more latency.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Voice {
-    /// Soprano and alto: about C#3 to C#6.
+    /// Soprano and alto: about G2 to D5.
     High,
-    /// Tenor and alto: about F2 to F5.
+    /// Tenor and alto: about E2 to G4.
     #[default]
     Middle,
-    /// Baritone and bass: about B1 to A4.
+    /// Baritone and bass: about A1 to D4.
     Low,
-    /// A melodic instrument, such as a violin, a trumpet or a bass guitar: about B1 to G6.
+    /// A melodic instrument, such as a violin or a trumpet: about A1 to B5.
     Instrument,
+    /// A bass instrument, such as a bass guitar: about G0 to G3.
+    BassInstrument,
 }
 
 impl Voice {
-    pub const ALL: [Self; 4] = [Self::High, Self::Middle, Self::Low, Self::Instrument];
+    pub const ALL: [Self; 5] = [
+        Self::High,
+        Self::Middle,
+        Self::Low,
+        Self::Instrument,
+        Self::BassInstrument,
+    ];
 
     /// The lowest and the highest fundamental, in Hz.
     pub fn range_hz(self) -> (f64, f64) {
         match self {
-            Self::High => (140.0, 1_100.0),
-            Self::Middle => (85.0, 700.0),
-            Self::Low => (60.0, 450.0),
-            Self::Instrument => (60.0, 1_600.0),
+            Self::High => (100.0, 600.0),
+            Self::Middle => (85.0, 400.0),
+            Self::Low => (53.0, 300.0),
+            Self::Instrument => (53.0, 1_000.0),
+            Self::BassInstrument => (24.5, 200.0),
         }
     }
 }
@@ -176,7 +186,7 @@ pub const RETUNE: Parameter = Parameter {
     field: "retune_ms",
     min: 0.0,
     max: 400.0,
-    default: 50.0,
+    default: 20.0,
     scale: sound_core::Scale::Linear,
     get: |state| state.retune_ms,
     set: |state, value| state.retune_ms = value,

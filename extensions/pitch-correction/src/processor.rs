@@ -8,15 +8,17 @@
 //! every octave, and they apply to the sound sung when they changed: the readings describe the
 //! voice a little back, so the changes wait for them.
 //!
-//! The correction, target less sung, in semitones, moves to its goal like a capacitor charging:
-//! most of the way in the retune time. A slow retune follows the average of a vibrato and
-//! leaves the vibrato; a retune of 0 takes the goal at once and flattens it. Through a short
-//! moment without a clear pitch, as in a breath inside a note, the goal holds; after that, and
-//! in a chord or noise, it goes back to 0, so nothing without a pitch is moved.
+//! The ratio the voice is read at moves to its goal, the target over what is sung, by the same
+//! part every frame: half way in the retune time. A slow retune follows the average of a
+//! vibrato and leaves the vibrato; a retune of 0 takes the goal at once and flattens it. When
+//! the target stays, the time grows over [`HUMANIZE_SECONDS`] towards the retune time with the
+//! humanize time added; a new target starts from the retune time again. Once the pitch is lost,
+//! in a chord, noise or a breath, the ratio is 1 at once, so nothing without a pitch is moved.
 //!
 //! Each voice range has its own tracker, made before the processor reaches the audio thread.
-//! A change of range starts the new one listening next to the old, and switches once it has
-//! heard enough to read a note.
+//! A tracker looks from the lowest pitch of its range, but not under [`LOWEST_HZ`], which the
+//! latency allows, up to twice its highest. A change of range starts the new one listening next
+//! to the old, and switches once it has heard enough to read a note.
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, DelayLine, EventInput, Ports,
@@ -34,17 +36,17 @@ type CorrectionTargets = Targets<PitchCorrectionState, { PARAMETERS.len() }>;
 const TOLERANCE: f64 = 0.5;
 /// How long a change of the mix takes.
 const RAMP_SECONDS: f32 = 0.02;
-/// How long the goal holds through a moment without a clear pitch.
-const HOLD_SECONDS: f64 = 0.05;
-/// The retune time reaches its own value in a third of it, so it is 95 % of the way there.
-const RETUNE_PARTS: f64 = 3.0;
-/// The longest a note's retune time grows for with humanize.
+/// The lowest pitch any tracker looks for, in Hz: a reading of a lower one is older than the
+/// latency leaves room for.
+const LOWEST_HZ: f64 = 60.0;
+/// How long a held target takes to reach the slower retune of humanize, and how much slower
+/// that is at most.
 const HUMANIZE_SECONDS: f64 = 0.4;
+const HUMANIZE_MS: f64 = 100.0;
+/// The wet sound is held under this before the mix.
+const LIMIT: f32 = 0.9999;
 /// How much nearer, in semitones, another allowed note must be than the target to take over.
 const STICK: f64 = 0.1;
-/// The frames from one working out of how fast the correction moves to the next, counted from
-/// the start, so a render is the same in any buffers.
-const KEEPING_FRAMES: u64 = 64;
 /// The changes of held notes that may wait for the readings at once.
 const WAITING: usize = 32;
 
@@ -93,16 +95,15 @@ pub struct PitchCorrection {
     waiting: [(u64, u16); WAITING],
     waiting_from: usize,
     waiting_count: usize,
-    /// The note moved to, how long it has been, and how many frames have had no clear pitch.
+    /// The note moved to, for how many frames, and the note heard.
     target: Option<i32>,
     target_frames: u64,
-    unclear_frames: usize,
     heard: Option<f64>,
-    /// Where the correction goes, where it is, in semitones, and the part of its distance to
-    /// the goal it keeps per frame.
-    goal: f64,
-    correction: f64,
-    keeping: f64,
+    /// The ratio the voice is read at, and the part of its distance to the goal it keeps per
+    /// frame at the retune time and at the retune time with humanize.
+    ratio: f64,
+    fast: f64,
+    slow: f64,
     /// Frames in a row of silent input.
     quiet: usize,
     rest_frames: usize,
@@ -142,14 +143,14 @@ impl PitchCorrection {
             waiting_count: 0,
             target: None,
             target_frames: 0,
-            unclear_frames: 0,
             heard: None,
-            goal: 0.0,
-            correction: 0.0,
-            keeping: 0.0,
+            ratio: 1.0,
+            fast: 0.0,
+            slow: 0.0,
             quiet: 0,
         };
         correction.shifter.keep_formants(state.keep_formants);
+        correction.retune();
         correction
     }
 
@@ -159,18 +160,15 @@ impl PitchCorrection {
             .map(|voice| {
                 let (lowest, highest) = voice.range_hz();
                 let settings = PitchSettings {
-                    lowest,
-                    highest,
+                    lowest: lowest.max(LOWEST_HZ),
+                    highest: 2.0 * highest,
                     tolerance: TOLERANCE,
                 };
                 PitchTracker::new(rate, settings)
             })
             .collect();
-        let lowest = (Voice::ALL.iter())
-            .map(|voice| voice.range_hz().0)
-            .fold(f64::MAX, f64::min);
         let oldest = trackers.iter().map(PitchTracker::age).fold(0.0, f64::max);
-        (trackers, Shifter::new(rate, rate / lowest, oldest))
+        (trackers, Shifter::new(rate, rate / LOWEST_HZ, oldest))
     }
 
     /// Silent frames after which the trackers, the shifter and the mix hold only silence.
@@ -187,7 +185,7 @@ impl PitchCorrection {
             self.mix.snap();
         }
         self.shifter.keep_formants(state.keep_formants);
-        self.keeping = self.keeping_now();
+        self.retune();
         let wanted = voice_index(state.voice);
         let starting = self.starting.map(|(index, _)| index);
         if wanted == self.listening {
@@ -257,22 +255,21 @@ impl PitchCorrection {
         }
     }
 
-    /// The factor the correction keeps of its distance to the goal per frame, for a target held
-    /// so long.
-    fn keeping_now(&self) -> f64 {
+    /// The parts of its distance to the goal the ratio keeps per frame, from the retune time,
+    /// alone and with the humanize time.
+    fn retune(&mut self) {
         let state = *self.state;
-        let held = self.target_frames as f64 / self.rate;
-        let seconds = f64::from(state.retune_ms) / 1_000.0
-            + f64::from(state.humanize) * held.min(HUMANIZE_SECONDS);
-        let frames = seconds / RETUNE_PARTS * self.rate;
-        match frames < 1.0 {
-            true => 0.0,
-            false => (-1.0 / frames).exp(),
-        }
+        let retune = f64::from(state.retune_ms);
+        let humanized = retune + f64::from(state.humanize) * HUMANIZE_MS;
+        let keeping = |half_life_ms: f64| match half_life_ms * self.rate / 1_000.0 {
+            frames if frames < 1.0 => 0.0,
+            frames => 0.5_f64.powf(1.0 / frames),
+        };
+        (self.fast, self.slow) = (keeping(retune), keeping(humanized));
     }
 
-    /// Reads the tracker after a frame: the goal, the correction a frame on towards it, and how
-    /// to shift the sound the reading describes.
+    /// Reads the tracker after a frame: the goal, the ratio a frame on towards it, and how to
+    /// shift the sound the reading describes.
     fn read(&mut self, offset: usize) -> Shift {
         let Some(tracker) = self.trackers.get(self.listening) else {
             return Shift::NONE;
@@ -280,32 +277,30 @@ impl PitchCorrection {
         let (pitch, age) = (tracker.pitch(), tracker.age());
         let described = (self.frame + offset as u64).saturating_sub(age as u64);
         let allowed = self.allowed(described);
-        let period = match pitch {
-            Pitch::Note(note) => {
-                self.unclear_frames = 0;
-                self.heard = Some(note);
-                let target = nearest_allowed(note, allowed, self.target);
-                match target == self.target {
-                    true => self.target_frames += 1,
-                    false => self.target_frames = 0,
-                }
-                self.target = target;
-                self.goal = target.map_or(0.0, |target| f64::from(target) - note);
-                let hz = 440.0 * 2_f64.powf((note - 69.0) / 12.0);
-                Some(self.rate / hz)
-            }
-            Pitch::Quiet | Pitch::Unclear => {
-                self.unclear_frames += 1;
-                if self.unclear_frames as f64 > HOLD_SECONDS * self.rate {
-                    (self.target, self.heard, self.goal) = (None, None, 0.0);
-                }
-                None
-            }
+        let Pitch::Note(note) = pitch else {
+            // Lost: no target, and the voice as it is.
+            (self.target, self.heard, self.ratio) = (None, None, 1.0);
+            return Shift {
+                period: None,
+                ratio: 1.0,
+                age,
+            };
         };
-        self.correction = self.goal + self.keeping * (self.correction - self.goal);
+        self.heard = Some(note);
+        let target = nearest_allowed(note, allowed, self.target);
+        match target == self.target {
+            true => self.target_frames += 1,
+            false => self.target_frames = 0,
+        }
+        self.target = target;
+        let goal = target.map_or(1.0, |target| 2_f64.powf((f64::from(target) - note) / 12.0));
+        let held = self.target_frames as f64 / (HUMANIZE_SECONDS * self.rate);
+        let keeping = self.fast + (self.slow - self.fast) * held.min(1.0);
+        self.ratio = goal + keeping * (self.ratio - goal);
+        let hz = 440.0 * 2_f64.powf((note - 69.0) / 12.0);
         Shift {
-            period,
-            ratio: 2_f64.powf(self.correction / 12.0),
+            period: Some(self.rate / hz),
+            ratio: self.ratio,
             age,
         }
     }
@@ -335,7 +330,7 @@ impl PitchCorrection {
         self.meters.heard.set(note(self.heard));
         self.meters.target.set(note(self.target.map(f64::from)));
         self.meters.correction.set(match self.heard {
-            Some(_) => self.correction as f32,
+            Some(_) => (12.0 * self.ratio.log2()) as f32,
             None => 0.0,
         });
     }
@@ -390,6 +385,7 @@ impl Processor for PitchCorrection {
             return;
         }
         self.rate = rate;
+        self.retune();
         (self.trackers, self.shifter) = Self::make(rate);
         self.shifter.keep_formants(self.state.keep_formants);
         self.latency = self.shifter.latency();
@@ -441,13 +437,13 @@ impl Processor for PitchCorrection {
             if self.quiet > self.rest_frames {
                 continue;
             }
-            if (self.frame + offset as u64).is_multiple_of(KEEPING_FRAMES) {
-                self.keeping = self.keeping_now();
-            }
             self.listen(0.5 * (frame[0] + frame[1]));
             let shift = self.read(offset);
             self.shifter.push(frame, shift);
-            let wet = self.shifter.pull();
+            let wet = self
+                .shifter
+                .pull()
+                .map(|sample| sample.clamp(-LIMIT, LIMIT));
             let position = (self.frame + offset as u64) as usize;
             let mix = self.mix.advance(1);
             for ((line, sample), (wet, out)) in (self.dry.iter_mut().zip(frame))

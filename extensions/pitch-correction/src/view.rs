@@ -82,11 +82,12 @@ const SCALES: [(Scale, &str); 5] = [
     (Scale::MajorPentatonic, "Major pentatonic"),
     (Scale::MinorPentatonic, "Minor pentatonic"),
 ];
-const VOICES: [(Voice, &str); 4] = [
+const VOICES: [(Voice, &str); 5] = [
     (Voice::High, "High"),
     (Voice::Middle, "Middle"),
     (Voice::Low, "Low"),
     (Voice::Instrument, "Instrument"),
+    (Voice::BassInstrument, "Bass"),
 ];
 
 /// What the processor last said: the note heard and the note moved to, 0 while none, and how
