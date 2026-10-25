@@ -4,8 +4,9 @@
 //! The points pin places in the file to ticks of the song with straight lines between them, so
 //! every frame of the song has a place in the file that should sound then. A head reads the file
 //! at its own speed, so at its own pitch, and stays within a period of that place by splicing: a
-//! period on or back, crossfaded over one period, as the [`Shifter`](crate::Shifter) does. Whole
-//! periods play twice or not at all.
+//! period on or back, faded in a straight line over a part of a period, with the period of the
+//! last note heard where there is none, as the [`Shifter`](crate::Shifter) does. Whole periods
+//! play twice or not at all.
 //!
 //! The shifter decides each splice from all it played before, because live sound cannot be read
 //! ahead. A clip is heard from wherever the playhead is, and after a seek, a loop or in a render
@@ -24,16 +25,13 @@ use std::sync::Arc;
 use sound_core::{Clock, Ticks};
 
 use crate::analysis::{PitchSettings, PitchTracker};
-use crate::shifter::crossfade;
+use crate::shifter::{FADE, UNHEARD_HZ};
 use crate::{Audio, Region, varispeed};
 
 /// How often the period is read, in seconds of the file.
 const HOP_SECONDS: f64 = 0.005;
-/// How long the period of a note holds after and before it, as through a consonant.
-const HOLD_SECONDS: f64 = 0.05;
-/// The splice of a sound with no clear period, such as drums, noise or a chord. A shorter one
-/// blurs a hit less in time and buzzes more at its rate.
-const SPLICE_SECONDS: f64 = 0.01;
+/// The lowest pitch looked for, in Hz, as pitch correction does.
+const LOWEST_HZ: f64 = 60.0;
 /// Hops each side the period is averaged over.
 const SMOOTHING_HOPS: usize = 2;
 /// How long the crossfade takes to follow a change of speed, so no weight jumps.
@@ -61,7 +59,11 @@ impl Periods {
         let hop = ((HOP_SECONDS * rate).round() as usize).max(1);
         let frames = usize::try_from(audio.frames()).unwrap_or(usize::MAX);
         let hops = frames.div_ceil(hop).max(1);
-        let mut tracker = PitchTracker::new(rate, PitchSettings::FULL);
+        let settings = PitchSettings {
+            lowest: LOWEST_HZ,
+            ..PitchSettings::FULL
+        };
+        let mut tracker = PitchTracker::new(rate, settings);
         let mut found = vec![None; hops];
         let mut block = vec![[0.0_f32; 2]; hop];
         // On into the silence after the end, so the last hops get a reading too.
@@ -80,15 +82,11 @@ impl Periods {
                 *slot = tracker.followed_period();
             }
         }
-        let hold = (HOLD_SECONDS / HOP_SECONDS).round() as usize;
-        let held: Vec<f64> = (0..hops)
-            .map(|index| {
-                let near = (0..=hold).find_map(|distance| {
-                    let before = index.checked_sub(distance).and_then(|at| found.get(at));
-                    let after = found.get(index + distance);
-                    before.copied().flatten().or(after.copied().flatten())
-                });
-                near.unwrap_or(SPLICE_SECONDS * rate).ln()
+        // Where there is no clear period, as in drums, noise or a chord, the last one heard.
+        let held: Vec<f64> = (found.iter())
+            .scan(rate / UNHEARD_HZ, |last, period| {
+                *last = period.unwrap_or(*last);
+                Some(last.ln())
             })
             .collect();
         let periods: Box<[f64]> = (0..hops)
@@ -191,16 +189,16 @@ impl Piece {
     }
 }
 
-/// The width of the crossfade at `speed`, in periods of the head ahead: one period of what is
-/// heard, where `step` is the speed of the file.
+/// The width of the crossfade at `speed`, in periods of the head ahead: [`FADE`] of a period
+/// of what is heard, where `step` is the speed of the file.
 fn width(speed: f64, step: f64) -> f64 {
-    (1.0 - speed / step).abs().clamp(NARROWEST, 1.0)
+    (FADE * (1.0 - speed / step).abs()).clamp(NARROWEST, 1.0)
 }
 
 /// How much of the head behind is heard in a crossfade of `width` centred where both heads are
 /// as near.
 fn weight(ahead: f64, width: f64) -> f64 {
-    crossfade(((ahead - 0.5) / width + 0.5).clamp(0.0, 1.0))
+    ((ahead - 0.5) / width + 0.5).clamp(0.0, 1.0)
 }
 
 impl Warp {
@@ -396,8 +394,8 @@ mod tests {
     use crate::{AudioAsset, WarpPoint};
 
     /// The largest move from one frame to the next, around frame `around`, of where the heads
-    /// read, each by its weight, for a sound of one period of 10 ms, as drums have. A weight
-    /// that jumps moves it by part of a period at once.
+    /// read, each by its weight, for a sound of one period of 10 ms. A weight that jumps moves
+    /// it by part of a period at once.
     fn largest_move(warp: &[(u64, f64)], around: u64) -> f64 {
         let periods = Periods {
             hop: 240.0,
@@ -438,7 +436,7 @@ mod tests {
     #[test]
     fn the_crossfade_follows_a_change_of_speed_with_no_jump() {
         // From half the speed of the file to its speed at frame 24,000, wherever the heads are.
-        for second in [0.252, 0.2535, 0.254, 0.2545, 0.256] {
+        for second in [0.2547, 0.2548, 0.2552, 0.2553] {
             let moved = largest_move(&[(960, second), (2_880, second + 1.0)], 24_000);
             assert!(moved < 10.0, "{second}: {moved} frames");
         }

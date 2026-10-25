@@ -62,11 +62,11 @@ static CURVE: LazyLock<Box<[f32]>> = LazyLock::new(|| {
 /// How far the head may be from where it should be, as a part of the period, before it jumps.
 const WINDOW: f64 = 0.6;
 /// The fade of a jump, as a part of the period.
-const FADE: f64 = 0.2;
+pub(crate) const FADE: f64 = 0.2;
 /// How many of its own periods a period holds once the readings lose it.
 const HOLD_PERIODS: f64 = 8.0;
 /// The period a jump takes before any was heard, in Hz.
-const UNHEARD_HZ: f64 = 440.0;
+pub(crate) const UNHEARD_HZ: f64 = 440.0;
 /// The shortest period a jump takes, in frames.
 const SHORTEST_PERIOD: f64 = 16.0;
 /// The ratios the head reads at.
@@ -325,11 +325,6 @@ impl Shifter {
         self.fade = 0.0;
         self.fade_step = 1.0 / (FADE * period).max(1.0);
     }
-}
-
-/// How much of the sound faded to is heard `part` of the way through a fade, 0 to 1.
-pub(crate) fn crossfade(part: f64) -> f64 {
-    0.5 - 0.5 * (PI * part).cos()
 }
 
 /// `from` towards `to` by `weight`, 0 to 1.
