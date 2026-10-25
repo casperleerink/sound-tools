@@ -105,20 +105,23 @@ impl MomentFinder {
         Some(Moment { frame, ..moment })
     }
 
-    /// The reading that describes the middle of the history: the one made as many frames after
-    /// it as that reading is old.
+    /// The newest reading that describes the middle of the history or before it: each one is
+    /// as old as it says.
     fn middle_pitch(&self) -> Pitch {
         let length = self.readings.len();
-        let (_, age) = self
-            .readings
-            .get(self.read)
-            .copied()
-            .unwrap_or((Pitch::Quiet, 0.0));
-        let back = (length / 2).saturating_sub(age.round() as usize);
-        let at = (self.read + length - back) % length;
-        self.readings
-            .get(at)
-            .map_or(Pitch::Quiet, |(pitch, _)| *pitch)
+        let middle = length / 2;
+        (0..length)
+            .map(|back| {
+                (
+                    back,
+                    self.readings.get((self.read + length - back) % length),
+                )
+            })
+            .find_map(|(back, reading)| {
+                let (pitch, age) = reading?;
+                (back as f64 + age >= middle as f64).then_some(*pitch)
+            })
+            .unwrap_or(Pitch::Quiet)
     }
 
     fn moment(&mut self) -> Moment {

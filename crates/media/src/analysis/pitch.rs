@@ -309,7 +309,11 @@ impl PitchTracker {
     /// Hears the next frames of the channel.
     pub fn push(&mut self, samples: impl IntoIterator<Item = f32>) {
         for sample in samples {
-            let sample = f64::from(sample);
+            // A sample that is not a number would stay in the filters for good: silence.
+            let sample = match sample.is_finite() {
+                true => f64::from(sample),
+                false => 0.0,
+            };
             let mut detected = sample;
             if self.steps > 1 {
                 for section in &mut self.before {
@@ -939,6 +943,30 @@ mod tests {
                 panic!("{pitch:?} at {time}");
             };
             assert!((note - glide(*time)).abs() < 0.05, "{note} at {time}");
+        }
+    }
+
+    #[test]
+    fn a_sample_that_is_not_a_number_does_not_stop_the_tracker() {
+        for rate in [44_100.0, 96_000.0] {
+            let mut tracker = PitchTracker::new(rate, VOICE);
+            let mut phase = 0.0_f64;
+            let mut sample = |tracker: &mut PitchTracker| {
+                phase += std::f64::consts::TAU * 220.0 / rate;
+                tracker.push([(0.3 * phase.sin()) as f32]);
+            };
+            for _ in 0..(0.3 * rate) as usize {
+                sample(&mut tracker);
+            }
+            tracker.push([f32::NAN]);
+            for _ in 0..rate as usize {
+                sample(&mut tracker);
+            }
+            let note = tracker.pitch();
+            assert!(
+                matches!(note, Pitch::Note(note) if (note - 57.0).abs() < 0.05),
+                "{note:?}"
+            );
         }
     }
 }
