@@ -83,26 +83,21 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
       <div style={() => ({ width: 3, height: ROW - 13, radius: 1.5, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
       <div style={{ grow: true, minWidth: 0, gap: 2, paddingLeft: 5 }}>
-        {() =>
-          memory.renaming === each.name ? (
-            <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
-          ) : (
-            <div key={`name-${each.name}`} style={() => ({ fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
-              {() => titleOf(each)}
-            </div>
-          )
-        }
+        <div style={{ direction: "row", align: "center", gap: 8 }}>
+          {() =>
+            memory.renaming === each.name ? (
+              <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
+            ) : (
+              <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
+                {() => titleOf(each)}
+              </div>
+            )
+          }
+          {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
+        </div>
         <div style={{ height: 24, direction: "row", align: "center", gap: 4 }}>
-          <div style={{ grow: true, minWidth: 0 }}>
-            {() =>
-              memory.armed.has(each.name) ? (
-                <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal />
-              ) : (
-                <div style={() => ({ fontSize: 12, truncate: true, color: muted(each) ? "gray-700/40" : "gray-700" })}>
-                  {() => (each.tool === "tape" ? "Audio" : (memory.names[`${each.name}/synth`] ?? ""))}
-                </div>
-              )
-            }
+          <div style={() => ({ grow: true, fontSize: 12, truncate: true, color: muted(each) ? "gray-700/40" : "gray-700" })}>
+            {() => (each.tool === "tape" ? "Audio" : (memory.names[`${each.name}/synth`] ?? ""))}
           </div>
           {() => {
             // Runs again, and learns its name again, when another instrument or plugin takes its place.
