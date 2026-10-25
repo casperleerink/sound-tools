@@ -5,10 +5,10 @@
 //! changed. So a meter at rest costs no frame, and one that falls after the sound draws until it
 //! is at rest.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gpui::{Context, Task};
+use gpui::{App, Context, Global, Task};
 use sound_core::Peaks;
 
 use crate::components::meter::{Ballistics, Level};
@@ -60,19 +60,68 @@ pub fn decibels(amplitude: f32) -> f32 {
 }
 
 /// Runs `tick` on the view once per poll of the session, for as long as the view lives: the
-/// clock of the meters of a view. Keep the task in the view.
+/// clock of the meters of a view. Keep the task in the view; dropping it stops the ticks.
 pub fn every_poll<V: 'static>(
     cx: &mut Context<V>,
     tick: impl Fn(&mut V, &mut Context<V>) + 'static,
 ) -> Task<()> {
-    cx.spawn(async move |view, cx| {
+    let view = cx.weak_entity();
+    let kept = Rc::new(Cell::new(true));
+    on_every_poll(cx, {
+        let kept = kept.clone();
+        move |cx| kept.get() && view.update(cx, |view, cx| tick(view, cx)).is_ok()
+    });
+    // Dropped with the task, which ends the ticks.
+    let guard = Stop(kept);
+    cx.spawn(async move |_, _| {
+        let _guard = guard;
+        std::future::pending::<()>().await;
+    })
+}
+
+/// Runs `tick` once per poll for as long as it says to go on. All of them share one timer, so
+/// the app wakes once per poll however many views tick.
+pub fn on_every_poll(cx: &mut App, tick: impl FnMut(&mut App) -> bool + 'static) {
+    let ticker = cx.default_global::<Ticker>();
+    ticker.ticks.push(Box::new(tick));
+    if std::mem::replace(&mut ticker.running, true) {
+        return;
+    }
+    cx.spawn(async move |cx| {
         loop {
             cx.background_executor().timer(POLL_INTERVAL).await;
-            if view.update(cx, |view, cx| tick(view, cx)).is_err() {
+            let going = cx.update(|cx| {
+                let mut ticks = std::mem::take(&mut cx.global_mut::<Ticker>().ticks);
+                ticks.retain_mut(|tick| tick(cx));
+                let ticker = cx.global_mut::<Ticker>();
+                // Those a tick added came after it took them.
+                ticks.append(&mut ticker.ticks);
+                ticker.ticks = ticks;
+                ticker.running = !ticker.ticks.is_empty();
+                ticker.running
+            });
+            if !going {
                 break;
             }
         }
     })
+    .detach();
+}
+
+#[derive(Default)]
+struct Ticker {
+    ticks: Vec<Box<dyn FnMut(&mut App) -> bool>>,
+    running: bool,
+}
+
+impl Global for Ticker {}
+
+struct Stop(Rc<Cell<bool>>);
+
+impl Drop for Stop {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
 }
 
 /// Peaks that several views read, such as the device output, which the transport and a page of

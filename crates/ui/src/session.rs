@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
 
-use crate::metering::{PeaksReader, SharedPeaks};
+use crate::metering::{PeaksReader, SharedPeaks, every_poll};
 use crate::recording::Recording;
 use sound_core::{
     EngineControl, EngineStatus, GraphError, InstanceId, Project, ProjectEdit, ProjectError,
@@ -100,14 +100,7 @@ impl Session {
     /// no view exists yet that could have shown something older.
     pub fn new(mut project: Project, cx: &mut Context<Self>) -> Self {
         project.drain_events();
-        let polling = cx.spawn(async move |session, cx| {
-            loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
-                if session.update(cx, |session, cx| session.poll(cx)).is_err() {
-                    break;
-                }
-            }
-        });
+        let polling = every_poll(cx, Self::poll);
         let time_signatures = project.project_file().tempo_map.time_signatures();
         let bar_five = time_signatures.bar(5).map_or(Ticks(0), |bar| bar.start);
         let output = SharedPeaks::new(project.engine().output_peaks().clone());

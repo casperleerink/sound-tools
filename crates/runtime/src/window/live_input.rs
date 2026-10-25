@@ -104,8 +104,8 @@ impl LiveInput {
         // numbers exist. A session with no MIDI message prints nothing.
         cx.on_release(|live, _| print_midi_report(live.latency(), live.lost_messages()))
             .detach();
-        // Its own timer, next to the one of the session: what the engine reports about the
-        // MIDI input must be drained whether the project plays or not.
+        // What the engine reports about the MIDI input must be drained whether the project
+        // plays or not.
         let polling = every_poll(cx, |live: &mut Self, cx| live.poll_input(cx));
         // The computer keys go on and off where the session says: cmd-K, or a tool's button.
         cx.observe(&session, |live, _, cx| live.follow_computer_keys(cx))

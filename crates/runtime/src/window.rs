@@ -1152,26 +1152,20 @@ impl Opened {
         .detach();
         // The background work of the extensions: the sounds of the Drum pads, the instruments
         // of the Samplers and the plugins of the project. One tick per session poll.
-        cx.spawn({
+        sound_ui::on_every_poll(cx, {
             // Nothing strong is held: the plugins must go when the project goes, because
             // that is what saves the state of every one of them.
             let (session, plugins) = (session.downgrade(), weak_plugins.clone());
-            async move |cx| {
-                // What the scan had found the last time a frame was asked for.
-                let mut scanned = 0;
-                loop {
-                    cx.background_executor()
-                        .timer(sound_ui::POLL_INTERVAL)
-                        .await;
-                    let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade())
-                    else {
-                        break;
-                    };
-                    cx.update(|cx| tick(&session, &plugins, &mut scanned, cx));
-                }
+            // What the scan had found the last time a frame was asked for.
+            let mut scanned = 0;
+            move |cx| {
+                let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade()) else {
+                    return false;
+                };
+                tick(&session, &plugins, &mut scanned, cx);
+                true
             }
-        })
-        .detach();
+        });
         // The state of every plugin reaches the project when the project is dropped, which
         // GPUI does with the views before any of this runs. See the plugin host.
         cx.on_app_quit({
