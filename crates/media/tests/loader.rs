@@ -45,9 +45,10 @@ fn a_read_that_fails_is_read_once_and_says_why_until_its_file_changes() {
     std::fs::write(&path, "silence").unwrap();
     let tool = InstanceId::new("tool").unwrap();
 
-    // Asked twice while it is read, as a behaviour asks for a sample.
+    // Asked twice, as a behaviour asks for a sample. The read may end between the two.
     assert_eq!(get(&LOADER, &READS, &path), Ok(None));
-    assert_eq!(get(&LOADER, &READS, &path), Ok(None));
+    let again = get(&LOADER, &READS, &path);
+    assert!(again == Ok(None) || again == Err("silence does not play".to_string()));
     assert_eq!(take_done(&LOADER, &path), std::slice::from_ref(&tool));
     for _ in 0..3 {
         let failed = get(&LOADER, &READS, &path);

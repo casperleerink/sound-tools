@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::conversation::Entry;
-use crate::{Account, ApprovalId, ExitReason, StepId, StepOutcome};
+use crate::{Account, ApprovalId, ExitReason, StepId, StepKind, StepOutcome};
 
 fn at(seconds: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000 + seconds)
@@ -88,9 +88,12 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
             },
             AgentEvent::StepStarted {
                 id: step.clone(),
-                title: "Wrote state/arrangement/bass/clip.json".to_string(),
-                request_title: "Write state/arrangement/bass/clip.json".to_string(),
-                running_title: "Writing state/arrangement/bass/clip.json".to_string(),
+                title: "Wrote state/song/bass/clip.json".to_string(),
+                request_title: "Write state/song/bass/clip.json".to_string(),
+                running_title: "Writing state/song/bass/clip.json".to_string(),
+                kind: StepKind::Change {
+                    path: "state/song/bass/clip.json".to_string(),
+                },
             },
             AgentEvent::StepDone {
                 id: step,
@@ -409,9 +412,12 @@ fn every_event_saves_as_the_same_line() {
         },
         AgentEvent::StepStarted {
             id: step(),
-            title: text("Ran cargo build"),
-            request_title: text("Run cargo build"),
-            running_title: text("Running cargo build"),
+            title: text("Edited song.json"),
+            request_title: text("Edit song.json"),
+            running_title: text("Editing song.json"),
+            kind: StepKind::Change {
+                path: text("song.json"),
+            },
         },
         AgentEvent::StepDone {
             id: step(),
@@ -466,7 +472,7 @@ fn every_event_saves_as_the_same_line() {
         format!(r#"{{"event":{{{at},"event":"turn_started"}}}}"#),
         format!(r#"{{"event":{{{at},"event":{{"text_done":{{"text":"Done."}}}}}}}}"#),
         format!(
-            r#"{{"event":{{{at},"event":{{"step_started":{{"id":"toolu_1","title":"Ran cargo build","running_title":"Running cargo build","request_title":"Run cargo build"}}}}}}}}"#
+            r#"{{"event":{{{at},"event":{{"step_started":{{"id":"toolu_1","title":"Edited song.json","running_title":"Editing song.json","request_title":"Edit song.json","kind":{{"change":{{"path":"song.json"}}}}}}}}}}}}"#
         ),
         format!(
             r#"{{"event":{{{at},"event":{{"step_done":{{"id":"toolu_1","outcome":"denied"}}}}}}}}"#

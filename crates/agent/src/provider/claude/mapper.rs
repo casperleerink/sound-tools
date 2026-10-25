@@ -12,8 +12,8 @@ use super::protocol::{
     TurnResult,
 };
 use crate::provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepOutcome,
-    TurnOutcome,
+    Account, AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepKind,
+    StepOutcome, TurnOutcome,
 };
 
 /// What the CLI says when `--resume` names a session it does not have.
@@ -251,6 +251,7 @@ impl Mapper {
                     title: action.done_title(),
                     running_title: action.running_title(),
                     request_title: action.request_title(),
+                    kind: action.kind(),
                 })
             }
             Block::ToolResult { .. } | Block::Other => None,
@@ -487,6 +488,16 @@ impl Action {
             _ => None,
         };
         action.unwrap_or_else(|| Action::Use(tool.to_string()))
+    }
+
+    fn kind(&self) -> StepKind {
+        match self {
+            Action::Run(_) => StepKind::Run,
+            Action::Read(path) => StepKind::Read { path: path.clone() },
+            Action::Edit(path) | Action::Write(path) => StepKind::Change { path: path.clone() },
+            Action::Search(_) => StepKind::Search,
+            Action::Use(_) => StepKind::Other,
+        }
     }
 
     fn done_title(&self) -> String {

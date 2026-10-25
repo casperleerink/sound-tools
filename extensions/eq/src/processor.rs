@@ -1,22 +1,8 @@
 //! The EQ processor: four bands one after the other, then the output gain.
 //!
-//! Each band is one state variable filter in its trapezoidal form (Simper, "Solving the
-//! continuous SVF equations using trapezoidal integration and equivalent currents", 2013), the
-//! same as a section of the Filter. It is linear and stable for every frequency, gain and Q,
-//! also while they move: no setting blows up. A band gives its band pass and its low pass from
-//! one memory, and every shape is a mix of those two and the input, with its own cutoff factor
-//! `g` and damping `k` (Simper, "Linear trapezoidal integrated state variable filter", 2016):
-//!
-//! | Shape | `g` | `k` | input, band, low |
-//! | --- | --- | --- | --- |
-//! | Low cut | `t` | `1/q` | `1, -k, -1` |
-//! | Low shelf | `t/√a` | `1/min(q, 1.5)` | `1, k (a - 1), a² - 1` |
-//! | Bell | `t` | `1/(q a)` | `1, k (a² - 1), 0` |
-//! | Notch | `t` | `1/q` | `1, -k, 0` |
-//! | High shelf | `t √a` | `1/min(q, 1.5)` | `a², k (1 - a) a, 1 - a²` |
-//! | High cut | `t` | `1/q` | `0, 0, 1` |
-//!
-//! with `t = tan(π f / sample rate)` and `a = 10^(gain / 40)`. So a band at 0 dB, or off, is
+//! Each band is one state variable filter in its trapezoidal form, the same as a section of
+//! the Filter, in one of the shapes of [`SvfShape`]. It is linear and stable for every
+//! frequency, gain and Q, also while they move: no setting blows up. A band at 0 dB, or off, is
 //! the mix `1, 0, 0`: the input, exactly.
 //!
 //! A change of shape is a glide too: the weight of each shape glides, and a band that is
@@ -26,8 +12,8 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, all_zero, amplitude,
-    held,
+    ProcessContext, Processor, ShapedSvf, Smoothed, SvfFactors, SvfSection, SvfShape, Targets,
+    all_zero, amplitude, held,
 };
 
 use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
@@ -38,12 +24,6 @@ type EqTargets = Targets<EqState, { AUTOMATED.len() }>;
 /// How long a change takes to arrive. A jump would click, or step in the sound.
 const RAMP_SECONDS: f32 = 0.02;
 
-/// The highest Q a shelf uses. Above 0.71 a shelf gets a bump at its frequency and a dip on its
-/// other side, and the bump grows fast: at Q 18 a shelf of +15 dB would peak at +38 dB. At 1.5
-/// the bump is at most 3.2 dB past the gain. A cut keeps the whole range of Q, because a
-/// resonant cut is a normal tool. The saved `q` is not changed: only the shelf uses less.
-pub const SHELF_MAX_Q: f32 = 1.5;
-
 /// While something moves, the factors are worked out again this often, as in the Filter.
 const FACTOR_FRAMES: usize = 16;
 
@@ -51,88 +31,34 @@ const FACTOR_FRAMES: usize = 16;
 /// memory, added up.
 const THROUGH: [f32; 3] = [1.0, 0.0, 0.0];
 
-/// One band at one setting: its cutoff factor, its damping, and its mix of input, band pass
-/// and low pass.
-#[derive(Copy, Clone, Debug, PartialEq)]
-struct Shaped {
-    g: f32,
-    k: f32,
-    mix: [f32; 3],
-}
-
-/// The table of the module documentation.
-fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Shaped {
-    let g = SvfFactors::cutoff_factor(hz, sample_rate);
-    let a = 10_f32.powf(gain_db / 40.0);
-    let k = 1.0 / q;
-    let shelf_k = 1.0 / q.min(SHELF_MAX_Q);
-    match shape {
-        Shape::LowCut => Shaped {
-            g,
-            k,
-            mix: [1.0, -k, -1.0],
-        },
-        Shape::LowShelf => Shaped {
-            g: g / a.sqrt(),
-            k: shelf_k,
-            mix: [1.0, shelf_k * (a - 1.0), a * a - 1.0],
-        },
-        Shape::Bell => {
-            let k = 1.0 / (q * a);
-            Shaped {
-                g,
-                k,
-                mix: [1.0, k * (a * a - 1.0), 0.0],
-            }
-        }
-        Shape::Notch => Shaped {
-            g,
-            k,
-            mix: [1.0, -k, 0.0],
-        },
-        Shape::HighShelf => Shaped {
-            g: g * a.sqrt(),
-            k: shelf_k,
-            mix: [a * a, shelf_k * (1.0 - a) * a, 1.0 - a * a],
-        },
-        Shape::HighCut => Shaped {
-            g,
-            k,
-            mix: [0.0, 0.0, 1.0],
-        },
-    }
+/// One band at one setting. A shelf uses Q up to [`sound_core::SHELF_MAX_Q`]; a cut keeps the
+/// whole range, because a resonant cut is a normal tool. The saved `q` is not changed.
+fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> ShapedSvf {
+    let shape = match shape {
+        Shape::LowCut => SvfShape::HighPass,
+        Shape::LowShelf => SvfShape::LowShelf,
+        Shape::Bell => SvfShape::Peak,
+        Shape::Notch => SvfShape::Notch,
+        Shape::HighShelf => SvfShape::HighShelf,
+        Shape::HighCut => SvfShape::LowPass,
+    };
+    shape.shaped(hz, gain_db, q, sample_rate)
 }
 
 /// The gain of one band at `hz`, as a complex number, once every change has arrived. Off, it
-/// is 1.
-///
-/// The trapezoidal form is the analog filter with its frequencies bent by `tan(π f / sample
-/// rate)`, so this is the analog response at the bent frequency: `input + (band s + low) / (s²
-/// + k s + 1)` with `s = j tan(π f / sample rate) / g`. Exact, not a drawing.
+/// is 1. Exact: see [`ShapedSvf::response`].
 pub fn band_response(band: &Band, hz: f32, sample_rate: f32) -> (f64, f64) {
     if !band.on {
         return (1.0, 0.0);
     }
-    let Shaped { g, k, mix } = shaped(
+    shaped(
         band.shape,
         band.frequency_hz,
         band.gain_db,
         band.q,
         sample_rate,
-    );
-    let [input, band, low] = mix.map(f64::from);
-    let (g, k) = (f64::from(g), f64::from(k));
-    let bent = (std::f64::consts::PI * f64::from(hz.min(0.499 * sample_rate))
-        / f64::from(sample_rate))
-    .tan();
-    let at = bent / g;
-    // (low + j band at) / (1 - at² + j k at)
-    let (numerator, denominator) = ((low, band * at), (1.0 - at * at, k * at));
-    let size = denominator.0 * denominator.0 + denominator.1 * denominator.1;
-    (
-        input + (numerator.0 * denominator.0 + numerator.1 * denominator.1) / size,
-        (numerator.1 * denominator.0 - numerator.0 * denominator.1) / size,
     )
+    .response(hz, sample_rate)
 }
 
 /// The gain at `hz` of an EQ with this record, as a factor, once every change has arrived:
@@ -229,7 +155,7 @@ impl BandGlide {
         }
         let one = |shape| shaped(shape, hz, gain_db, q, sample_rate);
         // At rest one shape has all the weight, and the band is exactly that shape.
-        let Shaped { g, k, mix } = match weights.iter().position(|weight| *weight == 1.0) {
+        let ShapedSvf { g, k, mix } = match weights.iter().position(|weight| *weight == 1.0) {
             Some(index) => one(Shape::ALL[index]),
             None => {
                 let (mut log_g, mut log_k, mut mix, mut total) = (0.0, 0.0, [0.0; 3], 0.0);
@@ -248,7 +174,7 @@ impl BandGlide {
                 // The weights glide from one shape to another together, so they add up to 1;
                 // this only keeps rounding out.
                 let total = total.max(f32::EPSILON);
-                Shaped {
+                ShapedSvf {
                     g: (log_g / total).exp(),
                     k: (log_k / total).exp(),
                     mix: mix.map(|part| part / total),

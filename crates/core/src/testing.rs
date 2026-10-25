@@ -1,9 +1,9 @@
-//! Checks for the tests of a tool: its parameters against `validate`, its agent doc, and what
-//! its sound folds back.
+//! Checks for the tests of a tool: its parameters against `validate`, and what its sound folds
+//! back.
 
 use std::f64::consts::TAU;
 
-pub use crate::parameter::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+pub use crate::parameter::check_parameter_ranges;
 
 /// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
 /// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.

@@ -1,7 +1,7 @@
 //! The undo history: undo and redo steps, the committed state under open edits, and how
 //! outside changes group into steps.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use super::editing::{Applied, Change, RecordChange};
@@ -172,10 +172,13 @@ impl History {
     /// The open edit of `step` publishes `applied`: it holds each record it publishes over
     /// until it closes.
     pub(super) fn hold(&mut self, step: &Step, applied: &Applied) {
-        for change in &applied.records {
-            if !step.records.contains_key(&change.id) {
-                *self.holders.entry(change.id.clone()).or_default() += 1;
-            }
+        // A record replaced in one publish, deleted then written, has two changes.
+        let new: BTreeSet<&InstanceId> = (applied.records.iter())
+            .map(|change| &change.id)
+            .filter(|id| !step.records.contains_key(*id))
+            .collect();
+        for id in new {
+            *self.holders.entry(id.clone()).or_default() += 1;
         }
     }
 

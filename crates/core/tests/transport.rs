@@ -28,6 +28,9 @@ struct Beats {
     interval: u64,
     previous_end: Option<Ticks>,
     broken_promises: Arc<AtomicU64>,
+    /// Rests until its next beat, so the engine skips the blocks between.
+    rests: bool,
+    blocks: Arc<AtomicU64>,
 }
 
 impl Processor for Beats {
@@ -41,12 +44,20 @@ impl Processor for Beats {
 
     fn update(&mut self, _: &mut ()) {}
 
+    fn rests_until(&self) -> Option<Ticks> {
+        let next = |end: Ticks| Ticks(end.0.next_multiple_of(self.interval));
+        self.previous_end.filter(|_| self.rests).map(next)
+    }
+
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        self.blocks.fetch_add(1, Ordering::Relaxed);
         let transport = &context.transport;
         let covered = transport.frame_range.end.0 - transport.frame_range.start.0;
-        let continues = self
-            .previous_end
-            .is_none_or(|end| end == transport.tick_range.start);
+        // A resting one skips the blocks between its beats.
+        let continues = self.rests
+            || self
+                .previous_end
+                .is_none_or(|end| end == transport.tick_range.start);
         let kept = if transport.playing {
             covered == context.frames as u64 && (continues || transport.jumped)
         } else {
@@ -107,18 +118,27 @@ struct BeatEngine {
     control: EngineControl,
     engine: Engine,
     broken_promises: Arc<AtomicU64>,
+    /// The blocks the beats played: fewer than the engine's when they rest.
+    blocks: Arc<AtomicU64>,
     rendered: Vec<f32>,
 }
 
 impl BeatEngine {
     fn new(sample_rate: u32, interval: u64) -> Self {
+        Self::with_rests(sample_rate, interval, false)
+    }
+
+    fn with_rests(sample_rate: u32, interval: u64, rests: bool) -> Self {
         let (mut control, engine) = Engine::new(EngineConfig::new(sample_rate, 1));
         let broken_promises = Arc::new(AtomicU64::new(0));
+        let blocks = Arc::new(AtomicU64::new(0));
         let mut edit = control.edit();
         let beats = Beats {
             interval,
             previous_end: None,
             broken_promises: broken_promises.clone(),
+            rests,
+            blocks: blocks.clone(),
         };
         let beats = edit.add_processor("beats", beats).unwrap();
         let impulses = edit.add_processor("impulses", Impulses).unwrap();
@@ -136,6 +156,7 @@ impl BeatEngine {
             control,
             engine,
             broken_promises,
+            blocks,
             rendered: Vec::new(),
         }
     }
@@ -183,8 +204,12 @@ fn tempo_map(changes: &[(u64, f64)]) -> TempoMap {
 
 #[test]
 fn quarter_notes_land_on_exact_engine_frames_for_every_device_buffer_size() {
-    for device_buffer in [1, 63, 64, 65, 480, 513] {
-        let mut beats = BeatEngine::new(48_000, 960);
+    // A processor that rests between its beats plays them on the same frames.
+    for (device_buffer, rests) in [1, 63, 64, 65, 480, 513]
+        .into_iter()
+        .flat_map(|size| [(size, false), (size, true)])
+    {
+        let mut beats = BeatEngine::with_rests(48_000, 960, rests);
         // 120 bpm, then 90 bpm from the third quarter note on.
         beats
             .control
@@ -200,15 +225,26 @@ fn quarter_notes_land_on_exact_engine_frames_for_every_device_buffer_size() {
             .zip(expected)
             .map(|(beat, frame)| (100 + frame, impulse(beat)))
             .collect();
-        assert_eq!(beats.impulses(), expected, "device buffer {device_buffer}");
+        assert_eq!(
+            beats.impulses(),
+            expected,
+            "device buffer {device_buffer}, rests {rests}"
+        );
         assert_eq!(beats.broken_promises.load(Ordering::Relaxed), 0);
+        // About 2350 blocks of 64 frames; resting, a few around each of six beats.
+        let blocks = beats.blocks.load(Ordering::Relaxed);
+        assert!(rests == (blocks < 100), "{blocks} blocks, rests {rests}");
     }
 }
 
 #[test]
 fn a_loop_goes_back_on_the_frame_of_its_end_for_every_device_buffer_size() {
-    for device_buffer in [1, 63, 64, 65, 480, 513] {
-        let mut beats = BeatEngine::new(48_000, 960);
+    // A processor that rests between its beats plays them on the same frames.
+    for (device_buffer, rests) in [1, 63, 64, 65, 480, 513]
+        .into_iter()
+        .flat_map(|size| [(size, false), (size, true)])
+    {
+        let mut beats = BeatEngine::with_rests(48_000, 960, rests);
         // Quarter notes 1 and 2, 24000 frames each at 120 bpm.
         beats.control.set_loop(Some(Ticks(960)..Ticks(2880)));
         beats.control.play();
@@ -219,10 +255,60 @@ fn a_loop_goes_back_on_the_frame_of_its_end_for_every_device_buffer_size() {
         let expected: Vec<_> = (expected.into_iter().chain(looped))
             .map(|(frame, beat)| (frame, impulse(beat)))
             .collect();
-        assert_eq!(beats.impulses(), expected, "device buffer {device_buffer}");
+        assert_eq!(
+            beats.impulses(),
+            expected,
+            "device buffer {device_buffer}, rests {rests}"
+        );
         assert_eq!(beats.broken_promises.load(Ordering::Relaxed), 0);
         assert_eq!(beats.control.poll().unwrap().jumps, 2);
     }
+}
+
+#[test]
+fn a_jump_lands_on_the_frame_of_its_tick_once_for_every_device_buffer_size() {
+    // A processor that rests between its beats plays them on the same frames.
+    for (device_buffer, rests) in [1, 63, 64, 65, 480, 513]
+        .into_iter()
+        .flat_map(|size| [(size, false), (size, true)])
+    {
+        let mut beats = BeatEngine::with_rests(48_000, 960, rests);
+        // At quarter note 2, 48000 frames at 120 bpm, playback goes on from quarter note 5.
+        beats.control.jump_at(Ticks(1920), Ticks(4800));
+        beats.control.play();
+        beats.render(110_000, &[device_buffer]);
+
+        let expected = [(0, 0), (24_000, 1), (48_000, 5), (72_000, 6), (96_000, 7)];
+        let expected: Vec<_> = (expected.into_iter())
+            .map(|(frame, beat)| (frame, impulse(beat)))
+            .collect();
+        assert_eq!(
+            beats.impulses(),
+            expected,
+            "device buffer {device_buffer}, rests {rests}"
+        );
+        assert_eq!(beats.broken_promises.load(Ordering::Relaxed), 0);
+        assert_eq!(beats.control.poll().unwrap().jumps, 1);
+    }
+}
+
+#[test]
+fn a_jump_to_a_tick_already_passed_goes_at_once_and_a_seek_drops_one_that_waits() {
+    let mut beats = BeatEngine::new(48_000, 960);
+    beats.control.play();
+    beats.render(30_000, &[64]);
+    // Quarter note 1 has passed: playback goes on from quarter note 4 now.
+    beats.control.jump_at(Ticks(960), Ticks(3840));
+    beats.render(10_000, &[64]);
+    assert_eq!(beats.impulses().last(), Some(&(30_000, impulse(4))));
+
+    beats.control.jump_at(Ticks(5760), Ticks(0));
+    beats.control.seek(Ticks(0));
+    beats.render(150_000, &[64]);
+    // Quarter note 6 plays at 6 x 24000 frames after the seek: no jump took it back.
+    let frames: Vec<_> = beats.impulses().iter().map(|(frame, _)| *frame).collect();
+    assert!(frames.contains(&(40_000 + 6 * 24_000)), "{frames:?}");
+    assert_eq!(beats.control.poll().unwrap().jumps, 2);
 }
 
 #[test]

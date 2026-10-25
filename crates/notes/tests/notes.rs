@@ -3,7 +3,7 @@
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
-use sound_core::{State, Ticks};
+use sound_core::Ticks;
 use sound_notes::{
     Amount, Bend, Clip, Expression, Length, Note, NoteError, NoteEvent, Pedal, PedalChange, Pitch,
     Velocity,
@@ -20,13 +20,6 @@ fn a_note_line_round_trips_as_plain_numbers() {
     assert_eq!(note.pitch.number(), 60);
     assert_eq!(note.velocity.value(), 100);
     assert_eq!(serde_json::to_string(&note).unwrap(), LINE);
-}
-
-#[test]
-fn the_form_the_runtime_writes_loads_to_the_same_note() {
-    let spaced = r#"{"start": 0, "length": 480, "pitch": 60, "velocity": 100}"#;
-    let note: Note = serde_json::from_str(LINE).unwrap();
-    assert_eq!(serde_json::from_str::<Note>(spaced).unwrap(), note);
 }
 
 #[test]
@@ -84,14 +77,6 @@ fn pitch_69_is_440_hz_and_each_octave_doubles() {
     assert_eq!(hz(57), 220.0);
     assert!((hz(0) - 8.176).abs() < 0.001, "{}", hz(0));
     assert!((hz(127) - 12_543.85).abs() < 0.05, "{}", hz(127));
-}
-
-#[test]
-fn a_note_gives_its_own_events() {
-    let note: Note = serde_json::from_str(LINE).unwrap();
-    let (pitch, velocity) = (note.pitch, note.velocity);
-    assert_eq!(note.on(), NoteEvent::On { pitch, velocity });
-    assert_eq!(note.off(), NoteEvent::Off { pitch });
 }
 
 #[test]

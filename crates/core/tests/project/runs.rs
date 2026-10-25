@@ -72,6 +72,27 @@ fn edits_each_frame_are_one_undo_step_written_once_when_they_stop() {
     assert_eq!(harness.project.undo_label(), Some("Add dc"));
 }
 
+/// A device put in the place of another, as a picker does: one publish deletes the record and
+/// writes it again.
+#[test]
+fn a_run_that_replaces_a_record_is_written_once_quiet() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness);
+    let mut changes = Changes::new();
+    changes.delete(dc.id());
+    changes.create(id("dc"), Dc { value: 0.5 });
+    let start = Instant::now();
+    (harness.project)
+        .publish_run_at(&id("tool"), "Replace", changes, start)
+        .unwrap();
+    harness
+        .project
+        .finish_quiet_runs_at(start + RUN_QUIET)
+        .unwrap();
+    assert!(harness.read("state/dc.json").contains("0.5"));
+    assert_eq!(harness.project.undo_label(), Some("Replace"));
+}
+
 #[test]
 fn a_pause_starts_another_step() {
     let mut harness = Harness::new();
@@ -160,6 +181,27 @@ fn a_run_that_goes_on_is_written_at_its_longest() {
             .read("state/dc.json")
             .contains(&format!("{}", (frames - 9) as f32 / 1000.0))
     );
+}
+
+/// A run of another label of the same editor ends the open one, so undo takes back the second
+/// alone, even when both changed one record.
+#[test]
+fn another_label_ends_the_run_before_it() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness);
+    let start = Instant::now();
+    edit_each_frame(&mut harness, &dc, ("One", 1), start, 1);
+    edit_each_frame(
+        &mut harness,
+        &dc,
+        ("Two", 2),
+        start + Duration::from_millis(100),
+        1,
+    );
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Two"));
+    assert_eq!(harness.level(), 0.001);
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some("One"));
+    assert_eq!(harness.level(), 0.0);
 }
 
 /// Undo takes back what the composer just saw, so it finishes the run first.

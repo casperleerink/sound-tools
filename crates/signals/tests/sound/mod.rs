@@ -18,6 +18,8 @@ struct Building {
     numbers: Vec<Value>,
     bangs: Vec<Value>,
     notes: Vec<Value>,
+    /// Of the bins of a `spectral`: the node of the sound around it each capture reads.
+    captures: Vec<usize>,
     declarations: Declarations,
 }
 
@@ -157,10 +159,27 @@ pub(crate) fn delay_up_to(x: impl Into<Signal>, ms: impl Into<Signal>, longest: 
     node("delay", &operands)
 }
 pub(crate) fn lowpass(x: impl Into<Signal>, hz: impl Into<Signal>, q: f32) -> Signal {
-    node(
-        "lowpass",
-        &[("x", x.into()), ("hz", hz.into()), ("q", q.into())],
-    )
+    filter("lowpass", x, hz, q)
+}
+/// `lowpass`, `highpass`, `bandpass`, `notch` or `allpass`.
+pub(crate) fn filter(op: &str, x: impl Into<Signal>, hz: impl Into<Signal>, q: f32) -> Signal {
+    node(op, &[("x", x.into()), ("hz", hz.into()), ("q", q.into())])
+}
+/// `peak`, `lowshelf` or `highshelf`.
+pub(crate) fn gained_filter(
+    op: &str,
+    x: impl Into<Signal>,
+    hz: f32,
+    db: impl Into<Signal>,
+    q: f32,
+) -> Signal {
+    let operands = [
+        ("x", x.into()),
+        ("hz", hz.into()),
+        ("db", db.into()),
+        ("q", q.into()),
+    ];
+    node(op, &operands)
 }
 pub(crate) fn adsr(
     gate: impl Into<Signal>,
@@ -231,6 +250,19 @@ pub(crate) fn pattern(name: &str, length: usize) -> Table {
     Table(json!({ "list": name }))
 }
 
+/// A sample field, as long as its sound.
+pub(crate) fn sample(name: &str) -> Table {
+    let array = ArraySpec {
+        name: name.to_string(),
+        length: None,
+        default: 0.0,
+        min: -1.0,
+        max: 1.0,
+    };
+    declare(|declarations| declarations.arrays.push(array));
+    Table(json!({ "list": name }))
+}
+
 pub(crate) fn buffer(seconds: f32) -> Table {
     BUILDING.with_borrow_mut(|building| {
         building.buffers.push(seconds);
@@ -239,6 +271,11 @@ pub(crate) fn buffer(seconds: f32) -> Table {
 }
 
 impl Table {
+    /// One side of a sample: `"left"` or `"right"`.
+    pub(crate) fn side(&self, side: &str) -> Self {
+        Self(json!({ side: self.0["list"] }))
+    }
+
     pub(crate) fn at(&self, index: impl Into<Signal>) -> Signal {
         let index = index.into();
         add(json!({ "op": "at", "table": self.0, "index": index.0 }))
@@ -303,6 +340,82 @@ pub(crate) fn output_bang(name: &str, when: impl Into<Signal>) {
 pub(crate) fn output_notes(name: &str, gate: Signal, pitch: Signal, velocity: Signal) {
     let notes = json!({ "name": name, "gate": gate.0, "pitch": pitch.0, "velocity": velocity.0 });
     BUILDING.with_borrow_mut(|building| building.notes.push(notes));
+}
+
+/// What a bin of a `spectral` is.
+pub(crate) struct Bin {
+    pub(crate) magnitude: Signal,
+    pub(crate) phase: Signal,
+    pub(crate) hz: Signal,
+    pub(crate) index: Signal,
+}
+
+/// Inside the bins of a `spectral`: `outer`, a signal of the sound around it.
+pub(crate) fn capture(outer: Signal) -> Signal {
+    let index = BUILDING.with_borrow_mut(|building| {
+        building.captures.push(outer.0);
+        building.captures.len() - 1
+    });
+    add(json!({ "op": "capture", "index": index }))
+}
+
+/// `x` through a spectrum of `size`, each bin as `bins` makes its magnitude and phase. A
+/// signal of the sound around it reaches the bins through `capture`.
+pub(crate) fn spectral(
+    x: impl Into<Signal>,
+    size: usize,
+    bins: impl FnOnce(Bin) -> (Signal, Signal),
+) -> Signal {
+    spectrum(x.into(), None, size, |bin, _| bins(bin))
+}
+
+/// As [`spectral`], where `bins` also gets the bin of `other` at the same frequency.
+pub(crate) fn spectral_of_two(
+    x: impl Into<Signal>,
+    other: impl Into<Signal>,
+    size: usize,
+    bins: impl FnOnce(Bin, Bin) -> (Signal, Signal),
+) -> Signal {
+    spectrum(x.into(), Some(other.into()), size, bins)
+}
+
+fn spectrum(
+    x: Signal,
+    side: Option<Signal>,
+    size: usize,
+    bins: impl FnOnce(Bin, Bin) -> (Signal, Signal),
+) -> Signal {
+    let around = BUILDING.take();
+    let (hz, index) = (node("hz", &[]), node("index", &[]));
+    let bin = Bin {
+        magnitude: node("magnitude", &[]),
+        phase: node("phase", &[]),
+        hz,
+        index,
+    };
+    let other = Bin {
+        magnitude: node("sideMagnitude", &[]),
+        phase: node("sidePhase", &[]),
+        hz,
+        index,
+    };
+    let (magnitude, phase) = bins(bin, other);
+    let inside = BUILDING.replace(around);
+    let feedbacks: Vec<usize> = (inside.feedbacks.iter())
+        .map(|value| value.expect("a feedback is never set"))
+        .collect();
+    add(json!({
+        "op": "spectral",
+        "x": x.0,
+        "side": side.map(|side| side.0),
+        "size": size,
+        "bins": {
+            "nodes": inside.nodes,
+            "feedbacks": feedbacks,
+            "captures": inside.captures,
+            "output": { "magnitude": magnitude.0, "phase": phase.0 },
+        },
+    }))
 }
 
 /// What leaves a sound: one signal, or a pair for a sound in stereo.

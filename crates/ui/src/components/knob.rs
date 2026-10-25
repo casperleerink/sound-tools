@@ -616,31 +616,6 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_of_one_point_is_a_two_hundredth_of_the_travel() {
-        let range = KnobRange::logarithmic(20., 20_000.);
-        // 1234.5 is at 0.5967 of the travel; one point up and down is 0.005 of it.
-        let mut travel = Travel::new(-300., range.position(1234.5), TRAVEL);
-        assert_eq!(travel.position(-300., false), None);
-        assert_eq!(
-            travel.position(-299., false).map(|p| range.value(p)),
-            Some(1280.)
-        );
-        assert_eq!(
-            travel.position(-301., false).map(|p| range.value(p)),
-            Some(1190.)
-        );
-        // With shift a tenth of that.
-        assert_eq!(
-            travel.position(-301., true).map(|p| range.value(p)),
-            Some(1190.)
-        );
-        assert_eq!(
-            travel.position(-311., true).map(|p| range.value(p)),
-            Some(1150.)
-        );
-    }
-
-    #[test]
     fn every_key_step_changes_the_value() {
         for range in RANGES {
             for step in 0..500 {

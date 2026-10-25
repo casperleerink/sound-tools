@@ -8,15 +8,7 @@ use plugin_host::PluginFormat;
 use sound_core::live_input;
 use sound_notes::{Pedal, Pitch, Velocity};
 
-use crate::support::{Harness, clip, first_sound, test_plugin_of, write};
-
-fn has_bun() -> bool {
-    let bun = sound_typescript::has_bun();
-    if !bun {
-        eprintln!("skipped: Bun is not installed");
-    }
-    bun
-}
+use crate::support::{Harness, first_sound, test_plugin_of, write};
 
 /// A `project.json` with these extensions and connections.
 fn project_json(extensions: &str, connections: &str) -> String {
@@ -56,7 +48,7 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
     // Bun's answer, which wires the parent.
     let mut heard = harness.render(64);
     let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
-    let notes = runtime::arrangement_wiring::recording::live_notes_inputs(&harness.project, None);
+    let notes = runtime::window::live_input::notes_inputs(&harness.project, None);
     keyboard
         .play_into(harness.project.engine(), &notes)
         .unwrap();
@@ -76,9 +68,10 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
 
 #[test]
 fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_and_every_instance_at_the_top() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let plugin = test_plugin_of(format, "keys");
         let folder = tempfile::tempdir().unwrap();
@@ -170,9 +163,10 @@ tool({ name: "half", title: "Half", when: "Never", doc: "Half as loud.", state: 
 
 #[test]
 fn the_microphone_into_a_parent_reaches_the_child_it_connects_it_to() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let microphone = r#"{"from": {"device_input": 0}, "to": {"input": {"instance": "router", "port": "audio"}}}"#;
@@ -205,7 +199,7 @@ fn the_microphone_into_a_parent_reaches_the_child_it_connects_it_to() {
 /// A constant that sends its value out as the number `level`.
 const LFO: &str = r#"import { output, tool } from "./sdk";
 
-tool({ name: "lfo", title: "LFO", when: "Never", doc: "Sends 0.5.", kind: "source", state: {}, sound: () => { output("level", 0.5); return 0; } });
+tool({ name: "lfo", title: "LFO", when: "Never", doc: "Sends 0.5.", state: {}, sound: () => { output("level", 0.5); return 0; } });
 "#;
 
 /// A parent that passes the number of its child `lfo` on as its own.
@@ -222,11 +216,11 @@ tool({
 "#;
 
 /// A constant 0.5, through `amp`, whose gain the number of `inner` turns.
-const RACK: &str = r#"import { knob, input, tool, type Declaration } from "./sdk";
+const RACK: &str = r#"import { number, input, tool, type Declaration } from "./sdk";
 
-tool({ name: "amp", title: "Amp", when: "Never", doc: "A gain.", state: { gain: knob({ min: 0, max: 1, default: 0 }) }, sound: ({ gain }) => input.times(gain) });
+tool({ name: "amp", title: "Amp", when: "Never", doc: "A gain.", state: { gain: number({ min: 0, max: 1, default: 0 }) }, sound: ({ gain }) => input.times(gain) });
 
-tool({ name: "dc", title: "DC", when: "Never", doc: "A constant.", kind: "source", state: {}, sound: () => 0.5 });
+tool({ name: "dc", title: "DC", when: "Never", doc: "A constant.", state: {}, sound: () => 0.5 });
 
 tool({
   name: "rack",
@@ -246,9 +240,10 @@ tool({
 
 #[test]
 fn a_number_of_a_child_passes_out_of_a_parent_to_the_parent_of_that() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     write(root, "project.json", &project_json("", &to_device("rack")));
@@ -284,54 +279,6 @@ fn a_number_of_a_child_passes_out_of_a_parent_to_the_parent_of_that() {
     assert!((last - 0.25).abs() < 1e-4, "{last}");
 }
 
-/// An effect that plays the note of its track and nothing else.
-const EARS: &str = r#"import { note, sine, tool } from "./sdk";
-
-tool({ name: "ears", title: "Ears", when: "Never", doc: "Plays its track's note.", state: {}, sound: () => sine(note.freq).times(note.gate).times(0.5) });
-"#;
-
-#[test]
-fn an_effect_hears_the_notes_of_its_track() {
-    if !has_bun() {
-        return;
-    }
-    let folder = tempfile::tempdir().unwrap();
-    let root = folder.path();
-    let project = project_json(r#""arrangement""#, "");
-    write(root, "project.json", &project);
-    write(root, "extensions/ears.ts", EARS);
-    write(
-        root,
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    );
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "Ears", "order": 1, "effects": ["ears"]}}"#;
-    write(root, "state/arrangement/ears/instance.json", track);
-    write(
-        root,
-        "state/arrangement/ears/ears.json",
-        r#"{"tool": "ears", "state": {}}"#,
-    );
-    // One note from tick 480, 12 000 frames at 120 bpm.
-    write(
-        root,
-        "state/arrangement/ears/part.json",
-        &clip(0, 3840, &[(480, 480, 69)]),
-    );
-    let mut harness = Harness::open(folder);
-    assert_eq!(harness.project.problems(), []);
-    let played = harness.play(18_000);
-    assert_eq!(first_sound(&played, 0), Some(12_000));
-
-    // Bypassed while the note sounds, and on again once it ended: it heard the end too.
-    let slot = |slot: &str| track.replace(r#"["ears"]"#, &format!("[{slot}]"));
-    let path = "state/arrangement/ears/instance.json";
-    harness.write_and_apply(path, &slot(r#"{"name": "ears", "bypass": true}"#));
-    harness.render(12_000);
-    harness.write_and_apply(path, &slot(r#""ears""#));
-    assert_eq!(first_sound(&harness.render(4_800), 0), None);
-}
-
 /// A parent whose behaviour names a child it finds by name, which is not there.
 const LOST: &str = r#"import { tool, type Declaration } from "./sdk";
 
@@ -350,9 +297,10 @@ tool({
 /// JSON leaves an undefined `child` out, which would make the end the parent's own output.
 #[test]
 fn a_child_that_is_undefined_is_a_problem_and_no_port_of_the_parent() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     write(root, "project.json", &project_json("", ""));
@@ -379,4 +327,72 @@ fn a_child_that_is_undefined_is_a_problem_and_no_port_of_the_parent() {
         ),
         "{problem:?}"
     );
+}
+
+/// `level` of `lfo` into the number input `gain` of `amp`, a grandchild inside `holder`, which
+/// plays what it hears.
+const DEEP: &str = r#"import { number, tool, type Declaration } from "./sdk";
+
+tool({ name: "level", title: "Level", when: "Never", doc: "Plays its number.", state: {}, inputs: { gain: number({ min: 0, max: 1, default: 0 }) }, sound: ({ gain }) => gain });
+
+tool({
+  name: "holder",
+  title: "Holder",
+  when: "Never",
+  doc: "Plays its child.",
+  state: {},
+  behaviour: (): Declaration => ({ connections: [{ from: { child: "amp" }, to: { port: "audio" } }] }),
+});
+
+tool({
+  name: "deep",
+  title: "Deep",
+  when: "Never",
+  doc: "A number into a grandchild.",
+  state: {},
+  behaviour: (): Declaration => ({
+    connections: [
+      { from: { child: "lfo", number: "level" }, to: { child: "holder/amp", number: "gain" } },
+      { from: { child: "holder" }, to: { port: "audio" } },
+    ],
+  }),
+});
+"#;
+
+#[test]
+fn a_number_reaches_the_number_input_of_a_grandchild() {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    write(root, "project.json", &project_json("", &to_device("deep")));
+    write(root, "extensions/lfo.ts", LFO);
+    write(root, "extensions/deep.ts", DEEP);
+    write(
+        root,
+        "state/deep/instance.json",
+        r#"{"tool": "deep", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/deep/lfo.json",
+        r#"{"tool": "lfo", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/deep/holder/instance.json",
+        r#"{"tool": "holder", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/deep/holder/amp.json",
+        r#"{"tool": "level", "state": {}}"#,
+    );
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.render(9_600);
+    let last = played[played.len() - 1];
+    assert!((last - 0.5).abs() < 1e-4, "{last}");
 }

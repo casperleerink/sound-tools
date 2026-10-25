@@ -17,14 +17,12 @@ use sound_core::{
     Smoothed, Timed, Watch,
 };
 use sound_notes::{
-    NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+    NoteEvent, Pedal, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
 };
 
 use crate::cable::{Bang, Control, Number};
-use crate::code::{
-    Code, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_OUTPUTS, MAX_PARAMETERS, MAX_STAGE_PORTS,
-};
-use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values, held};
+use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SOUNDS};
+use crate::machine::{Block, Frames, Inputs, LIMIT, List, Machine, Note, QUIET, Values, held};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
@@ -46,12 +44,10 @@ const MAX_SCHEDULED: usize = 256;
 /// What a tool is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// Sound in, sound out: the code reads `input`.
-    Effect,
-    /// Notes in, sound out: the code runs once per note, up to `voices` at once.
+    /// One voice, always running: it hears `input` and follows the newest held note.
+    One,
+    /// The code runs once per note, up to `voices` at once.
     Instrument { voices: usize },
-    /// Sound out, always running, as one voice that follows the newest held note.
-    Source,
 }
 
 impl Kind {
@@ -59,7 +55,7 @@ impl Kind {
     pub fn machines(self) -> usize {
         match self {
             Self::Instrument { .. } => MAX_VOICES,
-            Self::Effect | Self::Source => 1,
+            Self::One => 1,
         }
     }
 }
@@ -74,14 +70,22 @@ pub enum SignalsUpdate {
         values: Box<Values>,
         watches: Vec<Watch>,
     },
-    /// From the interface: a `live` control moves. Not saved.
-    Live { index: usize, value: f32 },
+    /// From the interface: a `live` control moves, at the frame `at` of engine time, or now
+    /// when there is none or it has passed. Not saved.
+    Live {
+        index: usize,
+        value: f32,
+        at: Option<u64>,
+    },
     /// From the interface: a trigger fires at the frame `at` of engine time, or in the next
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
     /// From the interface: a key or another note event, as if it came in on
     /// [`Signals::NOTES`]. Not saved.
     Note(Performed),
+    /// From the interface: the performer is gone, such as code that restarted. The keys it
+    /// holds come up now, and what it sent to play later does not play.
+    PerformerGone,
     /// From the behaviour: where to write what comes in on [`Signals::NOTES`], for the
     /// interface, or nowhere. The one it replaces rides back.
     Tap(Option<EventTap<NoteEvent>>),
@@ -92,6 +96,7 @@ pub enum SignalsUpdate {
 enum Played {
     Note(NoteEvent),
     Trigger(usize),
+    Live(usize, f32),
 }
 
 impl From<NoteEvent> for Played {
@@ -104,7 +109,7 @@ impl Scheduled for Played {
     fn note(&self) -> Option<NoteEvent> {
         match self {
             Self::Note(event) => Some(*event),
-            Self::Trigger(_) => None,
+            Self::Trigger(_) | Self::Live(..) => None,
         }
     }
 }
@@ -124,19 +129,16 @@ pub struct Signals {
     lives: [Smoothed; MAX_LIVES],
     /// What every voice reads in this block.
     block: Box<Block>,
-    /// What the voices play in this block, added up.
-    mix: Frames,
+    /// What the voices play in this block, added up, for each sound output.
+    mix: [Frames; MAX_SOUNDS],
     /// What one voice plays in a span, and what its old code plays while it fades out.
-    voice_frames: [Frames; 2],
-    /// Whether it has the ports of a stage: what it takes from before and hands on.
-    stage_ports: bool,
-    /// What it hands on in this block, and what its old code hands on while it fades out.
-    exports: Box<[[Frames; MAX_STAGE_PORTS]; 2]>,
+    voice_frames: [[Frames; MAX_SOUNDS]; 2],
     /// How many params and live controls the code has, so a block moves only those.
     counts: (usize, usize),
-    arrays: Vec<Vec<f32>>,
+    arrays: Vec<List>,
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
+    holds: Holds,
     watches: Vec<Watch>,
     tap: Option<EventTap<NoteEvent>>,
     sending: Sending,
@@ -194,6 +196,49 @@ struct Sending {
     notes: [Option<Pitch>; MAX_OUTPUTS],
 }
 
+/// The pitches the interface holds on the voices, and those the notes that come in hold, so a
+/// gone performer ends only its own. It counts nothing and holds back no off: where several
+/// senders meet, a feed already did, and an off ends its pitch on the voices whoever holds it.
+#[derive(Default)]
+struct Holds {
+    /// By pitch number, one bit each.
+    pitches: (u128, u128),
+    pedal: (bool, bool),
+}
+
+impl Holds {
+    fn follow(&mut self, event: NoteEvent, performed: bool) {
+        let (pitches, pedal) = match performed {
+            true => (&mut self.pitches.0, &mut self.pedal.0),
+            false => (&mut self.pitches.1, &mut self.pedal.1),
+        };
+        match event {
+            NoteEvent::On { pitch, .. } => *pitches |= 1 << pitch.number(),
+            NoteEvent::Off { pitch } => {
+                let up = !(1 << pitch.number());
+                self.pitches = (self.pitches.0 & up, self.pitches.1 & up);
+            }
+            NoteEvent::AllOff => *self = Self::default(),
+            NoteEvent::Pedal(moved) => *pedal = moved.is_down(),
+            _ => {}
+        }
+    }
+
+    /// Forgets what the performer holds, and gives `release` what ends it: the pedal up when the
+    /// notes that come in do not hold it down, then an off for each pitch they do not hold.
+    fn performer_gone(&mut self, mut release: impl FnMut(NoteEvent)) {
+        if std::mem::take(&mut self.pedal.0) && !self.pedal.1 {
+            release(NoteEvent::Pedal(Pedal::UP));
+        }
+        let alone = std::mem::take(&mut self.pitches.0) & !self.pitches.1;
+        for number in (0..128).filter(|number| alone & (1 << number) != 0) {
+            release(NoteEvent::Off {
+                pitch: Pitch::nearest(number),
+            });
+        }
+    }
+}
+
 /// The keys an effect or a source follows: the newest held one plays, and the note ends when
 /// none is held.
 struct Keys {
@@ -210,6 +255,16 @@ impl Signals {
     /// The live controls and the triggers, as cables reach them.
     pub const CONTROLS: EventInput<Control> = EventInput::new(2);
 
+    /// The sound input `index`: 0 is [`Self::INPUT`], then those the tool names.
+    pub const fn sound_input(index: usize) -> AudioInput {
+        AudioInput::new(index)
+    }
+
+    /// The sound output `index`: 0 is [`Self::OUTPUT`], then those of [`Code::sounds`].
+    pub const fn sound_output(index: usize) -> AudioOutput {
+        AudioOutput::new(index)
+    }
+
     /// The port of the number at `index` of [`Code::numbers`].
     pub const fn number(index: usize) -> EventOutput<Number> {
         EventOutput::new(index)
@@ -217,35 +272,12 @@ impl Signals {
 
     /// The port of the bang at `index` of [`Code::bangs`].
     pub const fn bang(index: usize) -> EventOutput<Bang> {
-        EventOutput::new(MAX_OUTPUTS + index)
+        EventOutput::new(MAX_NUMBERS + index)
     }
 
     /// The port of the notes at `index` of [`Code::notes`].
     pub const fn notes(index: usize) -> EventOutput<NoteEvent> {
-        EventOutput::new(2 * MAX_OUTPUTS + index)
-    }
-
-    /// The port of the number of a device at `index` of what a stage moves.
-    pub const fn device_number(index: usize) -> EventOutput<Number> {
-        EventOutput::new(3 * MAX_OUTPUTS + index)
-    }
-
-    /// The port of a stage that takes the signal at `index` from before.
-    pub const fn import(index: usize) -> AudioInput {
-        AudioInput::new(1 + index)
-    }
-
-    /// The port of a stage that hands on the signal at `index`.
-    pub const fn export(index: usize) -> AudioOutput {
-        AudioOutput::new(1 + index)
-    }
-
-    /// As a stage of a sound that plays through devices, with the ports of one. A processor
-    /// has its ports for good, and the others need none.
-    #[must_use]
-    pub fn with_stage_ports(mut self) -> Self {
-        self.stage_ports = true;
-        self
+        EventOutput::new(MAX_NUMBERS + MAX_OUTPUTS + index)
     }
 
     /// `machine` is the first voice; an instrument plays copies of it.
@@ -275,7 +307,7 @@ impl Signals {
                 }
                 Players::Many(voices)
             }
-            Kind::Effect | Kind::Source => Players::One(Box::new(Single {
+            Kind::One => Players::One(Box::new(Single {
                 voice,
                 keys: Keys {
                     pressed: [0; 128],
@@ -293,13 +325,12 @@ impl Signals {
             followed: false,
             lives,
             block: Box::new(Block::new()),
-            mix: [[0.0; MAX_BLOCK]; CHANNELS],
-            voice_frames: [[[0.0; MAX_BLOCK]; CHANNELS]; 2],
-            stage_ports: false,
-            exports: Box::new([[[[0.0; MAX_BLOCK]; CHANNELS]; MAX_STAGE_PORTS]; 2]),
+            mix: [[[0.0; MAX_BLOCK]; CHANNELS]; MAX_SOUNDS],
+            voice_frames: [[[[0.0; MAX_BLOCK]; CHANNELS]; MAX_SOUNDS]; 2],
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
+            holds: Holds::default(),
             watches,
             tap: None,
             sending: Sending {
@@ -419,14 +450,21 @@ impl Signals {
         }
     }
 
-    fn follow(&mut self, event: NoteEvent) {
-        if let NoteEvent::Bend(bend) = event {
-            self.bend = bend.fraction() * BEND_SEMITONES;
-        }
-        match &mut self.players {
-            Players::Many(voices) => voices.handle(event, &()),
-            Players::One(single) => single.keys.follow(event, &mut single.voice.note),
-        }
+    /// Follows `event`, which the interface played or not.
+    fn follow(&mut self, event: NoteEvent, performed: bool) {
+        self.holds.follow(event, performed);
+        play(&mut self.players, &mut self.bend, event);
+    }
+}
+
+/// Plays `event` on `players`, and moves the `bend` they read.
+fn play(players: &mut Players, bend: &mut f32, event: NoteEvent) {
+    if let NoteEvent::Bend(moved) = event {
+        *bend = moved.fraction() * BEND_SEMITONES;
+    }
+    match players {
+        Players::Many(voices) => voices.handle(event, &()),
+        Players::One(single) => single.keys.follow(event, &mut single.voice.note),
     }
 }
 
@@ -568,7 +606,7 @@ impl Voice for SignalsVoice {
 /// What a voice reads in a span besides its note.
 struct Shared<'a> {
     block: &'a Block,
-    arrays: &'a [Vec<f32>],
+    arrays: &'a [List],
     bend: f32,
     fade_frames: usize,
     quiet_limit: usize,
@@ -581,14 +619,11 @@ impl SignalsVoice {
         &mut self,
         shared: &Shared<'_>,
         frames: Range<usize>,
-        voice_frames: &mut [Frames; 2],
-        (mix, exports): (&mut Frames, Option<&mut [[Frames; MAX_STAGE_PORTS]; 2]>),
+        voice_frames: &mut [[Frames; MAX_SOUNDS]; 2],
+        mix: &mut [Frames; MAX_SOUNDS],
     ) {
-        let [exports, old_exports] = match exports {
-            Some([exports, old_exports]) => [&mut exports[..], &mut old_exports[..]],
-            None => [&mut [][..], &mut [][..]],
-        };
         let [sound, old] = voice_frames;
+        let outputs = self.machine.code().outputs();
         let mut start = frames.start;
         while start < frames.end && !self.is_idle() {
             // Cut where the fade ends, and, after the release, where the voice may go idle,
@@ -614,21 +649,21 @@ impl SignalsVoice {
                     ..self.note
                 },
             };
-            self.machine
-                .render(&inputs, part.clone(), sound, &mut *exports);
+            self.machine.render(&inputs, part.clone(), sound);
             if self.fade_left > 0
                 && let Some(fading) = &mut self.fading
             {
-                // Old code may hand on fewer signals: the rest fade in from silence.
-                for channel in old_exports.iter_mut().flatten() {
-                    channel.get_mut(part.clone()).unwrap_or_default().fill(0.0);
+                // A sound output the old code does not have fades in from silence.
+                let old_outputs = old.iter_mut().take(outputs).skip(fading.code().outputs());
+                for channel in old_outputs.flatten() {
+                    in_part_mut(channel, &part).fill(0.0);
                 }
-                fading.render(&inputs, part.clone(), old, &mut *old_exports);
+                fading.render(&inputs, part.clone(), old);
                 for frame in part.clone() {
                     let new = 1.0 - self.fade_left as f32 / shared.fade_frames as f32;
-                    let faded = std::iter::once((&mut *sound, &*old))
-                        .chain(exports.iter_mut().zip(old_exports.iter()));
-                    for (sound, old) in faded.flat_map(|(sound, old)| sound.iter_mut().zip(old)) {
+                    let outputs = sound.iter_mut().zip(old.iter()).take(outputs);
+                    let channels = outputs.flat_map(|(sound, old)| sound.iter_mut().zip(old));
+                    for (sound, old) in channels {
                         if let (Some(sample), Some(old)) = (sound.get_mut(frame), old.get(frame)) {
                             *sample = old + (*sample - old) * new;
                         }
@@ -637,16 +672,29 @@ impl SignalsVoice {
                 }
             }
             self.note.onset = false;
-            let [left, right] = &*sound;
-            let [mix_left, mix_right] = &mut *mix;
+            // A voice sounds while any of its outputs does.
+            let mut others = [0.0_f32; MAX_BLOCK];
+            let other_outputs = sound.iter().zip(mix.iter_mut()).take(outputs).skip(1);
+            for (sound, mix) in other_outputs.flat_map(|(sound, mix)| sound.iter().zip(mix)) {
+                let frames = (in_part(sound, &part).iter())
+                    .zip(in_part_mut(mix, &part))
+                    .zip(in_part_mut(&mut others, &part));
+                for ((sample, mixed), loudest) in frames {
+                    *mixed += sample;
+                    *loudest = loudest.max(sample.abs());
+                }
+            }
+            let [[left, right], ..] = &*sound;
+            let [[mix_left, mix_right], ..] = &mut *mix;
             let played = (in_part(left, &part).iter())
                 .zip(in_part(right, &part))
                 .zip(in_part_mut(mix_left, &part))
-                .zip(in_part_mut(mix_right, &part));
-            for (((left, right), mix_left), mix_right) in played {
+                .zip(in_part_mut(mix_right, &part))
+                .zip(in_part(&others, &part));
+            for ((((left, right), mix_left), mix_right), others) in played {
                 self.loudness = [left, right]
                     .iter()
-                    .fold(0.0_f32, |loudest, sample| loudest.max(sample.abs()));
+                    .fold(*others, |loudest, sample| loudest.max(sample.abs()));
                 if ending {
                     if self.loudness < QUIET {
                         self.quiet_frames += 1;
@@ -679,11 +727,9 @@ impl Signals {
     /// params, the live controls and the beat.
     fn fill(&mut self, inputs: &AudioInputs<'_>, frames: usize, bpm: f64, playing: bool) {
         let block = &mut *self.block;
-        let imports = self.players.code().map_or(0, |code| code.imports);
-        let ports = std::iter::once(Self::INPUT).chain((0..imports).map(Self::import));
-        let rows = std::iter::once(&mut block.input).chain(&mut block.imports);
-        for (rows, port) in rows.zip(ports) {
-            for (row, samples) in rows.iter_mut().zip(inputs.get(port)) {
+        let sounds = std::iter::once(&mut block.input).chain(&mut block.sounds);
+        for (port, sound) in sounds.enumerate() {
+            for (row, samples) in sound.iter_mut().zip(inputs.get(Self::sound_input(port))) {
                 for (frame, sample) in row.iter_mut().take(frames).enumerate() {
                     *sample = samples.get(frame).copied().unwrap_or(0.0);
                 }
@@ -716,16 +762,10 @@ impl Signals {
         };
         let (voice_frames, mix) = (&mut self.voice_frames, &mut self.mix);
         match &mut self.players {
-            Players::One(single) => {
-                let exports = Some(&mut *self.exports);
-                single
-                    .voice
-                    .render(&shared, frames, voice_frames, (mix, exports));
-            }
-            // An instrument plays through no device, so it hands nothing on.
+            Players::One(single) => single.voice.render(&shared, frames, voice_frames, mix),
             Players::Many(voices) => {
                 for voice in voices.iter_mut().filter(|voice| !voice.is_idle()) {
-                    voice.render(&shared, frames.clone(), voice_frames, (mix, None));
+                    voice.render(&shared, frames.clone(), voice_frames, mix);
                 }
             }
         }
@@ -736,33 +776,28 @@ impl Processor for Signals {
     type Update = SignalsUpdate;
 
     fn ports(&self) -> Ports {
-        let ports = Ports::new()
-            .audio_input(Self::INPUT)
-            .audio_output(Self::OUTPUT)
+        let ports = (0..MAX_SOUNDS).fold(Ports::new(), |ports, index| {
+            (ports.audio_input(Self::sound_input(index))).audio_output(Self::sound_output(index))
+        });
+        let ports = ports
             .event_input(Self::NOTES)
             .event_input(Self::AUTOMATION)
             .event_input(Self::CONTROLS);
-        let ports = (0..MAX_OUTPUTS).fold(ports, |ports, index| {
+        let ports = (0..MAX_NUMBERS).fold(ports, |ports, index| {
             ports.event_output(Self::number(index))
         });
         let ports =
             (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::bang(index)));
-        let ports =
-            (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::notes(index)));
-        if !self.stage_ports {
-            return ports;
-        }
-        let ports = (0..MAX_STAGE_PORTS).fold(ports, |ports, index| {
-            (ports.audio_input(Self::import(index))).audio_output(Self::export(index))
-        });
-        (0..MAX_DEVICE_NUMBERS).fold(ports, |ports, index| {
-            ports.event_output(Self::device_number(index))
-        })
+        (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::notes(index)))
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
         self.sample_rate = config.sample_rate as f32;
         self.fade_frames = ((FADE_SECONDS * self.sample_rate) as usize).max(1);
+    }
+
+    fn latency(&self) -> u32 {
+        self.players.code().map_or(0, |code| code.latency)
     }
 
     fn update(&mut self, update: &mut SignalsUpdate) {
@@ -772,10 +807,19 @@ impl Processor for Signals {
                 values,
                 watches,
             } => self.set(machines, values, watches),
-            SignalsUpdate::Live { index, value } => {
-                let ramp = RAMP_SECONDS * self.sample_rate;
-                if let Some(live) = self.lives.get_mut(*index) {
-                    live.set_target(*value, ramp);
+            SignalsUpdate::Live {
+                index,
+                value,
+                at: None,
+            } => self.move_live(*index, *value),
+            SignalsUpdate::Live {
+                index,
+                value,
+                at: Some(at),
+            } => {
+                // A full schedule moves it at once.
+                if !self.scheduled.add(Some(*at), Played::Live(*index, *value)) {
+                    self.move_live(*index, *value);
                 }
             }
             SignalsUpdate::Trigger { index, at } => {
@@ -785,8 +829,18 @@ impl Processor for Signals {
             }
             SignalsUpdate::Note(performed) => {
                 if let Some(now) = self.scheduled.perform(*performed) {
-                    self.follow(now);
+                    self.follow(now, true);
                 }
+            }
+            SignalsUpdate::PerformerGone => {
+                self.scheduled.clear();
+                let Self {
+                    holds,
+                    players,
+                    bend,
+                    ..
+                } = self;
+                holds.performer_gone(|event| play(players, bend, event));
             }
             SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
         }
@@ -846,7 +900,7 @@ impl Processor for Signals {
             frames,
         );
         block.steady_lives = advance_rows(&mut block.lives, &mut self.lives, lives, frames);
-        let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
+        let outputs = self.players.code().map_or(1, Code::outputs);
         // An instrument with no voice that sounds, and no note in this block, plays silence.
         let silent = match &self.players {
             Players::Many(voices) => voices.is_idle(),
@@ -857,8 +911,11 @@ impl Processor for Signals {
             && context.event_inputs.get(Self::NOTES).is_empty()
             && self.scheduled.next().is_none_or(|at| at >= next)
         {
-            left_out.fill(0.0);
-            right_out.fill(0.0);
+            for port in 0..outputs {
+                for channel in context.audio_outputs.get(Self::sound_output(port)) {
+                    channel.fill(0.0);
+                }
+            }
             return;
         }
         self.fill(&context.audio_inputs, frames, bpm, playing);
@@ -868,29 +925,21 @@ impl Processor for Signals {
                 self.block.fire(usize::from(index), timed.offset);
             }
         }
-        for channel in &mut self.mix {
+        for channel in self.mix.iter_mut().take(outputs).flatten() {
             channel.fill(0.0);
         }
 
         let notes = context.event_inputs.get(Self::NOTES);
         self.spans((notes, context.start_frame), frames, Some(quiet_limit));
 
-        for (out, channel) in [left_out, right_out].into_iter().zip(&self.mix) {
-            for (sample, mixed) in out.iter_mut().zip(channel) {
-                *sample = mixed.clamp(-LIMIT, LIMIT);
-            }
-        }
-        let exported = self.players.code().map_or(0, |code| code.exports.len());
-        for (index, exports) in self.exports[0].iter().enumerate().take(exported) {
-            let outputs = context.audio_outputs.get(Self::export(index));
-            for (out, channel) in outputs.into_iter().zip(exports) {
-                // A fade between two values near the ends of `f32` overflows.
-                for (sample, exported) in out.iter_mut().zip(channel) {
-                    *sample = if exported.is_finite() { *exported } else { 0.0 };
+        for (port, mix) in self.mix.iter().enumerate().take(outputs) {
+            let out = context.audio_outputs.get(Self::sound_output(port));
+            for (out, channel) in out.into_iter().zip(mix) {
+                for (sample, mixed) in out.iter_mut().zip(channel) {
+                    *sample = mixed.clamp(-LIMIT, LIMIT);
                 }
             }
         }
-
         let shown = match &self.players {
             Players::One(single) => Some(&single.voice),
             Players::Many(voices) => voices.newest(),
@@ -904,9 +953,6 @@ impl Processor for Signals {
             for (index, value) in voice.machine.sent().iter().enumerate() {
                 (context.event_outputs).push(Self::number(index), 0, Number(*value));
             }
-            for (index, value) in voice.machine.device_numbers().iter().enumerate() {
-                (context.event_outputs).push(Self::device_number(index), 0, Number(*value));
-            }
         }
         // An instrument sends none: a voice that ends or loses its place would hold a note.
         if let Players::One(single) = &self.players {
@@ -919,6 +965,14 @@ impl Processor for Signals {
 }
 
 impl Signals {
+    /// Glides the `live` control `index` to `value`.
+    fn move_live(&mut self, index: usize, value: f32) {
+        let ramp = RAMP_SECONDS * self.sample_rate;
+        if let Some(live) = self.lives.get_mut(index) {
+            live.set_target(value, ramp);
+        }
+    }
+
     /// Whether its code passes its input as it comes, with nothing that glides and no old code
     /// fading out: the code of a tool with no sound, which a copy plays.
     fn copies(&self) -> bool {
@@ -975,13 +1029,14 @@ impl Signals {
         let mut start = 0;
         while start < frames {
             while let Some(timed) = events.next_if(|timed| timed.offset <= start) {
-                self.follow(timed.event);
+                self.follow(timed.event, false);
             }
             let now = start_frame + start as u64;
             while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
-                    Played::Note(event) => self.follow(event),
+                    Played::Note(event) => self.follow(event, true),
                     Played::Trigger(index) => self.block.fire(index, start),
+                    Played::Live(index, value) => self.move_live(index, value),
                 }
             }
             let next_event = events.peek().map_or(frames, |timed| timed.offset);

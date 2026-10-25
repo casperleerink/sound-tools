@@ -15,7 +15,9 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use crate::code::{Code, Operation, Register, Table};
+use sound_core::Stft;
+
+use crate::code::{Code, Operation, Output, Register, Side, Table};
 
 #[derive(Clone, Debug)]
 pub(crate) enum Step {
@@ -223,6 +225,13 @@ pub(crate) fn edges(code: &Code) -> Vec<Vec<usize>> {
         {
             add(usize::from(*source), index);
         }
+        if let Operation::Spectral { slot, .. } = operation
+            && let Some(spectrum) = code.slots.spectra.get(usize::from(*slot))
+        {
+            for capture in &spectrum.captures {
+                add(usize::from(*capture), index);
+            }
+        }
         if let Some(buffer) = buffer_of(*operation)
             && let Some(operations) = on_buffers.get_mut(usize::from(buffer))
         {
@@ -253,7 +262,17 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Rise { input: x, .. }
         | Operation::Change { input: x, .. }
         | Operation::Read { index: x, .. }
-        | Operation::Lookup { phase: x, .. } => vec![x],
+        | Operation::Lookup { phase: x, .. }
+        | Operation::Spectral {
+            input: x,
+            side: None,
+            ..
+        } => vec![x],
+        Operation::Spectral {
+            input,
+            side: Some(side),
+            ..
+        } => vec![input, side],
         Operation::Binary(_, a, b)
         | Operation::Delay {
             input: a, ms: b, ..
@@ -267,14 +286,10 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Write {
             index: a, value: b, ..
         } => vec![a, b],
-        Operation::Clamp(a, b, c)
-        | Operation::Mix(a, b, c)
-        | Operation::Filter {
-            input: a,
-            hz: b,
-            q: c,
-            ..
-        } => vec![a, b, c],
+        Operation::Clamp(a, b, c) | Operation::Mix(a, b, c) => vec![a, b, c],
+        Operation::Filter {
+            input, hz, q, gain, ..
+        } => vec![input, hz, q, gain],
         Operation::Envelope {
             gate,
             attack,
@@ -284,9 +299,9 @@ fn operands(operation: Operation) -> Vec<Register> {
             ..
         } => vec![gate, attack, decay, sustain, release],
         Operation::Constant(_)
-        | Operation::Input
-        | Operation::InputLeft
-        | Operation::InputRight
+        | Operation::Input(_)
+        | Operation::InputLeft(_)
+        | Operation::InputRight(_)
         | Operation::Channel
         | Operation::SampleRate
         | Operation::Beat
@@ -297,31 +312,73 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Gate
         | Operation::Velocity
         | Operation::Onset
-        | Operation::Import { .. }
         | Operation::Parameter(_)
         | Operation::Live(_)
         | Operation::Trigger(_)
         | Operation::History(_)
         | Operation::Noise { .. }
-        | Operation::Length(_) => Vec::new(),
+        | Operation::Length(_)
+        | Operation::Bin(_) => Vec::new(),
     }
 }
 
+/// How many samples late what leaves `code` comes out: the most of the spectra on any way to
+/// it. A feedback is as late as what it is set to, one feedback deep, so a loop through a
+/// spectrum does not grow without end.
+pub(crate) fn latency(code: &Code) -> u32 {
+    let of_sources = latencies(code, &[]);
+    let latencies = latencies(code, &of_sources);
+    let of = |register: Register| latencies.get(usize::from(register)).copied();
+    let of_output = |output: &Output| match *output {
+        Output::Mono(register) => of(register),
+        Output::Stereo(left, right) | Output::Bin(left, right) => of(left).max(of(right)),
+    };
+    let outputs = std::iter::once(&code.output).chain(&code.sound_outputs);
+    let latency = outputs.map(of_output).max().flatten();
+    u32::try_from(latency.unwrap_or(0)).unwrap_or(u32::MAX)
+}
+
+/// The latency of each operation, a feedback as late as its source is in `before`.
+fn latencies(code: &Code, before: &[usize]) -> Vec<usize> {
+    let mut latencies: Vec<usize> = Vec::with_capacity(code.operations.len());
+    for operation in &code.operations {
+        let read = (operands(*operation).into_iter())
+            .filter_map(|operand| latencies.get(usize::from(operand)).copied())
+            .max()
+            .unwrap_or(0);
+        let own = match operation {
+            Operation::Spectral { slot, .. } => (code.slots.spectra.get(usize::from(*slot)))
+                .map_or(0, |spectrum| Stft::latency_of(spectrum.size)),
+            Operation::History(slot) => (code.feedbacks.get(usize::from(*slot)))
+                .and_then(|source| before.get(usize::from(*source)))
+                .copied()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        latencies.push(read + own);
+    }
+    latencies
+}
+
 /// Whether `operation` gives each channel of mono code its own result whatever it reads: the
-/// input, or a signal from before, of its channel, the index of its channel, or a noise, whose
-/// seed is of its channel.
+/// input of its channel, the index of its channel, a noise, whose seed is of its channel, or
+/// the side of a sample of its channel.
 fn varies_by_channel(operation: Operation) -> bool {
     match operation {
-        Operation::Input
-        | Operation::Channel
-        | Operation::Noise { .. }
-        | Operation::Import { channel: None, .. } => true,
-        Operation::Constant(_)
-        | Operation::Import {
-            channel: Some(_), ..
+        Operation::Input(_) | Operation::Channel | Operation::Noise { .. } | Operation::Bin(_) => {
+            true
         }
-        | Operation::InputLeft
-        | Operation::InputRight
+        Operation::Read {
+            table: Table::Sample(_, side),
+            ..
+        }
+        | Operation::Lookup {
+            table: Table::Sample(_, side),
+            ..
+        } => side == Side::Channel,
+        Operation::Constant(_)
+        | Operation::InputLeft(_)
+        | Operation::InputRight(_)
         | Operation::SampleRate
         | Operation::Beat
         | Operation::Bpm
@@ -350,7 +407,8 @@ fn varies_by_channel(operation: Operation) -> bool {
         | Operation::Read { .. }
         | Operation::Lookup { .. }
         | Operation::Length(_)
-        | Operation::Write { .. } => false,
+        | Operation::Write { .. }
+        | Operation::Spectral { .. } => false,
     }
 }
 

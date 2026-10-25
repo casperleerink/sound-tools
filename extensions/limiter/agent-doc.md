@@ -1,27 +1,20 @@
-# Limiter: the built-in limiter effect
+# Limiter
 
-`limiter` is an effect: nothing it sends out goes over its ceiling. The ceiling holds where the limiter is in `effects`: effects after it, and the pan of the track, can take the sound over it again, so put it last for a track that must stay under it. A peak that would go over is turned down at once, just enough, and the gain comes back with the release. Push the sound in with `gain_db` and the track gets louder while its peaks stay at the ceiling. It is the same limiter as the one at the end of the master, as a device you can put anywhere.
+`limiter` is an effect: nothing it sends out goes over `ceiling_db`. Effects after it, and a pan, can take the sound over again, so put it last for a sound that must stay under. Push the sound in with `gain_db` to make it louder with its peaks at the ceiling.
 
-Here the loops play through a limiter named `peaks`:
+Here the loops play through a limiter named `peaks`, which makes them 4 dB louder:
 
-```json state/arrangement/loops/peaks.json
+```json state/song/loops/chain/peaks.json
 {
   "tool": "limiter",
-  "state": {"gain_db": 0.0, "ceiling_db": -1.0, "release_ms": 100.0, "lookahead_ms": 1}
+  "state": {"gain_db": 4.0}
 }
 ```
 
-These are the defaults. A field you leave out takes its default, so `"state": {}` is the default limiter.
+{{fields limiter}}
 
-| Field | Meaning | Values | Default |
-| --- | --- | --- | --- |
-| `gain_db` | How much louder the sound goes into the limiter. Every dB over the ceiling is taken off again, so this makes the track louder without raising its peaks. | 0 to 24 | 0 |
-| `ceiling_db` | The highest a sample may reach, in dBFS. Under it the sound passes untouched. | -24 to 0 | -1 |
-| `release_ms` | How fast the gain comes back after a peak: the time to 63 % of the way. Short is louder and can distort bass; long is cleaner and can pump. | 10 to 1000 | 100 |
-| `lookahead_ms` | How far ahead it looks, so it turns down before a peak arrives and the top of the wave keeps its shape. It delays the track by as much, and the app keeps the track in time. `0` adds no delay and clips the first edge of a peak. | `0`, `1` or `5` | `1` |
+Only `gain_db` and `release_ms` can move with a lane.
 
-Starting points: catch the odd peak of a vocal or a bass with the defaults. Louder drums are `gain_db` 3 to 6 and `release_ms` 50. To make a whole track louder, put it last in `effects`, with `gain_db` a few dB and `release_ms` 100 to 300. For the whole mix, use the limiter of the master in `agent-docs/arrangement.md` instead. Several dB of reduction all the time sound squashed; take `gain_db` down until it only moves on the loudest hits.
+It holds the samples under the ceiling, not the wave between them, so a played or lossy file can go a little over. Keep `ceiling_db` at -1 or lower when that matters.
 
-`gain_db` and `release_ms` can move over time with an automation lane of the track: see `agent-docs/arrangement.md`. `ceiling_db` cannot, because a new ceiling applies at once and a lane would step it.
-
-It holds the samples under the ceiling, not the wave between them, which can go over it once the sound is played or made into a lossy file: most for high tones. The default of -1 dB leaves room for it. A change of `gain_db` glides over 20 ms, so it does not click.
+Starting points: catch the odd peak with the defaults. Louder drums: `gain_db` 3 to 6, `release_ms` 50. A louder track or mix: last in the chain, `gain_db` a few dB, `release_ms` 100 to 300. Lower `gain_db` until it only moves on the loudest hits, or it sounds squashed.

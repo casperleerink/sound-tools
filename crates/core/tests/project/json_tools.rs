@@ -32,11 +32,13 @@ fn wobble(max: f64, version: u32, seen: &Seen) -> JsonTool {
             Ok(())
         }),
         doc: Some(JsonToolDoc {
+            group: "Test",
             when: format!("You want wobble {version}"),
             markdown: format!("# Wobble {version}\n"),
         }),
         asset_folders: Vec::new(),
         owns_children: false,
+        end: None,
     }
 }
 
@@ -57,6 +59,7 @@ fn band(version: u32, seen: &Seen) -> JsonTool {
         doc: None,
         asset_folders: Vec::new(),
         owns_children: true,
+        end: None,
     }
 }
 

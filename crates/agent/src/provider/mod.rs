@@ -163,7 +163,7 @@ pub enum ApprovalMode {
     /// Edits the project freely, asks before commands.
     #[default]
     AskBeforeCommands,
-    /// Does anything without asking. Undo and git are the safety net.
+    /// Does anything without asking. Undo is the safety net.
     NeverAsk,
 }
 
@@ -235,7 +235,7 @@ pub enum AgentEvent {
     },
     StepStarted {
         id: StepId,
-        /// One line in the past tense, such as "Edited state/arrangement/bass/verse-a.json" or
+        /// One line in the past tense, such as "Edited state/song/bass/verse-a.json" or
         /// "Ran \`cargo build\`". Text between backticks shows as code, here and in the
         /// title of an approval.
         title: String,
@@ -245,6 +245,10 @@ pub enum AgentEvent {
         /// it never ran. Empty in a thread saved before it came.
         #[serde(default)]
         request_title: String,
+        /// What it does, for its icon and the summary of a finished turn. `Other` in a thread
+        /// saved before it came.
+        #[serde(default)]
+        kind: StepKind,
     },
     StepDone {
         id: StepId,
@@ -268,6 +272,23 @@ pub enum AgentEvent {
     Exited {
         reason: ExitReason,
     },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    /// The path is as the title says it, so two steps on one file name the same path.
+    Read {
+        path: String,
+    },
+    /// An edit or a write.
+    Change {
+        path: String,
+    },
+    Run,
+    Search,
+    #[default]
+    Other,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

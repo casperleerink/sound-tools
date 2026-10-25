@@ -4,7 +4,7 @@
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
-use sound_core::{State, Ticks};
+use sound_core::Ticks;
 use sound_notes::{
     Amount, Bend, Clip, Expression, Length, NoteEvent, Point, RawEvent, RawTake, check_order, cut,
     thinned, value_at,

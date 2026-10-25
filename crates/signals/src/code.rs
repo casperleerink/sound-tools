@@ -5,6 +5,8 @@
 //! so one pass in order computes a frame. A `History` reads what a feedback was set to in the
 //! frame before.
 
+use sound_core::SvfShape;
+
 /// The most params, and so the most knobs and toggles: the update carries their values in a
 /// fixed array.
 pub(crate) const MAX_PARAMETERS: usize = 32;
@@ -12,23 +14,29 @@ pub(crate) const MAX_PARAMETERS: usize = 32;
 pub(crate) const MAX_LIVES: usize = 32;
 /// The most watches.
 pub(crate) const MAX_WATCHES: usize = 16;
-/// The most numbers, bangs and notes a sound sends out, of each: each is an event port of
-/// every processor.
+/// The most bangs and notes a sound sends out, of each: each is an event port of every
+/// processor.
 pub(crate) const MAX_OUTPUTS: usize = 8;
-/// The longest a `delay` can be.
-pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
-/// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
-pub(crate) const MAX_DELAYS: usize = 16;
-/// The seconds of all the buffers of one code together, per channel and voice.
-pub(crate) const MAX_BUFFER_SECONDS: f32 = 30.0;
+/// The most numbers a sound sends out: each is an event port of every processor, and a watch a
+/// view reads.
+pub(crate) const MAX_NUMBERS: usize = MAX_WATCHES;
+/// The most sound inputs, and the most sound outputs, of a sound, its `audio` among them: each
+/// is a port of every processor.
+pub(crate) const MAX_SOUNDS: usize = 4;
+/// What a `delay` holds when it gives no `longest`.
+pub(crate) const DEFAULT_DELAY_MS: f32 = 4000.0;
+/// The seconds the delays and buffers of a tool hold together, per channel. An instrument keeps
+/// [`MAX_VOICES`](crate::MAX_VOICES) voices whatever it plays, so each holds an eighth, 2
+/// minutes: more than any sound could hold before.
+pub(crate) const MAX_MEMORY_SECONDS: f32 = 960.0;
 /// The longest a pattern can be.
-pub(crate) const MAX_ARRAY_LENGTH: usize = 1024;
+pub const MAX_ARRAY_LENGTH: usize = 1024;
+/// The sizes a `spectral` can be, powers of two: each bin keeps a memory, and a spectrum comes
+/// that many samples late.
+pub(crate) const SPECTRUM_SIZES: std::ops::RangeInclusive<usize> = 256..=8192;
+/// The most spectra one sound has, as each costs a transform both ways and its bins.
+pub(crate) const MAX_SPECTRA: usize = 8;
 pub(crate) const MAX_OPERATIONS: usize = 4096;
-/// The most signals a stage of a sound takes from the stages and devices before it, and the
-/// most it hands on: each is a sound port of its processor.
-pub(crate) const MAX_STAGE_PORTS: usize = 8;
-/// The most numbers of devices a stage moves.
-pub(crate) const MAX_DEVICE_NUMBERS: usize = 32;
 
 /// The index of an operation, and of the register it writes.
 pub(crate) type Register = u16;
@@ -71,12 +79,16 @@ pub struct Code {
     pub numbers: Vec<String>,
     pub bangs: Vec<String>,
     pub notes: Vec<String>,
-    /// How many signals it takes from the stages and devices before it.
-    pub imports: usize,
+    /// Names of the sound outputs besides `audio`, in the order of [`Self::sound_outputs`].
+    pub sounds: Vec<String>,
     /// Of the graph and what it reads, so a behaviour tells new code from new values.
     pub hash: u64,
+    /// How many samples late its sound comes out: of the spectra on the way.
+    pub latency: u32,
     pub(crate) operations: Vec<Operation>,
     pub(crate) output: Output,
+    /// What leaves each sound output besides `audio`, in the same form as [`Self::output`].
+    pub(crate) sound_outputs: Vec<Output>,
     /// The register each feedback takes for the next frame, by its slot.
     pub(crate) feedbacks: Vec<Register>,
     /// The register of each watch, in the order of [`Self::watches`].
@@ -86,14 +98,34 @@ pub struct Code {
     /// The registers that send events, frame by frame: each bang's, then the gate, the pitch
     /// and the velocity of each notes.
     pub(crate) event_registers: Vec<Register>,
-    /// The left and the right of each signal it hands on to a stage or a device after it.
-    pub(crate) exports: Vec<[Register; 2]>,
-    /// The register of each number of a device it moves.
-    pub(crate) device_number_registers: Vec<Register>,
     pub(crate) slots: Slots,
 }
 
 impl Code {
+    /// Whether it calls `spectral`, which costs a transform per voice.
+    pub fn has_spectra(&self) -> bool {
+        !self.slots.spectra.is_empty()
+    }
+
+    /// How many sound outputs it has, its `audio` among them.
+    pub(crate) fn outputs(&self) -> usize {
+        1 + self.sound_outputs.len()
+    }
+
+    /// This code for samples of one channel: a read on the side of its channel is then the same
+    /// on both channels, so it runs once for both, as cheap as before samples were in stereo. A
+    /// sample in stereo is heard mixed.
+    pub fn with_samples_of_one_channel(mut self) -> Self {
+        for operation in &mut self.operations {
+            if let Operation::Read { table, .. } | Operation::Lookup { table, .. } = operation
+                && let Table::Sample(_, side @ Side::Channel) = table
+            {
+                *side = Side::Both;
+            }
+        }
+        self
+    }
+
     /// Whether what leaves it is what comes in, on each channel, and nothing else leaves: the
     /// code of a tool with no sound.
     pub(crate) fn passes_input(&self) -> bool {
@@ -101,12 +133,11 @@ impl Code {
             return false;
         };
         let input = self.operations.get(usize::from(register));
-        matches!(input, Some(Operation::Input))
+        matches!(input, Some(Operation::Input(0)))
+            && self.sound_outputs.is_empty()
             && self.watch_registers.is_empty()
             && self.number_registers.is_empty()
             && self.event_registers.is_empty()
-            && self.exports.is_empty()
-            && self.device_number_registers.is_empty()
     }
 }
 
@@ -117,6 +148,8 @@ pub(crate) enum Output {
     Mono(Register),
     /// The code runs once for both channels, and hears both.
     Stereo(Register, Register),
+    /// The magnitude and the phase of one bin, of the code of a `spectral`.
+    Bin(Register, Register),
 }
 
 /// How much of each kind of memory the operations use, per channel.
@@ -134,21 +167,47 @@ pub(crate) struct Slots {
     pub(crate) memories: u16,
     /// The seconds of each buffer.
     pub(crate) buffers: Vec<f32>,
+    pub(crate) spectra: Vec<SpectrumSpec>,
 }
 
-/// Where `lookup`, `length` and `at` read: a list of the record, or a buffer.
+/// A `spectral`: the code that runs once per bin of each spectrum, and what it reads of the
+/// sound around it. In that code a `Parameter` is one of those captures, as it was in the
+/// last sample of the hop.
+#[derive(Clone, Debug)]
+pub(crate) struct SpectrumSpec {
+    pub(crate) size: usize,
+    /// It takes a second input, see [`Operation::Spectral`].
+    pub(crate) side: bool,
+    pub(crate) code: Code,
+    pub(crate) captures: Vec<Register>,
+}
+
+/// Where `lookup`, `length` and `at` read: a pattern, a side of a sample, or a buffer.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Table {
     Array(u16),
+    Sample(u16, Side),
     Buffer(u16),
+}
+
+/// What a read of a sample hears. A sample of one channel is the same on every side.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Side {
+    /// The side of the channel the code runs on, in code that runs on each channel apart.
+    Channel,
+    Left,
+    Right,
+    /// Both sides mixed, where the code runs once for both channels or once per bin.
+    Both,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Operation {
     Constant(f32),
-    Input,
-    InputLeft,
-    InputRight,
+    /// Of a sound input: 0 is `audio`.
+    Input(u8),
+    InputLeft(u8),
+    InputRight(u8),
     Channel,
     SampleRate,
     Beat,
@@ -159,11 +218,6 @@ pub(crate) enum Operation {
     Gate,
     Velocity,
     Onset,
-    /// A signal from a stage or a device before: of the channel it runs on, or of one.
-    Import {
-        port: u16,
-        channel: Option<u8>,
-    },
     Parameter(u16),
     Live(u16),
     Trigger(u16),
@@ -185,10 +239,12 @@ pub(crate) enum Operation {
         slot: u16,
     },
     Filter {
-        kind: FilterKind,
+        kind: SvfShape,
         input: Register,
         hz: Register,
         q: Register,
+        /// In dB. A shape without a gain ignores it.
+        gain: Register,
         slot: u16,
     },
     Smooth {
@@ -231,6 +287,24 @@ pub(crate) enum Operation {
         index: Register,
         value: Register,
     },
+    Spectral {
+        input: Register,
+        /// A second input, whose bins the code reads beside those of `input`.
+        side: Option<Register>,
+        slot: u16,
+    },
+    /// What a bin of a spectrum is, in the code of a `spectral`.
+    Bin(BinValue),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BinValue {
+    Magnitude,
+    Phase,
+    Hz,
+    Index,
+    SideMagnitude,
+    SidePhase,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -266,11 +340,4 @@ pub(crate) enum Binary {
     Min,
     Max,
     Power,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub(crate) enum FilterKind {
-    LowPass,
-    HighPass,
-    BandPass,
 }

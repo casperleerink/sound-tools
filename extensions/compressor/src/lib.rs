@@ -36,7 +36,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, SIDECHAIN_INPUT};
 
@@ -111,24 +111,28 @@ impl From<Lookahead> for u8 {
 /// compressor.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct CompressorState {
-    /// The peak level in dBFS above which the compressor turns the sound down.
+    /// The peak level in dBFS above which the compressor turns the sound down. Lower compresses
+    /// more of the sound.
     pub threshold_db: f32,
-    /// How much it turns down: 4 means 4 dB over the threshold comes out as 1 dB over it.
+    /// How much it turns down: 4 means 4 dB over the threshold comes out as 1 dB over it. 1 does
+    /// nothing, 100 is a limiter.
     pub ratio: f32,
     /// How fast it turns down when the sound gets louder: the time to 63 % of the way.
     pub attack_ms: f32,
     /// How fast it lets go when the sound gets quieter: the time to 63 % of the way, after the
     /// loud part has left the last 10 ms.
     pub release_ms: f32,
-    /// The width of the bend around the threshold, in dB. 0 is a hard corner.
+    /// How gently it starts: the width of the bend around the threshold. 0 is a hard corner.
     pub knee_db: f32,
     /// Gain after the compression, to bring the level back up.
     pub makeup_db: f32,
-    /// 0 is the sound as it came in, 1 is the compressed sound only.
+    /// 0 is the sound as it came in, 1 is the compressed sound only. Between is parallel
+    /// compression.
     pub mix: f32,
-    /// How far ahead it listens. It delays the sound by as much, and reports that as its
-    /// latency, so the track stays in time.
+    /// How far ahead it listens, so it can turn down before a peak arrives. It delays the sound
+    /// by as much, and reports that as its latency, so the track stays in time.
     #[serde(rename = "lookahead_ms")]
     pub lookahead: Lookahead,
 }
@@ -232,7 +236,8 @@ impl State for CompressorState {
 /// The doc of the compressor record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "compressor",
-    when: "A compressor on a track: evener, punchier, tamer peaks",
+    group: "Devices",
+    when: "A compressor on a track: evener, punchier, tamer peaks, ducking",
     markdown: include_str!("../agent-doc.md"),
 };
 
@@ -241,7 +246,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<CompressorState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Compressor::AUTOMATION.parameters());
+        .schema(Compressor::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
@@ -276,18 +281,9 @@ fn apply(
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

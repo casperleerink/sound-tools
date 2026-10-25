@@ -1,6 +1,5 @@
-//! The card of the Sampler in the track panel, with a simulated mouse and keys: it is picked
-//! as the instrument of a track, a file dropped on it from the Finder or chosen in the file
-//! panel becomes its sample as one undo step, every knob and handle is one undo step, the
+//! The card of the Sampler in a rack, with a simulated mouse and keys: a file dropped on it
+//! from the Finder or chosen in the file panel becomes its sample as one undo step, every knob and handle is one undo step, the
 //! green line follows the last note, and a missing file shows on the card.
 
 use std::path::{Path, PathBuf};
@@ -8,13 +7,12 @@ use std::path::{Path, PathBuf};
 use gpui::{Entity, ExternalPaths, FileDropEvent, Pixels, Point, TestAppContext, point, px};
 use sampler::SamplerState;
 use sampler::view::{LOAD_LABEL, SamplerView};
-use sound_core::Changes;
 use sound_media::AudioAsset;
 
-use crate::support::{self, BAR, Opened, clip, id, note};
+use crate::rack::notes;
+use crate::support::{self, BAR, Opened, id};
 
-const SLOT: &str = "arrangement/track-1/instrument";
-const PART: &str = "arrangement/track-1/part";
+const SLOT: &str = "rack/instrument";
 
 /// A mono float WAV of `seconds` of a sine of 440 Hz that dies away, as a plucked sound does.
 fn write_wav(path: &Path, seconds: f64) {
@@ -34,29 +32,21 @@ fn write_wav(path: &Path, seconds: f64) {
     writer.finalize().unwrap();
 }
 
-/// One track whose instrument is a Sampler of `sampler`, with a clip of one long note, and
-/// its panel open. `file` is written into `assets/audio/` first, when there is one.
+/// A rack whose instrument is a Sampler of `sampler`, with a timeline of one long note. `file`
+/// is written into `assets/audio/` first, when there is one.
 fn open_with<'a>(
     cx: &'a mut TestAppContext,
     sampler: SamplerState,
     file: Option<&'static str>,
 ) -> Opened<'a> {
-    let mut opened = support::open_with(cx, |project| {
+    let sampler = serde_json::json!({ "tool": "sampler", "state": sampler }).to_string();
+    let part = notes(4 * BAR, &[(0, 4 * BAR, 60)]);
+    let children = [("instrument", sampler.as_str()), ("part", part.as_str())];
+    support::open_rack_after(cx, &children, |folder| {
         if let Some(name) = file {
-            write_wav(&project.root().join("assets/audio").join(name), 2.);
+            write_wav(&folder.join("assets/audio").join(name), 2.);
         }
-        let mut changes = Changes::new();
-        changes.delete(&id(SLOT));
-        project.commit("Remove synth", changes).unwrap();
-        let mut changes = Changes::new();
-        changes.create(id(SLOT), sampler);
-        changes.create(id(PART), clip(0, 4 * BAR, vec![note(0, 4 * BAR, 60)]));
-        project.commit("Add sampler", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    opened
+    })
 }
 
 fn with_sample(name: &str) -> SamplerState {
@@ -74,12 +64,7 @@ fn state(opened: &mut Opened<'_>) -> SamplerState {
 }
 
 fn view(opened: &mut Opened<'_>) -> Entity<SamplerView> {
-    let panel = opened.track_panel().unwrap();
-    let view = opened.cx.read(|cx| {
-        let mut views = panel.read(cx).device_views();
-        views.next().unwrap().cloned()
-    });
-    view.unwrap().downcast::<SamplerView>().ok().unwrap()
+    opened.card::<SamplerView>(SLOT)
 }
 
 /// A file dragged from the Finder over `to` and let go of there.
@@ -119,18 +104,9 @@ fn play(opened: &mut Opened<'_>, frames: usize) -> Vec<f32> {
 }
 
 #[gpui::test]
-fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| project.clear_history());
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("instrument-picker");
-    opened.click(trigger);
-    let row = opened.control("menu-sampler");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Choose Sampler"));
-    assert_eq!(state(&mut opened), SamplerState::default());
+fn an_empty_sampler_shows_choose_file_and_expands(cx: &mut TestAppContext) {
+    let mut opened = open_with(cx, SamplerState::default(), None);
     assert_eq!(opened.project(|project| project.problems()), []);
-    view(&mut opened);
     // The shown knobs, `Choose file` in the empty display, and none of the hidden knobs.
     for shown in [
         "knob-root",
@@ -142,7 +118,7 @@ fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppC
         assert!(opened.find(shown).is_some(), "{shown}");
     }
     assert_eq!(opened.find("knob-start"), None);
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     for hidden in [
         "knob-start",
@@ -158,11 +134,16 @@ fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppC
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
     // The card is 520 pt, and 817 expanded: its header is as wide, inside a border of 1 pt.
-    let width =
-        |opened: &mut Opened<'_>| opened.bounds("card-instrument-header").unwrap().size.width;
+    let width = |opened: &mut Opened<'_>| {
+        opened
+            .bounds("card-rack/instrument-header")
+            .unwrap()
+            .size
+            .width
+    };
     assert_eq!(width(&mut opened), px(817. - 2.));
     // The icon moved with the right edge.
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     assert_eq!(width(&mut opened), px(520. - 2.));
 }
@@ -308,7 +289,7 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     assert_eq!(state(&mut opened).root.number(), 59);
 
     // Behind expand: Reverse is one click and one step, and so is a key step of Tune.
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     let reverse = opened.control("toggle-reverse");
     opened.click(reverse);

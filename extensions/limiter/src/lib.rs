@@ -39,7 +39,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -116,15 +116,19 @@ impl From<Lookahead> for u8 {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default limiter.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct LimiterState {
-    /// How much louder the sound goes into the limiter.
+    /// How much louder the sound goes into the limiter. Every dB over the ceiling is taken off
+    /// again, so this makes the track louder without raising its peaks.
     pub gain_db: f32,
-    /// The highest a sample may reach, in dBFS.
+    /// The highest a sample may reach, in dBFS. Under it the sound passes untouched.
     pub ceiling_db: f32,
-    /// How long the gain takes to come back after a peak: the time to 63 % of the way.
+    /// How long the gain takes to come back after a peak: the time to 63 % of the way. Short is
+    /// louder and can distort bass; long is cleaner and can pump.
     pub release_ms: f32,
-    /// How far ahead it looks. It delays the sound by as much, and reports that as its
-    /// latency, so the track stays in time.
+    /// How far ahead it looks, so it turns down before a peak arrives and the top of the wave
+    /// keeps its shape. It delays the sound by as much, and reports that as its latency, so the
+    /// track stays in time. `0` adds no delay and clips the first edge of a peak.
     #[serde(rename = "lookahead_ms")]
     pub lookahead: Lookahead,
 }
@@ -190,6 +194,7 @@ impl State for LimiterState {
 /// The doc of the limiter record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "limiter",
+    group: "Devices",
     when: "A limiter on a track: louder, with no peak over a ceiling",
     markdown: include_str!("../agent-doc.md"),
 };
@@ -199,7 +204,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<LimiterState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Limiter::AUTOMATION.parameters());
+        .schema(Limiter::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
@@ -221,18 +226,9 @@ fn apply(state: &LimiterState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the
-    /// one definition, so they cannot drift from it.
-    #[test]
-    fn the_doc_gives_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

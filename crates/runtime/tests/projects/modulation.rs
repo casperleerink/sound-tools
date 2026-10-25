@@ -1,29 +1,24 @@
-//! The built-in modulation in the chain of a real track: an outside agent changes it by file
+//! The built-in modulation in a rack after the synth: an outside agent changes it by file
 //! while the project plays and the change is heard.
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, Harness, clip, difference, synth};
 
-const FOLDER: &str = "state/arrangement/organ";
-const MODULATION_FILE: &str = "state/arrangement/organ/swirl.json";
+const MODULATION_FILE: &str = "state/rack/swirl.json";
 
-/// A track that plays long chords for four bars through a modulation named `swirl`.
+/// A rack that plays long chords for four bars through a modulation named `swirl`.
 fn organ_through(modulation: &str) -> Harness {
-    let mut harness = Harness::new();
     let chords = [
         (0, 3840, 48),
         (0, 3840, 55),
         (3840, 3840, 60),
         (3840, 3840, 64),
     ];
-    harness.write_track("organ", 1, 0.15, &[("chords", clip(0, 15360, &chords))]);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "organ", "order": 1, "effects": ["swirl"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(MODULATION_FILE, modulation),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chords) = (synth(0.15), clip(0, 15360, &chords));
+    Harness::rack(&[
+        ("instrument", &synth),
+        ("chords", &chords),
+        ("swirl", modulation),
+    ])
 }
 
 fn record(state: &str) -> String {

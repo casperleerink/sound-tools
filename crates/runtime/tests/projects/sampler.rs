@@ -1,4 +1,4 @@
-//! The Sampler as the instrument of a real track: an outside agent changes it by file while it
+//! The Sampler as the instrument of a rack: an outside agent changes it by file while it
 //! plays and the change is heard with its glide and undone in one step, it comes back as it was
 //! after close and reopen and renders the same to the byte, and a missing file is listed in
 //! `problems.txt` while the rest plays.
@@ -8,27 +8,18 @@ use sound_core::{Changes, InstanceId};
 use sound_media::AudioAsset;
 use sound_notes::Pitch;
 
-use crate::support::{BAR, Harness, TRACK, clip, difference, write_samples};
+use crate::support::{BAR, Harness, clip, difference, synth, write_samples};
 
-const FOLDER: &str = "state/arrangement/keys";
-const SAMPLER_FILE: &str = "state/arrangement/keys/instrument.json";
+const SAMPLER_FILE: &str = "state/rack/instrument.json";
 
 fn record(state: &str) -> String {
     format!(r#"{{"tool": "sampler", "state": {state}}}"#)
 }
 
-/// A track `keys` whose Sampler holds one C4 for two bars, with this record.
-fn keys_with(harness: &mut Harness, sampler: &str) {
-    let track = TRACK.replace("NAME", "keys").replace("ORDER", "1");
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), &track),
-        harness.write(SAMPLER_FILE, sampler),
-        harness.write(
-            &format!("{FOLDER}/held.json"),
-            &clip(0, 7680, &[(0, 7680, 60)]),
-        ),
-    ];
-    assert_eq!(harness.apply(&paths), 3);
+/// The folder of `harness` as a rack whose Sampler, with this record, holds one C4 for two bars.
+fn keys_with(harness: Harness, sampler: &str) -> Harness {
+    let held = clip(0, 7680, &[(0, 7680, 60)]);
+    harness.with_racks(&[("rack", &[("instrument", sampler), ("held", &held)])])
 }
 
 /// The left channel of an interleaved render.
@@ -38,10 +29,10 @@ fn left(samples: &[f32]) -> Vec<f32> {
 
 #[test]
 fn an_outside_edit_of_the_sampler_while_it_plays_is_heard_with_its_glide_and_undone_in_one_step() {
-    let mut harness = Harness::new();
+    let harness = Harness::new();
     // A steady level at 44.1 kHz, which the engine plays at 48 kHz.
     write_samples(&harness, "steady.wav", 44_100, 5.0, |_| 0.25);
-    keys_with(&mut harness, &record(r#"{"sample": "steady.wav"}"#));
+    let mut harness = keys_with(harness, &record(r#"{"sample": "steady.wav"}"#));
     assert_eq!(harness.project.problems(), []);
 
     let mut played = left(&harness.play_from_the_start(BAR / 2));
@@ -80,12 +71,12 @@ fn an_outside_edit_of_the_sampler_while_it_plays_is_heard_with_its_glide_and_und
 /// before it, to the byte.
 #[test]
 fn the_sampler_comes_back_after_close_and_reopen_and_renders_the_same() {
-    let mut harness = Harness::new();
+    let harness = Harness::new();
     write_samples(&harness, "kalimba.wav", 48_000, 2.0, |time| {
         (std::f64::consts::TAU * 523.25 * time).sin() as f32 * (-3.0 * time).exp() as f32 * 0.5
     });
-    keys_with(&mut harness, &record(r#"{"sample": "kalimba.wav"}"#));
-    let id = InstanceId::new("arrangement/keys/instrument").unwrap();
+    let mut harness = keys_with(harness, &record(r#"{"sample": "kalimba.wav"}"#));
+    let id = InstanceId::new("rack/instrument").unwrap();
     let sampler = harness.project.resolve::<SamplerState>(&id).unwrap();
     let sound = SamplerState {
         sample: Some(AudioAsset::new("kalimba.wav").unwrap()),
@@ -156,18 +147,19 @@ fn the_sampler_comes_back_after_close_and_reopen_and_renders_the_same() {
 #[test]
 fn a_missing_sample_is_in_problems_txt_and_the_rest_plays() {
     let piano_and_keys = |sampler: &str| {
-        let mut harness = Harness::new();
-        let chord = clip(0, 7680, &[(0, 7680, 48)]);
-        harness.write_track("piano", 2, 0.15, &[("chord", chord)]);
-        keys_with(&mut harness, &record(sampler));
-        harness
+        let (synth, chord) = (synth(0.15), clip(0, 7680, &[(0, 7680, 48)]));
+        let (sampler, held) = (record(sampler), clip(0, 7680, &[(0, 7680, 60)]));
+        Harness::racks(&[
+            ("piano", &[("instrument", &synth), ("chord", &chord)]),
+            ("keys", &[("instrument", &sampler), ("held", &held)]),
+        ])
     };
     let mut harness = piano_and_keys(r#"{"sample": "gone.wav"}"#);
     harness.project.poll().unwrap();
     let problems = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
     assert!(
         problems.contains(
-            "state/arrangement/keys/instrument.json: the sample assets/audio/gone.wav is not there, so the Sampler is silent"
+            "state/keys/instrument.json: the sample assets/audio/gone.wav is not there, so the Sampler is silent"
         ),
         "{problems}"
     );

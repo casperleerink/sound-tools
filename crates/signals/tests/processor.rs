@@ -9,7 +9,7 @@ use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput,
     EventTap, Node, Ports, PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_notes::{NoteEvent, Performed, Pitch, Velocity};
+use sound_notes::{NoteEvent, NoteFeed, NoteFeedUpdate, Pedal, Performed, Pitch, Velocity};
 use sound_signals::{
     Bang, Cable, Code, Control, Kind, Machine, Number, Signals, SignalsUpdate, Values,
 };
@@ -83,7 +83,7 @@ fn play(kind: Kind, code: Code, notes: Vec<(usize, NoteEvent)>) -> Played {
     let signals = edit.add_processor("signals", signals).unwrap();
     edit.connect(Connection::to_device(signals.id(), Signals::OUTPUT, 0))
         .unwrap();
-    if kind != Kind::Effect {
+    if !notes.is_empty() {
         let score = edit
             .add_processor("score", Score { notes, frame: 0 })
             .unwrap();
@@ -296,11 +296,30 @@ fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
 }
 
 #[test]
+fn a_spectral_says_how_late_it_plays_and_plays_that_late() {
+    let tone = |frame: usize| 0.5 * (TAU * 440.0 * frame as f32 / SAMPLE_RATE as f32).sin();
+    let code = compile(|| {
+        let tone = 0.5 * sin(phasor(440.0) * TAU);
+        spectral(tone, 256, |bin| (bin.magnitude, bin.phase))
+    });
+    let mut played = play(Kind::One, code, Vec::new());
+    let output = played.render(4096);
+    assert_eq!(played.control.poll().unwrap().latency, 255);
+    for (frame, sample) in output.iter().enumerate().skip(255) {
+        let expected = tone(frame - 255);
+        assert!(
+            (sample - expected).abs() < 1e-3,
+            "frame {frame}: {sample} for {expected}"
+        );
+    }
+}
+
+#[test]
 fn a_source_sounds_with_no_note_and_follows_the_newest_held_one() {
     // Before any note `gate` is 0, so this drone plays 110 Hz until a note comes.
     let code = compile(|| 0.2 * sin(phasor(mix(110.0, freq(), gate())) * TAU));
     let notes = vec![(24_000, on(69)), (36_000, on(81)), (42_000, off(81))];
-    let mut played = play(Kind::Source, code, notes);
+    let mut played = play(Kind::One, code, notes);
     let output = played.render(48_000);
     assert!((frequency(&output[..24_000]) - 110.0).abs() < 1.0);
     assert!((frequency(&output[24_100..36_000]) - 440.0).abs() < 1.0);
@@ -318,7 +337,7 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
         watch("total", count.read());
         0.0
     });
-    let mut played = play(Kind::Source, code, Vec::new());
+    let mut played = play(Kind::One, code, Vec::new());
     played.render(64);
     for _ in 0..3 {
         played
@@ -435,7 +454,7 @@ fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_ke
 
 #[test]
 fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once() {
-    let mut played = play(Kind::Source, compile(|| trigger("hit")), Vec::new());
+    let mut played = play(Kind::One, compile(|| trigger("hit")), Vec::new());
     // Engine time is 640 from here.
     played.render(640);
     for at in [1_000, 100] {
@@ -453,7 +472,7 @@ fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once()
 #[test]
 fn a_live_control_glides_to_where_the_interface_puts_it() {
     let mut played = play(
-        Kind::Source,
+        Kind::One,
         compile(|| live("x", 0.0, [0.0, 1.0])),
         Vec::new(),
     );
@@ -461,6 +480,7 @@ fn a_live_control_glides_to_where_the_interface_puts_it() {
     let live = SignalsUpdate::Live {
         index: 0,
         value: 1.0,
+        at: None,
     };
     played.control.update(played.signals, live).unwrap();
     let output = played.render(1_920);
@@ -473,7 +493,7 @@ fn a_live_control_glides_to_where_the_interface_puts_it() {
 
 #[test]
 fn the_beat_counts_quarter_notes_while_the_transport_plays() {
-    let mut played = play(Kind::Source, compile(|| beat() / 100.0), Vec::new());
+    let mut played = play(Kind::One, compile(|| beat() / 100.0), Vec::new());
     assert_eq!(played.render(4_800)[4_799], 0.0);
     played.control.play();
     // 120 bpm is two quarter notes a second.
@@ -496,7 +516,7 @@ fn an_instrument_silent_until_the_transport_stops_hears_the_beat_where_it_stoppe
         played.render(4_800)[4_799]
     };
     let instrument = stopped(Kind::Instrument { voices: 1 }, vec![(4_900, on(60))]);
-    let source = stopped(Kind::Source, vec![(0, on(60))]);
+    let source = stopped(Kind::One, vec![(0, on(60))]);
     assert!(source > 0.0);
     assert_eq!(instrument, source);
 }
@@ -504,13 +524,14 @@ fn an_instrument_silent_until_the_transport_stops_hears_the_beat_where_it_stoppe
 #[test]
 fn a_live_control_stays_where_it_is_when_the_code_is_new() {
     let mut played = play(
-        Kind::Source,
+        Kind::One,
         compile(|| live("x", 0.0, [0.0, 1.0])),
         Vec::new(),
     );
     let moved = SignalsUpdate::Live {
         index: 0,
         value: 1.0,
+        at: None,
     };
     played.control.update(played.signals, moved).unwrap();
     played.render(1_920);
@@ -540,9 +561,9 @@ fn new_code(kind: Kind, code: Code) -> SignalsUpdate {
 
 #[test]
 fn new_code_fades_in_without_a_jump() {
-    let mut played = play(Kind::Source, compile(|| 0.5), Vec::new());
+    let mut played = play(Kind::One, compile(|| 0.5), Vec::new());
     played.render(640);
-    let update = new_code(Kind::Source, compile(|| -0.5));
+    let update = new_code(Kind::One, compile(|| -0.5));
     played.control.update(played.signals, update).unwrap();
     let output = played.render(1_920);
     let steps = output.windows(2).map(|pair| (pair[1] - pair[0]).abs());
@@ -551,7 +572,7 @@ fn new_code_fades_in_without_a_jump() {
     assert_eq!(output[1_919], -0.5);
 }
 
-/// Sends one lane of automation, as an arrangement does, for its first `blocks` blocks.
+/// Sends one lane of automation, as a `lane` child does, for its first `blocks` blocks.
 struct Lane {
     value: f32,
     blocks: usize,
@@ -589,7 +610,7 @@ fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
     values.parameters[0] = 0.25;
     values.automated = vec![0];
     let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
-    let signals = Signals::new(Kind::Source, machine, values, Vec::new());
+    let signals = Signals::new(Kind::One, machine, values, Vec::new());
     let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
     let mut edit = control.edit();
     let signals = edit.add_processor("signals", signals).unwrap();
@@ -742,9 +763,9 @@ fn a_score_of_every_timing_renders_as_it_did() {
             scored_instrument(false),
             scored_instrument(true),
         ),
-        score_tool(Kind::Source, scored_source(110.0), scored_source(220.0)),
-        score_tool(Kind::Effect, scored_effect(false), scored_effect(true)),
-        score_tool(Kind::Effect, scored_tape(600.0), scored_tape(1_000.0)),
+        score_tool(Kind::One, scored_source(110.0), scored_source(220.0)),
+        score_tool(Kind::One, scored_effect(false), scored_effect(true)),
+        score_tool(Kind::One, scored_tape(600.0), scored_tape(1_000.0)),
     ];
     let mut found = Vec::new();
     for tool in &tools {
@@ -809,7 +830,7 @@ fn patched_in(
     let (mut control, engine) = Engine::new(config);
     let mut edit = control.edit();
     let sender = edit
-        .add_processor("sender", signals(Kind::Source, sender))
+        .add_processor("sender", signals(Kind::One, sender))
         .unwrap();
     let receiver = edit
         .add_processor("receiver", signals(kind, receiver))
@@ -828,7 +849,7 @@ fn patched_in(
 }
 
 /// A [`Cable`] from `output` of `sender` into the controls of `receiver`, at `place`.
-fn cable<From: sound_core::Event>(
+fn cable<From: sound_core::Event + sound_signals::Shown>(
     edit: &mut sound_core::Edit<'_>,
     (sender, output): (Node<Signals>, EventOutput<From>),
     (receiver, place): (Node<Signals>, u16),
@@ -863,13 +884,9 @@ fn a_bang_of_one_sound_fires_a_trigger_of_another_on_its_frame() {
         let _first = trigger("first");
         trigger("second")
     });
-    let mut played = patched(
-        sender,
-        (Kind::Source, receiver),
-        |edit, sender, receiver| {
-            cable::<Bang>(edit, (sender, Signals::bang(0)), (receiver, 1));
-        },
-    );
+    let mut played = patched(sender, (Kind::One, receiver), |edit, sender, receiver| {
+        cable::<Bang>(edit, (sender, Signals::bang(0)), (receiver, 1));
+    });
     let output = played.render(2_048);
     let fired: Vec<usize> = (0..output.len()).filter(|&at| output[at] == 1.0).collect();
     assert_eq!(fired, [100, 1_000]);
@@ -882,13 +899,9 @@ fn a_number_of_one_sound_moves_a_live_control_of_another() {
         0.0
     });
     let receiver = compile(|| live("level", 0.0, [0.0, 1.0]));
-    let mut played = patched(
-        sender,
-        (Kind::Source, receiver),
-        |edit, sender, receiver| {
-            cable::<Number>(edit, (sender, Signals::number(0)), (receiver, 0));
-        },
-    );
+    let mut played = patched(sender, (Kind::One, receiver), |edit, sender, receiver| {
+        cable::<Number>(edit, (sender, Signals::number(0)), (receiver, 0));
+    });
     assert_eq!(played.render(2_048)[2_047], 0.5);
 }
 
@@ -997,7 +1010,7 @@ fn a_held_note_follows_its_output_to_another_port_when_the_code_changes() {
         0.0
     });
     let mut edit = played.control.edit();
-    edit.update(sender, new_code(Kind::Source, let_go)).unwrap();
+    edit.update(sender, new_code(Kind::One, let_go)).unwrap();
     let from = |index| {
         Connection::new(
             sender.id(),
@@ -1045,7 +1058,7 @@ impl Processor for Odd {
 fn hearing_odd(code: Code, notes: Vec<(usize, NoteEvent)>) -> Played {
     let watches: Vec<Watch> = code.watches.iter().map(|_| Watch::new()).collect();
     let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
-    let signals = Signals::new(Kind::Effect, machine, Values::default(), watches.clone());
+    let signals = Signals::new(Kind::One, machine, Values::default(), watches.clone());
     let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
     let mut edit = control.edit();
     let signals = edit.add_processor("signals", signals).unwrap();
@@ -1095,8 +1108,98 @@ fn code_that_passes_its_input_plays_the_bytes_the_code_plays_and_leaves_the_same
     // New code hears where the beat stopped, the key that is still down and no new note.
     for played in &mut both {
         let code = compile(|| beat() + hold(beat(), onset()) + pitch() * gate() / 1_000.0);
-        let update = new_code(Kind::Effect, code);
+        let update = new_code(Kind::One, code);
         played.control.update(played.signals, update).unwrap();
     }
     render(&mut both, 1_920);
+}
+
+#[test]
+fn a_live_control_moves_at_the_frame_the_interface_says() {
+    let mut played = play(
+        Kind::One,
+        compile(|| live("x", 0.0, [0.0, 1.0])),
+        Vec::new(),
+    );
+    let later = SignalsUpdate::Live {
+        index: 0,
+        value: 1.0,
+        at: Some(4_800),
+    };
+    played.control.update(played.signals, later).unwrap();
+    let output = played.render(9_600);
+    assert_eq!(output[4_799], 0.0);
+    assert_eq!(output[9_599], 1.0);
+}
+
+fn performed(event: NoteEvent) -> SignalsUpdate {
+    SignalsUpdate::Note(Performed::Send { event, at: 0 })
+}
+
+#[test]
+fn a_gone_performer_leaves_the_note_another_sender_holds_on_its_key() {
+    let notes = vec![(4_800, on(60))];
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), notes);
+    played
+        .control
+        .update(played.signals, performed(on(60)))
+        .unwrap();
+    played.render(9_600);
+    played
+        .control
+        .update(played.signals, SignalsUpdate::PerformerGone)
+        .unwrap();
+    assert!(loudest(&played.render(9_600)[4_800..]) > 0.1);
+}
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_holds() {
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
+    let down = NoteEvent::Pedal(Pedal::new(127).unwrap());
+    for event in [down, on(60), off(60)] {
+        played
+            .control
+            .update(played.signals, performed(event))
+            .unwrap();
+    }
+    assert!(loudest(&played.render(9_600)[4_800..]) > 0.1);
+    played
+        .control
+        .update(played.signals, SignalsUpdate::PerformerGone)
+        .unwrap();
+    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
+}
+
+/// Two senders into a feed hold one key: the feed passes the off only once both let go, and the
+/// voice ends with it.
+#[test]
+fn a_key_two_senders_hold_through_a_feed_ends_when_the_feed_lets_it_go() {
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
+    let mut edit = played.control.edit();
+    let feed = edit.add_processor("feed", NoteFeed::default()).unwrap();
+    let into = Connection::new(
+        feed.id(),
+        NoteFeed::OUTPUT,
+        played.signals.id(),
+        Signals::NOTES,
+    );
+    edit.connect(into).unwrap();
+    edit.commit().unwrap();
+    let pitch = Pitch::new(60).unwrap();
+    let velocity = Velocity::new(100).unwrap();
+    for at in [0, 4_800] {
+        let note = Performed::Play {
+            pitch,
+            velocity,
+            at,
+            frames: 9_600,
+        };
+        played
+            .control
+            .update(feed, NoteFeedUpdate::Note(note))
+            .unwrap();
+    }
+    let output = played.render(24_000);
+    assert!(loudest(&output[9_600..14_400]) > 0.1);
+    assert_eq!(loudest(&output[14_500..]), 0.0);
 }

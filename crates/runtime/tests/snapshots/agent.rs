@@ -25,11 +25,11 @@ use gpui::{AppContext, Entity, HeadlessAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ExitReason, Installed, Model, Sidebar, StepId,
-    StepOutcome, TurnOutcome,
+    StepKind, StepOutcome, TurnOutcome,
 };
 use sound_ui::components::dropdown_menu::MenuPicked;
 
-use super::{Opened, piece};
+use super::{Opened, Save};
 
 /// The first answer, with the markdown an answer has.
 const ANSWER: &str = "Added a **bass line** in bars 5 to 8:
@@ -39,10 +39,7 @@ const ANSWER: &str = "Added a **bass line** in bars 5 to 8:
 
 Say *softer* if it sits too loud.";
 
-pub(crate) fn snapshots(
-    cx: &mut HeadlessAppContext,
-    save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
-) -> Result<()> {
+pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     let (opened, sidebar) = open_with_sidebar(cx)?;
     let step = |id: &str| StepId(id.to_string());
     // The first turn ends now, so it worked for 12 s.
@@ -82,9 +79,12 @@ pub(crate) fn snapshots(
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("read"),
-                        title: "Read state/arrangement/piano/verse.json".to_string(),
-                        request_title: "Read state/arrangement/piano/verse.json".to_string(),
-                        running_title: "Reading state/arrangement/piano/verse.json".to_string(),
+                        title: "Read state/song/piano/verse.json".to_string(),
+                        request_title: "Read state/song/piano/verse.json".to_string(),
+                        running_title: "Reading state/song/piano/verse.json".to_string(),
+                        kind: StepKind::Read {
+                            path: "state/song/piano/verse.json".to_string(),
+                        },
                     },
                     AgentEvent::StepDone {
                         id: step("read"),
@@ -92,9 +92,12 @@ pub(crate) fn snapshots(
                     },
                     AgentEvent::StepStarted {
                         id: step("write"),
-                        title: "Wrote state/arrangement/bass/clip-005.json".to_string(),
-                        request_title: "Write state/arrangement/bass/clip-005.json".to_string(),
-                        running_title: "Writing state/arrangement/bass/clip-005.json".to_string(),
+                        title: "Wrote state/song/bass/clip-005.json".to_string(),
+                        request_title: "Write state/song/bass/clip-005.json".to_string(),
+                        running_title: "Writing state/song/bass/clip-005.json".to_string(),
+                        kind: StepKind::Change {
+                            path: "state/song/bass/clip-005.json".to_string(),
+                        },
                     },
                     AgentEvent::StepDone {
                         id: step("write"),
@@ -119,6 +122,7 @@ pub(crate) fn snapshots(
                         request_title: "Run `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
                         // Longer than the line: it ends in an ellipsis.
                         running_title: "Running `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
+                        kind: StepKind::Run,
                     },
                 ],
                 cx,
@@ -126,7 +130,7 @@ pub(crate) fn snapshots(
         })
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-sidebar")?;
+    save(cx, opened.window.into(), "agent-sidebar")?;
 
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("build".to_string()),
@@ -134,14 +138,14 @@ pub(crate) fn snapshots(
     };
     cx.update(|cx| sidebar.update(cx, |sidebar, cx| sidebar.receive([question], cx)));
     cx.run_until_parked();
-    save(cx, &opened, "agent-approval")?;
+    save(cx, opened.window.into(), "agent-approval")?;
 
     // Closed while it waits: the icon carries the indicator.
     opened.key("secondary-l", cx)?;
     opened.key("secondary-l", cx)?;
     let open = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.left_panel_open()))?;
     anyhow::ensure!(!open, "the sidebar did not close");
-    save(cx, &opened, "agent-closed-working")?;
+    save(cx, opened.window.into(), "agent-closed-working")?;
 
     // Opened again: the command was denied, and the turn failed.
     opened.key("secondary-l", cx)?;
@@ -166,14 +170,14 @@ pub(crate) fn snapshots(
         })
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-failed")?;
+    save(cx, opened.window.into(), "agent-failed")?;
 
     // A turn with a failed step, which leaves two files that are not live. It worked for 47 s.
     let drums_started = SystemTime::now()
         .checked_sub(Duration::from_secs(47))
         .context("a clock this early")?;
     let root = cx.update(|cx| opened.session.read(cx).project().root().to_path_buf());
-    let broken: Vec<PathBuf> = ["state/arrangement/drums/swing.json", "state/tone/kick.json"]
+    let broken: Vec<PathBuf> = ["state/song/drums/swing.json", "state/tone/kick.json"]
         .into_iter()
         .map(|file| root.join(file))
         .collect();
@@ -185,9 +189,12 @@ pub(crate) fn snapshots(
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("edit"),
-                        title: "Edited state/arrangement/drums/clip-001.json".to_string(),
-                        request_title: "Edit state/arrangement/drums/clip-001.json".to_string(),
-                        running_title: "Editing state/arrangement/drums/clip-001.json".to_string(),
+                        title: "Edited state/song/drums/clip-001.json".to_string(),
+                        request_title: "Edit state/song/drums/clip-001.json".to_string(),
+                        running_title: "Editing state/song/drums/clip-001.json".to_string(),
+                        kind: StepKind::Change {
+                            path: "state/song/drums/clip-001.json".to_string(),
+                        },
                     },
                     AgentEvent::StepDone {
                         id: step("edit"),
@@ -198,6 +205,7 @@ pub(crate) fn snapshots(
                         title: "Ran `cargo test -p drums`".to_string(),
                         request_title: "Run `cargo test -p drums`".to_string(),
                         running_title: "Running `cargo test -p drums`".to_string(),
+                        kind: StepKind::Run,
                     },
                     AgentEvent::StepDone {
                         id: step("test"),
@@ -236,7 +244,7 @@ pub(crate) fn snapshots(
         })
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-steps-problems")?;
+    save(cx, opened.window.into(), "agent-steps-problems")?;
 
     let (model_menu, access_menu, new_menu) = cx.update(|cx| {
         let sidebar = sidebar.read(cx);
@@ -252,7 +260,7 @@ pub(crate) fn snapshots(
             menu.update(cx, |menu, cx| menu.open(window, cx));
         })?;
         cx.run_until_parked();
-        save(cx, &opened, name)?;
+        save(cx, opened.window.into(), name)?;
         cx.update_window(opened.window.into(), |_, window, cx| {
             menu.update(cx, |menu, cx| menu.close(window, cx));
         })?;
@@ -281,7 +289,7 @@ pub(crate) fn snapshots(
         })
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-cannot-continue")?;
+    save(cx, opened.window.into(), "agent-cannot-continue")?;
     drop(opened);
 
     // A new thread under "Never ask".
@@ -301,7 +309,7 @@ pub(crate) fn snapshots(
         })
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-never-ask")?;
+    save(cx, opened.window.into(), "agent-never-ask")?;
 
     let long = (1..=12)
         .map(|line| format!("Line {line} of a long message to the agent."))
@@ -312,7 +320,7 @@ pub(crate) fn snapshots(
         composer.update(cx, |composer, cx| composer.set_text(long, cx));
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-composer-full")?;
+    save(cx, opened.window.into(), "agent-composer-full")?;
 
     // The project's instructions, none yet, in place of the thread.
     cx.update(|cx| {
@@ -322,7 +330,7 @@ pub(crate) fn snapshots(
         });
     });
     cx.run_until_parked();
-    save(cx, &opened, "agent-instructions")?;
+    save(cx, opened.window.into(), "agent-instructions")?;
     Ok(())
 }
 
@@ -345,7 +353,7 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
         })
         .install(cx)
     });
-    let opened = Opened::new(cx, piece);
+    let opened = Opened::open(cx, &crate::song::song_files(2, 2));
     // The other snapshots show the window with no panel.
     cx.update(|cx| cx.remove_global::<LeftPanelSlot>());
     let opened = opened?;

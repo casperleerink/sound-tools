@@ -14,7 +14,7 @@ use sound_core::{
 };
 use sound_notes::{
     Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate, Pattern, Pitch,
-    PlayerWatches, QUEUED_STOP, Quantize, Velocity,
+    Placing, PlayerWatches, QUEUED_STOP, Quantize, Velocity,
 };
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -125,8 +125,36 @@ impl Harness {
     }
 
     fn launch(&mut self, pattern: Option<usize>, quantize: Quantize) {
-        let launch = NotePlayerUpdate::Launch(Launch { pattern, quantize });
+        let launch = NotePlayerUpdate::Launch(Launch {
+            pattern,
+            quantize,
+            once: false,
+            after: Ticks(0),
+        });
         self.control.update(self.player, launch).unwrap();
+    }
+
+    fn once(&mut self, quantize: Quantize) {
+        let launch = Launch {
+            pattern: Some(0),
+            quantize,
+            once: true,
+            after: Ticks(0),
+        };
+        (self.control)
+            .update(self.player, NotePlayerUpdate::Launch(launch))
+            .unwrap();
+    }
+
+    fn place(&mut self, at: u64, once: bool) {
+        let placing = Placing {
+            pattern: Some(0),
+            at: Ticks(at),
+            once,
+        };
+        (self.control)
+            .update(self.player, NotePlayerUpdate::Place(placing))
+            .unwrap();
     }
 
     fn swap(&mut self, patterns: Vec<Pattern>) {
@@ -453,4 +481,64 @@ proptest! {
         let status = harness.control.poll().unwrap();
         prop_assert_eq!(status.event_overflows, 0);
     }
+}
+
+#[test]
+fn a_placed_pattern_loops_from_its_tick_through_a_seek_and_plays_nothing_before_it() {
+    let mut harness = Harness::new(vec![two_notes()]);
+    harness.place(1000, false);
+    harness.control.play();
+    let mut output = harness.render_ticks(2000);
+    // A seek while stopped moves no placed pattern, as it moves a launched one.
+    harness.control.pause();
+    harness.control.seek(Ticks(500));
+    output.extend(harness.render(100));
+    harness.control.play();
+    output.extend(harness.render_ticks(600));
+    let expected = [
+        (1000, 60.0),
+        (1240, 0.0),
+        (1480, 62.0),
+        (1720, 0.0),
+        (1960, 60.0),
+    ];
+    let mut changes = at_ticks(&expected);
+    // The pause ends the note of 1960; from 500 the next note is the one of 1000.
+    changes.push((2000 * TICK, 0.0));
+    changes.push((2000 * TICK + 100 + 500 * TICK, 60.0));
+    assert_eq!(level_changes(&output), changes);
+}
+
+#[test]
+fn a_pattern_played_once_stops_after_its_round_placed_or_launched() {
+    let mut harness = Harness::new(vec![two_notes()]);
+    harness.place(960, true);
+    harness.control.play();
+    let output = harness.render_ticks(3000);
+    let expected = [(960, 60.0), (1200, 0.0), (1440, 62.0), (1680, 0.0)];
+    assert_eq!(level_changes(&output), at_ticks(&expected));
+    assert_eq!(harness.watched().0, NO_PATTERN);
+
+    let mut harness = Harness::new(vec![two_notes()]);
+    harness.control.play();
+    let mut output = harness.render_ticks(100);
+    harness.once(Quantize::Beat);
+    output.extend(harness.render_ticks(2900));
+    let expected = [(960, 60.0), (1200, 0.0), (1440, 62.0), (1680, 0.0)];
+    assert_eq!(level_changes(&output), at_ticks(&expected));
+}
+
+#[test]
+fn placing_again_ends_the_notes_the_pattern_holds() {
+    let mut harness = Harness::new(vec![pattern(960, &[note(0, 900, 60)])]);
+    harness.place(0, false);
+    harness.control.play();
+    let mut output = harness.render_ticks(100);
+    harness.place(5000, false);
+    output.extend(harness.render_ticks(200));
+    let changes = level_changes(&output);
+    assert_eq!(changes.first(), Some(&(0, 60.0)));
+    let (ended, level) = changes[1];
+    assert_eq!(level, 0.0);
+    assert!((100 * TICK..100 * TICK + 100).contains(&ended), "{ended}");
 }

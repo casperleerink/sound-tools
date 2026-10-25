@@ -10,22 +10,21 @@ use crate::plugin_hosts::open_read_only;
 use crate::support::{Harness, write};
 
 /// A sine at `hz` that runs all the time.
-const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
+const DRONE: &str = r#"import { number, sine, tool } from "./sdk";
 
 tool({
   name: "drone",
   title: "Drone",
   when: "You want a drone",
   doc: "A sine that never stops.",
-  kind: "source",
-  state: { hz: knob({ min: 20, max: 2000, default: 220, unit: "hz" }) },
+  state: { hz: number({ min: 20, max: 2000, default: 220, unit: "hz" }) },
   sound: ({ hz }) => sine(hz).times(0.25),
 });
 "#;
 
 /// Plays the child its record names through the effects it lists, into its own sound. It throws
 /// for a lead named `boom`.
-const BAND: &str = r#"import { input, knob, list, text, tool, type Connection } from "./sdk";
+const BAND: &str = r#"import { input, number, list, text, tool, type Connection } from "./sdk";
 
 tool({
   name: "band",
@@ -35,7 +34,7 @@ tool({
   state: {
     lead: text({ default: "low" }),
     effects: list(text(), { max: 4 }),
-    level: knob({ min: 0, max: 1, default: 1 }),
+    level: number({ min: 0, max: 1, default: 1 }),
   },
   sound: ({ level }) => input.times(level),
   behaviour: ({ state: { lead, effects } }) => {
@@ -53,23 +52,23 @@ tool({
 
 /// The owner of the doc for agents that write tools, as it is written there.
 fn doc_owner() -> String {
-    let doc = sound_typescript::AGENT_DOC.markdown;
-    let mut blocks = doc.split("```ts\n");
+    let mut blocks =
+        (sound_typescript::AGENT_DOCS.iter()).flat_map(|doc| doc.markdown.split("```ts\n"));
     let block = blocks.find(|block| block.contains("behaviour:")).unwrap();
     block.split("```").next().unwrap().to_string()
 }
 
 /// A project of `band` at the top, connected to the device, with three drones and a delay.
-fn band(record: &str) -> Option<Harness> {
+fn band(record: &str) -> Harness {
     band_of(BAND, record)
 }
 
 /// [`band`], with the tool `band` of `code`.
-fn band_of(code: &str, record: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn band_of(code: &str, record: &str) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = r#"{"format": 1, "extensions": ["delay"],
@@ -99,7 +98,7 @@ fn band_of(code: &str, record: &str) -> Option<Harness> {
         "state/band/echo.json",
         r#"{"tool": "delay", "state": {}}"#,
     );
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 /// How often the left channel rises through zero in a second of `samples`.
@@ -115,9 +114,7 @@ fn record(state: &str) -> String {
 
 #[test]
 fn an_owner_plays_its_source_child_through_its_effect_child_into_its_own_sound() {
-    let Some(mut harness) = band_of(&doc_owner(), &record(r#"{"effects": ["echo"]}"#)) else {
-        return;
-    };
+    let mut harness = band_of(&doc_owner(), &record(r#"{"effects": ["echo"]}"#));
     assert_eq!(harness.project.problems(), []);
     let played = harness.play(48_000);
     let peak = played
@@ -134,9 +131,7 @@ fn an_owner_plays_its_source_child_through_its_effect_child_into_its_own_sound()
 
 #[test]
 fn a_change_of_the_record_plays_the_last_wiring_until_bun_answers() {
-    let Some(mut harness) = band(&record("{}")) else {
-        return;
-    };
+    let mut harness = band(&record("{}"));
     let low = harness.play(48_000);
     assert!((rises(&low) as i64 - 220).abs() <= 2, "{}", rises(&low));
 
@@ -169,9 +164,7 @@ fn a_change_of_the_record_plays_the_last_wiring_until_bun_answers() {
 
 #[test]
 fn a_project_opened_again_plays_nothing_an_earlier_opening_declared() {
-    let Some(mut harness) = band(&record(r#"{"lead": "high"}"#)) else {
-        return;
-    };
+    let mut harness = band(&record(r#"{"lead": "high"}"#));
     let high = harness.play(48_000);
     assert!((rises(&high) as i64 - 880).abs() <= 2, "{}", rises(&high));
 
@@ -186,9 +179,7 @@ fn a_project_opened_again_plays_nothing_an_earlier_opening_declared() {
 
 #[test]
 fn a_missing_child_is_a_problem_that_names_it_and_the_rest_plays() {
-    let Some(mut harness) = band(&record(r#"{"effects": ["reverb", "echo"]}"#)) else {
-        return;
-    };
+    let mut harness = band(&record(r#"{"effects": ["reverb", "echo"]}"#));
     let problems: Vec<String> = (harness.project.problems().into_iter())
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
@@ -234,9 +225,7 @@ pub(crate) fn rendered_frames(folder: &Path, frames: usize) -> Vec<f32> {
 
 #[test]
 fn a_render_plays_the_declaration_from_its_first_block_and_the_same_every_time() {
-    let Some(harness) = band(&record(r#"{"lead": "high", "effects": ["echo"]}"#)) else {
-        return;
-    };
+    let harness = band(&record(r#"{"lead": "high", "effects": ["echo"]}"#));
     let folder = closed(harness);
     let first = rendered(folder.path());
     assert!((rises(&first[..2 * 4_800]) as i64 - 88).abs() <= 1);
@@ -245,10 +234,10 @@ fn a_render_plays_the_declaration_from_its_first_block_and_the_same_every_time()
 
 #[test]
 fn a_render_starts_with_every_owner_wired_also_more_than_the_engine_takes_in_one_block() {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     // More owners than the 64 edits the engine takes between two polls, each one an edit once
     // Bun answers.
     const OWNERS: usize = 80;
@@ -295,9 +284,7 @@ fn a_render_starts_with_every_owner_wired_also_more_than_the_engine_takes_in_one
 
 #[test]
 fn the_example_of_the_doc_of_an_owner_loads() {
-    let Some(harness) = band(&record("{}")) else {
-        return;
-    };
+    let harness = band(&record("{}"));
     let doc = (harness.project.agent_docs())
         .find(|doc| doc.name == "band")
         .unwrap()
@@ -315,21 +302,30 @@ fn the_example_of_the_doc_of_an_owner_loads() {
 }
 
 #[test]
-fn an_owner_in_the_effects_of_a_track_plays_its_children_into_the_track() {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return;
-    }
+fn an_owner_in_the_chain_of_a_rack_plays_its_children_into_it() {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let harness = Harness::new();
     harness.write("extensions/drone.ts", DRONE);
     harness.write("extensions/band.ts", &doc_owner());
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "pad", "order": 1, "effects": ["band"]}}"#;
-    harness.write("state/arrangement/pad/instance.json", track);
-    harness.write("state/arrangement/pad/band/instance.json", &record("{}"));
+    harness.write("extensions/rack.tsx", crate::rack::RACK);
     harness.write(
-        "state/arrangement/pad/band/drone.json",
+        "state/pad/instance.json",
+        r#"{"tool": "rack", "state": {"order": ["band"]}}"#,
+    );
+    harness.write("state/pad/band/instance.json", &record("{}"));
+    harness.write(
+        "state/pad/band/drone.json",
         r#"{"tool": "drone", "state": {"hz": 330}}"#,
     );
+    let project = std::fs::read_to_string(harness.path("project.json")).unwrap();
+    let project = project.replace(
+        r#""connections": []"#,
+        r#""connections": [{"from": {"instance": "pad", "port": "audio"}, "to": {"device_output": 0}}]"#,
+    );
+    harness.write("project.json", &project);
     let harness = harness.reopen();
     assert_eq!(harness.project.problems(), []);
     let played = rendered(closed(harness).path());
@@ -338,4 +334,117 @@ fn an_owner_in_the_effects_of_a_track_plays_its_children_into_the_track() {
         "{}",
         rises(&played)
     );
+}
+
+/// A box that holds what is put in it and plays none of it itself.
+const BOX: &str = r#"import { tool } from "./sdk";
+
+tool({
+  name: "box",
+  title: "Box",
+  when: "Never",
+  doc: "Holds children for its owner to wire.",
+  state: {},
+  behaviour: () => ({ connections: [] }),
+});
+"#;
+
+/// Plays the drone `a` in its box only while it is above 500 Hz, and the notes of its clip into
+/// the voice in its box while `on` is above 0.
+const OUTER: &str = r#"import { number, tool } from "./sdk";
+
+tool({
+  name: "outer",
+  title: "Outer",
+  when: "Never",
+  doc: "Wires what is inside its box.",
+  state: { on: number({ min: 0, max: 1, default: 1 }) },
+  behaviour: ({ state: { on }, children }) => {
+    const inside = children.find((child) => child.name === "inner")?.children ?? [];
+    const high = inside.some((child) => child.name === "a" && (child.state as { hz: number }).hz > 500);
+    const voice = inside.some((child) => child.name === "voice");
+    return {
+      connections: [
+        ...(high ? [{ from: { child: "inner/a" }, to: { port: "audio" as const } }] : []),
+        ...(voice && on > 0 ? [{ from: { child: "clip", notes: "notes" as const }, to: { child: "inner/voice", notes: "notes" as const } }] : []),
+        ...(voice ? [{ from: { child: "inner/voice" }, to: { port: "audio" as const } }] : []),
+      ],
+    };
+  },
+});
+"#;
+
+/// `outer` at the top, with its box holding `inside`, each `(name, record)`, and `more` of its
+/// own children.
+fn outer(inside: &[(&str, &str)], more: &[(&str, &str)]) -> Harness {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    let project = r#"{"format": 1, "extensions": ["instrument"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "outer", "port": "audio"}, "to": {"device_output": 0}}]}"#;
+    write(root, "project.json", project);
+    write(root, "extensions/drone.ts", DRONE);
+    write(root, "extensions/box.ts", BOX);
+    write(root, "extensions/outer.ts", OUTER);
+    write(
+        root,
+        "state/outer/instance.json",
+        r#"{"tool": "outer", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/outer/inner/instance.json",
+        r#"{"tool": "box", "state": {}}"#,
+    );
+    for (name, record) in inside {
+        write(root, &format!("state/outer/inner/{name}.json"), record);
+    }
+    for (name, record) in more {
+        write(root, &format!("state/outer/{name}.json"), record);
+    }
+    Harness::open(folder)
+}
+
+fn peak(samples: &[f32]) -> f32 {
+    samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+}
+
+/// What the behaviour of an owner reads of a grandchild asks it again when that changes.
+#[test]
+fn a_change_deep_inside_an_owner_asks_its_behaviour_again() {
+    let drone = r#"{"tool": "drone", "state": {"hz": 220}}"#;
+    let mut harness = outer(&[("a", drone)], &[]);
+    assert_eq!(peak(&harness.play(24_000)), 0.0);
+    harness.write_and_apply(
+        "state/outer/inner/a.json",
+        r#"{"tool": "drone", "state": {"hz": 880}}"#,
+    );
+    // Half a second of it, once Bun answered.
+    let high = harness.render(48_000);
+    let late = rises(&high[48_000..]);
+    assert!((late as i64 - 440).abs() <= 2, "{late}");
+    assert_eq!(harness.project.problems(), []);
+}
+
+/// Notes an owner plays into a grandchild end when it stops playing them there.
+#[test]
+fn notes_into_a_grandchild_end_when_the_owner_stops_sending_them() {
+    let voice = r#"{"tool": "instrument.synth", "state": {}}"#;
+    let clip = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [{"start": 0, "length": 3840, "pitch": 57, "velocity": 100}]}}"#;
+    let mut harness = outer(&[("voice", voice)], &[("clip", clip)]);
+    assert!(peak(&harness.play(24_000)) > 0.05);
+    harness.write_and_apply(
+        "state/outer/instance.json",
+        r#"{"tool": "outer", "state": {"on": 0}}"#,
+    );
+    let after = harness.render(96_000);
+    // Released within a second.
+    assert!(
+        peak(&after[48_000 * 2..]) < 1e-3,
+        "{}",
+        peak(&after[48_000 * 2..])
+    );
+    assert_eq!(harness.project.problems(), []);
 }

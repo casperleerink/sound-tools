@@ -220,11 +220,6 @@ impl DrumPadView {
         self.selected
     }
 
-    /// The select of the sound of the selected pad, for a test that opens it.
-    pub fn sound_list(&self) -> &Entity<DropdownMenu> {
-        &self.sounds
-    }
-
     /// How loud the card shows each pad, from 0 to 1. For tests.
     pub fn sounding(&self) -> [f32; PADS] {
         self.sounding
@@ -514,11 +509,6 @@ impl gpui::Render for DrumPadView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_grid_is_the_size_of_a_display_and_its_line() {
-        assert_eq!((GRID_WIDTH, GRID_HEIGHT), (300., 140.));
-    }
 
     #[test]
     fn the_arrows_move_the_selection_and_stop_at_the_edges() {

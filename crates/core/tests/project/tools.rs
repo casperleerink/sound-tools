@@ -9,9 +9,9 @@
 //! - `test.chain`: two gains in a row, connected by its behaviour. With `feedback` it also
 //!   connects the last to the side input of the first, which closes a cycle.
 //! - `test.pair`: an owner that plays a constant through its children `a` and `b`, two chains.
-//!   With `feedback` it also connects `b` back into `a`, which closes a cycle, as an
-//!   arrangement does whose tracks each listen to the other.
-//! - `test.reporter`: data only, with a derive that reports problems.
+//!   With `feedback` it also connects `b` back into `a`, which closes a cycle, as
+//!   two tracks do that each listen to the other.
+//! - `test.reporter`: reports its message as a problem; "fail" fails its behaviour.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,9 +19,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AgentDoc, AudioInput, AudioOutput, BehaviourContext, BehaviourError, Derived, Engine,
-    EngineConfig, InputEndpoint, InstanceId, OutputEndpoint, Place, Ports, PrepareConfig,
-    ProcessContext, Processor, Project, ProjectError, Registry, State, Was,
+    AgentDoc, AudioInput, AudioOutput, BehaviourContext, BehaviourError, Engine, EngineConfig,
+    InputEndpoint, InstanceId, OutputEndpoint, Place, Ports, PrepareConfig, ProcessContext,
+    Processor, Project, ProjectError, Registry, State,
 };
 
 pub(crate) const EXTENSION: &str = "test";
@@ -213,8 +213,8 @@ fn apply_pair(state: &Pair, context: &mut BehaviourContext<'_>) -> Result<(), Be
     Ok(())
 }
 
-/// Its derive reports its message as a problem. The message "fail" also derives an invalid
-/// record, so the whole group fails.
+/// Reports its message as a problem. The message "fail" fails its behaviour, so the whole
+/// group fails.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Reporter {
@@ -225,19 +225,15 @@ impl State for Reporter {
     const TOOL: &'static str = "test.reporter";
 }
 
-fn derive_reporter(
-    project: &Project,
-    reporter: &sound_core::Instance<Reporter>,
-    _: Was<'_, Reporter>,
-    derived: &mut Derived,
-) {
-    let Some(state) = project.state(reporter) else {
-        return;
-    };
-    derived.problem(state.message.clone());
+fn apply_reporter(
+    state: &Reporter,
+    context: &mut BehaviourContext<'_>,
+) -> Result<(), BehaviourError> {
     if state.message == "fail" {
-        derived.changes().create(id("dc"), Dc { value: 5.0 });
+        return Err(BehaviourError::Other("fail".into()));
     }
+    context.problem(state.message.clone());
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -334,12 +330,11 @@ pub(crate) fn registry() -> Registry {
     registry
         .tool::<Reporter>(EXTENSION)
         .unwrap()
-        .derive(derive_reporter);
+        .behaviour(apply_reporter);
     registry
         .tool::<Bank>(EXTENSION)
         .unwrap()
-        .behaviour(apply_bank)
-        .summary(summarize_bank);
+        .behaviour(apply_bank);
     registry.tool::<Shelf>(EXTENSION).unwrap();
     registry.tool::<Book>(EXTENSION).unwrap();
     registry.agent_doc(EXTENSION, TEST_AGENT_DOC).unwrap();
@@ -371,15 +366,10 @@ pub(crate) const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
 
 pub(crate) const TEST_AGENT_DOC: AgentDoc = AgentDoc {
     name: "test-tools",
+    group: "Test",
     when: "You work on a test record",
     markdown: "# Test tools\n\nA record of a test tool.\n",
 };
-
-/// A bank tells what it owns in one line, so a summary does not list every level.
-fn summarize_bank(project: &Project, bank: &sound_core::Instance<Bank>) -> String {
-    let levels = project.children::<Level>(bank.id()).count();
-    format!("bank {} with {levels} levels", bank.id())
-}
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 

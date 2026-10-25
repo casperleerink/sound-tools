@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { devices, h, input, knob, list, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
+import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Path, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -51,18 +51,18 @@ tool({
       // @ts-expect-error: and a sound not into a number.
       { from: { child: "lfo" }, to: { child: "filter", number: "cutoff_hz" } },
       { from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } },
-      { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } },
-      { from: { child: "lfo", number: "wave" }, to: { child: "drop", live: "rate" } },
+      { from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } },
+      { from: { child: "lfo", number: "wave" }, to: { child: "drop", number: "rate" } },
       // @ts-expect-error: notes go into notes, not into a number.
       { from: { child: "ears", notes: "hits" }, to: { child: "filter", number: "cutoff_hz" } },
-      // @ts-expect-error: a bang fires a trigger, and moves no live control.
-      { from: { child: "ears", bang: "onset" }, to: { child: "drop", live: "rate" } },
+      // @ts-expect-error: a bang goes into a bang, and moves no number.
+      { from: { child: "ears", bang: "onset" }, to: { child: "drop", number: "rate" } },
       // @ts-expect-error: and notes are no sound.
       { from: { child: "ears", notes: "hits" }, to: { child: "fx" } },
-      // @ts-expect-error: a sound moves no live control.
-      { from: { child: "lfo" }, to: { child: "drop", live: "rate" } },
-      // @ts-expect-error: and fires no trigger.
-      { from: { child: "lfo" }, to: { child: "drop", trigger: "hit" } },
+      // @ts-expect-error: a sound moves no number.
+      { from: { child: "lfo" }, to: { child: "drop", number: "rate" } },
+      // @ts-expect-error: and sends no bang.
+      { from: { child: "lfo" }, to: { child: "drop", bang: "hit" } },
       // @ts-expect-error: one port has the key of one kind.
       { from: { child: "ears", notes: "hits", number: "level" }, to: { child: "synth", notes: "notes" } },
     ],
@@ -93,8 +93,6 @@ tool({
       { from: { child: "lfo", number: "wave" }, to: { bang: "wave" } },
       // @ts-expect-error: a parent takes no number of its own from outside.
       { from: { number: "wave" }, to: { child: "filter", number: "cutoff_hz" } },
-      // @ts-expect-error: a live control is an input of a child, no output of the parent.
-      { from: { child: "lfo", number: "wave" }, to: { live: "rate" } },
     ],
   }),
 });
@@ -105,28 +103,29 @@ tool({
   when: "Never",
   doc: "Plays its children.",
   state: {},
-  controls: { hit: trigger() },
+  inputs: { hit: bang() },
   behaviour: (): Declaration => ({ connections: [] }),
-  tick: ({ set, fire, play, send }) => {
-    fire("hit");
-    set({ child: "lfo", live: "rate" }, 2);
-    fire({ child: "drums", trigger: "kick" }, { at: 1 });
+  tick: ({ play, send }) => {
+    send("hit");
+    send("hit", { at: 1 });
+    send({ child: "lfo", number: "rate" }, 2);
+    send({ child: "drums", bang: "kick" }, { at: 1 });
     play(60, { child: "synth", hold: true });
-    send({ type: "noteOff", pitch: 60 }, { child: "synth" });
-    send({ type: "cc", controller: 64, value: 1 }, { child: "synth", at: 1 });
-    send({ type: "bend", value: -0.5 });
+    send({ child: "synth", notes: "notes" }, { type: "noteOff", pitch: 60 });
+    send({ child: "synth", notes: "notes" }, { type: "cc", controller: 64, value: 1 }, { at: 1 });
+    send("notes", { type: "bend", value: -0.5 });
     // @ts-expect-error: a misspelled event.
-    send({ type: "noteoff", pitch: 60 });
+    send("notes", { type: "noteoff", pitch: 60 });
     // @ts-expect-error: a note on needs its velocity.
-    send({ type: "noteOn", pitch: 60 });
+    send("notes", { type: "noteOn", pitch: 60 });
     // @ts-expect-error: a key is let go of with a `noteOff`.
-    send({ type: "noteOff", pitch: 60, velocity: 0 });
-    // @ts-expect-error: a trigger of a child is fired, not set.
-    set({ child: "drums", trigger: "kick" }, 1);
-    // @ts-expect-error: and a live control of a child set, not fired.
-    fire({ child: "lfo", live: "rate" });
-    // @ts-expect-error: a knob of a child is the composition: a cable moves it.
-    set({ child: "filter", number: "cutoff_hz" }, 800);
+    send("notes", { type: "noteOff", pitch: 60, velocity: 0 });
+    // @ts-expect-error: a bang takes no number.
+    send("hit", 1);
+    // @ts-expect-error: and an input it does not have.
+    send("hits");
+    // @ts-expect-error: a number input of a child takes a number.
+    send({ child: "lfo", number: "rate" });
   },
 });
 
@@ -135,12 +134,12 @@ tool({
   title: "Recorder",
   when: "Never",
   doc: "Keeps what it hears and plays it back.",
-  kind: "instrument",
+  voices: 8,
   state: {},
   memory: () => ({ heard: [] as HeardEvent[] }),
   onNotes: ({ memory, send }, event) => {
     memory.heard.push(event);
-    send(event, { at: event.at + 1 });
+    send("notes", event, { at: event.at + 1 });
   },
   // @ts-expect-error: `release` is gone: a `noteOff` lets go.
   tick: ({ release }) => release(60),
@@ -178,20 +177,24 @@ tool({
   name: "takes",
   title: "Takes",
   when: "Never",
-  doc: "Saves each take as a child, and edits its sequencer.",
+  doc: "Saves each take as a child, and edits its timeline.",
   state: { count: number({ min: 0, max: 100 }) },
   behaviour: (): Declaration => ({ connections: [] }),
-  card: ({ time, transport, children }) => h("div", {}, `${children.length} at ${time} s, ${transport.bpm} bpm`),
-  onNotes: async ({ update, children, state, transport }, event) => {
-    const beats: number = (event.at * transport.bpm) / 60;
+  view: ({ time, clock, children }) => h("div", {}, () => `${children.length} at ${time} s, ${clock.playing ? "playing" : "stopped"}`),
+  onNotes: async ({ update, children, state, clock }, event) => {
+    const beats: number = (event.at * clock.bpm) / 60;
+    // @ts-expect-error: the clock moves only through its calls.
+    clock.tick = 0;
+    // @ts-expect-error: a jump goes to a tick, not to a bar and beat.
+    clock.jump({ bar: 2 });
     const taken: number = children.length;
     update("Save a take", ({ state, children }) => {
       state.count = taken + 1;
       children.push({ name: `take-${taken}`, tool: "take", state: { notes: [] } });
-      const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
-      bass.patterns?.push({ length: 3840, notes: [{ start: 0, length: 480, pitch: event.type === "noteOn" ? event.pitch : 60, velocity: 100 }] });
+      const bass = children.find((child) => child.name === "bass")!.state as TimelineState;
+      bass.notes?.push({ start: 0, length: 480, pitch: event.type === "noteOn" ? event.pitch : 60, velocity: 100 });
       // @ts-expect-error: a child's state is any tool's: say which it is.
-      children[0]!.state.patterns;
+      children[0]!.state.notes;
       // @ts-expect-error: a child names its tool.
       children.push({ name: "take", state: {} });
       // @ts-expect-error: a field it does not have.
@@ -220,31 +223,7 @@ tool({
   state: { notes: notes() },
 });
 
-tool({
-  name: "room",
-  title: "Room",
-  when: "Never",
-  doc: "Two reverbs, one with its numbers as knobs.",
-  state: { ...devices.reverb.fields, ...prefixed("far_", devices.reverb.fields), drive: knob({ min: 0, max: 1, default: 0 }) },
-  sound: (fields) => {
-    const near = devices.reverb(input, fields);
-    const far = devices.reverb({ left: near.left, right: near.right }, { mix: fields.far_mix, freeze: true });
-    // @ts-expect-error: the reverb has no number `size_m`.
-    devices.reverb(input, { size_m: 1 });
-    // @ts-expect-error: a toggle of the record is written as it is, not played as a signal.
-    devices.reverb(input, { freeze: fields.drive });
-    // @ts-expect-error: the fields of the second reverb are named with their prefix.
-    fields.far_freeze;
-    devices.filter(far, { type: "high_pass", cutoff_hz: fields.drive });
-    // @ts-expect-error: a choice of a device is one of its options.
-    devices.filter(far, { type: "hi_pass" });
-    // A band takes the defaults of its place for what it leaves out.
-    devices.eq(far, { bands: [{ gain_db: 3 }] });
-    return far;
-  },
-});
-
-const parts = { bass: "sequencer", fx: "filter", drop: "rain" } as const;
+const parts = { bass: "timeline", fx: "filter", drop: "rain" } as const;
 
 tool({
   name: "loops",
@@ -255,27 +234,29 @@ tool({
   children: parts,
   behaviour: ({ children }): Declaration<typeof parts> => {
     const bass = children.find((child) => child.name === "bass");
-    const length: number | undefined = bass?.state.patterns?.[0]?.length;
+    const length: number | undefined = bass?.state.notes?.[0]?.length;
     if (length === 0) return { connections: [] };
     return {
       connections: [
         { from: { child: "drop", number: "level" }, to: { child: "fx", number: "cutoff_hz" } },
-        { from: { child: "drop", number: "level" }, to: { child: "bass", live: "launch" } },
+        { from: { child: "drop", number: "level" }, to: { child: "bass", number: "launch" } },
         { from: { child: "bass", notes: "notes" }, to: { child: "drop", notes: "notes" } },
         { from: { child: "fx" }, to: { port: "audio" } },
         // @ts-expect-error: the filter has no number `cutoff`.
         { from: { child: "drop", number: "level" }, to: { child: "fx", number: "cutoff" } },
-        // @ts-expect-error: and no live control.
-        { from: { child: "drop", number: "level" }, to: { child: "fx", live: "launch" } },
+        // @ts-expect-error: and no number input.
+        { from: { child: "drop", number: "level" }, to: { child: "fx", number: "launch" } },
         // @ts-expect-error: a child it does not name.
         { from: { child: "synth" }, to: { port: "audio" } },
       ],
     };
   },
-  tick: ({ set, play, update }) => {
-    set({ child: "bass", live: "launch" }, 1);
-    // @ts-expect-error: the sequencer's live control is `launch`.
-    set({ child: "bass", live: "lunch" }, 1);
+  tick: ({ send, play, update }) => {
+    send({ child: "bass", number: "launch" }, 1);
+    // @ts-expect-error: the timeline's number input is `launch`.
+    send({ child: "bass", number: "lunch" }, 1);
+    // @ts-expect-error: a number field of a child is the composition: a cable moves it.
+    send({ child: "fx", number: "cutoff_hz" }, 800);
     // @ts-expect-error: a child it does not name.
     play(60, { child: "synth" });
     update("Edit", ({ children }) => {
@@ -283,8 +264,8 @@ tool({
         if (child.name === "fx") child.state.type = "high_pass";
         // @ts-expect-error: a choice of a child is one of its options.
         if (child.name === "fx") child.state.type = "notches";
-        // @ts-expect-error: a field the record of a sequencer does not have.
-        if (child.name === "bass") child.state.pattern = [];
+        // @ts-expect-error: a field the record of a timeline does not have.
+        if (child.name === "bass") child.state.patterns = [];
       }
       children.push({ name: "fx", tool: "filter", state: { cutoff_hz: 500 } });
       // @ts-expect-error: the child `fx` is a filter.
@@ -293,7 +274,7 @@ tool({
   },
 });
 
-const loose = { bass: "sequencer" };
+const loose = { bass: "timeline" };
 
 tool({
   name: "loose",
@@ -313,6 +294,215 @@ tool({
   doc: "Names its children in place, with a return type that names none.",
   state: {},
   // @ts-expect-error: a plain `Declaration` widens the tool names too.
-  children: { bass: "sequencer" },
+  children: { bass: "timeline" },
   behaviour: (): Declaration => ({ connections: [] }),
 });
+
+const drone = tool({
+  name: "drone",
+  title: "Drone",
+  when: "Never",
+  doc: "A tool of the project that a parent names by what `tool` returns.",
+  state: { pitch: number({ min: 0, max: 127, default: 60 }), name: text() },
+  inputs: { swell: number({ min: 0, max: 1, default: 0 }), hit: bang() },
+});
+const other = tool({
+  name: "other",
+  title: "Other",
+  when: "Never",
+  doc: "A tool of the project with the same fields as the drone.",
+  state: { pitch: number({ min: 0, max: 127, default: 60 }), name: text() },
+  inputs: { swell: number({ min: 0, max: 1, default: 0 }), hit: bang() },
+});
+const band = { lead: drone, fx: "filter" } as const;
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "Never",
+  doc: "Names a tool of the project among its children, so its ports and record are typed.",
+  state: {},
+  children: band,
+  behaviour: ({ children }): Declaration<typeof band> => {
+    const pitch: number | undefined = children.find((child) => child.name === "lead")?.state.pitch;
+    return {
+      connections: [
+        { from: { child: "lead", number: "anything" }, to: { child: "lead", number: "pitch" } },
+        { from: { child: "lead", notes: "melody" }, to: { child: "lead", notes: "notes" } },
+        { from: { child: "lead", bang: "onset" }, to: { child: "lead", bang: "hit" } },
+        { from: { child: "lead", number: String(pitch) }, to: { child: "lead", number: "swell" } },
+        { from: { child: "lead" }, to: { child: "fx" } },
+        // @ts-expect-error: the drone has no number `pitc`.
+        { from: { child: "lead", number: "level" }, to: { child: "lead", number: "pitc" } },
+        // @ts-expect-error: its input of notes is `notes`.
+        { from: { child: "lead", notes: "melody" }, to: { child: "lead", notes: "keys" } },
+      ],
+    };
+  },
+  tick: ({ send, update }) => {
+    send({ child: "lead", number: "swell" }, 1);
+    send({ child: "lead", bang: "hit" });
+    // @ts-expect-error: the drone has no number input `swel`.
+    send({ child: "lead", number: "swel" }, 1);
+    // @ts-expect-error: and no bang `hits`.
+    send({ child: "lead", bang: "hits" });
+    // @ts-expect-error: its field `pitch` is the composition: a cable moves it, `send` does not.
+    send({ child: "lead", number: "pitch" }, 60);
+    update("Edit", ({ children }) => {
+      for (const child of children) {
+        if (child.name === "lead") child.state.pitch = 62;
+        // @ts-expect-error: a field the drone does not have.
+        if (child.name === "lead") child.state.pitches = 62;
+      }
+      // @ts-expect-error: the lead is a drone, not another tool with the same fields.
+      children.push({ name: "lead", tool: other, state: { pitch: 60, name: "" } });
+    });
+  },
+});
+
+const counter = tool({
+  name: "counter",
+  title: "Counter",
+  when: "Never",
+  doc: "A whole number and a level.",
+  state: { count: number({ min: 1, max: 16, default: 4, integer: true }), level: number({ min: 0, max: 1, default: 0 }) },
+});
+const counted = { counter, drop: "rain" } as const;
+
+tool({
+  name: "counting",
+  title: "Counting",
+  when: "Never",
+  doc: "Moves the level of its counter.",
+  state: {},
+  children: counted,
+  behaviour: (): Declaration<typeof counted> => ({
+    connections: [
+      { from: { child: "drop", number: "level" }, to: { child: "counter", number: "level" } },
+      // @ts-expect-error: a whole number moves by no cable.
+      { from: { child: "drop", number: "level" }, to: { child: "counter", number: "count" } },
+    ],
+  }),
+});
+
+// Sound ports beyond `audio`: a parent's connections name them, checked against each tool.
+const duck = tool({
+  name: "duck",
+  title: "Duck",
+  when: "Never",
+  doc: "Turns down what comes in while its sidechain plays.",
+  state: {},
+  inputs: { sidechain: audio() },
+  sound: ({ sidechain }) => input.times(abs(sidechain.left).lt(0.1)),
+});
+const split = tool({
+  name: "split",
+  title: "Split",
+  when: "Never",
+  doc: "Its lows out of `low`.",
+  state: {},
+  outputs: { low: audio() },
+  sound: () => ({ audio: highpass(input, 200), low: lowpass(input, 200) }),
+});
+tool({
+  name: "unsplit",
+  title: "Unsplit",
+  when: "Never",
+  doc: "A sound that gives no `low`.",
+  state: {},
+  outputs: { low: audio() },
+  // @ts-expect-error: it gives each of its outputs.
+  sound: () => ({ audio: input }),
+});
+tool({
+  name: "mixed",
+  title: "Mixed",
+  when: "Never",
+  doc: "A sound whose outputs are one stereo and one not.",
+  state: {},
+  outputs: { low: audio() },
+  // @ts-expect-error: its outputs are each one signal or each { left, right }.
+  sound: () => ({ audio: { left: input, right: input }, low: input }),
+});
+const ported = { duck, split } as const;
+
+tool({
+  name: "ported",
+  title: "Ported",
+  when: "Never",
+  doc: "Keys its duck with the lows of its split.",
+  state: {},
+  children: ported,
+  behaviour: (): Declaration<typeof ported> => ({
+    connections: [
+      { from: { child: "split", port: "low" }, to: { child: "duck", port: "sidechain" } },
+      { from: { child: "duck" }, to: { port: "audio" } },
+      // @ts-expect-error: the duck has no input `sidechian`.
+      { from: { child: "split" }, to: { child: "duck", port: "sidechian" } },
+      // @ts-expect-error: and `low` is an output of the split, not an input.
+      { from: { child: "duck" }, to: { child: "split", port: "low" } },
+    ],
+  }),
+});
+
+tool({
+  name: "keyed",
+  title: "Keyed",
+  when: "Never",
+  doc: "Keys.",
+  sound: () => 0,
+  keys: ["delete", "cmd-c", "cmd-alt-left"],
+  // @ts-expect-error: no key is called `del`, and shift is not a name of a key.
+  globalKeys: ["del", "shift-a"],
+  onKey: ({ clock }, key) => {
+    // @ts-expect-error: no key is called `spacebar`.
+    if (key.key === "spacebar") clock.play();
+    // @ts-expect-error: a jump waits for a tick named `atTick`, not `at`, which is a time elsewhere.
+    clock.jump(0, { at: 3840 });
+    clock.jump(0, { atTick: 3840 });
+  },
+});
+
+tool({
+  name: "app-keyed",
+  title: "App keyed",
+  when: "Never",
+  doc: "Keys the app keeps.",
+  sound: () => 0,
+  // @ts-expect-error: tab and cmd-z are the app's.
+  globalKeys: ["tab", "cmd-z"],
+});
+
+// A select's value is typed by its options.
+const lanes = [{ value: "velocity", label: "Velocity" }, { value: "pedal", label: "Pedal" }] as const;
+const lane = (): "velocity" | "pedal" => "velocity";
+Select({ value: lane, options: lanes, onChange: (picked: "velocity" | "pedal") => picked });
+// @ts-expect-error: no option is "bend".
+Select({ value: lane, options: lanes, onChange: (picked: "bend") => picked });
+
+// A toggle shows one face: a label, an icon with its count, or a dot.
+Toggle({ icon: "automation", count: 2, tooltip: "Automation", on: true });
+// @ts-expect-error: an icon toggle shows no label.
+Toggle({ icon: "automation", label: "Automation", on: true });
+
+// A look takes only what a look changes, even from a `Style`.
+const look: Look = { background: "alpha/10" };
+const sized = { width: 120, background: "red" } satisfies Style;
+// @ts-expect-error: a width is no part of a look.
+const sizedLook: Look = sized;
+h("div", { style: { hover: look, pressed: sizedLook } });
+
+// A control names a `field`, or shows what code keeps and hears it with `onChange`.
+Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
+Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0 });
+// @ts-expect-error: a value code keeps is no field name, and needs `onChange`.
+Select({ value: "velocity", options: lanes });
+// @ts-expect-error: a field or what code keeps, not both.
+Select({ field: "mode", value: lane, onChange: (picked: "velocity" | "pedal") => picked, options: lanes });
+// @ts-expect-error: `show` is for what code keeps; a field shows itself.
+NumberBox({ field: "bpm", show: 120, key: "bpm", width: 40 });
+
+// A path starts at a point, not with a curve.
+Path({ points: [[0, 0], [5, 0, 10, 10]], color: "#ffffff" });
+// @ts-expect-error: its first point is `[x, y]`.
+Path({ points: [[5, 0, 10, 10]], color: "#ffffff" });

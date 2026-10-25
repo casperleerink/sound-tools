@@ -5,8 +5,8 @@
 //! Bun does one thing at a time and says which tool's code it runs before it runs it, so a
 //! thread here that hears it knows what hangs, without the window: the window may be busy.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,10 +16,11 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use sound_core::InstanceId;
+use sound_core::{InstanceId, Sections, TempoMap};
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
+use crate::tree::Op;
 use crate::{NoteMessage, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
@@ -38,6 +39,13 @@ const QUEUED_LINES: usize = 1024;
 /// things in a loop that never ends: the window would not catch up.
 const MAX_EVENTS: usize = 4096;
 
+/// What the code of the tools printed since Bun started, in `extensions/`, for an agent that
+/// debugs a tool it wrote.
+pub(crate) const LOG_FILE: &str = "log.txt";
+
+/// The lines the log keeps: the last ones, between half of these and all.
+const LOG_LINES: usize = 200;
+
 /// The files of `extensions/` Bun runs without, because their code hung or stopped it, with
 /// what to tell the composer. A change in the folder clears it.
 pub(crate) type Skipped = BTreeMap<String, String>;
@@ -55,23 +63,46 @@ pub(crate) enum Request<'a> {
         /// has the edits it sent after those.
         edits: u64,
     },
-    Render {
+    /// A view opens: its code makes its nodes once.
+    Mount {
         card: u64,
         instance: &'a InstanceId,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
-        /// The size of the page, the whole window; `None` for a card.
-        page: Option<PageSize>,
+        /// The room the window gives the view: the whole window, or the body of a card.
+        size: PageSize,
         #[serde(flatten)]
         clock: Clock,
     },
-    /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
+    /// The view has another room.
+    Resize {
+        card: u64,
+        size: PageSize,
+    },
+    /// The watches of an instance moved, and a binding of its cards reads them.
+    Watches {
+        instance: &'a InstanceId,
+        watches: &'a BTreeMap<String, f32>,
+    },
+    /// The clock started or stopped, or its repeat or click changed: what bindings follow. Also
+    /// before an event, so its handler reads where the playhead is.
+    Clock {
+        #[serde(flatten)]
+        clock: Clock,
+    },
+    /// The tempo map and the sections, as `project.json` holds them: at the start and when they
+    /// change.
+    Song {
+        tempo_map: &'a TempoMap,
+        sections: &'a Sections,
+    },
+    /// A press, a release, a click, or a drag that ended, on a node: `payload` is what its
+    /// handler hears.
     Event {
         card: u64,
-        /// The version of the tree that was clicked.
-        version: u64,
-        handler: usize,
-        at: Option<(f32, f32)>,
+        node: u64,
+        kind: EventKind,
+        payload: Value,
         time: f64,
     },
     /// One step of the control loop of every instance whose tool has one.
@@ -87,6 +118,20 @@ pub(crate) enum Request<'a> {
         instance: Played<'a>,
         key: &'a str,
         down: bool,
+        shift: bool,
+        alt: bool,
+        cmd: bool,
+        ctrl: bool,
+        #[serde(flatten)]
+        clock: Clock,
+    },
+    /// A take one of its `recorder` children made, for its `onTake` to keep.
+    Take {
+        instance: Played<'a>,
+        recorder: &'a str,
+        name: &'a str,
+        tool: &'a str,
+        state: &'a serde_json::Value,
         #[serde(flatten)]
         clock: Clock,
     },
@@ -100,6 +145,12 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
+    /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `confirm`, `offers`
+    /// or `numbers`.
+    Answer {
+        question: u64,
+        answer: Answer<'a>,
+    },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -107,6 +158,107 @@ pub(crate) enum Request<'a> {
         tool: &'a str,
         instance: &'a InstanceId,
     },
+}
+
+/// What happened on a node, which names the handler that hears it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EventKind {
+    Press,
+    /// The button of a press went up, wherever the pointer is.
+    Release,
+    /// A left press and release on a node, with no drag between.
+    Click,
+    /// The pointer came over a div, or left it.
+    Hover,
+    End,
+    /// Text a field tells.
+    Commit,
+    /// Escape in a field.
+    Cancel,
+    /// An edit of a field's text, or a pick of a segmented control: the place of its option.
+    Change,
+    /// Files, or what a drag of a node carried, let go on a node.
+    Drop,
+    /// The power icon of an embedded card.
+    Power,
+    /// The close icon of an embedded card.
+    Close,
+    /// The title of an embedded card, which is a menu.
+    Title,
+    /// A pick in a select of the sidechain picker of an embedded card.
+    Sidechain,
+}
+
+/// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.
+#[derive(Debug, Serialize)]
+pub(crate) struct Moved {
+    pub name: String,
+    /// What a person reads for it: as its device names it, or its field in plain words.
+    pub label: String,
+    pub min: f32,
+    pub max: f32,
+    /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
+    pub scale: &'static str,
+    /// What its record holds now.
+    pub value: Option<f32>,
+}
+
+/// What the window answers a tool that asked.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(crate) enum Answer<'a> {
+    /// The name under `assets/audio/` of the file the composer chose and the runtime copied
+    /// there, or that a render wrote, or none.
+    Asset(Option<&'a str>),
+    /// The place of the item the composer picked in a menu, or none.
+    Item(Option<usize>),
+    /// What the window offers that takes what was asked for, and what its pickers say under
+    /// them.
+    Offers {
+        offers: Vec<Offered>,
+        notes: Vec<String>,
+        /// The key of the offer at the child it was asked about, as a picker ticks it.
+        here: Option<String>,
+    },
+    /// What a lane or a cable can move of the child asked about.
+    Numbers(Vec<Moved>),
+    /// Whether the composer said yes to a question.
+    Confirmed(bool),
+}
+
+/// A device the window offers, as code gets it: what `addOffer` names it by.
+#[derive(Debug, Serialize)]
+pub(crate) struct Offered {
+    pub key: String,
+    pub name: String,
+    pub detail: Option<String>,
+    pub group: String,
+    /// The icon a picker shows beside it.
+    pub icon: String,
+    /// Why it cannot be picked here, or `None` when it can.
+    pub unavailable: Option<String>,
+}
+
+/// An item of a menu code opens.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MenuItemSpec {
+    pub label: String,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub checked: bool,
+    pub icon: Option<String>,
+    /// A quiet second line.
+    pub detail: Option<String>,
+    /// The heading it goes under, with the items before and after it of the same group.
+    pub group: Option<String>,
+    /// A line above it.
+    #[serde(default)]
+    pub separator: bool,
+    /// The keys that do it too, as `cmd-c`.
+    pub shortcut: Option<String>,
 }
 
 /// Where the sound and the piece are, which all code of a tool gets.
@@ -132,7 +284,7 @@ pub(crate) struct PageSize {
     pub height: u32,
 }
 
-/// Where the project plays, as the window's playhead shows it.
+/// Where the project plays, as the window's playhead shows it, and how the clock plays.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 pub(crate) struct Transport {
     pub playing: bool,
@@ -141,6 +293,58 @@ pub(crate) struct Transport {
     pub beat: u32,
     /// The tempo at `tick`.
     pub bpm: f64,
+    /// The ticks playback goes back from the end to the start of, while it repeats.
+    pub repeat: Option<[u64; 2]>,
+    pub click: bool,
+    /// Whether the computer keys play notes.
+    pub keys: bool,
+}
+
+/// Stopped at the start, at 120 bpm.
+impl Default for Transport {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            tick: 0,
+            bar: 1,
+            beat: 1,
+            bpm: 120.0,
+            repeat: None,
+            click: false,
+            keys: false,
+        }
+    }
+}
+
+impl Transport {
+    /// What bindings follow: not the playhead, which moves on every frame.
+    pub(crate) fn followed(&self) -> (bool, Option<[u64; 2]>, bool, bool) {
+        (self.playing, self.repeat, self.click, self.keys)
+    }
+}
+
+/// What code does to the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub(crate) enum TransportOp {
+    Play,
+    Pause,
+    Stop,
+    /// Playback goes on from `to`: at once, or once it reaches `at`, on its frame.
+    Jump {
+        to: u64,
+        at: Option<u64>,
+    },
+    /// Playback goes back from the end to the start of `range` while it is set.
+    Repeat {
+        range: Option<[u64; 2]>,
+    },
+    Click {
+        on: bool,
+    },
+    Keys {
+        on: bool,
+    },
 }
 
 /// A note event a tool heard, at `at`: engine time in seconds, the clock of `time` and of the
@@ -164,14 +368,15 @@ pub(crate) struct Played<'a> {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum RecordEdit {
-    /// These fields of the record of the instance, or of its child `child`, are set and those
-    /// of `removed` left out, on the record as it is when the edit lands.
+    /// These fields of the record of the instance, or of the one at the path `child` inside it
+    /// (`track` or `track/clip`), are set and those of `removed` left out, on the record as it
+    /// is when the edit lands.
     Fields {
         child: Option<String>,
         set: Map<String, Value>,
         removed: Vec<String>,
     },
-    /// The child `child` is a new record, or one of another tool.
+    /// The record at the path `child` is new, or one of another tool.
     Record {
         child: String,
         tool: String,
@@ -190,14 +395,18 @@ pub(crate) enum Event {
     Framed,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// A card drew, with the version of its tree, which a click on it names, so it runs a
-    /// handler of this tree and not of a newer one. Or why it did not.
-    Tree {
+    /// What changed on the nodes of a card, or why it failed. Read by [`read_line`].
+    #[serde(skip_deserializing)]
+    Ops {
         card: u64,
-        tree: Result<(u64, Value), String>,
+        ops: Result<Vec<Op>, String>,
+        /// The ops make all of it again, as after a new Bun.
+        mount: bool,
+        /// They answer a press or a drag, whose preview lets go with them.
+        event: bool,
     },
-    /// A card drew the tree it drew last.
-    Unchanged { card: u64 },
+    /// What the bindings of an instance read now: the window tells Bun at once only of that.
+    Reads { instance: InstanceId, reads: Reads },
     /// The code of an instance changed its record or those of its children, as one edit
     /// called `label`.
     Edit {
@@ -205,8 +414,8 @@ pub(crate) enum Event {
         label: String,
         changes: Vec<RecordEdit>,
     },
-    /// A card or a control loop moved a live control of an instance, or of its child `child`,
-    /// or fired a trigger when there is no value: at `at`, engine time in seconds, or at once.
+    /// Code moved a number input of an instance, or of its child `child`, or sent a bang when
+    /// there is no value: at `at`, engine time in seconds, or at once.
     Control {
         instance: InstanceId,
         child: Option<String>,
@@ -233,11 +442,110 @@ pub(crate) enum Event {
         event: NoteMessage,
         at: Option<f64>,
     },
+    /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
+    OpenFile { question: u64, title: String },
+    /// Code renders the sound of the child `path` of `instance` over `span`, in ticks, and
+    /// with `tail` what still sounds after it, into a new file of `assets/audio/` named after
+    /// `name`: the answer goes to its `question`.
+    Render {
+        question: u64,
+        instance: InstanceId,
+        path: String,
+        span: [u64; 2],
+        tail: bool,
+        name: String,
+    },
+    /// Code asks the composer `message` with the system's question, its buttons `confirm` and
+    /// Cancel: the answer goes to its `question`.
+    Confirm {
+        question: u64,
+        message: String,
+        #[serde(default)]
+        detail: Option<String>,
+        confirm: String,
+    },
+    /// Code opens a menu of `items` where the pointer is: the answer goes to its `question`.
+    OpenMenu {
+        question: u64,
+        items: Vec<MenuItemSpec>,
+        /// Quiet lines under the items.
+        #[serde(default)]
+        notes: Vec<String>,
+        /// How wide it is, and how tall its items go before they scroll, in points.
+        #[serde(default)]
+        width: Option<f32>,
+        #[serde(default, rename = "maxHeight")]
+        max_height: Option<f32>,
+        /// A field above the items that keeps those whose label holds what is typed.
+        #[serde(default)]
+        search: bool,
+    },
+    /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
+    /// With `at`, the answer says which offer is at that child of `instance` now.
+    Offers {
+        question: u64,
+        takes: String,
+        instance: InstanceId,
+        #[serde(default)]
+        at: Option<String>,
+    },
+    /// Code asks what a lane or a cable can move of the child of `instance` at `path`.
+    Numbers {
+        question: u64,
+        instance: InstanceId,
+        path: String,
+    },
+    /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`.
+    AddOffer {
+        instance: InstanceId,
+        path: String,
+        key: String,
+        label: String,
+    },
+    /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
+    Select {
+        instance: InstanceId,
+        path: Option<String>,
+        span: Option<[u64; 2]>,
+    },
+    /// Code played, stopped or moved the clock.
+    Transport {
+        #[serde(flatten)]
+        op: TransportOp,
+    },
+    /// The code of an instance changed the tempo map and the sections, as one edit called
+    /// `label`: both as `project.json` holds them.
+    SongEdit {
+        instance: InstanceId,
+        label: String,
+        tempo_map: Value,
+        sections: Value,
+    },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
     /// code a timer of a tool ran.
     #[serde(skip_deserializing)]
     Ended { blame: Option<Runs>, why: String },
+}
+
+/// What the bindings of the cards of an instance read, so the window tells Bun at once only of a
+/// change of that. `state` and `watches` name what they read, or are `None` for all of it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub(crate) struct Reads {
+    pub state: Option<Vec<String>>,
+    pub children: bool,
+    pub watches: Option<Vec<String>>,
+}
+
+/// Before Bun says, its cards read everything.
+impl Default for Reads {
+    fn default() -> Self {
+        Self {
+            state: None,
+            children: true,
+            watches: None,
+        }
+    }
 }
 
 /// The code of a tool Bun runs: its tool, and which code, such as `tick`.
@@ -261,10 +569,8 @@ pub(crate) struct LoadedTool {
     pub info: ToolInfo,
     /// The sound for every combination of its choices.
     pub sounds: Vec<(Map<String, Value>, Result<Graph, String>)>,
-    /// The tree of its card at its defaults, after one tick.
-    pub card: Result<Value, String>,
-    /// The same of its page, when it has one.
-    pub page: Option<Result<Value, String>>,
+    /// The ops of its view at its defaults, after one tick.
+    pub view: Result<Value, String>,
 }
 
 /// A load as `host.ts` sends it. Each tool is read on its own, so one that this side cannot
@@ -321,6 +627,8 @@ enum Line {
     Declared {
         question: u64,
         declaration: Result<Value, String>,
+        #[serde(default)]
+        reads: Option<behaviours::Reads>,
     },
     #[serde(untagged)]
     Event(Event),
@@ -356,6 +664,8 @@ pub(crate) struct Bun {
     /// Ended by [`Bun::end`], or when the runtime lets go of it. `None` once ended. The tools
     /// it loaded hold it too, so their records keep asking it outside the window.
     child: Mutex<Option<Child>>,
+    /// Disconnected once the thread that passes on what Bun prints is done.
+    printed: Mutex<mpsc::Receiver<()>>,
     told: Mutex<Told>,
 }
 
@@ -388,10 +698,50 @@ static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
 
 static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
+static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
+static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
+static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
+static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
+/// What the last batch of ops cost: Bun's milliseconds and the window's microseconds to apply.
+static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
+static LAST_APPLY_MICROS: AtomicU64 = AtomicU64::new(0);
 
 /// How many bytes this process told every Bun, for a test of what a frame costs.
 pub fn sent_bytes() -> u64 {
     SENT_BYTES.load(Ordering::Relaxed)
+}
+
+/// How many times this process told every Bun something that changes what cards show (records,
+/// watches, the transport, a card that opens) and how many presses and drags it told, for a
+/// test that a drag does not cross to Bun.
+pub fn sent_updates_and_events() -> (u64, u64) {
+    (
+        SENT_UPDATES.load(Ordering::Relaxed),
+        SENT_EVENTS.load(Ordering::Relaxed),
+    )
+}
+
+/// How many batches of ops the windows of this process applied, for a measurement of how long
+/// one takes to come.
+pub fn heard_batches() -> u64 {
+    HEARD_BATCHES.load(Ordering::Relaxed)
+}
+
+/// How many bytes of ops this process heard from every Bun, for a measurement of their size.
+pub fn heard_bytes() -> u64 {
+    HEARD_BYTES.load(Ordering::Relaxed)
+}
+
+/// What the last batch of ops cost, in milliseconds: Bun's work for its request, and the
+/// window's to apply it.
+pub fn last_batch() -> (f64, f64) {
+    let millis = |micros: &AtomicU64| micros.load(Ordering::Relaxed) as f64 / 1000.0;
+    (millis(&LAST_BUN_MICROS), millis(&LAST_APPLY_MICROS))
+}
+
+pub(crate) fn count_batch(apply: Duration) {
+    HEARD_BATCHES.fetch_add(1, Ordering::Relaxed);
+    LAST_APPLY_MICROS.store(apply.as_micros() as u64, Ordering::Relaxed);
 }
 
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those
@@ -403,38 +753,55 @@ pub(crate) fn new_opening() -> u64 {
 
 impl Bun {
     /// Starts Bun on `host_script` in `folder`, to load `files` of it for the project's
-    /// `opening`, and waits for its load. Blocks for as long as the load takes: never call it
-    /// on the thread that draws.
+    /// `opening`, and waits for its load. What its code prints goes to [`LOG_FILE`] too when
+    /// it `logs`: only a runtime that holds the project writes it. Blocks for as long as the
+    /// load takes: never call it on the thread that draws.
     pub(crate) fn start(
         program: &Path,
         host_script: &Path,
         (folder, opening): (&Path, u64),
         files: &[&str],
+        logs: bool,
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
+        let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
         #[allow(clippy::disallowed_methods)]
         let mut child = sound_core::process::background_command(program)
             .arg(host_script)
+            // Its questions are numbered from its own: an answer meant for a Bun before it
+            // settles none of them.
+            .arg(number.to_string())
             .args(files)
             .current_dir(folder)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| failure(format!("did not start: {error}")))?;
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
             return Err(failure("started without pipes".to_string()));
+        };
+        // The tools run without a log they cannot write.
+        let log = match logs.then(|| std::fs::File::create(folder.join(LOG_FILE))) {
+            Some(Ok(file)) => Some(file),
+            Some(Err(error)) => {
+                eprintln!("error: could not write {LOG_FILE}: {error}");
+                None
+            }
+            None => None,
         };
         let (events, received) = smol::channel::unbounded();
         let (said, heard) = mpsc::channel();
         let (lines, to_write) = mpsc::sync_channel::<String>(QUEUED_LINES);
+        let (printing, printed) = mpsc::channel::<()>();
         let busy = Arc::new(Mutex::new(Busy {
             pending: 0,
             since: Instant::now(),
             runs: None,
         }));
         // From here a failure drops it, which ends the process.
-        let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
         let bun = Self {
             number,
             opening,
@@ -442,11 +809,19 @@ impl Bun {
             busy: busy.clone(),
             events: received,
             child: Mutex::new(Some(child)),
+            printed: Mutex::new(printed),
             told: Mutex::default(),
         };
         std::thread::Builder::new()
             .name("bun".into())
             .spawn(move || read(stdout, &said))
+            .map_err(|error| failure(error.to_string()))?;
+        std::thread::Builder::new()
+            .name("bun-log".into())
+            .spawn(move || {
+                let _printing = printing;
+                print(stderr, log);
+            })
             .map_err(|error| failure(error.to_string()))?;
         std::thread::Builder::new()
             .name("bun-input".into())
@@ -480,10 +855,20 @@ impl Bun {
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     break format!("did not finish loading within {LOAD_TIMEOUT:?}");
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break "stopped Bun".to_string(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break "stopped".to_string(),
             }
         };
         Err(LoadFailure { file, why })
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.busy
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending
+            == 0
+            && self.events.is_empty()
     }
 
     /// What Bun says after its load, in order, up to [`Event::Ended`].
@@ -522,9 +907,17 @@ impl Bun {
         let sent = self.lines.try_send(line).is_ok();
         if sent {
             SENT_BYTES.fetch_add(length, Ordering::Relaxed);
+            match request {
+                Request::Records { .. }
+                | Request::Mount { .. }
+                | Request::Resize { .. }
+                | Request::Watches { .. }
+                | Request::Clock { .. } => SENT_UPDATES.fetch_add(1, Ordering::Relaxed),
+                Request::Event { .. } => SENT_EVENTS.fetch_add(1, Ordering::Relaxed),
+                _ => 0,
+            };
         } else {
-            let mut busy = lock();
-            busy.pending = busy.pending.saturating_sub(1);
+            done(&mut lock());
         }
         sent
     }
@@ -553,7 +946,7 @@ impl Bun {
         );
         let given: BTreeSet<&InstanceId> = records.iter().map(|(id, _)| *id).collect();
         let held: Vec<InstanceId> = (told.records.keys())
-            .filter(|child| child.parent().as_ref() == Some(id) && !given.contains(child))
+            .filter(|child| child.is_inside(id) && !given.contains(child))
             .cloned()
             .collect();
         records.extend(held.iter().map(|child| (child, None)));
@@ -627,6 +1020,57 @@ impl Bun {
     }
 }
 
+/// The `type` of a line, which every line has.
+#[derive(Deserialize)]
+struct Kind<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: std::borrow::Cow<'a, str>,
+}
+
+/// The ops of a card, as [`Event::Ops`].
+#[derive(Deserialize)]
+struct OpsLine<'a> {
+    card: u64,
+    #[serde(borrow)]
+    ops: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+    #[serde(default)]
+    mount: bool,
+    #[serde(default)]
+    event: bool,
+    #[serde(default)]
+    took: f64,
+}
+
+/// A line of Bun. Ops are read on their own road, here on the thread that hears Bun, not the
+/// window's: the first ops of a page of thousands of notes are megabytes.
+fn read_line(line: &str) -> serde_json::Result<Line> {
+    if serde_json::from_str::<Kind>(line)?.kind != "ops" {
+        return serde_json::from_str(line);
+    }
+    let OpsLine {
+        card,
+        ops,
+        error,
+        mount,
+        event,
+        took,
+    } = serde_json::from_str(line)?;
+    HEARD_BYTES.fetch_add(line.len() as u64, Ordering::Relaxed);
+    LAST_BUN_MICROS.store((took * 1000.0) as u64, Ordering::Relaxed);
+    let ops = match (ops, error) {
+        (_, Some(error)) => Err(error),
+        (Some(ops), None) => serde_json::from_str(ops.get()).map_err(|error| error.to_string()),
+        (None, None) => Ok(Vec::new()),
+    };
+    Ok(Line::Event(Event::Ops {
+        card,
+        ops,
+        mount,
+        event,
+    }))
+}
+
 /// Reads what Bun says until it stops, and passes it on to `said`.
 fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     for line in BufReader::new(stdout).lines() {
@@ -637,7 +1081,7 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
                 break;
             }
         };
-        match serde_json::from_str::<Line>(&line) {
+        match read_line(&line) {
             Ok(line) => {
                 if said.send(line).is_err() {
                     break;
@@ -648,8 +1092,53 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     }
 }
 
+/// Passes what the code of the tools prints on to the runtime's own stderr, and keeps its
+/// last lines in `log`, until Bun stops.
+fn print(printed: impl Read, mut log: Option<std::fs::File>) {
+    let mut printed = BufReader::new(printed);
+    let mut kept: VecDeque<Vec<u8>> = VecDeque::new();
+    loop {
+        let mut line = Vec::new();
+        match printed.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        if !line.ends_with(b"\n") {
+            line.push(b'\n');
+        }
+        std::io::stderr().write_all(&line).ok();
+        let Some(file) = &mut log else {
+            continue;
+        };
+        let written = if kept.len() < LOG_LINES {
+            let written = file.write_all(&line);
+            kept.push_back(line);
+            written
+        } else {
+            // Cut to the last half at once: a tool that prints on every frame does not write
+            // the whole log again for each line.
+            kept.drain(..LOG_LINES / 2);
+            kept.push_back(line);
+            (file.set_len(0))
+                .and_then(|()| file.rewind())
+                .and_then(|()| kept.iter().try_for_each(|line| file.write_all(line)))
+        };
+        if let Err(error) = written {
+            eprintln!("error: could not write {LOG_FILE}: {error}");
+            log = None;
+        }
+    }
+}
+
 /// Hears what Bun `number` says after its load and passes its events on to `events`, and the
 /// answers of behaviours to them, until it hangs or stops, which [`Event::Ended`] says.
+/// One thing Bun was told is done, or will never be.
+fn done(busy: &mut Busy) {
+    if busy.pending > 0 {
+        busy.pending -= 1;
+    }
+}
+
 fn hear(
     number: u64,
     heard: &mpsc::Receiver<Line>,
@@ -659,7 +1148,12 @@ fn hear(
     let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
     let ended = |why: String| {
         behaviours::ended(number, &why);
-        let blame = lock().runs.take();
+        let mut busy = lock();
+        while busy.pending > 0 {
+            done(&mut busy);
+        }
+        let blame = busy.runs.take();
+        drop(busy);
         // Outside the window nobody hears it.
         events.try_send(Event::Ended { blame, why }).ok();
     };
@@ -674,7 +1168,7 @@ fn hear(
             Ok(Line::Done) => {
                 let mut busy = lock();
                 busy.since = Instant::now();
-                busy.pending = busy.pending.saturating_sub(1);
+                done(&mut busy);
                 busy.runs = None;
             }
             // Code that says things in a loop that never ends says more than the window hears.
@@ -687,6 +1181,7 @@ fn hear(
             Ok(Line::Declared {
                 question,
                 declaration,
+                reads,
             }) => {
                 let answer = declaration.map_err(|error| format!("its behaviour failed: {error}"));
                 let answer = answer.and_then(|declaration| {
@@ -698,11 +1193,11 @@ fn hear(
                         )
                     })
                 });
-                behaviours::answered(question, answer);
+                behaviours::answered(question, answer, reads);
             }
             // Bun loads once.
             Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped".to_string()),
         }
         // Also while it says things: a loop that never ends may.
         let busy = lock();
@@ -727,6 +1222,11 @@ impl Bun {
             child.kill().ok();
             child.wait().ok();
         }
+        // So its last lines are in the log before a new Bun empties it. Not for ever: a
+        // process its code started may still hold the pipe.
+        (self.printed.lock().unwrap_or_else(PoisonError::into_inner))
+            .recv_timeout(Duration::from_secs(1))
+            .ok();
     }
 }
 
@@ -756,16 +1256,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_log_of_a_tool_that_prints_on_and_on_keeps_its_last_lines() {
+        let folder = tempfile::tempdir().unwrap();
+        let printed: String = (0..1000).map(|line| format!("line {line}\n")).collect();
+        let path = folder.path().join(LOG_FILE);
+        print(
+            printed.as_bytes(),
+            Some(std::fs::File::create(&path).unwrap()),
+        );
+        let log = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(
+            (LOG_LINES / 2..=LOG_LINES).contains(&lines.len()),
+            "{} lines",
+            lines.len()
+        );
+        let last: Vec<String> = (1000 - lines.len()..1000)
+            .map(|line| format!("line {line}"))
+            .collect();
+        assert_eq!(lines, last);
+    }
+
+    #[test]
     fn a_tool_this_side_cannot_read_is_an_error_of_its_file_and_the_others_load() {
         let tool = |name: &str, unit: &str| {
             serde_json::json!({
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
-                    "doc": "d", "kind": "effect", "tick": false, "page": false, "transport": false, "keys": false,
-                    "notes": false, "behaviour": false, "controls": {},
-                    "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
+                    "doc": "d", "voices": 1, "input": true, "sound": true, "tick": false, "view": false,
+                    "keys": false, "notes": false, "on_take": false, "behaviour": false, "inputs": {},
+                    "fields": { "rate": { "kind": "number", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },
-                "sounds": [], "card": { "Err": "no card" }, "page": null
+                "sounds": [], "view": { "Err": "no view" }
             })
         };
         let line = serde_json::json!({

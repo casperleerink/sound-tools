@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -56,18 +56,22 @@ impl Mode {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default chorus.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct ModulationState {
     pub mode: Mode,
     /// How fast the LFO goes up and down.
     pub rate_hz: f32,
-    /// How far the LFO moves the delay or the notches. 0 holds them still.
+    /// How far the LFO moves the delay or the notches. 1 is 7.4 to 19.5 ms for the chorus, 0.27
+    /// to 8.5 ms for the flanger, and 250 Hz to 4 kHz for the phaser. 0 holds them still.
     pub depth: f32,
-    /// How much of the wet sound goes round again. More is a sharper, ringing sweep.
+    /// How much of the wet sound goes round again. More is a sharper, ringing sweep that sounds
+    /// metallic.
     pub feedback: f32,
-    /// How far apart the LFO of the left and of the right side is. 0 moves both together, 1
-    /// moves them half a cycle apart.
+    /// How far apart the LFO of the left and of the right side is. 0 moves both together, 0.5 a
+    /// quarter cycle apart, 1 half a cycle: opposite, the widest.
     pub spread: f32,
-    /// 0 is the sound as it came in, 1 is the wet sound only.
+    /// 0 is the sound as it came in, 1 is the wet sound only. The notches of a flanger and a
+    /// phaser are deepest at 0.5.
     pub mix: f32,
 }
 
@@ -149,6 +153,7 @@ impl State for ModulationState {
 /// The doc of the modulation record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "modulation",
+    group: "Devices",
     when: "A chorus, flanger or phaser on a track: wider, swirling, a jet sweep",
     markdown: include_str!("../agent-doc.md"),
 };
@@ -158,7 +163,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ModulationState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Modulation::AUTOMATION.parameters());
+        .schema(Modulation::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
@@ -185,18 +190,9 @@ fn apply(
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

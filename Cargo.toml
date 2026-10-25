@@ -1,10 +1,11 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "0.12.0"
+# Not the app's version: a release takes that from its tag, see crates/runtime/src/lib.rs.
+version = "0.0.0"
 publish = false
 
 # Every dependency, internal or external, is declared here once. Members write `foo.workspace = true`.
@@ -14,19 +15,18 @@ publish = false
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
 analyzer = { path = "extensions/analyzer" }
-arrangement = { path = "extensions/arrangement" }
 compressor = { path = "extensions/compressor" }
 delay = { path = "extensions/delay" }
 drum-pad = { path = "extensions/drum-pad" }
 eq = { path = "extensions/eq" }
 filter = { path = "extensions/filter" }
-fit-tempo = { path = "extensions/fit-tempo" }
 gate = { path = "extensions/gate" }
 instrument = { path = "extensions/instrument" }
 limiter = { path = "extensions/limiter" }
 metronome = { path = "extensions/metronome" }
 midi = { path = "extensions/midi" }
 modulation = { path = "extensions/modulation" }
+pitch-correction = { path = "extensions/pitch-correction" }
 plugin-host = { path = "extensions/plugin-host" }
 reverb = { path = "extensions/reverb" }
 sampler = { path = "extensions/sampler" }
@@ -43,6 +43,7 @@ sound-typescript = { path = "crates/typescript" }
 sound-ui = { path = "crates/ui" }
 tone = { path = "extensions/tone" }
 utility = { path = "extensions/utility" }
+vocoder = { path = "extensions/vocoder" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
 cargo_metadata = "0.23"
@@ -97,7 +98,7 @@ rtsan-standalone = "0.3"
 schemars = "1.2.2"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps key order stable, so agent diffs of project files stay small.
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 # Errors name the field, such as `state.gain`, so an agent can fix its edit.
 serde_path_to_error = "0.1"
 # Checks the agent CLI the app downloads against its pinned checksum. MIT OR Apache-2.0.
@@ -107,6 +108,8 @@ smol = "2"
 tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
+# Grapheme boundaries, so the caret steps over an emoji as one character. The version gpui uses.
+unicode-segmentation = "1.13"
 # Claude session ids, which the app picks.
 uuid = { version = "1", features = ["v4", "v5"] }
 # Windows: the job object that ends the agent with every program it started, and hidden
@@ -145,7 +148,7 @@ codegen-units = 16
 debug = 0
 codegen-units = 16
 
-# Fast proc macros make derive-heavy extension builds faster. Fast layout and SVG keep debug UI usable.
+# Fast proc macros make derive-heavy extension builds faster. Fast gpui, layout and SVG keep debug UI usable.
 # Every crate with DSP code also gets opt-level 3: unoptimized audio glitches and hides real problems.
 [profile.dev.package]
 syn = { opt-level = 3 }
@@ -153,6 +156,7 @@ quote = { opt-level = 3 }
 proc-macro2 = { opt-level = 3 }
 serde_derive = { opt-level = 3 }
 gpui_macros = { opt-level = 3 }
+gpui = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
 # The shapes of waveforms and curves are tessellated on every paint of them.
@@ -162,19 +166,18 @@ lyon_geom = { opt-level = 3 }
 # Decodes FLAC samples of SFZ instruments when they load.
 claxon = { opt-level = 3 }
 analyzer = { opt-level = 3 }
-arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
 delay = { opt-level = 3 }
 drum-pad = { opt-level = 3 }
 eq = { opt-level = 3 }
 filter = { opt-level = 3 }
-fit-tempo = { opt-level = 3 }
 gate = { opt-level = 3 }
 instrument = { opt-level = 3 }
 limiter = { opt-level = 3 }
 metronome = { opt-level = 3 }
 midi = { opt-level = 3 }
 modulation = { opt-level = 3 }
+pitch-correction = { opt-level = 3 }
 plugin-host = { opt-level = 3 }
 reverb = { opt-level = 3 }
 runtime = { opt-level = 3 }
@@ -188,6 +191,7 @@ test-clap-plugin = { opt-level = 3 }
 test-vst3-plugin = { opt-level = 3 }
 tone = { opt-level = 3 }
 utility = { opt-level = 3 }
+vocoder = { opt-level = 3 }
 wavetable = { opt-level = 3 }
 # The FFT of the wavetables runs in the behaviour when a table is picked. Unoptimized it takes
 # a large part of a second.

@@ -171,12 +171,6 @@ pub(crate) fn lane_of_pin(id: u32) -> String {
     format!("parameters.{id}.value")
 }
 
-/// The pin an automation lane of this name moves, when it names one.
-pub(crate) fn pin_of_lane(name: &str) -> Option<u32> {
-    let id = name.strip_prefix("parameters.")?.strip_suffix(".value")?;
-    id.parse().ok()
-}
-
 /// Why the pin `id` of a record moves nothing, when it does not: the plugin has no such
 /// parameter a host may set, or the value is outside its range. Such a pin is not sent, and the
 /// rest of the record plays.

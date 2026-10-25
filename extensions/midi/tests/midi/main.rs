@@ -7,6 +7,4 @@
 mod computer_keys;
 mod messages;
 mod playing;
-mod recording;
 mod support;
-mod takes;

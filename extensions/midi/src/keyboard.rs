@@ -1,30 +1,26 @@
-//! The MIDI input in a running engine: where it plays, what it records, and how long it takes.
+//! The MIDI input in a running engine: where it plays, and how long it takes.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use sound_core::{
-    EngineControl, GraphError, InputEndpoint, Node, OutputEndpoint, StreamTiming, Ticks,
-    monotonic_nanos,
-};
+use sound_core::{EngineControl, GraphError, InputEndpoint, Node, OutputEndpoint, StreamTiming};
 
 use sound_notes::{Expression, Pedal};
 
 use crate::keys::{Input, Keys, Played, Report};
-use crate::take::{Take, TakeEvent};
 
 /// The name of the processor in the engine graph. Instance processors are named
 /// `<instance id>#<name>`, so a name without `#` can never collide with one.
 const PROCESSOR: &str = "midi-input";
 
-/// Messages that were played but did not reach the take or the latency, and messages that were
-/// never played at all. Both are zero in an ordinary session.
+/// Messages that were played but did not reach the latency, and messages that were never played
+/// at all. Both are zero in an ordinary session.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Lost {
     /// Messages that did not fit in the input ring, so they never sounded.
     pub input: u64,
-    /// Messages that sounded but whose report did not fit, so they are missing from a take.
+    /// Messages that sounded but whose report did not fit, so they are missing from the latency.
     pub reports: u64,
 }
 
@@ -81,22 +77,9 @@ impl Latency {
     }
 }
 
-/// A recording that is going on.
-struct Recording {
-    /// The playhead where it began.
-    start: Ticks,
-    /// The monotonic time where it began, so the take's times start at zero.
-    started_nanos: u64,
-    /// Where the pedal stood when it began, so a take under a held pedal plays back as it
-    /// sounded.
-    pedal_at_start: Pedal,
-    events: Vec<TakeEvent>,
-}
-
-/// The MIDI input in the engine: one processor, where its notes go, and what it records.
+/// The MIDI input in the engine: one processor, and where its notes go.
 ///
 /// It is not project state. Attaching it writes nothing and adds no undo step, like the click.
-/// A finished recording is an edit of the project, which the caller makes.
 pub struct Keyboard {
     node: Node<Keys>,
     input: Input,
@@ -106,10 +89,8 @@ pub struct Keyboard {
     /// Where the live input should go next. The change waits for the next [`Self::poll`], so
     /// the release of what was held is out of the processor before the connections go.
     wanted: Option<Vec<InputEndpoint>>,
-    recording: Option<Recording>,
     latency: Latency,
-    /// Where the pedal stands, as the reports have it. A recording that begins under a held
-    /// pedal starts with this value.
+    /// Where the pedal stands, as the reports have it.
     live_pedal: Pedal,
     /// The pitches the live input holds, one bit each, as the reports have it. It is what the
     /// processor holds, so this side can tell whether a release is needed at all.
@@ -135,7 +116,6 @@ impl Keyboard {
             lost_reports,
             destinations: Vec::new(),
             wanted: None,
-            recording: None,
             latency: Latency::default(),
             live_pedal: Pedal::UP,
             live_notes: 0,
@@ -198,8 +178,7 @@ impl Keyboard {
         &self.destinations
     }
 
-    /// Takes every report the engine sent since the last call: a recording grows by what was
-    /// played, and the latency is measured against `timing` when there is a device. It also
+    /// Takes every report the engine sent since the last call: the latency is measured against `timing` when there is a device. It also
     /// makes the port of [`Self::play_into`] the one the live input reaches.
     ///
     /// Call it regularly. Nothing here is on the way to sound.
@@ -271,80 +250,7 @@ impl Keyboard {
                     self.live_expression.follow(sounded.arrived.played.event());
                 }
             }
-            let Some(recording) = &mut self.recording else {
-                continue;
-            };
-            // Only what the project played from the start of the recording on. A key that was
-            // pressed before, while the project was stopped, is not part of the take. A clip
-            // has no lane for another controller.
-            let control = matches!(sounded.arrived.played, Played::Control { .. });
-            if !sounded.playing || sounded.tick < recording.start || control {
-                continue;
-            }
-            let since = sounded
-                .arrived
-                .at_nanos
-                .saturating_sub(recording.started_nanos);
-            recording.events.push(TakeEvent {
-                time_us: since / 1_000,
-                tick: sounded.tick,
-                played: sounded.arrived.played,
-            });
         }
-    }
-
-    /// Starts recording from the playhead. Whatever the engine sounds from here on is in the
-    /// take. A recording that was going on is dropped.
-    pub fn start_recording(&mut self, at: Ticks) {
-        // A wheel away from rest is in the take from its first moment, so its clip starts
-        // where the hand was, as it does for the pedal.
-        let wheels = Expression::REST.moves_to(self.live_expression);
-        let wheels = wheels.filter_map(Played::of_event);
-        self.recording = Some(Recording {
-            start: at,
-            started_nanos: monotonic_nanos(),
-            pedal_at_start: self.live_pedal,
-            events: wheels
-                .map(|played| TakeEvent {
-                    time_us: 0,
-                    tick: at,
-                    played,
-                })
-                .collect(),
-        });
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.recording.is_some()
-    }
-
-    /// The keys of the recording so far, as a take that ends at `until`: what a view shows
-    /// while it grows. Only the keys, because the pedal and the wheels move no note and a wheel
-    /// sends a message every few milliseconds. `None` when nothing records.
-    pub fn keys_so_far(&self, until: Ticks) -> Option<Take> {
-        let recording = self.recording.as_ref()?;
-        let keys = recording
-            .events
-            .iter()
-            .filter(|event| matches!(event.played, Played::On { .. } | Played::Off { .. }));
-        Some(Take {
-            start: recording.start,
-            end: until.max(recording.start),
-            pedal_at_start: Pedal::UP,
-            events: keys.copied().collect(),
-        })
-    }
-
-    /// Ends the recording at the playhead and gives the take. `None` when nothing was
-    /// recording. Poll once before this, so the last block is in the take.
-    pub fn finish_recording(&mut self, until: Ticks) -> Option<Take> {
-        let recording = self.recording.take()?;
-        Some(Take {
-            start: recording.start,
-            end: until.max(recording.start),
-            pedal_at_start: recording.pedal_at_start,
-            events: recording.events,
-        })
     }
 
     pub fn latency(&self) -> Latency {

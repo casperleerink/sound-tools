@@ -282,11 +282,8 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
-            // The record files hold what was written from outside, but not what a derive made
-            // of it, so those records are written here. Everything else is already on disk.
-            let derived: Vec<InstanceId> = applied.derived.clone();
             self.history.push_outside(OUTSIDE_LABEL, applied, at);
-            self.write(derived.iter(), write_project_file)?;
+            self.write([].iter(), write_project_file)?;
         }
         self.rebind_waiting_for(&asset_folders)?;
         Ok(count)

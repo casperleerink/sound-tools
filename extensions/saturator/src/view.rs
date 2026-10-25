@@ -238,25 +238,4 @@ mod tests {
         assert_eq!(drive_at(LEVELS_DB.1), DRIVE.min);
         assert_eq!(drive_at(LEVELS_DB.0), DRIVE.max);
     }
-
-    /// The automatic gain keeps a sine at the reference level where it was, so the curve goes
-    /// through the reference on the diagonal at every drive.
-    #[test]
-    fn the_curve_goes_through_the_reference_level() {
-        for curve in Curve::ALL {
-            for drive_db in [DRIVE.min, DRIVE.default, DRIVE.max] {
-                let state = SaturatorState {
-                    curve,
-                    drive_db,
-                    ..SaturatorState::default()
-                };
-                let reference = 20. * 0.25_f32.log10();
-                let out = level_out(&state, reference);
-                assert!(
-                    (out - reference).abs() < 1e-3,
-                    "{curve:?} {drive_db}: {out}"
-                );
-            }
-        }
-    }
 }

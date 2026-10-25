@@ -192,7 +192,7 @@ pub enum Table {
     BasicShapes,
     /// A square that narrows to a thin pulse.
     PulseWidth,
-    /// A sine, then the harmonics of a saw added one by one.
+    /// A sine, then the harmonics of a saw added one by one, up to 32.
     Harmonics,
     /// Drawbar settings of a tonewheel organ, from one flute to all drawbars out.
     Organ,

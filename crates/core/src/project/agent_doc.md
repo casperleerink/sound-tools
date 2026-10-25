@@ -2,13 +2,15 @@
 
 # This folder is a Sound Tools project
 
-A piece of music saved as small JSON files. You work on it by editing these files. While the runtime has the project open, every change applies live: the composer hears it about 0.2 s later, with no build and no restart. All the files of one request are one undo step for the composer, as long as you leave less than 15 s between two writes.
+A piece of music as small JSON files that you edit. While the runtime has the project open, every change applies live, about 0.2 s later, with no build. All the files of one request are one undo step, if no two writes are 15 s or more apart.
 
-This file is the map. It holds what you need on every task. The docs below hold the rest, one file each. Open the one your task needs and leave the others closed.
+The composer is a musician, not a programmer: in your replies and in what tools show, use musical words, not names of code, formats or files.
+
+This file is the map: open only the docs your task needs.
 
 ## The composer's instructions
 
-`instructions.md`, when it exists, holds the composer's instructions for this project. Read it before you start and follow it; where it disagrees with the docs, it wins. When the composer asks you to remember something for this project, or corrects a mistake you might make again, add a short line to it. Write it as a plain rule, and keep the lines that are there.
+`instructions.md`, when it exists, holds the composer's instructions for this project. Read and follow it before you start; it wins over the docs. When the composer asks you to remember something, or corrects a mistake you might repeat, add a short plain rule to it.
 
 ## Docs
 
@@ -24,25 +26,25 @@ state/                    every instance of a tool, one JSON record each
     instance.json         its own record
     <child>.json          a child instance
     <child>/instance.json a child instance that owns children itself
-problems.txt              written by the runtime while it has the project open: the files that are not live, and why
+problems.txt              written by the runtime while the project is open: what is not live, and why
 instructions.md           the composer's instructions for this project, if any
 AGENTS.md, CLAUDE.md      this map, generated
-agent-docs/               the docs of the list above, generated
+agent-docs/               the docs listed above, generated
 ```
 
-- A record is `{"tool": "<tool name>", "state": {...}}`. The `state` fields are in the doc of the tool's extension. An unknown field or a value out of range does not load.
-- The id of an instance is its path under `state/` without `.json`: the file `state/a/b.json` and the folder record `state/a/b/instance.json` both have the id `a/b`. An id never changes. Names that people see live inside the record.
+- A record is `{"tool": "<tool name>", "state": {...}}`. The `state` fields are in the doc of the tool. An unknown field or a value out of range does not load.
+- The id of an instance is its path under `state/` without `.json`: `state/a/b.json` and `state/a/b/instance.json` both have the id `a/b`. An id never changes. Names that people see live inside the record.
 - A name uses lowercase letters, digits, `-` and `_`. `instance` is reserved.
-- The tool decides the form, for good. A record in the other form does not load.
+- The tool decides the form, for good:
 
 {{tools}}
 
-- Every folder under `state/` is an instance and needs its `instance.json`. The folder tree is ownership: deleting a folder deletes the instance and all it owns. Moving a file gives it another owner.
+- Every folder under `state/` needs its `instance.json`. The folder tree is ownership: deleting a folder deletes the instance and all it owns. Moving a file gives it another owner.
 - A reference to another instance is its id as a string. It owns nothing and may point at nothing.
 
 ## Time
 
-Positions and lengths are whole ticks. 960 ticks are a quarter note at every tempo, so a tempo change never moves a tick position.
+Positions and lengths are whole ticks. 960 ticks are a quarter note at every tempo.
 
 The time signatures are in `project.json`, under `tempo_map.time_signatures`: runs such as `[{"signature": "4/4", "bars": 8}, {"signature": "7/8", "bars": 2}]`, the last going on to the end.
 
@@ -53,17 +55,16 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 ## Rules
 
 - Write a file whole, as valid JSON, in one write.
-- Touch only the files your task needs. Do not reformat or rewrite the others.
+- Touch only the files your task needs. Do not reformat the others.
 - Leave no temporary, backup or scratch files under `state/`.
 - Pick ids that say what the thing is, unique in their folder: `bass-verse`, not `clip-1`, `Bass Line` or `bass-bars-5-8`.
-- To delete, remove the file or the folder. To move, move the file.
-- The composer can undo your change. Keep no copies.
-- `AGENTS.md`, `CLAUDE.md`, `problems.txt` and the markdown in `agent-docs/` are written by the runtime. Editing them changes nothing.
+- To delete or move, delete or move the file or folder. The composer can undo: keep no copies.
+- `AGENTS.md`, `CLAUDE.md`, `problems.txt` and `agent-docs/` are written by the runtime. Editing them changes nothing.
 
 ## Check your work
 
-`problems.txt` follows a write by about 0.2 s. Read it at the end of your work, for yourself: the composer does not see it. When you write and read in one command, wait a second in between.
+`problems.txt` follows a write by about 0.2 s. Read it when done; the composer does not see it. When you write and read in one command, wait a second in between.
 
 - `No problems. Every file is live.`: all your files play.
-- Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and the last valid state keeps playing. Fix the file and its line goes away.
+- Else each line is `<file>: <field>: <reason>`, such as `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and its last valid state keeps playing.
 - No `problems.txt`, or one that lists a file you have fixed since: no runtime is watching, and nothing checked your edits. They load when the project opens.

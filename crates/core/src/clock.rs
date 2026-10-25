@@ -42,6 +42,9 @@ pub const MIN_EXACT_SAMPLE_RATE: u32 = 16_000;
 pub struct Ticks(pub u64);
 
 impl Ticks {
+    /// Later than any tick a piece reaches.
+    pub const MAX: Ticks = Ticks(u64::MAX);
+
     pub fn saturating_sub(self, other: Ticks) -> Ticks {
         Ticks(self.0.saturating_sub(other.0))
     }
@@ -582,15 +585,6 @@ impl TempoMap {
 
     pub fn time_signatures(&self) -> &TimeSignatures {
         &self.time_signatures
-    }
-
-    /// The same tempo changes with other time signatures. The ticks of the tempo changes stay,
-    /// so what plays stays where it is and the bar lines move.
-    pub fn with_time_signatures(&self, time_signatures: TimeSignatures) -> Self {
-        Self {
-            time_signatures,
-            tempo_changes: self.tempo_changes.clone(),
-        }
     }
 
     pub fn tempo_changes(&self) -> &[TempoChange] {

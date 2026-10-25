@@ -1,7 +1,7 @@
 //! What `--analyze` measures in a render or an audio file: loudness, peaks, the level of each
-//! frequency band, the stereo width and the pitch, of the whole and of each row of the report.
-//! An agent cannot listen, so these numbers are how it checks that what it wrote sounds as it
-//! meant.
+//! frequency band, the stereo width and the pitch, of the whole and of each row of the report,
+//! and the notes and their phrases. An agent cannot listen, so these numbers are how it checks
+//! that what it wrote sounds as it meant, and how it reads a recording it is to work with.
 //!
 //! Loudness is ITU-R BS.1770 (LUFS): the sound weighted like hearing (K-weighting), in blocks of
 //! 400 ms every 100 ms, and the two gates of the loudness of the whole. A plain level (RMS)
@@ -9,10 +9,14 @@
 //! of each row are what catch that. The true peak is the highest sample at four times the rate,
 //! the peak a converter or an encoder meets between the samples.
 //!
-//! The parts that measure a moment, [`Momentary`], [`PowerSpectrum`] and [`PitchFinder`], are
-//! public for a live display, such as the Analyzer card.
+//! The parts that measure a moment, [`Momentary`], [`PowerSpectrum`] and [`PitchTracker`], are
+//! public for a live display, such as the Analyzer card, and [`SteadyPitch`] for the pitch
+//! correction.
 
+mod moments;
+mod notes;
 mod pitch;
+mod steady;
 
 use std::sync::Arc;
 
@@ -20,8 +24,12 @@ use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
 use sound_core::{Oversampler, OversamplingFilters};
 
+pub use moments::Moment;
+use moments::MomentFinder;
+pub use notes::{Events, Note, NotePitch, Phrase, Tuning};
 use pitch::Pitches;
-pub use pitch::{MeasuredPitch, Pitch, PitchFinder, nearest_note};
+pub use pitch::{LOWEST_HZ, MeasuredPitch, Pitch, PitchSettings, PitchTracker, nearest_note};
+pub use steady::SteadyPitch;
 
 /// Every render is stereo, and a file is read as stereo.
 const CHANNELS: usize = 2;
@@ -70,6 +78,8 @@ pub struct Measures {
     pub pitch: Option<MeasuredPitch>,
     pub frames: u64,
     pub rows: Vec<RowMeasures>,
+    pub moments: Vec<Moment>,
+    pub events: Events,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,6 +123,9 @@ pub struct Meter {
     not_a_number: Option<u64>,
     spectrum: Spectrum,
     pitches: Pitches,
+    rate: f64,
+    moment_finder: MomentFinder,
+    moments: Vec<Moment>,
 }
 
 /// What a row adds up while the sound passes.
@@ -155,6 +168,9 @@ impl Meter {
             not_a_number: None,
             spectrum: Spectrum::new(rate),
             pitches: Pitches::default(),
+            rate,
+            moment_finder: MomentFinder::new(rate),
+            moments: Vec::new(),
         }
     }
 
@@ -186,6 +202,7 @@ impl Meter {
             }
             self.hear(values);
             self.spectrum.push(values);
+            self.moment_finder.push(values, false);
         }
     }
 
@@ -252,8 +269,11 @@ impl Meter {
             self.add_momentary(momentary);
         }
         self.frame += 1;
-        if let Some(heard) = self.spectrum.push(values) {
-            self.add_spectrum(self.frame, heard);
+        if let Some(bands) = self.spectrum.push(values) {
+            self.add_spectrum(self.frame, bands);
+        }
+        if let Some(moment) = self.moment_finder.push(values, true) {
+            self.add_moment(moment);
         }
     }
 
@@ -282,9 +302,9 @@ impl Meter {
         self.last_momentary = Some(momentary);
     }
 
-    /// The spectrum and the pitch of the last [`WINDOW`] frames, when `pushed` frames have been
-    /// pushed, go to the row its middle is in. The first ones have their middle before the start.
-    fn add_spectrum(&mut self, pushed: u64, heard: Heard) {
+    /// The spectrum of the last [`WINDOW`] frames, when `pushed` frames have been pushed, goes
+    /// to the row its middle is in. The first ones have their middle before the start.
+    fn add_spectrum(&mut self, pushed: u64, bands: [f64; BANDS.len()]) {
         let Some(middle) = pushed.checked_sub(WINDOW as u64 / 2) else {
             return;
         };
@@ -292,12 +312,22 @@ impl Meter {
         let Some(row) = self.rows.get_mut(row.saturating_sub(1)) else {
             return;
         };
-        for (sum, power) in row.bands.iter_mut().zip(heard.bands) {
+        for (sum, power) in row.bands.iter_mut().zip(bands) {
             *sum += power;
         }
         row.spectra += 1;
-        row.pitches.add(heard.pitch);
-        self.pitches.add(heard.pitch);
+    }
+
+    /// A moment's pitch goes to the row its middle is in.
+    fn add_moment(&mut self, moment: Moment) {
+        let row = self
+            .row_starts
+            .partition_point(|start| *start <= moment.frame);
+        if let Some(row) = self.rows.get_mut(row.saturating_sub(1)) {
+            row.pitches.add(moment.pitch);
+        }
+        self.pitches.add(moment.pitch);
+        self.moments.push(moment);
     }
 
     pub fn finish(mut self) -> Measures {
@@ -305,8 +335,14 @@ impl Meter {
         // completes them. A spectrum whose middle is past the end belongs to no row.
         let frames = self.frame;
         for pushed in frames + 1..frames + WINDOW as u64 / 2 {
-            if let Some(heard) = self.spectrum.push([0.0; CHANNELS]) {
-                self.add_spectrum(pushed, heard);
+            if let Some(bands) = self.spectrum.push([0.0; CHANNELS]) {
+                self.add_spectrum(pushed, bands);
+            }
+        }
+        for _ in 0..self.moment_finder.reach() {
+            let moment = self.moment_finder.push([0.0; CHANNELS], true);
+            if let Some(moment) = moment.filter(|moment| moment.frame < frames) {
+                self.add_moment(moment);
             }
         }
         // The same for the oversampling: the peaks of the last frames are still in it.
@@ -331,6 +367,8 @@ impl Meter {
             pitch: self.pitches.measure(),
             frames,
             rows,
+            events: notes::Events::find(&self.moments, self.rate),
+            moments: self.moments,
         }
     }
 }
@@ -493,6 +531,13 @@ impl Biquad {
         }
     }
 
+    /// Takes the state the filter has after `input` for ever.
+    fn settle(&mut self, input: f64) {
+        let gain = self.b.iter().sum::<f64>() / (1.0 + self.a.iter().sum::<f64>());
+        self.inputs = [input; 2];
+        self.outputs = [input * gain; 2];
+    }
+
     fn process(&mut self, input: f64) -> f64 {
         let output = self.b[0] * input + self.b[1] * self.inputs[0] + self.b[2] * self.inputs[1]
             - self.a[0] * self.outputs[0]
@@ -503,15 +548,8 @@ impl Biquad {
     }
 }
 
-/// What the last [`WINDOW`] frames hold: the power of each band, and the pitch of their
-/// middle.
-struct Heard {
-    bands: [f64; BANDS.len()],
-    pitch: Pitch,
-}
-
-/// The power spectrum of [`WINDOW`] frames under a Hann window: `WINDOW / 2 + 1` bins from
-/// 0 Hz to half the rate. Each bin is the mean square of the sound it stands for, its mirror
+/// The power spectrum of a window of frames under a Hann window: `length / 2 + 1` bins from 0 Hz
+/// to half the rate. Each bin is the mean square of the sound it stands for, its mirror
 /// image included, so the bins of a sound sum to its mean square.
 pub struct PowerSpectrum {
     fft: Arc<dyn RealToComplex<f32>>,
@@ -524,11 +562,12 @@ pub struct PowerSpectrum {
 }
 
 impl PowerSpectrum {
-    pub fn new() -> Self {
-        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(WINDOW);
-        let window: Vec<f32> = (0..WINDOW)
+    /// A spectrum of `length` frames, such as [`WINDOW`].
+    pub fn new(length: usize) -> Self {
+        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(length);
+        let window: Vec<f32> = (0..length)
             .map(|index| {
-                let phase = std::f64::consts::TAU * index as f64 / WINDOW as f64;
+                let phase = std::f64::consts::TAU * index as f64 / length as f64;
                 (0.5 - 0.5 * phase.cos()) as f32
             })
             .collect();
@@ -538,12 +577,12 @@ impl PowerSpectrum {
             output: fft.make_output_vec(),
             fft,
             window,
-            scale: WINDOW as f64 * window_power,
+            scale: length as f64 * window_power,
         }
     }
 
-    /// The power of each bin of `samples`, [`WINDOW`] frames of one channel. Fewer are padded
-    /// with silence.
+    /// The power of each bin of `samples`, the length of the window of one channel. Fewer are
+    /// padded with silence.
     pub fn powers(&mut self, samples: &[f32]) -> impl Iterator<Item = f64> + '_ {
         let padded = samples.iter().chain(std::iter::repeat(&0.0));
         for ((input, sample), weight) in self.input.iter_mut().zip(padded).zip(&self.window) {
@@ -554,21 +593,17 @@ impl PowerSpectrum {
             Ok(()) => self.output.len(),
             Err(_) => 0,
         };
-        let scale = self.scale;
+        let (scale, top) = (self.scale, self.window.len() / 2);
         let output = self.output.iter().take(bins).enumerate();
         output.map(move |(bin, value)| {
             // The bins between 0 and the top stand for their mirror image too.
-            let mirrored = if bin == 0 || bin == WINDOW / 2 {
-                1.0
-            } else {
-                2.0
-            };
+            let mirrored = if bin == 0 || bin == top { 1.0 } else { 2.0 };
             mirrored * f64::from(value.norm_sqr()) / scale
         })
     }
 }
 
-/// The power of each band over the last [`WINDOW`] frames and their pitch, every [`HOP`] frames.
+/// The power of each band over the last [`WINDOW`] frames, every [`HOP`] frames.
 struct Spectrum {
     power: PowerSpectrum,
     /// The last [`WINDOW`] frames of each channel, oldest first.
@@ -577,7 +612,6 @@ struct Spectrum {
     since: usize,
     /// The band of each bin. The bin at 0 is no band.
     bins: Vec<Option<usize>>,
-    pitch: PitchFinder,
 }
 
 impl Spectrum {
@@ -590,18 +624,16 @@ impl Spectrum {
             })
             .collect();
         Self {
-            power: PowerSpectrum::new(),
+            power: PowerSpectrum::new(WINDOW),
             history: [vec![0.0; WINDOW], vec![0.0; WINDOW]],
             since: 0,
             bins,
-            pitch: PitchFinder::new(rate, WINDOW),
         }
     }
 
     /// Adds one frame. Every [`HOP`] frames, the power of each band over the last [`WINDOW`]
-    /// frames, summed over the channels, each as the mean square of the sound it stands for,
-    /// and the pitch of their middle.
-    fn push(&mut self, values: [f32; CHANNELS]) -> Option<Heard> {
+    /// frames, summed over the channels, each as the mean square of the sound it stands for.
+    fn push(&mut self, values: [f32; CHANNELS]) -> Option<[f64; BANDS.len()]> {
         for (history, value) in self.history.iter_mut().zip(values) {
             if let Some(slot) = history.get_mut(WINDOW - HOP + self.since) {
                 *slot = value;
@@ -612,26 +644,11 @@ impl Spectrum {
             return None;
         }
         self.since = 0;
-        let heard = Heard {
-            bands: self.bands(),
-            pitch: self.pitch(),
-        };
+        let bands = self.bands();
         for history in &mut self.history {
             history.copy_within(HOP.., 0);
         }
-        Some(heard)
-    }
-
-    /// The pitch of the middle of the window, as long as the pitch finder looks at: shorter
-    /// than the window, so that a vibrato is not smoothed away.
-    fn pitch(&mut self) -> Pitch {
-        let length = self.pitch.length();
-        let middle = (WINDOW - length) / 2..(WINDOW + length) / 2;
-        let [left, right] = &self.history;
-        match (left.get(middle.clone()), right.get(middle)) {
-            (Some(left), Some(right)) => self.pitch.find(left, right),
-            _ => Pitch::Unclear,
-        }
+        Some(bands)
     }
 
     /// The bands of the last window.
@@ -878,6 +895,21 @@ mod tests {
                 assert!(pitch.drift < 1.0, "{hz} Hz: {pitch:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_voice_with_little_at_its_own_pitch_reads_it_by_its_octave() {
+        // G2 at 1% of the power, as through a small microphone, under its next three harmonics.
+        let hz = 98.0;
+        let mut voice = sine(hz, 0.03, 0.0, 1.0, 1.0);
+        for (harmonic, amplitude) in [(2.0, 0.3), (3.0, 0.2), (4.0, 0.1)] {
+            let partial = sine(harmonic * hz, amplitude, 0.0, 1.0, 1.0);
+            for (sample, partial) in voice.iter_mut().zip(partial) {
+                *sample += partial;
+            }
+        }
+        let pitch = measure(&voice, vec![]).rows[0].pitch.unwrap();
+        assert!((pitch.note - 43.0).abs() < 0.05, "{pitch:?}");
     }
 
     #[test]

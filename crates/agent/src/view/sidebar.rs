@@ -808,7 +808,7 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        // The hairline of the arrangement's lines, so the edges weigh the same.
+        // The hairline of the window's other lines, so the edges weigh the same.
         let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);
         let body = match (&self.instructions, &self.setup) {
             (Some((editor, _)), _) => editor.clone().into_any_element(),

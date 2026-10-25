@@ -20,6 +20,9 @@ pub struct NoteTimeline {
     bend: PlayedLane<Bend>,
     mod_wheel: PlayedLane<Amount>,
     pressure: PlayedLane<Amount>,
+    /// From the first clip's start to just past the last clip's end, where the pedal goes up:
+    /// outside it nothing plays, the pedal is up and the lanes are at rest.
+    span: Option<Range<Ticks>>,
 }
 
 impl NoteTimeline {
@@ -27,6 +30,9 @@ impl NoteTimeline {
     /// owner at a time, see [`PlayedLane::new`].
     pub fn new<'a>(clips: impl IntoIterator<Item = &'a Clip>) -> Self {
         let clips: Vec<&Clip> = clips.into_iter().collect();
+        let first = clips.iter().map(|clip| clip.start).min();
+        let last = clips.iter().map(|clip| clip.end()).max();
+        let span = first.zip(last).map(|(first, last)| first..last + Ticks(1));
         let bend = PlayedLane::new(&clips, |clip| &clip.bend);
         let mod_wheel = PlayedLane::new(&clips, |clip| &clip.mod_wheel);
         let pressure = PlayedLane::new(&clips, |clip| &clip.pressure);
@@ -58,6 +64,22 @@ impl NoteTimeline {
             bend,
             mod_wheel,
             pressure,
+            span,
+        }
+    }
+
+    /// Whether anything of it may play in `range`: a note, a pedal move or a lane.
+    pub(crate) fn plays_in(&self, range: &Range<Ticks>) -> bool {
+        (self.span.as_ref()).is_some_and(|span| span.start < range.end && range.start < span.end)
+    }
+
+    /// After ranges up to `end`, the tick before which none plays anything, see
+    /// [`Self::plays_in`]: `Ticks::MAX` when all of it is behind. `None` inside it.
+    pub(crate) fn quiet_until(&self, end: Ticks) -> Option<Ticks> {
+        match &self.span {
+            Some(span) if span.start >= end => Some(span.start),
+            Some(span) if span.end > end => None,
+            _ => Some(Ticks::MAX),
         }
     }
 

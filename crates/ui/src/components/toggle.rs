@@ -41,11 +41,10 @@ struct ToggleState {
 enum Face {
     Label(SharedString),
     Dot,
-    /// An icon of `crates/ui/assets/icons`, by name, and what it is called. It shows no words,
-    /// so its name is its tooltip.
+    /// An icon of `crates/ui/assets/icons`, by name. It shows no words, so give it a
+    /// [`Toggle::tooltip`].
     Icon {
         icon: SharedString,
-        label: SharedString,
         /// A number after the icon, such as how many lanes a track has. None at 0.
         count: usize,
     },
@@ -60,6 +59,7 @@ pub struct Toggle {
     color: Option<Hsla>,
     disabled: bool,
     tab_stop: bool,
+    tooltip: Option<SharedString>,
     on_change: Option<ChangeHandler>,
 }
 
@@ -73,6 +73,7 @@ impl Toggle {
             color: None,
             disabled: false,
             tab_stop: true,
+            tooltip: None,
             on_change: None,
         }
     }
@@ -87,17 +88,11 @@ impl Toggle {
     }
 
     /// A square toggle whose face is an icon, such as the one that shows the automation lanes
-    /// of a track. `label` is its tooltip.
-    pub fn icon(
-        id: impl Into<ElementId>,
-        icon: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        on: bool,
-    ) -> Self {
+    /// of a track.
+    pub fn icon(id: impl Into<ElementId>, icon: impl Into<SharedString>, on: bool) -> Self {
         Self {
             face: Face::Icon {
                 icon: icon.into(),
-                label: label.into(),
                 count: 0,
             },
             ..Self::new(id, "", on)
@@ -121,6 +116,11 @@ impl Toggle {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
@@ -212,10 +212,12 @@ impl RenderOnce for Toggle {
                     })
                     .on_click(move |_: &ClickEvent, window, cx| on_change(!on, window, cx))
             })
+            .when_some(self.tooltip, |toggle, text| {
+                toggle.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
+            })
             .map(|toggle| match self.face {
                 Face::Label(label) => toggle.child(label),
-                Face::Icon { icon, label, count } => toggle
-                    .tooltip(move |_, cx| Tooltip::new(label.clone()).view(cx))
+                Face::Icon { icon, count } => toggle
                     .child(Icon::new(icon).size(GLYPH).color(text))
                     .when(count > 0, |toggle| toggle.child(count.to_string())),
                 Face::Dot => {

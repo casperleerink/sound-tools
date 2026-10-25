@@ -135,27 +135,3 @@ fn random_level(seed: u32, cycle: u32) -> f32 {
     // The top 24 bits, which an `f32` holds exactly, from 0 to 2 and then down by 1.
     (mixed >> 40) as f32 / (1 << 23) as f32 - 1.0
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{Lfo, LfoShape};
-
-    #[test]
-    fn it_starts_at_zero_and_rises_to_one_a_quarter_cycle_later() {
-        let mut lfo = Lfo::default();
-        assert_eq!(lfo.value(LfoShape::Sine, 0.0), 0.0);
-        lfo.advance(12_000, 1.0, 48_000.0);
-        assert!((lfo.value(LfoShape::Sine, 0.0) - 1.0).abs() < 1e-6);
-        // Half a cycle behind is the other side.
-        assert!((lfo.value(LfoShape::Sine, 0.5) + 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_whole_cycle_comes_back_to_the_start() {
-        let mut lfo = Lfo::default();
-        for _ in 0..100 {
-            lfo.advance(480, 1.0, 48_000.0);
-        }
-        assert!(lfo.value(LfoShape::Sine, 0.0).abs() < 1e-4);
-    }
-}

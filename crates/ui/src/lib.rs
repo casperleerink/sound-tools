@@ -7,10 +7,12 @@ pub mod control_edit;
 pub mod device_edit;
 pub mod devices;
 pub mod focus;
+pub mod global_keys;
 pub mod import;
 pub mod lanes;
 pub mod metering;
 pub mod recording;
+pub mod render;
 pub mod session;
 pub mod spare_keys;
 pub mod theme;
@@ -22,14 +24,16 @@ pub use assets::Assets;
 pub use control_edit::{ControlEdit, DragEdit, weak_action, weak_callback};
 pub use device_edit::{DeviceEdit, DeviceView};
 pub use devices::{
-    DeviceLabel, DeviceOffer, Devices, LaneNumber, Needs, Numbers, OfferGroup, Slot,
+    DeviceLabel, DeviceOffer, Devices, LaneNumber, Needs, Numbers, OfferGroup, Takes,
     extension_is_enabled,
 };
 pub use focus::KeyboardFocus;
+pub use global_keys::{GlobalKey, GlobalKeys};
 pub use lanes::Lanes;
-pub use metering::{Metering, every_poll};
-pub use recording::{InputLevels, LiveBody, LiveNotes, LiveSound, LiveTake, Recording};
-pub use session::{Loop, POLL_INTERVAL, Playhead, Session};
+pub use metering::{Metering, PeaksReader, SharedPeaks, every_poll, on_every_poll};
+pub use recording::{FinishedTake, LiveNote, LiveNotes, LiveSound, LiveTake, Recording};
+pub use render::{RenderProgram, render};
+pub use session::{ClickSwitch, Loop, POLL_INTERVAL, Playhead, Session, SpanOf};
 pub use spare_keys::{SpareKey, SpareKeys};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;

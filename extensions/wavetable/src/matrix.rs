@@ -36,7 +36,7 @@ pub enum Source {
     /// How hard the note was played, from 0 to 1.
     #[serde(rename = "velocity")]
     Velocity,
-    /// The pitch of the note: 0 at middle C, 1 at [`KEY_SEMITONES`] above it, -1 as far below.
+    /// The pitch of the note: 0 at middle C (60), 1 eight octaves above it, -1 as far below.
     #[serde(rename = "key")]
     Key,
     /// The modulation wheel, from 0 to 1. It also adds the vibrato every bundled instrument has.
@@ -84,33 +84,46 @@ impl Source {
     }
 }
 
-/// Where a route goes.
+/// Where a route goes, and what amount 1 adds to it with its source at 1.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Destination {
+    /// Amount 1 adds the whole table.
     #[serde(rename = "osc_1_position")]
     Osc1Position,
+    /// Amount 1 adds the whole table.
     #[serde(rename = "osc_2_position")]
     Osc2Position,
+    /// The effect amount: amount 1 adds all of it.
     #[serde(rename = "osc_1_effect")]
     Osc1Effect,
+    /// The effect amount: amount 1 adds all of it.
     #[serde(rename = "osc_2_effect")]
     Osc2Effect,
+    /// Amount 1 adds 24 semitones.
     #[serde(rename = "osc_1_pitch")]
     Osc1Pitch,
+    /// Amount 1 adds 24 semitones.
     #[serde(rename = "osc_2_pitch")]
     Osc2Pitch,
+    /// Amount 1 adds the whole gain.
     #[serde(rename = "osc_1_gain")]
     Osc1Gain,
+    /// Amount 1 adds the whole gain.
     #[serde(rename = "osc_2_gain")]
     Osc2Gain,
+    /// Amount 1 adds the whole gain.
     #[serde(rename = "sub_gain")]
     SubGain,
+    /// Amount 1 adds 8 octaves: `key` at amount 1 makes the cutoff follow the keys exactly.
     #[serde(rename = "filter_1_cutoff")]
     Filter1Cutoff,
+    /// Amount 1 adds 8 octaves: `key` at amount 1 makes the cutoff follow the keys exactly.
     #[serde(rename = "filter_2_cutoff")]
     Filter2Cutoff,
+    /// Amount 1 adds the whole resonance.
     #[serde(rename = "filter_1_resonance")]
     Filter1Resonance,
+    /// Amount 1 adds the whole resonance.
     #[serde(rename = "filter_2_resonance")]
     Filter2Resonance,
     /// The level of the voice. A route to it only turns the voice down: by nothing where the
@@ -119,13 +132,16 @@ pub enum Destination {
     /// amount turns it down where the source is high instead. Routes to it multiply.
     #[serde(rename = "amp_level")]
     AmpLevel,
-    /// Where the voice sits, after the filters.
+    /// Where the voice sits, after the filters: amount 1 moves it from the middle to one side.
     #[serde(rename = "pan")]
     Pan,
+    /// Amount 1 adds 4 octaves, 16 times faster.
     #[serde(rename = "lfo_1_rate")]
     Lfo1Rate,
+    /// Amount 1 adds 4 octaves, 16 times faster.
     #[serde(rename = "lfo_2_rate")]
     Lfo2Rate,
+    /// Amount 1 adds the whole unison amount.
     #[serde(rename = "unison_amount")]
     UnisonAmount,
 }
@@ -176,10 +192,7 @@ impl Destination {
         }
     }
 
-    /// What a route at amount 1 adds with its source at 1, in the unit of the destination:
-    /// the whole range of a position, an effect amount, a gain, a resonance, the unison amount
-    /// and the pan from the middle to one side; 24 semitones of pitch; 8 octaves of cutoff; 4
-    /// octaves of LFO rate. For [`Self::AmpLevel`] see there.
+    /// What a route at amount 1 adds with its source at 1, in the unit of the destination.
     pub fn scale(self) -> f32 {
         match self {
             Self::Osc1Pitch | Self::Osc2Pitch => 24.0,
@@ -193,10 +206,11 @@ impl Destination {
 /// One route of the matrix.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = sound_core::ranges(&Route::PARAMETERS))]
 pub struct Route {
     pub source: Source,
     pub destination: Destination,
-    /// From -1 to 1. A negative amount works the other way round.
+    /// A negative amount works the other way round.
     pub amount: f32,
 }
 

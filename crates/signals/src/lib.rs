@@ -5,8 +5,7 @@
 //! operations. A [`Machine`] runs it over a span of frames, an operation at a time, with all
 //! the memory of one voice, made on the control thread; only operations around a feedback or a
 //! buffer run frame by frame. A [`Signals`] processor plays one machine per voice as an effect,
-//! an instrument or a source, and fades to new ones when the code changes. A sound that plays
-//! through built-in devices is a [`Program`]: a processor for each stage between them.
+//! an instrument or a source, and fades to new ones when the code changes.
 
 mod cable;
 mod code;
@@ -14,14 +13,12 @@ mod graph;
 mod machine;
 mod processor;
 mod program;
-mod stages;
 
-pub use cable::{Bang, Cable, Control, Number, Placed};
-pub use code::{ArraySpec, Code, ParameterSpec};
+pub use cable::{Bang, Cable, Control, Number, Placed, Shown};
+pub use code::{ArraySpec, Code, MAX_ARRAY_LENGTH, ParameterSpec};
 pub use graph::{ControlSpec, Declarations, Graph, GraphError};
-pub use machine::{Machine, Values};
+pub use machine::{List, Machine, Values};
 pub use processor::{Kind, MAX_VOICES, Signals, SignalsUpdate};
-pub use stages::{DeviceNumber, DeviceUse, Link, LinkFrom, LinkTo, Program, Sound};
 
 // The tests build sounds with the helpers of `tests/sound`, which name this crate.
 #[cfg(test)]

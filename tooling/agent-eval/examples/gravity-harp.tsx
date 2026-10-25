@@ -1,25 +1,4 @@
-import {
-  Canvas,
-  type Color,
-  type Shape,
-  type Style,
-  type TriggerControl,
-  Knob,
-  channel,
-  choice,
-  delay,
-  feedback,
-  h,
-  knob,
-  lowpass,
-  max,
-  mix,
-  noise,
-  pow,
-  sampleRate,
-  tool,
-  trigger,
-} from "./sdk";
+import { type BangInput, type Color, type ShapeLiteral, type Style, Knob, Space, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
 
 // The page, in points.
 const WIDTH = 640;
@@ -69,19 +48,18 @@ tool({
     "`brightness` how bright the pluck is: low is a soft thumb, high a hard pick. `space` is how much of a " +
     "soft stereo echo comes with it, 0 dry. `gravity` is how fast balls fall and `bounce` how much of its " +
     "speed a ball keeps on each hit: 1 would bounce for ever, the middle settles after a few hits.",
-  kind: "source",
   state: {
     root: choice({ options: ["C", "D", "E", "F", "G", "A"], default: "D" }),
     scale: choice({ options: ["major", "minor"], default: "minor" }),
     octave: choice({ options: [3, 4, 5], default: 4 }),
-    decay: knob({ min: 0.3, max: 12, default: 4, label: "Decay (s)" }),
-    brightness: knob({ min: 300, max: 12000, default: 3500, unit: "hz" }),
-    space: knob({ min: 0, max: 1, default: 0.35, unit: "percent" }),
-    volume: knob({ min: 0, max: 1, default: 0.5, unit: "percent" }),
-    gravity: knob({ min: 150, max: 2500, default: DEFAULTS.gravity }),
-    bounce: knob({ min: 0.2, max: 0.95, default: DEFAULTS.bounce }),
+    decay: number({ min: 0.3, max: 12, default: 4, label: "Decay (s)" }),
+    brightness: number({ min: 300, max: 12000, default: 3500, unit: "hz" }),
+    space: number({ min: 0, max: 1, default: 0.35, unit: "percent" }),
+    volume: number({ min: 0, max: 1, default: 0.5, unit: "percent" }),
+    gravity: number({ min: 150, max: 2500, default: DEFAULTS.gravity }),
+    bounce: number({ min: 0.2, max: 0.95, default: DEFAULTS.bounce }),
   },
-  controls: Object.fromEntries(plucks.map((name) => [name, trigger()])) as Record<Pluck, TriggerControl>,
+  inputs: Object.fromEntries(plucks.map((name) => [name, bang()])) as Record<Pluck, BangInput>,
   memory: (): Memory => ({ balls: [], shake: strings.map(() => 0), time: 0 }),
 
   sound: (fields) => {
@@ -115,7 +93,7 @@ tool({
     return dry.plus(wet.times(space)).times(volume);
   },
 
-  tick: ({ state, memory, dt, fire }) => {
+  tick: ({ state, memory, dt, send }) => {
     const gravity = state.gravity ?? DEFAULTS.gravity;
     const bounce = state.bounce ?? DEFAULTS.bounce;
     memory.time += dt;
@@ -152,39 +130,43 @@ tool({
           ball.vx += ((ball.x - centre) / (string.x1 - string.x0)) * 120 + (Math.random() - 0.5) * 40;
           ball.color = string.color;
           memory.shake[i] = Math.min(10, memory.shake[i] + speed / 80);
-          fire(plucks[i]);
+          send(plucks[i]);
         });
       }
     }
     memory.balls = memory.balls.filter((ball) => ball.y < HEIGHT + 20 && (ball.age += dt) < 60);
   },
 
-  page: ({ state, memory, update }) => {
-    const shapes: Shape[] = [];
-    strings.forEach((string, i) => {
-      // A plucked string wobbles, its middle the most, and calms down as it rings out.
-      const segments = 24;
-      const wobble = memory.shake[i] * Math.sin(memory.time * (40 + i * 9));
-      let last: [number, number] = [string.x0, string.y];
-      for (let k = 1; k <= segments; k++) {
-        const x = string.x0 + ((string.x1 - string.x0) * k) / segments;
-        const point: [number, number] = [x, string.y + wobble * Math.sin((Math.PI * k) / segments)];
-        shapes.push({ kind: "line", from: last, to: point, color: string.color, width: 2 });
-        last = point;
+  view: ({ state, memory, update }) => {
+    // Made again whole each tick, as the balls fall.
+    const shapes = () => {
+      const shapes: ShapeLiteral[] = [];
+      strings.forEach((string, i) => {
+        // A plucked string wobbles, its middle the most, and calms down as it rings out.
+        const segments = 24;
+        const wobble = memory.shake[i] * Math.sin(memory.time * (40 + i * 9));
+        let last: [number, number] = [string.x0, string.y];
+        for (let k = 1; k <= segments; k++) {
+          const x = string.x0 + ((string.x1 - string.x0) * k) / segments;
+          const point: [number, number] = [x, string.y + wobble * Math.sin((Math.PI * k) / segments)];
+          shapes.push({ kind: "line", from: last, to: point, color: string.color, width: 2 });
+          last = point;
+        }
+        shapes.push({ kind: "circle", x: string.x0, y: string.y, radius: 3, color: "#9ca3af" });
+        shapes.push({ kind: "circle", x: string.x1, y: string.y, radius: 3, color: "#9ca3af" });
+      });
+      for (const ball of memory.balls) {
+        shapes.push({ kind: "circle", x: ball.x, y: ball.y, radius: RADIUS, color: ball.color });
       }
-      shapes.push({ kind: "circle", x: string.x0, y: string.y, radius: 3, color: "#9ca3af" });
-      shapes.push({ kind: "circle", x: string.x1, y: string.y, radius: 3, color: "#9ca3af" });
-    });
-    for (const ball of memory.balls) {
-      shapes.push({ kind: "circle", x: ball.x, y: ball.y, radius: RADIUS, color: ball.color });
-    }
+      return shapes;
+    };
 
-    const options = <T extends string | number>(label: string, field: "root" | "scale" | "octave", values: readonly T[], current: T) => (
+    const options = <T extends string | number>(label: string, field: "root" | "scale" | "octave", values: readonly T[], current: () => T) => (
       <div style={row}>
         <div style={{ color: "#9ca3af" }}>{label}</div>
         {values.map((value) => (
           <div
-            style={value === current ? picked : button}
+            style={() => (value === current() ? picked : button)}
             onClick={() => update(`${label} ${value}`, ({ state: s }) => void ((s as Record<string, unknown>)[field] = value))}
           >
             {value}
@@ -202,27 +184,27 @@ tool({
             Clear
           </div>
         </div>
-        <Canvas
+        <Space
           width={WIDTH}
           height={HEIGHT}
           background="#151821"
-          shapes={shapes}
-          onPress={(x, y) =>
-            memory.balls.push({ x: x * WIDTH, y: y * HEIGHT, vx: (Math.random() - 0.5) * 60, vy: 0, color: "#e5e7eb", age: 0 })
-          }
-        />
+          radius={6}
+          onPress={({ x, y }) => memory.balls.push({ x, y, vx: (Math.random() - 0.5) * 60, vy: 0, color: "#e5e7eb", age: 0 })}
+        >
+          {shapes}
+        </Space>
         <div style={row}>
-          {options("Root", "root", ["C", "D", "E", "F", "G", "A"], state.root ?? "D")}
-          {options("Scale", "scale", ["major", "minor"], state.scale ?? "minor")}
-          {options("Octave", "octave", [3, 4, 5], state.octave ?? 4)}
+          {options("Root", "root", ["C", "D", "E", "F", "G", "A"], () => state.root ?? "D")}
+          {options("Scale", "scale", ["major", "minor"], () => state.scale ?? "minor")}
+          {options("Octave", "octave", [3, 4, 5], () => state.octave ?? 4)}
         </div>
         <div style={row}>
-          <Knob path="decay" label="Decay" min={0.3} max={12} default={4} />
-          <Knob path="brightness" label="Brightness" min={300} max={12000} default={3500} unit="hz" />
-          <Knob path="space" label="Space" min={0} max={1} default={0.35} unit="percent" />
-          <Knob path="volume" label="Volume" min={0} max={1} default={0.5} unit="percent" />
-          <Knob path="gravity" label="Gravity" min={150} max={2500} default={DEFAULTS.gravity} />
-          <Knob path="bounce" label="Bounce" min={0.2} max={0.95} default={DEFAULTS.bounce} />
+          <Knob field="decay" label="Decay" min={0.3} max={12} default={4} />
+          <Knob field="brightness" label="Brightness" min={300} max={12000} default={3500} unit="hz" />
+          <Knob field="space" label="Space" min={0} max={1} default={0.35} unit="percent" />
+          <Knob field="volume" label="Volume" min={0} max={1} default={0.5} unit="percent" />
+          <Knob field="gravity" label="Gravity" min={150} max={2500} default={DEFAULTS.gravity} />
+          <Knob field="bounce" label="Bounce" min={0.2} max={0.95} default={DEFAULTS.bounce} />
         </div>
       </div>
     );

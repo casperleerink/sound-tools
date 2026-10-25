@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
-//! How much faster than realtime many `Signals` processors render: effects, and instruments with
-//! every voice playing.
+//! How much faster than realtime many `Signals` processors render: effects, spectral ones too,
+//! and instruments with every voice playing.
 
 use std::time::Instant;
 
@@ -41,14 +41,39 @@ fn voice() -> Code {
     })
 }
 
+/// A freeze of a spectrum of 2048: each bin holds its magnitude and turns on by its last step
+/// of phase while frozen.
+fn freeze() -> Code {
+    compile(|| {
+        let frozen = param("frozen", 1.0, [0.0, 1.0]);
+        spectral(input(), 2048, |bin| {
+            let live = 1.0 - capture(frozen);
+            let before = feedback();
+            before.set(bin.phase);
+            let step = hold(bin.phase - before.read(), live);
+            let turned = feedback();
+            let phase = mix(turned.read() + step, bin.phase, live);
+            turned.set(phase);
+            (hold(bin.magnitude, live), phase)
+        })
+    })
+}
+
+/// Bins of a spectrum of 2048 with a second input, left as they are.
+fn two_inputs() -> Code {
+    compile(|| spectral_of_two(input(), input(), 2048, |bin, _| (bin.magnitude, bin.phase)))
+}
+
 /// Run with
 /// `cargo nextest run -p sound-signals --run-ignored only realtime_ratio --no-capture`.
 #[test]
 #[ignore = "a measurement, not a check; run it locally and read the printed ratio"]
 fn realtime_ratio_of_one_hundred_processors() {
     for (label, code, kind) in [
-        ("echo effect", echo(), Kind::Effect),
-        ("saw source", voice(), Kind::Source),
+        ("echo effect", echo(), Kind::One),
+        ("saw source", voice(), Kind::One),
+        ("spectral freeze effect", freeze(), Kind::One),
+        ("spectral of two inputs", two_inputs(), Kind::One),
     ] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();

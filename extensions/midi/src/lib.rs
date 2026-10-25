@@ -1,11 +1,9 @@
-//! MIDI input: a keyboard plays the instrument of the selected track, and a recording of what
-//! was played becomes a clip. The computer keys can be that keyboard too ([`ComputerKeys`]).
+//! MIDI input: a keyboard plays what is selected. The computer keys can be that keyboard too
+//! ([`ComputerKeys`]).
 //!
-//! This extension has no tool and no record. It is a processor in the engine, a device layer
-//! over `midir`, and a recorder. It meets the arrangement only through the note contract
-//! ([`sound_notes`]): the window says which ports the notes go to and makes the clip. The saved
-//! form of a take lives there too, as [`sound_notes::RawTake`], because the fit extension reads
-//! one and no extension may depend on another.
+//! This extension has no tool and no record. It is a processor in the engine and a device layer
+//! over `midir`. It meets the tools only through the note contract ([`sound_notes`]): the window
+//! says which ports the notes go to.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), sound_core::GraphError> {
@@ -22,7 +20,6 @@ mod computer_keys;
 mod keyboard;
 mod keys;
 mod ports;
-mod take;
 
 use sound_core::AgentDoc;
 
@@ -30,12 +27,12 @@ pub use computer_keys::ComputerKeys;
 pub use keyboard::{Keyboard, Latency, Lost};
 pub use keys::{INPUT_CAPACITY, Input, Played};
 pub use ports::{PortError, Ports};
-pub use take::{Take, TakeEvent};
 
 /// What an agent needs to know about a raw take. Every project gets it, because every project
 /// can be recorded into: the runtime registers it with `runtime_agent_doc`.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "takes",
-    when: "You see a file under assets/takes/, or you want the performance a clip came from",
+    group: "Project",
+    when: "A file under `assets/takes/`, or the raw performance of a recorded clip",
     markdown: include_str!("../agent-doc.md"),
 };

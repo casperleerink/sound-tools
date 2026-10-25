@@ -2,7 +2,9 @@
 
 - Read [ENGINEERING.md](ENGINEERING.md) before writing code.
 - Decisions are in [ARCHITECTURE.md](ARCHITECTURE.md).
-- Run builds and tests in the foreground. Don't start them in the background and poll the output in a loop.
+- Users are composers, not programmers. Text they see follows [DESIGN.md](DESIGN.md): no code words.
+- Verify with `cargo verify` (ENGINEERING.md, "Testing"), not workspace-wide commands.
+- Run builds and tests in the foreground, never in the background with polling.
 - A subagent pushes and returns. It does not wait for CI; the main session watches CI.
 
 ## Docs and comments

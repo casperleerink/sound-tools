@@ -1,5 +1,5 @@
-//! The gain computer and lookahead of a peak limiter, one frame at a time: the part the master
-//! of the arrangement and the Limiter effect share. Next to [`Smoothed`](crate::Smoothed) and
+//! The gain computer and lookahead of a peak limiter, one frame at a time: the part a master
+//! limiter and the Limiter effect share. Next to [`Smoothed`](crate::Smoothed) and
 //! [`Envelope`](crate::Envelope), a helper a processor uses per frame. The core itself limits
 //! nothing.
 //!

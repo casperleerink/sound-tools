@@ -11,13 +11,13 @@ use std::iter::repeat;
 use std::ops::Range;
 
 use sound_core::{
-    CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip,
-    xorshift32,
+    CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SpectralBin, Stft, SvfFactors, SvfSection, SvfShape,
+    amplitude, soft_clip, xorshift32,
 };
 
 use crate::code::{
-    Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, MAX_STAGE_PORTS, Operation, Output,
-    Register, Table, Unary,
+    BinValue, Binary, Code, MAX_LIVES, MAX_PARAMETERS, MAX_SOUNDS, Operation, Output, Register,
+    Side, SpectrumSpec, Table, Unary,
 };
 use crate::program::{self, Run, Step};
 
@@ -28,10 +28,18 @@ pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
     /// `None` leaves the lists the processor has: a sample is long, so it is sent only when
     /// it or another list changed, not at every turn of a knob.
-    pub arrays: Option<Vec<Vec<f32>>>,
+    pub arrays: Option<Vec<List>>,
     /// For each number an automation lane can move, in the order of its index, the param it
     /// moves.
     pub automated: Vec<u16>,
+}
+
+/// A list of the record: a pattern or a sample of one channel, or the left and right of a
+/// sample in stereo, as long as each other.
+#[derive(Clone, Debug, PartialEq)]
+pub enum List {
+    One(Vec<f32>),
+    Stereo(Vec<f32>, Vec<f32>),
 }
 
 /// What leaves the code, and the processor, is held to this, about 12 dB over full scale, so
@@ -40,6 +48,9 @@ pub(crate) const LIMIT: f32 = 4.0;
 
 /// Quieter than this is silence: of a voice that ends, and of what a delay holds.
 pub(crate) const QUIET: f32 = 1e-4;
+
+/// The most a peak or a shelf raises or lowers, in dB.
+const MAX_FILTER_GAIN_DB: f32 = 24.0;
 
 /// The note a voice plays. A source and an effect follow the newest held note.
 #[derive(Copy, Clone, Debug, Default)]
@@ -56,10 +67,11 @@ pub(crate) struct Note {
 pub(crate) type Frames = [[f32; MAX_BLOCK]; CHANNELS];
 
 /// What every voice reads in one block, frame by frame, from the processor.
+#[derive(Clone)]
 pub(crate) struct Block {
     pub(crate) input: Frames,
-    /// What the stages and devices before give, by the port of each.
-    pub(crate) imports: [Frames; MAX_STAGE_PORTS],
+    /// Of each sound input besides `audio`.
+    pub(crate) sounds: [Frames; MAX_SOUNDS - 1],
     pub(crate) parameters: [[f32; MAX_BLOCK]; MAX_PARAMETERS],
     pub(crate) lives: [[f32; MAX_BLOCK]; MAX_LIVES],
     /// One bit per param, and per live control, whose row is one value in every frame of the
@@ -77,7 +89,7 @@ impl Block {
     pub(crate) fn new() -> Self {
         Self {
             input: [[0.0; MAX_BLOCK]; CHANNELS],
-            imports: [[[0.0; MAX_BLOCK]; CHANNELS]; MAX_STAGE_PORTS],
+            sounds: [[[0.0; MAX_BLOCK]; CHANNELS]; MAX_SOUNDS - 1],
             parameters: [[0.0; MAX_BLOCK]; MAX_PARAMETERS],
             lives: [[0.0; MAX_BLOCK]; MAX_LIVES],
             steady_parameters: 0,
@@ -102,7 +114,7 @@ impl Block {
 /// What one voice reads over a span of frames.
 pub(crate) struct Inputs<'a> {
     pub(crate) block: &'a Block,
-    pub(crate) arrays: &'a [Vec<f32>],
+    pub(crate) arrays: &'a [List],
     pub(crate) note: Note,
 }
 
@@ -112,7 +124,7 @@ pub struct Machine {
     steps: Box<[Step]>,
     /// The steps the right channel of mono code runs again; it shares the results of the others
     /// with the left.
-    per_channel: Box<[Step]>,
+    pub(crate) per_channel: Box<[Step]>,
     sample_rate: f32,
     /// What each operation gave in each frame of the span: of the left channel, and then of the
     /// right where it differs.
@@ -120,7 +132,8 @@ pub struct Machine {
     /// The value a register holds in every frame of its row, where it holds one. A step that
     /// gives one value over a span works it out once, and fills the row only when it differs.
     filled: Vec<Option<f32>>,
-    channels: [Memory; CHANNELS],
+    /// Of each channel, and in the code of a `spectral` of each bin.
+    channels: Box<[Memory]>,
     /// The input and the slot of each delay.
     delay_inputs: Box<[(Register, u16)]>,
     /// Where the delays write the first frame of the next span.
@@ -129,8 +142,6 @@ pub struct Machine {
     watched: Vec<f32>,
     /// The last value of each number it sends out, of the left channel.
     sent: Vec<f32>,
-    /// The last value of each number of a device it moves, of the left channel.
-    device_numbers: Vec<f32>,
     /// What each of [`Code::event_registers`] gave in each frame of the block, of the left
     /// channel.
     events: Vec<[f32; MAX_BLOCK]>,
@@ -148,6 +159,31 @@ struct Memory {
     envelopes: Vec<Envelope>,
     memories: Vec<f32>,
     buffers: Vec<Vec<f32>>,
+    spectra: Vec<Spectrum>,
+}
+
+/// A `spectral` of one channel: its transform, and a machine for its bins, each bin a channel
+/// of it with a memory of its own. It runs at the rate of the spectra, see [`Machine::run_bins`].
+#[derive(Clone)]
+struct Spectrum {
+    stft: Stft,
+    bins: Box<Machine>,
+    /// Where its bins read the signals of the sound around them, as params that do not glide.
+    block: Box<Block>,
+    captures: Box<[Register]>,
+    /// The width of a bin.
+    hz: f32,
+}
+
+/// What one bin of a spectrum is, for the code of a `spectral`.
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) struct Bin {
+    pub(crate) magnitude: f32,
+    pub(crate) phase: f32,
+    pub(crate) hz: f32,
+    pub(crate) index: f32,
+    pub(crate) side_magnitude: f32,
+    pub(crate) side_phase: f32,
 }
 
 #[derive(Clone)]
@@ -162,11 +198,10 @@ struct Delay {
 struct Filter {
     section: SvfSection,
     factors: SvfFactors,
-    /// The damping, `1 / Q`, which a band and a high pass need too.
-    k: f32,
-    /// The cutoff and Q the factors are for, so a `tan` runs only when they move.
-    hz: f32,
-    q: f32,
+    /// How much of the input, the band pass and the low pass it adds up.
+    mix: [f32; 3],
+    /// The cutoff, Q and gain the factors are for, so a `tan` runs only when they move.
+    settings: [f32; 3],
 }
 
 #[derive(Clone, Default)]
@@ -201,8 +236,8 @@ enum Stage {
 /// A fixed seed per voice, slot and channel, so a render is the same every time and no two
 /// noises play the same. Different indexes give different seeds, and the index that gives 0,
 /// where xorshift would stay, is in the billions.
-fn noise_seed(voice: usize, slots: u16, slot: usize, channel: usize) -> u32 {
-    let index = (voice * usize::from(slots) + slot) * CHANNELS + channel + 1;
+fn noise_seed(voice: usize, slots: u16, slot: usize, (channel, channels): (usize, usize)) -> u32 {
+    let index = (voice * usize::from(slots) + slot) * channels + channel + 1;
     0x9E37_79B9 ^ (index as u32).wrapping_mul(0x85EB_CA6B)
 }
 
@@ -236,37 +271,46 @@ macro_rules! with_kind {
 
 impl Machine {
     pub fn new(code: Code, sample_rate: f32) -> Self {
+        Self::with_channels(code, sample_rate, CHANNELS)
+    }
+
+    fn with_channels(code: Code, sample_rate: f32, count: usize) -> Self {
         let slots = &code.slots;
-        let channels: [Memory; CHANNELS] = std::array::from_fn(|channel| Memory {
-            histories: vec![0.0; usize::from(slots.histories)],
-            phases: vec![0.0; usize::from(slots.phasors)],
-            noises: (0..usize::from(slots.noises))
-                .map(|slot| noise_seed(0, slots.noises, slot, channel))
-                .collect(),
-            delays: (slots.delays.iter())
-                .map(|ms| Delay {
-                    line: DelayLine::new((ms * 0.001 * sample_rate) as usize + 4),
-                    quiet_from: 0,
-                })
-                .collect(),
-            filters: (0..slots.filters)
-                .map(|_| Filter {
-                    hz: f32::NAN,
-                    ..Filter::default()
-                })
-                .collect(),
-            smooths: (0..slots.smooths)
-                .map(|_| Smooth {
-                    ms: f32::NAN,
-                    ..Smooth::default()
-                })
-                .collect(),
-            envelopes: vec![Envelope::default(); usize::from(slots.envelopes)],
-            memories: vec![0.0; usize::from(slots.memories)],
-            buffers: (slots.buffers.iter())
-                .map(|seconds| vec![0.0; ((seconds * sample_rate) as usize).max(1)])
-                .collect(),
-        });
+        let channels: Box<[Memory]> = (0..count)
+            .map(|channel| Memory {
+                histories: vec![0.0; usize::from(slots.histories)],
+                phases: vec![0.0; usize::from(slots.phasors)],
+                noises: (0..usize::from(slots.noises))
+                    .map(|slot| noise_seed(0, slots.noises, slot, (channel, count)))
+                    .collect(),
+                delays: (slots.delays.iter())
+                    .map(|ms| Delay {
+                        line: DelayLine::new((ms * 0.001 * sample_rate) as usize + 4),
+                        quiet_from: 0,
+                    })
+                    .collect(),
+                filters: (0..slots.filters)
+                    .map(|_| Filter {
+                        settings: [f32::NAN; 3],
+                        ..Filter::default()
+                    })
+                    .collect(),
+                smooths: (0..slots.smooths)
+                    .map(|_| Smooth {
+                        ms: f32::NAN,
+                        ..Smooth::default()
+                    })
+                    .collect(),
+                envelopes: vec![Envelope::default(); usize::from(slots.envelopes)],
+                memories: vec![0.0; usize::from(slots.memories)],
+                buffers: (slots.buffers.iter())
+                    .map(|seconds| vec![0.0; ((seconds * sample_rate) as usize).max(1)])
+                    .collect(),
+                spectra: (slots.spectra.iter())
+                    .map(|spectrum| Spectrum::new(spectrum, sample_rate))
+                    .collect(),
+            })
+            .collect();
         let mut registers = vec![[0.0; MAX_BLOCK]; code.operations.len()];
         let mut filled = vec![None; code.operations.len()];
         // The buffers of every channel are as long.
@@ -282,7 +326,7 @@ impl Machine {
                     Some(Operation::Constant(value)) => Some(*value),
                     Some(Operation::SampleRate) => Some(sample_rate),
                     Some(Operation::Length(table @ Table::Buffer(_))) => {
-                        Some(table_of(*table, &[], buffers).len() as f32)
+                        Some(table_of(*table, &[], buffers, 0).len() as f32)
                     }
                     _ => None,
                 };
@@ -310,7 +354,6 @@ impl Machine {
             position: 0,
             watched: vec![0.0; code.watches.len()],
             sent: vec![0.0; code.numbers.len()],
-            device_numbers: vec![0.0; code.device_number_registers.len()],
             events: vec![[0.0; MAX_BLOCK]; code.event_registers.len()],
             code,
         }
@@ -324,9 +367,10 @@ impl Machine {
     /// two voices that start on the same frame would otherwise play the same noise.
     pub(crate) fn seed(&mut self, voice: usize) {
         let count = self.code.slots.noises;
+        let channels = self.channels.len();
         for (channel, memory) in self.channels.iter_mut().enumerate() {
             for (slot, noise) in memory.noises.iter_mut().enumerate() {
-                *noise = noise_seed(voice, count, slot, channel);
+                *noise = noise_seed(voice, count, slot, (channel, channels));
             }
         }
     }
@@ -353,25 +397,19 @@ impl Machine {
         &self.sent
     }
 
-    /// The last value of each number of a device it moves.
-    pub(crate) fn device_numbers(&self) -> &[f32] {
-        &self.device_numbers
-    }
-
     /// What each register that sends events gave in each frame it rendered of this block, in
     /// the order of [`Code::event_registers`].
     pub(crate) fn events(&self) -> &[[f32; MAX_BLOCK]] {
         &self.events
     }
 
-    /// The `frames` of a block, both channels, into the same frames of `output`, and what it
-    /// hands on into `exports`.
+    /// The `frames` of a block, both channels, into the same frames of `outputs`: its `audio`
+    /// first, then its other sound outputs.
     pub(crate) fn render(
         &mut self,
         inputs: &Inputs<'_>,
         frames: Range<usize>,
-        output: &mut Frames,
-        exports: &mut [Frames],
+        outputs: &mut [Frames],
     ) {
         let Some(last) = frames.clone().last() else {
             return;
@@ -380,6 +418,8 @@ impl Machine {
         let runs = match self.code.output {
             Output::Mono(_) => CHANNELS,
             Output::Stereo(..) => 1,
+            // Its bins run through `run_bins`.
+            Output::Bin(..) => 0,
         };
         for channel in 0..runs {
             self.run(channel, inputs, frames.clone());
@@ -388,9 +428,7 @@ impl Machine {
                 // The watches show the left channel, and the numbers send it.
                 let watches = self.watched.iter_mut().zip(&self.code.watch_registers);
                 let numbers = self.sent.iter_mut().zip(&self.code.number_registers);
-                let device_numbers =
-                    (self.device_numbers.iter_mut()).zip(&self.code.device_number_registers);
-                for (value, register) in watches.chain(numbers).chain(device_numbers) {
+                for (value, register) in watches.chain(numbers) {
                     *value = value_at(registers, *register, last);
                 }
                 let events = self.events.iter_mut().zip(&self.code.event_registers);
@@ -399,33 +437,152 @@ impl Machine {
                     copy(events.get_mut(frames.clone()).unwrap_or_default(), values);
                 }
             }
-            match self.code.output {
-                Output::Mono(register) => {
-                    if let Some(output) = output.get_mut(channel) {
-                        held_into(output, registers, register, &frames);
+            let code = std::iter::once(&self.code.output).chain(&self.code.sound_outputs);
+            for (output, code) in outputs.iter_mut().zip(code) {
+                match *code {
+                    Output::Mono(register) => {
+                        if let Some(output) = output.get_mut(channel) {
+                            held_into(output, registers, register, &frames);
+                        }
                     }
-                }
-                Output::Stereo(left, right) => {
-                    for (output, register) in output.iter_mut().zip([left, right]) {
-                        held_into(output, registers, register, &frames);
+                    Output::Stereo(left, right) => {
+                        for (output, register) in output.iter_mut().zip([left, right]) {
+                            held_into(output, registers, register, &frames);
+                        }
                     }
-                }
-            }
-            // Mono code gives each channel in its own run. Not held as a sound is: a stage
-            // hands on numbers too, such as a cutoff in Hz.
-            for (export, pair) in exports.iter_mut().zip(&self.code.exports) {
-                let channels = (export.iter_mut().zip(pair).enumerate())
-                    .filter(|(at, _)| runs == 1 || *at == channel);
-                for (_, (export, register)) in channels {
-                    let values = row(registers, usize::from(*register), &frames);
-                    let export = export.get_mut(frames.clone()).unwrap_or_default();
-                    for (export, value) in export.iter_mut().zip(values) {
-                        *export = finite(*value);
-                    }
+                    Output::Bin(..) => {}
                 }
             }
         }
         self.position = self.position.wrapping_add(frames.len());
+    }
+
+    /// Runs the code of a `spectral` over `spectrum`, the bins from `first` on, at most a block
+    /// of them: each bin is a frame of one span, and has the memory of its own channel. Every
+    /// operation reads only those before it, and a feedback the memory of its bin, so they run
+    /// in their order, each over the span.
+    fn run_bins(
+        &mut self,
+        block: &Block,
+        arrays: &[List],
+        first: usize,
+        spectrum: &mut [SpectralBin],
+        side: &[SpectralBin],
+        hz: f32,
+    ) {
+        let count = spectrum.len().min(MAX_BLOCK);
+        let mut bins = [Bin::default(); MAX_BLOCK];
+        for (index, (bin, spectral)) in bins.iter_mut().zip(spectrum.iter()).enumerate() {
+            let side = side.get(index).copied().unwrap_or_default();
+            let index = (first + index) as f32;
+            *bin = Bin {
+                magnitude: spectral.magnitude,
+                phase: spectral.phase,
+                hz: index * hz,
+                index,
+                side_magnitude: side.magnitude,
+                side_phase: side.phase,
+            };
+        }
+        let Self {
+            code,
+            sample_rate,
+            registers,
+            filled,
+            channels,
+            ..
+        } = self;
+        let Some(lanes) = channels.get_mut(first..first + count) else {
+            return;
+        };
+        let frames = 0..count;
+        let span = Span {
+            block,
+            arrays,
+            note: Note::default(),
+            channel: 0,
+            bins: bins.get(frames.clone()).unwrap_or_default(),
+            first: 0,
+            position: 0,
+            sample_rate: *sample_rate,
+            feedbacks: &code.feedbacks,
+        };
+        for (register, operation) in code.operations.iter().enumerate() {
+            match operation {
+                // Set when the machine was made.
+                Operation::Constant(_) | Operation::SampleRate => continue,
+                Operation::Noise { slot } => {
+                    let out = registers.get_mut(register).into_iter().flatten();
+                    for (out, lane) in out.zip(lanes.iter_mut()) {
+                        *out = (lane.noises.get_mut(usize::from(*slot))).map_or(0.0, noise);
+                    }
+                }
+                Operation::History(slot) => {
+                    let out = registers.get_mut(register).into_iter().flatten();
+                    for (out, lane) in out.zip(lanes.iter()) {
+                        *out = lane
+                            .histories
+                            .get(usize::from(*slot))
+                            .copied()
+                            .unwrap_or(0.0);
+                    }
+                }
+                Operation::Phasor { .. }
+                | Operation::Filter { .. }
+                | Operation::Smooth { .. }
+                | Operation::Envelope { .. }
+                | Operation::Hold { .. }
+                | Operation::Rise { .. }
+                | Operation::Change { .. } => {
+                    for (frame, lane) in lanes.iter_mut().enumerate() {
+                        let value =
+                            span.step(*operation, register as Register, frame, registers, lane);
+                        if let Some(out) = registers
+                            .get_mut(register)
+                            .and_then(|row| row.get_mut(frame))
+                        {
+                            *out = value;
+                        }
+                    }
+                }
+                // What reads no memory.
+                _ => {
+                    let Some(memory) = lanes.first_mut() else {
+                        return;
+                    };
+                    if let Some(value) = span.steady(*operation, registers, filled, memory, &frames)
+                    {
+                        fill(registers, filled, register, value);
+                        continue;
+                    }
+                    span.run(
+                        *operation,
+                        register,
+                        frames.clone(),
+                        registers,
+                        filled,
+                        memory,
+                    );
+                }
+            }
+            if let Some(filled) = filled.get_mut(register) {
+                *filled = None;
+            }
+        }
+        for (frame, lane) in lanes.iter_mut().enumerate() {
+            for (history, source) in lane.histories.iter_mut().zip(&code.feedbacks) {
+                *history = finite(value_at(registers, *source, frame));
+            }
+        }
+        let Output::Bin(magnitude, phase) = code.output else {
+            return;
+        };
+        for (frame, bin) in spectrum.iter_mut().take(count).enumerate() {
+            *bin = SpectralBin {
+                magnitude: finite(value_at(registers, magnitude, frame)),
+                phase: finite(value_at(registers, phase, frame)),
+            };
+        }
     }
 
     /// Runs the steps of `channel` over `frames` with its memory: every step for the left, and
@@ -452,6 +609,7 @@ impl Machine {
             arrays: inputs.arrays,
             note: inputs.note,
             channel,
+            bins: &[],
             first: frames.start,
             position: *position,
             sample_rate: *sample_rate,
@@ -499,9 +657,11 @@ impl Machine {
 /// What the operations of one channel read over a span of frames.
 struct Span<'a> {
     block: &'a Block,
-    arrays: &'a [Vec<f32>],
+    arrays: &'a [List],
     note: Note,
     channel: usize,
+    /// In the code of a `spectral`, the bin of each frame.
+    bins: &'a [Bin],
     /// The first frame of the span: of the onset of a note, and the one where a feedback reads
     /// what was set in the span before.
     first: usize,
@@ -561,17 +721,9 @@ impl Span<'_> {
         let sample_rate = self.sample_rate;
         match operation {
             Operation::Constant(value) => out.fill(value),
-            Operation::Input => copy(out, row(&block.input, self.channel, &frames)),
-            Operation::InputLeft => copy(out, row(&block.input, 0, &frames)),
-            Operation::InputRight => copy(out, row(&block.input, 1, &frames)),
-            Operation::Import { port, channel } => {
-                let channel = channel.map_or(self.channel, usize::from);
-                let import = block.imports.get(usize::from(port));
-                copy(
-                    out,
-                    import.map_or(&[][..], |import| row(import, channel, &frames)),
-                );
-            }
+            Operation::Input(port) => copy(out, row(sound(block, port), self.channel, &frames)),
+            Operation::InputLeft(port) => copy(out, row(sound(block, port), 0, &frames)),
+            Operation::InputRight(port) => copy(out, row(sound(block, port), 1, &frames)),
             Operation::Channel => out.fill(self.channel as f32),
             Operation::SampleRate => out.fill(sample_rate),
             Operation::Beat => copy(out, part(&block.beat, &frames)),
@@ -628,8 +780,7 @@ impl Span<'_> {
                 Some(kept) => {
                     let mut state = *kept;
                     for out in out.iter_mut() {
-                        state = xorshift32(state);
-                        *out = state as f32 / u32::MAX as f32 * 2.0 - 1.0;
+                        *out = noise(&mut state);
                     }
                     *kept = state;
                 }
@@ -653,13 +804,14 @@ impl Span<'_> {
                 input,
                 hz,
                 q,
+                gain,
                 slot,
             } => match memory.filters.get_mut(usize::from(slot)) {
-                Some(kept) => settled!([hz, q], {
+                Some(kept) => settled!([hz, q, gain], {
                     let mut filter = kept.clone();
-                    let values = read(input).iter().zip(hz).zip(q);
-                    for (out, ((input, hz), q)) in out.iter_mut().zip(values) {
-                        *out = filter.next(kind, *input, hz, q, sample_rate);
+                    let values = read(input).iter().zip(hz).zip(q).zip(gain);
+                    for (out, (((input, hz), q), gain)) in out.iter_mut().zip(values) {
+                        *out = filter.next(kind, *input, [hz, q, gain], sample_rate);
                     }
                     *kept = filter;
                 }),
@@ -735,15 +887,16 @@ impl Span<'_> {
                 None => out.fill(0.0),
             },
             Operation::Read { table, index } => {
-                let values = table_of(table, self.arrays, &memory.buffers);
-                map(out, read(index), |index| read_at(values, index));
+                let values = table_of(table, self.arrays, &memory.buffers, self.channel);
+                map(out, read(index), |index| values.at(index));
             }
             Operation::Lookup { table, phase } => {
-                let values = table_of(table, self.arrays, &memory.buffers);
-                map(out, read(phase), |phase| look_up(values, phase));
+                let values = table_of(table, self.arrays, &memory.buffers, self.channel);
+                map(out, read(phase), |phase| values.look_up(phase));
             }
             Operation::Length(table) => {
-                out.fill(table_of(table, self.arrays, &memory.buffers).len() as f32);
+                let values = table_of(table, self.arrays, &memory.buffers, self.channel);
+                out.fill(values.len() as f32);
             }
             Operation::Write {
                 buffer,
@@ -752,6 +905,24 @@ impl Span<'_> {
             } => {
                 for ((out, index), value) in out.iter_mut().zip(read(index)).zip(read(value)) {
                     *out = write(memory.buffers.get_mut(usize::from(buffer)), *index, *value);
+                }
+            }
+            Operation::Spectral { input, side, slot } => {
+                match memory.spectra.get_mut(usize::from(slot)) {
+                    Some(spectrum) => {
+                        let outs = out.iter_mut().zip(read(input)).zip(frames.clone());
+                        for ((out, input), frame) in outs {
+                            let capture = |register| value_at(before, register, frame);
+                            let side = side.map_or(0.0, capture);
+                            *out = spectrum.next(*input, side, capture, self.arrays);
+                        }
+                    }
+                    None => out.fill(0.0),
+                }
+            }
+            Operation::Bin(value) => {
+                for (out, bin) in out.iter_mut().zip(self.bins) {
+                    *out = bin.value(value);
                 }
             }
         }
@@ -809,7 +980,7 @@ impl Span<'_> {
             }
             Operation::Live(index) => row_of(&block.lives, block.steady_lives, index),
             Operation::Length(table) => {
-                Some(table_of(table, self.arrays, &memory.buffers).len() as f32)
+                Some(table_of(table, self.arrays, &memory.buffers, self.channel).len() as f32)
             }
             Operation::Unary(op, x) => Some(unary(op, one(x)?)),
             Operation::Binary(op, a, b) => Some(binary(op, one(a)?, one(b)?)),
@@ -822,10 +993,9 @@ impl Span<'_> {
                 (memory.memories.get(usize::from(slot)).copied()).filter(|_| !fires)
             }
             // What moves within a span, or keeps a memory.
-            Operation::Input
-            | Operation::Import { .. }
-            | Operation::InputLeft
-            | Operation::InputRight
+            Operation::Input(_)
+            | Operation::InputLeft(_)
+            | Operation::InputRight(_)
             | Operation::Beat
             | Operation::Onset
             | Operation::Trigger(_)
@@ -840,7 +1010,9 @@ impl Span<'_> {
             | Operation::Change { .. }
             | Operation::Read { .. }
             | Operation::Lookup { .. }
-            | Operation::Write { .. } => None,
+            | Operation::Write { .. }
+            | Operation::Spectral { .. }
+            | Operation::Bin(_) => None,
         }
     }
 
@@ -898,6 +1070,9 @@ impl Span<'_> {
             Operation::Read { .. } => each!(operation @ Operation::Read { .. } => operation),
             Operation::Lookup { .. } => each!(operation @ Operation::Lookup { .. } => operation),
             Operation::Write { .. } => each!(operation @ Operation::Write { .. } => operation),
+            Operation::Spectral { .. } => {
+                each!(operation @ Operation::Spectral { .. } => operation);
+            }
             // In no loop, see `step`.
             _ => each!(operation => operation),
         }
@@ -944,9 +1119,10 @@ impl Span<'_> {
                 input,
                 hz,
                 q,
+                gain,
                 slot,
             } => (memory.filters.get_mut(usize::from(slot))).map_or(0.0, |filter| {
-                filter.next(kind, at(input), at(hz), at(q), sample_rate)
+                filter.next(kind, at(input), [at(hz), at(q), at(gain)], sample_rate)
             }),
             Operation::Smooth { input, ms, slot } => (memory.smooths.get_mut(usize::from(slot)))
                 .map_or(0.0, |smooth| smooth.next(at(input), at(ms), sample_rate)),
@@ -969,10 +1145,10 @@ impl Span<'_> {
             Operation::Change { input, slot } => (memory.memories.get_mut(usize::from(slot)))
                 .map_or(0.0, |before| change(before, at(input))),
             Operation::Read { table, index } => {
-                read_at(table_of(table, self.arrays, &memory.buffers), at(index))
+                table_of(table, self.arrays, &memory.buffers, self.channel).at(at(index))
             }
             Operation::Lookup { table, phase } => {
-                look_up(table_of(table, self.arrays, &memory.buffers), at(phase))
+                table_of(table, self.arrays, &memory.buffers, self.channel).look_up(at(phase))
             }
             Operation::Write {
                 buffer,
@@ -983,14 +1159,18 @@ impl Span<'_> {
                 at(index),
                 at(value),
             ),
+            Operation::Spectral { input, side, slot } => {
+                (memory.spectra.get_mut(usize::from(slot))).map_or(0.0, |spectrum| {
+                    spectrum.next(at(input), side.map_or(0.0, at), at, self.arrays)
+                })
+            }
             // These read no register, feedback or buffer, so they are in no loop. Not run over
             // one frame with `run` either: a second call of `run` keeps it from being inlined
             // where a span runs it, which made code without loops slower.
             Operation::Constant(_)
-            | Operation::Input
-            | Operation::Import { .. }
-            | Operation::InputLeft
-            | Operation::InputRight
+            | Operation::Input(_)
+            | Operation::InputLeft(_)
+            | Operation::InputRight(_)
             | Operation::Channel
             | Operation::SampleRate
             | Operation::Beat
@@ -1005,7 +1185,8 @@ impl Span<'_> {
             | Operation::Live(_)
             | Operation::Trigger(_)
             | Operation::Noise { .. }
-            | Operation::Length(_) => {
+            | Operation::Length(_)
+            | Operation::Bin(_) => {
                 debug_assert!(false, "an operation that reads nothing is in a loop");
                 0.0
             }
@@ -1043,6 +1224,14 @@ fn part<'a>(samples: &'a [f32; MAX_BLOCK], frames: &Range<usize>) -> &'a [f32] {
     samples
         .get(frames.clone())
         .unwrap_or_else(|| ZEROS.get(..frames.len()).unwrap_or_default())
+}
+
+/// Both channels of the sound input `port` in `block`.
+fn sound(block: &Block, port: u8) -> &[[f32; MAX_BLOCK]] {
+    match usize::from(port).checked_sub(1) {
+        None => &block.input,
+        Some(index) => block.sounds.get(index).map_or(&[], |frames| frames),
+    }
 }
 
 /// The `frames` of the row `index` of `rows`: of a register, an input, a param or a live
@@ -1114,12 +1303,66 @@ fn map3(out: &mut [f32], a: &[f32], b: &[f32], c: &[f32], f: impl Fn(f32, f32, f
     }
 }
 
-fn table_of<'a>(table: Table, arrays: &'a [Vec<f32>], buffers: &'a [Vec<f32>]) -> &'a [f32] {
-    let values = match table {
-        Table::Array(index) => arrays.get(usize::from(index)),
-        Table::Buffer(index) => buffers.get(usize::from(index)),
+/// What a read of `table` hears on `channel`.
+fn table_of<'a>(
+    table: Table,
+    arrays: &'a [List],
+    buffers: &'a [Vec<f32>],
+    channel: usize,
+) -> View<'a> {
+    let (index, side) = match table {
+        Table::Buffer(index) => {
+            let values = buffers.get(usize::from(index));
+            return View::One(values.map_or(&[], Vec::as_slice));
+        }
+        Table::Array(index) => (index, Side::Both),
+        Table::Sample(index, side) => (index, side),
     };
-    values.map_or(&[], Vec::as_slice)
+    match (arrays.get(usize::from(index)), side) {
+        (None, _) => View::One(&[]),
+        (Some(List::One(values)), _) => View::One(values),
+        (Some(List::Stereo(left, right)), side) => match (side, channel) {
+            (Side::Left, _) | (Side::Channel, 0) => View::One(left),
+            (Side::Right, _) | (Side::Channel, _) => View::One(right),
+            (Side::Both, _) => View::Both(left, right),
+        },
+    }
+}
+
+/// What a table read hears: one list, or both sides of a sample in stereo, mixed.
+#[derive(Copy, Clone)]
+enum View<'a> {
+    One(&'a [f32]),
+    Both(&'a [f32], &'a [f32]),
+}
+
+impl View<'_> {
+    fn len(self) -> usize {
+        match self {
+            Self::One(values) | Self::Both(values, _) => values.len(),
+        }
+    }
+
+    fn at(self, index: f32) -> f32 {
+        match self {
+            Self::One(values) => read_at(values, index),
+            Self::Both(left, right) => (read_at(left, index) + read_at(right, index)) * 0.5,
+        }
+    }
+
+    /// The table read at `phase` from 0 to 1 over its whole length, wrapped, with a straight
+    /// line between two values, as a wavetable or a sample is played.
+    fn look_up(self, phase: f32) -> f32 {
+        let length = self.len();
+        if length == 0 || !phase.is_finite() {
+            return 0.0;
+        }
+        let position = (phase - phase.floor()) * length as f32;
+        let fraction = position - position.floor();
+        let first = self.at(position);
+        let second = self.at(position + 1.0);
+        first + (second - first) * fraction
+    }
 }
 
 /// The slot of `index` in a table of `length`: the whole part, wrapped, so any index reads.
@@ -1137,29 +1380,82 @@ fn read_at(values: &[f32], index: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// The table read at `phase` from 0 to 1 over its whole length, wrapped, with a straight line
-/// between two values, as a wavetable or a sample is played.
-fn look_up(values: &[f32], phase: f32) -> f32 {
-    let length = values.len();
-    if length == 0 || !phase.is_finite() {
-        return 0.0;
+impl Spectrum {
+    fn new(spectrum: &SpectrumSpec, sample_rate: f32) -> Self {
+        let stft = match spectrum.side {
+            true => Stft::with_side(spectrum.size),
+            false => Stft::new(spectrum.size),
+        };
+        let rate = sample_rate / stft.hop() as f32;
+        let bins = Machine::with_channels(spectrum.code.clone(), rate, stft.bins());
+        let mut block = Box::new(Block::new());
+        block.steady_parameters = u32::MAX;
+        Self {
+            hz: sample_rate / spectrum.size as f32,
+            bins: Box::new(bins),
+            block,
+            captures: spectrum.captures.clone().into(),
+            stft,
+        }
     }
-    let position = (phase - phase.floor()) * length as f32;
-    let fraction = position - position.floor();
-    let first = read_at(values, position);
-    let second = read_at(values, position + 1.0);
-    first + (second - first) * fraction
+
+    /// Takes `sample` in and gives one out. On the last sample of a hop the bins run, and read
+    /// each of their captures as `capture` gives it.
+    #[inline(always)]
+    fn next(
+        &mut self,
+        sample: f32,
+        side: f32,
+        capture: impl Fn(Register) -> f32,
+        arrays: &[List],
+    ) -> f32 {
+        let Self {
+            stft,
+            bins,
+            block,
+            captures,
+            hz,
+        } = self;
+        stft.next_with_side(sample, side, |spectrum, side| {
+            for (row, register) in block.parameters.iter_mut().zip(captures.iter()) {
+                row[0] = capture(*register);
+            }
+            for (chunk, spectrum) in spectrum.chunks_mut(MAX_BLOCK).enumerate() {
+                let first = chunk * MAX_BLOCK;
+                let side = side.get(first..).unwrap_or_default();
+                bins.run_bins(block, arrays, first, spectrum, side, *hz);
+            }
+        })
+    }
+}
+
+impl Bin {
+    fn value(self, value: BinValue) -> f32 {
+        match value {
+            BinValue::Magnitude => self.magnitude,
+            BinValue::Phase => self.phase,
+            BinValue::Hz => self.hz,
+            BinValue::Index => self.index,
+            BinValue::SideMagnitude => self.side_magnitude,
+            BinValue::SidePhase => self.side_phase,
+        }
+    }
 }
 
 impl Filter {
     #[inline(always)]
-    fn next(&mut self, kind: FilterKind, input: f32, hz: f32, q: f32, sample_rate: f32) -> f32 {
-        if (hz != self.hz || q != self.q) && hz.is_finite() && q.is_finite() {
-            let g = SvfFactors::cutoff_factor(hz.max(1.0), sample_rate);
-            self.k = 1.0 / q.clamp(0.1, SVF_MAX_Q);
-            self.factors = SvfFactors::new(g, self.k);
-            self.hz = hz;
-            self.q = q;
+    fn next(&mut self, kind: SvfShape, input: f32, settings: [f32; 3], sample_rate: f32) -> f32 {
+        if settings != self.settings && settings.iter().all(|setting| setting.is_finite()) {
+            let [hz, q, gain_db] = settings;
+            let shaped = kind.shaped(
+                hz,
+                gain_db.clamp(-MAX_FILTER_GAIN_DB, MAX_FILTER_GAIN_DB),
+                q.clamp(0.1, SVF_MAX_Q),
+                sample_rate,
+            );
+            self.factors = SvfFactors::new(shaped.g, shaped.k);
+            self.mix = shaped.mix;
+            self.settings = settings;
         }
         let input = finite(input);
         let (band, low) = self.section.band_and_low(&self.factors, input);
@@ -1168,12 +1464,8 @@ impl Filter {
             // again from silence, as a feedback without a filter does.
             self.section = SvfSection::default();
         }
-        let k = self.k;
-        match kind {
-            FilterKind::LowPass => low,
-            FilterKind::BandPass => k * band,
-            FilterKind::HighPass => input - k * band - low,
-        }
+        let [dry, band_mix, low_mix] = self.mix;
+        dry * input + band_mix * band + low_mix * low
     }
 }
 
@@ -1375,6 +1667,13 @@ fn write(buffer: Option<&mut Vec<f32>>, index: f32, value: f32) -> f32 {
         *sample = value;
     }
     value
+}
+
+/// The next value of a white noise from -1 to 1, and moves its `state` on.
+#[inline(always)]
+fn noise(state: &mut u32) -> f32 {
+    *state = xorshift32(*state);
+    *state as f32 / u32::MAX as f32 * 2.0 - 1.0
 }
 
 /// What leaves the code: held to [`LIMIT`], and 0 where it is not a number.

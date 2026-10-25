@@ -1,25 +1,4 @@
-import {
-  abs,
-  adsr,
-  feedback,
-  floor,
-  h,
-  knob,
-  lowpass,
-  phasor,
-  pow,
-  rise,
-  sin,
-  smooth,
-  tool,
-  TAU,
-  watch,
-  wrap,
-  type Operand,
-  type Signal,
-  type Style,
-  Knob,
-} from "./sdk";
+import { memo, abs, adsr, feedback, floor, h, number, lowpass, phasor, pow, rise, sin, smooth, tool, TAU, output, wrap, type Operand, type Signal, type Style, Knob } from "./sdk";
 
 // D dorian over two octaves: degree 0 is D3, degree 14 is D5.
 const ROOT = 50;
@@ -48,11 +27,10 @@ tool({
     "`brightness` opens the filter, from a dark 250 Hz at 0 through about 1.3 kHz at 0.5 to 7 kHz at 1, and adds more of the upper saw.",
     "`level` is the output gain; near 0.15 sits like the synth.",
   ].join("\n"),
-  kind: "source",
   state: {
-    density: knob({ min: 0, max: 1, default: 0.35 }),
-    brightness: knob({ min: 0, max: 1, default: 0.4 }),
-    level: knob({ min: 0, max: 0.5, default: 0.15 }),
+    density: number({ min: 0, max: 1, default: 0.35 }),
+    brightness: number({ min: 0, max: 1, default: 0.4 }),
+    level: number({ min: 0, max: 0.5, default: 0.15 }),
   },
   sound: ({ density, brightness, level }) => {
     const seconds = pow(0.125, density).times(12);
@@ -75,7 +53,7 @@ tool({
     const index = degree.minus(octave.times(7));
     const semitone = index.times(2).minus(index.ge(2)).minus(index.ge(6));
     const pitch = octave.times(12).plus(semitone).plus(ROOT);
-    watch("note", pitch);
+    output("note", pitch);
 
     // A soft glide between notes, then a swell that takes most of the step.
     const hz = pow(2, smooth(pitch, 120).minus(69).over(12)).times(440);
@@ -92,25 +70,27 @@ tool({
 
     return tone.times(env).times(level);
   },
-  card: ({ watches }) => {
-    const pitch = Math.round(watches.note ?? 62);
-    const degree = (((pitch - ROOT) % 12) + 12) % 12;
-    const name = DEGREES[[0, 2, 3, 5, 7, 9, 10].indexOf(degree)] ?? "?";
-    const octave = Math.floor(pitch / 12) - 1;
+  view: ({ outputs }) => {
+    const pitch = () => Math.round(outputs.note ?? 62);
+    const name = memo(() => {
+      const degree = (((pitch() - ROOT) % 12) + 12) % 12;
+      return DEGREES[[0, 2, 3, 5, 7, 9, 10].indexOf(degree)] ?? "?";
+    });
+    const octave = () => Math.floor(pitch() / 12) - 1;
     return (
       <div style={column}>
         <div style={row}>
-          <div style={{ fontSize: 28, width: 64, color: "#5eead4" }}>{`${name}${octave}`}</div>
+          <div style={{ fontSize: 28, width: 64, color: "#5eead4" }}>{() => `${name()}${octave()}`}</div>
           <div style={row}>
             {DEGREES.map((degreeName) => (
-              <div style={degreeName === name ? lit : cell}>{degreeName}</div>
+              <div style={() => (degreeName === name() ? lit : cell)}>{degreeName}</div>
             ))}
           </div>
         </div>
         <div style={row}>
-          <Knob path="density" label="Density" min={0} max={1} default={0.35} />
-          <Knob path="brightness" label="Brightness" min={0} max={1} default={0.4} />
-          <Knob path="level" label="Level" min={0} max={0.5} default={0.15} />
+          <Knob field="density" label="Density" min={0} max={1} default={0.35} />
+          <Knob field="brightness" label="Brightness" min={0} max={1} default={0.4} />
+          <Knob field="level" label="Level" min={0} max={0.5} default={0.15} />
         </div>
       </div>
     );

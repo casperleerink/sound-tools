@@ -1,32 +1,18 @@
-//! The card of the built-in delay in the track rack, with a simulated mouse: it is added from
-//! the control at the end of the rack, and every edit of it is one undo step written once.
+//! The card of the built-in delay in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once.
 
 use delay::{DelayState, Division, Feel};
 use gpui::{TestAppContext, point, px};
 
+use crate::rack::record;
 use crate::support::{self, Opened, id};
 
-const DELAY: &str = "arrangement/track-1/delay";
-const DELAY_FILE: &str = "state/arrangement/track-1/delay.json";
+const DELAY: &str = "rack/delay";
+const DELAY_FILE: &str = "state/rack/delay.json";
 
-/// One track with no instrument, so the only card with knobs is the delay, and its panel
-/// open. The delay is added the way a composer adds it: `Add effect`, then `Delay`.
+/// A rack of the delay alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-delay");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Delay"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(cx, &[("delay", &record("delay", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> DelayState {
@@ -107,9 +93,9 @@ fn the_handle_drags_the_time_and_the_feedback(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_cuts_and_ping_pong(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-delay-expand");
+    let expand = opened.control("card-rack/delay-expand");
     opened.click(expand);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Delay"));
+    assert_eq!(opened.undo_label(), None);
     for hidden in ["knob-low_cut_hz", "knob-high_cut_hz", "toggle-ping-pong"] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
@@ -124,7 +110,7 @@ fn expand_shows_the_cuts_and_ping_pong(cx: &mut TestAppContext) {
     assert!(state(&mut opened).low_cut_hz > DelayState::default().low_cut_hz);
     assert_eq!(opened.undo_label().as_deref(), Some("Change low cut"));
 
-    let expand = opened.control("card-delay-expand");
+    let expand = opened.control("card-rack/delay-expand");
     opened.click(expand);
     assert_eq!(opened.find("toggle-ping-pong"), None);
 }

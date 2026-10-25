@@ -4,8 +4,7 @@
 //! contract crates, never on each other. This keeps the build wide and parallel, which
 //! protects the extension edit loop.
 //!
-//! The core depends on no other crate of the workspace, so it knows no music. The runtime names
-//! the arrangement only where it registers it and in its arrangement wiring.
+//! The core depends on no other crate of the workspace, so it knows no music.
 //!
 //! The top-level docs stay within a word limit, and code never points at them.
 
@@ -177,86 +176,29 @@ mod tests {
         Ok(())
     }
 
-    /// Whether `code` uses the `arrangement` crate: a path that starts with it, or a `use` of
-    /// it, and not a name such as `crate::arrangement_wiring` or `main_arrangement`.
-    fn names_the_arrangement(code: &str) -> bool {
-        let ident = |c: char| c.is_alphanumeric() || c == '_';
-        code.match_indices("arrangement").any(|(at, word)| {
-            let (before, after) = (&code[..at], &code[at + word.len()..]);
-            // `::arrangement` is the crate too, `crate::arrangement` is not.
-            let before = before
-                .strip_suffix("::")
-                .filter(|rest| !rest.ends_with(ident))
-                .unwrap_or(before);
-            let alone =
-                !before.ends_with(ident) && !before.ends_with(':') && !after.starts_with(ident);
-            alone && (after.starts_with("::") || before.trim_end().ends_with("use"))
-        })
-    }
-
-    /// The arrangement is the one extension the app may know, and in one place, so it is
-    /// never a second core. Every other extension the runtime only registers.
-    #[test]
-    fn the_runtime_names_the_arrangement_in_one_place() -> anyhow::Result<()> {
-        let source = workspace_root().join("crates/runtime/src");
-        let allowed =
-            ["lib.rs", "arrangement_wiring.rs", "arrangement_wiring"].map(|path| source.join(path));
-        let mut violations = Vec::new();
-        for path in files(&["crates/runtime/src"])? {
-            if allowed.iter().any(|allowed| path.starts_with(allowed)) {
-                continue;
-            }
-            if names_the_arrangement(&fs::read_to_string(&path)?) {
-                violations.push(path);
-            }
-        }
-        assert!(
-            violations.is_empty(),
-            "only the registration in lib.rs and arrangement_wiring may use the arrangement: {violations:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn finds_a_use_of_the_arrangement_crate() {
-        assert!(names_the_arrangement("use arrangement::TrackState;"));
-        assert!(names_the_arrangement(
-            "let end = arrangement::end(project, id);"
-        ));
-        assert!(names_the_arrangement("use ::arrangement::TrackState;"));
-        assert!(names_the_arrangement("use arrangement as timeline;"));
-        assert!(!names_the_arrangement("// the arrangement is the home"));
-        assert!(!names_the_arrangement(
-            "use crate::arrangement_wiring::recording;"
-        ));
-        assert!(!names_the_arrangement(
-            "crate::arrangement::X; main_arrangement::Y"
-        ));
-    }
-
     #[test]
     fn finds_direct_and_transitive_extension_dependencies() {
         let id = |name: &str| PackageId {
             repr: name.to_string(),
         };
-        let (synth, arrangement, mixer, contract, helper) = (
+        let (synth, song, mixer, contract, helper) = (
             id("synth"),
-            id("arrangement"),
+            id("song"),
             id("mixer"),
             id("contract"),
             id("helper"),
         );
-        let extensions = HashSet::from([&synth, &arrangement, &mixer]);
-        let arrangement_dependencies = [contract.clone(), helper.clone()];
+        let extensions = HashSet::from([&synth, &song, &mixer]);
+        let song_dependencies = [contract.clone(), helper.clone()];
         let synth_dependencies = [contract];
         let helper_dependencies = [mixer.clone()];
         let dependencies = HashMap::from([
-            (&arrangement, arrangement_dependencies.as_slice()),
+            (&song, song_dependencies.as_slice()),
             (&synth, synth_dependencies.as_slice()),
             (&helper, helper_dependencies.as_slice()),
         ]);
 
         let violations = extension_dependency_violations(&extensions, &dependencies);
-        assert_eq!(violations, vec![(&arrangement, &mixer)]);
+        assert_eq!(violations, vec![(&song, &mixer)]);
     }
 }

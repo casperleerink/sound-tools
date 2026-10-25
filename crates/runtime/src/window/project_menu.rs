@@ -9,16 +9,14 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
+use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use gpui::{
     App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Task,
     WeakEntity, Window, prelude::*,
 };
-use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use smol::stream::StreamExt;
 use sound_core::DeviceChoice;
 use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
@@ -28,7 +26,6 @@ use sound_ui::components::dropdown_menu::{
 use crate::app::ChosenDevices;
 #[cfg(unix)]
 use crate::app::Installed;
-use crate::main_arrangement;
 use crate::{app, log_file};
 
 const EXPORT: &str = "export";
@@ -79,28 +76,24 @@ pub struct ProjectMenu {
     menu_open: bool,
     /// What the items were made from. They are made again only when this changes.
     shown: Shown,
-    /// The file an export writes and how far it is, in percent. One at a time: the export
-    /// items are off while it runs.
-    exporting: Option<(SharedString, u8)>,
 }
 
 /// All that the items depend on in the project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Shown {
-    has_arrangement: bool,
     has_selection: bool,
-    exporting: bool,
+    /// One render at a time: the export items are off while one runs.
+    rendering: bool,
     undo: Option<String>,
     redo: Option<String>,
 }
 
 impl Shown {
-    fn of(session: &Session, exporting: bool) -> Self {
+    fn of(session: &Session) -> Self {
         let project = session.project();
         Self {
-            has_arrangement: main_arrangement(project).is_some(),
-            has_selection: !session.selected_clips().is_empty(),
-            exporting,
+            has_selection: session.selected_span().is_some(),
+            rendering: session.rendering().is_some(),
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
@@ -118,7 +111,7 @@ impl ProjectMenu {
         let project = session.read(cx).project();
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
-        let shown = Shown::of(session.read(cx), false);
+        let shown = Shown::of(session.read(cx));
         let items = entries(&shown, &device_name, &[], None);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
@@ -150,7 +143,6 @@ impl ProjectMenu {
             listing: Task::ready(()),
             menu_open: false,
             shown,
-            exporting: None,
         };
         this.refresh_devices(cx);
         this
@@ -196,22 +188,8 @@ impl ProjectMenu {
         &self.menu
     }
 
-    /// The file an export writes and how far it is, from 0 to 1, while one runs.
-    pub fn exporting(&self) -> Option<(&SharedString, f32)> {
-        let (file, percent) = self.exporting.as_ref()?;
-        Some((file, f32::from(*percent) / 100.))
-    }
-
-    fn set_exporting(&mut self, exporting: Option<(SharedString, u8)>, cx: &mut Context<Self>) {
-        if self.exporting != exporting {
-            self.exporting = exporting;
-            self.refresh(cx);
-            cx.notify();
-        }
-    }
-
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let shown = Shown::of(self.session.read(cx), self.exporting.is_some());
+        let shown = Shown::of(self.session.read(cx));
         if shown != self.shown {
             self.shown = shown;
             self.set_entries(cx);
@@ -248,7 +226,7 @@ impl ProjectMenu {
             .update(cx, |session, cx| match picked.0.as_ref() {
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
-                NEW_PROJECT => new_project(session, cx),
+                NEW_PROJECT => choose_new_project(cx.entity(), cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 LOG => {
@@ -295,7 +273,7 @@ fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     if !selection {
         return project.end().map(|_| Vec::new());
     }
-    let (from, to) = crate::clips_span(project, session.selected_clips())?;
+    let (from, to) = session.selected_span()?;
     Some(vec![
         "--from".into(),
         from.0.to_string(),
@@ -304,10 +282,7 @@ fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     ])
 }
 
-/// Asks where the WAV goes and renders it in a process of its own: this program with
-/// `--render`, which reads the project from its folder as an agent's render does. The window
-/// keeps playing meanwhile and shows how far it is, and a plugin that crashes in the render
-/// costs the render only.
+/// Asks where the WAV goes and renders it, see [`sound_ui::render`].
 fn export_audio(
     session: Entity<Session>,
     selection: bool,
@@ -319,7 +294,7 @@ fn export_audio(
         (folder, export_span(session, selection))
     });
     let Some(span) = span else {
-        let message = "The project has no clips, so there is nothing to export.";
+        let message = "Nothing in the project plays to an end, such as a clip, so there is nothing to export.";
         session.update(cx, |session, cx| session.report(message, cx));
         return;
     };
@@ -328,7 +303,7 @@ fn export_audio(
     let directory = folder.parent().unwrap_or(&folder).to_path_buf();
     let name = folder.file_name().unwrap_or_default().to_string_lossy();
     let picked = cx.prompt_for_new_path(&directory, Some(&format!("{name}.wav")));
-    cx.spawn_in(window, async move |this, cx| {
+    cx.spawn_in(window, async move |_, cx| {
         let wav = match picked.await {
             Ok(Ok(Some(wav))) => wav,
             Ok(Ok(None)) | Err(_) => return,
@@ -338,38 +313,17 @@ fn export_audio(
                 return;
             }
         };
-        let file = SharedString::from(
-            wav.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
-        );
-        // Fails only when the window is gone.
-        this.update(cx, |menu, cx| {
-            menu.set_exporting(Some((file.clone(), 0)), cx)
-        })
-        .ok();
-        let (sender, percents) = smol::channel::unbounded();
-        let rendered = cx.background_spawn({
-            let wav = wav.clone();
-            async move {
-                render_in_child(&folder, &wav, &span, |percent| {
-                    // Fails only once the window stopped listening.
-                    sender.try_send(percent).ok();
-                })
-                .await
-            }
+        let file = wav.file_name().unwrap_or_default().to_string_lossy();
+        let file = SharedString::from(file.into_owned());
+        let rendered = cx.update(|_, cx| {
+            let notice = SharedString::from(format!("Exporting {file}"));
+            sound_ui::render(&session, notice, wav.clone(), span, cx)
         });
-        // Ends when the render does, which drops the sender.
-        while let Ok(percent) = percents.recv().await {
-            this.update(cx, |menu, cx| {
-                menu.set_exporting(Some((file.clone(), percent)), cx)
-            })
-            .ok();
-        }
+        // Fails only when the window is gone.
+        let Ok(rendered) = rendered else {
+            return;
+        };
         let rendered = rendered.await;
-        this.update(cx, |menu, cx| menu.set_exporting(None, cx))
-            .ok();
         let errors = match rendered {
             Ok(errors) => errors,
             Err(error) => {
@@ -402,66 +356,6 @@ fn export_audio(
         }
     })
     .detach();
-}
-
-/// Runs `--render` and waits for it, telling `progress` each percent it reaches. Gives the
-/// errors it printed on the way, such as a plugin that did not load. When it failed, what it
-/// printed last on stderr is the error.
-async fn render_in_child(
-    folder: &Path,
-    wav: &Path,
-    span: &[String],
-    mut progress: impl FnMut(u8),
-) -> anyhow::Result<Vec<String>> {
-    let program = std::env::current_exe()?;
-    let mut child = smol::process::Command::new(program)
-        .arg(folder)
-        .arg("--render")
-        .arg(wav)
-        .args(span)
-        .arg("--progress")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Quitting the app stops the render.
-        .kill_on_drop(true)
-        .spawn()?;
-    let (Some(stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        anyhow::bail!("the render has no output");
-    };
-    // Both at once: a pipe that nobody reads fills up and stops the render.
-    let read_stdout = async {
-        let mut errors = Vec::new();
-        // Lossy and never stopping on a line it does not know: a plugin may print to stdout,
-        // and a pipe that stops being read stops the render.
-        let mut lines = BufReader::new(stdout).split(b'\n');
-        while let Some(line) = lines.next().await {
-            let line = String::from_utf8_lossy(&line?).into_owned();
-            let percent = line.strip_prefix("progress: ").map(str::parse);
-            if let Some(Ok(percent)) = percent {
-                progress(percent);
-            } else if let Some(error) = line.strip_prefix("error: ") {
-                errors.push(error.to_string());
-            }
-        }
-        anyhow::Ok(errors)
-    };
-    let read_stderr = async {
-        let mut said = String::new();
-        stderr.read_to_string(&mut said).await?;
-        anyhow::Ok(said)
-    };
-    let (errors, stderr) = smol::future::zip(read_stdout, read_stderr).await;
-    if child.status().await?.success() {
-        return errors;
-    }
-    let stderr = stderr?;
-    let last = stderr.lines().rfind(|line| !line.trim().is_empty());
-    anyhow::bail!(
-        "{}",
-        last.unwrap_or("the render stopped")
-            .trim_start_matches("Error: ")
-    )
 }
 
 /// The commands that open a terminal in `folder`, tried in turn while a program is missing.
@@ -535,10 +429,17 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
     .detach();
 }
 
+/// Shows the templates, and makes a new project of the one picked, see [`new_project`].
+pub(super) fn choose_new_project(session: Entity<Session>, cx: &mut App) {
+    let on_pick = move |template, cx: &mut App| {
+        session.update(cx, |session, cx| new_project(session, template, cx));
+    };
+    super::new_project::choose_template(Rc::new(on_pick), cx);
+}
+
 /// Asks for the name and place of a new project in the save panel, next to the open project,
-/// and opens it as [`open_another_project`] does. The panel itself asks before it reuses a
-/// folder that is there, and a folder with other files in it is refused as when opened.
-pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
+/// and opens it as [`open_another_project`] does. A folder with files in it is refused.
+fn new_project(session: &Session, template: &'static crate::Template, cx: &mut Context<Session>) {
     let root = session.project().root();
     let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
     cx.spawn(async move |session, cx| {
@@ -555,7 +456,7 @@ pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
                 return;
             }
         };
-        start_on(folder, &session, cx).await;
+        start_on(folder, Some(template), &session, cx).await;
     })
     .detach();
 }
@@ -567,7 +468,7 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
     let picked = cx.prompt_for_paths(super::start::folder_prompt());
     cx.spawn(
         async move |session, cx| match super::start::picked_folder(picked.await.ok()) {
-            Ok(Some(folder)) => start_on(folder, &session, cx).await,
+            Ok(Some(folder)) => start_on(folder, None, &session, cx).await,
             Ok(None) => {}
             Err(error) => report(&session, error, cx),
         },
@@ -577,12 +478,18 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
 
 /// Makes `folder` when it is new and remembers it as the last project, off the UI thread, then
 /// starts the app again on it.
-async fn start_on(folder: PathBuf, session: &WeakEntity<Session>, cx: &mut AsyncApp) {
+async fn start_on(
+    folder: PathBuf,
+    template: Option<&'static crate::Template>,
+    session: &WeakEntity<Session>,
+    cx: &mut AsyncApp,
+) {
     let remembered = cx
         .background_spawn(async move {
-            app::check_project_folder(&folder)?;
-            std::fs::create_dir_all(&folder)
-                .with_context(|| format!("could not make {}", folder.display()))?;
+            match template {
+                Some(template) => crate::templates::write(&folder, template)?,
+                None => app::check_project_folder(&folder)?,
+            }
             app::remember_project(&folder)
         })
         .await;
@@ -705,10 +612,9 @@ fn entries(
     vec![
         MenuEntry::Group(
             MenuGroup::new().items([
-                command(EXPORT, "Export audio…".to_string())
-                    .disabled(!shown.has_arrangement || shown.exporting),
+                command(EXPORT, "Export audio…".to_string()).disabled(shown.rendering),
                 command(EXPORT_SELECTION, "Export selection…".to_string())
-                    .disabled(!shown.has_selection || shown.exporting),
+                    .disabled(!shown.has_selection || shown.rendering),
             ]),
         ),
         MenuEntry::Separator,
@@ -731,7 +637,7 @@ fn entries(
         ))),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items(folder_items(recent))),
-        MenuEntry::Note(concat!("Sound Tools ", env!("CARGO_PKG_VERSION")).into()),
+        MenuEntry::Note(format!("Sound Tools {}", crate::VERSION).into()),
     ]
 }
 
@@ -791,37 +697,43 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
 /// to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
 /// started from a terminal writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
-    [
-        (NEW_PROJECT, "New project…"),
+    let mut items = vec![
+        MenuItem::new(NEW_PROJECT, "New project…")
+            .selectable(false)
+            .shortcut("mod+n"),
+    ];
+    let rest = [
         (OPEN_PROJECT, "Open project…"),
         (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
         (LOG, "Reveal log file"),
-    ]
-    .into_iter()
-    .filter(|(value, _)| match *value {
-        INSTALL_TOOL => cfg!(unix),
-        LOG => log_file::path().is_some(),
-        _ => true,
-    })
-    .map(|(value, label)| {
-        let item = MenuItem::new(value, label).selectable(false);
-        match value {
-            NEW_PROJECT => item.shortcut("mod+n"),
-            OPEN_PROJECT => item.shortcut("mod+o"),
-            OPEN_RECENT => item
-                .submenu(recent_items(recent))
-                .disabled(recent.is_empty()),
-            _ => item,
-        }
-    })
-    .collect()
+    ];
+    let rest = (rest.into_iter())
+        .filter(|(value, _)| match *value {
+            INSTALL_TOOL => cfg!(unix),
+            LOG => log_file::path().is_some(),
+            _ => true,
+        })
+        .map(|(value, label)| {
+            let item = MenuItem::new(value, label).selectable(false);
+            match value {
+                OPEN_PROJECT => item.shortcut("mod+o"),
+                OPEN_RECENT => item
+                    .submenu(recent_items(recent))
+                    .disabled(recent.is_empty()),
+                _ => item,
+            }
+        });
+    items.extend(rest);
+    items
 }
 
 #[cfg(test)]
 mod tests {
+    use std::process::Stdio;
+
     use super::*;
 
     /// CI has no Terminal to open, so the check is on the command itself.

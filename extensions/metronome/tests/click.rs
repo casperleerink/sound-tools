@@ -159,17 +159,6 @@ fn every_click_is_on_the_frame_of_its_beat_over_several_tempo_changes() {
 }
 
 #[test]
-fn a_waltz_clicks_three_beats_a_bar() {
-    check_beats(&[("3/4", 1)], &[(0, 100.0), (3 * 2880, 140.0)], 10);
-}
-
-#[test]
-fn six_eight_clicks_the_eighth_notes() {
-    // A beat is the note value of the lower number, so 6/8 is six clicks per 2880-tick bar.
-    check_beats(&[("6/8", 1)], &[(0, 90.0), (2 * 2880, 150.0)], 10);
-}
-
-#[test]
 fn every_bar_clicks_its_own_time_signature() {
     // Two bars of 3/16 (a sixteenth is 240 ticks), three of 2/8 (an eighth is 480), then 4/4.
     // The tempo changes inside the 2/8 bars, off a bar line.

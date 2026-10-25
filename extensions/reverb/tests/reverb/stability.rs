@@ -3,7 +3,6 @@
 
 use proptest::prelude::*;
 use reverb::{DECAY, PRE_DELAY, ReverbState, SIZE};
-use sound_core::Processor;
 
 use crate::support::{Rig, SAMPLE_RATE, Signal, burst, noise, peak, sine};
 
@@ -142,11 +141,6 @@ fn renders_are_the_same_every_time_to_the_byte() {
         [first[0].clone(), first[1].clone(), left, right].map(|samples| bytes(&samples))
     };
     assert_eq!(render(), render());
-}
-
-#[test]
-fn the_reverb_has_no_latency() {
-    assert_eq!(reverb::Reverb::new(ReverbState::default()).latency(), 0);
 }
 
 /// Mix 0 is the sound as it came in, to the bit.

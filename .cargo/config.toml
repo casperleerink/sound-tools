@@ -6,3 +6,6 @@ rustflags = ["-C", "symbol-mangling-version=v0"]
 # Redistributable. Zed does the same.
 [target.'cfg(windows)']
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[alias]
+verify = "run --quiet --locked -p verify --"

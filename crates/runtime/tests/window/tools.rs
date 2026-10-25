@@ -1,40 +1,50 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
 //! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes
-//! back; a save of a tool keeps the sample it plays. Bun is not part of the build, so where it
-//! is not installed, these tests say so and pass.
+//! back; a save of a tool keeps the sample it plays.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    Pixels, Point, TestAppContext, VisualTestContext, point,
+    FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, Pixels, Point,
+    TestAppContext, point,
 };
 use midi::Played;
-use plugin_host::{Plugins, ScanCache};
-use runtime::window::{DeviceAccess, Shell, bind_keys};
-use runtime::{OFFLINE, views};
-use sound_core::{Changes, Engine, Problem};
+use runtime::OFFLINE;
+use runtime::window::DeviceAccess;
+use sound_core::{Changes, Problem, Project, Ticks};
 use sound_notes::{Pitch, Velocity};
-use sound_ui::{POLL_INTERVAL, Session};
-use tempfile::TempDir;
 
-use crate::plugin_hosts::scanner;
-use crate::support::{id, peak};
+use crate::support::{Opened, id, open_files, open_folder, peak};
 
 mod edits;
+mod gestures;
+mod mixer;
+mod nested;
+mod parts;
+mod performance;
+mod piano_roll;
+mod rack;
+mod recorder;
+mod song;
+mod song_view;
+mod takes_and_notes;
+mod template;
+mod timeline;
+mod transport;
+mod watches;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
-const KEYS: &str = r#"import { adsr, h, knob, note, sine, tool } from "./sdk";
+const KEYS: &str = r#"import { adsr, h, number, note, sine, tool } from "./sdk";
 
 tool({
   name: "keys",
   title: "Keys",
   when: "You want to play a sine from the computer keyboard",
   doc: "The key a holds A4.",
-  kind: "instrument",
-  state: { last: knob({ min: 0, max: 127, default: 0 }), count: knob({ min: 0, max: 100, default: 0 }) },
+  voices: 8,
+  state: { last: number({ min: 0, max: 127, default: 0 }), count: number({ min: 0, max: 100, default: 0 }) },
   sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),
   onKey: ({ play, send, update }, { key, down }) => {
     if (down) {
@@ -44,7 +54,7 @@ tool({
     }
     if (key !== "a") return;
     if (down) play(69, { hold: true });
-    else send({ type: "noteOff", pitch: 69 });
+    else send("notes", { type: "noteOff", pitch: 69 });
   },
   onNotes: ({ update }, event) => {
     if (event.type !== "noteOn") return;
@@ -52,7 +62,7 @@ tool({
       state.last = event.pitch;
     });
   },
-  page: () => h("div", {}, "Play a"),
+  view: () => h("div", {}, "Play a"),
 });
 "#;
 
@@ -68,7 +78,9 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ("extensions/keys.ts", KEYS),
 ];
 
-/// A page that asks for the transport, at the top. A click keeps the tick it drew with.
+/// A page with a transport made of the SDK's blocks, at the top, and space as its key: play,
+/// the tempo as a number box, the click and the computer keys. A click keeps the tick of the
+/// clock where it was clicked.
 const BEAT: [(&str, &str); 3] = [
     ONLY_THE_TOOL[0],
     (
@@ -77,24 +89,40 @@ const BEAT: [(&str, &str); 3] = [
     ),
     (
         "extensions/beat.ts",
-        r#"import { h, input, knob, tool } from "./sdk";
+        r#"import { Button, h, input, now, number, NumberBox, tool } from "./sdk";
 
 tool({
   name: "beat",
   title: "Beat",
   when: "You want to see the beat",
-  doc: "Shows the bar and the beat.",
-  state: { tick: knob({ min: 0, max: 1000000, default: 0 }) },
+  doc: "Shows the transport.",
+  state: { tick: number({ min: 0, max: 1000000, default: 0 }) },
   sound: () => input,
-  transport: true,
-  page: ({ size, transport, update }) =>
-    h(
-      "div",
-      {
-        style: { width: size.width, height: size.height },
-        onClick: () => update("Keep the tick", ({ state }) => { state.tick = transport.tick; }),
-      },
-      `${transport.bar}.${transport.beat}`,
+  globalKeys: ["space"],
+  onKey: ({ clock }, { key, down }) => {
+    if (key === "space" && down) (clock.playing ? clock.pause() : clock.play());
+  },
+  view: ({ size, clock, update }) =>
+    h("div", { style: () => ({ width: size.width, height: size.height }) },
+      h("div", { style: { direction: "row", gap: 8 } },
+        h(Button, { key: "play", icon: () => (clock.playing ? "pause" : "play"), onClick: () => (clock.playing ? clock.pause() : clock.play()) }),
+        h(NumberBox, {
+          key: "tempo", width: 32, per: 2, min: 10, max: 1000,
+          show: now.bpm.round(),
+          value: () => clock.bpm,
+          onChange: (bpm) => clock.update("Change the tempo", ({ tempo_map }) => {
+            const first = tempo_map.tempo_changes[0];
+            if (first) first.bpm = bpm;
+          }),
+        }),
+        h(Button, { key: "click", icon: "metronome", onClick: () => clock.setClick(!clock.click) }),
+        h(Button, { key: "computer-keys", icon: "keyboard-music", onClick: () => clock.setComputerKeys(!clock.computerKeys) }),
+      ),
+      h("div", {
+        key: "keep",
+        style: { grow: true },
+        onClick: () => update("Keep the tick", ({ state }) => { state.tick = clock.tick; }),
+      }, "Keep"),
     ),
 });
 "#,
@@ -110,24 +138,53 @@ const COUNTER: [(&str, &str); 3] = [
     ),
     (
         "extensions/counter.ts",
-        r#"import { h, input, knob, tool } from "./sdk";
+        r#"import { h, input, number, tool } from "./sdk";
 
 tool({
   name: "counter",
   title: "Counter",
   when: "You want to count clicks",
   doc: "Counts the clicks on its page.",
-  state: { count: knob({ min: 0, max: 100, default: 0 }) },
+  state: { count: number({ min: 0, max: 100, default: 0 }) },
   sound: () => input,
-  page: ({ size, state, update }) =>
+  view: ({ size, state, update }) =>
     h(
       "div",
       {
-        style: { width: size.width, height: size.height },
+        style: () => ({ width: size.width, height: size.height }),
         onClick: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
       },
       "Count",
     ),
+});
+"#,
+    ),
+];
+
+/// A page that is a text field with the keys, which keeps what is typed as it is typed and is
+/// disabled from two characters on.
+const NOTE: [(&str, &str); 3] = [
+    ONLY_THE_TOOL[0],
+    ("state/note.json", r#"{"tool": "note", "state": {}}"#),
+    (
+        "extensions/note.ts",
+        r#"import { h, input, Input, text, tool } from "./sdk";
+
+tool({
+  name: "note",
+  title: "Note",
+  when: "You want to type a note",
+  doc: "Keeps what is typed.",
+  state: { typed: text() },
+  sound: () => input,
+  view: ({ state, update }) =>
+    h(Input, {
+      value: () => state.typed ?? "",
+      focus: true,
+      disabled: () => (state.typed ?? "").length >= 2,
+      onChange: (typed) => update("Type", ({ state: next }) => { next.typed = typed; }),
+      onCommit: () => {},
+    }),
 });
 "#,
     ),
@@ -140,15 +197,15 @@ const EAR: [(&str, &str); 3] = [
     ("state/keys.json", r#"{"tool": "keys", "state": {}}"#),
     (
         "extensions/keys.ts",
-        r#"import { h, knob, tool } from "./sdk";
+        r#"import { h, number, tool } from "./sdk";
 
 tool({
   name: "keys",
   title: "Ear",
   when: "You want to count what is played",
   doc: "Counts the notes and the keys it hears; a click on its page keeps the count.",
-  kind: "instrument",
-  state: { heard: knob({ min: 0, max: 100, default: 0 }) },
+  voices: 8,
+  state: { heard: number({ min: 0, max: 100, default: 0 }) },
   memory: () => ({ heard: 0 }),
   onNotes: ({ memory }, event) => {
     if (event.type === "noteOn") memory.heard += 1;
@@ -156,11 +213,11 @@ tool({
   onKey: ({ memory }, { down }) => {
     if (down) memory.heard += 1;
   },
-  page: ({ size, memory, update }) =>
+  view: ({ size, memory, update }) =>
     h(
       "div",
       {
-        style: { width: size.width, height: size.height },
+        style: () => ({ width: size.width, height: size.height }),
         onClick: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
       },
       "Listen",
@@ -183,14 +240,14 @@ const ONLY_THE_TOOL: [(&str, &str); 2] = [
 
 /// An effect that keeps the last note of the MIDI keyboard in its record, and how many it
 /// holds.
-const LISTENER: &str = r#"import { input, knob, tool } from "./sdk";
+const LISTENER: &str = r#"import { input, number, tool } from "./sdk";
 
 tool({
   name: "listener",
   title: "Listener",
   when: "You want to know the last note played",
   doc: "Passes the sound and keeps the last note and how many are held.",
-  state: { last: knob({ min: 0, max: 127, default: 0 }), held: knob({ min: 0, max: 128, default: 0 }) },
+  state: { last: number({ min: 0, max: 127, default: 0 }), held: number({ min: 0, max: 128, default: 0 }) },
   sound: () => input,
   onNotes: ({ update }, event) => {
     if (event.type === "noteOn") {
@@ -207,58 +264,25 @@ tool({
 });
 "#;
 
-/// Two tracks with a synth and a `listener` each.
-const TWO_TRACKS: [(&str, &str); 8] = [
+/// Two `listener`s at the top, `one` and `two`.
+const TWO_LISTENERS: [(&str, &str); 4] = [
     (
         "project.json",
-        r#"{"format": 1, "extensions": ["arrangement", "instrument"],
+        r#"{"format": 1, "extensions": [],
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": []}"#,
     ),
-    (
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    ),
-    (
-        "state/arrangement/one/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0, "effects": ["listener"]}}"#,
-    ),
-    (
-        "state/arrangement/one/instrument.json",
-        r#"{"tool": "instrument.synth", "state": {}}"#,
-    ),
-    (
-        "state/arrangement/one/listener.json",
-        r#"{"tool": "listener", "state": {}}"#,
-    ),
-    (
-        "state/arrangement/two/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "Two", "order": 1, "effects": ["listener"]}}"#,
-    ),
-    (
-        "state/arrangement/two/listener.json",
-        r#"{"tool": "listener", "state": {}}"#,
-    ),
+    ("state/one.json", r#"{"tool": "listener", "state": {}}"#),
+    ("state/two.json", r#"{"tool": "listener", "state": {}}"#),
     ("extensions/listener.ts", LISTENER),
 ];
 
-struct Window<'a> {
-    _folder: TempDir,
-    engine: Engine,
-    plugins: Plugins,
-    session: Entity<Session>,
-    shell: Entity<Shell>,
-    cx: &'a mut VisualTestContext,
-}
-
 /// Opens the window, as the application does, on a project of these files and its tools.
-/// `None` without Bun.
-fn open<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Option<Window<'a>> {
-    let folder = tempfile::tempdir().unwrap();
-    for (path, contents) in files {
-        write(folder.path(), path, contents);
-    }
-    open_folder(cx, folder)
+fn open<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Opened<'a> {
+    let files: Vec<(String, String)> = (files.iter())
+        .map(|(path, contents)| ((*path).to_string(), (*contents).to_string()))
+        .collect();
+    open_files(cx, &files)
 }
 
 fn write(folder: &Path, path: &str, contents: &str) {
@@ -267,107 +291,68 @@ fn write(folder: &Path, path: &str, contents: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
-/// [`open`] on a project folder that is written already.
-fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
-    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
-    open_with(cx, folder, plugins)
+/// [`open`] with a plugin host that finds the repository's test plugins.
+fn open_with_test_plugins<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Opened<'a> {
+    let files: Vec<(String, String)> = (files.iter())
+        .map(|(path, contents)| ((*path).to_string(), (*contents).to_string()))
+        .collect();
+    let host = crate::plugin_hosts::test_plugin_host;
+    crate::support::open_with(cx, &files, host, DeviceAccess::default())
 }
 
-/// [`open_folder`] with a plugin host that finds the repository's test plugins.
-fn open_with_test_plugins<'a>(
-    cx: &'a mut TestAppContext,
-    files: &[(&str, &str)],
-) -> Option<Window<'a>> {
-    let folder = tempfile::tempdir().unwrap();
-    for (path, contents) in files {
-        write(folder.path(), path, contents);
-    }
-    let plugins = crate::plugin_hosts::test_plugin_host(folder.path());
-    open_with(cx, folder, plugins)
-}
-
-fn open_with(cx: &mut TestAppContext, folder: TempDir, plugins: Plugins) -> Option<Window<'_>> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
-    // Bun's answers wake the window's tasks from a thread of their own.
-    cx.executor().allow_parking();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (project, extensions) =
-        runtime::open_with_extensions(folder.path(), control, plugins.clone()).unwrap();
-    assert_eq!(project.problems(), []);
-    cx.update(sound_ui::init);
-    let session = cx.new(|cx| Session::new(project, cx));
-    cx.update(bind_keys);
-    let (shell, cx) = cx.add_window_view({
-        let (session, plugins) = (session.clone(), plugins.clone());
-        move |window, cx| {
-            let (mut views, mut devices) = views(plugins.downgrade());
-            let extensions = extensions.unwrap();
-            sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
-            let device = DeviceAccess::default();
-            Shell::with_device(session, (views, devices), "Test".into(), device, window, cx)
-        }
-    });
-    cx.run_until_parked();
-    Some(Window {
-        _folder: folder,
-        engine,
-        plugins,
-        session,
-        shell,
-        cx,
-    })
-}
-
-impl Window<'_> {
+impl Opened<'_> {
     /// Runs the engine for `frames` and gives the loudest sample it played.
     fn loudest(&mut self, frames: usize) -> f32 {
-        let mut output = vec![0.0_f32; frames * OFFLINE.channels];
-        for buffer in output.chunks_mut(64 * OFFLINE.channels) {
-            self.engine.process_block(buffer);
+        peak(&self.render(frames))
+    }
+
+    /// Plays `polls` polls of the engine, each with its timers and the frame it asked for, as
+    /// the app does: how many times a card was drawn.
+    fn cards_drawn_in(&mut self, polls: usize) -> u64 {
+        let drawn = sound_typescript::card_renders();
+        let frames =
+            sound_ui::POLL_INTERVAL.as_millis() as usize * OFFLINE.sample_rate as usize / 1000;
+        for _ in 0..polls {
+            self.render(frames);
+            self.cx.executor().advance_clock(sound_ui::POLL_INTERVAL);
+            self.cx.update(|window, cx| window.simulate_next_frame(cx));
+            self.cx.run_until_parked();
         }
-        peak(&output)
+        sound_typescript::card_renders() - drawn
     }
 
-    /// One poll of the window, after a block of the engine: what Bun said is heard, and the
-    /// tick of the window runs.
-    fn poll(&mut self) {
-        self.loudest(64);
-        self.cx.executor().advance_clock(POLL_INTERVAL);
-        self.cx.run_until_parked();
-        let (session, plugins) = (self.session.clone(), self.plugins.clone());
-        (self.cx).update(|_, cx| runtime::window::tick(&session, &plugins, &mut 0, cx));
-    }
-
-    /// Polls until `done` holds: Bun answers on a thread of its own, in real time.
-    fn until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(5) {
-            self.poll();
-            if done(self) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("{what} did not happen within 5 s");
-    }
-
-    /// Polls for as long as Bun takes to answer, for a test that nothing happens.
+    /// Waits for pending records, watches and behaviour answers to reach the window.
     fn wait_for_bun(&mut self) {
-        for _ in 0..10 {
-            self.poll();
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        self.until("Bun answered", |window| {
+            if !window.page_ready() {
+                return false;
+            }
+            window.poll_plugins();
+            window.page_ready()
+        });
     }
 
-    /// The middle of a control that names itself for tests, after a whole frame. `None` when it
-    /// is not on screen.
-    fn find(&mut self, selector: &'static str) -> Option<Point<Pixels>> {
-        self.cx.update(|window, _| window.refresh());
-        self.cx.run_until_parked();
-        self.cx.debug_bounds(selector).map(|bounds| bounds.center())
+    /// Waits for the playhead to reach `tick`. A jump from code moves it only once the engine
+    /// played a block and the session polled it, which can be after Bun answered.
+    fn until_playhead(&mut self, tick: u64) {
+        let session = self.session.clone();
+        self.until("the playhead moved", |window| {
+            window
+                .cx
+                .read(|cx| session.read(cx).playhead().read(cx).tick)
+                == Ticks(tick)
+        });
+    }
+
+    fn page_ready(&mut self) -> bool {
+        let shell = self.shell.clone();
+        self.cx.update(|_, cx| {
+            shell
+                .read(cx)
+                .main_view()
+                .cloned()
+                .is_none_or(|page| sound_typescript::page_ready(&page, cx))
+        })
     }
 
     fn focused(&mut self) -> FocusHandle {
@@ -392,6 +377,31 @@ impl Window<'_> {
         });
     }
 
+    /// Where the element of `selector` is, once the page drew it.
+    fn until_found(&mut self, selector: &str) -> Point<Pixels> {
+        let mut found = None;
+        self.until(selector, |window| {
+            found = window.find(selector);
+            found.is_some()
+        });
+        found.unwrap()
+    }
+
+    /// The pointer over the name of the track `track`, until its header shows all its toggles.
+    fn show_toggles(&mut self, track: &str) {
+        let name = self.until_found(&format!("div-name-{track}"));
+        self.hover(name);
+        self.until_found(&format!("toggle-solo-{track}"));
+    }
+
+    /// Plays the project, as a transport would.
+    fn start_playing(&mut self) {
+        let session = self.session.clone();
+        self.cx
+            .update(|_, cx| session.update(cx, |session, _| session.engine().play()));
+        self.settle();
+    }
+
     fn playing(&mut self) -> bool {
         let session = self.session.clone();
         self.cx
@@ -401,10 +411,10 @@ impl Window<'_> {
     /// Plays a key of the MIDI keyboard, once it plays where the window wired it.
     fn play_midi(&mut self, pitch: u8) {
         let shell = self.shell.clone();
-        let transport = self.cx.read(|cx| shell.read(cx).transport().clone());
-        let input = self.cx.read(|cx| transport.read(cx).midi_input()).unwrap();
-        self.poll();
-        self.poll();
+        let live = self.cx.read(|cx| shell.read(cx).live_input().clone());
+        let input = self.cx.read(|cx| live.read(cx).midi_input()).unwrap();
+        self.settle();
+        self.settle();
         let pitch = Pitch::new(pitch).unwrap();
         let velocity = Velocity::new(100).unwrap();
         assert!(input.send(Played::On { pitch, velocity }));
@@ -412,24 +422,18 @@ impl Window<'_> {
 
     /// The record of `instance`.
     fn record(&mut self, instance: &str) -> serde_json::Value {
-        let session = self.session.clone();
-        let state = (self.cx)
-            .read(|cx| session.read(cx).project().state_json(&id(instance)))
-            .unwrap();
-        serde_json::from_str(&state).unwrap()
+        let state = self.project(|project| project.state_json(&id(instance)));
+        serde_json::from_str(&state.unwrap()).unwrap()
     }
 
     fn problems(&mut self) -> Vec<Problem> {
-        let session = self.session.clone();
-        self.cx.read(|cx| session.read(cx).project().problems())
+        self.project(sound_core::Project::problems)
     }
 }
 
 #[gpui::test]
 fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     assert_eq!(window.loudest(4_800), 0.0);
 
     window.cx.simulate_keystrokes("a");
@@ -440,7 +444,7 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 
     // The page has the keys, so space is the tool's and does not play.
     window.cx.simulate_keystrokes("space");
-    window.poll();
+    window.settle();
     assert!(!window.playing());
 
     let keystroke = Keystroke::parse("a").unwrap();
@@ -451,44 +455,64 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 }
 
 #[gpui::test]
-fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &BEAT) else {
-        return;
-    };
-    assert!(window.find("record").is_none());
-    let play = window.find("play").expect("the play button");
-    window.cx.simulate_click(play, Modifiers::default());
-    window.poll();
-    assert!(window.playing());
+fn a_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open(cx, &BEAT);
+    let play = window.until_found("button-play");
+    window.wait_for_bun();
 
-    // A click keeps the tick of the tree it clicked: the page drew again as the playhead moved.
-    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
-    let middle = point(middle.width, middle.height);
-    window.until("a draw at a later tick", |window| {
-        window.cx.simulate_click(middle, Modifiers::default());
+    // Played from elsewhere, its button says so: Bun hears the clock and sends what changed.
+    let heard = sound_typescript::heard_batches();
+    window.start_playing();
+    window.until("the button follows", |_| {
+        sound_typescript::heard_batches() > heard
+    });
+
+    // A click keeps the tick the handler read as it ran.
+    let keep = window.until_found("div-keep");
+    window.until("a later tick", |window| {
+        window.cx.simulate_click(keep, Modifiers::default());
+        window.wait_for_bun();
         window.record("beat")["tick"]
             .as_f64()
             .is_some_and(|tick| tick > 0.)
     });
+
+    // Its button pauses, and space, its key wherever the focus is, plays again.
+    window.cx.simulate_click(play, Modifiers::default());
+    window.until("the clock stops", |window| !window.playing());
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("space");
+    window.until("the clock plays", Opened::playing);
 }
 
-/// The tree stays the same, so a click runs the handler of the last draw, with the new record.
+/// A key the main view does not name in `globalKeys` plays nothing: the app plays no key.
+#[gpui::test]
+fn space_does_nothing_in_a_project_whose_tool_does_not_take_it(cx: &mut TestAppContext) {
+    let mut window = open(cx, &COUNTER);
+    window.wait_for_bun();
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("space");
+    window.settle();
+    assert!(!window.playing());
+}
+
+/// A click runs the handler the page made once, which reads the record as it is now.
 #[gpui::test]
 fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open(cx, &COUNTER) else {
-        return;
-    };
+    let mut window = open(cx, &COUNTER);
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
-    let count = |window: &mut Window| window.record("counter")["count"].as_f64();
+    let count = |window: &mut Opened| window.record("counter")["count"].as_f64();
     // Clicked again until it counts: the first click may come before the first tree.
     for wanted in [1.0, 2.0] {
         window.until("the click counts", |window| {
             window.cx.simulate_click(middle, Modifiers::default());
             (0..40).any(|_| {
-                window.poll();
+                window.settle();
                 std::thread::sleep(Duration::from_millis(5));
                 count(window) == Some(wanted)
             })
@@ -498,19 +522,73 @@ fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     assert_eq!(count(&mut window), Some(2.0));
 }
 
+/// A disabled div hears no press, release or click; the same div beside it hears its click.
+#[gpui::test]
+fn a_disabled_div_hears_nothing_of_the_pointer(cx: &mut TestAppContext) {
+    let code = r#"import { h, input, number, tool } from "./sdk";
+
+tool({
+  name: "counter",
+  title: "Counter",
+  when: "You want to count clicks",
+  doc: "Counts the clicks on one of its two buttons.",
+  state: { count: number({ min: 0, max: 100, default: 0 }) },
+  sound: () => input,
+  view: ({ state, update }) => {
+    const count = () => update("Count", ({ state: next }) => { next.count = state.count + 1; });
+    const style = { width: 80, height: 40 };
+    return h("div", { style: { direction: "row" } },
+      h("div", { key: "locked", disabled: true, style, onPress: count, onRelease: count, onClick: count }, "Locked"),
+      h("div", { key: "open", style, onClick: count }, "Open"),
+    );
+  },
+});
+"#;
+    let mut window = open(
+        cx,
+        &[COUNTER[0], COUNTER[1], ("extensions/counter.ts", code)],
+    );
+    let locked = window.until_found("div-locked");
+    let open = window.until_found("div-open");
+    window.wait_for_bun();
+    window.click(locked);
+    window.click(open);
+    window.wait_for_bun();
+    assert_eq!(window.record("counter")["count"], 1.0);
+}
+
+#[gpui::test]
+fn a_field_tells_each_edit_and_a_disabled_one_takes_no_keys(cx: &mut TestAppContext) {
+    let mut window = open(cx, &NOTE);
+    window.until("the field has the keys", |window| {
+        window.cx.update(|window, _| {
+            (window.context_stack().iter())
+                .any(|context| context.contains(sound_ui::components::text_input::KEY_CONTEXT))
+        })
+    });
+    let typed = |window: &mut Opened| window.record("note")["typed"].clone();
+    window.cx.simulate_input("a");
+    window.until("the first edit", |window| typed(window) == "a");
+    window.cx.simulate_input("b");
+    window.until("the second edit", |window| typed(window) == "ab");
+    window.wait_for_bun();
+    // The field still has the focus, but no longer the keys.
+    window.cx.simulate_input("c");
+    window.wait_for_bun();
+    assert_eq!(typed(&mut window), "ab");
+}
+
 /// The page draws again after its code hears a note or a key, and a click on it still runs.
 #[gpui::test]
 fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EAR) else {
-        return;
-    };
+    let mut window = open(cx, &EAR);
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
-    let kept = |window: &mut Window, wanted: f64| {
+    let kept = |window: &mut Opened, wanted: f64| {
         window.until("the click keeps the count", |window| {
             window.cx.simulate_click(middle, Modifiers::default());
             (0..40).any(|_| {
-                window.poll();
+                window.settle();
                 std::thread::sleep(Duration::from_millis(5));
                 window.record("keys")["heard"].as_f64() == Some(wanted)
             })
@@ -522,20 +600,10 @@ fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut Test
     kept(&mut window, 2.0);
 }
 
-#[gpui::test]
-fn a_page_that_does_not_ask_for_the_transport_has_no_play(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
-    assert!(window.find("play").is_none());
-}
-
 /// The computer keys play as a MIDI keyboard, but a page that hears keys keeps them.
 #[gpui::test]
 fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     window.cx.simulate_keystrokes("secondary-k");
     window.cx.simulate_keystrokes("a");
     window.until("the key on the page", |window| {
@@ -545,18 +613,44 @@ fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestA
     assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
 }
 
+/// A page that names its keys has those while the computer keys play the rest.
+#[gpui::test]
+fn a_page_that_names_its_keys_has_them_and_the_computer_keys_play_the_rest(
+    cx: &mut TestAppContext,
+) {
+    let keys = KEYS.replace("  voices: 8,", "  voices: 8,\n  keys: [\"a\"],");
+    let files = [
+        EXPERIMENT[0],
+        EXPERIMENT[1],
+        ("extensions/keys.ts", keys.as_str()),
+    ];
+    let mut window = open(cx, &files);
+    window.cx.simulate_keystrokes("secondary-k");
+    window.settle();
+    window.settle();
+    window.cx.simulate_keystrokes("a");
+    window.until("a on the page", |window| {
+        window.record("keys")["count"] == 1
+    });
+    window.cx.simulate_keystrokes("s");
+    window.until("s played by the computer keys", |window| {
+        window.record("keys")["last"]
+            .as_u64()
+            .is_some_and(|last| last > 0)
+    });
+    assert_eq!(window.record("keys")["count"], 1);
+}
+
 /// A key that went down before the page had the keys starts nothing there as it repeats. A key
 /// the computer keys hold stays theirs, also where the system does not mark a repeat (X11).
 #[gpui::test]
 fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     let page = window.focused();
     window.cx.simulate_keystrokes("secondary-k");
     // The keys play where the window wired them, and the tool hears what reaches it.
-    window.poll();
-    window.poll();
+    window.settle();
+    window.settle();
     window.focus_the_window();
     window.cx.simulate_keystrokes("a");
     window.until("the note of the computer keys", |window| {
@@ -573,9 +667,7 @@ fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut Test
 /// keys.
 #[gpui::test]
 fn a_key_the_page_held_repeats_into_nothing_on_the_computer_keys(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     window.cx.simulate_keystrokes("secondary-k");
     window.cx.simulate_keystrokes("a");
     window.until("the key on the page", |window| {
@@ -589,9 +681,7 @@ fn a_key_the_page_held_repeats_into_nothing_on_the_computer_keys(cx: &mut TestAp
 
 #[gpui::test]
 fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     // macOS sends no key up while cmd is held.
     window.cx.simulate_keystrokes("a");
     window.until("the note of the key", |window| window.loudest(480) > 0.1);
@@ -613,9 +703,7 @@ fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppCon
 
 #[gpui::test]
 fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     // All six go to Bun before the edit of the first comes back.
     window.cx.simulate_keystrokes("q w e r t y");
     window.until("six keys in the record", |window| {
@@ -625,9 +713,7 @@ fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppC
 
 #[gpui::test]
 fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &ONLY_THE_TOOL) else {
-        return;
-    };
+    let mut window = open(cx, &ONLY_THE_TOOL);
     // A control has the focus, as the composer of the agent does while it is typed in.
     let window_focus = window.cx.update(|window, cx| window.focused(cx));
     window.cx.simulate_keystrokes("tab");
@@ -645,7 +731,7 @@ fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
             })
         })
     });
-    window.poll();
+    window.settle();
     let shell = window.shell.clone();
     assert!(window.cx.read(|cx| shell.read(cx).main_view().is_some()));
     assert_eq!(window.cx.update(|window, cx| window.focused(cx)), focused);
@@ -653,9 +739,7 @@ fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     // The keyboard plays into `keys`, the instance at the top.
     window.play_midi(64);
     window.until("the note in the record", |window| {
@@ -665,77 +749,69 @@ fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &m
     assert!(window.loudest(480) > 0.1);
 }
 
+impl Opened<'_> {
+    fn select(&mut self, instance: &str) {
+        let session = self.session.clone();
+        let instance = id(instance);
+        self.cx
+            .update(|_, cx| session.update(cx, |session, cx| session.select(Some(instance), cx)));
+    }
+}
+
 #[gpui::test]
-fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
-    cx: &mut TestAppContext,
-) {
-    let Some(mut window) = open(cx, &TWO_TRACKS) else {
-        return;
-    };
-    // Nothing is selected, so the keyboard plays the first track.
+fn the_selected_tool_hears_the_keyboard_and_another_does_not(cx: &mut TestAppContext) {
+    let mut window = open(cx, &TWO_LISTENERS);
+    window.select("one");
     window.play_midi(60);
-    window.until("the note on the first track", |window| {
-        window.record("arrangement/one/listener")["last"] == 60
+    window.until("the note in the first", |window| {
+        window.record("one")["last"] == 60
     });
-    // Bun would have answered for both tracks at once.
+    // Bun would have answered for both at once.
     for _ in 0..10 {
-        window.poll();
+        window.settle();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(
-        window.record("arrangement/two/listener")["last"],
-        serde_json::Value::Null
-    );
+    assert_eq!(window.record("two")["last"], serde_json::Value::Null);
 }
 
 #[gpui::test]
-fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &TWO_TRACKS) else {
-        return;
-    };
+fn the_selected_tool_hears_the_computer_keys(cx: &mut TestAppContext) {
+    let mut window = open(cx, &TWO_LISTENERS);
+    window.select("one");
     window.cx.simulate_keystrokes("secondary-k");
-    window.poll();
-    window.poll();
+    window.settle();
+    window.settle();
     window.cx.simulate_keystrokes("a");
-    window.until("the note on the first track", |window| {
-        window.record("arrangement/one/listener")["last"] == 60
+    window.until("the note in the first", |window| {
+        window.record("one")["last"] == 60
     });
 }
 
 #[gpui::test]
-fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
-    cx: &mut TestAppContext,
-) {
-    let Some(mut window) = open(cx, &TWO_TRACKS) else {
-        return;
-    };
+fn a_tool_the_keyboard_leaves_hears_the_end_of_the_note_it_held(cx: &mut TestAppContext) {
+    let mut window = open(cx, &TWO_LISTENERS);
+    window.select("one");
     window.play_midi(60);
-    window.until("the note held on the first track", |window| {
-        window.record("arrangement/one/listener")["held"] == 1
+    window.until("the note held in the first", |window| {
+        window.record("one")["held"] == 1
     });
-    let session = window.session.clone();
-    window.cx.update(|_, cx| {
-        session.update(cx, |session, cx| {
-            session.select(Some(id("arrangement/two")), cx)
-        })
-    });
-    window.until("the end of the note on the first track", |window| {
-        window.record("arrangement/one/listener")["held"] == 0
+    window.select("two");
+    window.until("the end of the note in the first", |window| {
+        window.record("one")["held"] == 0
     });
 }
 
 /// A player of `sine.wav` at `level`, over and over.
 fn player(level: f32) -> String {
     format!(
-        r#"import {{ phasor, sample, tool }} from "./sdk";
+        r#"import {{ file, phasor, tool }} from "./sdk";
 
 tool({{
   name: "player",
   title: "Player",
   when: "You want a sound file to play",
   doc: "Plays a sound file over and over.",
-  kind: "source",
-  state: {{ sound: sample() }},
+  state: {{ sound: file() }},
   sound: ({{ sound }}) => sound.at(phasor(1).times(sound.length)).times({level}),
 }});
 "#
@@ -774,9 +850,7 @@ fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again(cx: &mut
     write(&root, "state/player.json", record);
     write(&root, "extensions/player.ts", &player(1.0));
     write_sine(&root, 0.5);
-    let Some(mut window) = open_folder(cx, folder) else {
-        return;
-    };
+    let mut window = open_folder(cx, folder);
     let level = window.loudest(4_800);
     assert!((level - 0.5).abs() < 0.02, "{level}");
 
@@ -804,14 +878,14 @@ fn noted(name: &str, hangs: bool) -> String {
         ""
     };
     format!(
-        r#"import {{ choice, input, knob, tool }} from "./sdk";
+        r#"import {{ choice, input, number, tool }} from "./sdk";
 
 tool({{
   name: "{name}",
   title: "{name}",
   when: "You want to know the last note played",
   doc: "Keeps the last note.",
-  state: {{ last: knob({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
+  state: {{ last: number({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
   sound: ({{ mode }}) => (mode === "half" ? input.times(0.5) : input),
   {tick}
   onNotes: ({{ update }}, event) => {{
@@ -830,29 +904,16 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     cx: &mut TestAppContext,
 ) {
     let (heard, stuck) = (noted("heard", false), noted("stuck", true));
-    // Both on one track, which plays its notes into each.
+    // Both at the top, where the keyboard plays with nothing selected.
     let files = [
-        TWO_TRACKS[0],
-        TWO_TRACKS[1],
-        (
-            "state/arrangement/one/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0, "effects": ["heard", "stuck"]}}"#,
-        ),
-        (
-            "state/arrangement/one/heard.json",
-            r#"{"tool": "heard", "state": {}}"#,
-        ),
-        (
-            "state/arrangement/one/stuck.json",
-            r#"{"tool": "stuck", "state": {}}"#,
-        ),
+        TWO_LISTENERS[0],
+        ("state/heard.json", r#"{"tool": "heard", "state": {}}"#),
+        ("state/stuck.json", r#"{"tool": "stuck", "state": {}}"#),
         ("extensions/heard.ts", heard.as_str()),
         ("extensions/stuck.ts", stuck.as_str()),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
-    let root = window._folder.path().to_path_buf();
+    let mut window = open(cx, &files);
+    let root = window.folder.path().to_path_buf();
     // The engine runs and the loops tick: Bun hangs in the tick of `stuck`.
     window.wait_for_bun();
 
@@ -864,7 +925,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut edit = project.begin("Half");
-                project.update_json(&mut edit, &id("arrangement/one/heard"), mode)?;
+                project.update_json(&mut edit, &id("heard"), mode)?;
                 project.finish(edit)
             })
         })
@@ -881,14 +942,14 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     // A new Bun runs the other tools.
     window.play_midi(64);
     window.until("the note in the other tool", |window| {
-        window.record("arrangement/one/heard")["last"] == 64
+        window.record("heard")["last"] == 64
     });
 
     write(&root, "extensions/stuck.ts", &noted("stuck", false));
     window.until("the fix", |window| window.problems().is_empty());
     window.play_midi(65);
     window.until("the note in the fixed tool", |window| {
-        window.record("arrangement/one/stuck")["last"] == 65
+        window.record("stuck")["last"] == 65
     });
 }
 
@@ -905,7 +966,6 @@ tool({
   title: "Hum",
   when: "You want a hum",
   doc: "A sine at the level of lib/level.ts.",
-  kind: "source",
   state: {},
   sound: () => sine(441).times(LEVEL),
 });
@@ -916,13 +976,11 @@ tool({
         ("extensions/hum.ts", hum),
         ("extensions/lib/level.ts", "export const LEVEL = 0.5;\n"),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let level = window.loudest(4_800);
     assert!((level - 0.5).abs() < 0.02, "{level}");
 
-    let root = window._folder.path().to_path_buf();
+    let root = window.folder.path().to_path_buf();
     write(
         &root,
         "extensions/lib/level.ts",
@@ -933,22 +991,311 @@ tool({
     });
 }
 
-/// A loop that never ends but keeps saying things, here moving a live control, is a hang of
+/// So an agent can print-debug a tool it wrote while the window has the project open.
+#[gpui::test]
+fn what_the_code_of_a_tool_prints_is_in_the_log_until_its_code_is_saved_again(
+    cx: &mut TestAppContext,
+) {
+    let hum = |level: &str| {
+        format!(
+            r#"import {{ sine, tool }} from "./sdk";
+
+console.log("level", {level});
+
+tool({{
+  name: "hum",
+  title: "Hum",
+  when: "You want a hum",
+  doc: "A sine.",
+  state: {{}},
+  sound: () => sine(441).times({level}),
+}});
+"#
+        )
+    };
+    let files = [
+        TWO_LISTENERS[0],
+        ("state/hum.json", r#"{"tool": "hum", "state": {}}"#),
+        ("extensions/hum.ts", &hum("0.5")),
+    ];
+    let mut window = open(cx, &files);
+    let root = window.folder.path().to_path_buf();
+    let log = || std::fs::read_to_string(root.join("extensions/log.txt")).unwrap_or_default();
+    window.until("the line of the code", |_| log().contains("level 0.5\n"));
+
+    write(&root, "extensions/hum.ts", &hum("0.25"));
+    window.until("only the line of the new code", |_| {
+        let log = log();
+        log.contains("level 0.25\n") && !log.contains("level 0.5")
+    });
+}
+
+/// A tool whose keys play pitch 60 on its child `synth`, or on its own voices, and count in its
+/// record: `a` holds it with `send`, `b` holds 64 with `play` and `hold`, `c` holds 60 twice,
+/// `d` sends it 5 s ahead, `e` too with its off 2.5 s ahead. Its page is `saved` once code
+/// saved so runs.
+fn pads(on_child: bool, saved: bool) -> String {
+    let (to, play, plays) = match on_child {
+        true => (
+            r#"{ child: "synth", notes: "notes" } as const"#,
+            r#"{ child: "synth" } as const"#,
+            r#"behaviour: () => ({ connections: [{ from: { child: "synth" }, to: { port: "audio" } }] }),"#,
+        ),
+        false => (
+            r#""notes" as const"#,
+            "{}",
+            "voices: 8,\n  sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),",
+        ),
+    };
+    format!(
+        r#"import {{ adsr, h, note, number, sine, tool }} from "./sdk";
+
+const SAVED = {saved};
+const TO = {to};
+const PLAY = {play};
+
+tool({{
+  name: "pads",
+  title: "Pads",
+  when: "You want to hold notes from the keys",
+  doc: "Its keys hold notes and send them for later.",
+  state: {{ count: number({{ min: 0, max: 1000, default: 0 }}) }},
+  {plays}
+  onKey: ({{ play, send, time, update }}, {{ key, down }}) => {{
+    if (!down) return;
+    update("Count the key", ({{ state }}) => {{
+      state.count = (state.count ?? 0) + 1;
+    }});
+    const on = {{ type: "noteOn", pitch: 60, velocity: 0.8 }} as const;
+    const off = {{ type: "noteOff", pitch: 60 }} as const;
+    if (key === "a") send(TO, on);
+    if (key === "b") play(64, {{ ...PLAY, hold: true }});
+    if (key === "c") {{
+      send(TO, on);
+      send(TO, on);
+    }}
+    if (key === "d") send(TO, on, {{ at: time + 5 }});
+    if (key === "e") {{
+      send(TO, on, {{ at: time + 5 }});
+      send(TO, off, {{ at: time + 2.5 }});
+    }}
+  }},
+  view: ({{ size }}) =>
+    h("div", {{ key: SAVED ? "saved" : "pads", style: () => ({{ width: size.width, height: size.height }}) }}, "Pads"),
+}});
+"#
+    )
+}
+
+/// A project of `pads` at the top, with its child `synth` when `on_child`.
+fn open_pads(cx: &mut TestAppContext, on_child: bool) -> Opened<'_> {
+    let (_, project) = EXPERIMENT[0];
+    let mut project = project.replace("\"keys\"", "\"pads\"");
+    let mut files = vec![("extensions/pads.ts".to_string(), pads(on_child, false))];
+    if on_child {
+        project = project.replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+        files.extend([
+            (
+                "state/pads/instance.json".to_string(),
+                r#"{"tool": "pads", "state": {}}"#.to_string(),
+            ),
+            ("state/pads/synth.json".to_string(), SYNTH.to_string()),
+        ]);
+    } else {
+        files.push((
+            "state/pads.json".to_string(),
+            r#"{"tool": "pads", "state": {}}"#.to_string(),
+        ));
+    }
+    files.push(("project.json".to_string(), project));
+    open_files(cx, &files)
+}
+
+const SYNTH: &str = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
+
+impl Opened<'_> {
+    /// Presses `key` on `pads` and waits for its code to have heard it.
+    fn press_on_pads(&mut self, key: &str) {
+        self.wait_for_bun();
+        let count = |window: &mut Self| window.record("pads")["count"].as_f64().unwrap_or(0.0);
+        let before = count(self);
+        self.cx.simulate_keystrokes(key);
+        self.until(key, |window| count(window) > before);
+    }
+
+    /// Saves the code of `pads` and waits for a new Bun to run it.
+    fn save_pads(&mut self, on_child: bool) {
+        let root = self.folder.path().to_path_buf();
+        write(&root, "extensions/pads.ts", &pads(on_child, true));
+        self.until_found("div-saved");
+    }
+}
+
+#[gpui::test]
+fn a_note_code_holds_on_a_child_ends_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open_pads(cx, true);
+    for key in ["a", "b"] {
+        let code = pads(true, false);
+        held_until_a_save(&mut window, key, "extensions/pads.ts", &code);
+    }
+}
+
+#[gpui::test]
+fn a_note_code_holds_on_its_own_voices_ends_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open(cx, &EXPERIMENT);
+    held_until_a_save(&mut window, "a", "extensions/keys.ts", KEYS);
+}
+
+/// Holds a note with `key`, then saves `file` with `code` and something new: the new Bun
+/// does not know the note, and still it ends.
+fn held_until_a_save(window: &mut Opened<'_>, key: &str, file: &str, code: &str) {
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes(key);
+    window.until(key, |window| window.loudest(480) > 0.05);
+    let root = window.folder.path().to_path_buf();
+    write(&root, file, &format!("{code}// Saved after {key}.\n"));
+    window.until("the release of the note", |window| {
+        window.loudest(4_800) == 0.0
+    });
+}
+
+#[gpui::test]
+fn a_pitch_code_holds_twice_on_a_child_ends_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open_pads(cx, true);
+    window.press_on_pads("c");
+    window.until("the note", |window| window.loudest(480) > 0.05);
+    window.save_pads(true);
+    window.until("the release of the note", |window| {
+        window.loudest(4_800) == 0.0
+    });
+}
+
+#[gpui::test]
+fn a_note_old_code_sent_for_later_neither_plays_nor_ends_the_note_of_the_new_code(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_pads(cx, false);
+    window.press_on_pads("d");
+    window.save_pads(false);
+    window.press_on_pads("a");
+    window.until("the note of the new code", |window| {
+        window.loudest(480) > 0.05
+    });
+    // Past the frame the old code sent its note for.
+    window.render(6 * OFFLINE.sample_rate as usize);
+    assert!(window.loudest(4_800) > 0.05);
+}
+
+#[gpui::test]
+fn a_note_old_code_sent_for_after_its_off_does_not_play_with_a_new_bun(cx: &mut TestAppContext) {
+    let mut window = open_pads(cx, true);
+    window.press_on_pads("e");
+    window.save_pads(true);
+    window.render(6 * OFFLINE.sample_rate as usize);
+    assert_eq!(window.loudest(4_800), 0.0);
+}
+
+/// A tool `pads` whose key `f` sends its bang `hit` 5 s ahead, which starts noise that never
+/// ends. Its page is `saved` once code saved so runs.
+fn hits(saved: bool) -> String {
+    format!(
+        r#"import {{ bang, feedback, h, max, noise, number, tool }} from "./sdk";
+
+const SAVED = {saved};
+
+tool({{
+  name: "pads",
+  title: "Pads",
+  when: "You want a hit later",
+  doc: "Its key sends a hit for later.",
+  state: {{ count: number({{ min: 0, max: 1000, default: 0 }}) }},
+  inputs: {{ hit: bang() }},
+  sound: ({{ hit }}) => {{
+    const level = feedback();
+    level.set(max(hit, level));
+    return noise().times(level).times(0.2);
+  }},
+  onKey: ({{ send, time, update }}, {{ key, down }}) => {{
+    if (!down) return;
+    update("Count the key", ({{ state }}) => {{
+      state.count = (state.count ?? 0) + 1;
+    }});
+    if (key === "f") send("hit", {{ at: time + 5 }});
+  }},
+  view: ({{ size }}) =>
+    h("div", {{ key: SAVED ? "saved" : "pads", style: () => ({{ width: size.width, height: size.height }}) }}, "Pads"),
+}});
+"#
+    )
+}
+
+#[gpui::test]
+fn a_bang_old_code_sent_for_later_does_not_fire_with_a_new_bun(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let files = [
+        ("project.json", project.replace("\"keys\"", "\"pads\"")),
+        (
+            "state/pads.json",
+            r#"{"tool": "pads", "state": {}}"#.to_string(),
+        ),
+        ("extensions/pads.ts", hits(false)),
+    ];
+    let files = files.map(|(path, text)| (path.to_string(), text));
+    let mut window = open_files(cx, &files);
+    window.press_on_pads("f");
+    let root = window.folder.path().to_path_buf();
+    write(&root, "extensions/pads.ts", &hits(true));
+    window.until_found("div-saved");
+    // Past the frame the old code sent its bang for.
+    window.render(6 * OFFLINE.sample_rate as usize);
+    assert_eq!(window.loudest(4_800), 0.0);
+}
+
+/// A child deleted and made again is another instrument: the note the old code held on the
+/// first does not end what the second plays.
+#[gpui::test]
+fn a_child_made_again_keeps_its_note_when_the_code_that_held_one_on_the_old_child_ends(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_pads(cx, true);
+    window.press_on_pads("a");
+    window.until("the note", |window| window.loudest(480) > 0.05);
+    window.edit(|project| {
+        let mut changes = Changes::new();
+        changes.delete(&id("pads/synth"));
+        project.commit("Delete the synth", changes)
+    });
+    window.until("the child gone", |window| window.loudest(4_800) == 0.0);
+    window.edit(Project::undo);
+    window.until("the child back", |window| {
+        window.project(|project| project.tool_of(&id("pads/synth")).is_some())
+    });
+    window.select("pads/synth");
+    window.play_midi(60);
+    window.until("the note of the keyboard", |window| {
+        window.loudest(480) > 0.05
+    });
+    window.save_pads(true);
+    window.render(4_800);
+    assert!(window.loudest(4_800) > 0.05);
+}
+
+/// A loop that never ends but keeps saying things, here moving a number input, is a hang of
 /// its tool too.
 #[gpui::test]
 fn a_tick_that_never_ends_while_it_plays_is_a_problem(cx: &mut TestAppContext) {
-    let flood = r#"import { input, live, tool } from "./sdk";
+    let flood = r#"import { input, number, tool } from "./sdk";
 
 tool({
   name: "flood",
   title: "Flood",
   when: "You want a flood",
-  doc: "Its loop never ends and moves a control all the time.",
+  doc: "Its loop never ends and moves an input all the time.",
   state: {},
-  controls: { x: live({ min: 0, max: 1, default: 0 }) },
+  inputs: { x: number({ min: 0, max: 1, default: 0 }) },
   sound: ({ x }) => input.times(x),
-  tick: ({ time, set }) => {
-    while (time > 0) set("x", 0);
+  tick: ({ time, send }) => {
+    while (time > 0) send("x", 0);
   },
 });
 "#;
@@ -958,9 +1305,7 @@ tool({
         ("state/flood.json", r#"{"tool": "flood", "state": {}}"#),
         ("extensions/flood.ts", flood),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until("the flood among the problems", |window| {
         let problems = window.problems();
         problems
@@ -1000,9 +1345,7 @@ tool({
         ("extensions/heard.ts", heard.as_str()),
         ("extensions/timer.ts", timer),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until("the hang among the problems", |window| {
         !window.problems().is_empty()
     });
@@ -1028,15 +1371,14 @@ tool({
 "#;
 
 /// A sine at `hz`, all the time.
-const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
+const DRONE: &str = r#"import { number, sine, tool } from "./sdk";
 
 tool({
   name: "drone",
   title: "Drone",
   when: "You want a drone",
   doc: "A sine.",
-  kind: "source",
-  state: { hz: knob({ min: 20, max: 2000, default: 220 }) },
+  state: { hz: number({ min: 20, max: 2000, default: 220 }) },
   sound: ({ hz }) => sine(hz).times(0.25),
 });
 "#;
@@ -1059,11 +1401,9 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
         ("extensions/band.ts", BAND),
         ("extensions/drone.ts", DRONE),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     // A tenth of a second of the left channel: how often it rises through zero.
-    let rises = |window: &mut Window| {
+    let rises = |window: &mut Opened| {
         let mut output = vec![0.0_f32; 4_800 * OFFLINE.channels];
         window.engine.process_block(&mut output);
         let left: Vec<f32> = output.iter().step_by(OFFLINE.channels).copied().collect();
@@ -1091,8 +1431,8 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
     assert_eq!(window.problems(), []);
 }
 
-/// A note a bar long that its sequencer `bass` loops on its child `synth` once a click on the
-/// page launches it; a click while the page sees it play stops it. Nothing plays before.
+/// A note a bar long that its looping timeline `bass` plays on its child `synth` once a click
+/// on the page launches it; a click while the page sees it play stops it. Nothing plays before.
 const LAUNCHER: &str = r#"import { h, tool } from "./sdk";
 
 tool({
@@ -1107,14 +1447,125 @@ tool({
       { from: { child: "synth" }, to: { port: "audio" } },
     ],
   }),
-  transport: true,
-  page: ({ size, watches, set }) =>
+  view: ({ size, outputs, send }) =>
     h("div", {
-      style: { width: size.width, height: size.height },
-      onClick: () => set({ child: "bass", live: "launch" }, watches["bass.playing"] === 0 ? -1 : 0),
+      style: () => ({ width: size.width, height: size.height }),
+      onClick: () => send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1),
     }, "Launch"),
 });
 "#;
+
+/// A loop that plays, whose page shows only whether it plays.
+const SHOWS_PLAYING: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "launcher",
+  title: "Launcher",
+  when: "Never",
+  doc: "Shows whether its loop plays.",
+  state: {},
+  behaviour: () => ({
+    connections: [
+      { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "synth" }, to: { port: "audio" } },
+    ],
+  }),
+  view: ({ outputs }) => h("div", {}, () => (outputs["bass.playing"] === 1 ? "On" : "Off")),
+});
+"#;
+
+#[gpui::test]
+fn a_page_that_reads_whether_a_loop_plays_hears_nothing_as_it_moves_on(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"launcher\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/launcher/instance.json",
+            r#"{"tool": "launcher", "state": {}}"#,
+        ),
+        (
+            "state/launcher/synth.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        ),
+        (
+            "state/launcher/bass.json",
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [{"start": 0, "length": 960, "pitch": 45, "velocity": 100}]}}"#,
+        ),
+        ("extensions/launcher.ts", SHOWS_PLAYING),
+    ];
+    let mut window = open(cx, &files);
+    window.start_playing();
+    for _ in 0..20 {
+        window.settle();
+    }
+    window.wait_for_bun();
+    let asked = sound_typescript::sent_updates_and_events();
+    // The phase moves on every block; whether it plays does not.
+    for _ in 0..20 {
+        window.loudest(4_800);
+        window.settle();
+    }
+    assert_eq!(sound_typescript::sent_updates_and_events(), asked);
+}
+
+#[gpui::test]
+fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"launcher\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let later = LAUNCHER.replace(
+        r#"send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1)"#,
+        r#"send({ child: "bass", number: "launch" }, 1, { at: time + 7 })"#,
+    );
+    let later = later.replace(
+        "view: ({ size, outputs, send })",
+        "view: ({ size, send, time })",
+    );
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/launcher/instance.json",
+            r#"{"tool": "launcher", "state": {}}"#,
+        ),
+        (
+            "state/launcher/synth.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        ),
+        (
+            "state/launcher/bass.json",
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}}"#,
+        ),
+        ("extensions/launcher.ts", later.as_str()),
+    ];
+    let mut window = open(cx, &files);
+    let queued = |window: &mut Opened| {
+        let session = window.session.clone();
+        let bass = id("launcher/bass");
+        let watches = (window.cx).read(|cx| session.read(cx).project().watches(&bass));
+        let queued = watches.iter().find(|(name, _)| name == "queued");
+        queued.map(|(_, watch)| watch.get())
+    };
+    window.start_playing();
+    window.until("the timeline", |window| queued(window).is_some());
+    // The page is drawn before the click.
+    window.wait_for_bun();
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    window
+        .cx
+        .simulate_click(point(middle.width, middle.height), Modifiers::default());
+    window.wait_for_bun();
+    window.settle();
+    assert_eq!(queued(&mut window), Some(0.0));
+    // Seven seconds on, it waits for the bar line after them.
+    window.loudest(7 * 48_000 + 12_000);
+    window.settle();
+    assert_eq!(queued(&mut window), Some(1.0));
+    assert_eq!(window.problems(), []);
+}
 
 /// Frames in a bar of 4/4 at 120 bpm.
 const BAR_FRAMES: usize = 96_000;
@@ -1139,31 +1590,30 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         ),
         (
             "state/launcher/bass.json",
-            r#"{"tool": "sequencer", "state": {"patterns": [{"length": 3840, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}]}}"#,
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}}"#,
         ),
         ("extensions/launcher.ts", LAUNCHER),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
-    let play = window.find("play").expect("the play button");
-    window.cx.simulate_click(play, Modifiers::default());
+    let mut window = open(cx, &files);
+    window.start_playing();
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
-    let queued = |window: &mut Window| {
+    let queued = |window: &mut Opened| {
         let session = window.session.clone();
         let bass = id("launcher/bass");
         let watches = (window.cx).read(|cx| session.read(cx).project().watches(&bass));
         let queued = watches.iter().find(|(name, _)| name == "queued");
         queued.map(|(_, watch)| watch.get())
     };
-    window.until("the sequencer", |window| queued(window).is_some());
+    window.until("the timeline", |window| queued(window).is_some());
+    // The page is drawn before the click.
+    window.wait_for_bun();
     window.cx.simulate_click(middle, Modifiers::default());
-    window.until("the launch", |window| queued(window) == Some(0.0));
+    window.until("the launch", |window| queued(window) == Some(1.0));
     assert!(window.playing());
 
     // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
-    let to_the_bar = |window: &mut Window| {
+    let to_the_bar = |window: &mut Opened| {
         let session = window.session.clone();
         let status = window
             .cx
@@ -1183,7 +1633,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
 
     window.until("the stop", |window| {
         window.cx.simulate_click(middle, Modifiers::default());
-        queued(window) == Some(sound_notes::QUEUED_STOP)
+        queued(window) == Some(-1.0)
     });
     // It plays on to the bar line, and is silent from a release after it.
     let (bar, before) = to_the_bar(&mut window);
@@ -1194,7 +1644,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
 }
 
 /// A parent whose page plays its children, one click each: a note on the built-in `synth`, a
-/// note on the tool `keys`, the live control and the trigger of `drop`; then a trigger `drop`
+/// note on the tool `keys`, the number input and the bang of `drop`; then a bang `drop`
 /// does not have, and a child it does not own.
 const CONDUCTOR: &str = r#"import { h, tool } from "./sdk";
 
@@ -1206,18 +1656,18 @@ tool({
   state: {},
   memory: () => ({ clicks: 0 }),
   behaviour: () => ({ connections: ["synth", "keys", "drop"].map((child) => ({ from: { child }, to: { port: "audio" } })) }),
-  page: ({ size, memory, play, set, fire }) =>
+  view: ({ size, memory, play, send }) =>
     h("div", {
-      style: { width: size.width, height: size.height },
+      style: () => ({ width: size.width, height: size.height }),
       onClick: () => {
         memory.clicks += 1;
         if (memory.clicks === 1) play(45, { child: "synth", seconds: 0.1 });
         if (memory.clicks === 2) play(69, { child: "keys", seconds: 0.1 });
         if (memory.clicks === 3) {
-          set({ child: "drop", live: "gain" }, 1);
-          fire({ child: "drop", trigger: "hit" });
+          send({ child: "drop", number: "gain" }, 1);
+          send({ child: "drop", bang: "hit" });
         }
-        if (memory.clicks === 4) fire({ child: "drop", trigger: "hat" });
+        if (memory.clicks === 4) send({ child: "drop", bang: "hat" });
         if (memory.clicks === 5) play(60, { child: "drum" });
       },
     }, "Play"),
@@ -1225,16 +1675,15 @@ tool({
 "#;
 
 /// Noise that jumps up when `hit` fires and falls away, silent until `gain` is up.
-const DROP: &str = r#"import { feedback, live, max, noise, tool, trigger } from "./sdk";
+const DROP: &str = r#"import { feedback, number, max, noise, tool, bang } from "./sdk";
 
 tool({
   name: "drop",
   title: "Drop",
   when: "You want a hit",
   doc: "A burst of noise.",
-  kind: "source",
   state: {},
-  controls: { hit: trigger(), gain: live({ min: 0, max: 1, default: 0 }) },
+  inputs: { hit: bang(), gain: number({ min: 0, max: 1, default: 0 }) },
   sound: ({ hit, gain }) => {
     const level = feedback();
     level.set(max(hit, level.times(0.9995)));
@@ -1273,9 +1722,7 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
         ("extensions/keys.ts", KEYS),
         ("extensions/drop.ts", DROP),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
     window.wait_for_bun();
@@ -1295,10 +1742,10 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
         message: format!("tool conductor: a performer plays the child {message}"),
     };
     window.cx.simulate_click(middle, Modifiers::default());
-    window.until("the problem of the trigger", |window| {
+    window.until("the problem of the bang", |window| {
         !window.problems().is_empty()
     });
-    let trigger = problem("\"drop\", which has no trigger hat: its triggers are hit");
+    let trigger = problem("\"drop\", which has no bang input hat: its bang inputs are hit");
     assert_eq!(window.problems(), std::slice::from_ref(&trigger));
     window.cx.simulate_click(middle, Modifiers::default());
     // A file shows its newest problem.
@@ -1318,7 +1765,7 @@ tool({
   title: "Hearer",
   when: "You want to know what reaches an instrument",
   doc: "Keeps every note event it hears, with its time.",
-  kind: "instrument",
+  voices: 8,
   state: { heard: list({ type: text(), at: number({ min: 0, max: 100000 }) }) },
   sound: () => sine(note.freq).times(note.gate).times(0.1),
   onNotes: ({ update }, event) => {
@@ -1329,7 +1776,7 @@ tool({
 });
 "#;
 
-impl Window<'_> {
+impl Opened<'_> {
     /// The engine frame of the next block, the clock `time` and `at` count on.
     fn engine_frame(&mut self) -> u64 {
         let session = self.session.clone();
@@ -1355,40 +1802,36 @@ fn frame_of(seconds: f64) -> u64 {
 }
 
 #[gpui::test]
-fn an_instrument_hears_the_clip_of_its_track_at_the_samples_it_sounds(cx: &mut TestAppContext) {
-    let clip = r#"{"tool": "arrangement.clip", "state": {"start": 0, "length": 3840,
+fn an_instrument_hears_the_timeline_of_its_parent_at_the_samples_it_sounds(
+    cx: &mut TestAppContext,
+) {
+    let clip = r#"{"tool": "timeline", "state": {"start": 0, "length": 3840,
   "notes": [{"start": 1000, "length": 500, "pitch": 60, "velocity": 100}, {"start": 2000, "length": 100, "pitch": 62, "velocity": 100}],
   "pedal": [{"start": 1500, "value": 127}]}}"#;
-    let files = [
-        TWO_TRACKS[0],
-        TWO_TRACKS[1],
-        (
-            "state/arrangement/one/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0}}"#,
-        ),
-        (
-            "state/arrangement/one/instrument.json",
-            r#"{"tool": "hearer", "state": {}}"#,
-        ),
-        ("state/arrangement/one/take.json", clip),
-        ("extensions/hearer.ts", HEARER),
-    ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut files = crate::rack::rack_files(&[
+        ("instrument", r#"{"tool": "hearer", "state": {}}"#),
+        ("take", clip),
+    ]);
+    files.push(("extensions/hearer.ts".into(), HEARER.into()));
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = open(cx, &files);
     window.wait_for_bun();
     let start = window.engine_frame();
     let session = window.session.clone();
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
     // Past the last note: 2100 ticks, 25 frames each at 120 bpm.
     window.loudest(54_000);
-    let heard = |window: &mut Window| window.record("arrangement/one/instrument")["heard"].clone();
+    let heard = |window: &mut Opened| window.record("rack/instrument")["heard"].clone();
     window.until("every event of the clip", |window| {
         heard(window)
             .as_array()
-            .is_some_and(|heard| heard.len() >= 5)
+            .is_some_and(|heard| heard.len() >= 6)
     });
     let heard: Vec<(String, u64)> = (heard(&mut window).as_array().unwrap().iter())
+        // A timeline lets go of everything as it starts, as every sender of notes may.
+        .filter(|event| event["type"] != "allOff")
         .map(|event| {
             let at = frame_of(event["at"].as_f64().unwrap());
             (event["type"].as_str().unwrap().to_string(), at - start)
@@ -1421,12 +1864,12 @@ tool({
   onKey: ({ send, update, time }, { key, down }) => {
     if (key !== "a" || !down) return;
     const at = time + 0.5;
-    send({ type: "cc", controller: 74, value: 1 }, { child: "piano", at });
+    send({ child: "piano", notes: "notes" }, { type: "cc", controller: 74, value: 1 }, { at });
     update("Keep the time", ({ state }) => {
       state.at = at;
     });
   },
-  page: ({ size }) => h("div", { style: { width: size.width, height: size.height } }, "Conduct"),
+  view: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Conduct"),
 });
 "#;
 
@@ -1449,9 +1892,7 @@ fn a_controller_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut T
         ("state/conductor/piano.json", plugin.as_str()),
         ("extensions/conductor.ts", CONDUCTOR_OF_A_PLUGIN),
     ];
-    let Some(mut window) = open_with_test_plugins(cx, &files) else {
-        return;
-    };
+    let mut window = open_with_test_plugins(cx, &files);
     window.until("the plugin", |window| window.problems().is_empty());
     window.cx.simulate_keystrokes("a");
     window.until("the time it was sent at", |window| {

@@ -1,15 +1,20 @@
-//! The application window: the title row with the project menu at its left and the transport
-//! in its middle, the view of the project's main instance under it, the left panel beside it,
-//! and a quiet line for errors and problems top-right, under the title row.
+//! The application window: the title row with the project menu at its left and what the main
+//! view puts in the title bar in its middle, the view of the project's main instance under it, the left panel beside it, and a
+//! quiet line for errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view the installed [`Views`] has for the first instance at the top of the project, and the
-//! transport is the arrangement's, see [`crate::arrangement_wiring`]. Nor does it name the
-//! agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
+//! view the installed [`Views`] has for the main instance of the project. Nor does it name the
+//! agent: the left panel is whatever
+//! the installed [`LeftPanelSlot`] makes. Its own keys are the app's: undo, the panel, opening
+//! and quitting. Musical keys, such as space to play, are the project's, through
+//! [`GlobalKeys`].
 
 pub mod audio_input;
+pub mod live_input;
+pub mod new_project;
 pub mod other_apps;
 mod project_menu;
+pub mod recorders;
 mod start;
 
 use std::path::{Path, PathBuf};
@@ -34,24 +39,24 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
-use sound_ui::components::text_input;
-use sound_ui::{ActiveTheme, Assets, Devices, Session, SpareKey, SpareKeys, Views, typography};
+use sound_ui::components::text_input::{self, TextInput};
+use sound_ui::{
+    ActiveTheme, Assets, Devices, GlobalKeys, Session, SpareKey, SpareKeys, Views, typography,
+};
 
 use audio_input::OpenInput;
+use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
-use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
-
-pub use crate::arrangement_wiring::transport::TransportPill;
+use project_menu::{ProjectMenu, choose_new_project, open_another_project, start_again};
+use recorders::Recorders;
 
 use crate::app::ChosenDevices;
-use crate::{open_with_loaded, update, views};
+use crate::{TEMPLATES, Template, open_with_loaded, update, views};
 
 actions!(
     sound_tools,
     [
-        TogglePlayback,
-        ToggleRecording,
         ToggleComputerKeys,
         Undo,
         Redo,
@@ -76,8 +81,7 @@ const NOTICE_WIDTH: f32 = 400.;
 /// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
 const WINDOW_WIDTH: f32 = 1470.;
 const WINDOW_HEIGHT: f32 = 920.;
-/// The smallest window: the project menu, the whole transport of a fitted project beside it,
-/// and a track panel with room for a card.
+/// The smallest window: the project menu beside a tool's page with room for a card.
 const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.
@@ -122,10 +126,17 @@ pub struct LeftPanel {
     /// Whether it works or waits on the composer. The icon in the title row says so while the
     /// panel is closed, so a closed panel never hides a question.
     busy: bool,
+    /// Where the window can write words for the agent, such as the merge of a template.
+    composer: Option<Box<dyn Fn(&App) -> Entity<TextInput>>>,
     _observing: Subscription,
 }
 
 impl LeftPanel {
+    pub fn with_composer(mut self, composer: impl Fn(&App) -> Entity<TextInput> + 'static) -> Self {
+        self.composer = Some(Box::new(composer));
+        self
+    }
+
     pub fn new<V: Render + Focusable>(
         view: Entity<V>,
         busy: fn(&V) -> bool,
@@ -147,6 +158,7 @@ impl LeftPanel {
                 Box::new(move |cx| view.read(cx).focus_handle(cx))
             },
             view: view.into(),
+            composer: None,
             _observing: observing,
         }
     }
@@ -168,8 +180,11 @@ pub struct Shell {
     session: Entity<Session>,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
+    /// What the main view shows in the title bar, such as the transport of a song.
+    title_bar: Option<Entity<sound_typescript::TitleBar>>,
     project_menu: Entity<ProjectMenu>,
-    transport: Entity<TransportPill>,
+    /// The machine's live input and the meter of the device, see [`LiveInput`].
+    live: Entity<LiveInput>,
     focus_handle: FocusHandle,
     dismiss_focus: FocusHandle,
     left_panel: Option<LeftPanel>,
@@ -186,6 +201,10 @@ pub struct Shell {
     remembering: Task<()>,
     /// The taps of the other apps `project.json` hears, in a window that can open them.
     _other_apps: Option<Entity<OtherApps>>,
+    recorders: Entity<Recorders>,
+    /// A newer template's code for files the project changed, until the composer merges or
+    /// dismisses it.
+    template_update: Option<crate::templates::Update>,
 }
 
 impl Shell {
@@ -222,10 +241,22 @@ impl Shell {
         let (views, devices) = registries;
         views.install(cx);
         devices.install(cx);
+        // The click is a processor in the engine, not project state: attaching it writes
+        // nothing and adds no undo step. It starts off and silent.
+        session.update(cx, |session, cx| {
+            match metronome::Click::attach(session.engine()) {
+                Ok(mut click) => {
+                    session.attach_click(Box::new(move |engine, on| click.set_on(engine, on)))
+                }
+                Err(error) => session.report(error, cx),
+            }
+        });
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
             let at_top = |id: &InstanceId| id.parent().is_none();
+            // `main` in `project.json` may name another one.
             if matches!(event, ProjectEvent::Created(id) | ProjectEvent::Deleted(id) if at_top(id))
+                || matches!(event, ProjectEvent::ProjectFileChanged)
             {
                 shell.show_main_instance(window, cx);
             }
@@ -243,9 +274,8 @@ impl Shell {
         // A key the computer keys hold comes up in the app that has the keys now.
         cx.observe_window_activation(window, |shell, window, cx| {
             if !window.is_window_active() {
-                shell
-                    .transport
-                    .update(cx, TransportPill::let_go_of_computer_keys);
+                shell.live.update(cx, LiveInput::let_go_of_computer_keys);
+                GlobalKeys::let_go(cx);
             }
         })
         .detach();
@@ -261,20 +291,21 @@ impl Shell {
             .is_none_or(crate::app::left_panel_was_open);
         let project_menu =
             cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
-        // For the notice of an export, and of an update.
-        cx.observe(&project_menu, |_, _, cx| cx.notify()).detach();
+        // For the notice of an update.
         cx.observe_global::<update::Ready>(|_, cx| cx.notify())
             .detach();
         let other_apps = app_sounds.map(|sounds| {
             let session = session.clone();
             cx.new(|cx| OtherApps::new(session, sounds, cx))
         });
+        let live = cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, cx));
+        let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
         let mut shell = Self {
             project_menu,
-            transport: cx
-                .new(|cx| TransportPill::with_device(session.clone(), timing, open_input, cx)),
+            live,
             session,
             main: None,
+            title_bar: None,
             focus_handle,
             dismiss_focus: cx.focus_handle().tab_stop(true),
             left_panel,
@@ -285,20 +316,30 @@ impl Shell {
             return_focus: None,
             remembering: Task::ready(()),
             _other_apps: other_apps,
+            recorders,
+            template_update: None,
         };
+        // Asked again after the open brought the rest up to date, which changes nothing more.
+        let root = shell.session.read(cx).project().root().to_path_buf();
+        match crate::templates::update(&root) {
+            Ok(update) => shell.template_update = update,
+            Err(error) => shell
+                .session
+                .update(cx, |session, cx| session.report(error, cx)),
+        }
         // A plugin's window passes on the keys its plugin does not use, to play the computer
         // keys. The plain keys are always free there: it has no text field and no tool.
-        let transport = shell.transport.downgrade();
+        let live = shell.live.downgrade();
         let pass = move |key: SpareKey<'_>, cx: &mut App| {
             // Fails only when the window is gone.
-            (transport.update(cx, |pill, cx| match key {
+            (live.update(cx, |live, cx| match key {
                 SpareKey::Down(event) => {
-                    pill.computer_key_down(event, true);
+                    live.computer_key_down(event, true);
                 }
                 SpareKey::Up(event) => {
-                    pill.computer_key_up(&event.keystroke.key);
+                    live.computer_key_up(&event.keystroke.key);
                 }
-                SpareKey::LetGo => pill.let_go_of_computer_keys(cx),
+                SpareKey::LetGo => live.let_go_of_computer_keys(cx),
             }))
             .ok();
         };
@@ -319,8 +360,14 @@ impl Shell {
         &self.project_menu
     }
 
-    pub fn transport(&self) -> &Entity<TransportPill> {
-        &self.transport
+    /// The machine's live input: the keyboard, the computer keys, the audio input and the meter.
+    pub fn live_input(&self) -> &Entity<LiveInput> {
+        &self.live
+    }
+
+    /// The takes of the recorders of the project.
+    pub fn recorders(&self) -> &Entity<Recorders> {
+        &self.recorders
     }
 
     /// The view in the left panel, open or not.
@@ -335,21 +382,25 @@ impl Shell {
     /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
     /// elsewhere, and closes it when the focus is in it.
     fn toggle_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.left_panel_open && self.left_panel_area.contains_focused(window, cx) {
+            self.set_left_panel_open(false, window, cx);
+            self.give_focus_back(window, cx);
+        } else {
+            self.focus_left_panel(window, cx);
+        }
+    }
+
+    /// Opens the panel when it is closed, and focuses it.
+    fn focus_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = &self.left_panel else {
             return;
         };
         let focus = (panel.focus)(cx);
+        self.remember_focus(window, cx);
         if !self.left_panel_open {
-            self.remember_focus(window, cx);
             self.set_left_panel_open(true, window, cx);
-            window.focus(&focus, cx);
-        } else if self.left_panel_area.contains_focused(window, cx) {
-            self.set_left_panel_open(false, window, cx);
-            self.give_focus_back(window, cx);
-        } else {
-            self.remember_focus(window, cx);
-            window.focus(&focus, cx);
         }
+        window.focus(&focus, cx);
     }
 
     /// The icon in the title row and cmd-B open and close the panel, and leave the focus where
@@ -464,6 +515,56 @@ impl Shell {
         )
     }
 
+    /// What the main area shows with no view: in an empty project, the ways to start one.
+    fn empty_state(&self, cx: &mut Context<Self>) -> EmptyState {
+        if self.session.read(cx).project().instances().next().is_some() {
+            return EmptyState::new(
+                "Nothing to show",
+                "Nothing in this project has a view yet. Ask the agent for one.",
+            );
+        }
+        let templates = (TEMPLATES.iter())
+            .filter(|template| !template.files.is_empty())
+            .map(|template| {
+                new_project::template_row(template, cx)
+                    .on_click(cx.listener(move |shell, _, _, cx| shell.start_from(template, cx)))
+            });
+        let ask = self.left_panel.as_ref().map(|_| {
+            Button::new("ask-the-agent", "Ask the agent")
+                .on_click(cx.listener(|shell, _, window, cx| shell.focus_left_panel(window, cx)))
+        });
+        EmptyState::new(
+            "An empty project",
+            "Ask the agent for the tools you want, or start from a template.",
+        )
+        .action(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .w(px(420.))
+                .children(templates)
+                .children(ask),
+        )
+    }
+
+    /// Writes `template` into this empty project, which then shows it as it would a change
+    /// of the agent's.
+    fn start_from(&mut self, template: &'static Template, cx: &mut Context<Self>) {
+        let root = self.session.read(cx).project().root().to_path_buf();
+        let session = self.session.downgrade();
+        cx.spawn(async move |_, cx| {
+            let written = (cx.background_executor())
+                .spawn(async move { crate::templates::write(&root, template) })
+                .await;
+            if let Err(error) = written {
+                // The window is gone when this fails, and there is nobody left to tell.
+                (session.update(cx, |session, cx| session.report(format!("{error:#}"), cx))).ok();
+            }
+        })
+        .detach();
+    }
+
     fn show_main_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let id = Views::main_instance(&self.session, cx);
         if id.as_ref() == self.main.as_ref().map(|(id, _)| id) {
@@ -473,33 +574,33 @@ impl Shell {
             let view = Views::view_of(&self.session, &id, window, cx)?;
             Some((id, view))
         });
+        self.title_bar =
+            (self.main.as_ref()).and_then(|(_, view)| sound_typescript::title_bar_of(view, cx));
         cx.notify();
     }
 
-    /// What is wrong, in one line each: the last error, and files that are not live. And an
-    /// export while it runs.
+    /// What is wrong, in one line each: the last error, and files that are not live. And a
+    /// render while it runs.
     fn notices(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let exporting = self
-            .project_menu
-            .read(cx)
-            .exporting()
-            .map(|(file, progress)| {
-                Notice::new("export", format!("Exporting {file}"))
-                    .tone(NoticeTone::Info)
-                    .progress(progress)
-                    .max_w_full()
-            });
         let update = cx.try_global::<update::Ready>().map(update_notice);
         let session = self.session.read(cx);
+        let rendering = session.rendering().map(|(notice, progress)| {
+            Notice::new("render", notice.clone())
+                .tone(NoticeTone::Info)
+                .progress(progress)
+                .max_w_full()
+        });
         let problems = session.project().problems().len();
         let files = match problems {
             0 => None,
-            1 => Some("1 file is not live, see problems.txt".to_string()),
-            count => Some(format!("{count} files are not live, see problems.txt")),
+            1 => Some("1 file is not live. Ask the agent to fix it.".to_string()),
+            count => Some(format!(
+                "{count} files are not live. Ask the agent to fix them."
+            )),
         };
         let error = session.notice().cloned();
         // Top-right, under the title row: clear of the transport, and of the left panel and the
-        // left edge of the main view, where an arrangement has its track headers. Not in the
+        // left edge of the main view, where a song has its track headers. Not in the
         // title row: there are the window buttons on Windows. A definite width, so that a
         // message wraps at the width it gets and the box is as tall as its lines: with only a
         // largest width the text was measured on one line and then painted on three. A notice is as wide as
@@ -513,8 +614,9 @@ impl Shell {
             .flex_col()
             .items_end()
             .gap(px(8.))
-            .children(exporting)
+            .children(rendering)
             .children(update)
+            .children(self.template_notice(cx))
             .children(files.map(|files| {
                 Notice::new("problems", files)
                     .tone(NoticeTone::Warning)
@@ -530,6 +632,64 @@ impl Shell {
                             .update(cx, |session, cx| session.dismiss_notice(cx))
                     }))
             }))
+    }
+
+    /// A newer template changes files the project changed: the agent merges them, when there is
+    /// one.
+    fn template_notice(&self, cx: &mut Context<Self>) -> Option<Notice> {
+        let update = self.template_update.as_ref()?;
+        let files = match update.files.len() {
+            1 => "a file".to_string(),
+            count => format!("{count} files"),
+        };
+        let message = format!(
+            "The {} template changes {files} this project changed too",
+            update.template.name
+        );
+        let merge = (self.left_panel.as_ref())
+            .is_some_and(|panel| panel.composer.is_some())
+            .then(|| {
+                Button::new("template-merge", "Merge with the agent")
+                    .on_click(cx.listener(|shell, _, window, cx| shell.merge_template(window, cx)))
+            });
+        let notice = Notice::new("template", message)
+            .tone(NoticeTone::Info)
+            .max_w_full()
+            .on_dismiss(cx.listener(|shell, _, _, cx| {
+                shell.template_update = None;
+                cx.notify();
+            }));
+        Some(match merge {
+            Some(merge) => notice.action(merge),
+            None => notice,
+        })
+    }
+
+    /// Puts the old and new template beside the project's files and writes what to ask in the
+    /// agent's composer, for the composer to send.
+    fn merge_template(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(update) = self.template_update.take() else {
+            return;
+        };
+        let root = self.session.read(cx).project().root().to_path_buf();
+        let ask = match crate::templates::begin_merge(&root, &update) {
+            Ok(ask) => ask,
+            Err(error) => {
+                self.session
+                    .update(cx, |session, cx| session.report(error, cx));
+                return;
+            }
+        };
+        if let Some(composer) = self
+            .left_panel
+            .as_ref()
+            .and_then(|panel| panel.composer.as_ref())
+        {
+            let input = composer(cx);
+            input.update(cx, |input, cx| input.set_text(ask, cx));
+        }
+        self.focus_left_panel(window, cx);
+        cx.notify();
     }
 
     /// The bare parts of the top row move the window, as a title bar does. On Windows they are
@@ -628,10 +788,7 @@ impl Render for Shell {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(EmptyState::new(
-                    "Nothing to show",
-                    "Nothing at the top of state/ has a view.",
-                ))
+                .child(self.empty_state(cx))
                 .into_any_element(),
         };
 
@@ -639,41 +796,41 @@ impl Render for Shell {
             .id("shell")
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|shell, _: &TogglePlayback, _, cx| {
-                shell.session.update(cx, Session::toggle_playback)
-            }))
-            .on_action(cx.listener(|shell, _: &ToggleRecording, _, cx| {
-                shell.transport.update(cx, TransportPill::toggle_recording)
-            }))
             .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
-                shell
-                    .transport
-                    .update(cx, TransportPill::toggle_computer_keys)
+                shell.live.update(cx, LiveInput::toggle_computer_keys)
             }))
-            // Before the focused view hears it, so a key that plays does nothing else, such as
-            // `a` in the arrangement.
+            // Before the focused view hears it, so a key that plays does nothing else.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                let free = keys_are_free(window);
-                if (shell.transport).update(cx, |pill, _| pill.computer_key_down(event, free)) {
+                let key = &event.keystroke.key;
+                let free = keys_are_free(window) && !sound_typescript::takes_key(window, key);
+                if (shell.live).update(cx, |live, _| live.computer_key_down(event, free)) {
                     cx.stop_propagation();
                 }
             }))
             // Wherever the focus went since its key went down.
             .capture_key_up(cx.listener(|shell, event: &KeyUpEvent, _, cx| {
                 let key = &event.keystroke.key;
-                if shell
-                    .transport
-                    .update(cx, |pill, _| pill.computer_key_up(key))
+                if shell.live.update(cx, |live, _| live.computer_key_up(key))
+                    || GlobalKeys::key_up(&event.keystroke, cx)
                 {
                     cx.stop_propagation();
                 }
             }))
+            // After the focused view, which may take the key itself, and only where the plain
+            // keys are free: the keys of the project, such as space to play.
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                if !event.is_held
+                    && keys_are_free(window)
+                    && GlobalKeys::key_down(&event.keystroke, cx)
+                {
+                    cx.stop_propagation();
+                }
+            })
             // macOS sends no key up while cmd is held.
             .on_modifiers_changed(cx.listener(|shell, event: &ModifiersChangedEvent, _, cx| {
                 if event.modifiers.platform {
-                    shell
-                        .transport
-                        .update(cx, TransportPill::let_go_of_computer_keys);
+                    shell.live.update(cx, LiveInput::let_go_of_computer_keys);
+                    GlobalKeys::let_go(cx);
                 }
             }))
             .on_action(
@@ -689,9 +846,7 @@ impl Render for Shell {
                 shell.open_or_close_left_panel(window, cx)
             }))
             .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
-                shell
-                    .session
-                    .update(cx, |session, cx| new_project(session, cx))
+                choose_new_project(shell.session.clone(), cx)
             }))
             .on_action(cx.listener(|shell, _: &OpenProject, _, cx| {
                 shell.session.update(cx, |_, cx| open_another_project(cx))
@@ -706,8 +861,8 @@ impl Render for Shell {
             .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
-            // The title row: the project menu, then the transport in the middle of the room
-            // right of it. The air on both sides of the pill moves the window. In a narrow
+            // The title row: the project menu, then what the main view puts there, such as a
+            // song's transport, in the middle of the room right of it. The air on both sides of the pill moves the window. In a narrow
             // window the air goes first, so the pill never covers the menu.
             .child(
                 div()
@@ -719,7 +874,7 @@ impl Render for Shell {
                     .children(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
-                    .child(self.transport.clone())
+                    .children(self.title_bar.clone())
                     .child(Self::drag_region().flex_1())
                     .children(Self::window_controls(window)),
             )
@@ -744,29 +899,27 @@ fn outside_text() -> String {
     format!("{KEY_CONTEXT} && !{}", text_input::KEY_CONTEXT)
 }
 
-/// Where the plain keys are the window's: outside a text field, and outside a tool of the
-/// project that has the keys, which plays them.
+/// Where the plain keys are free: outside a text field, and outside a tool of the project that
+/// has the keys, which plays them.
 fn plain_keys() -> String {
     format!("{} && !{}", outside_text(), sound_typescript::KEY_CONTEXT)
 }
 
-/// Whether the plain keys are the window's where the focus is, as the bindings of space and
-/// `r` match them.
+/// Whether the plain keys are free where the focus is: the computer keys and the keys of the
+/// project may take them.
 fn keys_are_free(window: &Window) -> bool {
     KeyBindingContextPredicate::parse(&plain_keys())
         .is_ok_and(|plain| plain.depth_of(&window.context_stack()).is_some())
 }
 
-/// The keys of the window. Space and record are [`plain_keys`], undo works outside a text
-/// field. Tab moves the focus everywhere. The computer keys are no bindings: they need the key
-/// going up as well, see the key listeners of [`Shell`]. `secondary` is cmd on macOS and ctrl
-/// on Windows and Linux.
+/// The keys of the app. Undo works outside a text field. Tab moves the focus everywhere. The
+/// computer keys and the keys of the project are no bindings: they need the key going up as
+/// well, see the key listeners of [`Shell`]. `secondary` is cmd on macOS and ctrl on Windows
+/// and Linux.
 pub fn bind_keys(cx: &mut App) {
-    let (outside_text, plain) = (outside_text(), plain_keys());
-    let (outside_text, plain) = (Some(outside_text.as_str()), Some(plain.as_str()));
+    let outside_text = outside_text();
+    let outside_text = Some(outside_text.as_str());
     cx.bind_keys([
-        KeyBinding::new("space", TogglePlayback, plain),
-        KeyBinding::new("r", ToggleRecording, plain),
         KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-z", Undo, outside_text),
         KeyBinding::new("shift-secondary-z", Redo, outside_text),
@@ -909,7 +1062,7 @@ impl Opened {
         // An experiment: every project the window opens can have tools of its own, written
         // while it runs, so the folder for them is always there.
         std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
-        Ok(Extensions::load(folder, &crate::tool_schemas()?))
+        crate::load_tools(folder)
     }
 
     fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {
@@ -999,26 +1152,20 @@ impl Opened {
         .detach();
         // The background work of the extensions: the sounds of the Drum pads, the instruments
         // of the Samplers and the plugins of the project. One tick per session poll.
-        cx.spawn({
+        sound_ui::on_every_poll(cx, {
             // Nothing strong is held: the plugins must go when the project goes, because
             // that is what saves the state of every one of them.
             let (session, plugins) = (session.downgrade(), weak_plugins.clone());
-            async move |cx| {
-                // What the scan had found the last time a frame was asked for.
-                let mut scanned = 0;
-                loop {
-                    cx.background_executor()
-                        .timer(sound_ui::POLL_INTERVAL)
-                        .await;
-                    let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade())
-                    else {
-                        break;
-                    };
-                    cx.update(|cx| tick(&session, &plugins, &mut scanned, cx));
-                }
+            // What the scan had found the last time a frame was asked for.
+            let mut scanned = 0;
+            move |cx| {
+                let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade()) else {
+                    return false;
+                };
+                tick(&session, &plugins, &mut scanned, cx);
+                true
             }
-        })
-        .detach();
+        });
         // The state of every plugin reaches the project when the project is dropped, which
         // GPUI does with the views before any of this runs. See the plugin host.
         cx.on_app_quit({
@@ -1108,7 +1255,7 @@ impl Opened {
         let input = shell
             .read(cx)
             .ok()
-            .and_then(|shell| shell.transport().read(cx).midi_input());
+            .and_then(|shell| shell.live_input().read(cx).midi_input());
         if let Some(input) = input {
             cx.spawn({
                 let session = session.downgrade();

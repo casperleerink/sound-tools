@@ -4,10 +4,10 @@
 //! crate.
 
 pub mod app;
-pub mod arrangement_wiring;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
+pub mod templates;
 pub mod update;
 pub mod window;
 
@@ -21,17 +21,23 @@ use plugin_host::{
 };
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
-    AgentDoc, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError, Registry,
-    SavedDestination, SavedSource, Ticks, ToolSchema,
+    AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Project,
+    ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks, ToolSchema,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
-use arrangement_wiring::{FIT_TEMPO, add_track_of_kind};
-pub use arrangement_wiring::{add_audio_track, add_track, clips_span, main_arrangement, solo};
+pub use templates::{TEMPLATES, Template};
 
-const PROJECT_FILE: &str = "project.json";
+pub const PROJECT_FILE: &str = "project.json";
+
+/// The release this build is, which `.github/workflows/release.yml` takes from its tag.
+/// `0.0.0` for a build of no release.
+pub const VERSION: &str = match option_env!("SOUND_TOOLS_VERSION") {
+    Some(version) => version,
+    None => "0.0.0",
+};
 
 /// Offline renders have no device to ask. `offline` is what every processor is told, and what a
 /// hosted plugin passes on to the plugin in the way its format intends.
@@ -48,10 +54,11 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 /// being opened somewhere else. Hence no path of this executable in it.
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
-    when: "You can run commands and want to check how your work sounds, read the whole piece in one go, or write it as a WAV",
+    group: "Project",
+    when: "You can run commands: check how your work sounds, read the whole piece, or render a WAV",
     markdown: "# Inspect, measure and render from a command line
 
-When you can run commands, the Sound Tools runtime reads the project for you. Every form works while the project is open and changes nothing.
+Every form works while the project is open and changes no record.
 
 ```sh
 sound-tools . --inspect
@@ -59,36 +66,46 @@ sound-tools . --analyze
 sound-tools . --render <wav>
 ```
 
-- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every track in order, every clip with its bar range, note count and pitch range, and the problems.
-- `--analyze` plays the piece and its tail offline and prints what it measures, of the whole and in up to 32 rows. Use it after a change, to check that it sounds as you meant.
+- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every instance with its record, the connections and the problems.
+- `--analyze` plays the piece and its tail offline, prints what it measures of the whole and writes the rest to a report file. Use it after a change, to check that it sounds as you meant.
 - `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
 
 `--analyze` and `--render` take the same options:
 
-- `--from <at>` and `--to <at>`, together or alone: a part of the piece, and its tail. `<at>` is ticks (`3840`), or a time as the composer reads it off the playhead (`1:23.5`) or in seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
+- `--from <at>` and `--to <at>`: a part of the piece, and its tail unless `--no-tail` follows. `<at>` is ticks (`3840`), a time as the playhead shows it (`1:23.5`) or seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
 - `--seconds <n>`: the first `n` seconds, with no tail.
-- `--solo <track>`, once per track: only these tracks play, by name or id. No file changes.
+- `--only <path>`: only the sound of this instance, such as `song/bass`, before what its parents do to it.
 
-`sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`, with `--from` and `--to` as times.
+To turn a part into audio, render it alone into `assets/audio/` under a new name and play it with a `region`: `sound-tools . --render assets/audio/bass.wav --only song/bass/chain --from 0 --to 7680`.
+
+`sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`.
 
 ## What `--analyze` prints
 
-The first line is the whole: its loudness (integrated, gated as streaming services measure it), the loudest 400 ms, the true peak and where it is, and its pitch and drift. Each row then starts at a tick, a bar and a time:
+The first line is the whole: loudness, the loudest 400 ms, the true peak and where it is, its pitch and drift. The second is the notes: how many and in how many phrases, the tuning they share and how far they spread around it (`+20c ±3c`; a speaking voice spreads 20c or more), and how far apart they start, as the tempos that gap is a beat or a part of at.
 
-- `LUFS`: the loudness of the row, weighted like hearing. `max`: its loudest 400 ms, which shows short hits that the loudness of the row hides.
-- `peak`: the true peak in dBTP, between the samples too. Above 0 clips.
+Then where the report file is, and the line each part starts on. Read only the part you need: the pitch part has 100 lines a second.
+
+Rows of the same size start at a tick, a bar and a time:
+
+- `LUFS`: the loudness of the row. `max`: its loudest 400 ms, which shows short hits.
+- `peak`: the true peak in dBTP. Above 0 clips.
 - `sub` under 60 Hz, `bass` 60 to 250, `lowmid` 250 to 500, `mid` 500 to 2k, `highmid` 2k to 6k, `high` above 6k: the level of each band in dB.
-- `width`: the share of the sound in the side. 0% is mono, 50% as wide as two unrelated channels; above 50% the channels cancel when summed to mono.
-- `pitch`: the middle pitch heard, as the nearest note and how far off it in cents, 100 to a semitone: `A4+3c` is 3 cents sharp. `drift`: how far the pitch moves, low to high, in cents. A steady note in tune reads `+0c` and `0c`; a vibrato of 20 cents either way about `40c`; two notes in one row their interval, `200c` for a whole tone.
-- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord, a mix, or a note under E1 or above B7.
+- `width`: the share of the sound in the side. 0% is mono; above 50% the channels cancel when summed to mono.
+- `pitch`: the middle pitch heard and how far off it in cents: `A4+3c`. `drift`: how far the pitch moves, in cents: a vibrato of 20 cents either way reads about `40c`, two notes in one row their interval.
+- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord.
 
-To check a vibrato, a wobble or the tuning, solo the track and measure one held note with `--from` and `--to`: the first line gives the drift of the whole note. A row shorter than one cycle of a slow wobble shows only part of it.
+A note starts at an attack, a syllable or a change of pitch:
 
-A mono file is measured as it plays in a project, on both channels: 3 dB above what a meter of one channel shows.
+- `phrases`: notes with no silence of a quarter second or more between them, where each starts and its `length` in seconds. Cut a recording into regions there.
+- `notes`: each one's `length` in seconds, the `level` of its loudest 10 ms in dB, its middle `pitch`, and its `glide` in cents from its start to its end.
+- `pitch every 10 ms`: the level and the pitch.
 
-Compare rows and runs, not rules of thumb: the same part before and after your change, a soloed track against the whole, a verse against a chorus. The numbers do not say whether it sounds good; the composer does.
+Silence is 40 dB under the loudest moment, or 10 dB over the noise of a recording. Which key and which bar the notes belong to is for you and the composer to decide.
 
-`sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu (on Windows the installer puts it there), or skip this step: `problems.txt` tells you whether your files loaded.",
+To check a vibrato or the tuning, solo the track and measure one held note with `--from` and `--to`. A mono file measures 3 dB above what a meter of one channel shows, as it plays on both. Compare runs (before and after your change, a soloed track against the whole); the composer says whether it sounds good.
+
+When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
 /// The plugin host of one session: it scans this machine, keeps the plugins a project loads
@@ -141,29 +158,31 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
-    register_extensions(&mut registry, Some(plugins))?;
+    // First, as the map lists its groups in the order of their first doc.
     registry.runtime_agent_doc(INSPECT_DOC)?;
-    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
+    for doc in sound_typescript::AGENT_DOCS {
+        registry.runtime_agent_doc(doc)?;
+    }
+    register_extensions(&mut registry, Some(plugins))?;
     Ok(registry)
 }
 
 /// Registers every bundled extension, and the plugin host when given the plugins it hosts.
 fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Result<()> {
     analyzer::register(registry)?;
-    arrangement::register(registry)?;
     compressor::register(registry)?;
     delay::register(registry)?;
     drum_pad::register(registry)?;
     eq::register(registry)?;
     filter::register(registry)?;
-    fit_tempo::register(registry)?;
     gate::register(registry)?;
     instrument::register(registry)?;
     limiter::register(registry)?;
     modulation::register(registry)?;
+    pitch_correction::register(registry)?;
     if let Some(plugins) = plugins {
         plugin_host::register(registry, plugins)?;
     }
@@ -172,8 +191,18 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     saturator::register(registry)?;
     tone::register(registry)?;
     utility::register(registry)?;
+    vocoder::register(registry)?;
     wavetable::register(registry)?;
     Ok(())
+}
+
+/// The name of every bundled extension.
+pub fn bundled_extensions() -> Result<Vec<&'static str>> {
+    let mut registry = Registry::new();
+    register_extensions(&mut registry, None)?;
+    let mut names = registry.extensions();
+    names.insert(plugin_host::EXTENSION);
+    Ok(names.into_iter().collect())
 }
 
 /// The built-in tools as the tools of a project see them, for their SDK.
@@ -187,12 +216,10 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
 /// and what a composer can pick. The window names no view type and no instrument: it takes
 /// both registries and installs them, see `Shell::new`.
 ///
-/// This is the one place that knows the built-in synth and the plugin host at once. The
-/// arrangement, which owns the track panel, depends on neither.
+/// This is the one place that knows the built-in synth and the plugin host at once.
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
-    arrangement::view::register(&mut views, add_track_of_kind, FIT_TEMPO);
     // The order here is the order of a picker: the instruments, then the effects group by
     // group, and the plugins of this Mac after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
@@ -206,10 +233,13 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     gate::view::register(&mut views, &mut devices);
     limiter::view::register(&mut views, &mut devices);
     modulation::view::register(&mut views, &mut devices);
+    vocoder::view::register(&mut views, &mut devices);
+    pitch_correction::view::register(&mut views, &mut devices);
     delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
     analyzer::view::register(&mut views, &mut devices);
+    sound_typescript::register_views(&mut views);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
@@ -274,7 +304,9 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let bun_folder = bun_folder.clone();
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
+        let composer = sidebar.clone();
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+            .with_composer(move |cx| composer.read(cx).composer().clone())
     })
 }
 
@@ -355,11 +387,8 @@ pub const SCAN_AGAIN: &str = "plugins:scan-again";
 /// own. A host that was not told to scan on a thread scans on this one, the first time a
 /// record needs a plugin.
 ///
-/// A folder without a `project.json` becomes the default
-/// project: 120 bpm, 4/4, one arrangement with no tracks. Other
-/// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
-///
-/// Making the default content is not something to undo, so a new project has no history.
+/// A folder without a `project.json` becomes an empty project: 120 bpm, 4/4, every bundled
+/// extension.
 ///
 /// With no window, it waits for what the behaviours of its own tools declare, so it plays what
 /// the records say from the start.
@@ -368,7 +397,8 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    let mut project = open_with_extensions(folder, control, plugins)?.0;
+    let extensions = load_tools(folder)?;
+    let mut project = open_with_loaded(folder, control, plugins, extensions)?.0;
     first(settle_behaviours(&mut project))?;
     Ok(project)
 }
@@ -381,8 +411,17 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    let extensions = Extensions::load(folder, &tool_schemas()?);
-    open_with_loaded(folder, control, plugins, extensions)
+    open_with_loaded(folder, control, plugins, load_tools(folder)?)
+}
+
+/// The project's own tools, once the code of the template it was made from is this release's
+/// where the project never changed it, see [`templates::update`]. What waits for a merge the
+/// window asks again.
+pub(crate) fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
+    if let Err(error) = templates::update(folder) {
+        eprintln!("error: {error:#}");
+    }
+    Ok(Extensions::load(folder, &tool_schemas()?, true))
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
@@ -393,16 +432,10 @@ pub(crate) fn open_with_loaded(
     plugins: Plugins,
     extensions: Option<FirstLoad>,
 ) -> Result<(Project, Option<Extensions>)> {
-    let is_new = !folder.join(PROJECT_FILE).exists();
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
-    }
-    // A `state/` folder with content but no project file is someone's work, not a new project.
-    if is_new && project.instances().next().is_none() && project.problems().is_empty() {
-        arrangement_wiring::create_default_project(&mut project)?;
-        project.clear_history();
     }
     Ok((project, extensions))
 }
@@ -415,6 +448,31 @@ fn registry_of(
     let mut registry = registry(plugins)?;
     let extensions = extensions.map(|loaded| loaded.register(&mut registry));
     Ok((registry, extensions))
+}
+
+/// Makes the device play only the `audio` output of `path`, in memory, for a render of one part
+/// of a read-only project: every `project.json` connection to the device output gives way to one
+/// from it. What its parents do to its sound after it, such as a mixer or a send, is not heard,
+/// and a tool that plays to the device by itself rather than through `project.json` still does.
+pub fn listen_only(project: &mut Project, path: &str) -> Result<()> {
+    let id = InstanceId::new(path)?;
+    if project.tool_of(&id).is_none() {
+        bail!(
+            "no instance is called {path:?}: name it by its path under state/, such as song/bass"
+        );
+    }
+    let mut changes = Changes::new();
+    let to_device = (project.project_file().connections.iter())
+        .filter(|connection| matches!(connection.to, SavedDestination::DeviceOutput(_)));
+    for connection in to_device {
+        changes.disconnect(connection.clone());
+    }
+    changes.connect(SavedConnection::to_device(
+        PortReference::new(&id, "audio"),
+        0,
+    ));
+    project.apply_in_memory(changes)?;
+    Ok(())
 }
 
 /// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
@@ -430,7 +488,8 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let extensions = Extensions::load(folder, &tool_schemas()?);
+    // A runtime that holds the project may be writing its log.
+    let extensions = Extensions::load(folder, &tool_schemas()?, false);
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {
@@ -440,8 +499,8 @@ pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, 
     Ok((project, engine))
 }
 
-/// What `--inspect` prints. A tool with a summary of its own, such as the arrangement, tells
-/// what it owns. Every other instance is one line with its record.
+/// What `--inspect` prints: the time, the sections, every instance with its record and sound
+/// ports beyond `audio`, the connections and the problems.
 pub fn summary(project: &Project) -> String {
     let project_file = project.project_file();
     let tempo_map = &project_file.tempo_map;
@@ -471,20 +530,15 @@ pub fn summary(project: &Project) -> String {
     }
     lines.extend(sections(project));
 
-    let mut summarised: Vec<&InstanceId> = Vec::new();
     for (id, tool) in project.instances() {
-        // Ids sort as text, so `arrangement-2` comes between `arrangement` and what is inside
-        // it: every summarised owner is checked, not only the last.
-        if summarised.iter().any(|owner| id.is_inside(owner)) {
-            continue;
-        }
-        if let Some(summary) = project.summary(id) {
-            lines.push(summary);
-            summarised.push(id);
-        } else {
-            let indent = "  ".repeat(id.as_str().matches('/').count());
-            let state = project.state_json(id).unwrap_or_default();
-            lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
+        let indent = "  ".repeat(id.as_str().matches('/').count());
+        let state = project.state_json(id).unwrap_or_default();
+        lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
+        // Only sound ports a connection names beyond `audio`, such as a sidechain.
+        let (inputs, outputs) = project.sound_ports(id);
+        if inputs.iter().chain(&outputs).any(|port| *port != "audio") {
+            let (inputs, outputs) = (inputs.join(", "), outputs.join(", "));
+            lines.push(format!("{indent}  sound ports: in {inputs}; out {outputs}"));
         }
     }
 
@@ -703,6 +757,7 @@ pub fn tick(
     // A tool of the project that owns children, whose behaviour Bun answered.
     let declared = sound_typescript::take_declared(project.assets());
     errors.extend(rebind(project, &declared));
+    sound_typescript::forget_gone(project);
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);
     // A plugin that is started again is handed to the engine. After the poll, which is what
@@ -813,7 +868,7 @@ pub fn render_into(
 /// Below this every sample of a tail is silence: -90 dB.
 const SILENT: f32 = 3.2e-5;
 
-/// Plays `from..to` and then the tail: what reverbs and releases still sound after the
+/// Plays `from..to` and then, with `tail`, what reverbs and releases still sound after the
 /// transport stops at `to`. The tail ends after half a second of silence, or after ten seconds
 /// for a sound that never ends, such as the noise of a plugin. See [`render_into`].
 pub fn render_range(
@@ -822,6 +877,7 @@ pub fn render_range(
     plugins: &Plugins,
     from: Ticks,
     to: Ticks,
+    tail: bool,
     mut write: impl FnMut(&[f32]) -> Result<()>,
 ) -> Result<Vec<plugin_host::PluginProblem>> {
     let clock = project.clock();
@@ -829,12 +885,15 @@ pub fn render_range(
     project.engine().seek(from);
     project.engine().play();
     let mut problems = render_into(project, engine, plugins, frames as usize, &mut write)?;
+    if !tail {
+        return Ok(problems);
+    }
     // Stopping releases every held note, which is where the tail starts.
     project.engine().pause();
     let channels = engine.channels();
     let rate = engine.sample_rate() as usize;
-    let (mut quiet, mut tail) = (0, 0);
-    while quiet < rate / 2 && tail < rate * 10 {
+    let (mut quiet, mut played) = (0, 0);
+    while quiet < rate / 2 && played < rate * 10 {
         problems.extend(render_into(project, engine, plugins, 512, |samples| {
             let frames = samples.len() / channels;
             quiet = if samples.iter().all(|sample| sample.abs() < SILENT) {
@@ -842,7 +901,7 @@ pub fn render_range(
             } else {
                 0
             };
-            tail += frames;
+            played += frames;
             write(samples)
         })?);
     }

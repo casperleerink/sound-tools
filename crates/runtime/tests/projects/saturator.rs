@@ -1,16 +1,14 @@
-//! The built-in saturator in the chain of a real track: an outside agent changes it by file
+//! The built-in saturator in a rack after the synth: an outside agent changes it by file
 //! while the project plays and the change is heard, and its oversampling is a latency the
 //! project makes up for.
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, Harness, clip, difference, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const SATURATOR_FILE: &str = "state/arrangement/piano/heat.json";
+const SATURATOR_FILE: &str = "state/rack/heat.json";
 
-/// A track that plays short chords for four bars, through a saturator named `heat` when there
+/// A rack that plays short chords for four bars, through a saturator named `heat` when there
 /// is a record for it.
 fn piano_through(saturator: Option<&str>) -> Harness {
-    let mut harness = Harness::new();
     let chords = [
         (0, 480, 48),
         (0, 480, 55),
@@ -18,18 +16,10 @@ fn piano_through(saturator: Option<&str>) -> Harness {
         (3840, 480, 64),
         (5760, 480, 67),
     ];
-    harness.write_track("piano", 1, 0.15, &[("chords", clip(0, 15360, &chords))]);
-    let Some(saturator) = saturator else {
-        return harness;
-    };
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["heat"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(SATURATOR_FILE, saturator),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chords) = (synth(0.15), clip(0, 15360, &chords));
+    let mut children = vec![("instrument", synth.as_str()), ("chords", chords.as_str())];
+    children.extend(saturator.map(|record| ("heat", record)));
+    Harness::rack(&children)
 }
 
 fn record(state: &str) -> String {

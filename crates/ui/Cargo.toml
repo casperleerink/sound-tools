@@ -8,11 +8,13 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
 gpui.workspace = true
 serde_json.workspace = true
+smol.workspace = true
 sound-core.workspace = true
 sound-media.workspace = true
-sound-notes.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

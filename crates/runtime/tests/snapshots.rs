@@ -1,188 +1,66 @@
-//! Renders the application window to PNGs with no visible window, and times its frames.
-//! `cargo test -p runtime --test snapshots` writes to `$WINDOW_SNAPSHOT_DIR`, default
-//! `<target>/window-snapshots`. The window is 1470 x 920 points at scale 2, the screen of a
-//! 13 inch MacBook Air without the menu bar, which is the laptop the design is for:
+//! Renders the application window to PNGs with no visible window. `cargo test -p runtime --test
+//! snapshots` writes to `$WINDOW_SNAPSHOT_DIR`, default `<target>/window-snapshots`. The window
+//! is 1470 x 920 points at scale 2, the screen of a 13 inch MacBook Air without the menu bar,
+//! which is the laptop the design is for:
 //!
-//! - `default.png`: a new project, which has no tracks.
-//! - `piece.png`: three tracks with several clips, playing, one clip selected.
-//! - `transport-click-off.png`: the same with the transport in focus, the click off.
-//! - `transport-click-on.png`: the same with the click on.
-//! - `transport-keys-on.png`: the same with the computer keys on as well.
-//! - `transport-recording.png`: the same while it records, a few keys played so far.
+//! - `default.png`: a new, empty project, with the ways to start one.
+//! - `new-project.png`: the templates a new project starts from.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.
-//! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
-//! - `menu.png`: the project menu, open, after one edit.
-//! - `fit-action.png`: the menu of a recorded take, with `Fit tempo to take`.
-//! - `fitted.png`: the same project after the fit, with the steadiness control in the
-//!   transport and the clip of the take on the grid the playing made.
-//! - `fit-steady.png`: the same with the steadiness at 60 %.
-//! - `fit-recording.png`: the same while it records: tempo, steadiness and record together.
-//! - `editor.png`: the note editor open on the selected clip, one note selected.
-//! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
-//! - `editor-velocity.png`: the melody with velocities of its own in the lane, three notes
-//!   selected, whose bars are in the text colour.
-//! - `editor-marquee.png`: the same with a rectangle being dragged over the notes.
-//! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default,
-//!   playing, so the meter under the volume shows its level.
-//! - `track-panel-solo.png`: the same with S on, the other tracks at 40 %.
-//! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
-//! - `master-panel.png`: the master row clicked, and its panel: the volume on its meter and the
-//!   Limiter pushed 18 dB, with four seconds of output under the ceiling and the reduction.
-//! - `track-panel-synth-effects.png`: the synth with five effects after it, which is wider
-//!   than the rack has room for on this screen, so its right edge fades. The test checks
-//!   the fade in the pixels.
-//! - `track-panel-filter.png`: the synth and the built-in filter after it.
-//! - `track-panel-filter-expanded.png`: the same with the filter expanded: slope and LFO.
-//! - `track-panel-compressor.png`: the synth, the filter and the built-in compressor, as in the
-//!   mockup, with the level of a playing chord on its curve and its gain reduction.
-//! - `track-panel-compressor-expanded.png`: the same with the compressor expanded: knee,
-//!   makeup, mix and lookahead, and the sidechain off.
-//! - `track-panel-compressor-sidechain.png`: the same keyed from the first track, after its
-//!   effects.
-//! - `track-panel-limiter.png`: the synth and the built-in limiter pushing the bass 18 dB into
-//!   a ceiling of -6 dB, with four seconds of what it sent out and the reduction.
-//! - `track-panel-eq.png`: the synth and the built-in EQ after it, band 3 selected.
-//! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
-//!   the output.
-//! - `track-panel-reverb.png`: the synth and the built-in reverb after it.
-//! - `track-panel-saturator.png`: the synth and the built-in saturator after it, the tube curve
-//!   driven 18 dB. `WINDOW_SNAPSHOT_ONLY=saturator` renders it alone.
-//! - `track-panel-delay.png`: the synth and the built-in delay after it, synced, dotted.
-//! - `track-panel-delay-expanded.png`: the same with the delay expanded and free in ms: the
-//!   cuts and ping-pong.
-//! - `track-panel-all-effects.png`: the synth, the Filter, the Compressor, the EQ and the
-//!   Reverb, at the start of the rack. The test measures in the pixels that every card, the
-//!   mixer strip and the master panel share one card top, one height and the value lines of
-//!   both rows of cells.
-//! - `track-panel-all-effects-end.png`: the same scrolled to the end of the rack.
-//! - `track-panel-reverb-expanded.png`: the same with the reverb expanded: the cuts, diffusion,
-//!   freeze, pre-delay and decay.
-//! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
-//! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
-//! - `track-panel-picker.png`: the same with the instrument picker open.
-//! - `track-panel-plugin-vst3.png`: the panel of a track whose instrument is a VST 3 plugin.
-//! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
-//! - `track-panel-effects.png`: the rack with an instrument and two effects, and the control
-//!   that adds one at the end of it.
-//! - `track-panel-bypass.png`: the same with the second effect bypassed from its power icon.
-//! - `track-panel-reorder.png`: the first effect dragged by its header over the second, the
-//!   button still down: its title under the pointer and a ring around where it would go.
-//! - `track-panel-effect-picker.png`: the same with that control open.
-//! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
-//! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
-//!   plugin host, where every plugin says what the one edit is.
-//! - `fit-action-disabled.png`: the same in a project made before the fit existed, where the
-//!   fit says why it is off.
-//! - `arrangement-selection.png`: the piece with two tempo changes in the ruler and three clips
-//!   selected on two tracks.
-//! - `arrangement-tempo.png`: the same with the tempo change of bar 5 clicked: selected, and the
-//!   playhead and the transport on it.
-//! - `arrangement-loop.png`: the same with the loop on, over bars 3 to 6.
-//! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
-//! - `arrangement-rename.png`: the name field open in the header of the bass.
-//! - `arrangement-sections.png`: the same with three sections, the chorus selected.
-//! - `arrangement-ruler-menu.png`: the menu of a right click in the ruler, its time signature
-//!   row under the keys and the ghost of where it lands.
-//! - `arrangement-time-signatures.png`: the piece with a time signature that changes almost
-//!   every bar, each shown in the ruler where it starts.
-//! - `arrangement-time-signature-selected.png`: the same with the 4/4 of bar 10 clicked.
-//! - `editor-time-signatures.png`: the note editor on the melody in those bars.
+//! - `menu.png`, `menu-devices.png`: the project menu, open, after one edit.
+//! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
+//! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
-//! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
-//! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
-//! - `track-panel-utility*.png`: the Utility, see `snapshots/utility.rs`.
-//! - `modulation-*.png`: the Modulation, see `snapshots/modulation.rs`.
-//! - `wavetable*.png`: the Wavetable, collapsed, expanded and scrolled, see
-//!   `snapshots/wavetable.rs`.
-//! - `editor-bend.png`, `editor-mod.png`: the expression lanes, see `snapshots/lanes.rs`.
-//! - `automation-*.png`: the automation lanes under a track, and a clip dragged with its
-//!   automation, see `snapshots/automation.rs`.
-//! - `track-panel-automated.png`: knobs that lanes move, see `snapshots/automated.rs`.
-//! - `track-panel-plugin-*.png`: parameters pinned on the card of a plugin, see
-//!   `snapshots/plugin.rs`.
-//! - `returns-*.png`: the returns and the sends of a track, see `snapshots/returns.rs`.
+//! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
+//! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
+//!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
 //!
-//! The frame times it prints are those of one update and the `Window::draw` it causes on the
-//! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
-//! are those of one real mouse move on that project: the publish into the gesture, every
-//! project event it causes and the frame after it.
+//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=typescript`, `=look` or `=timeline` renders the default
+//! project and those alone.
 
-use std::path::PathBuf;
+// The shared helpers of the tests unwrap, as the other test crates allow.
+#![allow(clippy::unwrap_used)]
+
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
-use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
-use arrangement::view::{ArrangementView, NoteEditor, RulerMark};
-use arrangement::{Colour, TrackState};
-use compressor::CompressorState;
-use compressor::view::CompressorView;
-use delay::view::DelayView;
-use delay::{DelayState, Feel};
-use eq::view::EqView;
-use eq::{Band, EqState, Shape};
-use filter::FilterState;
-use filter::view::FilterView;
 use gpui::{
-    AppContext, Entity, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, WindowHandle, point,
-    px, size,
+    AnyWindowHandle, AppContext, Entity, HeadlessAppContext, PlatformInput, WindowHandle, px, size,
 };
-use instrument::SynthState;
-use limiter::LimiterState;
-use limiter::view::LimiterView;
-use midi::Played;
-use plugin_host::{PluginFormat, PluginRecord, WeakPlugins};
-use reverb::ReverbState;
-use reverb::view::ReverbView;
+use plugin_host::{PluginFormat, WeakPlugins};
 use runtime::app::ChosenDevices;
+use runtime::window::new_project::{TemplatePicker, choose_template};
 use runtime::window::{DeviceAccess, DeviceMenu, Shell};
-use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
-use saturator::{Curve, SaturatorState};
-use sound_core::{
-    Changes, DeviceChoice, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap,
-    Ticks, TimeSignature,
-};
-use sound_notes::{Clip, Length, Note, Pitch, Velocity};
-use sound_ui::{Assets, Loop, Session};
+use runtime::{OFFLINE, views};
+use sound_core::{DeviceChoice, Engine, InstanceId, Ticks};
+use sound_ui::{Assets, Session};
 use tempfile::TempDir;
 
 use plugin_hosts::test_plugin_host;
 
 #[path = "snapshots/agent.rs"]
 mod agent;
-#[path = "snapshots/audio.rs"]
-mod audio;
-#[path = "snapshots/automated.rs"]
-mod automated;
-#[path = "snapshots/automation.rs"]
-mod automation;
-#[path = "snapshots/drums.rs"]
-mod drums;
-#[path = "projects/generated_take.rs"]
-mod generated_take;
-#[path = "snapshots/lanes.rs"]
-mod lanes;
-#[path = "snapshots/modulation.rs"]
-mod modulation;
-// The snapshots always show the test plugin, so they never open a project without one.
-#[path = "snapshots/plugin.rs"]
-mod plugin;
+#[path = "snapshots/cards.rs"]
+mod cards;
+#[path = "snapshots/look.rs"]
+mod look;
+#[allow(dead_code)]
 #[path = "shared/plugin_hosts.rs"]
-#[allow(dead_code, clippy::unwrap_used)]
 mod plugin_hosts;
-#[path = "snapshots/returns.rs"]
-mod returns;
-#[path = "snapshots/sampler.rs"]
-mod sampler;
-#[path = "snapshots/utility.rs"]
-mod utility;
+#[allow(dead_code)]
+#[path = "shared/rack.rs"]
+mod rack;
+#[allow(dead_code)]
+#[path = "shared/song.rs"]
+mod song;
+#[path = "snapshots/typescript.rs"]
+mod typescript;
 #[path = "snapshots/wavetable.rs"]
 mod wavetable;
 
-const BAR: u64 = 3840;
 /// The window in points.
 const WINDOW_WIDTH: f32 = 1470.;
 const WINDOW_HEIGHT: f32 = 920.;
@@ -196,124 +74,67 @@ struct Opened {
 }
 
 impl Opened {
-    fn new(
-        cx: &mut HeadlessAppContext,
-        fill: impl FnOnce(&mut Project) -> Result<()>,
-    ) -> Result<Self> {
-        Self::with_input(cx, fill, None)
+    /// A window on a project of these files, by their paths in its folder. Its tools of the
+    /// project have drawn when this returns.
+    fn open(cx: &mut HeadlessAppContext, files: &[(String, String)]) -> Result<Self> {
+        Self::open_with(cx, files, |_| Ok(()))
     }
 
-    /// The same, with an audio input the window opens as its default input, see
-    /// `audio::SimulatedInput`.
-    fn with_input(
+    /// [`Self::open`], with `prepare` writing more into the project folder first.
+    fn open_with(
         cx: &mut HeadlessAppContext,
-        fill: impl FnOnce(&mut Project) -> Result<()>,
-        input: Option<runtime::window::audio_input::OpenInput>,
+        files: &[(String, String)],
+        prepare: impl FnOnce(&Path) -> Result<()>,
     ) -> Result<Self> {
-        let fill = |project: &mut Project| {
-            // `Track 1`, as the add track button makes it, with no undo step: the track most
-            // snapshots start from.
-            let arrangement = main_arrangement(project).context("the arrangement")?;
-            runtime::add_track(project, &arrangement)?;
-            project.clear_history();
-            fill(project)
-        };
-        Self::open(cx, fill, input)
+        Self::open_with_input(cx, files, prepare, None)
     }
 
-    /// A new project as the app makes it, with no tracks, and what `fill` adds.
-    fn open(
+    /// [`Self::open_with`], with an audio input the window opens through `open_input`.
+    fn open_with_input(
         cx: &mut HeadlessAppContext,
-        fill: impl FnOnce(&mut Project) -> Result<()>,
-        input: Option<runtime::window::audio_input::OpenInput>,
+        files: &[(String, String)],
+        prepare: impl FnOnce(&Path) -> Result<()>,
+        open_input: Option<runtime::window::audio_input::OpenInput>,
     ) -> Result<Self> {
         // The folder name is the project name in the window.
         let folder = tempfile::tempdir()?;
-        let (control, engine) = Engine::new(OFFLINE);
-        // A plugin host that looks only in a folder of this project, with the repository's
-        // own test plugin in it, so that the picker holds the same plugins everywhere.
         let root = folder.path().join("Night Study");
-        let plugins = test_plugin_host(&root);
-        let mut project = open_or_create_with(&root, control, plugins.clone())?;
-        fill(&mut project)?;
-        let plugins = plugins.downgrade();
-        let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
-        let window = cx.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), |window, cx| {
-            let (session, plugins) = (session.clone(), plugins.clone());
-            cx.new(|cx| {
-                let name = "MacBook Pro Speakers".into();
-                let device = DeviceAccess {
-                    open_input: input,
-                    ..DeviceAccess::default()
-                };
-                Shell::with_device(session, views(plugins), name, device, window, cx)
-            })
-        })?;
-        cx.run_until_parked();
-        Ok(Self {
-            _folder: folder,
-            engine,
-            plugins,
-            session,
-            window,
-        })
-    }
-
-    /// A project whose `project.json` does not enable the plugin host, as one made before
-    /// step 4a has, with one track.
-    fn without_plugin_host(cx: &mut HeadlessAppContext) -> Result<Self> {
-        Self::without_extensions(cx, r#"["arrangement", "instrument", "tone"]"#, |_| Ok(()))
-    }
-
-    /// A project that enables only these extensions, with the default content plus whatever
-    /// `fill` writes into it. For the controls that offer something a project cannot load.
-    fn without_extensions(
-        cx: &mut HeadlessAppContext,
-        extensions: &str,
-        fill: impl FnOnce(&mut Project) -> Result<()>,
-    ) -> Result<Self> {
-        let folder = tempfile::tempdir()?;
-        let root = folder.path().join("Night Study");
-        let write = |relative: &str, contents: &str| -> Result<()> {
+        std::fs::create_dir_all(&root)?;
+        for (relative, contents) in files {
             let path = root.join(relative);
             std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
             std::fs::write(path, contents)?;
-            Ok(())
-        };
-        write(
-            "project.json",
-            &format!(
-                r#"{{"format": 1, "extensions": {extensions},
-                "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
-                "connections": []}}"#
-            ),
-        )?;
-        write(
-            "state/arrangement/instance.json",
-            r#"{"tool": "arrangement", "state": {}}"#,
-        )?;
-        write(
-            "state/arrangement/track-1/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 1}}"#,
-        )?;
-        write(
-            "state/arrangement/track-1/instrument.json",
-            r#"{"tool": "instrument.synth", "state": {}}"#,
-        )?;
+        }
+        prepare(&root)?;
+        cx.allow_parking();
         let (control, engine) = Engine::new(OFFLINE);
+        // A plugin host that looks only in a folder of this project, with the repository's own
+        // test plugin in it, so that the pickers hold the same plugins everywhere.
         let plugins = test_plugin_host(&root);
-        let mut project = open_or_create_with(&root, control, plugins.clone())?;
-        fill(&mut project)?;
+        let (project, extensions) = runtime::open_with_extensions(&root, control, plugins.clone())?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), |window, cx| {
-            let (session, plugins) = (session.clone(), plugins.clone());
+            let session = session.clone();
+            let (mut views, mut devices) = views(plugins.clone());
+            if let Some(extensions) = extensions {
+                sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
+            }
             cx.new(|cx| {
                 let name = "MacBook Pro Speakers".into();
-                Shell::new(session, views(plugins), name, window, cx)
+                let device = DeviceAccess {
+                    open_input,
+                    ..DeviceAccess::default()
+                };
+                Shell::with_device(session, (views, devices), name, device, window, cx)
             })
         })?;
-        cx.run_until_parked();
+        // Bun answers in real time, on a thread of its own.
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(2) {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(20));
+        }
         Ok(Self {
             _folder: folder,
             engine,
@@ -324,54 +145,44 @@ impl Opened {
     }
 
     /// Lets the engine run for `frames` and the session see it, as the device and the poll
-    /// timer do in the real window. Returns how long the poll and the frame it caused took:
-    /// with test support GPUI draws a window as soon as an update leaves it dirty.
-    fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) -> Duration {
+    /// timer do in the real window.
+    fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) {
         // What the poll of the window does for the background work of the extensions.
         drum_pad::wait_for_sounds();
         if let Some(plugins) = self.plugins.upgrade() {
-            // No frame is asked for because the scan learned something: none runs here.
             let mut scanned = plugins.scan_generation();
             cx.update(|cx| runtime::window::tick(&self.session, &plugins, &mut scanned, cx));
         }
         let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
         self.engine.process_block(&mut buffer);
-        let started = Instant::now();
         cx.update(|cx| self.session.update(cx, |session, cx| session.poll(cx)));
+        // And what the timer of the tools of the project does, which a headless window runs not.
+        let page = cx.update(|cx| {
+            let shell = self.window.read(cx).ok()?;
+            shell.main_view().cloned()
+        });
+        if let Some(page) = page {
+            cx.update(|cx| sound_typescript::run_frame(&page, cx));
+        }
         cx.run_until_parked();
-        started.elapsed()
     }
 
-    /// Plays on for `seconds` in polls of 16 ms, and reads every meter after each, as the
-    /// timers of the views do in the real window.
-    fn listen(&mut self, seconds: f32, cx: &mut HeadlessAppContext) -> Result<()> {
-        let poll = OFFLINE.sample_rate as f32 * sound_ui::POLL_INTERVAL.as_secs_f32();
-        for _ in 0..(seconds * 1000. / 16.) as usize {
-            self.advance(poll as usize, cx);
-            let view = self.arrangement_view(cx)?;
-            cx.update(|cx| {
-                let shell = self.window.read(cx)?;
-                let transport = shell.transport().clone();
-                transport.update(cx, |pill, cx| pill.read_meter(cx));
-                let (track, master) = {
-                    let view = view.read(cx);
-                    (view.track_panel().cloned(), view.master_panel().cloned())
-                };
-                if let Some(panel) = track {
-                    panel.update(cx, |panel, cx| panel.read_meter(cx));
-                }
-                if let Some(panel) = master {
-                    panel.update(cx, |panel, cx| panel.read_meters(cx));
-                }
-                anyhow::Ok(())
-            })?;
-            cx.run_until_parked();
-        }
+    /// What the timers of the input and of the recorders do, which a headless window runs not:
+    /// the level of the input, and the takes as they grow.
+    fn poll_recording(&self, cx: &mut HeadlessAppContext) -> Result<()> {
+        cx.update(|cx| {
+            let shell = self.window.read(cx)?;
+            let (live, recorders) = (shell.live_input().clone(), shell.recorders().clone());
+            live.update(cx, |live, cx| live.poll_input(cx));
+            recorders.update(cx, |recorders, cx| recorders.poll(cx));
+            anyhow::Ok(())
+        })?;
+        cx.run_until_parked();
         Ok(())
     }
 
-    /// Seeks and plays. Making a large project leaves many edits waiting for the engine, and
-    /// the transport waits behind them, so this runs the engine until it plays.
+    /// Seeks and plays, then plays half a second in frames of the window, so meters and what
+    /// eases move as they do.
     fn play_from(&mut self, tick: Ticks, cx: &mut HeadlessAppContext) -> Result<()> {
         cx.update(|cx| {
             self.session.update(cx, |session, _| {
@@ -379,630 +190,52 @@ impl Opened {
                 session.engine().play();
             })
         });
-        for _ in 0..1000 {
-            self.advance(64, cx);
-            if cx.update(|cx| self.session.read(cx).playhead().read(cx).playing) {
-                return Ok(());
-            }
+        for _ in 0..30 {
+            self.advance(800, cx);
+            std::thread::sleep(Duration::from_millis(16));
+            cx.update_window(self.window.into(), |_, window, _| window.refresh())?;
+            cx.run_until_parked();
         }
-        anyhow::bail!("the engine did not start to play")
+        Ok(())
     }
 
-    fn arrangement_view(&self, cx: &mut HeadlessAppContext) -> Result<Entity<ArrangementView>> {
-        let view = cx.update(|cx| self.window.read(cx).map(|shell| shell.main_view().cloned()))?;
-        let view = view.context("the window shows no main view")?;
-        view.downcast::<ArrangementView>()
-            .ok()
-            .context("not the arrangement")
-    }
-
-    fn timeline_view(
-        &self,
-        cx: &mut HeadlessAppContext,
-    ) -> Result<Entity<arrangement::view::Timeline>> {
-        let view = self.arrangement_view(cx)?;
-        Ok(cx.update(|cx| view.read(cx).timeline().clone()))
-    }
-
-    /// Selects a clip and opens the note editor for it, as enter does.
-    fn open_editor(
-        &self,
-        clip: &InstanceId,
-        cx: &mut HeadlessAppContext,
-    ) -> Result<Entity<NoteEditor>> {
-        let view = self.arrangement_view(cx)?;
-        let timeline = self.timeline_view(cx)?;
-        let instance = cx.update(|cx| self.session.read(cx).project().resolve::<Clip>(clip));
-        let instance = instance.context("no such clip")?;
+    /// One real event, and the frame it causes.
+    fn event(&self, event: PlatformInput, cx: &mut HeadlessAppContext) -> Result<()> {
         cx.update_window(self.window.into(), |_, window, cx| {
-            timeline.update(cx, |timeline, cx| {
-                timeline.select_clip(Some(clip.clone()), cx)
-            });
-            view.update(cx, |view, cx| view.open_editor(instance, window, cx));
+            window.dispatch_event(event, cx);
         })?;
         cx.run_until_parked();
-        let editor = cx.update(|cx| view.read(cx).editor().cloned());
-        editor.context("the editor did not open")
-    }
-
-    /// A real click on the name line of a track header, which selects the track and opens its
-    /// panel. The focus is then on the timeline, from the mouse, so no ring shows.
-    fn click_track_header(&self, row: f32, cx: &mut HeadlessAppContext) -> Result<()> {
-        let position = point(
-            px(HEADER_WIDTH / 2.),
-            px(48. + RULER_HEIGHT + TRACK_HEIGHT * row + NAME_MIDDLE),
-        );
-        self.drag(position, point(px(0.), px(0.)), 0, cx)?;
-        let view = self.arrangement_view(cx)?;
-        let open = cx.update(|cx| view.read(cx).track_panel().is_some());
-        anyhow::ensure!(open, "the track panel did not open");
         Ok(())
     }
 
     /// One key, and a frame, as the screen draws one between two keys: a focus ring follows
     /// the focus that a frame sees.
     fn key(&self, keys: &str, cx: &mut HeadlessAppContext) -> Result<()> {
-        let keystroke = gpui::Keystroke::parse(keys)?;
         let key_down = PlatformInput::KeyDown(gpui::KeyDownEvent {
-            keystroke,
+            keystroke: gpui::Keystroke::parse(keys)?,
             is_held: false,
             prefer_character_input: false,
         });
-        cx.update_window(self.window.into(), |_, window, cx| {
-            window.dispatch_event(key_down, cx);
-        })?;
-        cx.run_until_parked();
+        self.event(key_down, cx)?;
         cx.capture_screenshot(self.window.into())?;
         Ok(())
     }
 
-    /// One real mouse event, and the frame it causes. Returns how long both took.
-    fn mouse(&self, event: PlatformInput, cx: &mut HeadlessAppContext) -> Result<Duration> {
-        let started = Instant::now();
-        cx.update_window(self.window.into(), |_, window, cx| {
-            window.dispatch_event(event, cx);
-        })?;
-        cx.run_until_parked();
-        Ok(started.elapsed())
-    }
-
-    /// The left button down at `from` and moved to `to` in four moves, and not let go, for a
-    /// snapshot of a drag in progress.
-    fn press_and_move(
-        &self,
-        from: Point<Pixels>,
-        to: Point<Pixels>,
-        cx: &mut HeadlessAppContext,
-    ) -> Result<()> {
-        let modifiers = Modifiers::default();
-        self.mouse(
-            PlatformInput::MouseMove(MouseMoveEvent {
-                position: from,
-                pressed_button: None,
-                modifiers,
-            }),
-            cx,
-        )?;
-        self.mouse(
-            PlatformInput::MouseDown(MouseDownEvent {
-                position: from,
-                modifiers,
-                button: MouseButton::Left,
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        )?;
-        for step in 1..=4 {
-            let part = step as f32 / 4.;
-            self.press_and_move_to(from + (to - from) * part, cx)?;
-        }
-        Ok(())
-    }
-
-    /// One move with the left button down.
-    fn press_and_move_to(&self, to: Point<Pixels>, cx: &mut HeadlessAppContext) -> Result<()> {
-        self.mouse(
-            PlatformInput::MouseMove(MouseMoveEvent {
-                position: to,
-                pressed_button: Some(MouseButton::Left),
-                modifiers: Modifiers::default(),
-            }),
-            cx,
-        )?;
-        Ok(())
-    }
-
-    fn release(&self, at: Point<Pixels>, cx: &mut HeadlessAppContext) -> Result<()> {
-        self.mouse(
-            PlatformInput::MouseUp(MouseUpEvent {
-                position: at,
-                modifiers: Modifiers::default(),
-                button: MouseButton::Left,
-                click_count: 1,
-            }),
-            cx,
-        )?;
-        Ok(())
-    }
-
-    /// A drag with the left button from `from`, one mouse move per step of `step`, and the
-    /// time of each move. The button comes up where the drag ends.
-    fn drag(
-        &self,
-        from: Point<Pixels>,
-        step: Point<Pixels>,
-        moves: usize,
-        cx: &mut HeadlessAppContext,
-    ) -> Result<Vec<Duration>> {
-        let modifiers = Modifiers::default();
-        let moved = |position, pressed_button| {
-            PlatformInput::MouseMove(MouseMoveEvent {
-                position,
-                pressed_button,
-                modifiers,
-            })
-        };
-        self.mouse(moved(from, None), cx)?;
-        self.mouse(
-            PlatformInput::MouseDown(MouseDownEvent {
-                position: from,
-                modifiers,
-                button: MouseButton::Left,
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        )?;
-        let mut position = from;
-        let mut times = Vec::new();
-        for _ in 0..moves {
-            position += step;
-            times.push(self.mouse(moved(position, Some(MouseButton::Left)), cx)?);
-        }
-        self.mouse(
-            PlatformInput::MouseUp(MouseUpEvent {
-                position,
-                modifiers,
-                button: MouseButton::Left,
-                click_count: 1,
-            }),
-            cx,
-        )?;
-        Ok(times)
+    /// The view of the card of `instance` that the main page shows.
+    fn card<V: 'static>(&self, instance: &str, cx: &mut HeadlessAppContext) -> Result<Entity<V>> {
+        let instance = InstanceId::new(instance)?;
+        cx.update(|cx| {
+            let shell = self.window.read(cx)?;
+            let page = shell.main_view().context("no main view")?;
+            let view = sound_typescript::embedded_view(page, &instance, cx);
+            let view = view.with_context(|| format!("no card of {instance}"))?;
+            view.downcast::<V>()
+                .map_err(|_| anyhow::anyhow!("the card of {instance} is of another view"))
+        })
     }
 }
 
-/// Puts a plugin record in the `instrument` slot of a track, as picking one does.
-fn set_plugin(
-    project: &mut Project,
-    track: &str,
-    format: PluginFormat,
-    plugin_id: &str,
-    state_asset: &str,
-) -> Result<()> {
-    let slot = InstanceId::new(&format!("arrangement/{track}/instrument"))?;
-    let mut changes = Changes::new();
-    changes.create(
-        slot,
-        PluginRecord::new(format, plugin_id, state_asset).context("a plugin record")?,
-    );
-    project.commit("Choose a plugin", changes)?;
-    Ok(())
-}
-
-/// Puts a plugin in each of these effect slots of a track, in this order. One group each,
-/// which is what an interface does: `add_effect` reads the track record of the project and not
-/// the group being built.
-fn set_effects(project: &mut Project, track: &str, names: &[&str]) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    for name in names {
-        let track = project
-            .resolve::<TrackState>(&id)
-            .context("the track is not there")?;
-        let mut changes = Changes::new();
-        let slot = arrangement::add_effect(project, &mut changes, &track, name)?;
-        let record =
-            PluginRecord::new(PluginFormat::Clap, test_clap_plugin::PLUGIN_ID, slot.name());
-        changes.create(slot, record.context("a plugin record")?);
-        project.commit(&format!("Add {name}"), changes)?;
-    }
-    Ok(())
-}
-
-/// Puts a filter after the instrument of a track, as `Add effect` does.
-fn add_filter(project: &mut Project, track: &str) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "Filter")?;
-    let sound = FilterState {
-        cutoff_hz: 1_200.0,
-        resonance: 0.3,
-        ..FilterState::default()
-    };
-    changes.create(slot, sound);
-    project.commit("Add Filter", changes)?;
-    Ok(())
-}
-
-/// Puts an EQ after the instrument of a track, as `Add effect` does, with the bands of the
-/// mockup.
-fn add_eq(project: &mut Project, track: &str) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "EQ")?;
-    let band = |shape, frequency_hz, gain_db, q| Band {
-        on: true,
-        shape,
-        frequency_hz,
-        gain_db,
-        q,
-    };
-    let sound = EqState {
-        bands: [
-            band(Shape::LowCut, 60.0, 0.0, 0.71),
-            band(Shape::Bell, 250.0, 2.5, 1.0),
-            band(Shape::Bell, 900.0, -4.5, 2.0),
-            band(Shape::HighShelf, 6_000.0, 3.0, 0.71),
-        ],
-        output_gain_db: 0.0,
-    };
-    changes.create(slot, sound);
-    project.commit("Add EQ", changes)?;
-    Ok(())
-}
-
-/// Puts a reverb after the instrument of a track, as `Add effect` does, with the values of the
-/// mockup and `mix`.
-fn add_reverb(project: &mut Project, track: &str, mix: f32) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "Reverb")?;
-    let sound = ReverbState {
-        decay_seconds: 2.4,
-        size: 0.6,
-        low_cut_hz: 200.0,
-        mix,
-        ..ReverbState::default()
-    };
-    changes.create(slot, sound);
-    project.commit("Add Reverb", changes)?;
-    Ok(())
-}
-
-/// Puts a saturator after the instrument of a track, as `Add effect` does, driven so that its
-/// curve bends well inside the display.
-fn add_saturator(project: &mut Project, track: &str) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "Saturator")?;
-    let sound = SaturatorState {
-        curve: Curve::Tube,
-        drive_db: 18.0,
-        tone_db: -2.0,
-        mix: 0.8,
-        ..SaturatorState::default()
-    };
-    changes.create(slot, sound);
-    project.commit("Add Saturator", changes)?;
-    Ok(())
-}
-
-/// Puts a delay after the instrument of a track, as `Add effect` does: a dotted eighth.
-fn add_delay(project: &mut Project, track: &str) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "Delay")?;
-    let sound = DelayState {
-        feel: Feel::Dotted,
-        feedback: 0.5,
-        ..DelayState::default()
-    };
-    changes.create(slot, sound);
-    project.commit("Add Delay", changes)?;
-    Ok(())
-}
-
-/// Puts a compressor after the effects of a track, as `Add effect` does.
-fn add_compressor(project: &mut Project, track: &str, sound: CompressorState) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "Compressor")?;
-    changes.create(slot, sound);
-    project.commit("Add Compressor", changes)?;
-    Ok(())
-}
-
-/// Puts a limiter after the effects of a track, as `Add effect` does.
-fn add_limiter(project: &mut Project, track: &str, sound: LimiterState) -> Result<()> {
-    let id = InstanceId::new(&format!("arrangement/{track}"))?;
-    let track = project
-        .resolve::<TrackState>(&id)
-        .context("the track is not there")?;
-    let mut changes = Changes::new();
-    let slot = arrangement::add_effect(project, &mut changes, &track, "Limiter")?;
-    changes.create(slot, sound);
-    project.commit("Add Limiter", changes)?;
-    Ok(())
-}
-
-/// Where the cards of a panel and the value lines in it are drawn, read from the pixels of a
-/// snapshot, in points from the top of the window. The check of "aligned" is of what the
-/// screen shows, not of the constants the layout was built from.
-#[derive(Debug)]
-struct PanelLines {
-    /// The top and the height of every card wholly in view, left to right.
-    cards: Vec<(f32, f32)>,
-    /// The left edge of each of those cards.
-    lefts: Vec<f32>,
-    /// The value line of the first row of the last column of each of those cards.
-    row_1: Vec<f32>,
-    /// The value line of the second row of each: the lowest line of text in the card.
-    row_2: Vec<f32>,
-    /// The same two lines in the header column: pan, when there is one, and the readout of
-    /// the volume.
-    strip_row_1: Option<f32>,
-    strip_row_2: f32,
-}
-
-/// Reads [`PanelLines`] from a snapshot at scale 2. `pixel` gives the colour at a pixel.
-fn panel_lines(pixel: impl Fn(u32, u32) -> [u8; 3]) -> Result<PanelLines> {
-    use arrangement::view::track_panel::PANEL_HEIGHT;
-    use sound_ui::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
-    use sound_ui::components::device_card::{CARD_PADDING, HEADER_HEIGHT};
-    const SCALE: f32 = 2.;
-    let at = |points: f32| (points * SCALE) as u32;
-    let (width, bottom) = (at(WINDOW_WIDTH), at(WINDOW_HEIGHT));
-    let (panel_top, header) = (at(WINDOW_HEIGHT - PANEL_HEIGHT), at(HEADER_WIDTH));
-    // The rack between two cards, above them.
-    let background = pixel(header + 8, panel_top + 8);
-    let differs = |x: u32, y: u32| {
-        let colour = pixel(x, y);
-        (0..3).any(|channel| colour[channel].abs_diff(background[channel]) > 3)
-    };
-    // Text is light on the dark cards: labels, values and the lines under a display.
-    let is_text = |x: u32, y: u32| pixel(x, y).iter().any(|channel| *channel > 110);
-    // The value line in a box: the lowest row of it with text across, which leaves out the
-    // tail of a letter such as `Q` that reaches below the line.
-    let value_line = |left: u32, right: u32, top: u32, below: u32| -> Option<f32> {
-        let counts = (top..below)
-            .map(|y| (y, (left..right).filter(|x| is_text(*x, y)).count()))
-            .collect::<Vec<_>>();
-        let most = counts.iter().map(|(_, count)| *count).max()?;
-        let line = counts
-            .iter()
-            .rev()
-            .find(|(_, count)| *count * 10 >= most * 3 && *count > 0)?;
-        Some(line.0 as f32 / SCALE)
-    };
-
-    // The cards cross a row in their headers, above the titles.
-    let row = at(WINDOW_HEIGHT - PANEL_HEIGHT + 16.);
-    let mut runs = Vec::new();
-    let mut start = None;
-    for x in header + 2..width {
-        match (differs(x, row), start) {
-            (true, None) => start = Some(x),
-            (false, Some(from)) => {
-                runs.push((from, x - 1));
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    // Wholly in view: not cut at the left of the rack, and clear of the fade at its right.
-    let cards = runs
-        .into_iter()
-        .filter(|(left, right)| right - left > 200 && *left > header + 8 && *right + 100 < width)
-        .collect::<Vec<_>>();
-    anyhow::ensure!(!cards.is_empty(), "no card wholly in view");
-
-    let mut lines = PanelLines {
-        cards: Vec::new(),
-        lefts: Vec::new(),
-        row_1: Vec::new(),
-        row_2: Vec::new(),
-        strip_row_1: None,
-        strip_row_2: 0.,
-    };
-    for (left, right) in cards {
-        // Down the left padding of the card, where nothing is drawn on it, from under the
-        // hairline at the top of the panel.
-        let column = left + 8;
-        let rows = (panel_top + at(4.)..bottom).filter(|y| differs(column, *y));
-        let top = rows.clone().min().context("a card with no top")?;
-        let last = rows.max().context("a card with no bottom")?;
-        lines
-            .cards
-            .push((top as f32 / SCALE, (last + 1 - top) as f32 / SCALE));
-        lines.lefts.push(left as f32 / SCALE);
-        // The rows of cells start under the header, inside the border of one point.
-        let row_1 = top + at(1. + HEADER_HEIGHT);
-        let row_2 = row_1 + at(ROW_HEIGHT);
-        let last_column = right - at(CARD_PADDING + CELL_WIDTH);
-        let value = |row: u32| row + at(VALUE_LINE - 4.);
-        lines.row_1.push(
-            value_line(
-                last_column,
-                right - at(CARD_PADDING),
-                value(row_1),
-                row_2 - at(2.),
-            )
-            .context("no value line in row 1")?,
-        );
-        lines.row_2.push(
-            value_line(left + 2, right - 2, value(row_2), last)
-                .context("no value line in row 2")?,
-        );
-    }
-    // The header column, on the rows of the cards: pan right of the volume in row 1, the
-    // readout of the volume under it in row 2.
-    let (first_top, _) = lines.cards[0];
-    let row_1 = at(first_top + 1. + HEADER_HEIGHT);
-    let row_2 = row_1 + at(ROW_HEIGHT);
-    let pan_left = at(76.);
-    lines.strip_row_1 = value_line(
-        pan_left,
-        header - 8,
-        row_1 + at(VALUE_LINE - 4.),
-        row_2 - at(2.),
-    );
-    lines.strip_row_2 = value_line(0, pan_left, row_2 + at(VALUE_LINE - 4.), bottom - 2)
-        .context("no readout under the volume")?;
-    Ok(lines)
-}
-
-fn print_times(what: &str, mut times: Vec<Duration>) {
-    times.sort();
-    let mean = times.iter().sum::<Duration>() / times.len().max(1) as u32;
-    let worst = times.last().copied().unwrap_or_default();
-    let median = times.get(times.len() / 2).copied().unwrap_or_default();
-    println!("{what}: mean {mean:?}, median {median:?}, worst {worst:?}");
-}
-
-fn note(start: u64, length: u64, pitch: u8) -> Result<Note> {
-    Ok(Note {
-        start: Ticks(start),
-        length: Length::new(Ticks(length))?,
-        pitch: Pitch::new(pitch)?,
-        velocity: Velocity::new(100)?,
-    })
-}
-
-fn clip(start_bar: u64, bars: u64, notes: Vec<Note>) -> Result<Clip> {
-    Ok(Clip::new(
-        Ticks(start_bar * BAR),
-        Length::new(Ticks(bars * BAR))?,
-        notes,
-    ))
-}
-
-fn add_track(
-    project: &mut Project,
-    name: &str,
-    colour: Colour,
-    clips: Vec<Clip>,
-) -> Result<Instance<TrackState>> {
-    let arrangement = main_arrangement(project).context("no arrangement")?;
-    let mut changes = Changes::new();
-    let synth = SynthState::default();
-    let track =
-        arrangement::add_track(project, &mut changes, arrangement.id(), name, colour, synth)?;
-    for (index, clip) in clips.into_iter().enumerate() {
-        let id = track.id().child(&format!("clip-{index:03}"))?;
-        changes.create(id, clip);
-    }
-    project.commit("Add track", changes)?;
-    Ok(track)
-}
-
-/// A short piece: chords, a bass line and a melody with a gap, over twelve bars.
-fn piece(project: &mut Project) -> Result<()> {
-    let mut chords = Vec::new();
-    for (bar, root) in [(0, 57), (1, 53), (2, 48), (3, 55)] {
-        for interval in [0, 4, 7, 12] {
-            chords.push(note(bar * BAR, BAR - 120, root + interval)?);
-        }
-    }
-    let mut bass = Vec::new();
-    for (bar, root) in [(0, 33), (1, 29), (2, 36), (3, 31)] {
-        for eighth in 0..8 {
-            let pitch = if eighth % 4 == 3 { root + 12 } else { root };
-            bass.push(note(bar * BAR + eighth * 480, 360, pitch)?);
-        }
-    }
-    let mut melody = Vec::new();
-    let line = [
-        76, 74, 72, 74, 76, 79, 76, 72, 69, 72, 74, 72, 71, 67, 69, 71,
-    ];
-    for (index, pitch) in line.into_iter().enumerate() {
-        melody.push(note(index as u64 * 960, 720, pitch)?);
-    }
-
-    let track = main_arrangement(project)
-        .and_then(|arrangement| arrangement::tracks(project, arrangement.id()).pop())
-        .context("the project has a track")?
-        .0;
-    let mut changes = Changes::new();
-    for (index, start_bar) in [0, 4, 8].into_iter().enumerate() {
-        let id = track.id().child(&format!("chords-{index}"))?;
-        changes.create(id, clip(start_bar, 4, chords.clone())?);
-    }
-    project.commit("Add chords", changes)?;
-    let bass_clips = vec![
-        clip(0, 4, bass.clone())?,
-        clip(4, 4, bass.clone())?,
-        clip(8, 4, bass)?,
-    ];
-    add_track(project, "Bass", Colour::Peach, bass_clips)?;
-    let melody_clips = vec![
-        clip(4, 4, melody.clone())?,
-        clip(10, 2, melody[..8].to_vec())?,
-    ];
-    add_track(
-        project,
-        "A melody with a name too long for its header",
-        Colour::Mauve,
-        melody_clips,
-    )?;
-    Ok(())
-}
-
-/// A project with one track and the clip of a recorded take, as a recording leaves it.
-fn recorded(project: &mut Project) -> Result<()> {
-    let take = generated_take::generated_take(8);
-    let name = take.write(project.assets())?;
-    let clock = project.clock().clone();
-    let mut clip = take
-        .clip(|time_us| clock.tick_at_micros(time_us))
-        .context("a take with notes in it")?;
-    clip.take = Some(name);
-    let track = main_arrangement(project)
-        .and_then(|arrangement| arrangement::tracks(project, arrangement.id()).pop())
-        .context("the project has a track")?
-        .0;
-    let mut changes = Changes::new();
-    changes.create(track.id().child("take")?, clip);
-    project.commit("Record", changes)?;
-    Ok(())
-}
-
-/// The scale project of the milestone: clip `c` of track `t` is one bar at bar `8c + t mod 8`.
-fn scale(project: &mut Project) -> Result<()> {
-    for track in 0..100_u64 {
-        let pitch = 36 + (track % 40) as u8;
-        let notes: Vec<Note> = (0..4)
-            .map(|beat| note(beat * 960, 900, pitch + beat as u8 * 3))
-            .collect::<Result<_>>()?;
-        let clips = (0..100).map(|index| clip(index * 8 + track % 8, 1, notes.clone()));
-        let colour = Colour::ALL[track as usize % Colour::ALL.len()];
-        add_track(
-            project,
-            &format!("Track {}", track + 2),
-            colour,
-            clips.collect::<Result<_>>()?,
-        )?;
-    }
-    Ok(())
-}
+type Save<'a> = dyn Fn(&mut HeadlessAppContext, AnyWindowHandle, &str) -> Result<()> + 'a;
 
 fn main() -> Result<()> {
     // The offscreen renderer of GPUI is Metal's. Other platforms have none.
@@ -1023,156 +256,76 @@ fn main() -> Result<()> {
     );
     cx.update(sound_ui::init);
     cx.update(runtime::window::bind_keys);
-    let save = |cx: &mut HeadlessAppContext, opened: &Opened, name: &str| -> Result<()> {
+    let save = |cx: &mut HeadlessAppContext, window: AnyWindowHandle, name: &str| -> Result<()> {
         let path = out_dir.join(format!("{name}.png"));
-        cx.capture_screenshot(opened.window.into())?.save(&path)?;
+        cx.capture_screenshot(window)?.save(&path)?;
         println!("wrote {}", path.display());
         Ok(())
     };
 
-    let opened = Opened::open(&mut cx, |_| Ok(()), None)?;
-    save(&mut cx, &opened, "default")?;
+    let opened = Opened::open(&mut cx, &[])?;
+    save(&mut cx, opened.window.into(), "default")?;
 
-    // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
-    // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
-    // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation`,
-    // `=automated`, `=plugin`, `=returns` or `=wavetable` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
-    if runs("agent") {
-        agent::snapshots(&mut cx, &save)?;
-    }
-    if runs("audio") {
-        audio::snapshots(&mut cx, &save)?;
-    }
-    if runs("sampler") {
-        sampler::snapshots(&mut cx, &save)?;
-    }
-    if runs("drums") {
-        drums::snapshots(&mut cx, &save)?;
-    }
-    if runs("saturator") {
-        let opened = Opened::new(&mut cx, |project| {
-            piece(project)?;
-            add_saturator(project, "bass")
-        })?;
-        opened.click_track_header(1., &mut cx)?;
-        save(&mut cx, &opened, "track-panel-saturator")?;
-        drop(opened);
-    }
-    if runs("utility") {
-        utility::snapshots(&mut cx, &save)?;
-    }
-    if runs("modulation") {
-        modulation::snapshots(&mut cx, &save)?;
-    }
-    if runs("lanes") {
-        lanes::snapshots(&mut cx, &save)?;
-    }
-    if runs("automation") {
-        automation::snapshots(&mut cx, &save)?;
+    if runs("cards") {
+        cards::snapshots(&mut cx, &save)?;
     }
     if runs("wavetable") {
         wavetable::snapshots(&mut cx, &save)?;
     }
-    if runs("automated") {
-        automated::snapshots(&mut cx, &save)?;
+    if runs("agent") {
+        agent::snapshots(&mut cx, &save)?;
     }
-    if runs("plugin") {
-        plugin::snapshots(&mut cx, &save)?;
+    if runs("typescript") {
+        typescript::snapshots(&mut cx, &save)?;
     }
-    if runs("returns") {
-        returns::snapshots(&mut cx, &save)?;
+    if runs("look") {
+        look::snapshots(&mut cx, &save)?;
+    }
+    if runs("timeline") {
+        look::timeline::snapshots(&mut cx, &save)?;
+    }
+    if runs("takes") {
+        look::takes::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());
     }
 
-    let mut opened = Opened::new(&mut cx, piece)?;
-    let timeline = opened.timeline_view(&mut cx)?;
-    opened.play_from(Ticks(5 * BAR + 1440), &mut cx)?;
-    // Long enough for the master meter at the right end of the transport to show the level.
-    opened.listen(0.3, &mut cx)?;
-    let selected = InstanceId::new("arrangement/bass/clip-001")?;
-    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(selected), cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "piece")?;
+    templates(&mut cx, &save)?;
+    notices(&mut cx, &save)?;
+    menu(&mut cx, opened, &save)?;
+    Ok(())
+}
 
-    // The transport with the tempo and the click, off and on. The click is a switch on the
-    // engine, not project state: nothing is written and there is no undo step.
-    save(&mut cx, &opened, "transport-click-off")?;
-    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
+/// The window of the templates, as "New project…" opens it.
+fn templates(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
+    cx.update(|cx| choose_template(Rc::new(|_, _| {}), cx));
     cx.run_until_parked();
-    anyhow::ensure!(
-        cx.update(|cx| transport.read(cx).click_is_on()),
-        "the click did not come on"
-    );
-    save(&mut cx, &opened, "transport-click-on")?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
-    cx.run_until_parked();
-    anyhow::ensure!(
-        cx.update(|cx| transport.read(cx).computer_keys_are_on()),
-        "the computer keys did not come on"
-    );
-    save(&mut cx, &opened, "transport-keys-on")?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
-
-    // Recording: the record control in red, next to play and stop, and the take on the
-    // selected track growing to the playhead with what was played so far, the last key held.
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
-    cx.run_until_parked();
-    anyhow::ensure!(
-        cx.update(|cx| transport.read(cx).is_recording()),
-        "the recording did not start"
-    );
-    let input = cx.update(|cx| transport.read(cx).midi_input());
-    let input = input.context("no MIDI input")?;
-    let key = |pitch: u8| Pitch::new(pitch).context("no pitch");
-    let velocity = Velocity::new(96).context("no velocity")?;
-    for pitch in [40, 47, 43, 50, 45] {
-        let pitch = key(pitch)?;
-        input.send(Played::On { pitch, velocity });
-        opened.listen(0.25, &mut cx)?;
-        if pitch.number() != 45 {
-            input.send(Played::Off {
-                pitch,
-                velocity: 64,
-            });
-        }
-        cx.update(|cx| transport.update(cx, |pill, cx| pill.poll_input(cx)));
-    }
-    save(&mut cx, &opened, "transport-recording")?;
-    input.send(Played::Off {
-        pitch: key(45)?,
-        velocity: 64,
+    let picker = cx.update(|cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<TemplatePicker>())
     });
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
-    cx.update(|cx| opened.session.update(cx, |session, cx| session.undo(cx)));
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
+    let picker = picker.context("the templates did not open")?;
+    save(cx, picker.into(), "new-project")?;
+    cx.update_window(picker.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
+    Ok(())
+}
 
-    // The two notices, top-right: an edit that failed, and a file that is not live, here
-    // the record of a plugin this machine does not have.
-    let notices = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        set_plugin(
-            project,
-            "bass",
-            PluginFormat::Clap,
-            "com.example.nowhere",
-            "bass",
-        )
-    })?;
-    // A clip with a note after its end, which the clip tool refuses.
-    let wrong = clip(0, 1, vec![note(2 * BAR, 480, 60)?])?;
-    let id = InstanceId::new("arrangement/bass/clip-wrong")?;
+/// The notices, top-right: an edit that failed, a file that is not live, here the record of a
+/// plugin this machine does not have, and an update that is ready.
+fn notices(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
+    let missing = r#"{"tool": "plugin", "state": {"format": "clap", "plugin_id": "com.example.nowhere", "state_asset": "bass"}}"#;
+    let files = rack::rack_files(&[("instrument", missing)]);
+    let notices = Opened::open(cx, &files)?;
     cx.update(|cx| {
         notices.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.create(id, wrong);
-                project.commit("Add clip", changes)
+                let mut edit = project.begin("Wrong");
+                let wrong = |state: &mut serde_json::Value| state["order"] = 3.into();
+                project.update_json(&mut edit, &InstanceId::new("rack")?, wrong)?;
+                project.finish(edit)
             })
         })
     });
@@ -1180,7 +333,6 @@ fn main() -> Result<()> {
         cx.update(|cx| notices.session.read(cx).notice().is_some()),
         "the edit did not fail"
     );
-    // And an update that is ready, which the window learns of from the check at its start.
     // Set in an update of the window, which draws a frame after it.
     let version = runtime::update::Version::parse("0.2.0").context("no version")?;
     cx.update_window(notices.window.into(), |_, _, cx| {
@@ -1190,18 +342,24 @@ fn main() -> Result<()> {
         })
     })?;
     cx.run_until_parked();
-    save(&mut cx, &notices, "notices")?;
+    save(cx, notices.window.into(), "notices")?;
     drop(notices);
     cx.update(|cx| cx.remove_global::<runtime::update::Ready>());
+    Ok(())
+}
 
-    // The menu after an edit, so that undo has something to name.
+/// The project menu after an edit, so that undo has something to name, with recent projects and
+/// the devices of a machine.
+fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> {
     cx.update(|cx| {
         opened.session.update(cx, |session, cx| {
-            let arrangement = main_arrangement(session.project()).context("no arrangement")?;
-            session.edit(cx, |project| runtime::add_track(project, &arrangement));
-            anyhow::Ok(())
+            session.edit(cx, |project| {
+                let mut changes = sound_core::Changes::new();
+                changes.create(InstanceId::new("room")?, reverb::ReverbState::default());
+                project.commit("Add reverb", changes)
+            })
         })
-    })?;
+    });
     let menu = cx.update(|cx| {
         let shell = opened.window.read(cx)?;
         let project_menu = shell.project_menu().clone();
@@ -1239,1095 +397,25 @@ fn main() -> Result<()> {
     cx.run_until_parked();
     // Up from the bottom to "Open recent", and right opens its submenu.
     for key in ["up", "up", "up", "up", "right"] {
-        opened.key(key, &mut cx)?;
+        opened.key(key, cx)?;
     }
-    save(&mut cx, &opened, "menu")?;
+    save(cx, opened.window.into(), "menu")?;
     // On up to the output device, which opens the devices of the machine.
     for key in ["left", "up", "up", "up", "up", "right"] {
-        opened.key(key, &mut cx)?;
+        opened.key(key, cx)?;
     }
-    save(&mut cx, &opened, "menu-devices")?;
-    drop(opened);
-
-    // Editing the arrangement: two tempo changes in the ruler, three clips selected, the snap
-    // setting, and the name field of a track.
-    let mut editing = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        let changes = [(0, 120.0), (4 * BAR, 96.0), (8 * BAR, 132.5)];
-        let changes = changes.map(|(tick, bpm)| {
-            anyhow::Ok(TempoChange {
-                tick: Ticks(tick),
-                bpm: Tempo::from_bpm(bpm)?,
-            })
-        });
-        let changes = changes.into_iter().collect::<Result<Vec<_>>>()?;
-        let mut edit = Changes::new();
-        edit.set_tempo_map(TempoMap::new(TimeSignature::default(), changes)?);
-        project.commit("Tempo", edit)?;
-        Ok(())
-    })?;
-    let timeline = editing.timeline_view(&mut cx)?;
-    let selected = ["arrangement/bass/clip-001", "arrangement/bass/clip-002"];
-    let mut selected = selected
-        .into_iter()
-        .map(InstanceId::new)
-        .collect::<Result<Vec<_>, _>>()?;
-    selected.push(InstanceId::new(
-        "arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000",
-    )?);
-    let primary = selected.first().cloned();
-    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_clips(selected, primary, cx)));
-    cx.run_until_parked();
-    save(&mut cx, &editing, "arrangement-selection")?;
-
-    // A tempo mark clicked: it is selected and the playhead is on it, so the transport shows
-    // its tempo.
-    let mark = point(
-        px(HEADER_WIDTH + Viewport::default().x_of(Ticks(4 * BAR)) + 24.),
-        px(48. + RULER_HEIGHT / 2.),
-    );
-    editing.drag(mark, point(px(0.), px(0.)), 0, &mut cx)?;
-    editing.advance(64, &mut cx);
-    anyhow::ensure!(
-        cx.update(|cx| timeline.read(cx).selected_mark()) == Some(RulerMark::Tempo(Ticks(4 * BAR))),
-        "the tempo mark was not hit"
-    );
-    save(&mut cx, &editing, "arrangement-tempo")?;
-
-    let set_loop = |on: bool, cx: &mut HeadlessAppContext| {
-        let looped = Loop {
-            range: Ticks(2 * BAR)..Ticks(6 * BAR),
-            on,
-        };
-        cx.update(|cx| {
-            editing
-                .session
-                .update(cx, |session, cx| session.set_loop(looped, cx))
-        });
-        cx.run_until_parked();
-    };
-    set_loop(true, &mut cx);
-    save(&mut cx, &editing, "arrangement-loop")?;
-    set_loop(false, &mut cx);
-
-    // The snap setting open in the corner above the track headers.
-    let corner = point(px(HEADER_WIDTH - 40.), px(48. + RULER_HEIGHT / 2.));
-    editing.drag(corner, point(px(0.), px(0.)), 0, &mut cx)?;
-    save(&mut cx, &editing, "arrangement-snap")?;
-    editing.key("escape", &mut cx)?;
-
-    // The name field of the bass, open by a double click on its header.
-    let track = cx.update(|cx| {
-        let project = editing.session.read(cx).project();
-        project
-            .resolve::<TrackState>(&InstanceId::new("arrangement/bass")?)
-            .context("no bass")
-    })?;
-    cx.update_window(editing.window.into(), |_, window, cx| {
-        timeline.update(cx, |timeline, cx| timeline.start_rename(track, window, cx));
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &editing, "arrangement-rename")?;
-    editing.key("escape", &mut cx)?;
-
-    // The first track dragged by its header onto the third row, before the button comes up:
-    // the rows have moved, and the ring of a drag shows where it lands. Escape puts it back.
-    let header = |row: f32| {
-        point(
-            px(HEADER_WIDTH / 2.),
-            px(48. + RULER_HEIGHT + TRACK_HEIGHT * row + NAME_MIDDLE),
-        )
-    };
-    editing.press_and_move(header(0.), header(2.), &mut cx)?;
-    anyhow::ensure!(
-        cx.update(|cx| editing.session.read(cx).gesture_open()),
-        "the track drag did not begin"
-    );
-    save(&mut cx, &editing, "arrangement-track-drag")?;
-    editing.key("escape", &mut cx)?;
-    editing.release(header(2.), &mut cx)?;
-
-    // Sections behind the bar numbers, two of them where a tempo changes, the chorus clicked.
-    let sections = serde_json::from_str(
-        r#"[{"bar": 1, "name": "Intro"}, {"bar": 5, "name": "Verse"}, {"bar": 9, "name": "Chorus"}]"#,
-    )?;
-    cx.update(|cx| {
-        editing.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set_sections(sections);
-                project.commit("Sections", changes)
-            })
-        })
-    });
-    cx.run_until_parked();
-    let in_ruler = |tick: u64, right: f32| {
-        let x = HEADER_WIDTH + Viewport::default().x_of(Ticks(tick)) + right;
-        point(px(x), px(48. + RULER_HEIGHT / 2.))
-    };
-    editing.drag(in_ruler(8 * BAR, 30.), point(px(0.), px(0.)), 0, &mut cx)?;
-    anyhow::ensure!(
-        matches!(
-            cx.update(|cx| timeline.read(cx).selected_mark()),
-            Some(RulerMark::Section(_))
-        ),
-        "the name of the chorus was not hit"
-    );
-    save(&mut cx, &editing, "arrangement-sections")?;
-
-    // The menu of a right click in the ruler, past the middle of bar 7, with the keys on its
-    // time signature row: the ghost shows it lands on bar 8.
-    let menu_at = in_ruler(6 * BAR + 2000, 0.);
-    editing.mouse(
-        PlatformInput::MouseDown(MouseDownEvent {
-            position: menu_at,
-            modifiers: Modifiers::default(),
-            button: MouseButton::Right,
-            click_count: 1,
-            first_mouse: false,
-        }),
-        &mut cx,
-    )?;
-    editing.mouse(
-        PlatformInput::MouseUp(MouseUpEvent {
-            position: menu_at,
-            modifiers: Modifiers::default(),
-            button: MouseButton::Right,
-            click_count: 1,
-        }),
-        &mut cx,
-    )?;
-    editing.key("down", &mut cx)?;
-    editing.key("down", &mut cx)?;
-    save(&mut cx, &editing, "arrangement-ruler-menu")?;
-    editing.key("escape", &mut cx)?;
-    drop(editing);
-
-    // Time signatures that change: two bars of 4/4, then a new one almost every bar as in the
-    // Danse sacrale. The ruler shows each where it starts, and the editor has the beats of
-    // each bar.
-    let mut meters = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        let time_signatures = serde_json::from_str(
-            r#"[
-                {"signature": "4/4", "bars": 2},
-                {"signature": "3/16", "bars": 1},
-                {"signature": "2/16", "bars": 1},
-                {"signature": "3/16", "bars": 1},
-                {"signature": "2/8", "bars": 1},
-                {"signature": "5/16", "bars": 1},
-                {"signature": "7/8", "bars": 2},
-                {"signature": "4/4", "bars": 1}
-            ]"#,
-        )?;
-        let tempo_map = project.project_file().tempo_map.clone();
-        let mut edit = Changes::new();
-        edit.set_tempo_map(tempo_map.with_time_signatures(time_signatures));
-        project.commit("Time signatures", edit)?;
-        Ok(())
-    })?;
-    save(&mut cx, &meters, "arrangement-time-signatures")?;
-    // The 4/4 of bar 10 clicked: selected, and the transport shows it to edit. Two bars of 4/4,
-    // then 3/16, 2/16, 3/16, 2/8, 5/16 and two of 7/8.
-    let bar_ten = Ticks(2 * BAR + 720 + 480 + 720 + 960 + 1200 + 2 * 3360);
-    let label = point(
-        px(HEADER_WIDTH + Viewport::default().x_of(bar_ten) + 36.),
-        px(48. + RULER_HEIGHT / 2.),
-    );
-    let timeline = meters.timeline_view(&mut cx)?;
-    meters.drag(label, point(px(0.), px(0.)), 0, &mut cx)?;
-    meters.advance(64, &mut cx);
-    anyhow::ensure!(
-        cx.update(|cx| timeline.read(cx).selected_mark()) == Some(RulerMark::TimeSignature(10)),
-        "the time signature of bar 10 was not hit"
-    );
-    save(&mut cx, &meters, "arrangement-time-signature-selected")?;
-    let melody =
-        InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
-    meters.open_editor(&melody, &mut cx)?;
-    save(&mut cx, &meters, "editor-time-signatures")?;
-    drop(meters);
-
-    // A recorded take: the menu of its clip offers to fit the tempo to it, and the transport
-    // grows a steadiness control once the fit is there.
-    let mut opened = Opened::new(&mut cx, recorded)?;
-    let timeline = opened.timeline_view(&mut cx)?;
-    let take_clip = InstanceId::new("arrangement/track-1/take")?;
-    cx.update(|cx| {
-        timeline.update(cx, |timeline, cx| {
-            timeline.select_clip(Some(take_clip.clone()), cx)
-        })
-    });
-    cx.run_until_parked();
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        timeline.update(cx, |timeline, cx| timeline.open_clip_menu(window, cx))
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "fit-action")?;
-    let menu = cx.update(|cx| timeline.read(cx).clip_menu().clone());
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        menu.update(cx, |menu, cx| menu.close(window, cx));
-    })?;
-
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let clip = session
-                .project()
-                .resolve::<Clip>(&take_clip)
-                .context("the take clip")?;
-            let clip = session.project().state(&clip).context("its state")?.clone();
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                fit_tempo::fit_take(project, &mut changes, &clip)?;
-                project.commit(fit_tempo::FIT_LABEL, changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    opened.play_from(Ticks(5 * BAR), &mut cx)?;
-    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
-    anyhow::ensure!(
-        cx.update(|cx| transport.read(cx).shown_steadiness(cx)) == Some(0.0),
-        "the transport shows no steadiness"
-    );
-    save(&mut cx, &opened, "fitted")?;
-
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                fit_tempo::set_steadiness(project, &mut changes, 0.6);
-                project.commit(fit_tempo::STEADINESS_LABEL, changes)
-            });
-        })
-    });
-    cx.run_until_parked();
-    save(&mut cx, &opened, "fit-steady")?;
-    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "fit-recording")?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
-    cx.run_until_parked();
-    drop(opened);
-
-    // A project made before the fit existed: the action is at 40 % and says the one edit that
-    // brings it within reach, exactly as an instrument the project cannot load does.
-    let extensions = r#"["arrangement", "instrument", "plugin-host", "tone"]"#;
-    let opened = Opened::without_extensions(&mut cx, extensions, recorded)?;
-    let timeline = opened.timeline_view(&mut cx)?;
-    let take_clip = InstanceId::new("arrangement/track-1/take")?;
-    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(take_clip), cx)));
-    cx.run_until_parked();
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        timeline.update(cx, |timeline, cx| timeline.open_clip_menu(window, cx))
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "fit-action-disabled")?;
-    drop(opened);
-
-    // The note editor on the melody, one note selected, stopped at the start of the clip.
-    let mut opened = Opened::new(&mut cx, piece)?;
-    let melody =
-        InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
-    let editor = opened.open_editor(&melody, &mut cx)?;
-    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_notes(&[5], cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "editor")?;
-    // Velocities of its own, as a take has them, and three notes selected.
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let instance = session.project().resolve::<Clip>(&melody);
-            let instance = instance.context("no melody")?;
-            let mut state = session
-                .project()
-                .state(&instance)
-                .cloned()
-                .context("a clip")?;
-            for (index, note) in state.notes.iter_mut().enumerate() {
-                note.velocity = Velocity::nearest(40 + (index as i64 * 37) % 87);
-            }
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(&instance, state);
-                project.commit("Change velocities", changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_notes(&[4, 5, 6], cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "editor-velocity")?;
-    // A rectangle on empty space, the button still down.
-    let viewport = cx.update(|cx| editor.read(cx).viewport());
-    let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
-    let at = |tick: u64, pitch: u8| -> Result<Point<Pixels>> {
-        let y = roll::y_of(&viewport, Pitch::new(pitch)?) + KEY_HEIGHT / 2.;
-        Ok(point(
-            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
-            px(editor_top + y),
-        ))
-    };
-    let (from, to) = (at(5 * BAR + 200, 82)?, at(6 * BAR + 1900, 70)?);
-    opened.press_and_move(from, to, &mut cx)?;
-    save(&mut cx, &opened, "editor-marquee")?;
-    opened.release(to, &mut cx)?;
-    // The bass, low in the pitch range, as the editor looks after tab gave it the focus.
-    let bass = InstanceId::new("arrangement/bass/clip-001")?;
-    opened.open_editor(&bass, &mut cx)?;
-    // Away and back with the keys, so the focus is one from the keyboard and shows its ring.
-    for keys in ["shift-tab", "tab"] {
-        opened.key(keys, &mut cx)?;
-    }
-    save(&mut cx, &opened, "editor-focus")?;
-
-    // The track panel takes the place of the editor. The bass has a sound of its own, so the
-    // knobs are not all where the defaults are.
-    let bass_synth = InstanceId::new("arrangement/bass/instrument")?;
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let synth = session.project().resolve::<SynthState>(&bass_synth);
-            let synth = synth.context("the bass has no synth")?;
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                let sound = SynthState {
-                    waveform: instrument::Waveform::Square,
-                    cutoff_hz: 480.0,
-                    resonance: 0.4,
-                    decay_seconds: 0.35,
-                    sustain: 0.25,
-                    release_seconds: 0.12,
-                    ..SynthState::default()
-                };
-                changes.set(&synth, sound);
-                project.commit("Change sound", changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    // Playing, so the meter under the volume shows what the bass sends to the master.
-    opened.play_from(Ticks(4 * BAR), &mut cx)?;
-    opened.listen(0.5, &mut cx)?;
-    save(&mut cx, &opened, "track-panel")?;
-    // Solo on the bass: S lights yellow and the other tracks go quiet.
-    let bass = InstanceId::new("arrangement/bass")?;
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let track = session.project().resolve::<TrackState>(&bass);
-            let track = track.context("the bass is not there")?;
-            let mut state = session
-                .project()
-                .state(&track)
-                .cloned()
-                .context("a record")?;
-            state.solo = true;
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(&track, state);
-                project.commit("Solo track", changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    opened.listen(0.2, &mut cx)?;
-    save(&mut cx, &opened, "track-panel-solo")?;
-    // From the timeline, tab goes past the master row to the close control, the volume, the
-    // pan, mute and solo, then the picker and the expand icon of the card, the waveform and
-    // the cutoff.
-    for _ in 0..10 {
-        opened.key("tab", &mut cx)?;
-    }
-    save(&mut cx, &opened, "track-panel-focus")?;
-    drop(opened);
-
-    // The master: its row under the tracks, clicked, and its panel with the volume on its
-    // meter and the limiter. The limiter is pushed 18 dB, so four seconds of the piece show
-    // under the ceiling and the reduction hangs from the top.
-    let mut opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        let arrangement = main_arrangement(project).context("no arrangement")?;
-        let mut state = project.state(&arrangement).cloned().context("a record")?;
-        state.master.limiter.gain_db = 18.0;
-        let mut changes = Changes::new();
-        changes.set(&arrangement, state);
-        project.commit("Push the limiter", changes)?;
-        Ok(())
-    })?;
-    opened.play_from(Ticks(0), &mut cx)?;
-    let row = point(px(HEADER_WIDTH / 2.), px(WINDOW_HEIGHT - 20.));
-    opened.drag(row, point(px(0.), px(0.)), 0, &mut cx)?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let open = cx.update(|cx| view.read(cx).master_panel().is_some());
-    anyhow::ensure!(open, "the master panel did not open");
-    opened.listen(4.2, &mut cx)?;
-    save(&mut cx, &opened, "master-panel")?;
-    let image = cx.capture_screenshot(opened.window.into())?;
-    let master = panel_lines(|x, y| {
-        let [red, green, blue, _] = image.get_pixel(x, y).0;
-        [red, green, blue]
-    })?;
-    drop(opened);
-
-    // The synth with five effects: more than the rack has room for on the screen of the
-    // laptop, so it fades at its right edge.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        set_effects(project, "bass", &["Warmth", "Space", "Air", "Echo", "Room"])
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-synth-effects")?;
-    // The last card runs under the right edge of the window, and there the rack fades to the
-    // window colour: dark at the edge, the card itself 40 pt in, in the blank of its body.
-    let image = cx.capture_screenshot(opened.window.into())?;
-    let red_at = |x: f32| {
-        let y = WINDOW_HEIGHT - 216. + 12. + 32. + 60.;
-        image.get_pixel((x * 2.) as u32, (y * 2.) as u32).0[0]
-    };
-    let (edge, card) = (red_at(WINDOW_WIDTH - 2.), red_at(WINDOW_WIDTH - 45.));
-    anyhow::ensure!(
-        edge < 22 && card > 24,
-        "no fade at the right edge of the rack: {edge} at the edge, {card} on the card"
-    );
-    drop(opened);
-
-    // The built-in filter after the synth, with the values of the mockup, then expanded with
-    // the slope and the LFO.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        add_filter(project, "bass")
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-filter")?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let card = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
-        let card = card.context("the filter has no card")?;
-        card.downcast::<FilterView>()
-            .map_err(|_| anyhow::anyhow!("the second card is not the filter"))
-    })?;
-    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-filter-expanded")?;
-    drop(opened);
-
-    // The built-in EQ after the synth, with the bands of the mockup and band 3 selected, then
-    // expanded with the on and off of each band and the output.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        add_eq(project, "bass")
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let card = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
-        let card = card.context("the EQ has no card")?;
-        card.downcast::<EqView>()
-            .map_err(|_| anyhow::anyhow!("the second card is not the EQ"))
-    })?;
-    cx.update(|cx| card.update(cx, |card, cx| card.select(2, cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-eq")?;
-    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-eq-expanded")?;
-    drop(opened);
-
-    // The built-in reverb after the synth, then expanded.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        add_reverb(project, "bass", 0.25)
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-reverb")?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let card = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
-        let card = card.context("the reverb has no card")?;
-        card.downcast::<ReverbView>()
-            .map_err(|_| anyhow::anyhow!("the second card is not the reverb"))
-    })?;
-    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-reverb-expanded")?;
-    drop(opened);
-
-    // The built-in delay after the synth, then expanded and free in ms.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        add_delay(project, "bass")
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-delay")?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let card = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
-        let card = card.context("the delay has no card")?;
-        card.downcast::<DelayView>()
-            .map_err(|_| anyhow::anyhow!("the second card is not the delay"))
-    })?;
-    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
-    let id = InstanceId::new("arrangement/bass/delay")?;
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let delay = session.project().resolve::<DelayState>(&id);
-            let delay = delay.context("the delay is not there")?;
-            let sound = session.project().state(&delay).copied();
-            let sound = sound.context("its state")?;
-            let free = DelayState {
-                sync: false,
-                time_ms: 120.0,
-                ..sound
-            };
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(&delay, free);
-                project.commit("Change sync", changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-delay-expanded")?;
-    drop(opened);
-
-    // The compressor after the filter, with the values of the mockup but a threshold under the
-    // bass, which peaks at -22 dB, then expanded with knee, makeup, mix and lookahead.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        add_filter(project, "bass")?;
-        let sound = CompressorState {
-            threshold_db: -30.0,
-            ratio: 4.0,
-            attack_ms: 10.0,
-            release_ms: 120.0,
-            ..CompressorState::default()
-        };
-        add_compressor(project, "bass", sound)
-    })?;
-    let mut opened = opened;
-    opened.click_track_header(1., &mut cx)?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let card = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let card = panel.read(cx).device_views().nth(2).flatten().cloned();
-        let card = card.context("the compressor has no card")?;
-        card.downcast::<CompressorView>()
-            .map_err(|_| anyhow::anyhow!("the third card is not the compressor"))
-    })?;
-    // Half a second of the bass, and one look at what the compressor heard and did.
-    opened.play_from(Ticks(0), &mut cx)?;
-    for _ in 0..25 {
-        opened.advance(960, &mut cx);
-    }
-    cx.update(|cx| card.update(cx, |card, cx| card.read_meters(cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-compressor")?;
-    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-compressor-expanded")?;
-    let id = InstanceId::new("arrangement/bass")?;
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let track = session.project().resolve::<TrackState>(&id);
-            let track = track.context("the bass is not there")?;
-            let mut keyed = session
-                .project()
-                .state(&track)
-                .cloned()
-                .context("its state")?;
-            let slot = keyed.effects.last_mut().context("its compressor")?;
-            slot.sidechain = Some(arrangement::Sidechain {
-                track: "track-1".into(),
-                tap: arrangement::Tap::PostFx,
-            });
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(&track, keyed);
-                project.commit("Turn on sidechain", changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-compressor-sidechain")?;
-    drop(opened);
-
-    // The limiter after the synth, pushing the bass, which peaks at -22 dB, into a ceiling of
-    // -6 dB, with four seconds of it on the display.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        let sound = LimiterState {
-            gain_db: 18.0,
-            ceiling_db: -6.0,
-            ..LimiterState::default()
-        };
-        add_limiter(project, "bass", sound)
-    })?;
-    let mut opened = opened;
-    opened.click_track_header(1., &mut cx)?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let card = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
-        let card = card.context("the limiter has no card")?;
-        card.downcast::<LimiterView>()
-            .map_err(|_| anyhow::anyhow!("the second card is not the limiter"))
-    })?;
-    opened.play_from(Ticks(0), &mut cx)?;
-    let poll = OFFLINE.sample_rate as f32 * sound_ui::POLL_INTERVAL.as_secs_f32();
-    for _ in 0..(4.2 * 1000. / 16.) as usize {
-        opened.advance(poll as usize, &mut cx);
-        cx.update(|cx| card.update(cx, |card, cx| card.read_meters(cx)));
-    }
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-limiter")?;
-    drop(opened);
-
-    // A track with the synth, the Filter, the Compressor, the EQ and the Reverb, at the start
-    // of the rack and scrolled to its end: every card, the mixer strip and the master panel
-    // above share one card top, one height and the two value lines, measured in the pixels.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        add_filter(project, "bass")?;
-        let sound = CompressorState {
-            threshold_db: -30.0,
-            ratio: 4.0,
-            ..CompressorState::default()
-        };
-        add_compressor(project, "bass", sound)?;
-        add_eq(project, "bass")?;
-        add_reverb(project, "bass", 0.25)
-    })?;
-    opened.click_track_header(1., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-all-effects")?;
-    let read = |cx: &mut HeadlessAppContext| -> Result<PanelLines> {
-        let image = cx.capture_screenshot(opened.window.into())?;
-        panel_lines(|x, y| {
-            let [red, green, blue, _] = image.get_pixel(x, y).0;
-            [red, green, blue]
-        })
-    };
-    let start = read(&mut cx)?;
-    let wheel = PlatformInput::ScrollWheel(ScrollWheelEvent {
-        position: point(px(HEADER_WIDTH + 300.), px(WINDOW_HEIGHT - 100.)),
-        delta: ScrollDelta::Pixels(point(px(-4000.), px(0.))),
-        ..Default::default()
-    });
-    opened.mouse(wheel, &mut cx)?;
-    save(&mut cx, &opened, "track-panel-all-effects-end")?;
-    let end = read(&mut cx)?;
-    println!("alignment at the start of the rack: {start:?}");
-    println!("alignment at the end of the rack: {end:?}");
-    println!("alignment of the master panel: {master:?}");
-    let panels = [&start, &end, &master];
-    // Synth, filter and compressor at the start; compressor, EQ and reverb at the end; the
-    // limiter. The rack really moved, so the cards at the end are other cards.
-    let counts = panels.map(|panel| panel.cards.len());
-    anyhow::ensure!(
-        counts == [3, 3, 1],
-        "{counts:?} cards wholly in view, where 3, 3 and 1 were meant"
-    );
-    anyhow::ensure!(
-        start.lefts != end.lefts,
-        "the rack did not scroll: {:?}",
-        start.lefts
-    );
-    let expected_top = WINDOW_HEIGHT - arrangement::view::track_panel::PANEL_HEIGHT + 12.;
-    let card_height = sound_ui::components::device_card::CARD_HEIGHT;
-    for panel in panels {
-        for (top, height) in &panel.cards {
-            // Half a point is the one row of pixels the border shares with the rack.
-            anyhow::ensure!(
-                (top - expected_top).abs() <= 0.5 && (height - card_height).abs() <= 1.,
-                "a card at {top} pt, {height} pt tall, where every card is at {expected_top}, \
-                 {card_height} tall: {panel:?}"
-            );
-        }
-    }
-    // One pixel of the screen either way is the edge of a letter, not a line.
-    let same_line = |lines: &[f32]| {
-        let (low, high) = lines
-            .iter()
-            .fold((f32::MAX, f32::MIN), |(low, high), line| {
-                (low.min(*line), high.max(*line))
-            });
-        high - low <= 0.5
-    };
-    let mut row_1 = panels
-        .iter()
-        .flat_map(|panel| panel.row_1.iter().copied())
-        .collect::<Vec<_>>();
-    for panel in [&start, &end] {
-        row_1.push(panel.strip_row_1.context("no value line under Pan")?);
-    }
-    anyhow::ensure!(
-        same_line(&row_1),
-        "the value lines of row 1 are not one line: {row_1:?}"
-    );
-    let mut row_2 = panels
-        .iter()
-        .flat_map(|panel| panel.row_2.iter().copied())
-        .collect::<Vec<_>>();
-    row_2.extend(panels.iter().map(|panel| panel.strip_row_2));
-    anyhow::ensure!(
-        same_line(&row_2),
-        "the value lines of row 2 are not one line: {row_2:?}"
-    );
-    drop(opened);
-
-    // A track whose instrument is a tool that has no view: the tone.
-    let opened = Opened::new(&mut cx, |project| {
-        let slot = InstanceId::new("arrangement/track-1/instrument")?;
-        let mut changes = Changes::new();
-        changes.delete(&slot);
-        project.commit("Remove synth", changes)?;
-        let mut changes = Changes::new();
-        changes.create(slot, tone::ToneState::default());
-        project.commit("Add tone", changes)?;
-        Ok(())
-    })?;
-    opened.click_track_header(0., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-empty")?;
-    drop(opened);
-
-    // A track that plays a CLAP plugin: the name of the plugin on the card, with the control
-    // that opens the plugin's own window. Then the picker of that card, open.
-    let opened = Opened::new(&mut cx, |project| {
-        set_plugin(
-            project,
-            "track-1",
-            PluginFormat::Clap,
-            test_clap_plugin::PLUGIN_ID,
-            "test-tone",
-        )
-    })?;
-    opened.click_track_header(0., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-plugin")?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let picker = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let picker = panel.read(cx).pickers().next().cloned();
-        picker.context("the card has no picker")
-    })?;
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        picker.update(cx, |picker, cx| picker.open(window, cx));
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-picker")?;
-    drop(opened);
-
-    // The same for a VST 3 plugin. Its card is the CLAP one: the plugin's name and the control
-    // that opens its own window, which it has had since step 5b.
-    let opened = Opened::new(&mut cx, |project| {
-        set_plugin(
-            project,
-            "track-1",
-            PluginFormat::Vst3,
-            test_vst3_plugin::PLUGIN_ID,
-            "test-tone",
-        )
-    })?;
-    opened.click_track_header(0., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-plugin-vst3")?;
-    drop(opened);
-
-    // A project that does not enable the plugin host, as one made before step 4a has: every
-    // plugin is shown and cannot be taken, with the one edit that would put it within reach.
-    let opened = Opened::without_plugin_host(&mut cx)?;
-    opened.click_track_header(0., &mut cx)?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let picker = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        let picker = panel.read(cx).pickers().next().cloned();
-        picker.context("the card has no picker")
-    })?;
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        picker.update(cx, |picker, cx| picker.open(window, cx));
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-picker-disabled")?;
-    drop(opened);
-
-    // A plugin this machine does not have: the card says so and names the id, and the record
-    // is left exactly as it is.
-    let opened = Opened::new(&mut cx, |project| {
-        set_plugin(
-            project,
-            "track-1",
-            PluginFormat::Clap,
-            "com.example.nowhere",
-            "piano",
-        )
-    })?;
-    opened.click_track_header(0., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-missing")?;
-    drop(opened);
-
-    // The rack with an instrument and two effects after it, in the order of the record, with
-    // the control that adds one at the end. Then that control, open, with what this machine
-    // offers as an effect.
-    let opened = Opened::new(&mut cx, |project| {
-        set_plugin(
-            project,
-            "track-1",
-            PluginFormat::Clap,
-            test_clap_plugin::PLUGIN_ID,
-            "test-tone",
-        )?;
-        set_effects(project, "track-1", &["Warmth", "Space"])
-    })?;
-    opened.click_track_header(0., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-effects")?;
-    // Warmth dragged by its header over Space, the button still down. Cards of a plugin are
-    // 200 pt, 12 apart, from 16 pt right of the header column; the grip is left of the power
-    // and close icons, on the line of the titles.
-    let title_line = WINDOW_HEIGHT - arrangement::view::track_panel::PANEL_HEIGHT + 12. + 16.;
-    let warmth_right = HEADER_WIDTH + 16. + 200. + 12. + 200.;
-    let grip = point(px(warmth_right - 8. - 24. - 4. - 24. - 12.), px(title_line));
-    let over_space = point(px(warmth_right + 12. + 100.), px(title_line));
-    let undo_label = |cx: &mut HeadlessAppContext| {
-        cx.update(|cx| {
-            opened
-                .session
-                .read(cx)
-                .project()
-                .undo_label()
-                .map(str::to_string)
-        })
-    };
-    let before = undo_label(&mut cx);
-    opened.press_and_move(grip, over_space, &mut cx)?;
-    save(&mut cx, &opened, "track-panel-reorder")?;
-    // Let go where it came from: a drop on its own card moves nothing.
-    opened.press_and_move_to(grip, &mut cx)?;
-    opened.release(grip, &mut cx)?;
-    let after = undo_label(&mut cx);
-    anyhow::ensure!(before == after, "the drop moved something: {after:?}");
-    // Space bypassed: its power icon, title and body go quiet, and the sound goes past it.
-    // The click on the icon is in the window tests.
-    let track = InstanceId::new("arrangement/track-1")?;
-    cx.update(|cx| {
-        opened.session.update(cx, |session, cx| {
-            let track = session.project().resolve::<TrackState>(&track);
-            let track = track.context("the track is not there")?;
-            let mut state = session
-                .project()
-                .state(&track)
-                .cloned()
-                .context("a record")?;
-            let space = state.effects.iter_mut().find(|slot| slot.name == "space");
-            space.context("no space")?.bypass = true;
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(&track, state);
-                project.commit("Turn off Space", changes)
-            });
-            anyhow::Ok(())
-        })
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-bypass")?;
-    let view = opened.arrangement_view(&mut cx)?;
-    let add = cx.update(|cx| {
-        let panel = view.read(cx).track_panel().cloned();
-        let panel = panel.context("the track panel did not open")?;
-        anyhow::Ok(panel.read(cx).add_effect_control().clone())
-    })?;
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        add.update(cx, |add, cx| add.open(window, cx));
-    })?;
-    cx.run_until_parked();
-    save(&mut cx, &opened, "track-panel-effect-picker")?;
-    drop(opened);
-
-    // An effect this machine does not have: the card says so, the rest of the chain plays.
-    let opened = Opened::new(&mut cx, |project| {
-        set_plugin(
-            project,
-            "track-1",
-            PluginFormat::Clap,
-            test_clap_plugin::PLUGIN_ID,
-            "test-tone",
-        )?;
-        set_effects(project, "track-1", &["Warmth"])?;
-        let slot = InstanceId::new("arrangement/track-1/warmth")?;
-        let mut changes = Changes::new();
-        let record = PluginRecord::new(PluginFormat::Clap, "com.example.nowhere", "warmth");
-        changes.create(slot, record.context("a plugin record")?);
-        project.commit("A plugin this machine does not have", changes)?;
-        Ok(())
-    })?;
-    opened.click_track_header(0., &mut cx)?;
-    save(&mut cx, &opened, "track-panel-effect-missing")?;
-    drop(opened);
-
-    let started = Instant::now();
-    let mut opened = Opened::new(&mut cx, scale)?;
-    println!("scale project made and opened in {:?}", started.elapsed());
-    let timeline = opened.timeline_view(&mut cx)?;
-    let middle = Viewport {
-        scroll_x: 400.0 * 96.0,
-        scroll_y: 44.0 * f64::from(TRACK_HEIGHT),
-        ..Viewport::default()
-    };
-    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(middle, cx)));
-    opened.play_from(Ticks(405 * BAR), &mut cx)?;
-    save(&mut cx, &opened, "scale")?;
-
-    // The transport reads this after every change, so it has to stay small.
-    for _ in 0..3 {
-        let started = Instant::now();
-        let end = cx.update(|cx| opened.session.read(cx).project().end());
-        println!(
-            "Project::end over 10,000 clips: {:?} ({end:?})",
-            started.elapsed()
-        );
-        let started = Instant::now();
-        let end = cx.update(|cx| {
-            let project = opened.session.read(cx).project();
-            main_arrangement(project).and_then(|a| arrangement::end(project, a.id()))
-        });
-        println!("arrangement::end: {:?} ({end:?})", started.elapsed());
-    }
-
-    // Frames while playing: only the playhead moves, the timeline reuses what it painted.
-    let mut playing = Vec::new();
-    for _ in 0..200 {
-        playing.push(opened.advance(800, &mut cx));
-    }
-    // Frames while scrolling: the timeline builds and paints its scene again.
-    let mut scrolling = Vec::new();
-    for step in 0..200 {
-        let viewport = middle.scrolled(-(step as f32) * 7.0, -(step as f32) * 3.0);
-        let started = Instant::now();
-        cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(viewport, cx)));
-        scrolling.push(started.elapsed());
-    }
-    // Far zoomed out: every clip of every visible track is on screen.
-    let far_out = middle.zoomed(0.05, 0.0);
-    let mut zoomed_out = Vec::new();
-    for step in 0..200 {
-        let viewport = far_out.scrolled(-(step as f32), 0.0);
-        let started = Instant::now();
-        cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(viewport, cx)));
-        zoomed_out.push(started.elapsed());
-    }
-    print_times("frame while playing", playing);
-    print_times("frame while scrolling", scrolling);
-    print_times("frame while scrolling, zoomed far out", zoomed_out);
-
-    // A drag of a clip with the real mouse events, a snap step per move: 100 moves to the
-    // right on its track, then 8 moves down over other tracks. Stopped, so that only the drag
-    // is measured.
-    cx.update(|cx| {
-        opened
-            .session
-            .update(cx, |session, _| session.engine().stop())
-    });
-    opened.advance(64, &mut cx);
-    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(middle, cx)));
-    cx.run_until_parked();
-    // Row 46 is track 45 of the scale project, after `Track 1`. Its
-    // clip 50 is at bar 8 * 50 + 45 % 8 = 405, which is on screen.
-    let top = 48.0 + RULER_HEIGHT;
-    let rows = cx.update(|cx| timeline.read(cx).rows(cx));
-    let row_46 = top + middle.y_of(&rows, 46) + TRACK_HEIGHT / 2.;
-    let on_clip = point(
-        px(HEADER_WIDTH + middle.x_of(Ticks(405 * BAR + BAR / 2))),
-        px(row_46),
-    );
-    let in_time = opened.drag(on_clip, point(px(6.), px(0.)), 100, &mut cx)?;
-    print_times("clip drag in time, per mouse move", in_time);
-    let moved_to = on_clip + point(px(600.), px(0.));
-    let across = opened.drag(moved_to, point(px(0.), px(TRACK_HEIGHT)), 8, &mut cx)?;
-    print_times("clip drag across tracks, per mouse move", across);
-    let label = cx.update(|cx| {
-        opened
-            .session
-            .read(cx)
-            .project()
-            .undo_label()
-            .map(str::to_string)
-    });
-    anyhow::ensure!(
-        label.as_deref() == Some("Move clip"),
-        "the drag did not move a clip"
-    );
-
-    // A drag of a note in the editor of a clip of that project, a semitone per move.
-    let clip = InstanceId::new("arrangement/track-60/clip-050")?;
-    let editor = opened.open_editor(&clip, &mut cx)?;
-    let viewport = cx.update(|cx| editor.read(cx).viewport());
-    let state = cx.update(|cx| {
-        let project = opened.session.read(cx).project();
-        let instance = project.resolve::<Clip>(&clip)?;
-        project.state(&instance).cloned()
-    });
-    let state = state.context("the clip has no state")?;
-    let first = state.notes.first().context("the clip has no notes")?;
-    let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
-    let on_note = point(
-        px(HEADER_WIDTH + viewport.x_of(state.start + first.start) + 40.),
-        px(editor_top + roll::y_of(&viewport, first.pitch) + KEY_HEIGHT / 2.),
-    );
-    let mut note_moves = opened.drag(on_note, point(px(12.), px(-KEY_HEIGHT)), 10, &mut cx)?;
-    let back = on_note + point(px(120.), px(-10. * KEY_HEIGHT));
-    note_moves.extend(opened.drag(back, point(px(-12.), px(KEY_HEIGHT)), 10, &mut cx)?);
-    print_times("note drag, per mouse move", note_moves);
-    let label = cx.update(|cx| {
-        opened
-            .session
-            .read(cx)
-            .project()
-            .undo_label()
-            .map(str::to_string)
-    });
-    anyhow::ensure!(
-        label.as_deref() == Some("Move note"),
-        "the drag did not move a note"
-    );
-    save(&mut cx, &opened, "scale-editor")?;
-
-    // The publish alone, without the frame: the record, the behaviour of its track with a new
-    // snapshot of its 100 clips, and the engine batch.
-    let instance = cx.update(|cx| opened.session.read(cx).project().resolve::<Clip>(&clip));
-    let instance = instance.context("no such clip")?;
-    let mut publishes = Vec::new();
-    for step in 1..=100_u64 {
-        publishes.push(cx.update(|cx| {
-            opened.session.update(cx, |session, cx| {
-                if step == 1 {
-                    session.begin_gesture("Move clip", cx);
-                }
-                let started = Instant::now();
-                session.gesture(cx, |project, edit| {
-                    project.update(edit, &instance, |clip| {
-                        clip.start = state.start + Ticks(step * 240)
-                    })
-                });
-                started.elapsed()
-            })
-        }));
-        opened.advance(64, &mut cx);
-    }
-    cx.update(|cx| {
-        opened
-            .session
-            .update(cx, |session, cx| session.cancel_gesture(cx))
-    });
-    print_times("publish of one clip move", publishes);
+    save(cx, opened.window.into(), "menu-devices")?;
     Ok(())
+}
+
+/// The record of the repository's test plugin in `format`.
+fn test_plugin(format: PluginFormat, state_asset: &str) -> String {
+    let id = match format {
+        PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
+        PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
+    };
+    format!(
+        r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{id}", "state_asset": "{state_asset}"}}}}"#,
+        format.as_str()
+    )
 }

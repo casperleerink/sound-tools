@@ -1,70 +1,70 @@
 //! What `--inspect` prints for a small known project.
 
 use crate::plugin_hosts::open_read_only;
+use crate::rack::racks_files;
 use crate::support::{
-    Harness, TRACK, clip, test_plugin, test_plugin_host_that_only_lists, test_plugin_of,
+    Harness, clip, test_plugin, test_plugin_host_that_only_lists, test_plugin_of, write,
 };
+
+/// Edits `project.json` as an agent would, and applies it.
+fn edit_project(harness: &mut Harness, edit: impl FnOnce(&mut serde_json::Value)) {
+    let text = std::fs::read_to_string(harness.path("project.json")).unwrap();
+    let mut file: serde_json::Value = serde_json::from_str(&text).unwrap();
+    edit(&mut file);
+    harness.write_and_apply("project.json", &file.to_string());
+    assert_eq!(harness.project.problems(), [], "{file}");
+}
+
+/// The time signatures of a project, as `project.json` holds them.
+fn signatures(signatures: &str) -> impl FnOnce(&mut serde_json::Value) {
+    let signatures: serde_json::Value = serde_json::from_str(signatures).unwrap();
+    move |file| {
+        let tempo_map = file["tempo_map"].as_object_mut().unwrap();
+        tempo_map.remove("time_signature");
+        tempo_map.insert("time_signatures".into(), signatures);
+    }
+}
 
 #[test]
 fn the_summary_tells_what_plays_where() {
     let mut harness = Harness::piece();
     harness.write_and_apply(
-        "state/arrangement/pad/bars-5-8.json",
-        &clip(15360, 15360, &[(960, 480, 70), (1440, 480, 74)]),
-    );
-    harness.write_and_apply(
         "state/drone.json",
         r#"{"tool": "tone", "state": {"frequency_hz": 110.0, "gain": 0.1}}"#,
     );
-    harness.write_and_apply("state/arrangement/pad/broken.json", "{");
-    let project_file = std::fs::read_to_string(harness.path("project.json")).unwrap();
-    let project_file = project_file.replace(
-        r#"[{"tick": 0, "bpm": 120.0}]"#,
-        r#"[{"tick": 0, "bpm": 120.0}, {"tick": 15360, "bpm": 90.0}]"#,
-    );
-    harness.write_and_apply("project.json", &project_file);
+    edit_project(&mut harness, |file| {
+        let changes = serde_json::json!([{"tick": 0, "bpm": 120.0}, {"tick": 15360, "bpm": 90.0}]);
+        file["tempo_map"]["tempo_changes"] = changes;
+    });
+    harness.write_and_apply("state/pad/broken.json", "{");
 
     // A second, read-only open next to the live one sees the same: this is `--inspect`.
     let (inspected, _engine, _plugins) = open_read_only(harness.project.root());
-    let expected = format!(
-        "extensions: {}\n{}",
-        harness.project.project_file().extensions.join(", "),
-        r#"time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat
-tempo: 120 bpm from 1:1:000 (tick 0)
-tempo: 90 bpm from 5:1:000 (tick 15360)
-arrangement `arrangement`: 2 tracks. Positions are bar:beat:tick, a clip runs up to its end position
-  track `arrangement/piano` "piano": colour blue, order 1, instrument instrument.synth
-    clip `arrangement/piano/chords`: 1:1:000 to 5:1:000, ticks 0 to 15360, 5 notes, pitch 48 to 64
-  track `arrangement/pad` "pad": colour blue, order 2, instrument instrument.synth
-    clip `arrangement/pad/long`: 1:1:000 to 5:1:000, ticks 0 to 15360, 1 note, pitch 72 to 72
-    clip `arrangement/pad/bars-5-8`: 5:1:000 to 9:1:000, ticks 15360 to 30720, 2 notes, pitch 70 to 74
-instance `drone` [tone] {"frequency_hz":110.0,"gain":0.1}
-connections: 0
-problems: 1
-  state/arrangement/pad/broken.json: ?: EOF while parsing an object at line 1 column 1"#
-    );
-    assert_eq!(runtime::summary(&inspected), expected);
-    assert_eq!(runtime::summary(&harness.project), expected);
+    let summary = runtime::summary(&harness.project);
+    assert_eq!(runtime::summary(&inspected), summary);
+    let lines = [
+        "time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat\n",
+        "tempo: 90 bpm from 5:1:000 (tick 15360)\n",
+        "instance `drone` [tone] {\"frequency_hz\":110.0,\"gain\":0.1}\n",
+        "  instance `pad/instrument` [instrument.synth] ",
+        "connections: 2\n",
+        "  state/pad/broken.json: ?: EOF while parsing an object at line 1 column 1",
+    ];
+    for line in lines {
+        assert!(summary.contains(line), "{line} in {summary}");
+    }
 }
 
-/// A project whose time signature changes: the summary says where each one starts, and the
-/// positions of the clips count the bars of each. The clips keep their ticks.
+/// A project whose time signature changes: the summary says where each one starts.
 #[test]
 fn the_summary_follows_a_changing_time_signature() {
     let mut harness = Harness::piece();
-    harness.write_and_apply(
-        "state/arrangement/pad/bars-5-8.json",
-        &clip(15360, 15360, &[(960, 480, 70), (1440, 480, 74)]),
+    edit_project(
+        &mut harness,
+        signatures(
+            r#"[{"signature": "4/4", "bars": 2}, {"signature": "3/16", "bars": 1}, {"signature": "7/8", "bars": 1}]"#,
+        ),
     );
-    let project_file = std::fs::read_to_string(harness.path("project.json")).unwrap();
-    let one = r#"[{"signature": "4/4", "bars": 1}]"#;
-    assert!(project_file.contains(one), "{project_file}");
-    let project_file = project_file.replace(
-        one,
-        r#"[{"signature": "4/4", "bars": 2}, {"signature": "3/16", "bars": 1}, {"signature": "7/8", "bars": 1}]"#,
-    );
-    harness.write_and_apply("project.json", &project_file);
-    assert_eq!(harness.project.problems(), [], "{project_file}");
 
     let summary = runtime::summary(&harness.project);
     let lines: Vec<&str> = summary.lines().collect();
@@ -76,12 +76,6 @@ fn the_summary_follows_a_changing_time_signature() {
             "time signature: 7/8 from bar 4 (tick 8400), 3360 ticks per bar, 480 ticks per beat",
         ]
     );
-    // Tick 15360 is 6960 ticks into the 7/8 bars from bar 4: two bars and 240 ticks.
-    assert!(
-        summary
-            .contains("clip `arrangement/pad/bars-5-8`: 6:1:240 to 10:5:240, ticks 15360 to 30720"),
-        "{summary}"
-    );
 }
 
 /// `--inspect` opens the project with a host that loads no plugin, because printing a project
@@ -91,31 +85,26 @@ fn the_summary_follows_a_changing_time_signature() {
 #[test]
 fn inspecting_prints_the_same_project_without_loading_a_plugin() {
     let folder = tempfile::tempdir().unwrap();
-    let (mut harness, _plugins) = Harness::with_test_plugin(folder);
-    for (name, order, record) in [
-        ("piano", 1, test_plugin("piano")),
+    let missing = test_plugin_of(plugin_host::PluginFormat::Clap, "gone")
+        .replace(test_clap_plugin::PLUGIN_ID, "com.example.nowhere");
+    let (piano, take) = (test_plugin("piano"), clip(0, 3840, &[(480, 960, 60)]));
+    let racks = [
+        (
+            "piano",
+            [("instrument", piano.as_str()), ("take", take.as_str())],
+        ),
         (
             "missing",
-            2,
-            test_plugin_of(plugin_host::PluginFormat::Clap, "gone")
-                .replace(test_clap_plugin::PLUGIN_ID, "com.example.nowhere"),
+            [("instrument", missing.as_str()), ("take", take.as_str())],
         ),
-    ] {
-        let track = format!("state/arrangement/{name}");
-        harness.write(
-            &format!("{track}/instance.json"),
-            &TRACK
-                .replace("NAME", name)
-                .replace("ORDER", &order.to_string()),
-        );
-        harness.write(&format!("{track}/instrument.json"), &record);
-        harness.write(
-            &format!("{track}/take.json"),
-            &clip(0, 3840, &[(480, 960, 60)]),
-        );
-        let path = harness.path(&track);
-        harness.apply(&[path]);
+    ];
+    let racks: Vec<(&str, &[(&str, &str)])> = (racks.iter())
+        .map(|(name, children)| (*name, children.as_slice()))
+        .collect();
+    for (path, contents) in racks_files(&racks) {
+        write(folder.path(), &path, &contents);
     }
+    let (harness, _plugins) = Harness::with_test_plugin(folder);
     let loading = runtime::summary(&harness.project);
 
     // The same folder, opened the way `--inspect` opens it.
@@ -127,60 +116,19 @@ fn inspecting_prints_the_same_project_without_loading_a_plugin() {
     assert!(loading.contains("problems: 1"), "{loading}");
 }
 
-/// Ids sort as text, so a second arrangement `arrangement-2` comes between `arrangement` and
-/// what is inside it. What the first one summarised is still not printed again.
-#[test]
-fn a_second_arrangement_does_not_print_the_tracks_of_the_first_again() {
-    let mut harness = Harness::piece();
-    harness.write_and_apply(
-        "state/arrangement-2/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    );
-    assert_eq!(harness.project.problems(), []);
-    let summary = runtime::summary(&harness.project);
-    assert!(summary.contains("arrangement `arrangement-2`"), "{summary}");
-    assert!(!summary.contains("instance `arrangement/"), "{summary}");
-}
-
-#[test]
-fn the_summary_tells_the_sends_of_a_track_and_where_a_return_takes_them() {
-    let mut harness = Harness::piece();
-    harness.write_and_apply(
-        "state/arrangement/space/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "Space", "kind": "return", "pre_fader": true}}"#,
-    );
-    harness.write_and_apply(
-        "state/arrangement/piano/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "sends": {"space": -12.0}}}"#,
-    );
-    assert_eq!(harness.project.problems(), []);
-    let summary = runtime::summary(&harness.project);
-    let lines = [
-        "arrangement `arrangement`: 2 tracks, 1 return.",
-        "  track `arrangement/piano` \"piano\": colour blue, order 1, instrument instrument.synth, sends space -12 dB\n",
-        "  return `arrangement/space` \"Space\": colour blue, order 0, pre fader\n",
-    ];
-    for line in lines {
-        assert!(summary.contains(line), "{line} in {summary}");
-    }
-}
-
 /// Each section with its bars and ticks, so an agent can copy the music of "the chorus". The
-/// last runs to the bar line after the last clip, or to the end when it starts after it.
+/// last runs to the bar line after the last timeline, or to the end when it starts after it.
 #[test]
 fn the_summary_tells_the_bars_of_each_section() {
     let mut harness = Harness::piece();
     harness.write_and_apply(
-        "state/arrangement/pad/bars-5-8.json",
+        "state/pad/bars-5-8.json",
         &clip(15360, 15000, &[(960, 480, 70)]),
     );
-    let sections = r#"[{"bar": 1, "name": "Intro"}, {"bar": 3, "name": "Chorus"}]"#;
-    let project_file = std::fs::read_to_string(harness.path("project.json")).unwrap();
-    assert!(project_file.contains(r#""sections": []"#), "{project_file}");
-    let project_file =
-        project_file.replace(r#""sections": []"#, &format!(r#""sections": {sections}"#));
-    harness.write_and_apply("project.json", &project_file);
-    assert_eq!(harness.project.problems(), []);
+    edit_project(&mut harness, |file| {
+        file["sections"] =
+            serde_json::json!([{"bar": 1, "name": "Intro"}, {"bar": 3, "name": "Chorus"}]);
+    });
     let summary = runtime::summary(&harness.project);
     let lines = [
         "section \"Intro\": bars 1 to 2, ticks 0 to 7680\n",
@@ -190,11 +138,10 @@ fn the_summary_tells_the_bars_of_each_section() {
         assert!(summary.contains(line), "{line} in {summary}");
     }
 
-    let outro = project_file.replace(
-        r#""name": "Chorus"}"#,
-        r#""name": "Chorus"}, {"bar": 12, "name": "Outro"}"#,
-    );
-    harness.write_and_apply("project.json", &outro);
+    edit_project(&mut harness, |file| {
+        let outro = serde_json::json!({"bar": 12, "name": "Outro"});
+        file["sections"].as_array_mut().unwrap().push(outro);
+    });
     let summary = runtime::summary(&harness.project);
     let lines = [
         "section \"Chorus\": bars 3 to 11, ticks 7680 to 42240\n",
@@ -205,14 +152,10 @@ fn the_summary_tells_the_bars_of_each_section() {
     }
 
     // From bar 3 the bars are 7/8, 3360 ticks long.
-    let changing = outro
-        .replace(
-            r#"[{"signature": "4/4", "bars": 1}]"#,
-            r#"[{"signature": "4/4", "bars": 2}, {"signature": "7/8", "bars": 1}]"#,
-        )
-        .replace(r#""bar": 3"#, r#""bar": 4"#);
-    harness.write_and_apply("project.json", &changing);
-    assert_eq!(harness.project.problems(), [], "{changing}");
+    edit_project(&mut harness, |file| {
+        signatures(r#"[{"signature": "4/4", "bars": 2}, {"signature": "7/8", "bars": 1}]"#)(file);
+        file["sections"][1]["bar"] = 4.into();
+    });
     let summary = runtime::summary(&harness.project);
     let lines = [
         "section \"Intro\": bars 1 to 3, ticks 0 to 11040\n",

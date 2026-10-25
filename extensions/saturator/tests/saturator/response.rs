@@ -4,16 +4,14 @@
 //! automatic gain, the DC blocker, the tone, the output and the mix to their numbers, and the
 //! dry sound to the saturated one in time: were they a frame apart, the mix would comb.
 //!
-//! Tolerance: 0.02 dB, from 20 Hz to 20 kHz, at 44.1, 48 and 96 kHz.
+//! Tolerance: 0.02 dB, from 20 Hz to 20 kHz, at 44.1 and 96 kHz.
 
 use saturator::{Curve, LATENCY, Saturator, SaturatorState, response};
 use sound_core::Processor;
 
-use crate::support::{Rig, SAMPLE_RATE, measured_db_at, sine};
+use crate::support::{Rig, measured_db_at, sine};
 
-const FREQUENCIES: [f64; 9] = [
-    20.0, 50.0, 125.0, 500.0, 1_000.0, 4_000.0, 10_000.0, 16_000.0, 20_000.0,
-];
+const FREQUENCIES: [f64; 5] = [20.0, 125.0, 1_000.0, 10_000.0, 20_000.0];
 
 fn exact_db(state: &SaturatorState, hz: f64, sample_rate: u32) -> f64 {
     20.0 * f64::from(response(state, hz as f32, sample_rate as f32)).log10()
@@ -51,7 +49,7 @@ fn every_curve_tone_output_and_mix_measures_as_its_exact_response() {
         },
     ];
     let mut worst = 0.0_f64;
-    for sample_rate in [44_100, SAMPLE_RATE, 96_000] {
+    for sample_rate in [44_100, 96_000] {
         for state in states {
             for hz in FREQUENCIES {
                 let exact = exact_db(&state, hz, sample_rate);

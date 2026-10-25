@@ -28,7 +28,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -41,7 +41,9 @@ pub const EXTENSION: &str = "instrument";
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Waveform {
+    /// Bright and full.
     Saw,
+    /// Hollow.
     Square,
 }
 
@@ -51,27 +53,28 @@ pub enum Waveform {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default synth.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct SynthState {
     /// The wave of the oscillator.
     pub waveform: Waveform,
-    /// Where the low-pass filter starts to cut.
+    /// Where the low-pass filter starts to cut. Lower is darker.
     pub cutoff_hz: f32,
     /// 0 is a flat filter. 1 is a strong peak at the cutoff. Clean, it never oscillates on its
     /// own. The filter input is turned down as this goes up, so the peak does not overload.
     pub resonance: f32,
-    /// Warm saturates inside the filter: a loud sound bends at the cutoff and above, a quiet
-    /// one passes clean, and full resonance rings on its own.
+    /// How the filter reacts to level.
     pub character: FilterCharacter,
     /// From note on to full level.
     pub attack_seconds: f32,
     /// From full level to within 0.1% of the sustain level.
     pub decay_seconds: f32,
-    /// The level a held note settles at, as a part of full level.
+    /// The level a held note settles at, as a part of full level. 0 makes every note a pluck.
     pub sustain: f32,
     /// From note off to silence, for a note at full level. A quieter note ends a little sooner.
     pub release_seconds: f32,
     /// Linear output gain. With the default filter one note at velocity 127 peaks at about
-    /// this value. Tracks sum to the device with no mixer yet, so the default is low.
+    /// this value. Tracks add up into the master, whose limiter squashes a loud sum, so keep it
+    /// near 0.15, lower for thick chords. Set the level of a track with its `gain_db`.
     pub gain: f32,
 }
 
@@ -186,7 +189,8 @@ impl State for SynthState {
 /// The doc of the synth record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "instrument",
-    when: "You change how a track sounds, or give a new track its instrument",
+    group: "Devices",
+    when: "A track plays `instrument.synth`, or a new track needs an instrument",
     markdown: include_str!("../agent-doc.md"),
 };
 
@@ -213,17 +217,9 @@ fn apply(state: &SynthState, context: &mut BehaviourContext<'_>) -> Result<(), B
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges to agents, and the defaults in an example that another test
-    /// loads. They are checked against the one definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

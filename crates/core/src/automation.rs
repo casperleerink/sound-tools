@@ -1,6 +1,6 @@
 //! Automation: an owner moves the numbers of a device over time, block by block.
 //!
-//! The owner, such as the arrangement, plays its lanes on the audio thread and sends each
+//! The owner, such as a parent wiring `lane` children, plays its lanes on the audio thread and sends each
 //! device the values of this block as [`Automation`] events, to the [`AutomationInput`] the
 //! device names with [`BehaviourContext::automation`](crate::BehaviourContext::automation).
 //! The device keeps an [`Automated`] in place of its record, and aims at the [`Targets`] it
@@ -298,6 +298,11 @@ impl<S, const N: usize> Automated<S, N> {
         edit: f32,
     ) -> Option<Targets<S, N>> {
         let snaps = !std::mem::replace(&mut self.followed, true);
+        // No lane holds a number and none came: nothing moves, and a glide counts only while a
+        // lane holds one. Most devices have no lane, and this runs every block.
+        if events.is_empty() && self.lanes.iter().all(|lane| lane.value.is_none()) {
+            return None;
+        }
         let mut heard = [None; N];
         for timed in events {
             let index = usize::from(timed.event.parameter);

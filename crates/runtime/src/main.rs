@@ -8,7 +8,7 @@
 //! runtime <project-folder> --inspect                       print a summary, open no device
 //! runtime <project-folder> --render <wav>                 render the project and its tail
 //! runtime <project-folder> --render <wav> --seconds <n>    render the first n seconds
-//! runtime <project-folder> --render <wav> --from <at> --to <at>
+//! runtime <project-folder> --render <wav> --from <at> --to <at> [--no-tail]
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
@@ -19,8 +19,8 @@
 //!
 //! `<at>` is a position in ticks (`3840`), or a time as a playhead shows it (`1:23.5`) or in
 //! seconds (`83.5s`). A render and an analysis of a project take `--from` and `--to`, either
-//! one alone, or `--seconds`, and `--solo <track>`, as often as there are tracks to hear, by
-//! name or id. Solo changes no file. An analysis of a file takes times only.
+//! one alone, or `--seconds`, and `--only <path>`, the one instance whose sound the device plays,
+//! which changes no file. `--no-tail` stops a range at its end. An analysis of a file takes times only.
 //!
 //! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
 //! progress bar of the window's export.
@@ -45,7 +45,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
-use runtime::report::{Timeline, report};
+use runtime::report::Timeline;
 use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
@@ -247,8 +247,8 @@ fn inspect(folder: &Path) -> Result<()> {
 enum Span {
     /// From the start, this long, with no tail. Whatever the clips say.
     Seconds(f64),
-    /// This range and the tail, as the window exports selected clips.
-    Range(Ticks, Ticks),
+    /// This range, and the tail when the bool says so, as the window exports selected clips.
+    Range(Ticks, Ticks, bool),
 }
 
 /// Where a render starts or ends: ticks, or a time as the composer reads it off the playhead,
@@ -299,26 +299,32 @@ struct Options {
     seconds: Option<f64>,
     from: Option<Position>,
     to: Option<Position>,
-    solo: Vec<String>,
+    only: Option<String>,
+    no_tail: bool,
 }
 
 impl Options {
     fn parse(mut arguments: &[&str]) -> Result<Self> {
         let mut options = Self::default();
-        while let [flag, value, rest @ ..] = arguments {
+        while let [flag, rest @ ..] = arguments {
+            if *flag == "--no-tail" {
+                options.no_tail = true;
+                arguments = rest;
+                continue;
+            }
+            let [value, rest @ ..] = rest else {
+                bail!(USAGE);
+            };
             match *flag {
                 "--seconds" => {
                     options.seconds = Some(value.parse().context("--seconds takes a number")?);
                 }
                 "--from" => options.from = Some(Position::parse(value)?),
                 "--to" => options.to = Some(Position::parse(value)?),
-                "--solo" => options.solo.push(value.to_string()),
+                "--only" => options.only = Some(value.to_string()),
                 _ => bail!(USAGE),
             }
             arguments = rest;
-        }
-        if !arguments.is_empty() {
-            bail!(USAGE);
         }
         Ok(options)
     }
@@ -328,6 +334,7 @@ impl Options {
     fn span(&self, project: &Project) -> Result<Span> {
         let clock = project.clock();
         match (self.seconds, self.from, self.to) {
+            (Some(_), _, _) if self.no_tail => bail!("--seconds has no tail to leave out"),
             (Some(seconds), None, None) => Ok(Span::Seconds(seconds)),
             (Some(_), _, _) => {
                 bail!("--seconds renders from the start: give it alone, or --from and --to")
@@ -343,15 +350,18 @@ impl Options {
                 if to <= from {
                     bail!("--to must come after --from");
                 }
-                Ok(Span::Range(from, to))
+                Ok(Span::Range(from, to, !self.no_tail))
             }
         }
     }
 
     /// The span of an audio file of `length` seconds, in seconds. A file has no ticks.
     fn file_span(&self, length: f64) -> Result<(f64, f64)> {
-        if !self.solo.is_empty() {
-            bail!("--solo is for a project: a file has no tracks");
+        if self.only.is_some() {
+            bail!("--only is for a project: a file has one sound");
+        }
+        if self.no_tail {
+            bail!("--no-tail is for a project: a file has no tail");
         }
         let seconds = |position: Option<Position>, otherwise: f64| match position {
             None => Ok(otherwise),
@@ -374,13 +384,13 @@ impl Options {
     }
 }
 
-/// Opens the project read-only, with the tracks of `--solo` soloed in memory.
+/// Opens the project read-only, with `--only` heard alone, in memory.
 fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine, Plugins)> {
     let plugins = runtime::plugins(true)?;
-    let (mut project, mut engine) = open_read_only_with(folder, plugins.clone())?;
+    let (mut project, engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
-    for problem in runtime::solo(&mut project, &mut engine, &plugins, &options.solo)? {
-        println!("error: {problem}");
+    if let Some(only) = &options.only {
+        runtime::listen_only(&mut project, only)?;
     }
     Ok((project, engine, plugins))
 }
@@ -403,7 +413,9 @@ fn play(
             let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
             runtime::render_into(project, engine, plugins, frames, write)?
         }
-        Span::Range(from, to) => runtime::render_range(project, engine, plugins, from, to, write)?,
+        Span::Range(from, to, tail) => {
+            runtime::render_range(project, engine, plugins, from, to, tail, write)?
+        }
     };
     for problem in problems {
         println!("error: {problem}");
@@ -428,7 +440,7 @@ fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Resul
     let rate = f64::from(OFFLINE.sample_rate);
     let length = match span {
         Span::Seconds(seconds) => (seconds * rate) as u64,
-        Span::Range(from, to) => {
+        Span::Range(from, to, _) => {
             let clock = project.clock();
             clock.frame_of(to).0.saturating_sub(clock.frame_of(from).0)
         }
@@ -489,22 +501,25 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
             tail: false,
             clock: clock.clone(),
         },
-        Span::Range(from, to) => Timeline::Project {
+        Span::Range(from, to, tail) => Timeline::Project {
             clock: clock.clone(),
             from,
             to,
-            tail: true,
+            tail,
         },
     };
     // A range plays from a little earlier, so what sounds into it from before, such as the
     // tail of a reverb, is in it as it is when the whole piece plays. The meter hears that
     // part and measures none of it.
     let (span, mut warm_up) = match span {
-        Span::Range(from, to) => {
+        Span::Range(from, to, tail) => {
             let earlier = (clock.seconds_of(from) - WARM_UP_SECONDS).max(0.0);
             let earlier = clock.tick_at_seconds(earlier).min(from);
             let frames = clock.frame_of(from).0 - clock.frame_of(earlier).0;
-            (Span::Range(earlier, to), frames as usize * OFFLINE.channels)
+            (
+                Span::Range(earlier, to, tail),
+                frames as usize * OFFLINE.channels,
+            )
         }
         span => (span, 0),
     };
@@ -517,7 +532,7 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
         Ok(())
     };
     play(&mut project, &mut engine, &plugins, &span, measure)?;
-    println!("{}", report(&timeline, &meter.finish()));
+    println!("{}", runtime::report::write(&timeline, &meter.finish())?);
     print_event_overflows(&mut project)
 }
 
@@ -561,7 +576,7 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
         meter.warm_up(before);
         meter.push(after);
     }
-    println!("{}", report(&timeline, &meter.finish()));
+    println!("{}", runtime::report::write(&timeline, &meter.finish())?);
     Ok(())
 }
 
@@ -644,7 +659,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at>] [--solo <track>]...\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -693,7 +708,7 @@ fn main() -> Result<()> {
         ["--plugins"] => list_plugins(),
         ["--plugin-params", format, plugin_id] => list_plugin_parameters(format, plugin_id),
         ["--version"] => {
-            println!("sound-tools {}", env!("CARGO_PKG_VERSION"));
+            println!("sound-tools {}", runtime::VERSION);
             Ok(())
         }
         ["--help" | "-h"] => {

@@ -298,3 +298,104 @@ fn an_all_off_drops_what_was_sent_to_play_after_it_and_keeps_what_comes_before_a
         [(100, 60.0), (500, 0.0), (3_000, 64.0), (3_100, 0.0)]
     );
 }
+
+#[test]
+fn a_gone_performer_ends_each_note_it_holds_and_what_it_sent_for_later_never_plays() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, None));
+    harness.send(note(60, 10, None));
+    harness.send(note(62, 1_000, None));
+    harness.send(release(62, 500));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    // What a new performer plays before the frames of the old one keeps sounding.
+    harness.send(note(62, 300, None));
+    // Silent from the first frame, so no change there.
+    assert_eq!(level_changes(&harness.render(2_000)), [(100, 62.0)]);
+}
+
+#[test]
+fn a_gone_performer_leaves_the_note_another_sender_holds_on_its_pitch() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, None));
+    let (pitch, velocity) = (Pitch::new(60).unwrap(), Velocity::new(100).unwrap());
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    assert_eq!(harness.render(1_000).last(), Some(&60.0));
+}
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_holds_unless_another_sender_holds_it_too() {
+    for other_holds in [false, true] {
+        let mut harness = Harness::new();
+        harness.send(send(NoteEvent::Pedal(Pedal::new(127).unwrap()), 0));
+        if other_holds {
+            let down = Send::Once(10, NoteEvent::Pedal(Pedal::new(127).unwrap()));
+            harness.control.update(harness.sender, down).unwrap();
+        }
+        harness.send(note(60, 0, None));
+        harness.send(release(60, 50));
+        assert_eq!(harness.render(200).last(), Some(&1_000.0));
+        harness.send(NoteFeedUpdate::PerformerGone);
+        let pedal = if other_holds { 1_000.0 } else { 0.0 };
+        assert_eq!(harness.render(200).last(), Some(&pedal), "{other_holds}");
+    }
+}
+
+/// More ons of a pitch than a byte counts: a gone performer still leaves the one another
+/// sender holds.
+#[test]
+fn a_gone_performer_that_played_a_pitch_many_times_leaves_another_senders_note_of_it() {
+    let mut harness = Harness::new();
+    for _ in 0..255 {
+        harness.send(note(60, 0, None));
+    }
+    // Through the ring of updates, which holds fewer.
+    harness.render(48_000);
+    let (pitch, velocity) = (Pitch::new(60).unwrap(), Velocity::new(100).unwrap());
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    assert_eq!(harness.render(1_000).last(), Some(&60.0));
+}
+
+#[test]
+fn an_off_of_a_key_the_performer_does_not_hold_leaves_another_senders_note() {
+    let mut harness = Harness::new();
+    let (pitch, velocity) = (Pitch::new(60).unwrap(), Velocity::new(100).unwrap());
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    harness.send(release(60, 0));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+}
+
+#[test]
+fn a_gone_performer_lifts_the_pedal_it_put_down_when_the_feed_was_full() {
+    let mut harness = Harness::new();
+    // Room for 256 waiting: 128 notes far ahead, an on and an off each.
+    for pitch in 0..128 {
+        harness.send(note(pitch, 1_000_000, Some(1)));
+    }
+    harness.send(send(NoteEvent::Pedal(Pedal::new(127).unwrap()), 0));
+    assert_eq!(harness.render(4_800).last(), Some(&1_000.0));
+    harness.send(NoteFeedUpdate::PerformerGone);
+    assert_eq!(harness.render(200).last(), Some(&0.0));
+}
+
+#[test]
+fn a_release_when_the_feed_is_full_lets_go_of_a_key_two_performed_notes_hold() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, Some(100_000)));
+    harness.send(note(60, 10, Some(100_000)));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    // Room for 256 waiting: the two ends, and 127 notes far ahead, an on and an off each.
+    for pitch in 0..127 {
+        harness.send(note(pitch, 1_000_000, Some(1)));
+    }
+    harness.send(release(60, 0));
+    assert_eq!(harness.render(4_800).last(), Some(&0.0));
+}

@@ -41,7 +41,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -56,26 +56,32 @@ pub const EXTENSION: &str = "reverb";
 /// A field that a record leaves out takes its default, so `"state": {}` is the default reverb.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct ReverbState {
-    /// The time from the sound to the first of its reflections.
+    /// The time from the sound to the first of its reflections. Longer keeps a voice or a drum
+    /// clear of its room.
     pub pre_delay_ms: f32,
     /// The time the tail takes to fall by 60 dB.
     pub decay_seconds: f32,
-    /// The size of the room: how far apart the reflections are. 0 is a small box, 1 a hall.
+    /// The size of the room: how far apart the reflections are. 0 is a small box and sounds
+    /// metallic, 1 a hall.
     pub size: f32,
-    /// How much sooner the highs die than the rest. 0 is as long, 1 is a tenth of the time.
+    /// How much sooner the highs die than the rest. 0 is as long, 0.5 is 55 % of the decay
+    /// time, 1 is a tenth of it.
     pub damping: f32,
-    /// How quickly the reflections blur into a smooth tail. 0 is separate echoes.
+    /// How quickly the reflections blur into a smooth tail. 0 is separate echoes, 1 is smooth
+    /// at once.
     pub diffusion: f32,
-    /// What goes into the reverb is cut below this.
+    /// What goes into the reverb is cut below this. Raise it to keep the bass out of the room.
     pub low_cut_hz: f32,
-    /// What goes into the reverb is cut above this.
+    /// What goes into the reverb is cut above this. Lower it for a darker room.
     pub high_cut_hz: f32,
-    /// 0 is a mono tail, 1 is as wide as it gets.
+    /// 0 is a mono tail, 1 is as wide as it gets. The dry sound keeps its own width.
     pub width: f32,
     /// 0 is the sound as it came in, 1 is the reverb only.
     pub mix: f32,
-    /// Holds the tail as it is, for as long as it is on, and lets no new sound in.
+    /// Holds the tail as it is, for as long as it is on, lets no new sound into it, and passes
+    /// the dry sound as before.
     pub freeze: bool,
 }
 
@@ -199,7 +205,8 @@ impl State for ReverbState {
 /// The doc of the reverb record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "reverb",
-    when: "You put a reverb on a track, or change one: a room, a hall, more space, a frozen pad",
+    group: "Devices",
+    when: "A reverb on a track: a room, a hall, more space, a frozen pad",
     markdown: include_str!("../agent-doc.md"),
 };
 
@@ -208,7 +215,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ReverbState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Reverb::AUTOMATION.parameters());
+        .schema(Reverb::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
@@ -226,18 +233,9 @@ fn apply(state: &ReverbState, context: &mut BehaviourContext<'_>) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
