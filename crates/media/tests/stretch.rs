@@ -318,13 +318,14 @@ fn a_loop_over_a_warped_region_does_not_click_and_repeats_the_same() {
 #[test]
 fn two_warped_regions_that_meet_hand_over_with_no_dip() {
     let folder = tempfile::tempdir().unwrap();
-    file(folder.path(), "level.wav", 2.0, |_| 0.25);
-    let first = region("level.wav", 0, &[(BEAT, 0.3)]);
-    let mut second = region("level.wav", BEAT, &[(2 * BEAT, 1.5)]);
-    second.file_start_seconds = 0.3;
-    let mut song = Song::new(folder.path(), vec![first, second]);
-    let played = song.play(3 * BEAT_FRAMES, 512);
-    let lowest = (played[BEAT_FRAMES / 2..2 * BEAT_FRAMES].iter())
-        .fold(f32::MAX, |low, sample| low.min(*sample));
-    assert!(lowest > 0.25 * 0.95, "{lowest} at the join");
+    file(folder.path(), "level.wav", 1.0, |_| 0.25);
+    for end in [0.3, 0.9] {
+        let first = region("level.wav", 0, &[(BEAT, end)]);
+        let second = region("level.wav", BEAT, &[(2 * BEAT, 0.9)]);
+        let mut song = Song::new(folder.path(), vec![first, second]);
+        let played = song.play(3 * BEAT_FRAMES, 512);
+        let join = &played[BEAT_FRAMES / 2..3 * BEAT_FRAMES / 2];
+        let lowest = join.iter().fold(f32::MAX, |low, sample| low.min(*sample));
+        assert!(lowest > 0.25 * 0.95, "{lowest} at the join after {end} s");
+    }
 }

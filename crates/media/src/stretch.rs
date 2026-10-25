@@ -36,6 +36,11 @@ const HOLD_SECONDS: f64 = 0.05;
 const SPLICE_SECONDS: f64 = 0.01;
 /// Hops each side the period is averaged over.
 const SMOOTHING_HOPS: usize = 2;
+/// How long the crossfade takes to follow a change of speed, so no weight jumps.
+const EASE_SECONDS: f64 = 0.01;
+/// The narrowest crossfade, in periods. Near the speed of the file the heads hardly move, and
+/// a narrower one would switch from one to the other at once.
+const NARROWEST: f64 = 0.05;
 
 /// The periods of a file and its phase: its periods counted from its start.
 #[derive(Debug)]
@@ -116,6 +121,13 @@ impl Periods {
         }
     }
 
+    /// The period at `place`, in frames of the file.
+    fn period(&self, place: f64) -> f64 {
+        let last = self.periods.len().saturating_sub(1);
+        let index = ((place / self.hop).floor().max(0.0) as usize).min(last);
+        self.periods.get(index).copied().unwrap_or(1.0)
+    }
+
     /// The place at `phase`: the inverse of [`Self::phase`].
     fn place(&self, phase: f64) -> f64 {
         let starts = self.phases.get(..self.periods.len()).unwrap_or_default();
@@ -141,6 +153,8 @@ pub(crate) struct Warp {
     step: f64,
     /// The phase at `origin`.
     origin_phase: f64,
+    /// Engine frames of [`EASE_SECONDS`].
+    ease: f64,
 }
 
 /// The two heads around the place that should sound, in frames of the file, and how much of
@@ -154,7 +168,8 @@ pub(crate) struct Heads {
 
 /// A stretch of the region over which its file goes by at one speed, from frame `from` of the
 /// region up to `until`. `heard` is the phase the sound heard has reached at `from`, in periods
-/// of the place that should sound, at the speed of the file.
+/// of the place that should sound, at the speed of the file. `width` is the width of the
+/// crossfade of the piece before, which this one's takes over from in [`EASE_SECONDS`].
 #[derive(Clone, Copy)]
 struct Piece {
     from: f64,
@@ -163,6 +178,29 @@ struct Piece {
     phase: f64,
     speed: f64,
     heard: f64,
+    width: f64,
+}
+
+impl Piece {
+    /// How much of the head behind is heard at frame `frame`, the head ahead `ahead` periods
+    /// ahead of the place that should sound.
+    fn weight(&self, frame: f64, ahead: f64, warp: &Warp) -> f64 {
+        let eased = ((frame - self.from) / warp.ease).clamp(0.0, 1.0);
+        let own = width(self.speed, warp.step);
+        (1.0 - eased) * weight(ahead, self.width) + eased * weight(ahead, own)
+    }
+}
+
+/// The width of the crossfade at `speed`, in periods of the head ahead: one period of what is
+/// heard, where `step` is the speed of the file.
+fn width(speed: f64, step: f64) -> f64 {
+    (1.0 - speed / step).abs().clamp(NARROWEST, 1.0)
+}
+
+/// How much of the head behind is heard in a crossfade of `width` centred where both heads are
+/// as near.
+fn weight(ahead: f64, width: f64) -> f64 {
+    crossfade(((ahead - 0.5) / width + 0.5).clamp(0.0, 1.0))
 }
 
 impl Warp {
@@ -180,6 +218,7 @@ impl Warp {
                 .map(|point| (point.ticks.0, point.seconds * rate))
                 .collect(),
             step: rate / f64::from(engine.max(1)),
+            ease: EASE_SECONDS * f64::from(engine),
         }
     }
 
@@ -195,7 +234,10 @@ impl Warp {
         let anchors = std::iter::once((0, self.origin)).chain(self.points.iter().copied());
         let segments = anchors.zip(self.points.iter().copied());
         let inside = segments.flat_map(move |((from, at), (to, then))| {
-            let (first, last) = (self.start.0 + from, self.start.0 + to);
+            let (first, last) = (
+                self.start.0.saturating_add(from),
+                self.start.0.saturating_add(to),
+            );
             let after = changes.partition_point(|change| change.tick.0 <= first);
             let between = (changes.get(after..).unwrap_or_default().iter())
                 .take_while(move |change| change.tick.0 < last);
@@ -215,36 +257,42 @@ impl Warp {
     /// at the speed of the last piece.
     fn piece_at(&self, clock: &Clock, frame: f64) -> Piece {
         let mut knots = self.knots(clock);
-        let (mut from, mut place) = knots.next().unwrap_or((0.0, self.origin));
-        let (mut phase, mut heard, mut speed) = (self.origin_phase, 0.0, self.step);
-        for (until, then) in knots {
-            // Within one frame: the next piece starts here.
-            if until <= from {
-                continue;
-            }
-            speed = (then - place) / (until - from);
-            if frame < until {
-                return Piece {
-                    from,
-                    until,
-                    place,
-                    phase,
-                    speed,
-                    heard,
-                };
-            }
-            let then_phase = self.periods.phase(then);
-            heard += (then_phase - phase) / speed;
-            (from, place, phase) = (until, then, then_phase);
-        }
-        Piece {
+        let (from, place) = knots.next().unwrap_or((0.0, self.origin));
+        let mut piece = Piece {
             from,
             until: f64::INFINITY,
             place,
-            phase,
-            speed,
-            heard,
+            phase: self.origin_phase,
+            speed: self.step,
+            heard: 0.0,
+            width: 0.0,
+        };
+        let mut first = true;
+        for (until, then) in knots {
+            // Within one frame: the next piece starts here.
+            if until <= piece.from {
+                continue;
+            }
+            let speed = (then - piece.place) / (until - piece.from);
+            if first {
+                piece.width = width(speed, self.step);
+                first = false;
+            }
+            piece.speed = speed;
+            if frame < until {
+                return Piece { until, ..piece };
+            }
+            let phase = self.periods.phase(then);
+            piece = Piece {
+                from: until,
+                place: then,
+                phase,
+                heard: piece.heard + (phase - piece.phase) / speed,
+                width: width(speed, self.step),
+                ..piece
+            };
         }
+        piece
     }
 
     fn heads(&self, piece: &Piece, frame: f64) -> Heads {
@@ -255,12 +303,7 @@ impl Warp {
         // How far the head ahead is ahead of the place, from 0 to 1 period.
         let periods = (reading - phase).floor();
         let ahead = reading - phase - periods;
-        // A crossfade over one period of what is heard, centred where both are as near.
-        let width = (1.0 - piece.speed / self.step).abs().min(1.0);
-        let weight = match width > 0.0 {
-            true => crossfade(((ahead - 0.5) / width + 0.5).clamp(0.0, 1.0)),
-            false => f64::from(u8::from(ahead > 0.5)),
-        };
+        let weight = piece.weight(frame, ahead, self);
         Heads {
             ahead: self.periods.place(reading - periods),
             behind: self.periods.place(reading - periods - 1.0),
@@ -280,8 +323,10 @@ impl Warp {
         let ticks = self.points.last().map_or(0, |(ticks, _)| *ticks);
         let end = clock.frame_of(Ticks(self.start.0.saturating_add(ticks))).0;
         let length = end.saturating_sub(clock.frame_of(self.start).0).max(1);
+        // The head ahead may be a period ahead of the place.
         let last = self.piece_at(clock, f64::INFINITY);
-        let left = (file_frames as f64 - last.place).max(0.0) / last.speed;
+        let end = file_frames as f64 - self.periods.period(last.place);
+        let left = (end - last.place).max(0.0) / last.speed;
         (length, length.saturating_add(left as u64))
     }
 
@@ -340,5 +385,62 @@ impl Warp {
             }
         }
         sum
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sound_core::{Tempo, TempoMap, TimeSignature};
+
+    use super::*;
+    use crate::{AudioAsset, WarpPoint};
+
+    /// The largest move from one frame to the next, around frame `around`, of where the heads
+    /// read, each by its weight, for a sound of one period of 10 ms, as drums have. A weight
+    /// that jumps moves it by part of a period at once.
+    fn largest_move(warp: &[(u64, f64)], around: u64) -> f64 {
+        let periods = Periods {
+            hop: 240.0,
+            periods: vec![480.0; 1_000].into(),
+            phases: (0..=1_000).map(|hop| f64::from(hop) / 2.0).collect(),
+        };
+        let region = Region {
+            asset: AudioAsset::try_from("drums.wav".to_string()).unwrap(),
+            start: Ticks(0),
+            file_start_seconds: 0.0,
+            file_end_seconds: None,
+            gain: 1.0,
+            fade_in_ms: 0.0,
+            fade_out_ms: 0.0,
+            warp: (warp.iter())
+                .map(|(ticks, seconds)| WarpPoint {
+                    ticks: Ticks(*ticks),
+                    seconds: *seconds,
+                })
+                .collect(),
+        };
+        let warp = Warp::new(Arc::new(periods), &region, (48_000, 48_000));
+        let signature = TimeSignature::new(4, 4).unwrap();
+        let tempo = TempoMap::constant(signature, Tempo::from_bpm(120.0).unwrap());
+        let clock = Clock::new(tempo, 48_000);
+        let reads: Vec<f64> = (around - 2_000..around + 2_000)
+            .map(|frame| {
+                let heads = warp.heads_at(&clock, frame);
+                let weight = f64::from(heads.weight);
+                (1.0 - weight) * heads.ahead + weight * heads.behind
+            })
+            .collect();
+        (reads.windows(2))
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn the_crossfade_follows_a_change_of_speed_with_no_jump() {
+        // From half the speed of the file to its speed at frame 24,000, wherever the heads are.
+        for second in [0.252, 0.2535, 0.254, 0.2545, 0.256] {
+            let moved = largest_move(&[(960, second), (2_880, second + 1.0)], 24_000);
+            assert!(moved < 10.0, "{second}: {moved} frames");
+        }
     }
 }

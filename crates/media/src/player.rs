@@ -184,6 +184,15 @@ pub fn snapshot(
                 continue;
             }
         };
+        if let Some(point) = (region.warp.iter()).find(|point| point.seconds > file.seconds()) {
+            problems.push(format!(
+                "{what} is silent: a warp point plays second {} of {}, which is {:.3} s long. Move the point inside the file",
+                point.seconds,
+                region.asset,
+                file.seconds()
+            ));
+            continue;
+        }
         let warp = match (region.warp.is_empty(), periods) {
             (true, _) => None,
             (false, None) => continue,
