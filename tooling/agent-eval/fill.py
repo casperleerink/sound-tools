@@ -2,7 +2,7 @@
 
     python3 -I tooling/agent-eval/fill.py <window.png>...
 
-Takes the `window.png` the screenshot example writes. The page is the window under its title
+Takes the PNG `runtime <project> --screenshot <png>` writes. The page is the window under its title
 row; its own colour is the colour at its top left, and what differs from it is drawn.
 """
 
