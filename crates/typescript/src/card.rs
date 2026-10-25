@@ -1671,6 +1671,7 @@ struct Pointer {
 }
 
 /// A shape with its numbers worked out, in the units of its space.
+#[derive(Clone)]
 struct Placed {
     /// Its place among the shapes of the space, which its pointer is found by.
     index: usize,
@@ -1704,6 +1705,7 @@ impl Area {
     }
 }
 
+#[derive(Clone)]
 enum Geometry {
     Rect {
         x: f64,
@@ -2834,15 +2836,15 @@ impl Drawing<'_, '_> {
         };
         let mut indexes = self.indexes.borrow_mut();
         let version = self.table.version();
-        let index = match indexes.get(key) {
-            Some(index) if index.version == version => index,
-            _ => {
-                let index = placing.index(children, version);
-                indexes.insert(key.to_string(), index);
-                &indexes[key]
-            }
-        };
-        placing.indexed(index);
+        if indexes
+            .get(key)
+            .is_none_or(|index| index.version != version)
+        {
+            indexes.insert(key.to_string(), placing.index(children, version));
+        }
+        if let Some(index) = indexes.get_mut(key) {
+            placing.indexed(index);
+        }
         (placing.placed, placing.pointed)
     }
 
@@ -3090,6 +3092,52 @@ impl Extent {
 pub(crate) struct SpaceIndex {
     version: u64,
     shapes: Vec<Indexed>,
+    /// By the place of each shape in `shapes`: whether it and the groups that move it are
+    /// [`tree::ShapeProps::steady`].
+    steady: Vec<bool>,
+    /// What the steady shapes gave in the frame before, while what they read stays the same.
+    kept: Kept,
+}
+
+/// What the steady shapes of a space gave, and what they read when they gave it.
+#[derive(Default)]
+struct Kept {
+    reads: Option<Reads>,
+    /// By the place of each shape in `shapes`: what it gave, unless it is not steady.
+    shaped: Vec<Option<Option<Showing>>>,
+}
+
+/// All a steady shape reads: how the spaces show, the drag, and what the pointer is over.
+struct Reads {
+    spaces: HashMap<String, SpaceView>,
+    drag: Option<(String, DragNumbers)>,
+    hovered: (Option<u64>, Option<String>),
+}
+
+impl Reads {
+    fn of(sources: &Sources<'_>, hovered: Option<u64>) -> Self {
+        Self {
+            spaces: sources.spaces.clone(),
+            drag: (sources.drag).map(|(id, numbers)| (id.to_string(), numbers)),
+            hovered: (hovered, sources.hovered.map(str::to_string)),
+        }
+    }
+
+    fn are(&self, sources: &Sources<'_>, hovered: Option<u64>) -> bool {
+        let drag = (self.drag.as_ref()).map(|(id, numbers)| (id.as_str(), *numbers));
+        self.spaces == *sources.spaces
+            && drag == sources.drag
+            && self.hovered.0 == hovered
+            && self.hovered.1.as_deref() == sources.hovered
+    }
+}
+
+/// What a shape that shows gives a frame: what it does with the pointer, and where it is and
+/// in what colour unless it is see-through.
+#[derive(Clone)]
+struct Showing {
+    pointer: Option<Pointer>,
+    placed: Option<(Geometry, Hsla, Option<Area>)>,
 }
 
 enum Indexed {
@@ -3184,7 +3232,24 @@ impl Placing<'_> {
     fn index(&self, children: &[usize], version: u64) -> SpaceIndex {
         let mut shapes = Vec::with_capacity(children.len());
         self.index_into(children, ((0.0, 0.0), None), &Rc::from([]), &mut shapes);
-        SpaceIndex { version, shapes }
+        let steady_at = |slot: &usize| match self.table.get(*slot).map(|entry| &entry.props) {
+            Some(Props::Shape(shape)) => shape.steady(),
+            _ => true,
+        };
+        let steady = (shapes.iter())
+            .map(|indexed| match indexed {
+                Indexed::Stays { slot, .. } => steady_at(slot),
+                Indexed::Moves { slot, groups, .. } => {
+                    steady_at(slot) && groups.iter().all(steady_at)
+                }
+            })
+            .collect();
+        SpaceIndex {
+            version,
+            shapes,
+            steady,
+            kept: Kept::default(),
+        }
     }
 
     fn index_into(
@@ -3253,57 +3318,83 @@ impl Placing<'_> {
         ((left, top), clip)
     }
 
-    /// Places the shapes of `index` that move, and those of the rest that show.
-    fn indexed(&mut self, index: &SpaceIndex) {
-        let table = self.table;
-        for indexed in &index.shapes {
-            let (slot, placed) = match indexed {
-                Indexed::Stays {
-                    slot,
-                    offset,
-                    clip,
-                    extent,
-                } => {
-                    let shows = self.shown.as_ref().is_none_or(|shown| {
-                        shown.reaches(extent.across, extent.down, extent.reach)
-                    }) && clip.is_none_or(|clip| clip.meets(extent));
-                    if !shows {
-                        continue;
+    /// Places the shapes of `index` that move, and those of the rest that show. A steady shape
+    /// gives what it gave in the frame before, while what it reads is the same.
+    fn indexed(&mut self, index: &mut SpaceIndex) {
+        let kept = &mut index.kept;
+        let same =
+            (kept.reads.as_ref()).is_some_and(|reads| reads.are(&self.sources, self.hovered));
+        if !same || kept.shaped.len() != index.shapes.len() {
+            kept.shaped = vec![None; index.shapes.len()];
+            kept.reads = Some(Reads::of(&self.sources, self.hovered));
+        }
+        for ((indexed, steady), kept) in (index.shapes.iter())
+            .zip(&index.steady)
+            .zip(&mut kept.shaped)
+        {
+            let shaped = match kept {
+                Some(shaped) => shaped.clone(),
+                None => {
+                    let shaped = self.shaped(indexed);
+                    if *steady {
+                        *kept = Some(shaped.clone());
                     }
-                    (*slot, (*offset, *clip))
-                }
-                Indexed::Moves {
-                    slot,
-                    offset,
-                    clip,
-                    groups,
-                } => {
-                    // A shape that moves inside the box of a group that stays shows only when
-                    // that box does: the handle at the end of a clip far off.
-                    let boxed_off = |shown: &Shown| {
-                        clip.is_some_and(|Area([left, top, right, bottom])| {
-                            !shown.reaches((left, right), (top, bottom), (0.0, 0.0))
-                        })
-                    };
-                    if groups.is_empty() && self.shown.as_ref().is_some_and(boxed_off) {
-                        continue;
-                    }
-                    let mut placed = (*offset, *clip);
-                    for group in groups.iter() {
-                        if let Some(Props::Shape(group)) =
-                            table.get(*group).map(|entry| &entry.props)
-                        {
-                            placed = self.group(group, placed);
-                        }
-                    }
-                    (*slot, placed)
+                    shaped
                 }
             };
-            if let Some(entry) = table.get(slot)
-                && let Props::Shape(shape) = &entry.props
-            {
-                self.shape(entry.id, shape, placed);
+            self.put(shaped);
+        }
+    }
+
+    /// What `indexed` gives this frame.
+    fn shaped(&self, indexed: &Indexed) -> Option<Showing> {
+        let table = self.table;
+        let (slot, placed) = match indexed {
+            Indexed::Stays {
+                slot,
+                offset,
+                clip,
+                extent,
+            } => {
+                let shows =
+                    self.shown.as_ref().is_none_or(|shown| {
+                        shown.reaches(extent.across, extent.down, extent.reach)
+                    }) && clip.is_none_or(|clip| clip.meets(extent));
+                if !shows {
+                    return None;
+                }
+                (*slot, (*offset, *clip))
             }
+            Indexed::Moves {
+                slot,
+                offset,
+                clip,
+                groups,
+            } => {
+                // A shape that moves inside the box of a group that stays shows only when
+                // that box does: the handle at the end of a clip far off.
+                let boxed_off = |shown: &Shown| {
+                    clip.is_some_and(|Area([left, top, right, bottom])| {
+                        !shown.reaches((left, right), (top, bottom), (0.0, 0.0))
+                    })
+                };
+                if groups.is_empty() && self.shown.as_ref().is_some_and(boxed_off) {
+                    return None;
+                }
+                let mut placed = (*offset, *clip);
+                for group in groups.iter() {
+                    if let Some(Props::Shape(group)) = table.get(*group).map(|entry| &entry.props) {
+                        placed = self.group(group, placed);
+                    }
+                }
+                (*slot, placed)
+            }
+        };
+        match table.get(slot) {
+            Some(entry) if let Props::Shape(shape) = &entry.props => {
+                self.shape(entry.id, shape, placed)
+            }
+            _ => None,
         }
     }
 
@@ -3318,17 +3409,16 @@ impl Placing<'_> {
     }
 
     fn shape(
-        &mut self,
+        &self,
         id: u64,
         shape: &tree::ShapeProps,
         ((left, top), clip): ((f64, f64), Option<Area>),
-    ) {
-        let index = self.pointed.len();
+    ) -> Option<Showing> {
         let hovered = self.hovered == Some(id);
         let (moved_x, moved_y) = self.followed(&shape.moves);
         let (left, top) = (left + moved_x, top + moved_y);
         let Some(geometry) = self.geometry(shape, (left, top)) else {
-            return;
+            return None;
         };
         let extent = Extent::of(&geometry);
         let hidden = self
@@ -3337,11 +3427,11 @@ impl Placing<'_> {
             .is_some_and(|shown| !shown.shows(&geometry))
             || clip.is_some_and(|clip| !clip.meets(&extent));
         if hidden {
-            return;
+            return None;
         }
         let origin = geometry.origin();
         let anchor = shape.anchor.unwrap_or_default();
-        self.pointed.push(shape.is_pointed().then(|| Pointer {
+        let pointer = shape.is_pointed().then(|| Pointer {
             node: id,
             hears: Hears::of(shape.on_press, shape.on_release, shape.on_click),
             drag: self.table.drag(shape.drag).cloned(),
@@ -3350,12 +3440,15 @@ impl Placing<'_> {
                 anchor.x.map_or(origin.0, |x| left + f64::from(x)),
                 anchor.y.map_or(origin.1, |y| top + f64::from(y)),
             ),
-        }));
+        });
         let opacity = (shape.opacity.as_ref())
             .map_or(1.0, |opacity| self.sources.number(opacity).clamp(0.0, 1.0))
             as f32;
         if opacity <= 0.0 {
-            return;
+            return Some(Showing {
+                pointer,
+                placed: None,
+            });
         }
         let mut color = match (hovered.then_some(shape.hover).flatten(), &shape.color) {
             (Some(hover), _) => hover.0,
@@ -3363,12 +3456,26 @@ impl Placing<'_> {
             (None, None) => gpui::white(),
         };
         color.a *= opacity;
-        self.placed.push(Placed {
-            index,
-            geometry,
-            color,
-            clip,
-        });
+        Some(Showing {
+            pointer,
+            placed: Some((geometry, color, clip)),
+        })
+    }
+
+    fn put(&mut self, shaped: Option<Showing>) {
+        let Some(Showing { pointer, placed }) = shaped else {
+            return;
+        };
+        let index = self.pointed.len();
+        self.pointed.push(pointer);
+        if let Some((geometry, color, clip)) = placed {
+            self.placed.push(Placed {
+                index,
+                geometry,
+                color,
+                clip,
+            });
+        }
     }
 
     /// Where `shape` is and how big, at `left` and `top` in its space; `None` for a group.
