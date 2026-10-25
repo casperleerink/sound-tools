@@ -15,4 +15,4 @@ Here the vocal is hard tuned to A minor:
 
 Notes held on its `notes` input are the notes it moves to, in any octave, in place of the key and scale. To have a clip lead the voice, connect it in `project.json`: `{"from": {"instance": "song/keys/verse", "port": "notes"}, "to": {"input": {"instance": "song/vocal/chain/tune", "port": "notes"}}}`.
 
-Starting points: a natural correction is `retune_ms` 50 to 150, hard tuning `retune_ms` 0. Long notes that should keep their vibrato: `humanize` 0.5 to 1. Use the key of the song: a wrong key tunes the voice to wrong notes. Chords, drums and noise pass through unchanged. The sound comes out 38 ms late; the project makes up for it.
+Starting points: a natural correction is `retune_ms` 50 to 150, hard tuning `retune_ms` 0. Long notes that should keep their vibrato: `humanize` 0.5 to 1. A vibrato or slide that jumps between two notes: `ignore_vibrato` true. Use the key of the song: a wrong key tunes the voice to wrong notes. Chords, drums and noise pass through unchanged. The sound comes out 38 ms late; the project makes up for it.
