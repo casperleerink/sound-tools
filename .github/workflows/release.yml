@@ -1,8 +1,9 @@
 name: Release
 
 # A tag v<version> builds the app for macOS, Linux and Windows and makes a GitHub release of it.
-# Started by hand, it builds the same files and keeps them as artifacts of the run, with no
-# release: the dry run. `/release` makes the tag, see .agents/skills/release/SKILL.md.
+# The tag is the only place the version is written. Started by hand, it builds the same files as
+# version 0.0.0, which never updates, and keeps them as artifacts of the run, with no release:
+# the dry run. `/release` makes the tag, see .agents/skills/release/SKILL.md.
 on:
   push:
     tags: ["v*"]
@@ -20,15 +21,16 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      # Cargo.toml holds the version. A tag that says another one is a mistake.
-      - name: Check the tag against Cargo.toml
+      - name: Read the version from the tag
         id: version
         run: |
-          version="$(tooling/version.sh)"
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "::error::The tag $GITHUB_REF_NAME does not match version $version in Cargo.toml."
-            exit 1
+          version=0.0.0
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::The tag $GITHUB_REF_NAME is not v<major>.<minor>.<patch>."
+              exit 1
+            fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -36,6 +38,8 @@ jobs:
   macos:
     needs: version
     runs-on: macos-15
+    env:
+      SOUND_TOOLS_VERSION: ${{ needs.version.outputs.version }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +64,8 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runner }}
+    env:
+      SOUND_TOOLS_VERSION: ${{ needs.version.outputs.version }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +89,8 @@ jobs:
   windows:
     needs: version
     runs-on: windows-latest
+    env:
+      SOUND_TOOLS_VERSION: ${{ needs.version.outputs.version }}
     timeout-minutes: 45
     defaults:
       run:
@@ -98,10 +106,8 @@ jobs:
       # Nobody here has a Windows computer, so the runner tries the setup program as the app's
       # own update runs it: an install, an update over a running Bun, and the uninstall.
       - name: Try the setup program
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          setup() { "dist/Sound-Tools-Setup-$VERSION.exe" //VERYSILENT //SUPPRESSMSGBOXES //NORESTART; }
+          setup() { "dist/Sound-Tools-Setup-$SOUND_TOOLS_VERSION.exe" //VERYSILENT //SUPPRESSMSGBOXES //NORESTART; }
           on_path() {
             powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" \
               | grep -qF 'Programs\Sound Tools'

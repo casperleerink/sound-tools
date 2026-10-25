@@ -18,7 +18,7 @@ cd "$root"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 
-version="$(tooling/version.sh)"
+version="${SOUND_TOOLS_VERSION:-0.0.0}"
 # x86_64 or aarch64.
 name="sound-tools-$version-linux-$(uname -m)"
 

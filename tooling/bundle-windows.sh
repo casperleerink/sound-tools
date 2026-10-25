@@ -21,7 +21,7 @@ cd "$root"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 
-version="$(tooling/version.sh)"
+version="${SOUND_TOOLS_VERSION:-0.0.0}"
 
 iscc="$(command -v iscc || true)"
 if [[ -z "$iscc" ]]; then

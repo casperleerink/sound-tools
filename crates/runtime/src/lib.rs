@@ -32,6 +32,13 @@ pub use templates::{TEMPLATES, Template};
 
 pub const PROJECT_FILE: &str = "project.json";
 
+/// The release this build is, which `.github/workflows/release.yml` takes from its tag.
+/// `0.0.0` for a build of no release.
+pub const VERSION: &str = match option_env!("SOUND_TOOLS_VERSION") {
+    Some(version) => version,
+    None => "0.0.0",
+};
+
 /// Offline renders have no device to ask. `offline` is what every processor is told, and what a
 /// hosted plugin passes on to the plugin in the way its format intends.
 pub const OFFLINE: EngineConfig = EngineConfig {

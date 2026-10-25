@@ -1,13 +1,13 @@
 ---
 name: release
-description: Cut a versioned GitHub release of the Sound Tools app for macOS, Linux and Windows. Bumps the workspace version, merges it through a pull request, tags main and watches the release workflow. Use when asked to release, cut a release or ship a new version.
+description: Cut a versioned GitHub release of the Sound Tools app for macOS, Linux and Windows. Picks the version, tags main and watches the release workflow. Use when asked to release, cut a release or ship a new version.
 argument-hint: "[patch|minor|major|<version>]"
 disable-model-invocation: true
 ---
 
 # Release
 
-A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip, the two Linux tarballs and the Windows setup program and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
+A release is a tag `v<version>` on main, and the tag is the only place the version is written. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip, the two Linux tarballs and the Windows setup program with that version and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. Nothing is committed: `version` in `Cargo.toml` stays `0.0.0`.
 
 Stop and report at the first step that fails. Never move or delete a tag that was pushed.
 
@@ -16,6 +16,7 @@ Stop and report at the first step that fails. Never move or delete a tag that wa
 The argument is `patch`, `minor`, `major` or a version such as `0.3.0`, and it wins. With no argument, decide from what changed since the last release:
 
 ```sh
+git fetch origin --tags
 git describe --tags --abbrev=0 origin/main     # the last release tag
 gh pr list --state merged --base main --search "merged:>=<date of that tag>" --json number,title
 ```
@@ -24,65 +25,30 @@ gh pr list --state merged --base main --search "merged:>=<date of that tag>" --j
 - `minor`: something new a composer can do or see: a tool, an instrument, a view, a format field.
 - `patch`: only fixes and changes nobody notices.
 
-The largest that applies wins. Say which one and why in one line, before you bump.
+The largest that applies wins. Say which one and why in one line, before you tag.
 
-`tooling/version.sh` prints the current version. `0.1.4` becomes `0.1.5` for patch, `0.2.0` for minor, `1.0.0` for major. Below, `$VERSION` is the new version, without the `v`: set `VERSION=0.1.5`.
+`v0.1.4` becomes `0.1.5` for patch, `0.2.0` for minor, `1.0.0` for major. Below, `$VERSION` is the new version, without the `v`: set `VERSION=0.1.5`.
 
 ## 2. Check
 
+Tag the head of main, once main's full CI run on it ended `success`. A pull request runs only part of CI.
+
 ```sh
-git fetch origin --tags
-git status --porcelain                        # must print nothing
-git switch main && git merge --ff-only origin/main
-gh run list --workflow ci.yml --branch main --commit "$(git rev-parse HEAD)" --json status,conclusion
+sha=$(git rev-parse origin/main)
+gh run list --workflow ci.yml --branch main --commit "$sha" --json databaseId,status,conclusion
 git ls-remote --tags origin "v$VERSION"       # must print nothing
 ```
 
-CI must be `completed` and `success` for the head of main. If it still runs, wait with `gh run watch <id> --exit-status`.
+If the run still goes, wait with `gh run watch <id> --exit-status`.
 
-## 3. Bump
-
-Set `version = "<version>"` under `[workspace.package]` in `Cargo.toml`. Then:
+## 3. Tag
 
 ```sh
-cargo update --workspace
-tooling/version.sh                            # prints the new version
-git diff --stat                               # Cargo.toml and Cargo.lock only
-```
-
-## 4. Merge the bump
-
-Nobody pushes to main. The bump goes through a pull request. The active `gh` account may not have the right to open or merge it; the owner's does, so `gh pr create` and `gh pr merge` run with its token:
-
-```sh
-git switch -c "release/v$VERSION"
-git commit -am "Release v$VERSION"
-git push -u origin "release/v$VERSION"
-GH_TOKEN=$(gh auth token -u casperleerink) gh pr create --base main --title "Release v$VERSION" --body "Bumps the version to $VERSION. The tag v$VERSION on the merge commit makes the release."
-gh pr checks <number> --watch --fail-fast
-```
-
-When every check is green, merge:
-
-```sh
-GH_TOKEN=$(gh auth token -u casperleerink) gh pr merge <number> --merge
-```
-
-## 5. Tag
-
-Tag the merge commit, not a commit of the branch. A pull request runs only part of CI, so wait for main's full run on that commit first. It must end `success`:
-
-```sh
-sha=$(gh pr view <number> --json mergeCommit --jq .mergeCommit.oid)
-gh run list --workflow ci.yml --branch main --commit "$sha" --json databaseId,status,conclusion
-gh run watch <id> --exit-status
-git fetch origin
-git switch main && git merge --ff-only origin/main
 git tag -a "v$VERSION" "$sha" -m "Sound Tools $VERSION"
 git push origin "v$VERSION"
 ```
 
-## 6. Watch
+## 4. Watch
 
 ```sh
 gh run list --workflow release.yml --event push --limit 1 --json databaseId,headBranch
@@ -94,4 +60,4 @@ gh release view "v$VERSION" --json url --jq .url
 
 ## A dry run
 
-`gh workflow run release.yml --ref <branch>` builds the four files from any branch that has the workflow, and keeps them as artifacts of the run, with no tag and no release. `gh run download <id>` fetches them.
+`gh workflow run release.yml --ref <branch>` builds the four files from any branch that has the workflow, and keeps them as artifacts of the run, as version 0.0.0, with no tag and no release. `gh run download <id>` fetches them.

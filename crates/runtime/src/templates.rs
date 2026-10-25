@@ -84,7 +84,7 @@ struct KeptFile {
 fn write_kept_file(folder: &Path, template: &Template) -> Result<()> {
     let file = KeptFile {
         name: template.name.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::VERSION.to_string(),
     };
     put(
         &folder.join(KEPT).join("template.json"),
@@ -139,7 +139,7 @@ pub fn update(folder: &Path) -> Result<Option<Update>> {
         put(&kept.join(&path), newer)?;
     }
     if files.is_empty() {
-        if file.version != env!("CARGO_PKG_VERSION") {
+        if file.version != crate::VERSION {
             write_kept_file(folder, template)?;
         }
         return Ok(None);

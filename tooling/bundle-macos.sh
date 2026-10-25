@@ -24,7 +24,7 @@ output="${output:-dist}"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 
-version="$(tooling/version.sh)"
+version="${SOUND_TOOLS_VERSION:-0.0.0}"
 
 cargo build --release -p runtime --locked
 # .cargo/config.toml moves the build output out of the repository, so ask cargo where it is.

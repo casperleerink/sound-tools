@@ -637,7 +637,7 @@ fn entries(
         ))),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items(folder_items(recent))),
-        MenuEntry::Note(concat!("Sound Tools ", env!("CARGO_PKG_VERSION")).into()),
+        MenuEntry::Note(format!("Sound Tools {}", crate::VERSION).into()),
     ]
 }
 
