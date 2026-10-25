@@ -187,12 +187,22 @@ fn each_side_of_a_sudden_note_change_gets_its_own_correction() {
         (input, 69.0 + 12.0 * (hz / 440.0).log2())
     });
     // Each cycle from 0.2 s on, but those within 10 ms of the change, about two cycles.
+    let (mut first, mut second) = (0, 0);
     for (input, note) in cycles.filter(|(input, _)| *input > 0.2) {
         let expected = match input {
-            input if input < 0.49 => 57.0,
-            input if input > 0.51 => 60.0,
+            input if input < 0.49 => {
+                first += 1;
+                57.0
+            }
+            input if input > 0.51 => {
+                second += 1;
+                60.0
+            }
             _ => continue,
         };
         assert!((note - expected).abs() < 0.03, "{note} at {input} s");
     }
+    // Every cycle of both notes was there to check: 0.29 s of A3, and the rest of C4.
+    assert!(first >= 60, "{first} cycles of the first note");
+    assert!(second >= 100, "{second} cycles of the second note");
 }

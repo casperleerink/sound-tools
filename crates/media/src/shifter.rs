@@ -77,6 +77,10 @@ const CUTOFF: f64 = 0.85;
 const EASE: f64 = 0.2;
 /// How long a change of formants takes.
 const KEEP_SECONDS: f64 = 0.02;
+/// How much louder than the sound shifted with its formants the sound with them kept may be,
+/// and how fast the level of each falls.
+const LOUDER: f32 = 2.0;
+const LEVEL_SECONDS: f64 = 0.01;
 /// The pole of the tilt around the head, in Hz.
 const TILT_HZ: f64 = 360.0;
 
@@ -92,6 +96,10 @@ const LOOPED: f64 = 0.1;
 /// The pole of the tilt an envelope is worked out without, in Hz, so it fits the formants and
 /// not the fall of a voice to the highs.
 const ANALYSIS_TILT_HZ: f64 = 140.0;
+/// Power added at every frequency of an envelope, -20 dB of the whole. A period of a clean
+/// tone has nothing between its harmonics, and an envelope that fits that exactly puts the
+/// sound back far louder when the period changes under it.
+const FLOOR: f64 = 1e-2;
 
 /// How to shift a part of the sound, from what a pitch tracker read: pushed with each frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,6 +154,7 @@ pub struct Shifter {
     keeping: bool,
     keep: f32,
     filled: usize,
+    loudness: Loudness,
 }
 
 impl Shifter {
@@ -186,6 +195,7 @@ impl Shifter {
             keeping: false,
             keep: 0.0,
             filled: 0,
+            loudness: Loudness::new(rate),
         }
     }
 
@@ -280,7 +290,8 @@ impl Shifter {
         if self.keep > 0.0 {
             let flat = both(&self.flat);
             let kept = self.formants.restore(self.head.floor() as i64, flat);
-            out = between(out, kept, self.keep);
+            let gain = self.loudness.gain(out, kept);
+            out = between(out, kept.map(|sample| gain * sample), self.keep);
         }
         self.head += ratio;
         self.fading_from += ratio;
@@ -322,6 +333,36 @@ fn between(from: [f32; 2], to: [f32; 2], weight: f32) -> [f32; 2] {
         from[0] + weight * (to[0] - from[0]),
         from[1] + weight * (to[1] - from[1]),
     ]
+}
+
+/// The level of the sound shifted with its formants and of the sound with them kept: when the
+/// envelope put back meets a period it was not worked out from, as where the pitch jumps, the
+/// sound kept could ring far louder.
+struct Loudness {
+    fall: f32,
+    shifted: f32,
+    kept: f32,
+}
+
+impl Loudness {
+    fn new(rate: f64) -> Self {
+        Self {
+            fall: (-1.0 / (LEVEL_SECONDS * rate)).exp() as f32,
+            shifted: 0.0,
+            kept: 0.0,
+        }
+    }
+
+    /// The gain that holds `kept` to [`LOUDER`] times the level of `shifted`.
+    fn gain(&mut self, shifted: [f32; 2], kept: [f32; 2]) -> f32 {
+        let peak = |frame: [f32; 2]| frame[0].abs().max(frame[1].abs());
+        self.shifted = peak(shifted).max(self.fall * self.shifted);
+        self.kept = peak(kept).max(self.fall * self.kept);
+        match self.kept > LOUDER * self.shifted {
+            true => LOUDER * self.shifted / self.kept,
+            false => 1.0,
+        }
+    }
 }
 
 /// The steps of the rate the envelope counts in: 1 under 50 kHz, 2 under 100 kHz, else 4.
@@ -621,7 +662,7 @@ impl Formants {
         if let Some(first) = self.prediction.first_mut() {
             *first = 1.0;
         }
-        let mut error = lags.first().copied().unwrap_or(0.0);
+        let mut error = lags.first().copied().unwrap_or(0.0) * (1.0 + FLOOR);
         for stage in 1..=self.order {
             let (Some(taps), Some(lagged)) = (self.prediction.get(..stage), lags.get(1..=stage))
             else {
@@ -990,5 +1031,42 @@ mod tests {
                 .iter()
                 .any(|sample| sample.abs() > 0.1)
         );
+    }
+
+    #[test]
+    fn kept_formants_stay_at_the_level_of_the_sound_when_the_pitch_jumps() {
+        // A bright tone that jumps between two notes every 125 ms, a third up and down: a clean
+        // tone has no power between its harmonics, the hardest case for an envelope.
+        for rate in [44_100.0, 48_000.0, 96_000.0] {
+            for (low, high) in [(110.0, 220.0), (100.0, 600.0)] {
+                let mut shifter = Shifter::new(rate, rate / 60.0, 1.6 * rate / 60.0);
+                shifter.keep_formants(true);
+                let (mut phase, mut loudest) = (0.0_f64, 0.0_f32);
+                let switch = (0.125 * rate) as usize;
+                for frame in 0..(3.0 * rate) as usize {
+                    let hz = if (frame / switch).is_multiple_of(2) {
+                        low
+                    } else {
+                        high
+                    };
+                    phase += std::f64::consts::TAU * hz / rate;
+                    let sample: f64 = (1..=16)
+                        .map(|harmonic| 0.15 * (phase * harmonic as f64).sin() / harmonic as f64)
+                        .sum();
+                    let shift = Shift {
+                        period: Some(rate / hz),
+                        ratio: 1.03,
+                        age: 0.0,
+                    };
+                    shifter.push([sample as f32; 2], shift);
+                    let out = shifter.pull()[0];
+                    if frame > rate as usize {
+                        loudest = loudest.max(out.abs());
+                    }
+                }
+                // The tone peaks at 0.26.
+                assert!(loudest < 0.55, "{rate} Hz, {low} and {high} Hz: {loudest}");
+            }
+        }
     }
 }
