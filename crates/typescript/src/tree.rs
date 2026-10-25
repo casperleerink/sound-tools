@@ -530,6 +530,27 @@ pub(crate) struct Uses {
     pub takes: BTreeSet<String>,
 }
 
+impl Uses {
+    fn join(&mut self, other: &Uses) {
+        self.watches |= other.watches;
+        self.tick |= other.tick;
+        self.animates |= other.animates;
+        self.output |= other.output;
+        self.input |= other.input;
+        let sets = [
+            (&mut self.peaks, &other.peaks),
+            (&mut self.played, &other.played),
+            (&mut self.scopes, &other.scopes),
+            (&mut self.inside, &other.inside),
+            (&mut self.files, &other.files),
+            (&mut self.takes, &other.takes),
+        ];
+        for (into, from) in sets {
+            into.extend(from.iter().cloned());
+        }
+    }
+}
+
 /// How many nodes of a table use each thing, so a node that goes takes its use with it.
 #[derive(Clone, Debug, Default)]
 struct UseCounts {
@@ -692,6 +713,29 @@ impl NodeTable {
 
     pub(crate) fn uses(&self) -> &Uses {
         &self.uses
+    }
+
+    /// What the nodes use outside the node in `slot` and its children, and inside it.
+    pub(crate) fn uses_around(&self, slot: usize) -> (Uses, Uses) {
+        let (mut outside, mut inside) = (Uses::default(), Uses::default());
+        let mut todo: Vec<(usize, bool)> = self
+            .root
+            .map(|root| (root, root == slot))
+            .into_iter()
+            .collect();
+        while let Some((at, within)) = todo.pop() {
+            let Some(entry) = self.get(at) else {
+                continue;
+            };
+            (if within { &mut inside } else { &mut outside }).join(&entry.uses);
+            todo.extend(
+                entry
+                    .children
+                    .iter()
+                    .map(|child| (*child, within || *child == slot)),
+            );
+        }
+        (outside, inside)
     }
 
     pub(crate) fn version(&self) -> u64 {

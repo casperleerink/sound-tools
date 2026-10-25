@@ -55,7 +55,7 @@ use crate::tree::{
     self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, CardSelect, Cursor,
     DivProps, Drag, IconProps, InputProps, List, MeterProps, NodeTable, NoticeProps, NoticeToned,
     OverlayProps, Paint, PathPoint, Props, Reach, Readout, SegmentedProps, ShapeKind, SliderProps,
-    SpaceProps, TextProps, ToggleProps, Turned, Weight, Words,
+    SpaceProps, TextProps, ToggleProps, Turned, Uses, Weight, Words,
 };
 use crate::window::OpenedMenu;
 use crate::window::{Live, Surface, state_of};
@@ -118,6 +118,11 @@ pub(crate) struct TypeScriptCard {
     embedded: HashMap<u64, Embedded>,
     /// The div it shows in the window's title bar, by its slot and index, as last drawn.
     title_bar: Option<(usize, Vec<usize>)>,
+    /// What the rest of the nodes use and what the title bar's use, for the version of the
+    /// nodes and the slot of the title bar they were worked out for.
+    uses_around: RefCell<Option<((u64, Option<usize>), Uses, Uses)>>,
+    /// The title bar draws again alone, and reads the feeds for its frame.
+    title_reads: bool,
     /// How each meter node falls and holds its peak, by node.
     meters: Rc<RefCell<HashMap<u64, Metering>>>,
     /// Where each node that hears a press was last laid out, by node, so a menu its press opens
@@ -609,9 +614,8 @@ impl TypeScriptCard {
         // Once per poll that moved it: a frame between two polls would draw the same tick.
         let playhead = session.read(cx).playhead().clone();
         cx.observe(&playhead, |view, _, cx| {
-            if view.live.read(cx).uses(view.card).tick {
-                cx.notify();
-            }
+            let (body, title_bar) = view.uses_around(cx);
+            view.draw_again(body.tick, title_bar.tick, cx);
         })
         .detach();
         cx.observe_in(&live, window, |view, _, window, cx| {
@@ -674,6 +678,8 @@ impl TypeScriptCard {
             focus_before_overlays: None,
             embedded: HashMap::new(),
             title_bar: None,
+            uses_around: RefCell::default(),
+            title_reads: false,
             meters: Rc::default(),
             placed: Rc::default(),
             anchor: Rc::default(),
@@ -689,13 +695,47 @@ impl TypeScriptCard {
         let Some(state) = self.state(cx) else {
             return;
         };
-        let uses = self.live.read(cx).uses(self.card);
+        let (body, title_bar) = self.uses_around(cx);
         let session = self.session.read(cx);
         let tick = session.playhead().read(cx).tick;
         let input = session.recording().read(cx).input_levels();
-        if (self.feeds).changed(session, (&self.id, &state), &uses, tick, input) {
+        let feeds = &mut self.feeds;
+        let mut changed =
+            |uses, title| feeds.changed(session, (&self.id, &state), (uses, title), tick, input);
+        let body = changed(&body, false);
+        let title_bar = !body && self.title_bar.is_some() && changed(&title_bar, true);
+        self.draw_again(body, title_bar, cx);
+    }
+
+    /// Draws the whole card again, or only its title bar when nothing else changed.
+    fn draw_again(&mut self, body: bool, title_bar: bool, cx: &mut Context<Self>) {
+        if body {
             cx.notify();
+        } else if title_bar {
+            self.title_reads = true;
+            cx.emit(TitleBarChanged);
         }
+    }
+
+    /// What the nodes use outside the title bar, and inside it.
+    fn uses_around(&self, cx: &App) -> (Uses, Uses) {
+        let live = self.live.read(cx);
+        let Some(Ok(table)) = live.tree(self.card) else {
+            return (live.uses(self.card), Uses::default());
+        };
+        let slot = self.title_bar.as_ref().map(|(slot, _)| *slot);
+        let key = (table.version(), slot);
+        let mut kept = self.uses_around.borrow_mut();
+        if kept.as_ref().is_none_or(|(at, ..)| *at != key) {
+            let (body, title_bar) = match slot {
+                Some(slot) => table.uses_around(slot),
+                None => (table.uses().clone(), Uses::default()),
+            };
+            *kept = Some((key, body, title_bar));
+        }
+        (kept.as_ref())
+            .map(|(_, body, title_bar)| (body.clone(), title_bar.clone()))
+            .unwrap_or_default()
     }
 
     /// Makes what its nodes show that is an entity of the window: a text field, the card of
@@ -4243,10 +4283,60 @@ impl TypeScriptCard {
         }
     }
 
-    /// The div its view shows in the window's title bar, with what the body last read.
+    /// Reads for a frame what the live values of its nodes, `uses`, read of the engine.
+    fn read_frame(
+        &mut self,
+        state: &Value,
+        uses: &Uses,
+        tick: sound_core::Ticks,
+        cx: &mut Context<Self>,
+    ) {
+        self.feeds.files.retain(|file, _| uses.files.contains(file));
+        let assets = self.session.read(cx).project().assets().clone();
+        for file in &uses.files {
+            let Ok(asset) = AudioAsset::new(file) else {
+                continue;
+            };
+            // Made in the background; the cache tells the card when it is ready.
+            if let Some(overview) = Waveforms::overview(&assets, &asset, cx) {
+                self.feeds.files.insert(file.clone(), overview);
+            }
+        }
+        let recording = self.session.read(cx).recording().read(cx);
+        self.feeds.input = match uses.input {
+            true => recording.input_levels().to_vec(),
+            false => Vec::new(),
+        };
+        self.feeds.takes = (uses.takes.iter())
+            .filter_map(|name| {
+                let recorder = self.id.child(name).ok()?;
+                let sound = &recording.take_of(&recorder)?.sound;
+                Some((name.clone(), sound.overview.read(Feeds::take)))
+            })
+            .collect();
+        self.feeds.take_notes = (uses.takes.iter())
+            .filter_map(|name| {
+                let notes = recording.notes_of(&self.id.child(name).ok()?)?;
+                Some((name.clone(), Rc::new(notes.clone())))
+            })
+            .collect();
+        let now = cx.background_executor().now();
+        let session = self.session.read(cx);
+        (self.feeds).read(session, &self.id, state, uses, tick, now);
+    }
+
+    /// The div its view shows in the window's title bar, with what the body last read, or what
+    /// it reads itself when it draws alone.
     fn draw_title_bar(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (slot, index) = self.title_bar.clone()?;
         let state = self.state(cx)?;
+        if std::mem::take(&mut self.title_reads) {
+            let uses = self.live.read(cx).uses(self.card);
+            let tick = self.session.read(cx).playhead().read(cx).tick;
+            self.read_frame(&state, &uses, tick, cx);
+        }
+        // What moves in it moves the title bar alone.
+        let body_moving = self.feeds.moving.take();
         let live = self.live.read(cx);
         let info = live.info(self.card);
         let Some(Ok(table)) = live.tree(self.card).cloned() else {
@@ -4287,6 +4377,8 @@ impl TypeScriptCard {
         let bar = drawing.draw(slot, &index);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
+        let moved = self.feeds.moving.replace(body_moving);
+        (self.feeds.title_moving).set(self.feeds.title_moving.get() || moved);
         let theme = cx.theme();
         Some(
             div()
@@ -4298,10 +4390,11 @@ impl TypeScriptCard {
     }
 }
 
-/// The div of a page's view that shows in the window's title bar moved, came or went.
-pub(crate) struct TitleBarMoved;
+/// The div of a page's view that shows in the window's title bar moved, came or went, or what
+/// it shows changed while nothing else of the page did.
+pub(crate) struct TitleBarChanged;
 
-impl EventEmitter<TitleBarMoved> for TypeScriptCard {}
+impl EventEmitter<TitleBarChanged> for TypeScriptCard {}
 
 /// What the view of a page shows in the window's title bar: its div that says `titleBar`.
 pub struct TitleBar(Entity<TypeScriptCard>);
@@ -4309,7 +4402,7 @@ pub struct TitleBar(Entity<TypeScriptCard>);
 impl TitleBar {
     pub(crate) fn new(card: Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
         cx.observe(&card, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&card, |_, _, _: &TitleBarMoved, cx| cx.notify())
+        cx.subscribe(&card, |_, _, _: &TitleBarChanged, cx| cx.notify())
             .detach();
         Self(card)
     }
@@ -4360,38 +4453,8 @@ impl Render for TypeScriptCard {
         if uses.animates {
             window.request_animation_frame();
         }
-        self.feeds.files.retain(|file, _| uses.files.contains(file));
-        let assets = self.session.read(cx).project().assets().clone();
-        for file in &uses.files {
-            let Ok(asset) = AudioAsset::new(file) else {
-                continue;
-            };
-            // Made in the background; the cache tells the card when it is ready.
-            if let Some(overview) = Waveforms::overview(&assets, &asset, cx) {
-                self.feeds.files.insert(file.clone(), overview);
-            }
-        }
-        let recording = self.session.read(cx).recording().read(cx);
-        self.feeds.input = match uses.input {
-            true => recording.input_levels().to_vec(),
-            false => Vec::new(),
-        };
-        self.feeds.takes = (uses.takes.iter())
-            .filter_map(|name| {
-                let recorder = self.id.child(name).ok()?;
-                let sound = &recording.take_of(&recorder)?.sound;
-                Some((name.clone(), sound.overview.read(Feeds::take)))
-            })
-            .collect();
-        self.feeds.take_notes = (uses.takes.iter())
-            .filter_map(|name| {
-                let notes = recording.notes_of(&self.id.child(name).ok()?)?;
-                Some((name.clone(), Rc::new(notes.clone())))
-            })
-            .collect();
-        let now = cx.background_executor().now();
-        let session = self.session.read(cx);
-        (self.feeds).read(session, &self.id, &state, &uses, playhead.tick, now);
+        self.read_frame(&state, &uses, playhead.tick, cx);
+        self.title_reads = false;
         let body = match tree {
             Some(Ok(table)) => {
                 let drag = (self.held.as_ref())
@@ -4430,7 +4493,7 @@ impl Render for TypeScriptCard {
                 let (spaces, title_bar) = (drawing.spaces, drawing.title_bar);
                 if self.title_bar != title_bar {
                     self.title_bar = title_bar;
-                    cx.emit(TitleBarMoved);
+                    cx.emit(TitleBarChanged);
                 }
                 self.keep_spaces(spaces);
                 body
