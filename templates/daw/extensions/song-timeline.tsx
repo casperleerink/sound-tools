@@ -265,8 +265,8 @@ export const Timeline = ({ page }: { page: Page }) => {
     const chosen = () => isPicked(key);
     // Its handles show, and its gain and trims drag, while it is chosen alone.
     const alone = () => chosen() && memory.selected.size === 1;
-    // Seconds of its file, as ticks through the tempo map from where it starts.
-    const width = () => ticksAcross(clock.tempo_map.tempo_changes, region.state.start, outputs[`${key}.seconds`] ?? 0);
+    // To its last warp point, else seconds of its file as ticks through the tempo map from where it starts.
+    const width = () => region.state.warp?.at(-1)?.ticks ?? ticksAcross(clock.tempo_map.tempo_changes, region.state.start, outputs[`${key}.seconds`] ?? 0);
     const sound = () => now.file(region.state.asset, { from: region.state.file_start_seconds, to: region.state.file_end_seconds });
     // While its gain handle drags, how much louder it is drawn: the handle is the chosen region's.
     const dragged = now.tick.times(0).plus(10).pow(now.drag("gain").dy.times((-ROW * 72) / 200 / 20)).min((ROW - 8) / 44);
