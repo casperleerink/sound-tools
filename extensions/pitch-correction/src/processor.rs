@@ -24,7 +24,7 @@ use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, DelayLine, EventInput, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Watch, all_held_silent, held,
 };
-use sound_media::analysis::{LOWEST_HZ, Pitch, PitchSettings, PitchTracker};
+use sound_media::analysis::{LOWEST_HZ, Pitch, PitchTracker};
 use sound_media::{Shift, Shifter};
 use sound_notes::NoteEvent;
 
@@ -32,8 +32,6 @@ use crate::{MIX, PARAMETERS, PitchCorrectionState, Voice};
 
 type CorrectionTargets = Targets<PitchCorrectionState, { PARAMETERS.len() }>;
 
-/// How clearly the voice must repeat to read as a note: between strict and tolerant.
-const TOLERANCE: f64 = 0.5;
 /// How long a change of the mix takes.
 const RAMP_SECONDS: f32 = 0.02;
 /// How old the shifter takes a reading to be at most, which sets the latency: 37.5 ms with the
@@ -157,17 +155,7 @@ impl PitchCorrection {
     /// The trackers of every voice range at `rate`, and a shifter for the lowest of them.
     fn make(rate: f64) -> (Box<[PitchTracker]>, Shifter) {
         let trackers: Box<[PitchTracker]> = (Voice::ALL.iter())
-            .map(|voice| {
-                let (lowest, highest) = voice.range_hz();
-                let settings = PitchSettings {
-                    lowest: lowest.max(LOWEST_HZ),
-                    highest,
-                    tolerance: TOLERANCE,
-                    width: voice.width(),
-                    lone_minimum: *voice == Voice::BassInstrument,
-                };
-                PitchTracker::new(rate, settings)
-            })
+            .map(|voice| PitchTracker::new(rate, voice.tracker_settings()))
             .collect();
         (
             trackers,

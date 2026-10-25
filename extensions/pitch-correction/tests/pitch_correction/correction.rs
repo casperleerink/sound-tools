@@ -209,3 +209,31 @@ fn each_side_of_a_sudden_note_change_gets_its_own_correction() {
     assert!(first >= 60, "{first} cycles of the first note");
     assert!(second >= 100, "{second} cycles of the second note");
 }
+
+#[test]
+fn every_voice_range_reads_every_note_from_its_lowest_to_its_highest() {
+    use pitch_correction::Voice;
+    use sound_media::analysis::{LOWEST_HZ, Pitch, PitchTracker};
+    let rate = f64::from(SAMPLE_RATE);
+    let note_of = |hz: f64| 69.0 + 12.0 * (hz / 440.0).log2();
+    for range in Voice::ALL {
+        let (lowest, highest) = range.range_hz();
+        let (from, to) = (
+            note_of(lowest.max(LOWEST_HZ)).ceil() as i32,
+            note_of(highest).floor() as i32,
+        );
+        for note in from..=to {
+            let mut tracker = PitchTracker::new(rate, range.tracker_settings());
+            let mut sing = voice(move |_| Some(f64::from(note)));
+            let frames: Vec<f32> = (0..(0.4 * rate) as u64)
+                .map(|frame| sing(frame)[0])
+                .collect();
+            tracker.push(frames);
+            let read = tracker.pitch();
+            assert!(
+                matches!(read, Pitch::Note(read) if (read - f64::from(note)).abs() < 0.05),
+                "{range:?}: {note} read as {read:?}"
+            );
+        }
+    }
+}

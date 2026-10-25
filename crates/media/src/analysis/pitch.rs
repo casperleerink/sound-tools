@@ -6,9 +6,11 @@
 //! short history. For every lag of that history it keeps the energy and the correlation, and so
 //! the difference of the sound with itself one lag on, normalized: 0 repeats exactly, 0.5 is
 //! unrelated sound. A period is taken only from two or three minima under the threshold of the
-//! tolerance that sit evenly spaced, within a tenth: a period, twice it and three times it. A
-//! lone minimum counts only for a bass. So a loud octave is not taken for the note, and noise,
-//! which has no evenly spaced minima, has no pitch.
+//! tolerance that sit evenly spaced, within a tenth: a period, twice it and three times it. The
+//! history holds 250 lags, about 24 Hz at 48 kHz, so a low note has its second minimum in it;
+//! the lowest pitch only bounds which period is followed. A lone minimum counts only for a bass.
+//! So a loud octave is not taken for the note, and noise, which has no evenly spaced minima, has
+//! no pitch.
 //!
 //! Once a period is found, the tracker follows it at the full detection rate on a small
 //! neighbourhood of lags around it, [`PitchSettings::width`] each side, with running sums that
@@ -18,13 +20,18 @@
 //! sound too quiet to follow, loses the note, and the tracker looks for one again from an empty
 //! history.
 //!
-//! Ours on top: whether the sound between notes is quiet or unclear, and two checks. A chord can
-//! repeat too: C, E and G together repeat at the period of a C two octaves under them, a note
-//! nobody plays. So a period is found only when the sound has power at its frequency or the
-//! octave above. A note whose octave is louder than itself has evenly spaced minima at the
-//! octave too, so twice the period is taken when the sound repeats there and has power at its
-//! frequency. And a note an octave up still repeats at the old period, so a note followed is
-//! let go when the sound repeats at half its period and has no power at its frequency.
+//! Ours on top: whether the sound between notes is quiet or unclear, and four checks.
+//!
+//! - A chord can repeat too: C, E and G together repeat at the period of a C two octaves under
+//!   them, a note nobody plays. So a period is found only when the sound has power at its
+//!   frequency or the octave above.
+//! - A note whose octave is louder than itself has evenly spaced minima at the octave or the
+//!   twelfth too, so two or three times the period is taken when the sound repeats there and
+//!   has some power at its frequency.
+//! - A bass takes a lone minimum only past the history: a short lag of a low note can dip early,
+//!   while the history fills.
+//! - A note an octave up still repeats at the old period, so a note followed is let go when the
+//!   sound repeats at half its period and has no power at its frequency.
 
 /// What the sound is at one moment.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,6 +109,10 @@ const QUIET_SECONDS: f64 = 0.02;
 /// it. A sawtooth has 61% there, a bright tone a few; a chord read as its root has almost
 /// nothing.
 const FUNDAMENTAL: f64 = 0.02;
+/// The least share of the power at the frequency of a period a few times one found, for the
+/// note to be that lower one. A period alone has nothing there, so far less than
+/// [`FUNDAMENTAL`] tells, also in a mix where the voice is a small part of the sound.
+const UNDER: f64 = 0.005;
 /// The detection signal is at most this fast.
 const DETECTION_HZ: f64 = 50_000.0;
 /// One sample of the history a note is looked for in per this many of the detection signal.
@@ -133,7 +144,7 @@ const SECTIONS: usize = 5;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PitchSettings {
     /// The lowest and the highest fundamental looked for, in Hz. The highest sets where the
-    /// history is low-passed, at twice it; the lowest sets how long the history is.
+    /// history is low-passed, at twice it; a period under the lowest is not followed.
     pub lowest: f64,
     pub highest: f64,
     /// How clearly a sound must repeat to read as a note, from 0, strict, to 1, tolerant. A
@@ -260,9 +271,11 @@ impl PitchTracker {
         let detection = rate / steps as f64;
         // Under 1 Hz a history would grow without bound.
         let lowest = settings.lowest.max(1.0);
-        let lags = ((detection / (COARSE as f64 * lowest)).ceil() as usize + 2).clamp(5, MOST_LAGS);
+        // Every lag is searched: a period is taken from minima at twice and three times it too.
+        let lags = MOST_LAGS;
         let width = settings.width.max(2);
-        let longest = COARSE * lags + 2 * width;
+        // The longest lag followed: the period of the lowest pitch, and the neighbourhood.
+        let longest = (detection / lowest).ceil() as usize + 2 * width;
         let quality = |section: usize| {
             let angle = std::f64::consts::PI * (2 * section + 1) as f64 / (4 * SECTIONS) as f64;
             1.0 / (2.0 * angle.cos())
@@ -281,7 +294,7 @@ impl PitchTracker {
             before,
             low: Section::new(2.0 * settings.highest, root_half, detection, false),
             high: Section::new(HIGH_PASS_HZ, root_half, detection, true),
-            signal: vec![0.0; 2 * longest + 2].into(),
+            signal: vec![0.0; 2 * longest.max(COARSE * lags) + 2].into(),
             newest: 0,
             heard: 0,
             history: [0.0; HISTORY],
@@ -477,13 +490,20 @@ impl PitchTracker {
                 }
             }
             2 if (first - (second - first)).abs() < EVEN * first => (first + second - first) / 2.0,
-            1 if self.lone_minimum => first,
+            // Ours: only a minimum whose second would lie past the history. A short lag of a low
+            // note can dip under the threshold before the history reaches its period.
+            1 if self.lone_minimum && 2.0 * first >= (COARSE * (self.lags - 2)) as f64 => first,
             _ => return None,
         };
-        // A note with its octave louder than itself has evenly spaced minima at the octave too.
-        let period = match self.under(period, searched) {
-            true => 2.0 * period,
-            false => period,
+        // A note whose octave or twelfth is louder than itself has evenly spaced minima there
+        // too: the note is the longest of those periods the sound repeats at and has power at.
+        let minima = minima.get(..found).unwrap_or_default();
+        let period = match [3.0, 2.0]
+            .into_iter()
+            .find(|times| self.under(period, *times, minima, searched))
+        {
+            Some(times) => times * period,
+            None => period,
         };
         let lag = (period + 0.5) as usize;
         let heard =
@@ -491,18 +511,22 @@ impl PitchTracker {
         (lag > 0 && heard).then_some(lag)
     }
 
-    /// Whether the note is an octave under `period`: the history repeats at twice it too, and
-    /// the sound has power at its frequency. `searched` lags of the history are worked out.
-    fn under(&self, period: f64, searched: usize) -> bool {
-        let lag = 2.0 * period / COARSE as f64;
+    /// Whether the note has a period `times` `period`: one of the `minima` found is there, or
+    /// the history repeats there, and the sound has power at its frequency. `searched` lags of
+    /// the history are worked out.
+    fn under(&self, period: f64, times: f64, minima: &[f64], searched: usize) -> bool {
+        let longer = times * period;
+        let found = (minima.iter()).any(|minimum| (minimum - longer).abs() < EVEN * period);
+        let lag = longer / COARSE as f64;
         let near = lag.floor() as usize..=lag.ceil() as usize;
-        let repeats = (near.clone().all(|lag| lag + 1 < searched))
-            && near.into_iter().any(|lag| {
-                self.normalized
-                    .get(lag)
-                    .is_some_and(|difference| *difference < self.threshold)
-            });
-        repeats && self.share_at(2.0 * period, 1) >= FUNDAMENTAL
+        let repeats = found
+            || (near.clone().all(|lag| lag + 1 < searched)
+                && near.into_iter().any(|lag| {
+                    self.normalized
+                        .get(lag)
+                        .is_some_and(|difference| *difference < self.threshold)
+                }));
+        repeats && self.share_at(longer, 1) >= UNDER
     }
 
     /// The share of the power of the last two periods of `period` samples that is at its
@@ -763,11 +787,11 @@ mod tests {
             };
             assert!((note - 57.0).abs() < 0.05, "{note} at {time}");
         }
-        // Heard on its own, the faded part reads near the octave: following is what keeps it.
+        // Heard on its own, the faded part still has power at its note, so it reads as it.
         let faded = sound.get((0.9 * RATE) as usize..).unwrap();
         let (_, last) = *track(PitchSettings::FULL, faded).last().unwrap();
         assert!(
-            matches!(last, Pitch::Note(note) if (note - 69.0).abs() < 1.0),
+            matches!(last, Pitch::Note(note) if (note - 57.0).abs() < 0.05),
             "{last:?}"
         );
     }
@@ -876,22 +900,20 @@ mod tests {
 
     #[test]
     fn a_period_needs_minima_that_agree_unless_a_bass_takes_a_lone_one() {
-        // A2, whose second dip lies past what a history from 100 Hz holds: one minimum.
-        let low = PitchSettings {
-            lowest: 100.0,
-            highest: 300.0,
-            width: 30,
-            ..VOICE
-        };
-        let sound = tone(1.0, |_| 45.0, bright);
-        assert!(!reads(low, &sound));
+        // E1, whose second dip lies past the 250 lags of the history: one minimum.
+        let sound = tone(1.0, |_| 28.0, bright);
+        assert!(!reads(PitchSettings::FULL, &sound));
         let bass = PitchSettings {
             lone_minimum: true,
-            ..low
+            ..PitchSettings::FULL
         };
         assert!(reads(bass, &sound));
-        // From 40 Hz the history holds two dips, a period apart.
-        assert!(reads(PitchSettings::FULL, &sound));
+        // A2 has two dips in the history, whatever the lowest pitch looked for.
+        let low = PitchSettings {
+            lowest: 100.0,
+            ..VOICE
+        };
+        assert!(reads(low, &tone(1.0, |_| 45.0, bright)));
     }
 
     #[test]
