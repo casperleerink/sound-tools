@@ -99,6 +99,10 @@ impl Pitches {
     }
 }
 
+/// The lowest pitch pitch correction and a stretched clip look for, in Hz: a lower one needs a
+/// longer look, which reads later than the latency of pitch correction leaves room for.
+pub const LOWEST_HZ: f64 = 60.0;
+
 /// What the tracker looks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PitchSettings {
@@ -247,6 +251,14 @@ impl PitchTracker {
     /// The pitch of the last [`Self::length`] frames, looked at in the last few milliseconds.
     pub fn pitch(&self) -> Pitch {
         self.pitch
+    }
+
+    /// The period of [`Self::pitch`] in frames, when it is a note.
+    pub fn followed_period(&self) -> Option<f64> {
+        match self.pitch {
+            Pitch::Note(_) => self.followed,
+            Pitch::Quiet | Pitch::Unclear => None,
+        }
     }
 
     /// How far [`Self::pitch`] can be trusted, from 0, a note only just told from noise or no

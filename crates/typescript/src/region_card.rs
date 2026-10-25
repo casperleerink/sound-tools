@@ -9,7 +9,7 @@ use gpui::{
     prelude::*, px,
 };
 use serde_json::Value;
-use sound_core::{Clock, Frames, InstanceId, ProjectEvent, Ticks};
+use sound_core::{Clock, InstanceId, ProjectEvent, Ticks};
 use sound_media::{Cached, Info};
 use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle};
@@ -178,14 +178,10 @@ impl RegionCard {
         let tick = session.playhead().read(cx).tick;
         let clock = project.clock();
         let region = crate::region::region(state);
-        let end = clock.tick_at(Frames(
-            clock.frame_of(state.start).0 + region.length(&file, clock.sample_rate()),
-        ));
-        if tick < state.start || tick >= end {
+        if tick < state.start || tick >= region.end(&file, clock) {
             return None;
         }
-        let seconds =
-            clock.seconds_of(tick) - clock.seconds_of(state.start) + state.file_start_seconds;
+        let seconds = region.file_seconds_at(tick, clock);
         let step = file.seconds() / f64::from(DISPLAY_WIDTH);
         Some(((seconds / step).round() * step) as f32)
     }

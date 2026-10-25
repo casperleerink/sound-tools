@@ -144,8 +144,8 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - The Sampler reads the part of SFZ real libraries need and ignores the rest: a third-party file that plays a little plainer beats one that is refused.
 - Library samples are memory-mapped and read ahead off the audio thread. Only files nothing writes in place are mapped, because a mapped file cut short ends the process. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
 - The library is a catalog in code of free instruments at pinned commits, so an id always plays the same. Downloads are shared machine data. Nothing downloads by itself, not for an agent either: its guess must not spend hundreds of megabytes.
-- In the window an instrument loads in the background and the old one plays until it is ready. A render, an inspect and the tests load at once, so they play what the records say from the first block.
-- Other sample rates go through a stateless resampler, so any block can render on its own from any place. Rejected: resamplers that keep filter state.
+- In the window an instrument loads in the background and the old one plays until it is ready. A render, an inspect and the tests load at once, so they play the records from the first block.
+- Other sample rates and warp points are stateless reads, so a block renders alone from anywhere. Rejected: a resampler or splicer with state, such as the live shifter.
 - The drawing thread never reads a file; waveform overviews are made in the background and never saved.
 
 ## Recording

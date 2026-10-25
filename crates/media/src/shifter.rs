@@ -62,9 +62,9 @@ static CURVE: LazyLock<Box<[f32]>> = LazyLock::new(|| {
 /// How far the head may be from where it should be, as a part of the period, before it jumps.
 const WINDOW: f64 = 0.6;
 /// The fade of a jump, as a part of the period.
-const FADE: f64 = 0.2;
+pub(crate) const FADE: f64 = 0.2;
 /// How many of its own periods a period holds once the readings lose it.
-const HOLD_PERIODS: f64 = 8.0;
+pub(crate) const HOLD_PERIODS: f64 = 8.0;
 /// The period a jump takes before any was heard, in Hz.
 const UNHEARD_HZ: f64 = 440.0;
 /// The shortest period a jump takes, in frames.

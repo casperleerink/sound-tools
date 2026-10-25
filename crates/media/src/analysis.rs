@@ -26,7 +26,7 @@ pub use moments::Moment;
 use moments::MomentFinder;
 pub use notes::{Events, Note, NotePitch, Phrase, Tuning};
 use pitch::Pitches;
-pub use pitch::{MeasuredPitch, Pitch, PitchSettings, PitchTracker, nearest_note};
+pub use pitch::{LOWEST_HZ, MeasuredPitch, Pitch, PitchSettings, PitchTracker, nearest_note};
 
 /// Every render is stereo, and a file is read as stereo.
 const CHANNELS: usize = 2;

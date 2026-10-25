@@ -8,10 +8,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    Assets, BehaviourContext, BehaviourError, Frames, InstanceId, JsonTool, JsonToolDoc, Project,
-    State, Ticks, ToolSchema,
+    Assets, BehaviourContext, BehaviourError, InstanceId, JsonTool, JsonToolDoc, Project, State,
+    Ticks, ToolSchema,
 };
-use sound_media::{AUDIO_FOLDER, Audio, AudioAsset, Keep, Loader, Region, Stamp};
+use sound_media::{
+    AUDIO_FOLDER, Audio, AudioAsset, Keep, Loader, Periods, Region, Stamp, WarpPoint,
+};
 
 pub(crate) const NAME: &str = "region";
 /// What its parent's view reads of how long it plays, in seconds.
@@ -45,6 +47,10 @@ pub(crate) struct Record {
     /// A straight line from its level to silence at its end.
     #[serde(default)]
     pub(crate) fade_out_ms: f32,
+    /// Seconds of the file pinned to ticks after its start, to play it longer or shorter at its
+    /// own pitch. It stops at the last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) warp: Vec<WarpPoint>,
 }
 
 impl State for Record {
@@ -99,6 +105,41 @@ pub(crate) fn record(state: &Value) -> Result<Record, String> {
             record.gain_db
         ));
     }
+    let mut before = WarpPoint {
+        ticks: Ticks(0),
+        seconds: record.file_start_seconds,
+    };
+    for (index, point) in record.warp.iter().enumerate() {
+        let (ticks, seconds) = match index {
+            0 => (
+                "the start of the region".to_string(),
+                "file_start_seconds".to_string(),
+            ),
+            _ => (
+                format!("warp[{}]", index - 1),
+                format!("warp[{}]", index - 1),
+            ),
+        };
+        if point.ticks <= before.ticks {
+            return Err(format!(
+                "state.warp[{index}].ticks must be more than {}, at {ticks}: they count from the start of the region and go forward, not {}",
+                before.ticks.0, point.ticks.0
+            ));
+        }
+        if !(point.seconds.is_finite() && point.seconds > before.seconds) {
+            return Err(format!(
+                "state.warp[{index}].seconds must be more than {}, at {seconds}: they go forward in the file, not {}",
+                before.seconds, point.seconds
+            ));
+        }
+        before = *point;
+    }
+    if !record.warp.is_empty() && record.file_end_seconds.is_some() {
+        return Err(
+            "state.file_end_seconds must be left out with warp points: the region stops at its last point"
+                .to_string(),
+        );
+    }
     for (field, value) in [
         ("fade_in_ms", record.fade_in_ms),
         ("fade_out_ms", record.fade_out_ms),
@@ -112,14 +153,11 @@ pub(crate) fn record(state: &Value) -> Result<Record, String> {
     Ok(record)
 }
 
-/// Where it stops playing in the song: its start, then its stretch of the file at the file's
-/// speed. `None` while the file is not there.
+/// Where it stops playing in the song. `None` while the file is not there.
 fn end(project: &Project, state: &Value) -> Option<Ticks> {
     let region = region(&record(state).ok()?);
-    let clock = project.clock();
     let file = sound_media::info(project.assets(), &region.asset).ok()?;
-    let length = region.length(&file, clock.sample_rate());
-    Some(clock.tick_at(Frames(clock.frame_of(region.start).0 + length)))
+    Some(region.end(&file, project.clock()))
 }
 
 /// The region a record plays.
@@ -136,6 +174,7 @@ pub(crate) fn region(record: &Record) -> Region {
         gain,
         fade_in_ms: record.fade_in_ms,
         fade_out_ms: record.fade_out_ms,
+        warp: record.warp.clone(),
     }
 }
 
@@ -161,7 +200,7 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
         },
     };
     let what = format!("the region {:?}", context.id().name());
-    let (_, problems) = sound_media::snapshot([(what, region)], context.assets(), rate);
+    let (_, problems) = sound_media::snapshot([(what, region, None)], context.assets(), rate);
     for problem in problems {
         context.problem(problem);
     }
@@ -203,8 +242,97 @@ pub(crate) fn audio(
         .or_else(|| Some(Arc::clone(&*read(assets, asset, waiter).ok()??)))
 }
 
-/// The regions of the project of `assets` whose file was read since the last call, to run
-/// their behaviour again.
+/// The periods of the file of a region with warp points, read on a thread of their own in the
+/// window, as its file is.
+static PERIODS: Loader<PathBuf, Periods> = Loader::new("region periods", Keep::WhileUsed);
+
+/// The periods of `asset`, or `None` while they are read for the region `waiter`, which runs
+/// again with its parent then, or when its file does not play, which it says itself.
+pub(crate) fn periods(
+    assets: &Assets,
+    asset: &AudioAsset,
+    waiter: &InstanceId,
+) -> Option<Arc<Periods>> {
+    let path = assets.path(asset.asset_name());
+    let read = {
+        let (assets, asset, path) = (assets.clone(), asset.clone(), path.clone());
+        move || {
+            let audio = sound_media::load(&assets, &asset).map_err(|error| error.to_string());
+            (
+                audio.map(|audio| Periods::of(&audio)),
+                vec![Stamp::of(&path)],
+            )
+        }
+    };
+    PERIODS.get(path, (assets, waiter), read).ok()?
+}
+
+/// The regions of the project of `assets` whose file or periods were read since the last call,
+/// to run their behaviour again.
 pub(crate) fn take_read(assets: &Assets) -> Vec<InstanceId> {
-    FILES.take_done(assets)
+    let mut read = FILES.take_done(assets);
+    read.extend(PERIODS.take_done(assets));
+    read
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn refusal(warp: Value, file_end_seconds: Option<f64>) -> String {
+        let state = json!({
+            "asset": "voice.wav",
+            "file_start_seconds": 0.5,
+            "file_end_seconds": file_end_seconds,
+            "warp": warp,
+        });
+        record(&state).err().unwrap_or_default()
+    }
+
+    #[test]
+    fn warp_points_that_do_not_go_forward_are_refused_with_what_to_change() {
+        let refusals = [
+            (
+                json!([{"ticks": 0, "seconds": 1.0}]),
+                "state.warp[0].ticks must be more than 0, at the start of the region",
+            ),
+            (
+                json!([{"ticks": 960, "seconds": 0.5}]),
+                "state.warp[0].seconds must be more than 0.5, at file_start_seconds",
+            ),
+            (
+                json!([{"ticks": 960, "seconds": 1.0}, {"ticks": 960, "seconds": 2.0}]),
+                "state.warp[1].ticks must be more than 960, at warp[0]",
+            ),
+            (
+                json!([{"ticks": 960, "seconds": 1.0}, {"ticks": 1920, "seconds": 0.9}]),
+                "state.warp[1].seconds must be more than 1, at warp[0]",
+            ),
+        ];
+        for (warp, expected) in refusals {
+            let refusal = refusal(warp, None);
+            assert!(refusal.starts_with(expected), "{refusal}");
+        }
+        let warp = json!([{"ticks": 960, "seconds": 1.0}, {"ticks": 1920, "seconds": 1.5}]);
+        assert_eq!(refusal(warp.clone(), None), "");
+        let refusal = refusal(warp, Some(2.0));
+        assert!(refusal.starts_with("state.file_end_seconds must be left out"));
+    }
+
+    #[test]
+    fn a_record_without_warp_points_is_written_as_it_was() {
+        let state = json!({
+            "asset": "voice.wav",
+            "start": 3840,
+            "file_start_seconds": 0.5,
+            "file_end_seconds": null,
+            "gain_db": 0.0,
+            "fade_in_ms": 10.0,
+            "fade_out_ms": 0.0,
+        });
+        let written = serde_json::to_value(record(&state).ok()).ok();
+        assert_eq!(written, Some(state));
+    }
 }

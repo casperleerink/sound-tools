@@ -102,14 +102,14 @@ export function rowsOf(children: readonly RowKind[], order: readonly string[]): 
     .sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1));
 }
 
-/** How long the clip or the region `key` names is on the timeline, in ticks: a region as long as its file plays, through the tempo changes. */
+/** How long the clip or the region `key` names is on the timeline, in ticks: a region to its last warp point, else as long as its file plays, through the tempo changes. */
 export function lengths({ children, outputs, clock }: Pick<Song, "children" | "outputs" | "clock">) {
   return (key: string) => {
     const [row, name] = key.split("/");
     const owner = children.find((child) => child.name === row);
     const item = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((child) => child.name === name) : undefined;
     if (item?.tool === "timeline") return lengthOf(item.state);
-    if (item?.tool === "region") return ticksAcross(clock.tempo_map.tempo_changes, item.state.start, outputs[`${key}.seconds`] ?? 0);
+    if (item?.tool === "region") return item.state.warp?.at(-1)?.ticks ?? ticksAcross(clock.tempo_map.tempo_changes, item.state.start, outputs[`${key}.seconds`] ?? 0);
     return 0;
   };
 }
