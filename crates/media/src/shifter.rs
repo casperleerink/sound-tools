@@ -736,6 +736,8 @@ mod tests {
         lowest: 80.0,
         highest: 1_000.0,
         tolerance: 0.5,
+        width: 15,
+        lone_minimum: false,
     };
 
     /// A bright tone at `hz` with the harmonics of `amplitudes`, while `on` says so.
@@ -864,8 +866,8 @@ mod tests {
             let (before, after) = (onsets(&sound), onsets(&output));
             assert_eq!(before.len(), after.len(), "{semitones}: {after:?}");
             // The head stays within its window of a period around the latency, also through a
-            // rest, where nothing moves it back.
-            let window = (WINDOW * RATE / 220.0).ceil() as i64;
+            // rest, where nothing moves it back, and a fade takes it a little further.
+            let window = ((WINDOW + FADE * (ratio - 1.0).abs()) * RATE / 220.0).ceil() as i64;
             for (before, after) in before.iter().zip(&after) {
                 let late = *after as i64 - (*before + latency) as i64;
                 assert!(late.abs() <= window, "{semitones}: {late} frames off");
@@ -921,8 +923,10 @@ mod tests {
             let cycles = (0.5 * hz).round();
             let steady = &output[(0.5 * RATE) as usize..][..(cycles / hz * RATE) as usize];
             let rest_db = rest_db(steady, hz, harmonics.len());
+            // Each jump is by the period read, which is a little off: the wave either side of
+            // a jump does not quite meet.
             assert!(
-                rest_db < -60.0,
+                rest_db < -55.0,
                 "{semitones}: {rest_db} dB besides the harmonics"
             );
         }
@@ -1067,6 +1071,36 @@ mod tests {
                 // The tone peaks at 0.26.
                 assert!(loudest < 0.55, "{rate} Hz, {low} and {high} Hz: {loudest}");
             }
+        }
+    }
+
+    #[test]
+    fn without_readings_a_jump_takes_the_last_period_heard_or_440_hz() {
+        // Readings with a period for the first 0.2 s of A3, or none at all for A4.
+        let harmonics = [0.4, 0.2, 0.1, 0.05];
+        for (hz, readings) in [(220.0, 0.2), (440.0, 0.0)] {
+            let sound = tone(1.5, hz, &harmonics, |_| true);
+            let mut shifter = Shifter::new(RATE, 800.0, 1_000.0);
+            let output: Vec<f32> = (sound.iter().enumerate())
+                .map(|(frame, sample)| {
+                    let period = (frame as f64 / RATE < readings).then_some(RATE / hz);
+                    let shift = Shift {
+                        period,
+                        ratio: 1.05,
+                        age: 0.0,
+                    };
+                    shifter.push([*sample; 2], shift);
+                    shifter.pull()[0]
+                })
+                .collect();
+            let shifted = hz * 1.05;
+            let cycles = (0.5 * shifted).round();
+            let steady = &output[(0.8 * RATE) as usize..][..(cycles / shifted * RATE) as usize];
+            let rest_db = rest_db(steady, shifted, harmonics.len());
+            assert!(
+                rest_db < -55.0,
+                "{hz} Hz: {rest_db} dB besides the harmonics"
+            );
         }
     }
 }

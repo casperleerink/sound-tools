@@ -177,6 +177,16 @@ impl Voice {
             Self::BassInstrument => (24.5, 200.0),
         }
     }
+
+    /// How many lags each side of its period a note is followed: wide for low voices, whose
+    /// periods move by more lags in a glide.
+    pub fn width(self) -> usize {
+        match self {
+            Self::High | Self::Instrument => 6,
+            Self::Middle => 15,
+            Self::Low | Self::BassInstrument => 30,
+        }
+    }
 }
 
 /// One number of the saved state, with its range and its default.

@@ -165,6 +165,8 @@ fn tracking_pitch_runs_on_the_audio_thread_without_allocating_locking_or_calling
             lowest: 80.0,
             highest: 1_000.0,
             tolerance: 0.5,
+            width: 15,
+            lone_minimum: false,
         },
     ] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
