@@ -9,6 +9,8 @@
 //! - `cards-tools.png`, `cards-tools-expanded.png`: the Modulation, the Utility with bass mono
 //!   on, and the Vocoder with its formant moved.
 //! - `cards-analyzer.png`: the Analyzer hearing the chord.
+//! - `cards-pitch.png`, `cards-pitch-expanded.png`: the Pitch correction moving an F down to
+//!   the E of C major pentatonic.
 //! - `cards-drums.png`, `cards-drums-expanded.png`: the Drum pad playing a beat.
 //! - `cards-sampler.png`, `cards-sampler-expanded.png`: the Sampler playing a file.
 //! - `cards-plugin.png`: the test plugin as the instrument and as an effect.
@@ -132,6 +134,31 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
 
     let opened = rack(cx, &[("analyzer", &record("analyzer", "{}"))])?;
     save(cx, opened.window.into(), "cards-analyzer")?;
+    drop(opened);
+
+    let tune = record(
+        "pitch-correction",
+        r#"{"scale": "major_pentatonic", "retune_ms": 0.0}"#,
+    );
+    let (synth, melody) = (
+        record("instrument.synth", r#"{"gain": 0.3}"#),
+        notes(3840, &[(0, 3840, 65)]),
+    );
+    let children = [
+        ("instrument", synth.as_str()),
+        ("melody", melody.as_str()),
+        ("tune", tune.as_str()),
+    ];
+    let mut opened = Opened::open(cx, &rack_files(&children))?;
+    opened.play_from(Ticks(0), cx)?;
+    save(cx, opened.window.into(), "cards-pitch")?;
+    expand!(
+        opened,
+        cx,
+        pitch_correction::view::PitchCorrectionView,
+        "tune"
+    );
+    save(cx, opened.window.into(), "cards-pitch-expanded")?;
     drop(opened);
 
     // A beat: kick on 1 and 3, snare on 2 and 4, hat on the eighths.

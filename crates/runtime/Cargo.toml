@@ -26,6 +26,7 @@ limiter.workspace = true
 metronome.workspace = true
 midi.workspace = true
 modulation.workspace = true
+pitch-correction.workspace = true
 plugin-host.workspace = true
 reverb.workspace = true
 sampler.workspace = true

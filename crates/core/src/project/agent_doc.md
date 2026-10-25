@@ -2,7 +2,7 @@
 
 # This folder is a Sound Tools project
 
-A piece of music saved as small JSON files, which you edit. While the runtime has the project open, every change applies live, about 0.2 s later, with no build. All the files of one request are one undo step for the composer, as long as you leave less than 15 s between two writes.
+A piece of music as small JSON files that you edit. While the runtime has the project open, every change applies live, about 0.2 s later, with no build. All the files of one request are one undo step, if no two writes are 15 s or more apart.
 
 The composer is a musician, not a programmer: in your replies and in what tools show, use musical words, not names of code, formats or files.
 
@@ -26,7 +26,7 @@ state/                    every instance of a tool, one JSON record each
     instance.json         its own record
     <child>.json          a child instance
     <child>/instance.json a child instance that owns children itself
-problems.txt              written by the runtime while it has the project open: the files that are not live, and why
+problems.txt              written by the runtime while the project is open: what is not live, and why
 instructions.md           the composer's instructions for this project, if any
 AGENTS.md, CLAUDE.md      this map, generated
 agent-docs/               the docs listed above, generated
@@ -63,7 +63,7 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 
 ## Check your work
 
-`problems.txt` follows a write by about 0.2 s. Read it at the end of your work; the composer does not see it. When you write and read in one command, wait a second in between.
+`problems.txt` follows a write by about 0.2 s. Read it when done; the composer does not see it. When you write and read in one command, wait a second in between.
 
 - `No problems. Every file is live.`: all your files play.
 - Else each line is `<file>: <field>: <reason>`, such as `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and its last valid state keeps playing.

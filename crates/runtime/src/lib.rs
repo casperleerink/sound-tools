@@ -175,6 +175,7 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     instrument::register(registry)?;
     limiter::register(registry)?;
     modulation::register(registry)?;
+    pitch_correction::register(registry)?;
     if let Some(plugins) = plugins {
         plugin_host::register(registry, plugins)?;
     }
@@ -226,6 +227,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     limiter::view::register(&mut views, &mut devices);
     modulation::view::register(&mut views, &mut devices);
     vocoder::view::register(&mut views, &mut devices);
+    pitch_correction::view::register(&mut views, &mut devices);
     delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);

@@ -296,6 +296,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "song/vocal",
             "song/vocal/chain",
             "song/vocal/chain/clear",
+            "song/vocal/chain/tune",
         ]
     );
 

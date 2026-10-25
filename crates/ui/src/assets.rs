@@ -38,6 +38,7 @@ icons!(
     "device-gate",
     "device-limiter",
     "device-modulation",
+    "device-pitch-correction",
     "device-plugin",
     "device-reverb",
     "device-sampler",
