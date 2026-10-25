@@ -67,7 +67,7 @@ const LINUX_PROGRAM: &str = ".local/lib/sound-tools/sound-tools";
 
 /// `major.minor.patch`. A version with more, such as `1.0.0-beta`, is a prerelease and never
 /// offered.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Version {
     major: u64,
     minor: u64,
@@ -87,8 +87,9 @@ impl Version {
         parts.next().is_none().then_some(version)
     }
 
+    /// `None` for a build of no release, which never updates.
     fn current() -> Option<Self> {
-        Self::parse(env!("CARGO_PKG_VERSION"))
+        Self::parse(crate::VERSION).filter(|version| *version != Self::default())
     }
 }
 

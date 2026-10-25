@@ -4,7 +4,8 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "0.14.1"
+# Not the app's version: a release takes that from its tag, see crates/runtime/src/lib.rs.
+version = "0.0.0"
 publish = false
 
 # Every dependency, internal or external, is declared here once. Members write `foo.workspace = true`.

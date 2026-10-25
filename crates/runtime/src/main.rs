@@ -708,7 +708,7 @@ fn main() -> Result<()> {
         ["--plugins"] => list_plugins(),
         ["--plugin-params", format, plugin_id] => list_plugin_parameters(format, plugin_id),
         ["--version"] => {
-            println!("sound-tools {}", env!("CARGO_PKG_VERSION"));
+            println!("sound-tools {}", runtime::VERSION);
             Ok(())
         }
         ["--help" | "-h"] => {

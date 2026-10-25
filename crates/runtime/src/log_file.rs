@@ -108,7 +108,7 @@ fn heading(what: &str) -> String {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z");
     format!(
         "--- {now}: Sound Tools {} on {} {}, {what} ---",
-        env!("CARGO_PKG_VERSION"),
+        crate::VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )
