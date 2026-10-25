@@ -9,7 +9,7 @@ use crate::support::id;
 
 impl Opened<'_> {
     /// The file at `path` in the project folder, if there is one.
-    fn file(&self, path: &str) -> Option<String> {
+    pub(super) fn file(&self, path: &str) -> Option<String> {
         std::fs::read_to_string(self.folder.path().join(path)).ok()
     }
 

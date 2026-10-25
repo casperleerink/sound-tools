@@ -158,7 +158,7 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
 }
 
 /// The synth card's title lists what takes notes, and the one picked takes the place of the
-/// synth, as one undo step that gives the synth back.
+/// synth, in its file too, as one undo step that gives the synth back.
 #[gpui::test]
 fn an_instrument_picked_from_the_offers_takes_the_place_of_the_synth(cx: &mut TestAppContext) {
     let mut window = open_rack(cx);
@@ -181,6 +181,8 @@ fn an_instrument_picked_from_the_offers_takes_the_place_of_the_synth(cx: &mut Te
     });
     assert_eq!(window.problems(), []);
     window.after_the_runs();
+    let saved = window.file("state/song/t00/synth.json").unwrap();
+    assert!(saved.contains("wavetable"), "{saved}");
     assert_eq!(window.undo().as_deref(), Some("Change the instrument"));
     assert_eq!(tool(&mut window), Some("instrument.synth"));
 }
