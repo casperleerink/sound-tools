@@ -5,7 +5,7 @@
 //! once, at its end.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -118,9 +118,13 @@ pub(crate) struct TypeScriptCard {
     embedded: HashMap<u64, Embedded>,
     /// The div it shows in the window's title bar, by its slot and index, as last drawn.
     title_bar: Option<(usize, Vec<usize>)>,
-    /// What the rest of the nodes use and what the title bar's use, for the version of the
-    /// nodes and the slot of the title bar they were worked out for.
-    uses_around: RefCell<Option<((u64, Option<usize>), Uses, Uses)>>,
+    /// What its nodes read by where they draw, for the version of the nodes and the slot of the
+    /// title bar it was worked out for.
+    parts: RefCell<Option<((u64, Option<usize>), Rc<Parts>)>>,
+    /// The spaces of a page the layer over it draws, by node, with where the page laid them out.
+    lifted: Rc<RefCell<HashMap<u64, Lifted>>>,
+    /// Where the page is in the window, which the layer over it draws from.
+    origin: Rc<Cell<Point<Pixels>>>,
     /// The title bar draws again alone, and reads the feeds for its frame.
     title_reads: bool,
     /// How each meter node falls and holds its peak, by node.
@@ -417,15 +421,75 @@ impl Render for Carried {
 }
 
 /// A page, which draws again only when it changed, while the window draws again with every
-/// move of the playhead.
-pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>);
+/// move of the playhead: the spaces that show the playhead draw on the layer over it.
+pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>, Entity<Over>);
+
+impl Page {
+    pub(crate) fn new(card: Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
+        let over = cx.new(|cx| Over::new(card.clone(), cx));
+        Self(card, over)
+    }
+}
 
 impl Render for Page {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.0
-            .clone()
-            .cached(StyleRefinement::default().size_full())
+        let over = StyleRefinement::default().absolute().top_0().left_0();
+        div()
+            .relative()
+            .size_full()
+            .child(
+                self.0
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+            )
+            .child(self.1.clone().cached(over.size_full()))
     }
+}
+
+/// The spaces of a page that show the playhead, drawn over the page where it laid them out.
+/// While nothing else moves, they draw again and the page does not.
+pub(crate) struct Over(Entity<TypeScriptCard>);
+
+impl Over {
+    fn new(card: Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&card, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&card, |_, _, _: &OverChanged, cx| cx.notify())
+            .detach();
+        Self(card)
+    }
+}
+
+impl Render for Over {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let spaces = self.0.update(cx, |card, cx| card.draw_over(window, cx));
+        div().size_full().children(spaces)
+    }
+}
+
+/// Only what the spaces over a page show changed.
+pub(crate) struct OverChanged;
+
+impl EventEmitter<OverChanged> for TypeScriptCard {}
+
+/// What the nodes of a card read, by where they draw.
+#[derive(Default)]
+pub(crate) struct Parts {
+    /// Those the card draws itself.
+    body: Uses,
+    title_bar: Uses,
+    /// The spaces of a page that show the playhead, which the layer over it draws, together.
+    over: Uses,
+    lifted: HashSet<u64>,
+}
+
+/// A space the layer over a page draws: its slot and place in the tree, and where the page laid
+/// it out and cut it off, in the window.
+#[derive(Clone)]
+pub(crate) struct Lifted {
+    slot: usize,
+    index: Vec<usize>,
+    bounds: Bounds<Pixels>,
+    mask: Bounds<Pixels>,
 }
 
 /// A drag the pointer holds, on a shape or a space.
@@ -614,8 +678,8 @@ impl TypeScriptCard {
         // Once per poll that moved it: a frame between two polls would draw the same tick.
         let playhead = session.read(cx).playhead().clone();
         cx.observe(&playhead, |view, _, cx| {
-            let (body, title_bar) = view.uses_around(cx);
-            view.draw_again(body.tick, title_bar.tick, cx);
+            let parts = view.parts(cx);
+            view.draw_again([parts.body.tick, parts.title_bar.tick, parts.over.tick], cx);
         })
         .detach();
         cx.observe_in(&live, window, |view, _, window, cx| {
@@ -678,7 +742,9 @@ impl TypeScriptCard {
             focus_before_overlays: None,
             embedded: HashMap::new(),
             title_bar: None,
-            uses_around: RefCell::default(),
+            parts: RefCell::default(),
+            lifted: Rc::default(),
+            origin: Rc::default(),
             title_reads: false,
             meters: Rc::default(),
             placed: Rc::default(),
@@ -695,47 +761,82 @@ impl TypeScriptCard {
         let Some(state) = self.state(cx) else {
             return;
         };
-        let (body, title_bar) = self.uses_around(cx);
+        let parts = self.parts(cx);
         let session = self.session.read(cx);
         let tick = session.playhead().read(cx).tick;
         let input = session.recording().read(cx).input_levels();
         let feeds = &mut self.feeds;
         let mut changed =
             |uses, title| feeds.changed(session, (&self.id, &state), (uses, title), tick, input);
-        let body = changed(&body, false);
-        let title_bar = !body && self.title_bar.is_some() && changed(&title_bar, true);
-        self.draw_again(body, title_bar, cx);
+        let body = changed(&parts.body, false);
+        let title_bar = !body && self.title_bar.is_some() && changed(&parts.title_bar, true);
+        let over = !body && !parts.lifted.is_empty() && changed(&parts.over, false);
+        self.draw_again([body, title_bar, over], cx);
     }
 
-    /// Draws the whole card again, or only its title bar when nothing else changed.
-    fn draw_again(&mut self, body: bool, title_bar: bool, cx: &mut Context<Self>) {
+    /// Draws the whole card again, or only its title bar or the layer over the page when
+    /// nothing else changed.
+    fn draw_again(&mut self, [body, title_bar, over]: [bool; 3], cx: &mut Context<Self>) {
         if body {
             cx.notify();
-        } else if title_bar {
+            return;
+        }
+        if title_bar {
             self.title_reads = true;
             cx.emit(TitleBarChanged);
         }
+        if over {
+            cx.emit(OverChanged);
+        }
     }
 
-    /// What the nodes use outside the title bar, and inside it.
-    fn uses_around(&self, cx: &App) -> (Uses, Uses) {
+    /// What its nodes read: in the title bar, in the spaces of a page that show the playhead,
+    /// which the layer over the page draws, and the rest.
+    fn parts(&self, cx: &App) -> Rc<Parts> {
         let live = self.live.read(cx);
         let Some(Ok(table)) = live.tree(self.card) else {
-            return (live.uses(self.card), Uses::default());
+            let body = live.uses(self.card);
+            return Rc::new(Parts {
+                body,
+                ..Parts::default()
+            });
         };
-        let slot = self.title_bar.as_ref().map(|(slot, _)| *slot);
-        let key = (table.version(), slot);
-        let mut kept = self.uses_around.borrow_mut();
-        if kept.as_ref().is_none_or(|(at, ..)| *at != key) {
-            let (body, title_bar) = match slot {
-                Some(slot) => table.uses_around(slot),
-                None => (table.uses().clone(), Uses::default()),
-            };
-            *kept = Some((key, body, title_bar));
+        let title = self.title_bar.as_ref().map(|(slot, _)| *slot);
+        let key = (table.version(), title);
+        if let Some((at, parts)) = &*self.parts.borrow()
+            && *at == key
+        {
+            return parts.clone();
         }
-        (kept.as_ref())
-            .map(|(_, body, title_bar)| (body.clone(), title_bar.clone()))
-            .unwrap_or_default()
+        // Not where a div lies over others: drawn over the page, a space would hide it.
+        let page = self.frame.is_none() && !table.lays_over();
+        let spaces: Vec<(usize, u64)> = (table.spaces().into_iter())
+            .filter(|(slot, _)| page && title.is_none_or(|title| !table.within(*slot, title)))
+            .collect();
+        let slots: Vec<usize> = spaces.iter().map(|(slot, _)| *slot).collect();
+        let (_, each) = table.uses_split(&slots);
+        let lifted: Vec<(usize, u64)> = (spaces.into_iter().zip(&each))
+            .filter(|(_, uses)| uses.tick)
+            .map(|(space, _)| space)
+            .collect();
+        let parts_of: Vec<usize> = (title.into_iter())
+            .chain(lifted.iter().map(|(slot, _)| *slot))
+            .collect();
+        let (body, mut each) = table.uses_split(&parts_of);
+        let title_bar = match title {
+            Some(_) if !each.is_empty() => each.remove(0),
+            _ => Uses::default(),
+        };
+        let mut over = Uses::default();
+        each.iter().for_each(|uses| over.join(uses));
+        let parts = Rc::new(Parts {
+            body,
+            title_bar,
+            over,
+            lifted: lifted.into_iter().map(|(_, id)| id).collect(),
+        });
+        *self.parts.borrow_mut() = Some((key, parts.clone()));
+        parts
     }
 
     /// Makes what its nodes show that is an entity of the window: a text field, the card of
@@ -2204,6 +2305,8 @@ struct Drawing<'a, 'b> {
     in_title_bar: bool,
     /// The title bar's div the body left out.
     title_bar: Option<(usize, Vec<usize>)>,
+    /// The spaces the body leaves to the layer over the page, and where it lays them out.
+    lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -2234,7 +2337,7 @@ impl Drawing<'_, '_> {
             Props::Text(TextProps { text }) => {
                 SharedString::from(text.clone().unwrap_or_default()).into_any_element()
             }
-            Props::Space(space) => self.space(id, space, &entry.children, index),
+            Props::Space(space) => self.space(slot, id, space, &entry.children, index),
             // A shape outside a space, or a marker, draws nothing.
             Props::Shape(_) | Props::Marker => div().into_any_element(),
             Props::Input(_) => match self.inputs.get(&id) {
@@ -2888,11 +2991,62 @@ impl Drawing<'_, '_> {
 
     fn space(
         &mut self,
+        slot: usize,
         id: u64,
         space: &SpaceProps,
         children: &[usize],
         index: &[usize],
     ) -> AnyElement {
+        let (key, view, fit) = self.space_view(space, index);
+        let selector = format!("space-{key}");
+        let inner = match self.lifting.filter(|(lifted, _)| lifted.contains(&id)) {
+            // The layer over the page draws it where this lays it out.
+            Some((_, places)) => {
+                let place = Lifted {
+                    slot,
+                    index: index.to_vec(),
+                    bounds: Bounds::default(),
+                    mask: Bounds::default(),
+                };
+                places.borrow_mut().insert(id, place);
+                let places = places.clone();
+                canvas(
+                    move |bounds, window, _| {
+                        if let Some(place) = places.borrow_mut().get_mut(&id) {
+                            (place.bounds, place.mask) = (bounds, window.content_mask().bounds);
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full()
+                .into_any_element()
+            }
+            None => self.space_element(id, space, children, (key, view, fit)),
+        };
+        let holder = div().debug_selector(move || selector).child(inner);
+        let holder = match space.width {
+            Some(width) => holder.w(px(width)),
+            None => holder.w_full(),
+        };
+        let holder = match space.height {
+            Some(height) => holder.h(px(height)),
+            None => holder.h_full(),
+        };
+        let holder = if space.grow == Some(true) {
+            holder.flex_grow(1.).min_h_0()
+        } else {
+            holder.flex_none()
+        };
+        holder.into_any_element()
+    }
+
+    /// The key of a space, and where it is scrolled to and how far zoomed now, which the spaces
+    /// that follow it see; the fit it still asks for.
+    fn space_view(
+        &mut self,
+        space: &SpaceProps,
+        index: &[usize],
+    ) -> (String, SpaceView, Option<tree::Fit>) {
         let key = element_name("space", space.key.as_deref(), index);
         let (unit_x, unit_y) = space.unit();
         let extent = space.extent.unwrap_or_default();
@@ -2917,6 +3071,17 @@ impl Drawing<'_, '_> {
         let follow = space.follow.clone().unwrap_or_default();
         let view = followed(clamped(view, &extent), &follow, &self.spaces);
         self.spaces.insert(key.clone(), view);
+        (key, view, fit)
+    }
+
+    /// The shapes of a space as they are now, and what it does with the pointer and drops.
+    fn space_element(
+        &mut self,
+        id: u64,
+        space: &SpaceProps,
+        children: &[usize],
+        (key, view, fit): (String, SpaceView, Option<tree::Fit>),
+    ) -> AnyElement {
         let (placed, pointed) = self.place(children, &key, &view);
         let frame = Rc::new(SpaceFrame {
             key,
@@ -2931,9 +3096,8 @@ impl Drawing<'_, '_> {
             cursor: space.cursor,
             extent: space.extent.unwrap_or_default(),
             zoom: space.zoom.unwrap_or_default(),
-            follow,
+            follow: space.follow.clone().unwrap_or_default(),
         });
-        let selector = format!("space-{}", frame.key);
         let card = self.cx.entity().downgrade();
         let spaces = self.laid_out.clone();
         // Where it was painted, for where a drop falls in its units.
@@ -2952,8 +3116,12 @@ impl Drawing<'_, '_> {
                       window: &mut Window,
                       cx: &mut App| {
                     painted_at.set(Some(bounds));
+                    // The card draws again, for the spaces that follow it to see the fit.
                     if fit.is_some() {
-                        window.request_animation_frame();
+                        let card = card.clone();
+                        window.on_next_frame(move |_, cx| {
+                            card.update(cx, |_, cx| cx.notify()).ok();
+                        });
                     }
                     // The size it was laid out at, for live values of what shows and the next scroll.
                     if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
@@ -2965,23 +3133,7 @@ impl Drawing<'_, '_> {
                 }
             },
         );
-        let holder = div()
-            .debug_selector(move || selector)
-            .child(element.size_full());
-
-        let holder = match space.width {
-            Some(width) => holder.w(px(width)),
-            None => holder.w_full(),
-        };
-        let holder = match space.height {
-            Some(height) => holder.h(px(height)),
-            None => holder.h_full(),
-        };
-        let holder = if space.grow == Some(true) {
-            holder.flex_grow(1.).min_h_0()
-        } else {
-            holder.flex_none()
-        };
+        let holder = div().size_full().child(element.size_full());
         if space.on_drop != Some(true) {
             return holder.into_any_element();
         }
@@ -4218,29 +4370,72 @@ impl TypeScriptCard {
         (self.feeds).read(session, &self.id, state, uses, tick, now);
     }
 
-    /// The div its view shows in the window's title bar, with what the body last read, or what
-    /// it reads itself when it draws alone.
-    fn draw_title_bar(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (slot, index) = self.title_bar.clone()?;
-        let state = self.state(cx)?;
-        if std::mem::take(&mut self.title_reads) {
-            let uses = self.live.read(cx).uses(self.card);
-            let tick = self.session.read(cx).playhead().read(cx).tick;
-            self.read_frame(&state, &uses, tick, cx);
+    /// The spaces the layer over the page draws, each where the page laid it out.
+    fn draw_over(&mut self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let places: Vec<(u64, Lifted)> = (self.lifted.borrow().iter())
+            .map(|(id, place)| (*id, place.clone()))
+            .collect();
+        if places.is_empty() {
+            return Vec::new();
         }
-        // What moves in it moves the title bar alone.
-        let body_moving = self.feeds.moving.take();
+        let Some(state) = self.state(cx) else {
+            return Vec::new();
+        };
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
+            return Vec::new();
+        };
+        let uses = self.live.read(cx).uses(self.card);
+        let tick = self.session.read(cx).playhead().read(cx).tick;
+        self.read_frame(&state, &uses, tick, cx);
+        let origin = self.origin.get();
+        let mut drawing = self.drawing(state, &table, window, cx);
+        let spaces = (places.into_iter())
+            .filter_map(|(id, place)| {
+                let entry = table.get(place.slot).filter(|entry| entry.id == id)?;
+                let Props::Space(space) = &entry.props else {
+                    return None;
+                };
+                let view = drawing.space_view(space, &place.index);
+                let element = drawing.space_element(id, space, &entry.children, view);
+                let Lifted { bounds, mask, .. } = place;
+                // Cut off where the page cuts it off, as by a div that scrolls.
+                let cut = div()
+                    .absolute()
+                    .left(mask.origin.x - origin.x)
+                    .top(mask.origin.y - origin.y)
+                    .w(mask.size.width)
+                    .h(mask.size.height)
+                    .overflow_hidden();
+                let at = div()
+                    .absolute()
+                    .left(bounds.origin.x - mask.origin.x)
+                    .top(bounds.origin.y - mask.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height);
+                Some(cut.child(at.child(element)).into_any_element())
+            })
+            .collect();
+        let kept = drawing.spaces;
+        self.keep_spaces(kept);
+        spaces
+    }
+
+    /// A drawing of its nodes in `table`, with what they read now.
+    fn drawing<'a, 'b>(
+        &'a self,
+        state: Rc<Value>,
+        table: &'a NodeTable,
+        window: &Window,
+        cx: &'a mut Context<'b, Self>,
+    ) -> Drawing<'a, 'b> {
         let live = self.live.read(cx);
         let info = live.info(self.card);
-        let Some(Ok(table)) = live.tree(self.card).cloned() else {
-            return None;
-        };
         let watches = live.watches(self.card).cloned().unwrap_or_default();
         let played = live.played_of(&self.id).cloned();
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
-        let mut drawing = Drawing {
+        Drawing {
             info,
             state,
             watches,
@@ -4250,7 +4445,7 @@ impl TypeScriptCard {
             laid_out: self.spaces.clone(),
             drag,
             hovered: self.hovered.clone(),
-            table: &table,
+            table,
             feeds: &self.feeds,
             indexes: &self.indexes,
             inputs: &self.inputs,
@@ -4263,10 +4458,30 @@ impl TypeScriptCard {
             scrolled_cards: self.scrolled_cards.clone(),
             button_down: self.button_down.get(),
             scroller: None,
-            in_title_bar: true,
+            in_title_bar: false,
             title_bar: None,
+            lifting: None,
             cx,
+        }
+    }
+
+    /// The div its view shows in the window's title bar, with what the body last read, or what
+    /// it reads itself when it draws alone.
+    fn draw_title_bar(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (slot, index) = self.title_bar.clone()?;
+        let state = self.state(cx)?;
+        if std::mem::take(&mut self.title_reads) {
+            let uses = self.live.read(cx).uses(self.card);
+            let tick = self.session.read(cx).playhead().read(cx).tick;
+            self.read_frame(&state, &uses, tick, cx);
+        }
+        // What moves in it moves the title bar alone.
+        let body_moving = self.feeds.moving.take();
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
+            return None;
         };
+        let mut drawing = self.drawing(state, &table, window, cx);
+        drawing.in_title_bar = true;
         let bar = drawing.draw(slot, &index);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
@@ -4340,8 +4555,6 @@ impl Render for TypeScriptCard {
         let key_context = (info.as_ref()).map(|info| crate::key_context(info.takes.as_deref()));
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
-        let watches = live.watches(self.card).cloned().unwrap_or_default();
-        let played = live.played_of(&self.id).cloned();
         let playhead = *self.session.read(cx).playhead().read(cx);
         if uses.animates {
             window.request_animation_frame();
@@ -4350,35 +4563,12 @@ impl Render for TypeScriptCard {
         self.title_reads = false;
         let body = match tree {
             Some(Ok(table)) => {
-                let drag = (self.held.as_ref())
-                    .and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
-                let mut drawing = Drawing {
-                    info,
-                    state,
-                    watches,
-                    played,
-                    tick: playhead.tick.0 as f64,
-                    spaces: self.spaces.borrow().clone(),
-                    laid_out: self.spaces.clone(),
-                    drag,
-                    hovered: self.hovered.clone(),
-                    table: &table,
-                    feeds: &self.feeds,
-                    indexes: &self.indexes,
-                    inputs: &self.inputs,
-                    focus: &self.focus,
-                    viewport: window.viewport_size(),
-                    embedded: &self.embedded,
-                    meters: &self.meters,
-                    placed: self.placed.clone(),
-                    scrolls: &self.scrolls,
-                    scrolled_cards: self.scrolled_cards.clone(),
-                    button_down: self.button_down.get(),
-                    scroller: None,
-                    in_title_bar: false,
-                    title_bar: None,
-                    cx,
-                };
+                let parts = self.parts(cx);
+                self.lifted
+                    .borrow_mut()
+                    .retain(|id, _| parts.lifted.contains(id));
+                let mut drawing = self.drawing(state, &table, window, cx);
+                drawing.lifting = Some((&parts.lifted, &self.lifted));
                 let body = match table.root() {
                     Some(root) => drawing.draw(root, &[]),
                     None => div().into_any_element(),
@@ -4449,9 +4639,10 @@ impl Render for TypeScriptCard {
                 .into_any_element(),
             None => {
                 // The room the page draws in: the whole main area.
-                let (live, card) = (self.live.clone(), self.card);
+                let (live, card, origin) = (self.live.clone(), self.card, self.origin.clone());
                 let measure = canvas(
                     move |bounds, _, cx| {
+                        origin.set(bounds.origin);
                         let size = PageSize {
                             width: f32::from(bounds.size.width).round() as u32,
                             height: f32::from(bounds.size.height).round() as u32,
