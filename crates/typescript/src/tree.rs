@@ -882,6 +882,16 @@ fn uses_of(props: &Props) -> Uses {
 }
 
 impl ShapeProps {
+    /// Whether all it shows is [`Num::steady`], with no list or live text that moves on its own.
+    pub(crate) fn steady(&self) -> bool {
+        let color = match &self.color {
+            Some(Paint::Mix { by, .. }) => by.steady(),
+            _ => true,
+        };
+        let text = !matches!(self.text, Some(Words::Live(_)));
+        color && text && self.list.is_none() && self.numbers().all(Num::steady)
+    }
+
     /// Whether where it is never moves: no live number places or sizes it and no drag moves
     /// or grows it. A live colour, opacity or readout does not move it. A wave's list is worked
     /// out on every frame, so a history keeps counting while it does not show.
@@ -1254,6 +1264,15 @@ impl<'de> Visitor<'de> for NumVisitor {
 }
 
 impl Num {
+    /// Whether it reads only how the spaces show, the drag and the pointer: from one frame to the
+    /// next it stays the same while those do.
+    pub(crate) fn steady(&self) -> bool {
+        match self {
+            Self::Fixed(_) => true,
+            Self::Live(live) => live.steady(),
+        }
+    }
+
     /// Its number, when it is one and not a live value.
     pub(crate) fn fixed(&self) -> Option<f32> {
         match self {
@@ -1418,6 +1437,42 @@ pub(crate) enum Ease {
 }
 
 impl Live {
+    fn steady(&self) -> bool {
+        match self {
+            Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => true,
+            Self::Tick
+            | Self::Bpm
+            | Self::Elapsed
+            | Self::Value { .. }
+            | Self::Peak { .. }
+            | Self::DevicePeak { .. }
+            | Self::Input { .. }
+            | Self::Ease { .. } => false,
+            Self::Plus { a, b }
+            | Self::Minus { a, b }
+            | Self::Times { a, b }
+            | Self::Over { a, b }
+            | Self::Mod { a, b }
+            | Self::Pow { a, b }
+            | Self::Min { a, b }
+            | Self::Max { a, b }
+            | Self::Lt { a, b }
+            | Self::Gt { a, b }
+            | Self::Le { a, b }
+            | Self::Ge { a, b }
+            | Self::Eq { a, b }
+            | Self::Ne { a, b }
+            | Self::Snap { a, b } => a.steady() && b.steady(),
+            Self::Negate { x }
+            | Self::Abs { x }
+            | Self::Floor { x }
+            | Self::Round { x }
+            | Self::Sin { x }
+            | Self::Cos { x }
+            | Self::Decibels { x } => x.steady(),
+        }
+    }
+
     fn add_uses(&self, uses: &mut Uses) {
         match self {
             Self::Tick | Self::Bpm => uses.tick = true,
