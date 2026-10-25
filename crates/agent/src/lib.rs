@@ -32,9 +32,9 @@ pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Command, Events, ExitReason,
-    Installed, Model, Provider, SignInChoice, StepId, StepKind, StepOutcome, Thread, ThreadClosed,
-    ThreadOptions, TurnOutcome,
+    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command, Events,
+    ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, SignInChoice, StepId,
+    StepKind, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
 pub use view::{Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};

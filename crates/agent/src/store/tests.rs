@@ -26,10 +26,24 @@ fn keep(
     sent: u64,
     events: Vec<AgentEvent>,
 ) {
-    conversation.send(message, at(sent));
+    keep_attached(store, thread, conversation, (message, &[]), sent, events);
+}
+
+/// [`keep`] with a message that has attachments, by name.
+fn keep_attached(
+    store: &ThreadStore,
+    thread: &SavedThread,
+    conversation: &mut Conversation,
+    (message, attachments): (&str, &[&str]),
+    sent: u64,
+    events: Vec<AgentEvent>,
+) {
+    let attachments: Vec<String> = attachments.iter().map(|name| name.to_string()).collect();
+    conversation.send(message, attachments.clone(), at(sent));
     let mut lines = vec![Line::Sent {
         at: at(sent),
         message: message.to_string(),
+        attachments,
     }];
     for (event, second) in events.into_iter().zip(sent + 1..) {
         lines.extend(Line::of(&event, at(second)));
@@ -58,7 +72,7 @@ fn shown(conversation: &Conversation) -> Vec<&str> {
         .entries()
         .iter()
         .map(|entry| match entry {
-            Entry::Message(text) | Entry::Notice(text) => text.as_str(),
+            Entry::Message { text, .. } | Entry::Notice(text) => text.as_str(),
             Entry::Turn(turn) => turn.blocks.first().map_or("", String::as_str),
         })
         .collect()
@@ -74,11 +88,11 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
     };
     let mut conversation = Conversation::default();
     let step = StepId("write".to_string());
-    keep(
+    keep_attached(
         &store,
         &thread,
         &mut conversation,
-        "Add a bass line",
+        ("Add a bass line like this", &["Pasted image", "take.wav"]),
         0,
         vec![
             AgentEvent::TurnStarted,
@@ -443,6 +457,13 @@ fn every_event_saves_as_the_same_line() {
         serde_json::to_string(&Line::Sent {
             at: at(0),
             message: text("Hello"),
+            attachments: Vec::new(),
+        })
+        .unwrap(),
+        serde_json::to_string(&Line::Sent {
+            at: at(0),
+            message: text("Like this"),
+            attachments: vec![text("take.wav")],
         })
         .unwrap(),
     ];
@@ -469,6 +490,7 @@ fn every_event_saves_as_the_same_line() {
     let at = r#""at":{"secs_since_epoch":1800000000,"nanos_since_epoch":0}"#;
     let expected = [
         format!(r#"{{"sent":{{{at},"message":"Hello"}}}}"#),
+        format!(r#"{{"sent":{{{at},"message":"Like this","attachments":["take.wav"]}}}}"#),
         format!(r#"{{"event":{{{at},"event":"turn_started"}}}}"#),
         format!(r#"{{"event":{{{at},"event":{{"text_done":{{"text":"Done."}}}}}}}}"#),
         format!(

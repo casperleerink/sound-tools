@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AppContext, BackgroundExecutor, Bounds, Entity, Modifiers, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, Point, TestAppContext, VisualTestContext, point,
+    AppContext, BackgroundExecutor, Bounds, Entity, ExternalPaths, FileDropEvent, Modifiers,
+    MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, VisualTestContext,
+    point, px,
 };
 use plugin_host::{Plugins, ScanCache, WeakPlugins};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
@@ -408,6 +409,24 @@ impl Opened<'_> {
             let view = sound_typescript::embedded_view(page, &instance, cx).unwrap();
             view.downcast::<V>().ok().unwrap()
         })
+    }
+
+    /// Files dragged from the Finder over `to` and let go of there.
+    pub(crate) fn drop_files(&mut self, paths: &[PathBuf], to: Point<Pixels>) {
+        let paths = ExternalPaths(paths.iter().cloned().collect());
+        let position = to - point(px(30.), px(0.));
+        self.cx
+            .simulate_event(FileDropEvent::Entered { position, paths });
+        for step in [20., 10., 0.] {
+            self.cx.update(|window, _| window.refresh());
+            self.cx.run_until_parked();
+            let position = to - point(px(step), px(0.));
+            self.cx.simulate_event(FileDropEvent::Pending { position });
+        }
+        self.cx
+            .simulate_event(FileDropEvent::Submit { position: to });
+        self.cx.run_until_parked();
+        self.settle();
     }
 
     pub(crate) fn keys(&mut self, keystrokes: &str) {

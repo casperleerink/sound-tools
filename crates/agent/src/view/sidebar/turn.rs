@@ -11,7 +11,9 @@ use super::{Agent, Sidebar};
 use crate::conversation::request_label;
 use crate::store::{Line, SavedThread, Write};
 use crate::view::onboarding::Setup;
-use crate::{AgentEvent, ApprovalAnswer, Events, Installed, Thread, ThreadOptions, TurnOutcome};
+use crate::{
+    AgentEvent, ApprovalAnswer, Events, Installed, Message, Thread, ThreadOptions, TurnOutcome,
+};
 
 /// Events that come within one frame are applied together, so a fast stream of text measures
 /// the growing entry once a frame and not once a token.
@@ -27,16 +29,29 @@ impl Sidebar {
     /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
     /// worked.
     pub fn begin_at(&mut self, message: &str, started: SystemTime, cx: &mut Context<Self>) {
+        self.begin_with(message, Vec::new(), started, cx);
+    }
+
+    /// [`Self::begin_at`] with the names of what the message has attached.
+    fn begin_with(
+        &mut self,
+        message: &str,
+        attachments: Vec<String>,
+        started: SystemTime,
+        cx: &mut Context<Self>,
+    ) {
         let label = request_label(message);
         self.session
             .update(cx, |session, _| session.begin_request(&label));
         self.problems_before = self.session.read(cx).project().problems();
         self.just_ended = None;
-        self.conversation.send(message, started);
+        self.conversation
+            .send(message, attachments.clone(), started);
         let saved = self.saved.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
             at: started,
             message: message.to_string(),
+            attachments,
         };
         let writes = [
             Write::Current(Some(saved.clone())),
@@ -177,7 +192,15 @@ impl Sidebar {
         }
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.history.reset();
-        self.begin(&message, cx);
+        let (names, attachments) = std::mem::take(&mut self.attachments)
+            .into_iter()
+            .map(|attached| (attached.name, attached.attachment))
+            .unzip();
+        self.begin_with(&message, names, SystemTime::now(), cx);
+        let message = Message {
+            text: message,
+            attachments,
+        };
         let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {
             let outcome = TurnOutcome::Failed {

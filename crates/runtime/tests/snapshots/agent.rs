@@ -15,17 +15,19 @@
 //! - `agent-never-ask.png`: a new thread under "Full access", which its pill says, in a composer of
 //!   three lines.
 //! - `agent-composer-full.png`: the composer at its eight rows, scrolled to the caret.
+//! - `agent-attachments.png`: a message sent with a picture and a file, which it names, and a
+//!   picture attached to the next.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
-use gpui::{AppContext, Entity, HeadlessAppContext};
+use gpui::{AppContext, Entity, Focusable, HeadlessAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ExitReason, Installed, Model, Sidebar, StepId,
-    StepKind, StepOutcome, TurnOutcome,
+    StepKind, StepOutcome, Thread, TurnOutcome,
 };
 use sound_ui::components::dropdown_menu::MenuPicked;
 
@@ -331,6 +333,63 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     });
     cx.run_until_parked();
     save(cx, opened.window.into(), "agent-instructions")?;
+    drop(opened);
+
+    // A message sent with a picture and a file, and the next one with a picture attached.
+    let (opened, sidebar) = open_with_sidebar(cx)?;
+    let (thread, _commands) = Thread::without_agent(None);
+    let outside = tempfile::tempdir()?;
+    let picture = outside.path().join("Groove sketch.png");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tooling/icon/sound-tools-512.png"
+        ),
+        &picture,
+    )?;
+    let take = outside.path().join("Vocal take 3.wav");
+    std::fs::write(&take, "")?;
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.connect(thread);
+            sidebar.attach_files(vec![picture.clone(), take], cx);
+            sidebar.composer().update(cx, |composer, cx| {
+                composer.set_text(
+                    "Make the bass follow this groove, and tune it to the take",
+                    cx,
+                );
+            });
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        window.focus(&sidebar.focus_handle(cx), cx);
+    })?;
+    opened.key("enter", cx)?;
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.receive(
+                [
+                    AgentEvent::TurnStarted,
+                    AgentEvent::TextDone {
+                        text:
+                            "The bass follows the kick of the sketch now, in the key of the take."
+                                .to_string(),
+                    },
+                    AgentEvent::TurnEnded {
+                        outcome: TurnOutcome::Completed,
+                    },
+                ],
+                cx,
+            );
+            sidebar.attach_files(vec![picture], cx);
+            sidebar.composer().update(cx, |composer, cx| {
+                composer.set_text("And this one?", cx);
+            });
+        })
+    });
+    cx.run_until_parked();
+    save(cx, opened.window.into(), "agent-attachments")?;
     Ok(())
 }
 

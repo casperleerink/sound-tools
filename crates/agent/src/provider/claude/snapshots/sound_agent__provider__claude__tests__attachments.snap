@@ -1,0 +1,37 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"attachments\")"
+---
+[
+    TurnStarted,
+    Started {
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
+            },
+        ],
+    },
+    TextDelta {
+        text: "The picture is red, and the attached file is named `take.wav`.",
+    },
+    TextDone {
+        text: "The picture is red, and the attached file is named `take.wav`.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

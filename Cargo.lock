@@ -6190,6 +6190,7 @@ dependencies = [
 name = "sound-agent"
 version = "0.14.1"
 dependencies = [
+ "base64",
  "ctrlc",
  "dunce",
  "gpui",

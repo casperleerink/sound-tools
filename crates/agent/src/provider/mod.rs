@@ -350,10 +350,55 @@ fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// What the composer sends: the text, and what is attached to it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Message {
+    pub text: String,
+    pub attachments: Vec<Attachment>,
+}
+
+impl From<String> for Message {
+    fn from(text: String) -> Self {
+        Message {
+            text,
+            attachments: Vec::new(),
+        }
+    }
+}
+
+impl From<&str> for Message {
+    fn from(text: &str) -> Self {
+        text.to_string().into()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Attachment {
+    /// A picture the agent sees.
+    Image(Image),
+    /// Any other file. The agent gets its path and reads it itself; nothing is copied.
+    File(PathBuf),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Image {
+    pub format: ImageFormat,
+    pub bytes: Vec<u8>,
+}
+
+/// The formats a picture can be sent in. Any other picture goes as a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Jpeg,
+    Gif,
+    Webp,
+}
+
 /// What a [`Thread`] asks its driver to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    Send(String),
+    Send(Message),
     Interrupt,
     Answer(ApprovalId, ApprovalAnswer),
     SetApprovalMode(ApprovalMode),
@@ -421,8 +466,8 @@ impl Thread {
     /// Sends a message of the composer. A turn starts. Send only between turns: a message
     /// sent while a turn runs becomes a turn of its own, queued, which the events do not
     /// show apart.
-    pub fn send(&self, text: impl Into<String>) -> Result<(), ThreadClosed> {
-        self.command(Command::Send(text.into()))
+    pub fn send(&self, message: impl Into<Message>) -> Result<(), ThreadClosed> {
+        self.command(Command::Send(message.into()))
     }
 
     /// Stops the running turn. It ends with [`TurnOutcome::Interrupted`].

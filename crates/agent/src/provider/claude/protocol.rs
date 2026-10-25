@@ -6,9 +6,13 @@
 
 use std::path::PathBuf;
 
+use base64::Engine as _;
+use base64::prelude::BASE64_STANDARD;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::provider::{self, Attachment, ImageFormat};
 
 /// A line the CLI writes.
 #[derive(Debug, Deserialize)]
@@ -212,17 +216,51 @@ pub(super) enum Outgoing {
 }
 
 impl Outgoing {
-    pub(super) fn user(text: String) -> Self {
+    /// Pictures go as image blocks. A file goes as its path, after the text.
+    pub(super) fn user(message: provider::Message) -> Self {
+        let provider::Message {
+            mut text,
+            attachments,
+        } = message;
+        let mut content = Vec::new();
+        let mut files = Vec::new();
+        for attachment in attachments {
+            match attachment {
+                Attachment::Image(image) => content.push(UserBlock::Image {
+                    source: ImageSource::Base64 {
+                        media_type: media_type(image.format).to_string(),
+                        data: BASE64_STANDARD.encode(&image.bytes),
+                    },
+                }),
+                Attachment::File(path) => files.push(path),
+            }
+        }
+        if !files.is_empty() {
+            text.push_str("\n\nAttached files:");
+            for path in files {
+                text.push('\n');
+                text.push_str(&path.to_string_lossy());
+            }
+        }
+        // The text is the last block: the CLI reads the last block for the prompt.
+        content.push(UserBlock::Text { text });
         Outgoing::User {
             message: UserMessage {
                 role: Role::User,
-                // The text stays the last block when images join it later: the CLI reads the
-                // last block for the prompt.
-                content: vec![UserBlock::Text { text }],
+                content,
             },
             parent_tool_use_id: None,
             session_id: String::new(),
         }
+    }
+}
+
+fn media_type(format: ImageFormat) -> &'static str {
+    match format {
+        ImageFormat::Png => "image/png",
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::Gif => "image/gif",
+        ImageFormat::Webp => "image/webp",
     }
 }
 
@@ -242,6 +280,13 @@ pub(super) enum Role {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum UserBlock {
     Text { text: String },
+    Image { source: ImageSource },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(super) enum ImageSource {
+    Base64 { media_type: String, data: String },
 }
 
 /// Our requests to the CLI.

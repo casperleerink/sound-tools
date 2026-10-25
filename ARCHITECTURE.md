@@ -203,15 +203,16 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/agent`.
 
-- The sidebar runs Claude Code as a child process in the project folder, editing files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
-- The window has a generic left panel slot and names no agent type.
+- The sidebar runs Claude Code in the project folder, as a terminal agent would. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is how more agents come later.
+- The window has a generic left panel and names no agent type.
 - Each message is one request: one undo step.
-- The thread state is built from provider-neutral events and holds no process, so tests feed it events.
-- Threads, settings and whether the panel is open are kept per machine, never in the project, so an agent cannot change the interface or raise its own access by editing a file.
-- The provider keeps the conversation; the app keeps only its session id and a log to show it.
-- The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`: 215 MB more per download, and an app release per version.
-- Sign-in is Claude Code's own. The app never reads or keeps a credential.
-- New problems after a turn are shown to the composer. Nothing goes back to the agent; its docs tell it to read `problems.txt`.
+- The thread is built from provider-neutral events with no process, so tests feed it events.
+- Threads, settings and the panel's state are kept per machine, so an agent cannot change the interface or raise its own access by editing a file.
+- The provider keeps the conversation; the app keeps its session id and a log to show.
+- The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling it: 215 MB more per download, and a release per version.
+- Sign-in is Claude Code's own; the app never keeps a credential.
+- New problems after a turn show to the composer, not the agent: its docs tell it to read `problems.txt`.
+- An attached picture goes as a picture, any other file as its path: nothing is copied in. A saved thread keeps their names only.
 
 ## Tools of the project
 

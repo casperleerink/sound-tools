@@ -9,10 +9,16 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
+use base64::Engine as _;
+use base64::prelude::BASE64_STANDARD;
+
 use super::mapper::Mapper;
-use super::protocol::{ControlResponse, Outgoing, PermissionResult};
+use super::protocol::{ControlResponse, Outgoing, PermissionResult, UserBlock};
 use super::{ThreadOptions, arguments};
-use crate::provider::{AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider};
+use crate::provider::{
+    AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Image, ImageFormat,
+    Installed, Message, Provider,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -151,7 +157,42 @@ fn read_only_commands() {
     insta::assert_debug_snapshot!(events);
 }
 
-const FIXTURES: [&str; 13] = [
+/// The agent sees the picture, and reads the file's name from its path.
+#[test]
+fn attachments() {
+    insta::assert_debug_snapshot!(replay("attachments"));
+}
+
+/// What [`Outgoing::user`] writes for a picture and a file is the line the CLI took.
+#[test]
+fn writes_attachments_as_the_cli_accepted() {
+    let recorded = entries("attachments")
+        .into_iter()
+        .find_map(|entry| match entry {
+            Entry::Sent(sent) if sent["type"] == "user" => Some(sent),
+            _ => None,
+        })
+        .unwrap();
+    let data = recorded["message"]["content"][0]["source"]["data"]
+        .as_str()
+        .unwrap();
+    let message = Message {
+        text: "What colour is the picture, and what is the name of the attached file? \
+               Answer in one short sentence. Use no tools."
+            .to_string(),
+        attachments: vec![
+            Attachment::Image(Image {
+                format: ImageFormat::Png,
+                bytes: BASE64_STANDARD.decode(data).unwrap(),
+            }),
+            Attachment::File(PathBuf::from("/tmp/project/take.wav")),
+        ],
+    };
+    let ours = serde_json::to_value(Outgoing::user(message)).unwrap();
+    assert_eq!(ours, recorded);
+}
+
+const FIXTURES: [&str; 14] = [
     "plain",
     "edit",
     "approval_allowed",
@@ -165,6 +206,7 @@ const FIXTURES: [&str; 13] = [
     "stale_resume",
     "error_turn",
     "crash",
+    "attachments",
 ];
 
 /// The CLI accepted every line the recorder sent, so our types must write the same JSON.
@@ -177,9 +219,11 @@ fn writes_what_the_cli_accepted() {
             };
             let message: Outgoing = serde_json::from_value(recorded.clone()).unwrap();
             assert_eq!(serde_json::to_value(&message).unwrap(), recorded, "{name}");
-            if let Outgoing::User { message, .. } = message {
-                let super::protocol::UserBlock::Text { text } = &message.content[0];
-                let ours = serde_json::to_value(Outgoing::user(text.clone())).unwrap();
+            // A message with attachments has its own test.
+            if let Outgoing::User { message, .. } = message
+                && let [UserBlock::Text { text }] = message.content.as_slice()
+            {
+                let ours = serde_json::to_value(Outgoing::user(text.as_str().into())).unwrap();
                 assert_eq!(ours, recorded, "{name}");
             }
         }

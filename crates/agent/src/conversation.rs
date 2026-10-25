@@ -28,8 +28,11 @@ pub struct Conversation {
 
 #[derive(Debug, PartialEq)]
 pub enum Entry {
-    /// What the composer sent.
-    Message(String),
+    /// What the composer sent, and the names of what it attached.
+    Message {
+        text: String,
+        attachments: Vec<String>,
+    },
     /// What the agent did for one message.
     Turn(Turn),
     /// A quiet line that is no turn: an error, or why the agent stopped.
@@ -198,7 +201,7 @@ impl Conversation {
     /// What the composer sent, oldest first.
     pub fn messages(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().filter_map(|entry| match entry {
-            Entry::Message(message) => Some(message.as_str()),
+            Entry::Message { text, .. } => Some(text.as_str()),
             Entry::Turn(_) | Entry::Notice(_) => None,
         })
     }
@@ -223,8 +226,11 @@ impl Conversation {
     }
 
     /// The composer's message, and the turn that answers it, working from now.
-    pub fn send(&mut self, message: &str, now: SystemTime) {
-        self.entries.push(Entry::Message(message.to_string()));
+    pub fn send(&mut self, message: &str, attachments: Vec<String>, now: SystemTime) {
+        self.entries.push(Entry::Message {
+            text: message.to_string(),
+            attachments,
+        });
         self.entries.push(Entry::Turn(Turn::new(now)));
     }
 
@@ -397,7 +403,7 @@ mod tests {
         let start = SystemTime::now();
         let summary = |steps: &[(StepKind, StepOutcome)]| {
             let mut conversation = Conversation::default();
-            conversation.send("Go", start);
+            conversation.send("Go", Vec::new(), start);
             for (number, (kind, outcome)) in steps.iter().enumerate() {
                 let id = step(&number.to_string());
                 let started = AgentEvent::StepStarted {
@@ -459,7 +465,7 @@ mod tests {
     fn a_turn_streams_its_text_and_ends_with_how_long_it_worked() {
         let start = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Add a clip", start);
+        conversation.send("Add a clip", Vec::new(), start);
         assert!(conversation.is_working());
         let events = [
             AgentEvent::TurnStarted,
@@ -513,7 +519,7 @@ mod tests {
     fn an_approval_waits_until_answered_and_is_void_when_the_turn_ends() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Build it", now);
+        conversation.send("Build it", Vec::new(), now);
         let asked = AgentEvent::ApprovalRequested {
             id: ApprovalId("question".to_string()),
             title: "Run `cargo build`".to_string(),
@@ -551,7 +557,7 @@ mod tests {
     fn a_second_approval_waits_behind_the_first() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Build it", now);
+        conversation.send("Build it", Vec::new(), now);
         for (id, title) in [
             ("first", "Run `cargo build`"),
             ("second", "Run `cargo test`"),
@@ -599,7 +605,7 @@ mod tests {
     fn an_error_is_a_quiet_line_and_an_exit_ends_an_open_turn() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Hello", now);
+        conversation.send("Hello", Vec::new(), now);
         let error = AgentEvent::Error {
             message: "Could not stop".to_string(),
         };
@@ -630,7 +636,7 @@ mod tests {
     fn a_crash_mid_turn_says_so_once() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Hello", now);
+        conversation.send("Hello", Vec::new(), now);
         let failed = AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {
                 message: "Killed".to_string(),
@@ -647,7 +653,7 @@ mod tests {
     fn a_lost_session_ends_the_thread() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Hello", now);
+        conversation.send("Hello", Vec::new(), now);
         assert!(conversation.can_continue());
         let failed = AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {
