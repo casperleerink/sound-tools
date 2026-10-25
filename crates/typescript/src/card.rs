@@ -411,8 +411,8 @@ impl Render for Carried {
     }
 }
 
-/// A page, which draws again only when it changed, while the window draws every frame as it
-/// plays.
+/// A page, which draws again only when it changed, while the window draws again with every
+/// move of the playhead.
 pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>);
 
 impl Render for Page {
@@ -606,11 +606,10 @@ impl TypeScriptCard {
             _ => {}
         })
         .detach();
-        // A seek while stopped moves the playhead with no frame to draw it.
+        // Once per poll that moved it: a frame between two polls would draw the same tick.
         let playhead = session.read(cx).playhead().clone();
-        cx.observe(&playhead, |view, playhead, cx| {
-            let uses = view.live.read(cx).uses(view.card);
-            if uses.tick && !playhead.read(cx).playing {
+        cx.observe(&playhead, |view, _, cx| {
+            if view.live.read(cx).uses(view.card).tick {
                 cx.notify();
             }
         })
@@ -4251,7 +4250,7 @@ impl Render for TypeScriptCard {
         let watches = live.watches(self.card).cloned().unwrap_or_default();
         let played = live.played_of(&self.id).cloned();
         let playhead = *self.session.read(cx).playhead().read(cx);
-        if (uses.tick && playhead.playing) || uses.animates {
+        if uses.animates {
             window.request_animation_frame();
         }
         self.feeds.files.retain(|file, _| uses.files.contains(file));
