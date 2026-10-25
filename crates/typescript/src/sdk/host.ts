@@ -27,7 +27,7 @@ function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
         top = makeNode("div");
         send(top);
         for (const child of made as Made[]) {
-          top.children.add(child);
+          (top.children ??= new Set()).add(child);
           insert(top.id, child, null);
         }
       }
@@ -66,7 +66,7 @@ function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "co
   }
   const made = nodes.get(id);
   if (!made) return;
-  const scope = (made.scope ??= { owner: null, owned: [], cleanups: [], card: made.card, disposed: false });
+  const scope = (made.scope ??= { owner: null, card: made.card, disposed: false });
   if (kind === "press" && made.onRelease) releases.set(`${id} ${(payload as Press).button}`, { release: made.onRelease, scope });
   return runIn(scope, () => handle(made, kind, payload));
 }

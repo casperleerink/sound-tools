@@ -45,7 +45,8 @@ export interface Made extends PointerEvents {
   drag?: Drag;
   /** Where its handlers run, made at the first: what they start, such as a timer, goes with the node. */
   scope?: Owner;
-  children: Set<Made>;
+  /** Made on the first: a shape has none. */
+  children?: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
   region?: { parent: number | null };
 }
@@ -77,7 +78,7 @@ export function currentCard(): CardRoot {
 }
 
 export function makeNode(family: Family): Made {
-  const made: Made = { id: nextNode++, family, card: currentCard(), props: {}, sent: false, children: new Set() } as unknown as Made;
+  const made: Made = { id: nextNode++, family, card: currentCard(), props: {}, sent: false } as unknown as Made;
   nodes.set(made.id, made);
   return made;
 }
@@ -107,7 +108,7 @@ export function forget(made: Made) {
   nodes.delete(made.id);
   if (made.scope) dispose(made.scope);
   made.card.changes.delete(made);
-  for (const child of made.children) forget(child);
+  for (const child of made.children ?? []) forget(child);
 }
 
 function remove(made: Made) {
@@ -151,7 +152,7 @@ export function element(family: Family, props: Record<string, unknown>, children
   for (const child of children) materialize(child, placed, family);
   send(made);
   for (const child of placed as Made[]) {
-    made.children.add(child);
+    (made.children ??= new Set()).add(child);
     insert(made.id, child, null);
   }
   return made;
@@ -210,14 +211,14 @@ function place(region: Made, nodesToPlace: Made[], before: Made, into: UiNode[] 
     if (into) into.push(made);
     else if (parent !== null && parent !== undefined) insert(parent, made, before);
     const parentNode = parent === null || parent === undefined ? undefined : nodes.get(parent);
-    parentNode?.children.add(made);
+    if (parentNode) (parentNode.children ??= new Set()).add(made);
   }
 }
 
 /** Takes `made` out of the parent of the region that ends at `end`. */
 function takeOut(end: Made, made: Made) {
   const parent = end.region?.parent;
-  if (parent !== null && parent !== undefined) nodes.get(parent)?.children.delete(made);
+  if (parent !== null && parent !== undefined) nodes.get(parent)?.children?.delete(made);
   remove(made);
 }
 
@@ -241,7 +242,7 @@ function dynamic(show: Accessor<Child>, into: UiNode[], family: Family) {
     materialize(value, next, family);
     for (const old of shown) {
       if (!next.includes(old)) {
-        parentNode?.children.delete(old);
+        parentNode?.children?.delete(old);
         remove(old);
       }
     }
@@ -285,7 +286,7 @@ export function For<T>(props: { each: Accessor<readonly T[]>; children: (item: T
           const kept = items.map((item) => left.get(item)?.shift());
           for (const row of [...left.values()].flat()) {
             for (const made of row.nodes) {
-              parentNode?.children.delete(made);
+              parentNode?.children?.delete(made);
               remove(made);
             }
             row.dispose();
