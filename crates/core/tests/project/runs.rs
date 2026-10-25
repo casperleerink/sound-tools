@@ -72,6 +72,27 @@ fn edits_each_frame_are_one_undo_step_written_once_when_they_stop() {
     assert_eq!(harness.project.undo_label(), Some("Add dc"));
 }
 
+/// A device put in the place of another, as a picker does: one publish deletes the record and
+/// writes it again.
+#[test]
+fn a_run_that_replaces_a_record_is_written_once_quiet() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness);
+    let mut changes = Changes::new();
+    changes.delete(dc.id());
+    changes.create(id("dc"), Dc { value: 0.5 });
+    let start = Instant::now();
+    (harness.project)
+        .publish_run_at(&id("tool"), "Replace", changes, start)
+        .unwrap();
+    harness
+        .project
+        .finish_quiet_runs_at(start + RUN_QUIET)
+        .unwrap();
+    assert!(harness.read("state/dc.json").contains("0.5"));
+    assert_eq!(harness.project.undo_label(), Some("Replace"));
+}
+
 #[test]
 fn a_pause_starts_another_step() {
     let mut harness = Harness::new();
