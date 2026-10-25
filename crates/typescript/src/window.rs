@@ -230,7 +230,7 @@ pub fn start_window(
         move |session, id, window, cx| {
             let (live, session, id) = (live.clone(), session.clone(), id.clone());
             let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, window, cx));
-            Some(cx.new(|_| Page(page)).into())
+            Some(cx.new(|cx| Page::new(page, cx)).into())
         },
     );
     devices.effects({

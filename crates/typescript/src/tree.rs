@@ -531,7 +531,7 @@ pub(crate) struct Uses {
 }
 
 impl Uses {
-    fn join(&mut self, other: &Uses) {
+    pub(crate) fn join(&mut self, other: &Uses) {
         self.watches |= other.watches;
         self.tick |= other.tick;
         self.animates |= other.animates;
@@ -715,27 +715,60 @@ impl NodeTable {
         &self.uses
     }
 
-    /// What the nodes use outside the node in `slot` and its children, and inside it.
-    pub(crate) fn uses_around(&self, slot: usize) -> (Uses, Uses) {
-        let (mut outside, mut inside) = (Uses::default(), Uses::default());
-        let mut todo: Vec<(usize, bool)> = self
+    /// What the nodes use outside the nodes in `parts` and their children, and inside each of
+    /// them; a node in two of them counts in the innermost.
+    pub(crate) fn uses_split(&self, parts: &[usize]) -> (Uses, Vec<Uses>) {
+        let mut outside = Uses::default();
+        let mut inside = vec![Uses::default(); parts.len()];
+        let part_of = |slot: usize| parts.iter().position(|part| *part == slot);
+        let mut todo: Vec<(usize, Option<usize>)> = self
             .root
-            .map(|root| (root, root == slot))
+            .map(|root| (root, part_of(root)))
             .into_iter()
             .collect();
         while let Some((at, within)) = todo.pop() {
             let Some(entry) = self.get(at) else {
                 continue;
             };
-            (if within { &mut inside } else { &mut outside }).join(&entry.uses);
-            todo.extend(
-                entry
-                    .children
-                    .iter()
-                    .map(|child| (*child, within || *child == slot)),
-            );
+            match within.and_then(|part| inside.get_mut(part)) {
+                Some(uses) => uses.join(&entry.uses),
+                None => outside.join(&entry.uses),
+            }
+            todo.extend((entry.children.iter()).map(|child| (*child, part_of(*child).or(within))));
         }
         (outside, inside)
+    }
+
+    /// Whether the node in `slot` is the node in `outer` or inside it.
+    pub(crate) fn within(&self, slot: usize, outer: usize) -> bool {
+        let mut at = Some(slot);
+        while let Some(slot) = at {
+            if slot == outer {
+                return true;
+            }
+            at = self.get(slot).and_then(|entry| entry.parent);
+        }
+        false
+    }
+
+    /// The slot and the id of every space.
+    pub(crate) fn spaces(&self) -> Vec<(usize, u64)> {
+        (self.slots.iter().enumerate())
+            .filter_map(|(slot, entry)| entry.as_ref().map(|entry| (slot, entry)))
+            .filter(|(_, entry)| matches!(entry.props, Props::Space(_)))
+            .map(|(slot, entry)| (slot, entry.id))
+            .collect()
+    }
+
+    /// Whether a div is placed over the others.
+    pub(crate) fn lays_over(&self) -> bool {
+        (self.entries()).any(|entry| match &entry.props {
+            Props::Div(div) => div
+                .style
+                .as_ref()
+                .is_some_and(|style| style.absolute.is_some()),
+            _ => false,
+        })
     }
 
     pub(crate) fn version(&self) -> u64 {
