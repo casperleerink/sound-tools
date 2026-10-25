@@ -79,8 +79,11 @@ pub(crate) struct Feeds {
     /// What was drawn since the last poll still moves with no new sound: a meter that falls or
     /// a number that eases. The title bar draws from these feeds too, before or after the body.
     pub moving: Cell<bool>,
-    /// The frame the last poll saw, and whether what was drawn until then still moved.
-    polled: (u64, bool),
+    /// The same of the title bar, which draws again on its own when only it moves.
+    pub title_moving: Cell<bool>,
+    /// The frame the last poll saw, and whether what was drawn until then still moved, in the
+    /// body and in the title bar.
+    polled: (u64, bool, bool),
     pub histories: RefCell<HashMap<String, (u64, VecDeque<f32>)>>,
     /// The clock of the project, for the tempo and the places in the piece a tree shows.
     pub clock: Option<Clock>,
@@ -144,10 +147,14 @@ impl Feeds {
         now: Instant,
     ) {
         let started = *self.started.get_or_insert(now);
-        self.dt = (self.last.map_or(0.0, |last| (now - last).as_secs_f64())).min(LONGEST_FRAME);
-        self.last = Some(now);
-        self.time = (now - started).as_secs_f64();
-        self.frame += 1;
+        // A second read of one frame, as when the title bar draws alone and then the body, is
+        // the same frame: what eases moves once.
+        if self.last.is_none_or(|last| now - last >= SAME_FRAME) {
+            self.dt = (self.last.map_or(0.0, |last| (now - last).as_secs_f64())).min(LONGEST_FRAME);
+            self.last = Some(now);
+            self.time = (now - started).as_secs_f64();
+            self.frame += 1;
+        }
         let project = session.project();
         let clock = project.clock();
         if (self.clock.as_ref()).is_none_or(|kept| kept.tempo_map() != clock.tempo_map()) {
@@ -213,22 +220,28 @@ impl Feeds {
         (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
     }
 
-    /// Whether a frame now would draw something else than the last: what it reads of the
-    /// engine, of the audio input or of what plays changed, or the last frame still moves.
-    /// Takes nothing, so the frame sees all of it.
+    /// Whether a frame now would draw something else than the last, of what reads `uses`, the
+    /// title bar or the rest: what it reads of the engine, of the audio input or of what plays
+    /// changed, or the last frame still moves. Takes nothing, so the frame sees all of it.
     pub(crate) fn changed(
         &mut self,
         session: &Session,
         (id, state): (&InstanceId, &Value),
-        uses: &Uses,
+        (uses, title_bar): (&Uses, bool),
         tick: Ticks,
         input: &[f32],
     ) -> bool {
         if self.polled.0 != self.frame {
-            self.polled = (self.frame, self.moving.take());
+            self.polled = (self.frame, self.moving.take(), self.title_moving.take());
         }
+        let moving = if title_bar {
+            self.polled.2
+        } else {
+            self.polled.1
+        };
         let loud = |peaks: &[f32; 2]| peaks.iter().any(|peak| *peak > 0.0);
-        if self.polled.1 || self.peaks.values().any(loud) || loud(&self.output) {
+        let peaks = (uses.peaks.iter()).filter_map(|name| self.peaks.get(name));
+        if moving || peaks.into_iter().any(loud) || (uses.output && loud(&self.output)) {
             return true;
         }
         let project = session.project();
