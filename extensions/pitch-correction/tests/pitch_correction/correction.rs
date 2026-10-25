@@ -75,6 +75,30 @@ fn hard_tuning_flattens_a_vibrato_and_a_slow_retune_keeps_it() {
 }
 
 #[test]
+fn ignoring_vibrato_holds_one_note_where_a_vibrato_crosses_into_the_next() {
+    // A3 40 cents sharp with 35 cents each way six times a second, so its top is nearer A#3,
+    // hard tuned.
+    let vibrato = |time: f64| Some(57.4 + 0.35 * (std::f64::consts::TAU * 6.0 * time).sin());
+    let notes = |ignore_vibrato| {
+        let state = PitchCorrectionState {
+            ignore_vibrato,
+            ..retune(0.0)
+        };
+        let output = Rig::new(state, voice(vibrato)).render(2 * SECOND);
+        between(&heard(&output, latency()), 0.8, 1.9)
+    };
+    let flips = |notes: &[f64]| {
+        (notes.windows(2))
+            .filter(|pair| pair[0].round() != pair[1].round())
+            .count()
+    };
+    let flipping = notes(false);
+    assert!(flips(&flipping) > 8, "{flipping:?}");
+    let ignoring = notes(true);
+    assert!(farthest_cents(&ignoring, 57.0) < 5.0, "{ignoring:?}");
+}
+
+#[test]
 fn a_scale_moves_the_voice_to_its_nearest_note() {
     // C#4 a little low, in C major: D4 is nearer than C4.
     let state = PitchCorrectionState {

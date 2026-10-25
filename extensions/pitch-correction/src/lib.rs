@@ -49,6 +49,10 @@ pub struct PitchCorrectionState {
     pub voice: Voice,
     /// Keeps the tone of the voice, so a note moved up does not sound smaller.
     pub keep_formants: bool,
+    /// Chooses the note from the voice with its vibrato smoothed out, so a vibrato or a small
+    /// slide near the middle of two notes does not jump between them. Retune still moves the
+    /// voice itself to the note chosen.
+    pub ignore_vibrato: bool,
     /// How much of the corrected sound plays, 0 to 1; the rest is the voice as it comes.
     pub mix: f32,
 }
@@ -247,6 +251,7 @@ impl Default for PitchCorrectionState {
             humanize: HUMANIZE.default,
             voice: Voice::Middle,
             keep_formants: false,
+            ignore_vibrato: false,
             mix: MIX.default,
         }
     }

@@ -4,9 +4,11 @@
 //! The target is the allowed note nearest to what the voice sings, in any octave, so a
 //! correction is never more than half an octave and a note read an octave off still finds the
 //! right one. The target held keeps a little of its pull ([`STICK`]), so a voice between two
-//! notes does not flip from one to the other. Held notes on `notes` are the allowed notes in
-//! every octave, and they apply to the sound sung when they changed: the readings describe the
-//! voice a little back, so the changes wait for them.
+//! notes does not flip from one to the other. With `ignore_vibrato` the nearest is found from
+//! the [`SteadyPitch`], so a vibrato does not flip it either; the goal is still from what is
+//! sung. Held notes on `notes` are the allowed notes in every octave, and they apply to the
+//! sound sung when they changed: the readings describe the voice a little back, so the changes
+//! wait for them.
 //!
 //! The ratio the voice is read at moves to its goal, the target over what is sung, by the same
 //! part every frame: half way in the retune time. A slow retune follows the average of a
@@ -24,7 +26,7 @@ use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, DelayLine, EventInput, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Watch, all_held_silent, held,
 };
-use sound_media::analysis::{LOWEST_HZ, Pitch, PitchTracker};
+use sound_media::analysis::{LOWEST_HZ, Pitch, PitchTracker, SteadyPitch};
 use sound_media::{Shift, Shifter};
 use sound_notes::NoteEvent;
 
@@ -77,6 +79,7 @@ pub struct PitchCorrection {
     trackers: Box<[PitchTracker]>,
     listening: usize,
     starting: Option<(usize, usize)>,
+    steady: SteadyPitch,
     shifter: Shifter,
     /// The input, as late as the shifter, for the mix.
     dry: [DelayLine; 2],
@@ -127,6 +130,7 @@ impl PitchCorrection {
             mix: Smoothed::new(state.mix),
             listening: voice_index(state.voice),
             starting: None,
+            steady: SteadyPitch::new(rate),
             dry: [DelayLine::new(latency), DelayLine::new(latency)],
             rest_frames: Self::rest_frames(&trackers, latency),
             trackers,
@@ -271,6 +275,7 @@ impl PitchCorrection {
         let allowed = self.allowed(described);
         let Pitch::Note(note) = pitch else {
             // Lost: no target, and the voice as it is.
+            self.steady.push(None);
             (self.target, self.heard, self.ratio) = (None, None, 1.0);
             return Shift {
                 period: None,
@@ -279,7 +284,14 @@ impl PitchCorrection {
             };
         };
         self.heard = Some(note);
-        let target = nearest_allowed(note, allowed, self.target);
+        let hz = 440.0 * 2_f64.powf((note - 69.0) / 12.0);
+        let period = self.rate / hz;
+        self.steady.push(Some(period));
+        let chosen_from = match self.state.ignore_vibrato {
+            true => note + self.steady.offset(),
+            false => note,
+        };
+        let target = nearest_allowed(chosen_from, allowed, self.target);
         match target == self.target {
             true => self.target_frames += 1,
             false => self.target_frames = 0,
@@ -289,9 +301,8 @@ impl PitchCorrection {
         let held = self.target_frames as f64 / (HUMANIZE_SECONDS * self.rate);
         let keeping = self.fast + (self.slow - self.fast) * held.min(1.0);
         self.ratio = goal + keeping * (self.ratio - goal);
-        let hz = 440.0 * 2_f64.powf((note - 69.0) / 12.0);
         Shift {
-            period: Some(self.rate / hz),
+            period: Some(period),
             ratio: self.ratio,
             age,
         }
@@ -379,6 +390,7 @@ impl Processor for PitchCorrection {
         self.rate = rate;
         self.retune();
         (self.trackers, self.shifter) = Self::make(rate);
+        self.steady = SteadyPitch::new(rate);
         self.shifter.keep_formants(self.state.keep_formants);
         self.latency = self.shifter.latency();
         self.dry = [DelayLine::new(self.latency), DelayLine::new(self.latency)];

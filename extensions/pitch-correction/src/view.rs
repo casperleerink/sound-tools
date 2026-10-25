@@ -1,8 +1,8 @@
 //! The card of the pitch correction: across its display, a semitone around the note the voice
 //! is moved to, at the middle line. A thin line is what the voice sings, and a block from it
 //! to a bright line is how far it is moved, to where it plays. Key and Scale sit at its top,
-//! Retune and Humanize at its right, and behind expand the voice range, formants and Mix. The rack gives the view a
-//! [`CardFrame`].
+//! Retune and Humanize at its right, and behind expand the voice range, formants, Mix and
+//! Ignore vibrato. The rack gives the view a [`CardFrame`].
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session by [`DeviceEdit`]. What the voice sings comes from the watches of
@@ -181,7 +181,8 @@ impl PitchCorrectionView {
         }
     }
 
-    /// Shows or hides the voice range, formants and mix, as the expand icon does.
+    /// Shows or hides the voice range, formants, mix and ignore vibrato, as the expand icon
+    /// does.
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
@@ -211,14 +212,20 @@ impl PitchCorrectionView {
             }))
     }
 
-    fn formants(&self, state: &PitchCorrectionState, cx: &mut Context<Self>) -> Toggle {
-        let on = state.keep_formants;
-        Toggle::new("keep_formants", if on { "On" } else { "Off" }, on).on_change(weak_callback(
+    /// A switch of one on or off of the record: one click is one step.
+    fn toggle(
+        &self,
+        id: &'static str,
+        on: bool,
+        undo_label: &'static str,
+        set: fn(&mut PitchCorrectionState, bool),
+        cx: &mut Context<Self>,
+    ) -> Toggle {
+        Toggle::new(id, if on { "On" } else { "Off" }, on).on_change(weak_callback(
             cx,
-            |view, on: bool, cx| {
-                let set = |state: &mut PitchCorrectionState, on| state.keep_formants = on;
+            move |view, on: bool, cx| {
                 view.device
-                    .change("Change formants", ValueChange::Set(on), set, cx);
+                    .change(undo_label, ValueChange::Set(on), set, cx);
             },
         ))
     }
@@ -280,6 +287,20 @@ impl Render for PitchCorrectionView {
             |state, voice| state.voice = voice,
             cx,
         );
+        let formants = self.toggle(
+            "keep_formants",
+            state.keep_formants,
+            "Change formants",
+            |state, on| state.keep_formants = on,
+            cx,
+        );
+        let vibrato = self.toggle(
+            "ignore_vibrato",
+            state.ignore_vibrato,
+            "Change ignore vibrato",
+            |state, on| state.ignore_vibrato = on,
+            cx,
+        );
         let choices = div().flex().gap_1().child(key).child(scale);
         let retune = Column::new()
             .top(knob(RETUNE_KNOB, cx))
@@ -288,8 +309,10 @@ impl Render for PitchCorrectionView {
             Column::new()
                 .span(2)
                 .top(Cell::new(voice).span(2).label("Voice"))
-                .bottom(Cell::new(self.formants(&state, cx)).label("Formants")),
-            Column::new().top(knob(MIX_KNOB, cx)),
+                .bottom(Cell::new(formants).label("Formants")),
+            Column::new()
+                .top(knob(MIX_KNOB, cx))
+                .bottom(Cell::new(vibrato).label("Ignore vibrato")),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = (self.frame.card())

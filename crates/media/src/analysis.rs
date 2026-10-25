@@ -10,11 +10,13 @@
 //! the peak a converter or an encoder meets between the samples.
 //!
 //! The parts that measure a moment, [`Momentary`], [`PowerSpectrum`] and [`PitchTracker`], are
-//! public for a live display, such as the Analyzer card.
+//! public for a live display, such as the Analyzer card, and [`SteadyPitch`] for the pitch
+//! correction.
 
 mod moments;
 mod notes;
 mod pitch;
+mod steady;
 
 use std::sync::Arc;
 
@@ -27,6 +29,7 @@ use moments::MomentFinder;
 pub use notes::{Events, Note, NotePitch, Phrase, Tuning};
 use pitch::Pitches;
 pub use pitch::{LOWEST_HZ, MeasuredPitch, Pitch, PitchSettings, PitchTracker, nearest_note};
+pub use steady::SteadyPitch;
 
 /// Every render is stereo, and a file is read as stereo.
 const CHANNELS: usize = 2;
@@ -526,6 +529,13 @@ impl Biquad {
             inputs: [0.0; 2],
             outputs: [0.0; 2],
         }
+    }
+
+    /// Takes the state the filter has after `input` for ever.
+    fn settle(&mut self, input: f64) {
+        let gain = self.b.iter().sum::<f64>() / (1.0 + self.a.iter().sum::<f64>());
+        self.inputs = [input; 2];
+        self.outputs = [input * gain; 2];
     }
 
     fn process(&mut self, input: f64) -> f64 {
