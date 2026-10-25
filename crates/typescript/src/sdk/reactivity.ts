@@ -28,8 +28,9 @@ export type Memory<M> = M extends Set<infer T>
 
 export interface Owner {
   owner: Owner | null;
-  owned: Computation[];
-  cleanups: Array<() => void>;
+  /** Made on the first: most bindings own nothing and clean up nothing. */
+  owned?: Computation[];
+  cleanups?: Array<() => void>;
   /** The card whose nodes it makes. */
   card: CardRoot | null;
   disposed: boolean;
@@ -116,9 +117,11 @@ function flush() {
 }
 
 function clean(node: Owner) {
-  for (const child of node.owned) dispose(child);
-  node.owned = [];
-  for (const cleanup of node.cleanups.splice(0)) cleanup();
+  for (const child of node.owned ?? []) dispose(child);
+  node.owned = undefined;
+  const cleanups = node.cleanups;
+  node.cleanups = undefined;
+  for (const cleanup of cleanups ?? []) cleanup();
   if ("sources" in node) {
     const computation = node as Computation;
     for (const read of computation.sources) read.observers.delete(computation);
@@ -152,8 +155,8 @@ function failedIn(where: Owner, error: unknown) {
 }
 
 function computation(run: () => void): Computation {
-  const made: Computation = { run, sources: [], owner, owned: [], cleanups: [], card: owner?.card ?? null, disposed: false, order: order++, queued: false };
-  owner?.owned.push(made);
+  const made: Computation = { run, sources: [], owner, card: owner?.card ?? null, disposed: false, order: order++, queued: false };
+  if (owner) (owner.owned ??= []).push(made);
   return made;
 }
 
@@ -164,7 +167,7 @@ export function effect(run: () => void) {
 
 /** A root of its own, disposed by hand: a row of a list, a card. */
 export function root<T>(make: (dispose: () => void) => T, card: CardRoot | null = owner?.card ?? null): T {
-  const made: Owner = { owner, owned: [], cleanups: [], card, disposed: false };
+  const made: Owner = { owner, card, disposed: false };
   const [lastListener, lastOwner] = [listener, owner];
   [listener, owner] = [null, made];
   try {
@@ -177,7 +180,7 @@ export function root<T>(make: (dispose: () => void) => T, card: CardRoot | null 
 /** Runs `cleanup` when what runs now goes: the view, a part `Show` shows, a row of a `For`, a binding that runs again, or the node whose handler runs. */
 export function onCleanup(cleanup: () => void) {
   if (owner?.disposed) cleanup();
-  else owner?.cleanups.push(cleanup);
+  else if (owner) (owner.cleanups ??= []).push(cleanup);
 }
 
 /** Runs `run` as part of `scope`, following nothing it reads: what it makes goes when `scope` does. */
@@ -226,10 +229,10 @@ function timer(run: () => void, ms: number, repeats: boolean): () => void {
   const stop = () => {
     if (repeats) clearInterval(handle);
     else clearTimeout(handle);
-    const at = scope.cleanups.indexOf(stop);
-    if (at >= 0) scope.cleanups.splice(at, 1);
+    const at = scope.cleanups?.indexOf(stop) ?? -1;
+    if (at >= 0) scope.cleanups?.splice(at, 1);
   };
-  scope.cleanups.push(stop);
+  (scope.cleanups ??= []).push(stop);
   return stop;
 }
 
