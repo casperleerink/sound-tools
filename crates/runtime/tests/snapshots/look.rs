@@ -36,7 +36,7 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::Ticks;
 
-use crate::song::{ACROSS, ARM, BAR, HEADER, LEAD, ROW, TOGGLES, daw};
+use crate::song::{ACROSS, BAR, HEADER, LEAD, ROW, daw};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::CaptureWriter;
 
@@ -101,7 +101,7 @@ fn away(opened: &super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
     pointer_to(opened, point(px(1400.), px(80.)), cx)
 }
 
-fn pointer_to(
+pub(crate) fn pointer_to(
     opened: &super::Opened,
     at: Point<Pixels>,
     cx: &mut HeadlessAppContext,
@@ -133,7 +133,13 @@ fn header(row: f32) -> Point<Pixels> {
     point(px(60.), px(TOP + row * ROW + 18.))
 }
 
-/// The arm toggle of the audio track `row` from the top.
+/// In a track's header while its toggles show, from its left and its top: the middle of their
+/// line, of the arm of an audio track, and of the automation of a track with one lane.
+pub(crate) const TOGGLES: f32 = 42.0;
+const ARM: f32 = 91.0;
+pub(crate) const LANES: f32 = 84.0;
+
+/// The arm toggle of the audio track `row` from the top, which shows once its header is clicked.
 fn arm(row: f32) -> Point<Pixels> {
     point(px(ARM), px(TOP + row * ROW + TOGGLES))
 }
@@ -421,8 +427,8 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened =
         super::Opened::open_with_input(cx, &audio_files(), write_audio, Some(input.opener()))?;
     wait_for_waveforms(&mut opened, cx)?;
-    click(&opened, arm(3.), 1, cx)?;
     click(&opened, header(3.), 1, cx)?;
+    click(&opened, arm(3.), 1, cx)?;
     run_input(&mut opened, &input, 0.5, cx)?;
     save(cx, opened.window.into(), "look-armed")?;
     drop(opened);
@@ -432,9 +438,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened =
         super::Opened::open_with_input(cx, &audio_files(), write_audio, Some(input.opener()))?;
     wait_for_waveforms(&mut opened, cx)?;
-    click(&opened, arm(3.), 1, cx)?;
+    click(&opened, header(4.), 1, cx)?;
     click(&opened, arm(4.), 1, cx)?;
     click(&opened, header(3.), 1, cx)?;
+    click(&opened, arm(3.), 1, cx)?;
     cx.update(|cx| (opened.session).update(cx, |session, _| session.engine().seek(Ticks(4 * BAR))));
     opened.advance(64, cx);
     settle(cx);

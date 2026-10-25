@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 
 use super::{Opened, write};
 use crate::plugin_hosts::scanner;
-use crate::song::{ARM, HEADER, LEAD, ROW, TOGGLES, song_files};
+use crate::song::song_files;
 use crate::support::SimulatedInput;
 use crate::support::open_folder_with;
 
@@ -220,14 +220,10 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
     let plugins = |_: &std::path::Path| Plugins::new(Vec::new(), scanner(), ScanCache::none());
     let mut window = open_folder_with(cx, folder, plugins, device);
     window.wait_for_bun();
-    // The R of the voice, the fifth row: after its name, M and S in the header.
-    let row = window.on_lane(0, 4);
-    let arm = gpui::point(
-        row.x - gpui::px(LEAD + HEADER) + gpui::px(ARM),
-        row.y - gpui::px(ROW / 2.) + gpui::px(TOGGLES),
-    );
-    window.press(arm);
-    window.release(arm);
+    // The R of the voice shows while the pointer is over its header.
+    window.show_toggles("audio-voice");
+    let arm = window.until_found("toggle-arm-audio-voice");
+    window.click(arm);
     // Armed, its input opens before it records.
     window.until("the input opens", |window| {
         window.settle();

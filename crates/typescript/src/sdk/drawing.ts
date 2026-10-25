@@ -382,6 +382,8 @@ interface DivProps extends PointerEvents {
   disabled?: Bind<boolean>;
   cursor?: Pointed["cursor"];
   tooltip?: Bind<string>;
+  /** The pointer came over it, `true`, or left it, `false`, also over its children. */
+  onHover?: (over: boolean) => void;
   /** A drag of it carries this to a node that hears drops, such as another row of a list it reorders. */
   carry?: string;
   /** Files from the system, or what a dragged `div` carries, let go on it. */

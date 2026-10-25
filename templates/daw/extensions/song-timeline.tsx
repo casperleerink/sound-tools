@@ -3,6 +3,7 @@ import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
 import { itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, type Child, type Page } from "./song-page";
+import { Shades } from "./song-ruler";
 import { notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./transport";
@@ -333,6 +334,8 @@ export const Timeline = ({ page }: { page: Page }) => {
   return (
     <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, Math.max(tops().at(-1) ?? 0, 1)] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
       drag={marqueeDrag} onPress={pressTimeline} onDrop={dropOnTimeline}>
+      <Shades page={page} height={1000} />
+      <Rect x={-1e6} y={() => tops().at(-1) ?? 0} width={2e6} height={timeline.pointY} color="alpha/5" />
       <For each={layout}>
         {({ each, lane, add }, row) =>
           add ? null : lane ? (
@@ -342,6 +345,7 @@ export const Timeline = ({ page }: { page: Page }) => {
             }
           ) : (
             <>
+              <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="alpha/5" />
               {() => {
                 const snap = memory.snap;
                 return <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} snap={snap} />}</For>;

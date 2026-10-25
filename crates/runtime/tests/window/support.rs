@@ -489,6 +489,12 @@ impl Opened<'_> {
         self.cx.debug_bounds(selector).map(|bounds| bounds.center())
     }
 
+    /// The pointer over `position` with no button down, as a track's head shows its toggles.
+    pub(crate) fn hover(&mut self, position: Point<Pixels>) {
+        (self.cx).simulate_mouse_move(position, None, Modifiers::default());
+        self.cx.run_until_parked();
+    }
+
     pub(crate) fn press(&mut self, position: Point<Pixels>) {
         self.press_times(position, 1);
     }

@@ -155,6 +155,7 @@ export const Ruler = ({ page }: { page: Page }) => {
   return (
     <Space key="ruler" height={RULER - 1} unit={{ x: ACROSS }} extent={() => ({ x: [-LEAD, end()] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }}
       onPress={pressRuler} drag={loopDrag}>
+      <Shades page={page} height={RULER - 1} />
       <For each={starts}>
         {(tick, bar) => [
           <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="alpha/10" />,
@@ -185,6 +186,17 @@ export const Ruler = ({ page }: { page: Page }) => {
       <Circle x={playhead} y={RULER / 2} radius={3.5} color="gray-950" />
     </Space>
   );
+};
+
+/** Every other part of the song from the second, the bars before the first section a part too: a shade lighter, `height` tall. */
+export const Shades = ({ page: { clock, starts, end }, height }: { page: Page; height: number }) => {
+  const shaded = memo(() => {
+    const edges = clock.sections.map((each) => starts()[each.bar - 1] ?? end());
+    if (edges[0] !== 0) edges.unshift(0);
+    edges.push(end());
+    return edges.slice(1, -1).flatMap((from, index) => (index % 2 === 0 ? [{ from, to: edges[index + 2]! }] : []));
+  });
+  return <For each={shaded}>{(part) => <Rect x={part.from} y={0} width={part.to - part.from} height={height} color="alpha/4" />}</For>;
 };
 
 /** The field to name the section being named, over the timeline. */

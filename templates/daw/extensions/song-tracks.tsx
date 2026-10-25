@@ -1,9 +1,9 @@
-import { Button, For, Fragment, h, Icon, Input, PeakMeter, Select, Show, Toggle, type Color } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, onCleanup, PeakMeter, Select, Show, Toggle, untrack, type Color } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
 import type { Song } from "./song";
-import { addLane, LaneHead, showLanes } from "./song-automation";
+import { addLane, LaneHead, learnName, showLanes } from "./song-automation";
 import { copyOf } from "./song-clips";
 import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, titleOf, type Child, type Page } from "./song-page";
 import { tape } from "./tape";
@@ -42,12 +42,14 @@ export const Heads = ({ page }: { page: Page }) => {
               </div>
             ) : (
               <div key={`head-${each.name}`} carry={`track:${each.name}`} onDrop={({ carried }) => carried?.startsWith("track:") && carried.slice(6) !== each.name && moveTrack(page, carried.slice(6), each.name)}
-                style={{ height: ROW, paddingX: 8, paddingY: 4 }}>
+                style={{ height: ROW }}>
+                <div style={{ height: 1, background: "alpha/5", keep: true }} />
                 <TrackHead page={page} each={each} />
               </div>
             )
           }
         </For>
+        <div style={{ height: 1, background: "alpha/5", keep: true }} />
         <div style={{ height: ROW, direction: "row", align: "center", paddingX: 8 }}>
           <div key="add-track" style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
             onClick={() => addTrack(page, 0)}>
@@ -64,35 +66,60 @@ export const Heads = ({ page }: { page: Page }) => {
   );
 };
 
-/** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. A click anywhere on it but its toggles shows its panel, a double click names it, a right press opens its menu. */
+/**
+ * A track's header: its colour, its name, what plays it, and of its toggles those that are on,
+ * all of them while the pointer is over it or its panel shows. A click anywhere on it but its
+ * toggles shows its panel, a double click names it, a right press opens its menu.
+ */
 const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   const { state, children, memory, panelOf, openPanel, toggleMute, toggleSolo } = page;
+  const all = () => memory.hovered === each.name || panelOf() === each.name;
+  // A head drawn anew, as when lanes show, hears no leave of the one it replaces.
+  onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
-    <div style={() => ({ height: ROW - 8, radius: 6, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
+    <div style={() => ({ height: ROW - 1, direction: "row", align: "center", gap: 8, paddingRight: 8, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
+      onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
-      <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, paddingRight: 9, direction: "row", align: "center", gap: 8 }}>
-        <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
-        {() =>
-          memory.renaming === each.name ? (
-            <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
-          ) : (
-            <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
-              {() => titleOf(each)}
-            </div>
-          )
-        }
-        {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
-      </div>
-      <div style={{ height: 24, direction: "row", align: "center", paddingLeft: 4, paddingRight: 4, gap: 4 }}>
-        <Toggle key={`lanes-${each.name}`} icon="automation" tooltip="Automation" on={() => memory.lanes.has(each.name)}
-          count={() => lanesOf(each).length} onClick={() => showLanes(page, each, !memory.lanes.has(each.name))} />
-        <div style={{ grow: true }} />
-        <Show when={() => each.tool === "tape"}>
-          {() => <Toggle key={`arm-${each.name}`} dot on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(page, each.name)} />}
-        </Show>
-        <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
-        <Toggle key={`solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />
+      <div style={() => ({ width: 3, height: ROW - 13, radius: 1.5, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
+      <div style={{ grow: true, minWidth: 0, gap: 2, paddingLeft: 5 }}>
+        <div style={{ direction: "row", align: "center", gap: 8 }}>
+          {() =>
+            memory.renaming === each.name ? (
+              <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
+            ) : (
+              <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
+                {() => titleOf(each)}
+              </div>
+            )
+          }
+          {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
+        </div>
+        <div style={{ height: 24, direction: "row", align: "center", gap: 4 }}>
+          <div style={() => ({ grow: true, fontSize: 12, truncate: true, color: muted(each) ? "gray-700/40" : "gray-700" })}>
+            {() => (each.tool === "tape" ? "Audio" : (memory.names[`${each.name}/synth`] ?? ""))}
+          </div>
+          {() => {
+            // Runs again, and learns its name again, when another instrument or plugin takes its place.
+            const synth = each.children.find((child) => child.name === "synth");
+            const playing = synth && `${synth.tool} ${(synth.state as { plugin_id?: string }).plugin_id}`;
+            if (playing) untrack(() => learnName(page, each.name, "synth"));
+            return null;
+          }}
+          <Show when={() => all() || memory.lanes.has(each.name)}>
+            {() => <Toggle key={`lanes-${each.name}`} icon="automation" tooltip="Automation" on={() => memory.lanes.has(each.name)}
+              count={() => lanesOf(each).length} onClick={() => showLanes(page, each, !memory.lanes.has(each.name))} />}
+          </Show>
+          <Show when={() => each.tool === "tape" && (all() || memory.armed.has(each.name))}>
+            {() => <Toggle key={`arm-${each.name}`} dot on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(page, each.name)} />}
+          </Show>
+          <Show when={() => all() || muted(each)}>
+            {() => <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
+          </Show>
+          <Show when={() => all() || state.solo.includes(each.name)}>
+            {() => <Toggle key={`solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
+          </Show>
+        </div>
       </div>
     </div>
   );

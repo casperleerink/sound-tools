@@ -387,6 +387,13 @@ impl Opened<'_> {
         found.unwrap()
     }
 
+    /// The pointer over the name of the track `track`, until its header shows all its toggles.
+    fn show_toggles(&mut self, track: &str) {
+        let name = self.until_found(&format!("div-name-{track}"));
+        self.hover(name);
+        self.until_found(&format!("toggle-solo-{track}"));
+    }
+
     /// Plays the project, as a transport would.
     fn start_playing(&mut self) {
         let session = self.session.clone();

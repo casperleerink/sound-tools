@@ -25,7 +25,7 @@ use gpui::{
 };
 use sound_core::Ticks;
 
-use super::look::click;
+use super::look::{LANES, TOGGLES, click, pointer_to};
 
 const GALLERY: [(&str, &str); 3] = [
     ("project.json", include_str!("../sdk-gallery/project.json")),
@@ -170,12 +170,8 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     // A track's head shows its panel in place of the mixer, and the automation of the first
     // track's head: its lane of the cutoff shows under it.
     click(&opened, point(px(60.), px(280.)), 1, cx)?;
-    click(
-        &opened,
-        point(px(24.), px(TOP + crate::song::TOGGLES)),
-        1,
-        cx,
-    )?;
+    pointer_to(&opened, point(px(60.), px(TOP + 18.)), cx)?;
+    click(&opened, point(px(LANES), px(TOP + TOGGLES)), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-lanes")?;
     drop(opened);
