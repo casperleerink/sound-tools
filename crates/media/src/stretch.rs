@@ -4,9 +4,11 @@
 //! The points pin places in the file to ticks of the song with straight lines between them, so
 //! every frame of the song has a place in the file that should sound then. A head reads the file
 //! at its own speed, so at its own pitch, and stays within a period of that place by splicing: a
-//! period on or back, faded in a straight line over a part of a period, with the period of the
-//! last note heard where there is none, as the [`Shifter`](crate::Shifter) does. Whole periods
-//! play twice or not at all.
+//! period on or back, faded in a straight line over a part of a period, as the
+//! [`Shifter`](crate::Shifter) does. Whole periods play twice or not at all. A clip may hold any
+//! sound, not one voice: away from a note by more than the shifter holds its period, as in
+//! drums, noise or a mix, it splices every [`SPLICE_SECONDS`] instead, for a period of a
+//! note there would repeat a hit every few milliseconds and buzz at that pitch.
 //!
 //! The shifter decides each splice from all it played before, because live sound cannot be read
 //! ahead. A clip is heard from wherever the playhead is, and after a seek, a loop or in a render
@@ -24,14 +26,14 @@ use std::sync::Arc;
 
 use sound_core::{Clock, Ticks};
 
-use crate::analysis::{PitchSettings, PitchTracker};
-use crate::shifter::{FADE, UNHEARD_HZ};
+use crate::analysis::{LOWEST_HZ, PitchSettings, PitchTracker};
+use crate::shifter::{FADE, HOLD_PERIODS};
 use crate::{Audio, Region, varispeed};
 
 /// How often the period is read, in seconds of the file.
 const HOP_SECONDS: f64 = 0.005;
-/// The lowest pitch looked for, in Hz, as pitch correction does.
-const LOWEST_HZ: f64 = 60.0;
+/// The splice where no sound has a clear period.
+const SPLICE_SECONDS: f64 = 0.01;
 /// Hops each side the period is averaged over.
 const SMOOTHING_HOPS: usize = 2;
 /// How long the crossfade takes to follow a change of speed, so no weight jumps.
@@ -82,12 +84,13 @@ impl Periods {
                 *slot = tracker.followed_period();
             }
         }
-        // Where there is no clear period, as in drums, noise or a chord, the last one heard.
-        let held: Vec<f64> = (found.iter())
-            .scan(rate / UNHEARD_HZ, |last, period| {
-                *last = period.unwrap_or(*last);
-                Some(last.ln())
-            })
+        // The period of a note holds for some of its periods after it, as in the shifter, and
+        // before it, so a hit lands as near its tick as the note after it.
+        let after = hold(found.iter(), hop as f64);
+        let mut before = hold(found.iter().rev(), hop as f64);
+        before.reverse();
+        let held: Vec<f64> = (after.iter().zip(&before))
+            .map(|(after, before)| after.or(*before).unwrap_or(SPLICE_SECONDS * rate).ln())
             .collect();
         let periods: Box<[f64]> = (0..hops)
             .map(|index| {
@@ -137,6 +140,21 @@ impl Periods {
             _ => 0.0,
         }
     }
+}
+
+/// Each hop's period of `found`, read in order, else the last one while it holds for
+/// [`HOLD_PERIODS`] of itself, `hop` frames per hop.
+fn hold<'a>(found: impl Iterator<Item = &'a Option<f64>>, hop: f64) -> Vec<Option<f64>> {
+    let mut last: Option<(f64, f64)> = None;
+    let held = found.map(|found| {
+        last = match (found, last) {
+            (Some(period), _) => Some((*period, HOLD_PERIODS * period)),
+            (None, Some((period, left))) if left > hop => Some((period, left - hop)),
+            (None, _) => None,
+        };
+        last.map(|(period, _)| period)
+    });
+    held.collect()
 }
 
 /// The warp points of a region as a player plays them.

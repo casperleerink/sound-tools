@@ -329,3 +329,39 @@ fn two_warped_regions_that_meet_hand_over_with_no_dip() {
         assert!(lowest > 0.25 * 0.95, "{lowest} at the join after {end} s");
     }
 }
+
+/// How alike `samples` is to itself `lag` frames later, from -1 to 1.
+fn alike(samples: &[f32], lag: usize) -> f64 {
+    let pairs = samples.iter().zip(&samples[lag..]);
+    let together: f64 = pairs.map(|(a, b)| f64::from(*a) * f64::from(*b)).sum();
+    let power: f64 = samples.iter().map(|a| f64::from(*a).powi(2)).sum();
+    together / power
+}
+
+/// Noise has no clear pitch, so it is spliced every 10 ms, as drums or a mix would be: not at
+/// the period of a note, which would repeat it every few milliseconds and buzz at that pitch.
+#[test]
+fn noise_stretched_is_spliced_every_ten_milliseconds() {
+    let folder = tempfile::tempdir().unwrap();
+    // Splitmix64 of the frame: white, the same every run.
+    let noise = |time: f64| {
+        let mut bits = ((time * 48_000.0).round() as u64).wrapping_add(0x9e37_79b9_7f4a_7c15);
+        bits = (bits ^ (bits >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        bits = (bits ^ (bits >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        bits ^= bits >> 31;
+        0.5 * ((bits >> 11) as f64 / (1_u64 << 53) as f64 - 0.5)
+    };
+    file(folder.path(), "noise.wav", 1.0, noise);
+    // A second over four beats: half its speed, so half of what plays is played twice.
+    let warped = region("noise.wav", 0, &[(4 * BEAT, 1.0)]);
+    let mut song = Song::new(folder.path(), vec![warped]);
+    let played = song.play(4 * BEAT_FRAMES, 512);
+    let middle = &played[BEAT_FRAMES..3 * BEAT_FRAMES];
+    let at_a_note = alike(middle, 48_000 / 440);
+    let at_ten_milliseconds = alike(middle, 480);
+    assert!(
+        at_a_note.abs() < 0.05,
+        "{at_a_note} at the period of 440 Hz"
+    );
+    assert!(at_ten_milliseconds > 0.2, "{at_ten_milliseconds} at 10 ms");
+}

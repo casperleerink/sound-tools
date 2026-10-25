@@ -64,9 +64,9 @@ const WINDOW: f64 = 0.6;
 /// The fade of a jump, as a part of the period.
 pub(crate) const FADE: f64 = 0.2;
 /// How many of its own periods a period holds once the readings lose it.
-const HOLD_PERIODS: f64 = 8.0;
+pub(crate) const HOLD_PERIODS: f64 = 8.0;
 /// The period a jump takes before any was heard, in Hz.
-pub(crate) const UNHEARD_HZ: f64 = 440.0;
+const UNHEARD_HZ: f64 = 440.0;
 /// The shortest period a jump takes, in frames.
 const SHORTEST_PERIOD: f64 = 16.0;
 /// The ratios the head reads at.

@@ -99,6 +99,10 @@ impl Pitches {
     }
 }
 
+/// The lowest pitch pitch correction and a stretched clip look for, in Hz: a lower one needs a
+/// longer look, which reads later than the latency of pitch correction leaves room for.
+pub const LOWEST_HZ: f64 = 60.0;
+
 /// What the tracker looks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PitchSettings {

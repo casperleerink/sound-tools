@@ -24,7 +24,7 @@ use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, DelayLine, EventInput, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Watch, all_held_silent, held,
 };
-use sound_media::analysis::{Pitch, PitchSettings, PitchTracker};
+use sound_media::analysis::{LOWEST_HZ, Pitch, PitchSettings, PitchTracker};
 use sound_media::{Shift, Shifter};
 use sound_notes::NoteEvent;
 
@@ -36,9 +36,6 @@ type CorrectionTargets = Targets<PitchCorrectionState, { PARAMETERS.len() }>;
 const TOLERANCE: f64 = 0.5;
 /// How long a change of the mix takes.
 const RAMP_SECONDS: f32 = 0.02;
-/// The lowest pitch any tracker looks for, in Hz: a reading of a lower one is older than the
-/// latency leaves room for.
-const LOWEST_HZ: f64 = 60.0;
 /// How long a held target takes to reach the slower retune of humanize, and how much slower
 /// that is at most.
 const HUMANIZE_SECONDS: f64 = 0.4;
