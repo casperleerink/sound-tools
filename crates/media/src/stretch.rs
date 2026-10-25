@@ -61,29 +61,11 @@ impl Periods {
         let hop = ((HOP_SECONDS * rate).round() as usize).max(1);
         let frames = usize::try_from(audio.frames()).unwrap_or(usize::MAX);
         let hops = frames.div_ceil(hop).max(1);
-        let settings = PitchSettings {
-            lowest: LOWEST_HZ,
-            ..PitchSettings::FULL
-        };
-        let mut tracker = PitchTracker::new(rate, settings);
-        let mut found = vec![None; hops];
-        let mut block = vec![[0.0_f32; 2]; hop];
-        // On into the silence after the end, so the last hops get a reading too.
-        let end = hops
-            .saturating_mul(hop)
-            .saturating_add(2 * tracker.length());
-        let mut heard = 0;
-        while heard < end {
-            audio.read(i64::try_from(heard).unwrap_or(i64::MAX), &mut block);
-            tracker.push(block.iter().map(|[left, right]| 0.5 * (left + right)));
-            heard += hop;
-            let described = heard as f64 - tracker.age();
-            if described >= 0.0
-                && let Some(slot) = found.get_mut((described / hop as f64) as usize)
-            {
-                *slot = tracker.followed_period();
-            }
-        }
+        let forward = readings(audio, rate, hop, hops, false);
+        let backward = readings(audio, rate, hop, hops, true);
+        let found: Vec<Option<f64>> = (forward.iter().zip(&backward))
+            .map(|(forward, backward)| forward.or(*backward))
+            .collect();
         // The period of a note holds for some of its periods after it, as in the shifter, and
         // before it, so a hit lands as near its tick as the note after it.
         let after = hold(found.iter(), hop as f64);
@@ -140,6 +122,47 @@ impl Periods {
             _ => 0.0,
         }
     }
+}
+
+/// The period of each of `hops` hops of `hop` frames of `audio`, while it holds a note: the
+/// file read from its start, or from its end. The tracker finds a note a few of its periods
+/// after it starts and follows it to where it stops, so read both ways the periods reach both
+/// ends of a note.
+fn readings(audio: &Audio, rate: f64, hop: usize, hops: usize, backward: bool) -> Vec<Option<f64>> {
+    let settings = PitchSettings {
+        lowest: LOWEST_HZ,
+        ..PitchSettings::FULL
+    };
+    let mut tracker = PitchTracker::new(rate, settings);
+    let mut found = vec![None; hops];
+    let mut block = vec![[0.0_f32; 2]; hop];
+    let total = hops.saturating_mul(hop);
+    // On into the silence past the end, so the last hops get a reading too.
+    let end = total.saturating_add(2 * tracker.length());
+    let mut heard = 0;
+    while heard < end {
+        let start = match backward {
+            true => total as i64 - (heard + hop) as i64,
+            false => i64::try_from(heard).unwrap_or(i64::MAX),
+        };
+        audio.read(start, &mut block);
+        if backward {
+            block.reverse();
+        }
+        tracker.push(block.iter().map(|[left, right]| 0.5 * (left + right)));
+        heard += hop;
+        let described = heard as f64 - tracker.age();
+        let described = match backward {
+            true => total as f64 - described,
+            false => described,
+        };
+        if described >= 0.0
+            && let Some(slot) = found.get_mut((described / hop as f64) as usize)
+        {
+            *slot = tracker.followed_period();
+        }
+    }
+    found
 }
 
 /// Each hop's period of `found`, read in order, else the last one while it holds for

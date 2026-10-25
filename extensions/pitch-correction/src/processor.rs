@@ -16,15 +16,15 @@
 //! in a chord, noise or a breath, the ratio is 1 at once, so nothing without a pitch is moved.
 //!
 //! Each voice range has its own tracker, made before the processor reaches the audio thread.
-//! A tracker looks from the lowest pitch of its range, but not under [`LOWEST_HZ`], which the
-//! latency allows, up to twice its highest. A change of range starts the new one listening next
-//! to the old, and switches once it has heard enough to read a note.
+//! A tracker looks from the lowest pitch of its range, but not under [`LOWEST_HZ`], to its
+//! highest, and follows a note as far each side as its range sets. A change of range starts the
+//! new one listening next to the old, and switches once it has heard enough to read a note.
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, DelayLine, EventInput, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Watch, all_held_silent, held,
 };
-use sound_media::analysis::{LOWEST_HZ, Pitch, PitchSettings, PitchTracker};
+use sound_media::analysis::{LOWEST_HZ, Pitch, PitchTracker};
 use sound_media::{Shift, Shifter};
 use sound_notes::NoteEvent;
 
@@ -32,10 +32,11 @@ use crate::{MIX, PARAMETERS, PitchCorrectionState, Voice};
 
 type CorrectionTargets = Targets<PitchCorrectionState, { PARAMETERS.len() }>;
 
-/// How clearly the voice must repeat to read as a note: between strict and tolerant.
-const TOLERANCE: f64 = 0.5;
 /// How long a change of the mix takes.
 const RAMP_SECONDS: f32 = 0.02;
+/// How old the shifter takes a reading to be at most, which sets the latency: 37.5 ms with the
+/// window of a period of [`LOWEST_HZ`]. A reading is about a period old.
+const OLDEST_SECONDS: f64 = 0.0275;
 /// How long a held target takes to reach the slower retune of humanize, and how much slower
 /// that is at most.
 const HUMANIZE_SECONDS: f64 = 0.4;
@@ -154,18 +155,12 @@ impl PitchCorrection {
     /// The trackers of every voice range at `rate`, and a shifter for the lowest of them.
     fn make(rate: f64) -> (Box<[PitchTracker]>, Shifter) {
         let trackers: Box<[PitchTracker]> = (Voice::ALL.iter())
-            .map(|voice| {
-                let (lowest, highest) = voice.range_hz();
-                let settings = PitchSettings {
-                    lowest: lowest.max(LOWEST_HZ),
-                    highest: 2.0 * highest,
-                    tolerance: TOLERANCE,
-                };
-                PitchTracker::new(rate, settings)
-            })
+            .map(|voice| PitchTracker::new(rate, voice.tracker_settings()))
             .collect();
-        let oldest = trackers.iter().map(PitchTracker::age).fold(0.0, f64::max);
-        (trackers, Shifter::new(rate, rate / LOWEST_HZ, oldest))
+        (
+            trackers,
+            Shifter::new(rate, rate / LOWEST_HZ, OLDEST_SECONDS * rate),
+        )
     }
 
     /// Silent frames after which the trackers, the shifter and the mix hold only silence.

@@ -32,8 +32,11 @@ pub(super) struct MomentFinder {
     since: usize,
     /// The frames pushed after the start.
     measured: u64,
-    /// Hears both channels mixed.
+    /// Hears both channels mixed, and what it read after each frame of the history, newest at
+    /// `read`, with how far back each reading describes.
     pitch: PitchTracker,
+    readings: Vec<(Pitch, f64)>,
+    read: usize,
     spectrum: PowerSpectrum,
     onset_length: usize,
     /// The power of each bin, both channels together, so channels of opposite polarity do not
@@ -56,6 +59,8 @@ impl MomentFinder {
             since: 0,
             measured: 0,
             pitch,
+            readings: vec![(Pitch::Quiet, 0.0); length],
+            read: 0,
             spectrum: PowerSpectrum::new(onset_length),
             onset_length,
             powers: vec![0.0; bins],
@@ -78,11 +83,12 @@ impl MomentFinder {
                 *slot = value;
             }
         }
-        // The tracker hears as many frames as the history holds, since two periods of the
-        // lowest note are longer than the onset spectrum, so its pitch is that of the middle,
-        // as of its last look a few milliseconds ago.
         self.pitch
             .push([values.iter().sum::<f32>() / CHANNELS as f32]);
+        self.read = (self.read + 1) % length;
+        if let Some(slot) = self.readings.get_mut(self.read) {
+            *slot = (self.pitch.pitch(), self.pitch.age());
+        }
         self.since += 1;
         if measured {
             self.measured += 1;
@@ -97,6 +103,25 @@ impl MomentFinder {
         }
         let frame = self.measured.checked_sub(length as u64 / 2)?;
         Some(Moment { frame, ..moment })
+    }
+
+    /// The newest reading that describes the middle of the history or before it: each one is
+    /// as old as it says.
+    fn middle_pitch(&self) -> Pitch {
+        let length = self.readings.len();
+        let middle = length / 2;
+        (0..length)
+            .map(|back| {
+                (
+                    back,
+                    self.readings.get((self.read + length - back) % length),
+                )
+            })
+            .find_map(|(back, reading)| {
+                let (pitch, age) = reading?;
+                (back as f64 + age >= middle as f64).then_some(*pitch)
+            })
+            .unwrap_or(Pitch::Quiet)
     }
 
     fn moment(&mut self) -> Moment {
@@ -132,7 +157,7 @@ impl MomentFinder {
         Moment {
             frame: 0,
             level,
-            pitch: self.pitch.pitch(),
+            pitch: self.middle_pitch(),
             rise,
         }
     }

@@ -237,6 +237,8 @@ pub(crate) fn heard(output: &[f32], latency: u32) -> Vec<(f64, f64)> {
         lowest: 80.0,
         highest: 1_000.0,
         tolerance: 0.5,
+        width: 15,
+        lone_minimum: false,
     };
     let mut tracker = PitchTracker::new(RATE, settings);
     let mut notes = Vec::new();

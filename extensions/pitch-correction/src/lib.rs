@@ -17,6 +17,7 @@ use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, State, ranges,
 };
+use sound_media::analysis::{LOWEST_HZ, PitchSettings};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 pub use processor::{Meters, PitchCorrection};
@@ -175,6 +176,30 @@ impl Voice {
             Self::Low => (53.0, 300.0),
             Self::Instrument => (53.0, 1_000.0),
             Self::BassInstrument => (24.5, 200.0),
+        }
+    }
+
+    /// What the tracker of the range looks for: from its lowest pitch, but not under the
+    /// lowest any tracker follows, to its highest, between strict and tolerant, a bass also by a
+    /// lone minimum.
+    pub fn tracker_settings(self) -> PitchSettings {
+        let (lowest, highest) = self.range_hz();
+        PitchSettings {
+            lowest: lowest.max(LOWEST_HZ),
+            highest,
+            tolerance: 0.5,
+            width: self.width(),
+            lone_minimum: self == Self::BassInstrument,
+        }
+    }
+
+    /// How many lags each side of its period a note is followed: wide for low voices, whose
+    /// periods move by more lags in a glide.
+    fn width(self) -> usize {
+        match self {
+            Self::High | Self::Instrument => 6,
+            Self::Middle => 15,
+            Self::Low | Self::BassInstrument => 30,
         }
     }
 }
