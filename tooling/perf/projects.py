@@ -83,10 +83,11 @@ def track(folder, name, order, instrument, clip_notes, effects=None, gain_db=0.0
     effects = {"reverb": {}, "delay": {}} if effects is None else effects
     for effect, effect_state in effects.items():
         write(base / f"chain/{effect}.json", {"tool": effect, "state": effect_state})
-    write(base / "chain/instance.json", {"tool": "chain", "state": {"order": list(effects)}})
+    # A track has no filter of its own: the first effect of its chain is one.
+    write(base / "chain/fx.json", {"tool": "filter", "state": {}})
+    write(base / "chain/instance.json", {"tool": "chain", "state": {"order": ["fx", *effects]}})
     write(base / "instance.json", {"tool": "track", "state": {"title": name}})
     write(base / "synth.json", instrument)
-    write(base / "fx.json", {"tool": "filter", "state": {}})
     write(base / "mix.json", {"tool": "fader", "state": {"gain_db": gain_db}})
     write(base / "rec.json", {"tool": "recorder", "state": {}})
     if clip_notes is not None:
@@ -268,7 +269,7 @@ def automate(folder):
         record = json.loads(path.read_text())
         record["state"]["automation"] = [
             {"lane": "lane-gain", "target": "mix.gain_db"},
-            {"lane": "lane-cutoff", "target": "fx.cutoff_hz"},
+            {"lane": "lane-cutoff", "target": "chain/fx.cutoff_hz"},
         ]
         write(path, record)
 
