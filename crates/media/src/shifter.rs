@@ -327,6 +327,11 @@ impl Shifter {
     }
 }
 
+/// How much of the sound faded to is heard `part` of the way through a fade, 0 to 1.
+pub(crate) fn crossfade(part: f64) -> f64 {
+    0.5 - 0.5 * (PI * part).cos()
+}
+
 /// `from` towards `to` by `weight`, 0 to 1.
 fn between(from: [f32; 2], to: [f32; 2], weight: f32) -> [f32; 2] {
     [

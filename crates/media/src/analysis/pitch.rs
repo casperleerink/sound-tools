@@ -249,6 +249,14 @@ impl PitchTracker {
         self.pitch
     }
 
+    /// The period of [`Self::pitch`] in frames, when it is a note.
+    pub fn followed_period(&self) -> Option<f64> {
+        match self.pitch {
+            Pitch::Note(_) => self.followed,
+            Pitch::Quiet | Pitch::Unclear => None,
+        }
+    }
+
     /// How far [`Self::pitch`] can be trusted, from 0, a note only just told from noise or no
     /// note at all, to 1, a sound that repeats exactly.
     pub fn confidence(&self) -> f64 {

@@ -18,11 +18,15 @@
 
 use std::sync::Arc;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use sound_core::{
-    Assets, AudioOutput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
+    Assets, AudioOutput, Clock, Frames, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor,
+    Ticks,
 };
 
-use crate::{Audio, AudioAsset, MediaError, Resampler, SCRATCH_FRAMES};
+use crate::stretch::{Heads, Warp};
+use crate::{Audio, AudioAsset, MediaError, Periods, Resampler, SCRATCH_FRAMES};
 
 /// How long the ramp at every edge of a clip is. Not a setting, and not drawn.
 pub const DECLICK_SECONDS: f64 = 0.002;
@@ -42,10 +46,22 @@ struct PlacedAudio {
     gain: f32,
     fade_in: u64,
     fade_out: u64,
+    /// Its warp points, which make the clock say its length instead.
+    warp: Option<Warp>,
 }
 
-/// A stretch of an audio file at a place in the song, as a player is given it. It plays at the
-/// speed of its file, so a tempo change moves only where it starts.
+/// A place in the file pinned to a place in the song.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WarpPoint {
+    /// Ticks after the region's start.
+    pub ticks: Ticks,
+    /// Seconds into the file.
+    pub seconds: f64,
+}
+
+/// A stretch of an audio file at a place in the song, as a player is given it. Without warp
+/// points it plays at the speed of its file, so a tempo change moves only where it starts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Region {
     /// The file, under `assets/audio/`.
@@ -62,18 +78,54 @@ pub struct Region {
     /// at its end.
     pub fade_in_ms: f32,
     pub fade_out_ms: f32,
+    /// After its start, which plays `file_start_seconds`, each point plays its second of the file
+    /// at its tick, with straight lines between. It stops at the last.
+    pub warp: Vec<WarpPoint>,
 }
 
 impl Region {
     /// The part of the file that plays, in frames of the file: from, and up to.
     pub fn file_frames(&self, file: &crate::Info) -> (u64, u64) {
-        file_frames(file, self.file_start_seconds, self.file_end_seconds)
+        let end = self.warp.last().map(|point| point.seconds);
+        file_frames(file, self.file_start_seconds, end.or(self.file_end_seconds))
     }
 
-    /// How many engine frames it plays at `engine_rate`.
+    /// How many engine frames that part of the file lasts at `engine_rate`, at its own speed.
     pub fn length(&self, file: &crate::Info, engine_rate: u32) -> u64 {
         let (from, to) = self.file_frames(file);
         crate::engine_frames(to - from, file.sample_rate, engine_rate)
+    }
+
+    /// Where it stops in the song.
+    pub fn end(&self, file: &crate::Info, clock: &Clock) -> Ticks {
+        match self.warp.last() {
+            Some(point) => Ticks(self.start.0.saturating_add(point.ticks.0)),
+            None => {
+                let length = self.length(file, clock.sample_rate());
+                clock.tick_at(Frames(clock.frame_of(self.start).0 + length))
+            }
+        }
+    }
+
+    /// The second of its file that plays at `tick`, at or after its start.
+    pub fn file_seconds_at(&self, tick: Ticks, clock: &Clock) -> f64 {
+        let after = tick.0.saturating_sub(self.start.0);
+        // The line it is on, or the last one on past its end.
+        let index = self.warp.partition_point(|point| point.ticks.0 <= after);
+        let index = index.min(self.warp.len().saturating_sub(1));
+        let Some(to) = self.warp.get(index).copied() else {
+            return clock.seconds_of(tick) - clock.seconds_of(self.start) + self.file_start_seconds;
+        };
+        let start = WarpPoint {
+            ticks: Ticks(0),
+            seconds: self.file_start_seconds,
+        };
+        let from = index
+            .checked_sub(1)
+            .and_then(|before| self.warp.get(before));
+        let from = from.copied().unwrap_or(start);
+        let along = (after as f64 - from.ticks.0 as f64) / (to.ticks.0 - from.ticks.0) as f64;
+        from.seconds + along * (to.seconds - from.seconds)
     }
 }
 
@@ -88,19 +140,20 @@ pub fn file_frames(file: &crate::Info, start_seconds: f64, end_seconds: Option<f
 }
 
 /// The snapshot of `regions`, which `what` names in a problem such as `the clip "verse"`, the
-/// last one heard where they overlap, and a line for each that cannot play.
+/// last one heard where they overlap, and a line for each that cannot play. A region with warp
+/// points plays with the periods of its file, and is left out without them.
 ///
 /// Reads every file the first time it is named, on this thread, see [`crate::load`]. A file
 /// that does not play, or a region that plays none of its file, costs one look at the file
 /// after that, see [`crate::info`].
 pub fn snapshot(
-    regions: impl IntoIterator<Item = (String, Region)>,
+    regions: impl IntoIterator<Item = (String, Region, Option<Arc<Periods>>)>,
     assets: &Assets,
     engine_rate: u32,
 ) -> (AudioSnapshot, Vec<String>) {
     let mut clips = Vec::new();
     let mut problems = Vec::new();
-    for (what, region) in regions {
+    for (what, region, periods) in regions {
         let file = match crate::info(assets, &region.asset) {
             Ok(file) => file,
             Err(MediaError::Missing { path }) => {
@@ -131,6 +184,16 @@ pub fn snapshot(
                 continue;
             }
         };
+        let warp = match (region.warp.is_empty(), periods) {
+            (true, _) => None,
+            (false, None) => continue,
+            (false, Some(periods)) => {
+                // Made here, on the control side, and never first on the audio thread.
+                crate::varispeed();
+                let rates = (audio.sample_rate(), engine_rate);
+                Some(Warp::new(periods, &region, rates))
+            }
+        };
         let file = audio.info();
         let (origin, _) = region.file_frames(&file);
         // What the file holds from where it starts, which a join may play past its end.
@@ -148,6 +211,7 @@ pub fn snapshot(
             gain: region.gain,
             fade_in: milliseconds(region.fade_in_ms),
             fade_out: milliseconds(region.fade_out_ms),
+            warp,
         });
     }
     (AudioSnapshot { clips }, problems)
@@ -162,12 +226,28 @@ struct Part {
     hands_over: bool,
 }
 
+/// Where a clip reads its file in a block: through the clock of the block, or on from where its
+/// heads were, for what sounded before a jump.
+#[derive(Copy, Clone)]
+enum Reading<'a> {
+    Clock(&'a Clock),
+    On(Heads),
+}
+
 impl PlacedAudio {
-    /// The level of frame `frame` of the clip, heard in `part`: the gain, the fades, and the
-    /// ramp at each edge of that part. `entered` frames ago the sound came in after a jump,
-    /// which is one more edge with the same ramp. A clip that starts where the sound comes in
-    /// therefore gets one ramp and not two.
-    fn level(&self, frame: u64, part: Part, ramp: u64, entered: u64) -> f32 {
+    /// How many engine frames the clip plays, and how many its file holds from where it starts.
+    fn bounds(&self, clock: &Clock) -> (u64, u64) {
+        match &self.warp {
+            None => (self.length, self.available),
+            Some(warp) => warp.bounds(clock, self.audio.frames()),
+        }
+    }
+
+    /// The level of frame `frame` of the clip, `length` frames long, heard in `part`: the gain,
+    /// the fades, and the ramp at each edge of that part. `entered` frames ago the sound came in
+    /// after a jump, which is one more edge with the same ramp. A clip that starts where the
+    /// sound comes in therefore gets one ramp and not two.
+    fn level(&self, frame: u64, length: u64, part: Part, ramp: u64, entered: u64) -> f32 {
         let end = match part.hands_over {
             true => part.to + ramp,
             false => part.to,
@@ -184,26 +264,35 @@ impl PlacedAudio {
             level = level.min(frame as f64 / self.fade_in as f64);
         }
         if self.fade_out > 0 {
-            level = level.min(self.length.saturating_sub(frame) as f64 / self.fade_out as f64);
+            level = level.min(length.saturating_sub(frame) as f64 / self.fade_out as f64);
         }
         (level * f64::from(self.gain)) as f32
     }
 
-    /// Frames `first..` of the clip as heard in `part`, into `out`. `entered` is for `first`,
-    /// see [`Self::level`].
+    /// Frames `first..` of the clip, `length` frames long, as heard in `part`, into `out`.
+    /// `entered` is for `first`, see [`Self::level`].
     fn write(
         &self,
+        reading: Reading<'_>,
         (first, entered): (u64, u64),
-        part: Part,
+        (part, length): (Part, u64),
         ramp: u64,
         out: &mut [[f32; 2]],
         scratch: &mut [[f32; 2]],
     ) {
-        self.resampler
-            .render(&self.audio, self.origin, first, out, scratch);
+        match (&self.warp, reading) {
+            (None, _) => self
+                .resampler
+                .render(&self.audio, self.origin, first, out, scratch),
+            (Some(warp), Reading::Clock(clock)) => {
+                warp.render(&self.audio, clock, first, out, scratch);
+            }
+            (Some(warp), Reading::On(heads)) => warp.render_on(&self.audio, heads, out, scratch),
+        }
         for (index, frame) in out.iter_mut().enumerate() {
             let index = index as u64;
-            let level = self.level(first + index, part, ramp, entered.saturating_add(index));
+            let entered = entered.saturating_add(index);
+            let level = self.level(first + index, length, part, ramp, entered);
             *frame = frame.map(|sample| sample * level);
         }
     }
@@ -225,11 +314,13 @@ impl AudioSnapshot {
     }
 }
 
-/// Where a clip is in project frames for one block, under the clock of that block.
+/// Where a clip is in project frames for one block, under the clock of that block, and how
+/// many frames its file holds from its start.
 #[derive(Copy, Clone, Default)]
 struct Span {
     start: u64,
     end: u64,
+    available: u64,
 }
 
 /// What a [`AudioPlayer`] gets from its behaviour on every change of its track.
@@ -248,11 +339,14 @@ impl AudioUpdate {
     }
 }
 
-/// The clip heard on the last frame of a block, and its frame after that one.
+/// The clip heard on the last frame of a block, its frame after that one, its length, and
+/// where its heads are there when it has warp points.
 #[derive(Copy, Clone)]
 struct Sounding {
     clip: usize,
     next: u64,
+    length: u64,
+    heads: Heads,
 }
 
 pub struct AudioPlayer {
@@ -310,13 +404,14 @@ impl AudioPlayer {
             Some((sounding, clip)) => {
                 let whole = Part {
                     from: 0,
-                    to: clip.length,
+                    to: sounding.length,
                     hands_over: false,
                 };
                 let first = (sounding.next, self.entered);
                 clip.write(
+                    Reading::On(sounding.heads),
                     first,
-                    whole,
+                    (whole, sounding.length),
                     self.ramp,
                     &mut self.going_on,
                     &mut self.scratch,
@@ -346,6 +441,7 @@ impl AudioPlayer {
     /// the clips that hand over play past their edge.
     fn play_past_hand_overs(
         &mut self,
+        clock: &Clock,
         range: std::ops::Range<u64>,
         offset: usize,
         outputs: [&mut [f32]; 2],
@@ -366,8 +462,7 @@ impl AudioPlayer {
                 if seen || (edge == span.end && span.start == edge) {
                     continue;
                 }
-                let Some((outgoing, part)) = hand_over(&self.spans, &self.snapshot, edge, ramp)
-                else {
+                let Some((outgoing, part)) = hand_over(&self.spans, edge, ramp) else {
                     continue;
                 };
                 let (Some(clip), Some(outgoing_span)) =
@@ -382,7 +477,16 @@ impl AudioPlayer {
                 };
                 let entered = self.entered.saturating_add(from - range.start);
                 let first = (from - outgoing_span.start, entered);
-                clip.write(first, part, ramp, piece, &mut self.scratch);
+                let length = outgoing_span.end - outgoing_span.start;
+                let reading = Reading::Clock(clock);
+                clip.write(
+                    reading,
+                    first,
+                    (part, length),
+                    ramp,
+                    piece,
+                    &mut self.scratch,
+                );
                 let at = offset + (from - range.start) as usize;
                 let outputs = left.iter_mut().zip(right.iter_mut()).skip(at);
                 for ((left, right), sample) in outputs.zip(piece.iter()) {
@@ -434,12 +538,7 @@ fn heard_part(spans: &[Span], owner: usize, frame: u64) -> (u64, u64) {
 /// Whether one clip hands over to another at project frame `edge`, with file enough to play
 /// on past it for one ramp: the clip heard before the edge and its part, which then ends in
 /// a crossfade.
-fn hand_over(
-    spans: &[Span],
-    snapshot: &AudioSnapshot,
-    edge: u64,
-    ramp: u64,
-) -> Option<(usize, Part)> {
+fn hand_over(spans: &[Span], edge: u64, ramp: u64) -> Option<(usize, Part)> {
     let before = edge.checked_sub(1)?;
     let (outgoing, _) = heard_at(spans, before, edge);
     let (incoming, _) = heard_at(spans, edge, edge + 1);
@@ -448,9 +547,8 @@ fn hand_over(
         return None;
     }
     let span = spans.get(outgoing)?;
-    let clip = snapshot.clips.get(outgoing)?;
     let (from, to) = heard_part(spans, outgoing, before);
-    if span.start + to != edge || to + ramp > clip.available {
+    if span.start + to != edge || to + ramp > span.available {
         return None;
     }
     let hands_over = true;
@@ -513,10 +611,15 @@ impl Processor for AudioPlayer {
             self.spans.clear();
             for clip in &self.snapshot.clips {
                 let start = transport.clock.frame_of(clip.start).0;
-                let end = start.saturating_add(clip.length);
+                let (length, available) = clip.bounds(transport.clock);
+                let end = start.saturating_add(length);
                 // The update made room for every clip, so this never grows the list.
                 if self.spans.len() < self.spans.capacity() {
-                    self.spans.push(Span { start, end });
+                    self.spans.push(Span {
+                        start,
+                        end,
+                        available,
+                    });
                 }
             }
             // Where `range` starts in the block. Right after a play in a project with latency
@@ -530,9 +633,8 @@ impl Processor for AudioPlayer {
                     (clip, owner.and_then(|owner| self.spans.get(owner)))
                 {
                     let (from, to) = heard_part(&self.spans, owner, frame);
-                    let hands_over =
-                        hand_over(&self.spans, &self.snapshot, span.start + to, self.ramp)
-                            .is_some_and(|(outgoing, _)| outgoing == owner);
+                    let hands_over = hand_over(&self.spans, span.start + to, self.ramp)
+                        .is_some_and(|(outgoing, _)| outgoing == owner);
                     let part = Part {
                         from,
                         to,
@@ -542,7 +644,10 @@ impl Processor for AudioPlayer {
                     if let Some(piece) = self.piece.get_mut(..count) {
                         let entered = self.entered.saturating_add(frame - range.start);
                         let first = (frame - span.start, entered);
-                        clip.write(first, part, self.ramp, piece, &mut self.scratch);
+                        let length = span.end - span.start;
+                        let reading = Reading::Clock(transport.clock);
+                        let (ramp, scratch) = (self.ramp, &mut self.scratch);
+                        clip.write(reading, first, (part, length), ramp, piece, scratch);
                         let at = offset + (frame - range.start) as usize;
                         let outputs = left.iter_mut().zip(right.iter_mut()).skip(at);
                         for ((left, right), sample) in outputs.zip(piece.iter()) {
@@ -553,14 +658,20 @@ impl Processor for AudioPlayer {
                 }
                 frame = next;
             }
-            self.play_past_hand_overs(range.clone(), offset, [&mut *left, &mut *right]);
+            let outputs = [&mut *left, &mut *right];
+            self.play_past_hand_overs(transport.clock, range.clone(), offset, outputs);
             self.entered = self.entered.saturating_add(range.end - range.start);
             let (owner, _) = heard_at(&self.spans, range.end - 1, range.end);
             self.last = owner.and_then(|clip| {
                 let span = self.spans.get(clip)?;
+                let next = range.end - span.start;
+                let warp = self.snapshot.clips.get(clip)?.warp.as_ref();
                 Some(Sounding {
                     clip,
-                    next: range.end - span.start,
+                    next,
+                    length: span.end - span.start,
+                    heads: warp
+                        .map_or_else(Heads::default, |warp| warp.heads_at(transport.clock, next)),
                 })
             });
             self.played_to = Some(range.end);
