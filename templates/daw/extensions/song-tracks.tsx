@@ -1,4 +1,4 @@
-import { Button, For, Fragment, h, Icon, Input, PeakMeter, Select, Show, Toggle, untrack, type Color } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, onCleanup, PeakMeter, Select, Show, Toggle, untrack, type Color } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
@@ -74,6 +74,8 @@ export const Heads = ({ page }: { page: Page }) => {
 const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   const { state, children, memory, panelOf, openPanel, toggleMute, toggleSolo } = page;
   const all = () => memory.hovered === each.name || panelOf() === each.name;
+  // A head drawn anew, as when lanes show, hears no leave of the one it replaces.
+  onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
     <div style={() => ({ height: ROW - 1, direction: "row", align: "center", gap: 8, paddingRight: 8, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
       onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
@@ -109,7 +111,7 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
             if (playing) untrack(() => learnName(page, each.name, "synth"));
             return null;
           }}
-          <Show when={() => all() || lanesOf(each).length > 0}>
+          <Show when={() => all() || memory.lanes.has(each.name)}>
             {() => <Toggle key={`lanes-${each.name}`} icon="automation" tooltip="Automation" on={() => memory.lanes.has(each.name)}
               count={() => lanesOf(each).length} onClick={() => showLanes(page, each, !memory.lanes.has(each.name))} />}
           </Show>

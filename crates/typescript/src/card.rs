@@ -132,8 +132,8 @@ pub(crate) struct TypeScriptCard {
     /// Where each node that hears a press was last laid out, by node, so a menu its press opens
     /// hangs under it.
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
-    /// The divs that hear the pointer come over them which it is over, by node.
-    hovered_divs: Rc<RefCell<HashSet<u64>>>,
+    /// The divs that hear the pointer come over them.
+    hovers: Rc<RefCell<Hovers>>,
     /// Where the next menu opens: under the div, button or title last pressed with the left
     /// button. `None` opens it at the pointer, as after a press of a space or a right press.
     anchor: Rc<Cell<Option<Point<Pixels>>>>,
@@ -408,55 +408,88 @@ fn placed(id: u64, placed: &Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>) -> impl I
     .size_full()
 }
 
+/// The divs that hear the pointer come over them: where each one this frame drew was laid out,
+/// those the pointer is over, and whether it is in the window.
+#[derive(Default)]
+struct Hovers {
+    placed: HashMap<u64, Bounds<Pixels>>,
+    over: HashSet<u64>,
+    inside: bool,
+}
+
 /// Takes no room and tells the div `id`, its parent, when the pointer comes over it and when it
 /// leaves. Its bounds tell, not its hitbox: a child that takes the pointer, as a toggle on a
 /// head does, would end the hover of a hitbox.
 fn hears_hover(
     id: u64,
-    hovered: Rc<RefCell<HashSet<u64>>>,
+    hovers: Rc<RefCell<Hovers>>,
     card: WeakEntity<TypeScriptCard>,
 ) -> impl IntoElement {
     canvas(
-        |_, _, _| {},
-        move |bounds, (), window, cx| {
-            let tell = Rc::new({
-                let hovered = hovered.clone();
-                move |over: bool, cx: &mut App| {
-                    let changed = match over {
-                        true => hovered.borrow_mut().insert(id),
-                        false => hovered.borrow_mut().remove(&id),
-                    };
-                    if changed {
-                        (card.update(cx, |card, cx| {
-                            card.event(id, EventKind::Hover, json!(over), cx)
-                        }))
-                        .ok();
-                    }
-                }
-            });
-            // It moved under a pointer that stood still, as heads do while the timeline scrolls.
-            let over = bounds.contains(&window.mouse_position());
-            if over != hovered.borrow().contains(&id) {
-                let tell = tell.clone();
-                window.defer(cx, move |_, cx| tell(over, cx));
+        {
+            let hovers = hovers.clone();
+            move |bounds, _, _| {
+                hovers.borrow_mut().placed.insert(id, bounds);
             }
+        },
+        move |_, (), window, cx| {
+            // What moved under a pointer that stood still, as heads do while the timeline
+            // scrolls, once every div of the frame is laid out.
+            let pointer = window.mouse_position();
+            window.defer(cx, {
+                let (hovers, card) = (hovers.clone(), card.clone());
+                move |_, cx| tell_hovers(&hovers, Some(pointer), &card, cx)
+            });
             window.on_mouse_event({
-                let tell = tell.clone();
+                let (hovers, card) = (hovers.clone(), card.clone());
                 move |event: &MouseMoveEvent, phase, _, cx| {
                     if phase == DispatchPhase::Capture {
-                        tell(bounds.contains(&event.position), cx);
+                        hovers.borrow_mut().inside = true;
+                        tell_hovers(&hovers, Some(event.position), &card, cx);
                     }
                 }
             });
             window.on_mouse_event(move |_: &MouseExitEvent, phase, _, cx| {
                 if phase == DispatchPhase::Capture {
-                    tell(false, cx);
+                    hovers.borrow_mut().inside = false;
+                    tell_hovers(&hovers, None, &card, cx);
                 }
             });
         },
     )
     .absolute()
     .size_full()
+}
+
+/// Tells each div that hears the pointer come over it whether it is over it now, at `pointer`,
+/// if that changed.
+fn tell_hovers(
+    hovers: &RefCell<Hovers>,
+    pointer: Option<Point<Pixels>>,
+    card: &WeakEntity<TypeScriptCard>,
+    cx: &mut App,
+) {
+    let changed: Vec<(u64, bool)> = {
+        let mut hovers = hovers.borrow_mut();
+        let over: HashSet<u64> = match pointer.filter(|_| hovers.inside) {
+            Some(pointer) => (hovers.placed.iter())
+                .filter(|(_, bounds)| bounds.contains(&pointer))
+                .map(|(id, _)| *id)
+                .collect(),
+            None => HashSet::new(),
+        };
+        let left = (hovers.over.difference(&over)).map(|id| (*id, false));
+        let came = (over.difference(&hovers.over)).map(|id| (*id, true));
+        let changed = left.chain(came).collect();
+        hovers.over = over;
+        changed
+    };
+    for (id, over) in changed {
+        (card.update(cx, |card, cx| {
+            card.event(id, EventKind::Hover, json!(over), cx)
+        }))
+        .ok();
+    }
 }
 
 impl Render for Carried {
@@ -801,7 +834,7 @@ impl TypeScriptCard {
             title_reads: false,
             meters: Rc::default(),
             placed: Rc::default(),
-            hovered_divs: Rc::default(),
+            hovers: Rc::default(),
             anchor: Rc::default(),
             scrolls: RefCell::default(),
             scrolled_cards: Rc::default(),
@@ -2352,7 +2385,7 @@ struct Drawing<'a, 'b> {
     embedded: &'a HashMap<u64, Embedded>,
     meters: &'a RefCell<HashMap<u64, Metering>>,
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
-    hovered_divs: Rc<RefCell<HashSet<u64>>>,
+    hovers: Rc<RefCell<Hovers>>,
     scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
     scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     button_down: bool,
@@ -2562,7 +2595,7 @@ impl Drawing<'_, '_> {
                 }
                 if *on_hover == Some(true) {
                     let card = self.cx.entity().downgrade();
-                    let hovered = hears_hover(id, self.hovered_divs.clone(), card);
+                    let hovered = hears_hover(id, self.hovers.clone(), card);
                     children.push(hovered.into_any_element());
                 }
                 if let Some(outer) = outer {
@@ -4622,7 +4655,7 @@ impl TypeScriptCard {
             embedded: &self.embedded,
             meters: &self.meters,
             placed: self.placed.clone(),
-            hovered_divs: self.hovered_divs.clone(),
+            hovers: self.hovers.clone(),
             scrolls: &self.scrolls,
             scrolled_cards: self.scrolled_cards.clone(),
             button_down: self.button_down.get(),
@@ -4736,6 +4769,8 @@ impl Render for TypeScriptCard {
                 self.lifted
                     .borrow_mut()
                     .retain(|id, _| parts.lifted.contains(id));
+                // A div left out of this frame, as a head scrolled out of view, is over nothing.
+                self.hovers.borrow_mut().placed.clear();
                 let mut drawing = self.drawing(state, &table, window, cx);
                 drawing.lifting = Some((&parts.lifted, &self.lifted));
                 let body = match table.root() {
