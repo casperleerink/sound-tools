@@ -34,6 +34,8 @@ type Memory = {
   recording: number | null;
   /** The track the keyboard plays, and the one whose name is typed. */
   track: string | null;
+  /** The track whose head the pointer is over, which shows all its toggles. */
+  hovered: string | null;
   renaming: string | null;
   renamingClip: string | null;
   clipboard: Clipboard | null;
@@ -62,7 +64,7 @@ export const song = tool({
   state: fields,
   children: parts,
   memory: (): Memory => ({
-    selected: new Set(), below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
+    selected: new Set(), below: null, armed: new Set(), recording: null, track: null, hovered: null, renaming: null, renamingClip: null,
     clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {},
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),

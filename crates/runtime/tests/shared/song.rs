@@ -15,12 +15,8 @@ pub(crate) const ROW: f32 = 64.0;
 pub(crate) const HEADER: f32 = 176.0;
 pub(crate) const ACROSS: f32 = 0.025;
 pub(crate) const LEAD: f32 = 8.0;
-/// In a track's header, from its left and its top: the middle of its name, of its mute and solo,
-/// and of the arm of an audio track; the toggles are on one line.
+/// In a track's header, from its left and its top: the middle of its name.
 pub(crate) const NAME: (f32, f32) = (50.0, 18.0);
-pub(crate) const MUTE: f32 = 118.0;
-pub(crate) const ARM: f32 = 88.0;
-pub(crate) const TOGGLES: f32 = 41.0;
 
 /// A number from `seed`, the same on every machine.
 fn noise(seed: &mut u64) -> u64 {

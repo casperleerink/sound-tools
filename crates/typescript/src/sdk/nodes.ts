@@ -33,6 +33,7 @@ export interface Made extends PointerEvents {
   props: Wired;
   /** Sent to the window: changes after this go as `set`. */
   sent: boolean;
+  onHover?: (over: boolean) => void;
   onDrop?: (drop: Dropped) => void;
   onCommit?: (text: string) => void;
   onCancel?: () => void;
@@ -129,7 +130,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onRelease", "onClick", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange"]);
+const HANDLERS = new Set(["onPress", "onRelease", "onClick", "onHover", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 export function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {

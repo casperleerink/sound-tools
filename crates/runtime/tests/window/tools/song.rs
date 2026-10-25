@@ -3,7 +3,7 @@
 //! mutes, and its meter follows the engine with nothing from Bun.
 
 use super::{Opened, open};
-use crate::song::{ACROSS, BAR, HEADER, LEAD, MUTE, NAME, ROW, TOGGLES, song_files};
+use crate::song::{ACROSS, BAR, HEADER, LEAD, NAME, ROW, song_files};
 use gpui::{
     Modifiers, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
 };
@@ -101,15 +101,11 @@ fn a_double_click_opens_a_clip_below_and_a_double_click_there_adds_a_note(cx: &m
 #[gpui::test]
 fn the_mute_of_a_track_mutes_its_mix_as_one_undo_step(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 4, 12);
-    let lane = window.on_lane(0, 2);
-    // The M of the third track: after its name, in the header left of the timeline.
-    let mute = point(
-        lane.x - px(LEAD + HEADER) + px(MUTE),
-        lane.y - px(ROW / 2.) + px(TOGGLES),
-    );
     window.wait_for_bun();
-    window.press(mute);
-    window.release(mute);
+    // The M of the third track shows while the pointer is over its header.
+    window.show_toggles("t02");
+    let mute = window.until_found("toggle-mute-t02");
+    window.click(mute);
     window.until("the track muted", |window| {
         window.record("song/t02/mix")["mute"] == true
     });
@@ -135,11 +131,11 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     });
     window.cx.run_until_parked();
     assert!(window.find("div-name-t00").is_none());
-    assert!(window.find("div-name-t10").is_some());
-    // The M on the top row is the eleventh track's now.
-    let mute = timeline + point(px(MUTE) - px(HEADER), px(TOGGLES));
-    window.press(mute);
-    window.release(mute);
+    // The header on the top row is the eleventh track's now.
+    let top = timeline + point(px(NAME.0) - px(HEADER), px(NAME.1));
+    window.hover(top);
+    let mute = window.until_found("toggle-mute-t10");
+    window.click(mute);
     window.until("the track muted", |window| {
         window.record("song/t10/mix")["mute"] == true
     });

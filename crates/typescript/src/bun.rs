@@ -169,6 +169,8 @@ pub(crate) enum EventKind {
     Release,
     /// A left press and release on a node, with no drag between.
     Click,
+    /// The pointer came over a div, or left it.
+    Hover,
     End,
     /// Text a field tells.
     Commit,

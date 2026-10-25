@@ -31,7 +31,7 @@ async function learnRange(page: Page, track: string, target: string) {
   if (found) memory.ranges = { ...memory.ranges, [`${track}/${target}`]: found };
   await learnName(page, track, child);
 }
-async function learnName({ memory, offers }: Page, track: string, path: string) {
+export async function learnName({ memory, offers }: Page, track: string, path: string) {
   if (path === "mix") return;
   const { offers: offered, here } = await offers(path === "synth" ? "notes" : "audio", { at: `${track}/${path}` });
   const name = offered.find((each) => each.key === here)?.name;

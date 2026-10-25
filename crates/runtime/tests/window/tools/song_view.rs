@@ -436,6 +436,7 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
 fn a_press_in_a_lane_adds_a_point_its_drag_moves_and_an_alt_drag_erases(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
+    window.show_toggles("t00");
     let lanes = window.until_found("toggle-lanes-t00");
     window.click(lanes);
     window.until_found("div-lane-name-t00-lane-cutoff");
@@ -1200,9 +1201,10 @@ fn a_clip_added_after_the_song_opened_is_drawn_once_after_its_track_lays_out_aga
             sound_typescript::node_count(page, cx)
         })
     };
+    window.show_toggles("t00");
+    let lanes = window.until_found("toggle-lanes-t00");
     let before = nodes(&mut window);
     // Showing the track's lanes and hiding them again lays its row out anew, twice.
-    let lanes = window.until_found("toggle-lanes-t00");
     window.click(lanes);
     window.wait_for_bun();
     window.click(lanes);
@@ -1275,8 +1277,8 @@ fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(
 fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    // A press on its header where none of its toggles is.
-    let head = window.until_found("div-head-t00");
+    // A press on its name, which none of its toggles covers.
+    let head = window.until_found("div-name-t00");
     window.click(head);
     window.until_found("div-sends");
     window.until_found("space-knob-t00/send-ret-a.gain_db");
@@ -1304,7 +1306,7 @@ fn a_new_return_opens_the_returns(cx: &mut TestAppContext) {
 fn the_keys_choose_move_and_name_the_track_whose_panel_shows(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 3, 3);
     window.wait_for_bun();
-    let head = window.until_found("div-head-t00");
+    let head = window.until_found("div-name-t00");
     window.click(head);
     window.until_found("space-knob-t00/send-ret-a.gain_db");
     // Down chooses the track under it, alt-up moves that one over the first.
@@ -1333,7 +1335,7 @@ fn the_keys_choose_move_and_name_the_track_whose_panel_shows(cx: &mut TestAppCon
 fn delete_asks_before_it_deletes_the_track_whose_panel_shows(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let head = window.until_found("div-head-t01");
+    let head = window.until_found("div-name-t01");
     window.click(head);
     window.until_found("space-knob-t01/send-ret-a.gain_db");
     window.cx.simulate_keystrokes("backspace");

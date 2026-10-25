@@ -52,6 +52,8 @@ props! {
         on_press: bool,
         on_release: bool,
         on_click: bool,
+        /// It hears the pointer come over it and leave, over its children too.
+        on_hover: bool,
         /// It hears no press, release, click, drag or drop and shows its disabled look; it still
         /// scrolls.
         disabled: bool,

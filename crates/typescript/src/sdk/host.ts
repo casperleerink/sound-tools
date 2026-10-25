@@ -57,7 +57,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 const releases = new Map<string, { release: (press: Press) => void; scope: Owner }>();
 
 /** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "release" | "click" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
+function nodeEvent(id: number, kind: "press" | "release" | "click" | "hover" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
   if (kind === "release") {
     const pressed = `${id} ${(payload as Press).button}`;
     const held = releases.get(pressed);
@@ -79,6 +79,8 @@ function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "rele
       return made.onCancel?.();
     case "change":
       return made.onChange?.(payload);
+    case "hover":
+      return made.onHover?.(payload as boolean);
     case "power":
       return made.onPower?.();
     case "close":

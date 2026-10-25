@@ -9,7 +9,8 @@ The design principles of the Sound Tools UI, and the rules of how it is used. Wh
 Every element must earn its keep. Lots of air, colour only where it means something, calm type. Audio tools are usually crowded; we do not copy that.
 
 - A control that does nothing yet is not shown. It is noise.
-- No legends, no zoom controls, no scrollbars, no grid in the timeline. The note editor is the one place with a grid, because notes are placed by it.
+- No legends, no zoom controls, no scrollbars. The timeline has no grid, only lines that mean something: a faint line between tracks, and every other section of the song a shade lighter. The note editor is the one place with a grid, because notes are placed by it.
+- A track's head shows its name and what plays it. Of its toggles only those that are on show, and all of them while the pointer is over it or its panel is open.
 - No toolbars and no tools: what the pointer is on decides what a drag does.
 - Chrome is one quiet menu on the project name, and the live input beside it.
 - Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind the expand icon of a card.

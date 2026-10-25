@@ -12,11 +12,11 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle, ScrollWheelEvent,
-    SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun, WeakEntity,
-    WeakFocusHandle, Window, anchored, canvas, deferred, div, fill, hsla, outline, point,
-    prelude::*, px, size,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle,
+    ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun,
+    WeakEntity, WeakFocusHandle, Window, anchored, canvas, deferred, div, fill, hsla, outline,
+    point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -132,6 +132,8 @@ pub(crate) struct TypeScriptCard {
     /// Where each node that hears a press was last laid out, by node, so a menu its press opens
     /// hangs under it.
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    /// The divs that hear the pointer come over them which it is over, by node.
+    hovered_divs: Rc<RefCell<HashSet<u64>>>,
     /// Where the next menu opens: under the div, button or title last pressed with the left
     /// button. `None` opens it at the pointer, as after a press of a space or a right press.
     anchor: Rc<Cell<Option<Point<Pixels>>>>,
@@ -401,6 +403,57 @@ fn placed(id: u64, placed: &Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>) -> impl I
             placed.borrow_mut().insert(id, bounds);
         },
         |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// Takes no room and tells the div `id`, its parent, when the pointer comes over it and when it
+/// leaves. Its bounds tell, not its hitbox: a child that takes the pointer, as a toggle on a
+/// head does, would end the hover of a hitbox.
+fn hears_hover(
+    id: u64,
+    hovered: Rc<RefCell<HashSet<u64>>>,
+    card: WeakEntity<TypeScriptCard>,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            let tell = Rc::new({
+                let hovered = hovered.clone();
+                move |over: bool, cx: &mut App| {
+                    let changed = match over {
+                        true => hovered.borrow_mut().insert(id),
+                        false => hovered.borrow_mut().remove(&id),
+                    };
+                    if changed {
+                        (card.update(cx, |card, cx| {
+                            card.event(id, EventKind::Hover, json!(over), cx)
+                        }))
+                        .ok();
+                    }
+                }
+            });
+            // It moved under a pointer that stood still, as heads do while the timeline scrolls.
+            let over = bounds.contains(&window.mouse_position());
+            if over != hovered.borrow().contains(&id) {
+                let tell = tell.clone();
+                window.defer(cx, move |_, cx| tell(over, cx));
+            }
+            window.on_mouse_event({
+                let tell = tell.clone();
+                move |event: &MouseMoveEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Capture {
+                        tell(bounds.contains(&event.position), cx);
+                    }
+                }
+            });
+            window.on_mouse_event(move |_: &MouseExitEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture {
+                    tell(false, cx);
+                }
+            });
+        },
     )
     .absolute()
     .size_full()
@@ -748,6 +801,7 @@ impl TypeScriptCard {
             title_reads: false,
             meters: Rc::default(),
             placed: Rc::default(),
+            hovered_divs: Rc::default(),
             anchor: Rc::default(),
             scrolls: RefCell::default(),
             scrolled_cards: Rc::default(),
@@ -2298,6 +2352,7 @@ struct Drawing<'a, 'b> {
     embedded: &'a HashMap<u64, Embedded>,
     meters: &'a RefCell<HashMap<u64, Metering>>,
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    hovered_divs: Rc<RefCell<HashSet<u64>>>,
     scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
     scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     button_down: bool,
@@ -2439,6 +2494,7 @@ impl Drawing<'_, '_> {
                 tooltip,
                 on_release,
                 on_click,
+                on_hover,
                 follow,
                 carry,
                 on_drop,
@@ -2503,6 +2559,11 @@ impl Drawing<'_, '_> {
                 }
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
+                }
+                if *on_hover == Some(true) {
+                    let card = self.cx.entity().downgrade();
+                    let hovered = hears_hover(id, self.hovered_divs.clone(), card);
+                    children.push(hovered.into_any_element());
                 }
                 if let Some(outer) = outer {
                     self.scroller = outer;
@@ -4561,6 +4622,7 @@ impl TypeScriptCard {
             embedded: &self.embedded,
             meters: &self.meters,
             placed: self.placed.clone(),
+            hovered_divs: self.hovered_divs.clone(),
             scrolls: &self.scrolls,
             scrolled_cards: self.scrolled_cards.clone(),
             button_down: self.button_down.get(),
