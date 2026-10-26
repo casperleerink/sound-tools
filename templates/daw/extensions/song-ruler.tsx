@@ -43,9 +43,10 @@ function addSection(page: Page, tick: number) {
 /**
  * A press on the ruler or the tempo lane, as the arrangement's: a click plays from the grid, a
  * double click on the ruler adds a section. The menu adds a tempo change on the grid, and a time
- * signature or a section on the nearest bar line; it removes the mark there.
+ * signature or a section on the nearest bar line; it removes the mark there, or `mark`, the one
+ * right-clicked.
  */
-export const pressTime = (page: Page, sections: boolean) => async ({ button, x, clicks }: Press) => {
+export const pressTime = (page: Page, sections: boolean, mark?: Mark) => async ({ button, x, clicks }: Press) => {
   const { clock, memory, runs, starts, openMenu } = page;
   if (button !== "right") {
     memory.mark = null;
@@ -58,12 +59,12 @@ export const pressTime = (page: Page, sections: boolean) => async ({ button, x, 
   const section = clock.sections.find((each) => each.bar === bar);
   const signature = bar > 1 && changeBars(runs()).includes(bar);
   const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick > 0 && (each.tick === tick || each.tick === line));
-  const marked = section !== undefined || signature || tempo !== undefined;
+  const removed = mark ?? (section ? { kind: "section" as const, bar, tick: line } : signature ? { kind: "signature" as const, bar, tick: line } : tempo ? { kind: "tempo" as const, bar, tick: tempo.tick } : null);
   const picked = await openMenu([
     { label: "Tempo", icon: "tempo-change", disabled: clock.tempo_map.tempo_changes.some((each) => each.tick === tick) },
     { label: "Time signature", icon: "time-signature", disabled: bar === 1 || signature },
     { label: "Section", icon: "section", disabled: section !== undefined },
-    ...(marked ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
+    ...(removed ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
   ]);
   // A tempo or a time signature added is chosen with the playhead on it, for the transport to change.
   if (picked === 0) {
@@ -74,17 +75,14 @@ export const pressTime = (page: Page, sections: boolean) => async ({ button, x, 
     memory.mark = { kind: "signature", bar, tick: line };
     clock.jump(line);
   } else if (picked === 2) addSection(page, line);
-  else if (picked === 3) {
-    const mark = section ? { kind: "section" as const, bar, tick: line } : signature ? { kind: "signature" as const, bar, tick: line } : tempo ? { kind: "tempo" as const, bar, tick: tempo.tick } : null;
-    if (mark) removeMark(clock, mark);
-  }
+  else if (picked === 3 && removed) removeMark(clock, removed);
 };
 /** The tempo changes after the first, each with its mark. */
 export const tempoMarks = ({ clock, barOf }: Page) =>
   clock.tempo_map.tempo_changes.filter((change) => change.tick > 0).map((change) => ({ ...change, mark: { kind: "tempo" as const, bar: barOf(change.tick), tick: change.tick } }));
 /** A press on a mark chooses it and plays from it; a double click on a section names it. A right-click opens the menu there. */
 export const pressMark = (page: Page, mark: Mark) => (press: Press) => {
-  if (press.button === "right") return pressTime(page, false)(press);
+  if (press.button === "right") return pressTime(page, false, mark)(press);
   page.choose(new Set());
   page.memory.mark = mark;
   page.clock.jump(mark.tick);
@@ -122,7 +120,7 @@ export const Ruler = ({ page }: { page: Page }) => {
     const after = changes().find((change) => change.tick > tick);
     // The most bars between this number and the next that shows as far out as it does.
     const apart = index & -index;
-    let shows = timeline.pointX.le((apart * 4 * BEAT) / 40);
+    let shows = timeline.pointX.le(((starts()[index + apart] ?? tick + apart * 4 * BEAT) - tick) / 40);
     if (before) shows = shows.times(timeline.pointX.le((tick - before.tick) / (before.width + GAP)));
     if (after) shows = shows.times(timeline.pointX.le((after.tick - tick) / (String(index + 1).length * 5.6 + GAP)));
     return shows;
@@ -199,7 +197,8 @@ export const Ruler = ({ page }: { page: Page }) => {
           <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} size={12} color="gray-700" opacity={() => changeShows(index())}
             text={() => [{ text: `${change.bar}  ` }, { text: change.signature, border: chosen("signature", change.bar) }]} />,
           change.bar > 1 ? (
-            <Rect x={timeline.pointX.times(4).plus(change.tick)} y={LINE} width={timeline.pointX.times(change.width + 4)} height={16} color={COLOR.clear} cursor="pointer"
+            // No wider than its label shows: a hidden one hears no press.
+            <Rect x={timeline.pointX.times(4).plus(change.tick)} y={LINE} width={() => timeline.pointX.times(change.width + 4).times(changeShows(index()))} height={16} color={COLOR.clear} cursor="pointer"
               onPress={pressMark(page, { kind: "signature", bar: change.bar, tick: change.tick })} />
           ) : null,
         ]}
@@ -207,7 +206,7 @@ export const Ruler = ({ page }: { page: Page }) => {
       <For each={tempos}>
         {(change) => [
           <Rect x={change.tick} y={RULER - 8} width={timeline.pointX} height={8} color={() => (tempoChosen(change.tick) ? "gray-950" : "alpha/40")} />,
-          <Rect key={`ruler-tempo-${change.tick}`} x={timeline.pointX.times(-3).plus(change.tick)} y={LINE} width={timeline.pointX.times(7)} height={RULER - LINE - 10}
+          <Rect key={`ruler-tempo-${change.tick}`} x={timeline.pointX.times(-3).plus(change.tick)} y={LINE} width={timeline.pointX.times(7)} height={RULER - LINE}
             color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />,
         ]}
       </For>
