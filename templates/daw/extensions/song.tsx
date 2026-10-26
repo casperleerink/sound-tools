@@ -9,7 +9,7 @@ import { MasterPanel, Rack } from "./song-panel";
 import { Ruler, SectionName, type Mark } from "./song-ruler";
 import { TempoLane } from "./song-tempo";
 import { ClipName, Timeline } from "./song-timeline";
-import { Heads, MasterRow, notesTrackOf, Returns, toggleRecordingOf } from "./song-tracks";
+import { EmptySong, Heads, MasterRow, notesTrackOf, Returns, toggleRecordingOf } from "./song-tracks";
 import { tape } from "./tape";
 import { track } from "./track";
 import { Transport } from "./transport";
@@ -190,7 +190,10 @@ export const song = tool({
                 </>
               )}
             </Show>
-            <Timeline page={page} />
+            <div style={{ grow: true }}>
+              <Timeline page={page} />
+              <Show when={() => rows().length === 0}>{() => <EmptySong page={page} />}</Show>
+            </div>
           </div>
         </div>
         <Show when={() => returns().length > 0}>{() => <Returns page={page} />}</Show>

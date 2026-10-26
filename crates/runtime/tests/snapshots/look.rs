@@ -233,6 +233,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         })
         .collect();
     let opened = super::Opened::open(cx, &files)?;
+    // Two frames, as the window draws them: the ruler sees the timeline from the second.
+    for _ in 0..2 {
+        cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+    }
     save(cx, opened.window.into(), "look-empty")?;
     drop(opened);
 

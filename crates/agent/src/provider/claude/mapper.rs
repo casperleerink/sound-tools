@@ -586,11 +586,19 @@ fn code(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::shorten;
+    use super::{plain, shorten};
 
     #[test]
     fn a_command_that_starts_with_a_blank_line_shows_its_first_line() {
         assert_eq!(shorten("\n  cargo build\n"), "cargo build");
         assert_eq!(shorten("\ncargo build\ncargo test"), "cargo build…");
+    }
+
+    #[test]
+    fn a_busy_service_is_said_in_words_and_other_errors_as_they_are() {
+        let busy = r#"API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        assert_eq!(plain(busy), "Claude is busy. Try again in a moment.");
+        let model = "There's an issue with the selected model (claude-no-such-model).";
+        assert_eq!(plain(model), model);
     }
 }

@@ -13,6 +13,18 @@ import { freeName, track } from "./track";
 // returns, and the master; adding, moving, naming, arming and deleting tracks.
 
 /** The column of heads left of the timeline, under the snap, which scrolls with it. */
+/** Over the timeline while the song has no track: what to start with. */
+export const EmptySong = ({ page }: { page: Page }) => (
+  <div style={{ absolute: { top: 0, left: 0, right: 0, bottom: 0 }, align: "center", justify: "center", gap: 8 }}>
+    <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>An empty song</div>
+    <div style={{ fontSize: 13, color: "gray-700" }}>Add a track to play or record, or ask the agent for one.</div>
+    <div style={{ direction: "row", gap: 8, paddingTop: 8 }}>
+      <Button key="empty-instrument" label="Instrument track" icon="plus" variant="subtle" size="sm" onClick={() => addTrack(page, 0)} />
+      <Button key="empty-audio" label="Audio track" icon="plus" variant="subtle" size="sm" onClick={() => addTrack(page, 1)} />
+    </div>
+  </div>
+);
+
 export const Heads = ({ page }: { page: Page }) => {
   const { memory, layout } = page;
   return (
