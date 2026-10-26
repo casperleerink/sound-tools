@@ -3225,8 +3225,8 @@ impl Drawing<'_, '_> {
                     // The card draws again, for the spaces that follow it and the live values
                     // that read it to see its fit, or its size on its first paint. Lifted spaces
                     // draw every frame anyway; a page with a div over it draws only when told.
-                    // Only the first paint: drawing again on every resize kept a song's keys
-                    // from reaching it (`tools::nested`).
+                    // Only the first paint: drawing again on every resize made `tools::nested`
+                    // fail, for a cause not found.
                     if fit.is_some() || first {
                         let card = card.clone();
                         window.on_next_frame(move |_, cx| {

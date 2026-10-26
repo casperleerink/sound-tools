@@ -269,6 +269,11 @@ pub(super) fn problems(
 ) -> AnyElement {
     let theme = cx.theme();
     let (peach, muted) = (theme.peach, theme.gray_800);
+    let chevron = if open {
+        "chevron-down"
+    } else {
+        "chevron-right"
+    };
     let files = problems
         .iter()
         .map(|problem| problem.path.as_str())
@@ -288,15 +293,22 @@ pub(super) fn problems(
             div()
                 .id("problems")
                 .debug_selector(move || format!("agent-problems-{index}"))
+                .flex()
+                .items_start()
+                .gap(px(4.))
                 .text_color(peach)
                 .cursor_pointer()
+                .hover(move |style| style.text_color(peach.opacity(0.8)))
                 .on_click(on_toggle)
+                .child(Icon::new(chevron).size(12.).mt(px(2.)))
                 .child(line),
         )
+        // Under the words of the line, past its chevron.
         .when(open, |lines| {
             lines.children(problems.iter().enumerate().map(|(number, problem)| {
                 div()
                     .debug_selector(move || format!("agent-problem-{index}-{number}"))
+                    .pl(px(16.))
                     .text_color(muted)
                     .child(format!("{}: {}", problem.path, problem.message))
             }))

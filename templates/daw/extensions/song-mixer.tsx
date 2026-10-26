@@ -26,7 +26,7 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
   </>
 );
 
-/** A strip per track, the returns' strips after them, and on the right the master's; its limiter is in the master's panel. */
+/** A strip per track, the returns' strips after them, then the master's, which stays in view while they scroll; its limiter is in the master's panel. */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, memory, rows, returns, openPanel, toggleMute, toggleSolo } = page;
   const mostSends = memo(() => Math.max(0, ...rows().map((each) => sendsOf(each).length)));
@@ -50,7 +50,7 @@ export const Mixer = ({ page }: { page: Page }) => {
           {each ? <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
           {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
         </div>
-        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tooltip={() => (each ? titleOf(each) : "Master")}
+        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tooltip={each ? () => titleOf(each) : undefined}
           style={{ width: STRIP - 4, height: 22, paddingX: 4, radius: 6, direction: "row", align: "center", justify: "center", gap: 5, hover: { background: "alpha/5" } }}
           onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
           <div style={() => ({
@@ -64,7 +64,7 @@ export const Mixer = ({ page }: { page: Page }) => {
   };
   return (
     <div key="mixer" style={{ direction: "row", keep: true }}>
-      <div style={{ grow: true, direction: "row", scroll: "x" }}>
+      <div style={{ direction: "row", scroll: "x" }}>
         <div style={GROUP}>
           <For each={rows}>{(each) => <Strip each={each} />}</For>
         </div>
@@ -83,6 +83,7 @@ export const Mixer = ({ page }: { page: Page }) => {
       <div style={GROUP}>
         <Strip master />
       </div>
+      <div style={{ width: 1, background: "alpha/5", keep: true }} />
     </div>
   );
 };
