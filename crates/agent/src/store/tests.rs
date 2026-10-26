@@ -26,10 +26,11 @@ fn keep(
     sent: u64,
     events: Vec<AgentEvent>,
 ) {
-    conversation.send(message, at(sent));
+    conversation.send(message, Vec::new(), at(sent));
     let mut lines = vec![Line::Sent {
         at: at(sent),
         message: message.to_string(),
+        attachments: Vec::new(),
     }];
     for (event, second) in events.into_iter().zip(sent + 1..) {
         lines.extend(Line::of(&event, at(second)));
@@ -58,7 +59,7 @@ fn shown(conversation: &Conversation) -> Vec<&str> {
         .entries()
         .iter()
         .map(|entry| match entry {
-            Entry::Message(text) | Entry::Notice(text) => text.as_str(),
+            Entry::Message { text, .. } | Entry::Notice(text) => text.as_str(),
             Entry::Turn(turn) => turn.blocks.first().map_or("", String::as_str),
         })
         .collect()
@@ -443,6 +444,13 @@ fn every_event_saves_as_the_same_line() {
         serde_json::to_string(&Line::Sent {
             at: at(0),
             message: text("Hello"),
+            attachments: Vec::new(),
+        })
+        .unwrap(),
+        serde_json::to_string(&Line::Sent {
+            at: at(0),
+            message: text("Like this"),
+            attachments: vec![text("take.wav")],
         })
         .unwrap(),
     ];
@@ -469,6 +477,7 @@ fn every_event_saves_as_the_same_line() {
     let at = r#""at":{"secs_since_epoch":1800000000,"nanos_since_epoch":0}"#;
     let expected = [
         format!(r#"{{"sent":{{{at},"message":"Hello"}}}}"#),
+        format!(r#"{{"sent":{{{at},"message":"Like this","attachments":["take.wav"]}}}}"#),
         format!(r#"{{"event":{{{at},"event":"turn_started"}}}}"#),
         format!(r#"{{"event":{{{at},"event":{{"text_done":{{"text":"Done."}}}}}}}}"#),
         format!(

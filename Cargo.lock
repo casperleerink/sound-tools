@@ -6190,9 +6190,11 @@ dependencies = [
 name = "sound-agent"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "ctrlc",
  "dunce",
  "gpui",
+ "image",
  "insta",
  "libc",
  "pulldown-cmark",

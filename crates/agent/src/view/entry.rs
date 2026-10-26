@@ -30,19 +30,42 @@ const SHIMMER: Duration = Duration::from_millis(2200);
 /// How wide the band is, in characters.
 const SHIMMER_WIDTH: f32 = 8.;
 
-pub(super) fn message(text: &str, cx: &App) -> AnyElement {
+/// The message, and below it the names of what it had attached: a saved thread keeps no
+/// pictures.
+pub(super) fn message(text: &str, attachments: &[String], cx: &App) -> AnyElement {
+    let muted = cx.theme().gray_700;
+    let attached = attachments.iter().map(|name| {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(SMALL_TEXT_SIZE))
+            .line_height(px(SMALL_LINE_HEIGHT))
+            .text_color(muted)
+            .child(Icon::new("paperclip").size(12.).flex_none())
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(SharedString::from(name.clone())),
+            )
+    });
     div()
         .flex()
         .justify_end()
         .child(
             div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
                 .max_w(relative(0.8))
                 .p(px(14.))
                 .rounded(px(12.))
                 .bg(cx.theme().alpha_at(0.05))
                 .text_size(px(TEXT_SIZE))
                 .line_height(px(LINE_HEIGHT))
-                .child(SharedString::from(text.to_string())),
+                .child(SharedString::from(text.to_string()))
+                .children(attached),
         )
         .into_any_element()
 }

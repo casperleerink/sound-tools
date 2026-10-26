@@ -75,6 +75,9 @@ pub(crate) enum Line {
     Sent {
         at: SystemTime,
         message: String,
+        /// The names of what it attached. The pictures themselves are not kept.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<String>,
     },
     Event {
         at: SystemTime,
@@ -298,8 +301,12 @@ fn replay(text: &str) -> Conversation {
     let mut last = None;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         match serde_json::from_str::<Line>(line) {
-            Ok(Line::Sent { at, message }) => {
-                conversation.send(&message, at);
+            Ok(Line::Sent {
+                at,
+                message,
+                attachments,
+            }) => {
+                conversation.send(&message, attachments, at);
                 last = Some(at);
             }
             Ok(Line::Event { at, event }) => {

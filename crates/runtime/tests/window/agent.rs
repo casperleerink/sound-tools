@@ -1,16 +1,17 @@
 //! The agent sidebar in the left panel: a turn fed as events with no process, the request it
 //! makes one undo step, the approval row, cmd-L and escape, the panel remembered closed, the
-//! thread saved and opened again, and the project's instructions.
+//! thread saved and opened again, pictures and files attached, and the project's instructions.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{AppContext, Entity, Focusable, TestAppContext};
+use gpui::{AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
-    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
-    Installed, Model, Sidebar, StepId, StepKind, StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Attachment, Command, Entry,
+    ExitReason, Image, ImageFormat, Installed, Message, Model, Sidebar, StepId, StepKind,
+    StepOutcome, Thread, TurnOutcome,
 };
 use tempfile::TempDir;
 
@@ -179,7 +180,8 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
     opened.cx.read(|cx| {
         let conversation = sidebar.read(cx).conversation();
         assert!(!conversation.is_working());
-        let [Entry::Message(message), Entry::Turn(turn)] = conversation.entries() else {
+        let [Entry::Message { text: message, .. }, Entry::Turn(turn)] = conversation.entries()
+        else {
             panic!("{:?}", conversation.entries());
         };
         assert_eq!(message, MESSAGE);
@@ -416,7 +418,7 @@ fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
     opened.cx.read(|cx| {
         let conversation = sidebar.read(cx).conversation();
         assert!(!conversation.is_working());
-        let [Entry::Message(_), Entry::Turn(turn)] = conversation.entries() else {
+        let [Entry::Message { .. }, Entry::Turn(turn)] = conversation.entries() else {
             panic!("{:?}", conversation.entries());
         };
         let outcome = turn.end.as_ref().map(|end| &end.outcome);
@@ -479,7 +481,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     assert_eq!(
         sent,
         [
-            Command::Send("Hello".to_string()),
+            Command::Send("Hello".into()),
             Command::Interrupt,
             Command::Interrupt
         ]
@@ -561,14 +563,14 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     opened.keys("enter");
     assert_eq!(
         commands.try_recv().ok(),
-        Some(Command::Send("Which file was it?".to_string()))
+        Some(Command::Send("Which file was it?".into()))
     );
     opened.cx.read(|cx| {
         let entries = sidebar.read(cx).conversation().entries();
         let [
-            Entry::Message(_),
+            Entry::Message { .. },
             Entry::Turn(_),
-            Entry::Message(next),
+            Entry::Message { text: next, .. },
             Entry::Turn(_),
         ] = entries
         else {
@@ -576,6 +578,141 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
         };
         assert_eq!(next, "Which file was it?");
     });
+}
+
+/// One red pixel.
+const PNG: [u8; 69] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+    0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0, 3, 1,
+    1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+/// One red pixel, as the clipboard of Windows holds a screenshot.
+const BMP: [u8; 58] = [
+    66, 77, 58, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0,
+    0, 0, 0, 0, 4, 0, 0, 0, 19, 11, 0, 0, 19, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0,
+];
+
+/// A picture pasted and files dropped on the composer go with the next message: a picture as
+/// itself, or as PNG when the agent cannot see its format, and any other file as its path. One
+/// taken out stays behind. The message shows their names, also when the thread opens again.
+#[gpui::test]
+fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    let outside = tempfile::tempdir().unwrap();
+    let [score, take, notes] = ["Score.PNG", "Take 3.wav", "notes.pdf"].map(|name| {
+        let path = outside.path().join(name);
+        std::fs::write(&path, PNG).unwrap();
+        path
+    });
+
+    opened.keys("secondary-l");
+    let pasted = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, BMP.to_vec());
+    opened
+        .cx
+        .write_to_clipboard(ClipboardItem::new_image(&pasted));
+    opened.keys("secondary-v");
+    let composer = opened.control("agent-composer");
+    // GPUI takes a drop only when the last input was the pointer's, not the keys'.
+    opened
+        .cx
+        .simulate_mouse_move(composer, None, Modifiers::default());
+    opened.drop_files(&[score, take.clone(), notes], composer);
+    let remove_notes = opened.control("agent-remove-attachment-3");
+    opened.click(remove_notes);
+    // The paste went to the chips, not into the text.
+    opened.cx.simulate_input("Make the bass follow this");
+    opened.keys("enter");
+
+    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+        panic!("no message went");
+    };
+    assert_eq!(text, "Make the bass follow this");
+    let [
+        Attachment::Image(Image {
+            format: ImageFormat::Png,
+            bytes: pasted,
+        }),
+        score,
+        file,
+    ] = attachments.as_slice()
+    else {
+        panic!("{attachments:?}");
+    };
+    assert!(
+        pasted.starts_with(&PNG[..8]),
+        "the pasted picture is no PNG"
+    );
+    let picture = Attachment::Image(Image {
+        format: ImageFormat::Png,
+        bytes: PNG.to_vec(),
+    });
+    assert_eq!((score, file), (&picture, &Attachment::File(take)));
+    assert_eq!(opened.find("agent-remove-attachment-0"), None);
+    opened.cx.read(|cx| {
+        let entries = sidebar.read(cx).conversation().entries();
+        let [Entry::Message { attachments, .. }, Entry::Turn(_)] = entries else {
+            panic!("{entries:?}");
+        };
+        assert_eq!(attachments, &["Pasted image", "Score.PNG", "Take 3.wav"]);
+    });
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    let shown = entries(&mut opened);
+    drop(sidebar);
+    let folder = opened.close();
+
+    let mut opened = open_again(cx, folder);
+    assert_eq!(entries(&mut opened), shown);
+}
+
+/// A message sent while a dropped file is still being read waits for it, so the file never goes
+/// with the next message instead.
+#[gpui::test]
+fn a_message_waits_for_a_file_still_being_read(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    let outside = tempfile::tempdir().unwrap();
+    let take = outside.path().join("take.wav");
+    std::fs::write(&take, "").unwrap();
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Tune the bass to this");
+
+    let attach = vec![take.clone()];
+    opened.cx.update(|_, cx| {
+        sidebar.update(cx, |sidebar, cx| sidebar.attach_files(attach, cx));
+    });
+    opened
+        .cx
+        .dispatch_action(sound_ui::components::text_input::Submit);
+    assert!(
+        commands.try_recv().is_err(),
+        "it went before the file was in"
+    );
+    opened.cx.run_until_parked();
+    opened.keys("enter");
+    let message = Message {
+        text: "Tune the bass to this".to_string(),
+        attachments: vec![Attachment::File(take)],
+    };
+    assert_eq!(commands.try_recv().ok(), Some(Command::Send(message)));
 }
 
 /// The thread the sidebar shows, by its id in the index of the project's threads.
@@ -926,7 +1063,7 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     opened.keys("enter");
     assert_eq!(
         commands.try_recv().ok(),
-        Some(Command::Send("Hello".to_string()))
+        Some(Command::Send("Hello".into()))
     );
 
     // While the turn runs, a change goes to the agent at once too.

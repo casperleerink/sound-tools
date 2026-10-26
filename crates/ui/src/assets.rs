@@ -67,6 +67,7 @@ icons!(
     "minus",
     "music",
     "panel-left",
+    "paperclip",
     "pause",
     "pencil",
     "piano",

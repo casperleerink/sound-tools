@@ -18,15 +18,18 @@ agents) is replaced before writing, since the repository is public. Runs use hai
 stay cheap; one full recording costs a few cents.
 """
 
+import base64
 import json
 import os
 import re
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import uuid
+import zlib
 from pathlib import Path
 
 CLAUDE = os.environ.get("CLAUDE", "claude")
@@ -318,6 +321,38 @@ def error_turn():
     run.finish()
 
 
+def red_png():
+    """An 8 by 8 red square."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = b"".join(b"\x00" + b"\xff\x00\x00" * 8 for _ in range(8))
+    header = struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
+def attachments():
+    # A picture and a file, as `Outgoing::user` writes them: images first, then the text with
+    # the file's path.
+    run = Run("attachments", "acceptEdits")
+    take = Path(run.folder, "take.wav")
+    take.write_bytes(b"RIFF")
+    run.control({"subtype": "initialize"})
+    image = {"type": "base64", "media_type": "image/png", "data": base64.b64encode(red_png()).decode()}
+    text = (
+        "What colour is the picture, and what is the name of the attached file? "
+        "Answer in one short sentence. Use no tools."
+        f"\n\nAttached files:\n{take}"
+    )
+    run.send({
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "image", "source": image}, {"type": "text", "text": text}]},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    })
+    run.until_result()
+    run.finish()
+
+
 def crash():
     run = Run("crash", "acceptEdits")
     run.control({"subtype": "initialize"})
@@ -334,7 +369,7 @@ SCENARIOS = {
     function.__name__: function
     for function in (
         plain, edit, approval_allowed, approval_denied, interrupt, interrupt_approval, permission_mode,
-        permission_bypass, set_model, read_only, stale_resume, error_turn, crash,
+        permission_bypass, set_model, read_only, stale_resume, error_turn, crash, attachments,
     )
 }
 

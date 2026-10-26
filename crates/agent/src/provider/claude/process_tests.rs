@@ -163,7 +163,7 @@ fn cancelling_next_loses_nothing_of_a_message() {
     let go = folder.path().join("go");
     let (thread, mut events) = start("slow_reader", &go);
     let text = "a".repeat(300_000);
-    let line = serde_json::to_vec(&Outgoing::user(text.clone())).unwrap();
+    let line = serde_json::to_vec(&Outgoing::user(text.clone().into())).unwrap();
     thread.send(text).unwrap();
     for _ in 0..10 {
         if let Some(Some(event)) = smol::block_on(future::poll_once(events.next())) {

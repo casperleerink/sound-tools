@@ -46,6 +46,8 @@ utility = { path = "extensions/utility" }
 vocoder = { path = "extensions/vocoder" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
+# The pictures sent to the agent of the sidebar. The version usvg uses for gpui. MIT OR Apache-2.0.
+base64 = "0.22"
 cargo_metadata = "0.23"
 # The time at the top of each session of the app's log. The version and features gpui uses.
 # MIT OR Apache-2.0.

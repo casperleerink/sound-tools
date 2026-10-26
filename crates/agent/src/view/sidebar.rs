@@ -10,12 +10,14 @@
 //!
 //! This file holds the view itself: its fields, the menus and the settings, the instructions,
 //! and the render. The rest is in `sidebar/`, as more `impl Sidebar`:
+//! - `attachments`: the pictures and files the composer attaches to a message.
 //! - `turn`: the agent's process, a turn from the send to its end, approvals, and the problems
 //!   a turn left.
 //! - `setup`: finding the program, its download, the sign-in and the sign-out.
 //! - `threads`: the saved threads: the project's last one, **New**, **Open recent**, and
 //!   writing them in order.
 
+mod attachments;
 mod setup;
 mod threads;
 mod turn;
@@ -25,9 +27,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FollowMode, FontWeight,
-    Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions, div, hsla,
-    list, point, prelude::*, px,
+    AnyElement, App, BoxShadow, Context, Entity, ExternalPaths, FocusHandle, Focusable, FollowMode,
+    FontWeight, Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions,
+    div, hsla, list, point, prelude::*, px,
 };
 use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
@@ -35,8 +37,9 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
-use sound_ui::components::text_input::{Arrow, TextInput};
+use sound_ui::components::text_input::{Arrow, Paste, TextInput};
 
+use self::attachments::Attached;
 use super::entry;
 use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
@@ -117,6 +120,10 @@ pub struct Sidebar {
     /// The turns whose problems show line by line, by entry.
     problems_open: HashSet<usize>,
     input: Entity<TextInput>,
+    /// What goes with the next message.
+    attachments: Vec<Attached>,
+    /// Reads of attachments not in yet. No message goes until they are.
+    attachments_reading: usize,
     /// Where up and down in the composer are among the earlier messages.
     history: History,
     /// The sidebar itself, for when it has no composer.
@@ -312,6 +319,8 @@ impl Sidebar {
             problems_left: HashMap::new(),
             problems_open: HashSet::new(),
             input,
+            attachments: Vec::new(),
+            attachments_reading: 0,
             history: History::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
@@ -562,7 +571,7 @@ impl Sidebar {
 
     fn render_entry(&mut self, index: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let content = match self.conversation.entries().get(index) {
-            Some(Entry::Message(text)) => entry::message(text, cx),
+            Some(Entry::Message { text, attachments }) => entry::message(text, attachments, cx),
             Some(Entry::Notice(text)) => entry::notice(text, cx),
             Some(Entry::Turn(turn)) => {
                 let below = match (turn.approval(), self.problems_left.get(&index)) {
@@ -678,9 +687,10 @@ impl Sidebar {
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
-        let (blue, stop) = (theme.blue, theme.gray_950);
+        let (blue, stop, lavender) = (theme.blue, theme.gray_950, theme.lavender);
         let working = self.conversation.is_working();
-        let can_send = !self.input.read(cx).text().trim().is_empty();
+        let can_send =
+            !self.input.read(cx).text().trim().is_empty() && self.attachments_reading == 0;
         // While a turn runs the send button stops it: one turn at a time.
         let button = if working {
             Button::icon_only("stop", "square")
@@ -699,6 +709,18 @@ impl Sidebar {
         // The access pill always says the mode, so it is never a surprise.
         div().flex_none().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
             div()
+                .id("agent-composer")
+                .debug_selector(|| "agent-composer".to_string())
+                // Before the field's own paste, which takes only text.
+                .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
+                    if sidebar.paste_attachments(cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
+                .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
+                    sidebar.attach_files(paths.paths().to_vec(), cx);
+                }))
                 .flex()
                 .flex_col()
                 .gap(px(8.))
@@ -716,6 +738,7 @@ impl Sidebar {
                     spread_radius: px(-8.),
                     inset: false,
                 }])
+                .children(self.attachment_chips(cx))
                 .child(div().min_h(px(44.)).child(self.input.clone()))
                 .child(
                     div()

@@ -11,7 +11,9 @@ use super::{Agent, Sidebar};
 use crate::conversation::request_label;
 use crate::store::{Line, SavedThread, Write};
 use crate::view::onboarding::Setup;
-use crate::{AgentEvent, ApprovalAnswer, Events, Installed, Thread, ThreadOptions, TurnOutcome};
+use crate::{
+    AgentEvent, ApprovalAnswer, Events, Installed, Message, Thread, ThreadOptions, TurnOutcome,
+};
 
 /// Events that come within one frame are applied together, so a fast stream of text measures
 /// the growing entry once a frame and not once a token.
@@ -21,22 +23,30 @@ impl Sidebar {
     /// Shows the composer's message and opens its request. [`Self::send`] calls it before the
     /// message goes to the agent; a test calls it to replay a recorded turn with no process.
     pub fn begin(&mut self, message: &str, cx: &mut Context<Self>) {
-        self.begin_at(message, SystemTime::now(), cx);
+        self.begin_at(message, Vec::new(), SystemTime::now(), cx);
     }
 
-    /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
-    /// worked.
-    pub fn begin_at(&mut self, message: &str, started: SystemTime, cx: &mut Context<Self>) {
+    /// [`Self::begin`] with the names of what the message has attached, and the turn started
+    /// at `started`, so a snapshot shows how long it worked.
+    pub fn begin_at(
+        &mut self,
+        message: &str,
+        attachments: Vec<String>,
+        started: SystemTime,
+        cx: &mut Context<Self>,
+    ) {
         let label = request_label(message);
         self.session
             .update(cx, |session, _| session.begin_request(&label));
         self.problems_before = self.session.read(cx).project().problems();
         self.just_ended = None;
-        self.conversation.send(message, started);
+        self.conversation
+            .send(message, attachments.clone(), started);
         let saved = self.saved.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
             at: started,
             message: message.to_string(),
+            attachments,
         };
         let writes = [
             Write::Current(Some(saved.clone())),
@@ -155,6 +165,7 @@ impl Sidebar {
         let message = self.input.read(cx).text().trim().to_string();
         let ready = self.loading.is_none()
             && self.opening.is_none()
+            && self.attachments_reading == 0
             && self.settings.read(cx).is_read()
             && self.conversation.can_continue();
         if message.is_empty() || self.conversation.is_working() || !ready {
@@ -177,7 +188,15 @@ impl Sidebar {
         }
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.history.reset();
-        self.begin(&message, cx);
+        let (names, attachments) = std::mem::take(&mut self.attachments)
+            .into_iter()
+            .map(|attached| (attached.read.name, attached.read.attachment))
+            .unzip();
+        self.begin_at(&message, names, SystemTime::now(), cx);
+        let message = Message {
+            text: message,
+            attachments,
+        };
         let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {
             let outcome = TurnOutcome::Failed {
