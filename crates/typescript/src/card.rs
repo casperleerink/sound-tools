@@ -3212,17 +3212,24 @@ impl Drawing<'_, '_> {
                       window: &mut Window,
                       cx: &mut App| {
                     painted_at.set(Some(bounds));
-                    // The card draws again, for the spaces that follow it to see the fit.
-                    if fit.is_some() {
+                    // The size it was laid out at, for live values of what shows and the next scroll.
+                    let size = (
+                        f64::from(f32::from(bounds.size.width)),
+                        f64::from(f32::from(bounds.size.height)),
+                    );
+                    let resized = spaces.borrow_mut().get_mut(&frame.key).is_some_and(|view| {
+                        let resized = (view.width, view.height) != size;
+                        (view.width, view.height) = size;
+                        resized
+                    });
+                    // The card draws again, for the spaces that follow it and the live values
+                    // that read it to see its fit or its new size. Lifted spaces draw every
+                    // frame anyway; a page with a div over it draws only when told.
+                    if fit.is_some() || resized {
                         let card = card.clone();
                         window.on_next_frame(move |_, cx| {
                             card.update(cx, |_, cx| cx.notify()).ok();
                         });
-                    }
-                    // The size it was laid out at, for live values of what shows and the next scroll.
-                    if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
-                        view.width = f64::from(f32::from(bounds.size.width));
-                        view.height = f64::from(f32::from(bounds.size.height));
                     }
                     paint(&frame, bounds, &hitbox, &painted, window, cx);
                     listen(&frame, &card, bounds, hitbox, painted, window);

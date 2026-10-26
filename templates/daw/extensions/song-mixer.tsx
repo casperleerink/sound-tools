@@ -1,4 +1,4 @@
-import { Fader, For, Fragment, h, Knob, memo, NumberBox, Toggle, untrack, type Peaks } from "./sdk";
+import { Fader, For, Fragment, h, Knob, memo, NumberBox, Toggle, untrack, type Color, type Peaks } from "./sdk";
 import { colourOf, muted, titleOf, type Child, type Page } from "./song-page";
 
 // The mixer under the timeline: a strip per track and per return, and the master's.
@@ -50,11 +50,10 @@ export const Mixer = ({ page }: { page: Page }) => {
         </div>
         <div key={each ? `strip-name-${each.name}` : "strip-name-master"} style={{ width: STRIP - 8, direction: "row", align: "center", justify: "center", gap: 5 }}
           onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
-          {each ? (
-            <div style={() => ({ width: 6, height: 6, radius: 3, keep: true, background: colourOf(each) })} />
-          ) : (
-            <div style={{ width: 6, height: 6, radius: 3, borderWidth: 1, borderColor: "gray-800", keep: true }} />
-          )}
+          <div style={() => ({
+            width: 6, height: 6, radius: 3, keep: true,
+            ...(each ? { background: muted(each) ? (`${colourOf(each)}/40` as Color) : colourOf(each) } : { borderWidth: 1, borderColor: "gray-800" }),
+          })} />
           <div style={{ fontSize: 12, color: "gray-800", truncate: true }}>{() => (each ? titleOf(each) : "Master")}</div>
         </div>
       </div>

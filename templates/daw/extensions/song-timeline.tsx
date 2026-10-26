@@ -346,6 +346,9 @@ export const Timeline = ({ page }: { page: Page }) => {
           ) : (
             <>
               <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="alpha/5" />
+              <Label x={() => timeline.left.max(0).plus(timeline.pointX.times(12))} y={() => timeline.pointY.times(-7).plus(topOf(row()) + 0.5)}
+                text={() => (memory.recording !== null || clipsOf(each).length + regionsOf(each).length > 0 ? "" : each.tool === "tape" ? "Drop an audio file here" : "Double-click to add a clip")}
+                size={11} color="gray-700" />
               {() => {
                 const snap = memory.snap;
                 return <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} snap={snap} />}</For>;
