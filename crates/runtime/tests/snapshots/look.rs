@@ -46,7 +46,7 @@ pub(crate) mod takes;
 pub(crate) mod timeline;
 
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
-const TOP: f32 = 48.0 + 32.0;
+const TOP: f32 = 48.0 + 44.0;
 
 /// The title of the first card of a track's panel, and its Add effect after a plugin's card.
 const PICKER: (f32, f32) = (230., 920. - 216. + 12. + 22.);

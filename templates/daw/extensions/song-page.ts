@@ -10,11 +10,12 @@ export const BEAT = 960;
 // The song shows at least 64 bars of 4/4, and 32 more after what it holds.
 const SHOWN = 64 * 4 * BEAT;
 const AFTER = 32 * 4 * BEAT;
-// As the window drew a song before it was a tool: rows of 64 points, headers 176 wide, a ruler
-// 32 tall, and bar 1 eight points right of the headers.
+// Rows of 64 points, headers 176 wide, a ruler of two lines, and bar 1 eight points right of the
+// headers. The tempo lane under the ruler, while it shows, is as tall as the ruler's old one line.
 export const ROW = 64;
 export const HEADER = 176;
-export const RULER = 32;
+export const RULER = 44;
+export const TEMPO = 32;
 export const MASTER_ROW = 40;
 // The row under a track's lanes that adds one.
 export const ADD_LANE = 40;

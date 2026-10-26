@@ -5,7 +5,7 @@ import { snapsOf } from "./clip-editor";
 import type { Song } from "./song";
 import { addLane, LaneHead, learnName, showLanes } from "./song-automation";
 import { copyOf } from "./song-clips";
-import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, titleOf, type Child, type Page } from "./song-page";
+import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, TEMPO, titleOf, type Child, type Page } from "./song-page";
 import { tape } from "./tape";
 import { freeName, track } from "./track";
 
@@ -17,11 +17,20 @@ export const Heads = ({ page }: { page: Page }) => {
   const { memory, layout } = page;
   return (
     <div style={{ width: HEADER - 1, keep: true }}>
-      <div style={{ height: RULER, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8 }}>
+      <div style={{ height: RULER, direction: "row", align: "center", gap: 8, paddingLeft: 8, paddingRight: 8 }}>
+        <Toggle key="tempo-lane" icon="tempo-change" tooltip="Tempo" on={() => memory.tempoLane} onClick={() => (memory.tempoLane = !memory.tempoLane)} />
         <div style={{ grow: true, fontSize: 12, color: "gray-700" }}>Snap</div>
         <Select key="song-snap" title="Snap" value={() => memory.snap} options={snapsOf(4 * BEAT).map(({ label, ticks }) => ({ value: ticks, label }))}
           onChange={(snap) => (memory.snap = snap)} />
       </div>
+      <Show when={() => memory.tempoLane}>
+        {() => (
+          <div style={{ height: TEMPO }}>
+            <div style={{ grow: true, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8, fontSize: 12, color: "gray-800" }}>Tempo</div>
+            <div style={{ height: 1, background: "alpha/5", keep: true }} />
+          </div>
+        )}
+      </Show>
       <div style={{ grow: true }} follow={{ y: "timeline" }}>
         <For each={layout}>
           {({ each, lane, add }) =>

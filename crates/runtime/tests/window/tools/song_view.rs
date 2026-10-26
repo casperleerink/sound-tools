@@ -647,7 +647,7 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
     // The repeat's bar is at the foot of the ruler, over bars 1 to 4 until it moves.
     let ruler = window.space_at("ruler");
     let on_bar =
-        |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(26.));
+        |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(38.));
     // Each press waits for the bar where the last change put it.
     let drag = |window: &mut Opened<'_>, from: Point<Pixels>, by: f32| {
         window.wait_for_bun();

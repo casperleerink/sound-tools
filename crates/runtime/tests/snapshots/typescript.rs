@@ -184,7 +184,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
 }
 
 /// Where a song's rows start: under the title row, the ruler and its line.
-const TOP: f32 = 48.0 + 32.0 + 1.0;
+const TOP: f32 = 48.0 + 44.0 + 1.0;
 
 /// Plays half a second in frames of the window, so meters and what eases move as they do.
 fn play(opened: &mut super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
