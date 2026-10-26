@@ -374,9 +374,14 @@ impl RenderOnce for MenuList {
             .entries
             .into_iter()
             .filter_map(|entry| match entry {
-                MenuEntry::Separator => {
-                    Some(div().h(px(1.)).mx(px(8.)).bg(line).into_any_element())
-                }
+                MenuEntry::Separator => Some(
+                    div()
+                        .flex_none()
+                        .h(px(1.))
+                        .mx(px(8.))
+                        .bg(line)
+                        .into_any_element(),
+                ),
                 MenuEntry::Note(note) => {
                     notes.push(note);
                     None
@@ -461,6 +466,7 @@ impl RenderOnce for MenuList {
 
                     let element = div()
                         .flex()
+                        .flex_none()
                         .flex_col()
                         .gap(px(2.))
                         .px(px(8.))
@@ -482,12 +488,14 @@ impl RenderOnce for MenuList {
                 }
             })
             .collect::<Vec<_>>();
+        // Under items, a line sets the notes apart. Their text lines up with the items'.
+        let ruled = !notes.is_empty() && !groups.is_empty();
         let notes = notes.into_iter().enumerate().map(|(note_ix, note)| {
             div()
                 .id(("menu-note", note_ix))
                 // What a test looks a quiet line up by, as a row is looked up by its value.
                 .debug_selector(move || format!("menu-note-{note_ix}"))
-                .px(px(12.))
+                .px(px(18.))
                 .py(px(6.))
                 .text_size(px(11.))
                 .line_height(px(15.))
@@ -509,6 +517,9 @@ impl RenderOnce for MenuList {
                         .max_h(px(height)),
                 ),
                 None => d.child(groups),
+            })
+            .when(ruled, |d| {
+                d.child(div().h(px(1.)).mx(px(8.)).mb(px(4.)).bg(line))
             })
             .children(notes)
     }
