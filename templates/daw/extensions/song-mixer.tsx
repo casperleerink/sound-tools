@@ -1,4 +1,4 @@
-import { Fader, For, Fragment, h, Knob, memo, NumberBox, Toggle, untrack, type Color, type Peaks } from "./sdk";
+import { Fader, For, Fragment, h, Knob, memo, NumberBox, Show, Toggle, untrack, type Color, type Peaks } from "./sdk";
 import { colourOf, muted, titleOf, type Child, type Page } from "./song-page";
 
 // The mixer under the timeline: a strip per track and per return, and the master's.
@@ -6,6 +6,8 @@ const STRIP = 72;
 const MIXER_FADER = 140;
 /** A knob with its name and value under it. */
 const KNOB = 72;
+/** The strips of the tracks, of the returns or the master's, between the full-height lines. */
+const GROUP = { direction: "row", gap: 4, paddingX: 8, paddingTop: 12, paddingBottom: 8, keep: true } as const;
 
 /** The sends of a track or an audio track, `send-<return>`. */
 export const sendsOf = (each: Child) => (each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
@@ -48,7 +50,8 @@ export const Mixer = ({ page }: { page: Page }) => {
           {each ? <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
           {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
         </div>
-        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} style={{ width: STRIP - 8, direction: "row", align: "center", justify: "center", gap: 5 }}
+        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tooltip={() => (each ? titleOf(each) : "Master")}
+          style={{ width: STRIP - 4, height: 22, paddingX: 4, radius: 6, direction: "row", align: "center", justify: "center", gap: 5, hover: { background: "alpha/5" } }}
           onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
           <div style={() => ({
             width: 6, height: 6, radius: 3, keep: true,
@@ -61,13 +64,23 @@ export const Mixer = ({ page }: { page: Page }) => {
   };
   return (
     <div key="mixer" style={{ direction: "row", keep: true }}>
-      <div style={{ grow: true, direction: "row", gap: 4, paddingLeft: 8, paddingTop: 12, paddingBottom: 8, scroll: "x" }}>
-        <For each={rows}>{(each) => <Strip each={each} />}</For>
-        {() => (returns().length > 0 ? <div style={{ width: 1, background: "alpha/5", keep: true }} /> : null)}
-        <For each={returns}>{(each) => <Strip each={each} />}</For>
+      <div style={{ grow: true, direction: "row", scroll: "x" }}>
+        <div style={GROUP}>
+          <For each={rows}>{(each) => <Strip each={each} />}</For>
+        </div>
+        <Show when={() => returns().length > 0}>
+          {() => (
+            <>
+              <div style={{ width: 1, background: "alpha/5", keep: true }} />
+              <div style={GROUP}>
+                <For each={returns}>{(each) => <Strip each={each} />}</For>
+              </div>
+            </>
+          )}
+        </Show>
       </div>
       <div style={{ width: 1, background: "alpha/5", keep: true }} />
-      <div style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
+      <div style={GROUP}>
         <Strip master />
       </div>
     </div>

@@ -3217,15 +3217,17 @@ impl Drawing<'_, '_> {
                         f64::from(f32::from(bounds.size.width)),
                         f64::from(f32::from(bounds.size.height)),
                     );
-                    let resized = spaces.borrow_mut().get_mut(&frame.key).is_some_and(|view| {
-                        let resized = (view.width, view.height) != size;
+                    let first = spaces.borrow_mut().get_mut(&frame.key).is_some_and(|view| {
+                        let first = view.width == 0.0 && size.0 > 0.0;
                         (view.width, view.height) = size;
-                        resized
+                        first
                     });
                     // The card draws again, for the spaces that follow it and the live values
-                    // that read it to see its fit or its new size. Lifted spaces draw every
-                    // frame anyway; a page with a div over it draws only when told.
-                    if fit.is_some() || resized {
+                    // that read it to see its fit, or its size on its first paint. Lifted spaces
+                    // draw every frame anyway; a page with a div over it draws only when told.
+                    // Only the first paint: drawing again on every resize kept a song's keys
+                    // from reaching it (`tools::nested`).
+                    if fit.is_some() || first {
                         let card = card.clone();
                         window.on_next_frame(move |_, cx| {
                             card.update(cx, |_, cx| cx.notify()).ok();
