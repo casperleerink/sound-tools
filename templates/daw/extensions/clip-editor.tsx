@@ -44,12 +44,11 @@ const isBlack = (pitch: number) => [1, 3, 6, 8, 10].includes(pitch % 12);
 // The keys of a piano: C to E share 5 rows and F to B share 7, so white keys are as wide as on a
 // real keyboard, and the black keys lie over them.
 const BLACK_KEY = 24;
-const WHITE_KEYS = Array.from({ length: 11 }, (_, octave) =>
-  [0, 2, 4, 5, 7, 9, 11].map((step, index) => {
-    const [low, high] = index < 3 ? [(index * 5) / 3, ((index + 1) * 5) / 3] : [5 + ((index - 3) * 7) / 4, 5 + ((index - 2) * 7) / 4];
-    return { pitch: octave * 12 + step, low: octave * 12 + low, high: Math.min(octave * 12 + high, 128) };
-  }),
-)
+const WHITE_KEYS = Array.from({ length: 11 }, (_, octave) => {
+  const lowKeys = [0, 2, 4].map((step, index) => ({ step, low: (index * 5) / 3, high: ((index + 1) * 5) / 3 }));
+  const highKeys = [5, 7, 9, 11].map((step, index) => ({ step, low: 5 + (index * 7) / 4, high: 5 + ((index + 1) * 7) / 4 }));
+  return [...lowKeys, ...highKeys].map(({ step, low, high }) => ({ pitch: octave * 12 + step, low: octave * 12 + low, high: Math.min(octave * 12 + high, 128) }));
+})
   .flat()
   .filter(({ pitch }) => pitch < 128);
 const rowOf = (pitch: number) => 127 - pitch;
@@ -384,7 +383,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       <div style={{ height: roll, direction: "row", keep: true }}>
         <Space key={`${key}-keys`} width={HEADER - 1} height={roll} unit={{ y: ROW }} extent={{ y: [0, 128] }} scroll={{ y: middleRow }} follow={{ y: key }}>
           {WHITE_KEYS.map(({ pitch, low, high }) => (
-            <Rect x={HEADER - 1 - KEYS} y={128 - high + 0.5 / ROW} width={KEYS} height={high - low - 1 / ROW} radius={2} color="alpha/12"
+            <Rect x={HEADER - 1 - KEYS} y={128 - high + 0.5 / ROW} width={KEYS} height={high - low - 1 / ROW} radius={2} color="alpha/10"
               onPress={() => preview(pitch)} />
           ))}
           {pitches.filter(isBlack).map((pitch) => (

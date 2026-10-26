@@ -241,7 +241,11 @@ impl RenderOnce for Button {
             hover_bg,
             hover_fg,
         } = look(self.variant, cx);
-        let ring = cx.theme().lavender;
+        // A solid lavender button has the ring's colour already, so its focus is bright.
+        let ring = match cx.theme().lavender {
+            lavender if lavender == border => cx.theme().gray_950,
+            lavender => lavender,
+        };
         let size = self.size;
         let disabled = self.disabled;
         let icon_only = self.label.is_none();

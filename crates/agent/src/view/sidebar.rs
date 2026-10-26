@@ -608,7 +608,7 @@ impl Sidebar {
     /// The question the agent waits on, as the last thing of the thread. Nothing is modal:
     /// music and editing go on while it waits.
     fn approval_row(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
-        let lavender = cx.theme().lavender;
+        let (lavender, text) = (cx.theme().lavender, cx.theme().gray_950);
         let answers = [
             ("allow", "Allow", ApprovalAnswer::Allow),
             (
@@ -624,10 +624,9 @@ impl Sidebar {
                 .zip(&self.approval_focus)
                 .map(|((id, label, answer), focus)| {
                     let variant = match answer {
-                        ApprovalAnswer::Allow => ButtonVariant::SubtleColor(lavender),
-                        ApprovalAnswer::AllowForThread | ApprovalAnswer::Deny => {
-                            ButtonVariant::GhostColor(lavender)
-                        }
+                        ApprovalAnswer::Allow => ButtonVariant::Solid(lavender),
+                        ApprovalAnswer::AllowForThread => ButtonVariant::SubtleColor(lavender),
+                        ApprovalAnswer::Deny => ButtonVariant::Ghost,
                     };
                     Button::new(id, label)
                         .debug_selector(move || format!("approval-{id}"))
@@ -639,8 +638,13 @@ impl Sidebar {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .text_color(lavender)
+            .gap(px(12.))
+            .p(px(14.))
+            .rounded(px(12.))
+            .bg(lavender.opacity(0.06))
+            .border_1()
+            .border_color(lavender.opacity(0.3))
+            .text_color(text)
             .child(entry::title("approval", title))
             .child(div().flex().flex_wrap().gap(px(8.)).children(buttons))
             .into_any_element()

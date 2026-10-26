@@ -7,8 +7,8 @@
 //! Every sample is live: its value is kept here and a drag, a key or a click changes it.
 
 use gpui::{
-    AnyElement, App, AppContext, Entity, FontWeight, IntoElement, ParentElement, Point,
-    SharedString, Styled, Window, div, point, px,
+    AnyElement, App, AppContext, Entity, FocusHandle, FontWeight, IntoElement, ParentElement,
+    Point, SharedString, Styled, Window, div, point, px,
 };
 use sound_core::LfoShape;
 use sound_ui::ActiveTheme;
@@ -925,6 +925,7 @@ struct FocusState {
     select: Entity<DropdownMenu>,
     on: bool,
     split: Entity<SplitButton>,
+    solid: FocusHandle,
 }
 
 /// The focus section: one of each control that the keyboard reaches, in tab order, so that the
@@ -937,6 +938,7 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         select: select(cx),
         on: true,
         split: split_button("focus-split", cx),
+        solid: cx.focus_handle().tab_stop(true),
     });
     let change = |f: fn(&mut FocusState, ValueChange)| {
         let focus = focus.clone();
@@ -950,8 +952,8 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let state = focus.read(cx);
     let (cutoff, mute) = (state.cutoff.value, state.mute);
     let (segment, select, on) = (state.segment.clone(), state.select.clone(), state.on);
-    let split = state.split.clone();
-    let peach = cx.theme().peach;
+    let (split, solid) = (state.split.clone(), state.solid.clone());
+    let (peach, lavender) = (cx.theme().peach, cx.theme().lavender);
     let toggle = {
         let focus = focus.clone();
         move |mute, _: &mut Window, cx: &mut App| {
@@ -1024,6 +1026,14 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             ),
             // Two stops: the main half, then the chevron.
             sample("split button", cx, split),
+            sample(
+                "solid button",
+                cx,
+                Button::new("focus-solid", "Allow")
+                    .variant(ButtonVariant::Solid(lavender))
+                    .size(ButtonSize::Sm)
+                    .focus_handle(&solid),
+            ),
         ],
     )
 }
