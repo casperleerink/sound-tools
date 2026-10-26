@@ -347,7 +347,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     return Array.from({ length: Math.ceil(end() / BEAT) }, (_, beat) => beat * BEAT).filter((tick) => !starts.has(tick));
   };
   // The roll and what follows it across: the ruler and the lane.
-  const across = { unit: { x: ACROSS }, extent: () => ({ x: [-BEAT, end()] as const }), zoom: { x: [1, 8] as const } };
+  const across = { unit: { x: ACROSS }, extent: () => ({ x: [-BEAT, end()] as const }), zoom: { x: [0.1, 8] as const } };
   const Rule = () => <div style={{ width: 1, background: "alpha/5", keep: true }} />;
 
   return (

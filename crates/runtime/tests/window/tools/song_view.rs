@@ -15,7 +15,7 @@ use super::{Opened, write_sine};
 use crate::song::{ACROSS, BAR, HEADER, LEAD, song_files};
 
 /// The note editor's rows and lane, as `clip-editor.tsx` has them: 12 points a pitch, a lane 56
-/// tall, and as it opens on a clip, 8 points before it and 96 after it, 24 to 192 points a beat.
+/// tall, and as it opens on a clip, 8 points before it and 96 after it, 2.4 to 192 points a beat.
 const EDITOR_ROW: f32 = 12.;
 const EDITOR_LANE: f32 = 56.;
 
@@ -67,7 +67,7 @@ impl Opened<'_> {
             .as_f64()
             .map_or(end, |length| length as f32);
         let width = f32::from(roll.size.width);
-        let across = ((width - 104.) / length).clamp(0.025, 0.2);
+        let across = ((width - 104.) / length).clamp(0.0025, 0.2);
         let pitches = notes.iter().map(|note| field(note, "pitch"));
         let middle = match (pitches.clone().reduce(f32::min), pitches.reduce(f32::max)) {
             (Some(low), Some(high)) => (low + high) / 2.,
@@ -1006,6 +1006,36 @@ fn notes_pasted_into_a_clip_with_no_length_are_kept(cx: &mut TestAppContext) {
     window.editor("t00/c00");
     window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
+}
+
+/// The editor of a clip 64 bars long opens on all of it: a note is added in its last bar.
+#[gpui::test]
+fn the_editor_of_a_long_clip_opens_on_its_end(cx: &mut TestAppContext) {
+    let length = 64 * BAR;
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        record["state"]["length"] = length.into();
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    let editor = window.editor("t00/c00");
+    let notes = window.record("song/t00/c00")["notes"]
+        .as_array()
+        .map_or(0, Vec::len);
+    let tick = (length - BAR / 2) as f32;
+    let pitch = free_pitch(&window.record("song/t00/c00"), tick);
+    window.double_click(editor.at(tick, pitch));
+    window.until("a note added", |window| {
+        window.record("song/t00/c00")["notes"]
+            .as_array()
+            .map(Vec::len)
+            == Some(notes + 1)
+    });
+    let added = window.record("song/t00/c00")["notes"][notes]["start"]
+        .as_u64()
+        .unwrap();
+    assert!(added >= length - 2 * BAR, "{added}");
 }
 
 /// The timeline reaches past its last clip, wherever that is: a clip at bar 88 scrolled to the
