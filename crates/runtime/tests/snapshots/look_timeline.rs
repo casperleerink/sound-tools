@@ -3,7 +3,7 @@
 //!
 //! - `look-selection.png`: the piece with tempo changes at bars 5 and 9, the bass's second and
 //!   third clips and the melody's first chosen.
-//! - `look-tempo.png`: the same with the tempo change of bar 5 clicked.
+//! - `look-tempo.png`: the same with the tempo lane open and its change of bar 5 clicked.
 //! - `look-loop.png`: the same with a loop dragged over bars 3 to 6.
 //! - `look-snap.png`: the snap setting open in the corner.
 //! - `look-rename.png`: the name field of the bass, open by a double click.
@@ -21,13 +21,16 @@ use serde_json::{Value, json};
 use super::{at, away, click, piece_files, settle};
 use crate::song::{ACROSS, BAR, HEADER, LEAD};
 
-/// Where `tick` is in the ruler, `right` points after it.
+/// Where `tick` is on the top line of the ruler, `right` points after it.
 fn in_ruler(tick: u64, right: f32) -> Point<Pixels> {
     point(
         px(HEADER + LEAD + tick as f32 * ACROSS + right),
-        px(48. + 16.),
+        px(48. + 8.),
     )
 }
+
+/// The tempo toggle left of the ruler.
+const TEMPO_TOGGLE: (f32, f32) = (20., 48. + 22.);
 
 fn press(
     opened: &crate::Opened,
@@ -124,16 +127,24 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &crate::Save) -> Resu
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-selection")?;
 
-    click(&opened, in_ruler(4 * BAR, 24.), 1, cx)?;
+    let toggle = point(px(TEMPO_TOGGLE.0), px(TEMPO_TOGGLE.1));
+    click(&opened, toggle, 1, cx)?;
+    click(
+        &opened,
+        in_ruler(4 * BAR, 0.) + point(px(0.), px(44. + 8.)),
+        1,
+        cx,
+    )?;
     opened.advance(64, cx);
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-tempo")?;
+    click(&opened, toggle, 1, cx)?;
 
     drag(&opened, in_ruler(2 * BAR, 0.), in_ruler(6 * BAR, 0.), cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-loop")?;
 
-    click(&opened, point(px(HEADER - 40.), px(48. + 16.)), 1, cx)?;
+    click(&opened, point(px(HEADER - 40.), px(48. + 22.)), 1, cx)?;
     save(cx, opened.window.into(), "look-snap")?;
     opened.key("escape", cx)?;
     settle(cx);

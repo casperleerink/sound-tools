@@ -188,6 +188,42 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
 }
 
 #[gpui::test]
+fn a_tempo_change_clicked_in_the_tempo_lane_is_chosen_played_from_and_deleted(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let ruler = window.space_at("ruler");
+    let in_ruler = |tick: u64| ruler + point(px(LEAD + tick as f32 * ACROSS), px(8.));
+    window.click_with(in_ruler(2 * BAR), MouseButton::Right);
+    window.pick("menu-0");
+    let changes = |window: &mut Opened<'_>| {
+        window.project_file()["tempo_map"]["tempo_changes"]
+            .as_array()
+            .map(Vec::len)
+    };
+    window.until("a tempo change", |window| changes(window) == Some(2));
+    let toggle = window.until_found("toggle-tempo-lane");
+    window.click(toggle);
+    window.click(in_ruler(6 * BAR));
+    window.until_playhead(6 * BAR);
+    let lane = window.space_at("tempo");
+    window.click(lane + point(px(LEAD + (2 * BAR) as f32 * ACROSS), px(15.)));
+    window.until_playhead(2 * BAR);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("backspace");
+    window.until("the tempo change removed", |window| {
+        changes(window) == Some(1)
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.undo_label().as_deref(),
+        Some("Remove a tempo change")
+    );
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
 fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
     cx: &mut TestAppContext,
 ) {

@@ -1,121 +1,136 @@
-import { Circle, For, Fragment, h, Input, Label, Line, memo, now, Rect, Space, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, type Clock, type Drag, type Press, type TextPart } from "./sdk";
 import { ACROSS, barStarts, BEAT, COLOR, LEAD, RULER, type Page, type Runs } from "./song-page";
 
-// The ruler: bars, sections, tempo changes and time signatures; under it the repeat range.
+// The ruler: the sections on its top line; bars, time signatures and tempo changes on the line
+// under it; at its foot the repeat range.
 
 /** What starts at a bar of the ruler: a section, a time signature change or a tempo change, at `tick`. */
 export type Mark = { kind: "section" | "signature" | "tempo"; bar: number; tick: number };
 
-/** The signature of each of `count` bars. */
-function signaturesOf(runs: Runs, count: number): string[] {
-  const each: string[] = [];
-  runs.forEach((run, index) => {
-    const bars = index === runs.length - 1 ? Math.max(count - each.length, 0) : run.bars;
-    for (let bar = 0; bar < bars; bar++) each.push(run.signature);
-  });
-  return each.slice(0, count);
-}
 /** The bar each run starts at, from 1: where a time signature change is, even to the same one. */
 function changeBars(runs: Runs): number[] {
   const bars = [1];
   for (const run of runs.slice(0, -1)) bars.push(bars.at(-1)! + run.bars);
   return bars;
 }
+/** Where the line under the sections starts, and the points between two labels on it. */
+const LINE = 18;
+const GAP = 6;
+/** About how many points a label of 12 points takes. */
+const widthOf = (parts: readonly TextPart[]) => parts.reduce((width, part) => width + part.text.length * 5.6 + (part.border ? 2.5 : 0), 0);
+/** A tempo as the ruler and the tempo lane show it, to a tenth. */
+export const bpmText = (bpm: number) => String(Math.round(bpm * 10) / 10);
+
+/** The tick nearest `tick` on the grid of the snap in the corner. */
+const snapped = ({ memory }: Page, tick: number) => Math.max(memory.snap > 0 ? Math.round(tick / memory.snap) * memory.snap : Math.round(tick), 0);
+/** The bar whose line is nearest `tick`, from 1. */
+const nearestBar = ({ starts }: Page, tick: number) => {
+  const lines = starts();
+  return lines.reduce((best, start, index) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? index : best), 0) + 1;
+};
+/** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
+function addSection(page: Page, tick: number) {
+  const { clock, memory, starts } = page;
+  const bar = nearestBar(page, tick);
+  if (!clock.sections.some((each) => each.bar === bar)) {
+    clock.update("Add a section", (song) => {
+      song.sections = [...song.sections, { bar, name: `Section ${song.sections.length + 1}` }].sort((a, b) => a.bar - b.bar);
+    });
+  }
+  memory.editing = { bar, tick: starts()[bar - 1] ?? 0 };
+}
+
+/**
+ * A press on the ruler or the tempo lane, as the arrangement's: a click plays from the grid, a
+ * double click on the ruler adds a section. The menu adds a tempo change on the grid, and a time
+ * signature or a section on the nearest bar line; it removes the mark there.
+ */
+export const pressTime = (page: Page, sections: boolean) => async ({ button, x, clicks }: Press) => {
+  const { clock, memory, runs, starts, openMenu } = page;
+  if (button !== "right") {
+    memory.mark = null;
+    if (clicks === 2 && sections) addSection(page, x);
+    else clock.jump(snapped(page, x));
+    return;
+  }
+  const [tick, bar] = [snapped(page, x), nearestBar(page, x)];
+  const line = starts()[bar - 1] ?? 0;
+  const section = clock.sections.find((each) => each.bar === bar);
+  const signature = bar > 1 && changeBars(runs()).includes(bar);
+  const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick > 0 && (each.tick === tick || each.tick === line));
+  const marked = section !== undefined || signature || tempo !== undefined;
+  const picked = await openMenu([
+    { label: "Tempo", icon: "tempo-change", disabled: clock.tempo_map.tempo_changes.some((each) => each.tick === tick) },
+    { label: "Time signature", icon: "time-signature", disabled: bar === 1 || signature },
+    { label: "Section", icon: "section", disabled: section !== undefined },
+    ...(marked ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
+  ]);
+  // A tempo or a time signature added is chosen with the playhead on it, for the transport to change.
+  if (picked === 0) {
+    addTempo(clock, memory, tick);
+    clock.jump(tick);
+  } else if (picked === 1) {
+    addSignature(clock, bar);
+    memory.mark = { kind: "signature", bar, tick: line };
+    clock.jump(line);
+  } else if (picked === 2) addSection(page, line);
+  else if (picked === 3) {
+    const mark = section ? { kind: "section" as const, bar, tick: line } : signature ? { kind: "signature" as const, bar, tick: line } : tempo ? { kind: "tempo" as const, bar, tick: tempo.tick } : null;
+    if (mark) removeMark(clock, mark);
+  }
+};
+/** The tempo changes after the first, each with its mark. */
+export const tempoMarks = ({ clock, barOf }: Page) =>
+  clock.tempo_map.tempo_changes.filter((change) => change.tick > 0).map((change) => ({ ...change, mark: { kind: "tempo" as const, bar: barOf(change.tick), tick: change.tick } }));
+/** A press on a mark chooses it and plays from it; a double click on a section names it. A right-click opens the menu there. */
+export const pressMark = (page: Page, mark: Mark) => (press: Press) => {
+  if (press.button === "right") return pressTime(page, false)(press);
+  page.choose(new Set());
+  page.memory.mark = mark;
+  page.clock.jump(mark.tick);
+  if (press.clicks === 2 && mark.kind === "section") page.memory.editing = mark;
+};
 
 export const Ruler = ({ page }: { page: Page }) => {
-  const { memory, clock, openMenu, runs, starts, end, choose, timeline, playhead, handle } = page;
+  const { memory, clock, runs, starts, end, timeline, playhead, handle } = page;
   const loop = now.drag("loop");
-  // The ruler's label of bar `index`: its number, with the time signature where one starts.
-  const barSignatures = memo(() => signaturesOf(runs(), starts().length));
-  /** A bar's number, its time signature where it changes, and the name of a section that starts there. */
-  const rulerLabel = (index: number): TextPart[] => {
-    const here = barSignatures()[index];
-    const section = clock.sections.find((each) => each.bar === index + 1);
-    const changes = changeBars(runs()).includes(index + 1);
-    const tempo = clock.tempo_map.tempo_changes.find((change) => change.tick > 0 && change.tick === starts()[index]);
-    // The chosen mark in a light box.
-    const chosen = (kind: Mark["kind"]) => (memory.mark?.kind === kind && memory.mark.bar === index + 1 ? ("gray-800" as const) : undefined);
-    return [
-      { text: String(index + 1) },
-      ...(changes ? [{ text: "  " }, { text: here ?? "4/4", border: chosen("signature") }] : []),
-      ...(section ? [{ text: "   " }, { text: section.name, color: "gray-950" as const, weight: "medium" as const, border: chosen("section") }] : []),
-      ...(tempo ? tempoParts(tempo.bpm, chosen("tempo")) : []),
-    ];
+  const chosen = (kind: Mark["kind"], bar: number) => (memory.mark?.kind === kind && memory.mark.bar === bar ? ("gray-800" as const) : undefined);
+  // Each section from its bar line to the next one's.
+  const sections = memo(() =>
+    clock.sections.map((section, index) => ({ ...section, from: starts()[section.bar - 1] ?? end(), to: starts()[(clock.sections[index + 1]?.bar ?? Infinity) - 1] ?? end() })),
+  );
+  // Where each time signature starts, and the points its label takes: its bar and the signature.
+  const changes = memo(() =>
+    changeBars(runs()).flatMap((bar, index) => {
+      const tick = starts()[bar - 1];
+      const signature = runs()[index]?.signature ?? "4/4";
+      return tick === undefined ? [] : [{ bar, tick, signature, width: widthOf([{ text: `${bar}  ` }, { text: signature, border: "gray-800" }]) }];
+    }),
+  );
+  /** 1 while the label of the time signature change before leaves room for that at `index`. */
+  const changeShows = (index: number) => {
+    const [before, change] = [changes()[index - 1], changes()[index]];
+    return before && change ? timeline.pointX.le((change.tick - before.tick) / (before.width + GAP)) : 1;
   };
-  /** The mark a press on the label of bar `index` takes: its section, then its time signature change, then its tempo change, as the arrangement's did. */
-  const markAt = (index: number): Mark | null => {
-    const [bar, tick] = [index + 1, starts()[index] ?? 0];
-    if (clock.sections.some((each) => each.bar === bar)) return { kind: "section", bar, tick };
-    if (index > 0 && changeBars(runs()).includes(bar)) return { kind: "signature", bar, tick };
-    if (tick > 0 && clock.tempo_map.tempo_changes.some((each) => each.tick === tick)) return { kind: "tempo", bar, tick };
-    return null;
+  /**
+   * 1 while the number of bar `index` shows: zoomed out, every second, fourth, eighth … bar keeps
+   * 40 points between numbers, and a time signature's label takes the room it needs first.
+   */
+  const numberShows = (index: number) => {
+    const tick = starts()[index] ?? 0;
+    const before = changes().findLast((change) => change.tick <= tick);
+    const after = changes().find((change) => change.tick > tick);
+    // The most bars between this number and the next that shows as far out as it does.
+    const apart = index & -index;
+    let shows = timeline.pointX.le((apart * 4 * BEAT) / 40);
+    if (before) shows = shows.times(timeline.pointX.le((tick - before.tick) / (before.width + GAP)));
+    if (after) shows = shows.times(timeline.pointX.le((after.tick - tick) / (String(index + 1).length * 5.6 + GAP)));
+    return shows;
   };
-  /** A press on a mark chooses it and plays from it; a double click on a section names it. */
-  const pressMark = (mark: Mark) => ({ clicks }: Press) => {
-    choose(new Set());
-    memory.mark = mark;
-    clock.jump(mark.tick);
-    if (clicks === 2 && mark.kind === "section") memory.editing = mark;
-  };
-  /** About how many points the label of bar `index` takes, 8 after its line, its box too. */
-  const labelWidth = (index: number) => 8 + rulerLabel(index).reduce((width, part) => width + part.text.length * 5.6 + (part.border ? 2.5 : 0), 0);
-  /** 1 while the label of the bar before leaves room for the label of bar `index`, which hides under it, as the arrangement's did. */
-  const roomFor = (index: number) => (index === 0 ? 1 : timeline.pointX.times(labelWidth(index - 1) + 4).plus(starts()[index - 1] ?? 0).lt(starts()[index] ?? 0));
-  // A tempo change in a box after what its bar shows, as the arrangement had it.
-  const tempoParts = (bpm: number, chosen?: Color): TextPart[] => [{ text: "   " }, { text: String(bpm), color: "gray-950", border: chosen ?? "alpha/10" }, { text: " bpm", border: chosen ?? "alpha/10" }];
-  /** The tick nearest `tick` on the grid of the snap in the corner. */
-  const snapped = (tick: number) => Math.max(memory.snap > 0 ? Math.round(tick / memory.snap) * memory.snap : Math.round(tick), 0);
-  /** The bar whose line is nearest `tick`, from 1. */
-  const nearestBar = (tick: number) => {
-    const lines = starts();
-    return lines.reduce((best, start, index) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? index : best), 0) + 1;
-  };
-  /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
-  const addSection = (tick: number) => {
-    const bar = nearestBar(tick);
-    if (!clock.sections.some((each) => each.bar === bar)) {
-      clock.update("Add a section", (song) => {
-        song.sections = [...song.sections, { bar, name: `Section ${song.sections.length + 1}` }].sort((a, b) => a.bar - b.bar);
-      });
-    }
-    memory.editing = { bar, tick: starts()[bar - 1] ?? 0 };
-  };
-  // As the arrangement's: a click plays from the grid, a double click adds a section. The menu
-  // adds a tempo change on the grid, and a time signature or a section on the nearest bar line;
-  // it removes the mark there.
-  const pressRuler = async ({ button, x, clicks }: Press) => {
-    if (button !== "right") {
-      memory.mark = null;
-      if (clicks === 2) addSection(x);
-      else clock.jump(snapped(x));
-      return;
-    }
-    const [tick, bar] = [snapped(x), nearestBar(x)];
-    const line = starts()[bar - 1] ?? 0;
-    const section = clock.sections.find((each) => each.bar === bar);
-    const signature = bar > 1 && changeBars(runs()).includes(bar);
-    const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick > 0 && (each.tick === tick || each.tick === line));
-    const marked = section !== undefined || signature || tempo !== undefined;
-    const picked = await openMenu([
-      { label: "Tempo", icon: "tempo-change", disabled: clock.tempo_map.tempo_changes.some((each) => each.tick === tick) },
-      { label: "Time signature", icon: "time-signature", disabled: bar === 1 || signature },
-      { label: "Section", icon: "section", disabled: section !== undefined },
-      ...(marked ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
-    ]);
-    // A tempo or a time signature added is chosen with the playhead on it, for the transport to change.
-    if (picked === 0) {
-      addTempo(clock, memory, tick);
-      clock.jump(tick);
-    } else if (picked === 1) {
-      addSignature(clock, bar);
-      memory.mark = { kind: "signature", bar, tick: line };
-      clock.jump(line);
-    } else if (picked === 2) addSection(line);
-    else if (picked === 3) {
-      const mark = section ? { kind: "section" as const, bar, tick: line } : signature ? { kind: "signature" as const, bar, tick: line } : tempo ? { kind: "tempo" as const, bar, tick: tempo.tick } : null;
-      if (mark) removeMark(clock, mark);
-    }
-  };
+  // The tempo changes, a tick each at the foot while the tempo lane is closed: the pointer over
+  // one, or the chosen one, reads its tempo.
+  const tempos = memo(() => (memory.tempoLane ? [] : tempoMarks(page)));
+  const tempoChosen = (tick: number) => memory.mark?.kind === "tempo" && memory.mark.tick === tick;
   const loopDrag: Drag = {
     id: "loop",
     snap: { x: BEAT, grid: true },
@@ -154,23 +169,46 @@ export const Ruler = ({ page }: { page: Page }) => {
 
   return (
     <Space key="ruler" height={RULER - 1} unit={{ x: ACROSS }} extent={() => ({ x: [-LEAD, end()] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }}
-      onPress={pressRuler} drag={loopDrag}>
+      onPress={pressTime(page, true)} drag={loopDrag}>
       <Shades page={page} height={RULER - 1} />
+      <For each={sections}>
+        {(section) => {
+          // Its name stays at the left edge while the section goes on past it, and is cut at its end.
+          const left = timeline.left.max(section.from);
+          const room = left.negate().plus(section.to).minus(timeline.pointX.times(4)).max(0);
+          return [
+            <Rect x={section.from} y={0} width={timeline.pointX} height={LINE - 2} color="alpha/20" />,
+            <Group x={left} clip={{ width: room, height: LINE }}>
+              <Rect x={0} y={0} width={room.min(timeline.pointX.times(widthOf([{ text: section.name }]) + 12))} height={LINE} color={COLOR.clear} cursor="pointer"
+                onPress={pressMark(page, { kind: "section", bar: section.bar, tick: section.from })} />
+              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "gray-950", weight: "medium", border: chosen("section", section.bar) }]} size={12} />
+            </Group>,
+          ];
+        }}
+      </For>
       <For each={starts}>
         {(tick, bar) => [
           <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="alpha/10" />,
-          <Label x={timeline.pointX.times(8).plus(tick)} y={8} text={() => rulerLabel(bar())} size={12} color="gray-700" opacity={() => roomFor(bar())} />,
-          () => {
-            const mark = markAt(bar());
-            return mark ? <Rect x={timeline.pointX.times(4).plus(tick)} y={2} width={() => timeline.pointX.times(labelWidth(bar()))} height={RULER - 16} color={COLOR.clear} cursor="pointer" onPress={pressMark(mark)} /> : null;
-          },
+          () => (changes().some((change) => change.tick === tick) ? null : (
+            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} size={12} color="gray-700" opacity={() => numberShows(bar())} />
+          )),
         ]}
       </For>
-      <For each={() => clock.tempo_map.tempo_changes.filter((change) => change.tick > 0)}>
+      <For each={changes}>
+        {(change, index) => [
+          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} size={12} color="gray-700" opacity={() => changeShows(index())}
+            text={() => [{ text: `${change.bar}  ` }, { text: change.signature, border: chosen("signature", change.bar) }]} />,
+          change.bar > 1 ? (
+            <Rect x={timeline.pointX.times(4).plus(change.tick)} y={LINE} width={timeline.pointX.times(change.width + 4)} height={16} color={COLOR.clear} cursor="pointer"
+              onPress={pressMark(page, { kind: "signature", bar: change.bar, tick: change.tick })} />
+          ) : null,
+        ]}
+      </For>
+      <For each={tempos}>
         {(change) => [
-          <Rect x={() => change.tick} y={0} width={timeline.pointX} height={RULER - 1} color="alpha/20" />,
-          // One off a bar line is labelled here; one on it, after its bar.
-          () => (starts().includes(change.tick) ? null : <Label x={timeline.pointX.times(2).plus(change.tick)} y={8} text={tempoParts(change.bpm)} size={12} color="gray-700" />),
+          <Rect x={change.tick} y={RULER - 8} width={timeline.pointX} height={8} color={() => (tempoChosen(change.tick) ? "gray-950" : "alpha/40")} />,
+          <Rect key={`ruler-tempo-${change.tick}`} x={timeline.pointX.times(-3).plus(change.tick)} y={LINE} width={timeline.pointX.times(7)} height={RULER - LINE - 10}
+            color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />,
         ]}
       </For>
       <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 10}
@@ -182,8 +220,18 @@ export const Ruler = ({ page }: { page: Page }) => {
       <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
         anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} onClick={toggleRepeat} />
       <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active.times(loop.dx.abs().gt(0))} />
-      <Line from={[playhead, RULER / 2]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
-      <Circle x={playhead} y={RULER / 2} radius={3.5} color="gray-950" />
+      <For each={tempos}>
+        {(change) => {
+          const text = `${bpmText(change.bpm)} bpm`;
+          const shown = () => (tempoChosen(change.tick) ? 1 : now.hover(`ruler-tempo-${change.tick}`));
+          return [
+            <Rect x={timeline.pointX.times(6).plus(change.tick)} y={LINE} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4} color="gray-100" border="alpha/10" borderWidth={1} opacity={shown} />,
+            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} size={12} color="gray-950" opacity={shown} />,
+          ];
+        }}
+      </For>
+      <Line from={[playhead, LINE + 8]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
+      <Circle x={playhead} y={LINE + 8} radius={3.5} color="gray-950" />
     </Space>
   );
 };

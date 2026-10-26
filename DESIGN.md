@@ -23,7 +23,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Every device shows what it does to the sound. A card is a display of the sound on the left and a few knobs at its right. The handles on a display drag.
 - A display is never the only way to reach a value: every value a handle moves also has a knob, visible or behind expand. That knob is the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
-- One control per value. The tempo is a drag number in the transport; a mark in the ruler selects and seeks.
+- One control per value. The tempo is a drag number in the transport; a mark in the ruler or the tempo lane selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
