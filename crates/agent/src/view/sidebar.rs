@@ -609,6 +609,15 @@ impl Sidebar {
     /// music and editing go on while it waits.
     fn approval_row(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
         let (lavender, text) = (cx.theme().lavender, cx.theme().gray_950);
+        // A command that ends the question, as in "Run `cargo build`", goes under its words, so
+        // it wraps as code and not in the middle of the sentence.
+        let (words, command) = match title
+            .strip_suffix('`')
+            .and_then(|rest| rest.split_once('`'))
+        {
+            Some((words, command)) => (words.trim_end(), Some(command)),
+            None => (title, None),
+        };
         let answers = [
             ("allow", "Allow", ApprovalAnswer::Allow),
             (
@@ -645,7 +654,10 @@ impl Sidebar {
             .border_1()
             .border_color(lavender.opacity(0.3))
             .text_color(text)
-            .child(entry::title("approval", title))
+            .child(entry::title("approval", words))
+            .when_some(command, |card, command| {
+                card.child(entry::command(command, cx))
+            })
             .child(div().flex().flex_wrap().gap(px(8.)).children(buttons))
             .into_any_element()
     }
