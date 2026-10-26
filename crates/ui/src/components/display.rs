@@ -819,12 +819,13 @@ impl RenderOnce for Display {
                     .h(px(CAPTION_HEIGHT))
                     .flex()
                     .justify_center()
-                    .font(typography::tabular())
                     .text_size(px(12.))
                     .line_height(px(CAPTION_HEIGHT))
-                    .text_color(caption_color)
                     .whitespace_nowrap()
-                    .children(self.caption),
+                    .children(
+                        self.caption
+                            .map(|caption| typography::tabular_text(caption, caption_color)),
+                    ),
             )
     }
 }

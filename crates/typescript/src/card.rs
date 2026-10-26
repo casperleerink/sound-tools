@@ -4212,6 +4212,14 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                     .map(|part| run(part.len, part.color.unwrap_or(color), part.weight))
                     .collect(),
             };
+            let mut at = 0;
+            let runs: Vec<TextRun> = (runs.iter())
+                .flat_map(|run| {
+                    let part = text.get(at..at + run.len).unwrap_or_default();
+                    at += run.len;
+                    typography::tabular_runs(part, run)
+                })
+                .collect();
             let shaped = window
                 .text_system()
                 .shape_line(text.clone(), px(*font_size), &runs, None);
