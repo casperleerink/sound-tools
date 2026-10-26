@@ -24,7 +24,7 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
   </>
 );
 
-/** A strip per track, then on the right the returns' strips and the master's; its limiter is in the master's panel. */
+/** A strip per track, the returns' strips after them, and on the right the master's; its limiter is in the master's panel. */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, memory, rows, returns, openPanel, toggleMute, toggleSolo } = page;
   const mostSends = memo(() => Math.max(0, ...rows().map((each) => sendsOf(each).length)));
@@ -63,9 +63,7 @@ export const Mixer = ({ page }: { page: Page }) => {
     <div key="mixer" style={{ direction: "row", keep: true }}>
       <div style={{ grow: true, direction: "row", gap: 4, paddingLeft: 8, paddingTop: 12, paddingBottom: 8, scroll: "x" }}>
         <For each={rows}>{(each) => <Strip each={each} />}</For>
-      </div>
-      <div style={{ width: 1, background: "alpha/5", keep: true }} />
-      <div style={{ direction: "row", gap: 4, paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
+        {() => (returns().length > 0 ? <div style={{ width: 1, background: "alpha/5", keep: true }} /> : null)}
         <For each={returns}>{(each) => <Strip each={each} />}</For>
       </div>
       <div style={{ width: 1, background: "alpha/5", keep: true }} />

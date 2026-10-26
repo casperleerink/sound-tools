@@ -4198,7 +4198,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                         Some(Weight::Medium) => gpui::FontWeight::MEDIUM,
                         Some(Weight::Semibold) => gpui::FontWeight::SEMIBOLD,
                     },
-                    ..typography::tabular()
+                    ..typography::ui_font()
                 },
                 color,
                 background_color: None,

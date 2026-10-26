@@ -360,6 +360,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(60.), px(bottom - panel - 60.)), 1, cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-returns")?;
+    // The mixer's button at the right of the master's row: three tracks, then the returns.
+    click(&opened, point(px(1449.), px(684.)), 1, cx)?;
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-mixer")?;
     drop(opened);
 
     // Track 1 alone, its instrument the test plugin.
