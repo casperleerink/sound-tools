@@ -161,8 +161,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     },
                     AgentEvent::TurnEnded {
                         outcome: TurnOutcome::Failed {
-                            message: "API Error: 529 Overloaded. Try again in a moment."
-                                .to_string(),
+                            message: "Claude is busy. Try again in a moment.".to_string(),
                         },
                     },
                 ],
@@ -272,8 +271,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
             sidebar.begin("Which clips did you add?", cx);
-            let lost =
-                "No conversation found with session ID: 0b6c2a4e-6f0f-4c43-9d43-6f5ad1c5a0e2";
+            let lost = "Claude no longer has this thread.";
             sidebar.receive(
                 [
                     AgentEvent::TurnStarted,

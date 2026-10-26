@@ -19,6 +19,9 @@ use crate::provider::{
 /// What the CLI says when `--resume` names a session it does not have.
 const SESSION_NOT_FOUND: &str = "no conversation found with session id";
 
+/// What an API error says when the service is too busy: "Overloaded", or `overloaded_error`.
+const OVERLOADED: &str = "overloaded";
+
 /// The model the CLI picks itself, in its list of models.
 const DEFAULT_MODEL: &str = "default";
 
@@ -172,7 +175,7 @@ impl Mapper {
             let message = said.unwrap_or("Claude Code stopped during the turn.");
             events.push(AgentEvent::TurnEnded {
                 outcome: TurnOutcome::Failed {
-                    message: message.to_string(),
+                    message: plain(message),
                 },
             });
         }
@@ -461,8 +464,23 @@ fn failure(result: &TurnResult) -> String {
         .iter()
         .find(|error| !error.starts_with("[ede_diagnostic]"))
         .or(result.result.as_ref())
-        .cloned()
-        .unwrap_or_else(|| "Claude Code ended the turn with an error.".to_string())
+        .map_or_else(
+            || "Claude Code ended the turn with an error.".to_string(),
+            |error| plain(error),
+        )
+}
+
+/// A failure in words for the composer: an error of the service that nothing in the project
+/// can fix gets a sentence of ours, without its codes and ids.
+fn plain(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains(SESSION_NOT_FOUND) {
+        "Claude no longer has this thread.".to_string()
+    } else if lower.contains(OVERLOADED) {
+        "Claude is busy. Try again in a moment.".to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 /// What a tool use does, for its title.

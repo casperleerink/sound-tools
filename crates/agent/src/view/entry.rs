@@ -5,14 +5,13 @@ use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, ElementId, HighlightStyle, Hsla,
-    SharedString, StyledText, Window, div, ease_out_quint, prelude::*, px, relative,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, HighlightStyle, Hsla, SharedString,
+    StyledText, Window, div, ease_out_quint, prelude::*, px, relative,
 };
 use sound_core::Problem;
 use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
-use sound_ui::typography::MONO;
 
 use super::markdown::{Markdown, MarkdownText};
 use crate::conversation::Turn;
@@ -76,26 +75,6 @@ pub(super) fn notice(text: &str, cx: &App) -> AnyElement {
         .text_size(px(SMALL_TEXT_SIZE))
         .text_color(cx.theme().gray_700)
         .child(SharedString::from(text.to_string()))
-        .into_any_element()
-}
-
-/// A line the app writes, such as a step or a question, with its commands as code.
-pub(super) fn title(id: impl Into<ElementId>, line: &str) -> MarkdownText {
-    MarkdownText::new(id, Markdown::inline_code(line))
-}
-
-/// A command the agent asks to run, whole: smaller than the text, and wrapped.
-pub(super) fn command(command: &str, cx: &App) -> AnyElement {
-    div()
-        .px(px(12.))
-        .py(px(8.))
-        .rounded(px(8.))
-        .bg(cx.theme().alpha_at(0.05))
-        .font_family(MONO)
-        .text_size(px(13.))
-        .line_height(px(20.))
-        .text_color(cx.theme().gray_900)
-        .child(SharedString::from(command.to_string()))
         .into_any_element()
 }
 

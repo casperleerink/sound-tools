@@ -49,6 +49,8 @@ enum Block {
     },
     Quote(Vec<Block>),
     Code(SharedString),
+    /// A command the agent asks to run: code that wraps, so all of it shows.
+    Command(SharedString),
     Table(Table),
     Rule,
 }
@@ -124,6 +126,20 @@ impl Markdown {
         }
         Self {
             blocks: inline.finish().map(Block::Paragraph).into_iter().collect(),
+        }
+    }
+
+    /// [`Self::inline_code`] for a question, with a command that ends it, as in "Run `cargo
+    /// build`", under its words: inline, the command would wrap anywhere.
+    pub fn question(line: &str) -> Self {
+        let Some((words, command)) = line.strip_suffix('`').and_then(|rest| rest.split_once('`'))
+        else {
+            return Self::inline_code(line);
+        };
+        let words = Self::inline_code(words.trim_end());
+        let command = Block::Command(command.to_string().into());
+        Self {
+            blocks: words.blocks.iter().cloned().chain([command]).collect(),
         }
     }
 
@@ -723,26 +739,20 @@ impl Renderer {
                 .into_any_element(),
             // A long line scrolls sideways rather than wraps. Up and down still scroll the
             // thread around it.
-            Block::Code(code) => div()
-                .id(self.id("code"))
-                .flex()
-                .overflow_x_scroll()
-                .restrict_scroll_to_axis()
-                .px(px(12.))
-                .py(px(8.))
-                .rounded(px(8.))
-                .bg(self.theme.alpha_at(0.05))
-                .font_family(MONO)
-                .text_size(px(13.))
-                .line_height(px(20.))
-                .text_color(self.theme.gray_900)
-                .child(
-                    div()
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .child(self.text(code, [(0..code.len(), HighlightStyle::default())])),
-                )
-                .into_any_element(),
+            Block::Code(code) => {
+                let text = self.text(code, [(0..code.len(), HighlightStyle::default())]);
+                self.code_box()
+                    .id(self.id("code"))
+                    .flex()
+                    .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
+                    .child(div().flex_none().whitespace_nowrap().child(text))
+                    .into_any_element()
+            }
+            Block::Command(command) => {
+                let text = self.text(command, [(0..command.len(), HighlightStyle::default())]);
+                self.code_box().child(text).into_any_element()
+            }
             Block::Table(table) => self.table(table),
             Block::Rule => div()
                 .h(px(1.))
@@ -750,6 +760,18 @@ impl Renderer {
                 .bg(self.theme.alpha_at(0.10))
                 .into_any_element(),
         }
+    }
+
+    fn code_box(&self) -> Div {
+        div()
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(8.))
+            .bg(self.theme.alpha_at(0.05))
+            .font_family(MONO)
+            .text_size(px(13.))
+            .line_height(px(20.))
+            .text_color(self.theme.gray_900)
     }
 
     fn list(&mut self, first_number: Option<u64>, items: &[Vec<Block>]) -> AnyElement {
@@ -959,7 +981,7 @@ mod tests {
                 Block::List { items, .. } => items.iter().flat_map(|item| inlines(item)).collect(),
                 Block::Quote(blocks) => inlines(blocks),
                 Block::Table(table) => table.rows.iter().flatten().flatten().collect(),
-                Block::Code(_) | Block::Rule => Vec::new(),
+                Block::Code(_) | Block::Command(_) | Block::Rule => Vec::new(),
             })
             .collect()
     }
@@ -1375,6 +1397,18 @@ mod tests {
         );
         assert_eq!(spans(&line("Edited a`b")), [("Edited a`b", plain())]);
         assert_eq!(Markdown::inline_code("").blocks(), []);
+    }
+
+    #[test]
+    fn a_command_that_ends_a_question_goes_under_its_words() {
+        let question = Markdown::question("Run `cargo build && cargo test`");
+        let [Block::Paragraph(words), Block::Command(command)] = question.blocks() else {
+            panic!("not words and a command: {:?}", question.blocks());
+        };
+        assert_eq!(spans(words), [("Run", plain())]);
+        assert_eq!(command.as_ref(), "cargo build && cargo test");
+        let inside = "Search for `gain` in effects";
+        assert_eq!(Markdown::question(inside), Markdown::inline_code(inside));
     }
 
     /// The sidebar parses the whole streaming message again on each frame. Measured on an
