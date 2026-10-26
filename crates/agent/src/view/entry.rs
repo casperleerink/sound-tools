@@ -5,8 +5,9 @@ use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, HighlightStyle, Hsla, SharedString,
-    StyledText, Window, div, ease_out_quint, prelude::*, px, relative,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, FocusHandle, HighlightStyle, Hsla,
+    MouseButton, MouseDownEvent, SharedString, StyledText, Window, div, ease_out_quint, prelude::*,
+    px, relative,
 };
 use sound_core::Problem;
 use sound_ui::ActiveTheme;
@@ -268,7 +269,7 @@ pub(super) fn problems(
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (peach, muted) = (theme.peach, theme.gray_800);
+    let (peach, muted, bright) = (theme.peach, theme.gray_800, theme.gray_900);
     let chevron = if open {
         "chevron-down"
     } else {
@@ -298,7 +299,7 @@ pub(super) fn problems(
                 .gap(px(4.))
                 .text_color(peach)
                 .cursor_pointer()
-                .hover(move |style| style.text_color(peach.opacity(0.8)))
+                .hover(move |style| style.text_color(bright))
                 .on_click(on_toggle)
                 .child(Icon::new(chevron).size(12.).mt(px(2.)))
                 .child(line),
@@ -314,6 +315,46 @@ pub(super) fn problems(
             }))
         })
         .into_any_element()
+}
+
+/// "Try again" under a turn that failed, as quiet as the lines over it, its words on their
+/// edge. A tab stop: enter and space click it, and its ring shows when the keys brought it.
+pub(super) fn try_again(
+    focus: &FocusHandle,
+    ring: bool,
+    on_press: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let (muted, bright) = (theme.gray_700, theme.gray_900);
+    let border = if ring {
+        theme.lavender
+    } else {
+        Hsla::transparent_black()
+    };
+    let line = div()
+        .id("try-again")
+        .debug_selector(|| "agent-try-again".to_string())
+        .track_focus(focus)
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .ml(px(-5.))
+        .px(px(4.))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(border)
+        .text_size(px(SMALL_TEXT_SIZE))
+        .line_height(px(SMALL_LINE_HEIGHT))
+        .text_color(muted)
+        .cursor_pointer()
+        .hover(move |style| style.text_color(bright))
+        .on_mouse_down(MouseButton::Left, on_press)
+        .on_click(on_click)
+        .child(Icon::new("redo-2").size(12.))
+        .child("Try again");
+    div().flex().child(line).into_any_element()
 }
 
 /// The icon of a step's line.

@@ -38,6 +38,7 @@ use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
+use sound_ui::focus::KeyboardFocus;
 
 use self::attachments::Attached;
 use super::entry;
@@ -46,10 +47,10 @@ use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Sco
 use super::markdown::{self, Markdown, MarkdownText};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
-use crate::conversation::{Conversation, Entry};
+use crate::conversation::{Conversation, Entry, Turn, TurnEnd};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
-use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread};
+use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, TurnOutcome};
 
 actions!(agent_sidebar, [Stop]);
 
@@ -131,6 +132,8 @@ pub struct Sidebar {
     send_focus: FocusHandle,
     /// Allow, Allow for this thread, Deny.
     approval_focus: [FocusHandle; 3],
+    try_again_focus: FocusHandle,
+    try_again_keyboard: KeyboardFocus,
     agent: Option<Agent>,
     /// The thread shown, as it is saved. `None` until its first message.
     saved: Option<SavedThread>,
@@ -325,6 +328,8 @@ impl Sidebar {
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
+            try_again_focus: cx.focus_handle().tab_stop(true),
+            try_again_keyboard: KeyboardFocus::default(),
             agent: None,
             saved: None,
             writes: None,
@@ -569,7 +574,12 @@ impl Sidebar {
         }
     }
 
-    fn render_entry(&mut self, index: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let content = match self.conversation.entries().get(index) {
             Some(Entry::Message { text, attachments }) => entry::message(text, attachments, cx),
             Some(Entry::Notice(text)) => entry::notice(text, cx),
@@ -583,7 +593,10 @@ impl Sidebar {
                         });
                         Some(entry::problems(problems, index, open, toggle, cx))
                     }
-                    (None, None) => None,
+                    (None, None) => self
+                        .retry_message(index)
+                        .is_some()
+                        .then(|| self.try_again(index, window, cx)),
                 };
                 let toggle = cx.listener(move |sidebar, _, _, cx| {
                     sidebar.toggle(|sidebar| &mut sidebar.expanded, index, cx);
@@ -603,6 +616,44 @@ impl Sidebar {
             .when(index == 0, |item| item.pt(px(8.)))
             .child(content)
             .into_any_element()
+    }
+
+    /// The message of the turn at `index` to send again: the last turn, which failed, of a
+    /// thread that can go on, when its message had nothing attached (a saved thread keeps no
+    /// pictures).
+    fn retry_message(&self, index: usize) -> Option<&str> {
+        let entries = self.conversation.entries();
+        let failed = matches!(
+            entries.get(index),
+            Some(Entry::Turn(Turn {
+                end: Some(TurnEnd {
+                    outcome: TurnOutcome::Failed { .. },
+                    ..
+                }),
+                ..
+            }))
+        );
+        if !failed || index + 1 != entries.len() || !self.conversation.can_continue() {
+            return None;
+        }
+        match entries.get(index.checked_sub(1)?)? {
+            Entry::Message { text, attachments } if attachments.is_empty() => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Under a turn that failed: its message again, as it was sent. The composer then has the
+    /// keys, as after a message.
+    fn try_again(&self, index: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let ring = (self.try_again_keyboard).shows_ring(&self.try_again_focus, window);
+        let press = cx.listener(|sidebar, _, _, cx| sidebar.try_again_keyboard.pressed(cx));
+        let click = cx.listener(move |sidebar, _, window, cx| {
+            if let Some(message) = sidebar.retry_message(index).map(str::to_string) {
+                sidebar.send_again(message, cx);
+                window.focus(&sidebar.focus_handle(cx), cx);
+            }
+        });
+        entry::try_again(&self.try_again_focus, ring, press, click, cx)
     }
 
     /// The question the agent waits on, as the last thing of the thread. Nothing is modal:

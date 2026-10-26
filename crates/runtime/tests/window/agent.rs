@@ -232,6 +232,63 @@ fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn try_again_sends_the_message_of_a_turn_that_failed_and_keeps_the_draft(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Make the drums swing");
+    opened.keys("enter");
+    assert!(matches!(commands.try_recv(), Ok(Command::Send(_))));
+    assert!(opened.find("agent-try-again").is_none());
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "Claude is busy. Try again in a moment.".to_string(),
+            },
+        },
+    ]);
+
+    // A draft and a picture for the next message are in the composer.
+    opened.cx.simulate_input("Make it softer");
+    let pasted = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, BMP.to_vec());
+    opened
+        .cx
+        .write_to_clipboard(ClipboardItem::new_image(&pasted));
+    opened.keys("secondary-v");
+    // From the composer, past the picture's remove button, the keys reach it.
+    opened.keys("shift-tab");
+    opened.keys("shift-tab");
+    // GPUI clicks the focused element when enter goes up.
+    opened.keys("enter");
+    let up = gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+    };
+    opened.cx.simulate_event(up);
+    opened.cx.run_until_parked();
+    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+        panic!("the message did not go again");
+    };
+    assert_eq!(
+        (text.as_str(), attachments.len()),
+        ("Make the drums swing", 0)
+    );
+    // The new turn works, so the failed one is no longer the last.
+    assert!(opened.find("agent-try-again").is_none());
+    let draft = opened
+        .cx
+        .read(|cx| sidebar.read(cx).composer().read(cx).text().to_string());
+    assert_eq!(draft, "Make it softer");
+    assert!(opened.composer_focused());
+}
+
+#[gpui::test]
 fn a_claude_that_does_not_start_is_a_quiet_line_and_no_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());

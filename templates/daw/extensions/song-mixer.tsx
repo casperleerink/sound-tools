@@ -83,7 +83,6 @@ export const Mixer = ({ page }: { page: Page }) => {
       <div style={GROUP}>
         <Strip master />
       </div>
-      <div style={{ width: 1, background: "alpha/5", keep: true }} />
     </div>
   );
 };
