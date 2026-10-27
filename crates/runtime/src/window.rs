@@ -196,8 +196,6 @@ pub struct Shell {
     /// The machine's live input and the meter of the device, see [`LiveInput`].
     live: Entity<LiveInput>,
     focus_handle: FocusHandle,
-    dismiss_focus: FocusHandle,
-    fix_focus: FocusHandle,
     left_panel: Option<LeftPanel>,
     left_panel_open: bool,
     /// See [`LeftPanelSlot::remembered`].
@@ -318,8 +316,6 @@ impl Shell {
             main: None,
             title_bar: None,
             focus_handle,
-            dismiss_focus: cx.focus_handle().tab_stop(true),
-            fix_focus: cx.focus_handle().tab_stop(true),
             left_panel,
             left_panel_open,
             left_panel_file,
@@ -621,7 +617,6 @@ impl Shell {
             };
             Button::new("problems-ask", label)
                 .debug_selector(|| "problems-ask".to_string())
-                .focus_handle(&self.fix_focus)
                 .on_click(cx.listener(|shell, _, window, cx| shell.ask_to_fix(window, cx)))
         });
         let error = session.notice().cloned();
@@ -655,7 +650,6 @@ impl Shell {
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()
-                    .dismiss_focus(&self.dismiss_focus)
                     .on_dismiss(cx.listener(|shell, _, _, cx| {
                         shell
                             .session
@@ -726,6 +720,7 @@ impl Shell {
     /// panel opens on the thread and the message goes. When the agent cannot take a message
     /// now, the panel opens on what it is doing.
     fn ask_to_fix(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_focus(window, cx);
         if !self.left_panel_open {
             self.set_left_panel_open(true, window, cx);
         }

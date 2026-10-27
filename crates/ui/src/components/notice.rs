@@ -2,6 +2,7 @@
 //! a failed edit or files that did not load. A dot, the message, an optional action, such as
 //! "Restart" for an update, and an optional dismiss button. A long message wraps to at most three lines. It never blocks: float it in a corner.
 //! Work that takes a while, such as an export, shows its progress as a bar under the message.
+//! Its action and its dismiss button are tab stops of their own, kept under its id.
 
 use std::rc::Rc;
 
@@ -37,7 +38,12 @@ pub struct Notice {
     progress: Option<f32>,
     action: Option<Button>,
     on_dismiss: Option<Handler>,
-    dismiss_focus: Option<FocusHandle>,
+}
+
+/// The tab stops of a notice's buttons, kept between frames.
+struct NoticeFocus {
+    action: FocusHandle,
+    dismiss: FocusHandle,
 }
 
 impl Notice {
@@ -50,7 +56,6 @@ impl Notice {
             progress: None,
             action: None,
             on_dismiss: None,
-            dismiss_focus: None,
         }
     }
 
@@ -78,14 +83,6 @@ impl Notice {
     }
 }
 
-impl Notice {
-    /// Gives the dismiss button a focus handle, so Tab reaches it and it shows a focus ring.
-    pub fn dismiss_focus(mut self, handle: &FocusHandle) -> Self {
-        self.dismiss_focus = Some(handle.clone());
-        self
-    }
-}
-
 impl Styled for Notice {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
@@ -93,7 +90,15 @@ impl Styled for Notice {
 }
 
 impl RenderOnce for Notice {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let focus = window.use_keyed_state(self.id.clone(), cx, |_, cx| NoticeFocus {
+            action: cx.focus_handle().tab_stop(true),
+            dismiss: cx.focus_handle().tab_stop(true),
+        });
+        let (action_focus, dismiss_focus) = {
+            let focus = focus.read(cx);
+            (focus.action.clone(), focus.dismiss.clone())
+        };
         let theme = cx.theme();
         let dot = match self.tone {
             NoticeTone::Error => theme.red,
@@ -161,19 +166,19 @@ impl RenderOnce for Notice {
                     action
                         .variant(ButtonVariant::Subtle)
                         .size(ButtonSize::Xs)
+                        .focus_handle(&action_focus)
                         .mt(px(-2.)),
                 )
             })
             .when_some(self.on_dismiss, |d, on_dismiss| {
-                let button = Button::icon_only("notice-dismiss", "x")
-                    .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Xs)
-                    .mt(px(-2.))
-                    .on_click(move |event, window, cx| on_dismiss(event, window, cx));
-                d.child(match &self.dismiss_focus {
-                    Some(handle) => button.focus_handle(handle),
-                    None => button,
-                })
+                d.child(
+                    Button::icon_only("notice-dismiss", "x")
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Xs)
+                        .focus_handle(&dismiss_focus)
+                        .mt(px(-2.))
+                        .on_click(move |event, window, cx| on_dismiss(event, window, cx)),
+                )
             })
     }
 }

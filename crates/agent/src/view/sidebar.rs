@@ -54,8 +54,8 @@ use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, 
 actions!(agent_sidebar, [Stop]);
 
 const KEY_CONTEXT: &str = "AgentSidebar";
-/// What the composer asks the agent about the files that are not live, from under a turn or
-/// from the window's notice. The agent reads what is not live itself.
+/// What asking the agent to fix the files that are not live sends, from under a turn or from
+/// the window's notice. The agent reads what is not live itself.
 pub const FIX_NOT_LIVE: &str = "Fix the files that are not live.";
 
 /// How far the list draws beyond what shows, so a short scroll needs no measuring.
