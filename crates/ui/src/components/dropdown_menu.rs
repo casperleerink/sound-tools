@@ -204,6 +204,11 @@ pub(crate) fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
         .collect()
 }
 
+/// The row of the item `value` among `entries`, as the highlight counts them.
+pub(crate) fn row_of(entries: &[MenuEntry], value: &SharedString) -> Option<usize> {
+    flat(entries).iter().position(|item| item.value == *value)
+}
+
 /// The row the highlight moves to from `highlighted`, `delta` rows on, skipping disabled rows
 /// and going round. From no highlight, `usize::MAX`, down is the first row and up the last.
 /// `None` for a menu with no rows.
@@ -1047,6 +1052,12 @@ impl DropdownMenu {
 
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
+        // A select opens on what it holds, so the keys move from there.
+        if matches!(self.trigger, Trigger::Select)
+            && let Some(row) = (self.selected.as_ref()).and_then(|held| row_of(self.shown(), held))
+        {
+            self.highlighted = row;
+        }
         match &self.search {
             // A search starts empty each time, with the keys in its field.
             Some(search) => {
@@ -1078,7 +1089,8 @@ impl DropdownMenu {
     }
 
     /// Opens a [`Trigger::Pointer`] menu with its top left at `position`, under what opened it,
-    /// moved up or left as far as it must to stay inside the window, as a select's list does.
+    /// moved up or left as far as it must to stay inside the window, as a select's list does,
+    /// with its checked row highlighted.
     pub fn open_under(
         &mut self,
         position: Point<Pixels>,
@@ -1087,6 +1099,10 @@ impl DropdownMenu {
     ) {
         self.open_at(position, window, cx);
         self.snapped = true;
+        // The option it holds, so the keys move from there.
+        self.highlighted = (flat(self.shown()).iter())
+            .position(|item| item.checked)
+            .unwrap_or(usize::MAX);
     }
 
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1116,6 +1132,10 @@ impl DropdownMenu {
     }
 
     fn point(&mut self, value: SharedString, hovered: bool, cx: &mut Context<Self>) {
+        // The pointer moves the one highlight the keys move too.
+        if hovered && let Some(row) = row_of(self.shown(), &value) {
+            self.highlighted = row;
+        }
         let pointer_on = match hovered {
             true => Some(value),
             false => self.pointer_on.take().filter(|on| *on != value),

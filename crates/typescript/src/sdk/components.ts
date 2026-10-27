@@ -436,7 +436,7 @@ export function Select<const T extends string | number | boolean | null>(props: 
     const option = picked === null ? undefined : options[picked];
     if (option && option.value !== value) set(option.value);
   };
-  return h("div", { key: props.key, style: look.style, onClick: open },
+  return h("div", { key: props.key, style: look.style, tabStop: true, onClick: open },
     h("div", { style: { fontSize: look.text, weight: "medium", color: "gray-950" } }, said),
     Icon({ name: "chevron-down", size: 12, color: "gray-700" }),
   );

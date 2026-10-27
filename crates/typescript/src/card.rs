@@ -2406,6 +2406,8 @@ struct Drawing<'a, 'b> {
     out_of_page: bool,
     /// Whether what it draws is inside a div with a tooltip.
     under_tooltip: bool,
+    /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
+    takes_keys: bool,
     /// The title bar's div the body left out.
     title_bar: Option<(usize, Vec<usize>)>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
@@ -3029,9 +3031,7 @@ impl Drawing<'_, '_> {
     /// the keys where a press on its page would, as a button of the system takes no focus from
     /// the pointer, so that space after a click on play still pauses.
     fn keyboard_control<E: InteractiveElement>(&mut self, wrap: E) -> E {
-        let page = (self.info.as_ref())
-            .filter(|info| info.keys && !self.out_of_page)
-            .map(|_| self.focus.clone());
+        let page = (self.takes_keys && !self.out_of_page).then(|| self.focus.clone());
         let before = Rc::new(RefCell::new(None));
         control_keys(wrap)
             .capture_any_mouse_down({
@@ -4750,6 +4750,7 @@ impl TypeScriptCard {
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
+        let takes_keys = info.as_ref().is_some_and(|info| info.keys) || !self.overlays.is_empty();
         Drawing {
             info,
             state,
@@ -4777,6 +4778,7 @@ impl TypeScriptCard {
             in_title_bar: false,
             out_of_page: false,
             under_tooltip: false,
+            takes_keys,
             title_bar: None,
             lifting: None,
             cx,

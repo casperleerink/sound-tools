@@ -818,3 +818,33 @@ fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not(cx: &mut TestAp
         window.cx.run_until_parked();
     }
 }
+
+const PICKED: &str = r#"import { h, number, Select, tool } from "./sdk";
+
+tool({
+  name: "picked",
+  title: "Picked",
+  when: "A test",
+  doc: "A select of three grids, on a page that hears the keys and so holds them first.",
+  state: { grid: number({ default: 240, min: 0, max: 960 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h(Select, { key: "grid", field: "grid", options: [{ value: 240, label: "1/16" }, { value: 480, label: "1/8" }, { value: 960, label: "1/4" }] }),
+});
+"#;
+
+/// A select is a tab stop: enter opens its list, whose keys pick another option.
+#[gpui::test]
+fn tab_and_enter_open_a_select_whose_keys_pick(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("picked", PICKED));
+    window.until_found("div-grid");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "enter");
+    window.until_found("menu-1");
+    // The list opens on what it holds, 1/16; down is the next.
+    press_key(&mut window, "down");
+    press_key(&mut window, "enter");
+    window.until("1/8 picked", |window| {
+        window.record("picked")["grid"] == 480
+    });
+}
