@@ -10,13 +10,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle,
-    ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun,
-    WeakEntity, WeakFocusHandle, Window, anchored, canvas, deferred, div, fill, hsla, outline,
-    point, prelude::*, px, size,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, DispatchPhase, Div, ElementId, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
+    PromptLevel, ScrollHandle, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
+    Task, TextAlign, TextRun, WeakEntity, WeakFocusHandle, Window, anchored, canvas, deferred, div,
+    fill, hsla, outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -96,6 +96,8 @@ pub(crate) struct TypeScriptCard {
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
     /// them, and a page takes them when it opens and nothing else has them.
     focus: FocusHandle,
+    /// The keys of what it shows in the title bar, out of the page, which hands them to the page.
+    title_focus: FocusHandle,
     /// The keys that went down and not up yet. They go up when it loses the keys, when cmd
     /// goes down and when it closes, so a note a key holds is not held for ever.
     keys_down: BTreeSet<String>,
@@ -722,6 +724,7 @@ impl TypeScriptCard {
         };
         let card = live.update(cx, |live, cx| live.add(id.clone(), tool, surface, cx));
         let focus = cx.focus_handle();
+        let title_focus = cx.focus_handle();
         let hears_keys = live.read(cx).info(card).is_some_and(|info| info.keys);
         // Not from what has the focus, such as the composer of the agent while it is typed in.
         if page && hears_keys && window.focused(cx).is_none() {
@@ -729,12 +732,16 @@ impl TypeScriptCard {
         }
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
             .detach();
-        // A text field in an overlay lets go of the keys on a press that nothing focusable took,
-        // such as on a space: the card takes them from the window, for escape to close it.
+        cx.on_focus_out(&title_focus, window, |view, _, _, cx| {
+            view.let_go_of_keys(cx)
+        })
+        .detach();
+        // What had the focus in it let go: a text field in an overlay on a press that nothing
+        // focusable took, such as on a space, or a button that went, such as a panel's close.
+        // The card takes the keys from the window, for escape to close an overlay and for the
+        // keys of its page.
         cx.on_focus_lost(window, |view, window, cx| {
-            if !view.overlays.is_empty()
-                && window.focus_lost_restore_target(cx).as_ref() == Some(&view.focus)
-            {
+            if window.focus_lost_restore_target(cx).as_ref() == Some(&view.focus) {
                 window.focus(&view.focus, cx);
             }
         })
@@ -818,6 +825,7 @@ impl TypeScriptCard {
             pressed: Vec::new(),
             clicking: None,
             focus,
+            title_focus,
             keys_down: BTreeSet::new(),
             feeds: Feeds::default(),
             indexes: RefCell::default(),
@@ -2393,6 +2401,8 @@ struct Drawing<'a, 'b> {
     scroller: Option<ScrollHandle>,
     /// Whether it draws the title bar's div, which the body leaves out.
     in_title_bar: bool,
+    /// Whether what it draws shows out of its page, in the title bar.
+    out_of_page: bool,
     /// The title bar's div the body left out.
     title_bar: Option<(usize, Vec<usize>)>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
@@ -2909,11 +2919,13 @@ impl Drawing<'_, '_> {
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
+            .when(hears.click, |toggle| toggle.on_click(self.clicked(id)))
             .when_some(props.color, |toggle, color| toggle.color(color.0))
             .when_some(tooltip_of(&props.tooltip, &props.shortcut), Toggle::tooltip)
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
-        let wrap = (div().flex_none().occlude().debug_selector(move || selector))
+        let wrap = self
+            .keyboard_control(div().flex_none().occlude().debug_selector(move || selector))
             .when(hears.any(), Div::cursor_pointer);
         self.hears_pointer(wrap, id, hears)
             .child(toggle)
@@ -2951,6 +2963,8 @@ impl Drawing<'_, '_> {
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let button = button
+            .tab_stop(hears.click)
+            .when(hears.click, |button| button.on_click(self.clicked(id)))
             .variant(variant)
             .size(size)
             .rounded(props.rounded == Some(true))
@@ -2964,11 +2978,47 @@ impl Drawing<'_, '_> {
                 },
             )
             .debug_selector(move || selector);
-        let wrap = div().flex_none().relative();
+        let wrap = self.keyboard_control(div().flex_none().relative());
         self.hears_pointer(wrap, id, hears)
             .child(button)
             .when(hears.any(), |wrap| wrap.child(placed(id, &self.placed)))
             .into_any_element()
+    }
+
+    /// A button or a toggle: its keys, see [`control_keys`], and a press with the pointer leaves
+    /// the keys where a press on its page would, as a button of the system takes no focus from
+    /// the pointer, so that space after a click on play still pauses.
+    fn keyboard_control<E: InteractiveElement>(&mut self, wrap: E) -> E {
+        let page = (self.info.as_ref())
+            .filter(|info| info.keys && !self.out_of_page)
+            .map(|_| self.focus.clone());
+        let before = Rc::new(RefCell::new(None));
+        control_keys(wrap)
+            .capture_any_mouse_down({
+                let before = before.clone();
+                move |_, window, cx| *before.borrow_mut() = window.focused(cx)
+            })
+            .on_any_mouse_down(move |_, window, cx| {
+                match page.clone().or_else(|| before.borrow_mut().take()) {
+                    Some(focus) => window.focus(&focus, cx),
+                    None => window.blur(cx),
+                }
+            })
+    }
+
+    /// The click of a button or a toggle, which is a tab stop: enter clicks it too. A mouse
+    /// click is the one its press began, as on a div.
+    fn clicked(&mut self, id: u64) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        (self.cx).listener(
+            move |view, event: &ClickEvent, _, cx| match event.is_keyboard() {
+                true => {
+                    let press = press_of((0.0, 0.0), MouseButton::Left, 1, event.modifiers());
+                    view.hang_menus_under(id);
+                    view.event(id, EventKind::Click, press, cx);
+                }
+                false => view.released_over(id, cx),
+            },
+        )
     }
 
     /// `element`, the node `id`, tells its code what of the pointer `hears` asks for.
@@ -4681,6 +4731,7 @@ impl TypeScriptCard {
             button_down: self.button_down.get(),
             scroller: None,
             in_title_bar: false,
+            out_of_page: false,
             title_bar: None,
             lifting: None,
             cx,
@@ -4704,19 +4755,28 @@ impl TypeScriptCard {
         };
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.in_title_bar = true;
+        drawing.out_of_page = true;
         let bar = drawing.draw(slot, &index);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
         let moved = self.feeds.moving.replace(body_moving);
         (self.feeds.title_moving).set(self.feeds.title_moving.get() || moved);
         let theme = cx.theme();
-        Some(
-            div()
-                .text_size(px(12.))
-                .text_color(theme.gray_950)
-                .child(bar)
-                .into_any_element(),
-        )
+        let bar = div()
+            .text_size(px(12.))
+            .text_color(theme.gray_950)
+            .child(bar);
+        // Out of the page, it hands the page the keys its controls do not keep, such as R to
+        // record with Play focused, and lets go of them when the focus leaves it.
+        let info = self.live.read(cx).info(self.card).filter(|info| info.keys);
+        let bar = match info {
+            Some(info) => {
+                let context = crate::key_context(info.takes.as_deref());
+                hearing_keys(bar, &self.title_focus.clone(), Some(context), cx)
+            }
+            None => bar,
+        };
+        Some(bar.into_any_element())
     }
 }
 
@@ -4818,32 +4878,12 @@ impl Render for TypeScriptCard {
         let (text, background) = (theme.gray_950, theme.gray_100);
         // A click in what takes the keys gives them: the body of a card, a whole page. Also while
         // it shows an overlay, for escape to close it.
-        let takes_keys = |element: Div| {
-            element.when(hears_keys || !self.overlays.is_empty(), |element| {
-                element
-                    .track_focus(&self.focus)
-                    .when_some(
-                        key_context.clone().filter(|_| hears_keys),
-                        |element, context| element.key_context(context),
-                    )
-                    .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                        // A text field in it has the keys first.
-                        if !typing(window) {
-                            view.key(&event.keystroke, true, event.is_held, cx)
-                        }
-                    }))
-                    .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
-                        view.key(&event.keystroke, false, false, cx)
-                    }))
-                    // macOS sends no key up while cmd is held.
-                    .on_modifiers_changed(cx.listener(
-                        |view, event: &ModifiersChangedEvent, _, cx| {
-                            if event.modifiers.platform {
-                                view.let_go_of_keys(cx);
-                            }
-                        },
-                    ))
-            })
+        let takes_keys = hears_keys || !self.overlays.is_empty();
+        let focus = self.focus.clone();
+        let context = key_context.filter(|_| hears_keys);
+        let takes_keys = move |element: Div, cx: &mut Context<Self>| match takes_keys {
+            true => hearing_keys(element, &focus, context.clone(), cx),
+            false => element,
         };
         let body = div()
             .text_size(px(12.))
@@ -4859,7 +4899,7 @@ impl Render for TypeScriptCard {
             Some(frame) => frame
                 .card()
                 .min_w(px(PLAIN_CARD_WIDTH))
-                .child(takes_keys(body))
+                .child(takes_keys(body, cx))
                 .into_any_element(),
             None => {
                 // The room the page draws in: the whole main area.
@@ -4883,7 +4923,7 @@ impl Render for TypeScriptCard {
                     .child(measure)
                     // A column, so a page whose top div grows fills the window and no more.
                     .child(body.size_full().flex().flex_col());
-                takes_keys(div().size_full().bg(background).child(room)).into_any_element()
+                takes_keys(div().size_full().bg(background).child(room), cx).into_any_element()
             }
         }
     }
@@ -4988,6 +5028,64 @@ mod tests {
 
 /// How far a boxed part's box reaches past its text, across and down.
 const BOXED: (f32, f32) = (5., 2.);
+
+/// `element` takes the keys of the page of `cx`'s card on `focus`, and hands them to its code.
+fn hearing_keys(
+    element: Div,
+    focus: &FocusHandle,
+    context: Option<gpui::KeyContext>,
+    cx: &mut Context<TypeScriptCard>,
+) -> Div {
+    element
+        .track_focus(focus)
+        .when_some(context, |element, context| element.key_context(context))
+        .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+            // A text field in it has the keys first.
+            if !typing(window) {
+                view.key(&event.keystroke, true, event.is_held, cx)
+            }
+        }))
+        .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
+            view.key(&event.keystroke, false, false, cx)
+        }))
+        // macOS sends no key up while cmd is held.
+        .on_modifiers_changed(cx.listener(|view, event: &ModifiersChangedEvent, _, cx| {
+            if event.modifiers.platform {
+                view.let_go_of_keys(cx);
+            }
+        }))
+}
+
+/// The keys of a button or a toggle with the focus. Enter clicks it and is no key of its view,
+/// such as the song's enter that opens the selected clip. Space stays its view's alone, such as
+/// the song's play and pause, which GPUI would follow with a click.
+fn control_keys<E: InteractiveElement>(wrap: E) -> E {
+    wrap.capture_key_down(|event: &KeyDownEvent, window, _| {
+        if event.keystroke.key == "space" {
+            window.prevent_default();
+        }
+    })
+    .capture_key_up(|event: &KeyUpEvent, window, _| {
+        if event.keystroke.key == "space" {
+            window.prevent_default();
+        }
+    })
+    .on_key_down(|event: &KeyDownEvent, _, cx| {
+        if clicks(&event.keystroke) {
+            cx.stop_propagation();
+        }
+    })
+    .on_key_up(|event: &KeyUpEvent, _, cx| {
+        if clicks(&event.keystroke) {
+            cx.stop_propagation();
+        }
+    })
+}
+
+/// Enter with no modifier, which GPUI turns into a click.
+fn clicks(key: &Keystroke) -> bool {
+    key.key == "enter" && !key.modifiers.modified()
+}
 
 /// The tooltip of a button or a toggle, with its shortcut's keys after its words.
 fn tooltip_of(text: &Option<String>, shortcut: &Option<String>) -> Option<Tooltip> {

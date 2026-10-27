@@ -480,6 +480,103 @@ fn a_toggle_and_a_button_tell_how_many_clicks(cx: &mut TestAppContext) {
     window.heard_by_the_pointer("toggle-click-1 toggle-click-2 button-click-1 button-click-2");
 }
 
+/// `key` down and up, as GPUI clicks what has the focus on the key up of enter.
+fn press_key(window: &mut Opened<'_>, key: &str) {
+    window.keys(key);
+    let up = gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse(key).unwrap(),
+    };
+    window.cx.simulate_event(up);
+    window.cx.run_until_parked();
+}
+
+const KEYED: &str = r#"import { Button, h, text, Toggle, tool } from "./sdk";
+
+tool({
+  name: "keyed",
+  title: "Keyed",
+  when: "A test",
+  doc: "Writes down its button's clicks and the keys it hears.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: ({ update }) => {
+    const hear = (what: string) => () => update(what, ({ state }) => { state.heard = `${state.heard} ${what}`.trim(); });
+    return h("div", {},
+      h(Button, { key: "go", label: "Go", onClick: hear("click") }),
+      h(Toggle, { key: "switch", label: "S", on: false, onClick: hear("toggle") }),
+    );
+  },
+});
+"#;
+
+impl Opened<'_> {
+    fn heard_by_the_keys(&mut self, heard: &str) {
+        self.until(heard, |window| window.record("keyed")["heard"] == heard);
+    }
+}
+
+/// Tab reaches the button, then the toggle; enter clicks each and is not a key of its view,
+/// while the others, space and cmd-enter too, are its view's and click nothing.
+#[gpui::test]
+fn enter_clicks_what_tab_reaches_and_is_no_key_of_its_view(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("keyed", KEYED));
+    window.until_found("button-go");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "space");
+    press_key(&mut window, "enter");
+    press_key(&mut window, "a");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "enter");
+    press_key(&mut window, "cmd-enter");
+    window.heard_by_the_keys("key-space click key-a toggle key-enter");
+}
+
+const TITLED: &str = r#"import { Button, h, text, tool } from "./sdk";
+
+tool({
+  name: "titled",
+  title: "Titled",
+  when: "A test",
+  doc: "A button in the window's title bar, and the keys its page hears.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: ({ update }) =>
+    h("div", {}, h("div", { titleBar: true }, h(Button, { key: "go", label: "Go", onClick: () => update("go", ({ state }) => { state.heard = `${state.heard} click`.trim(); }) }))),
+});
+"#;
+
+/// A button in the title bar, out of its page, hands the page the keys it does not click with.
+#[gpui::test]
+fn a_button_in_the_title_bar_hands_its_page_the_keys(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    press_key(&mut window, "shift-tab");
+    press_key(&mut window, "enter");
+    press_key(&mut window, "a");
+    window.until("click key-a", |window| {
+        window.record("titled")["heard"] == "click key-a"
+    });
+}
+
+/// A click takes no focus from the page: space after it is the page's, each time, and clicks
+/// nothing, as a click on play then space pauses.
+#[gpui::test]
+fn space_after_a_click_on_a_button_is_its_views(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("keyed", KEYED));
+    let button = window.until_found("button-go");
+    window.click(button);
+    press_key(&mut window, "space");
+    press_key(&mut window, "space");
+    press_key(&mut window, "enter");
+    window.heard_by_the_keys("click key-space key-space key-enter");
+}
+
 #[gpui::test]
 fn the_right_button_ends_no_left_click_of_a_div_a_toggle_or_a_button(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
@@ -567,5 +664,48 @@ fn a_card_that_goes_while_its_pad_is_held_sends_the_release(cx: &mut TestAppCont
     window.until("the card gone", |window| window.find("div-key").is_none());
     window.until("the release", |window| {
         window.record("rig/pad")["heard"] == "press release"
+    });
+}
+
+/// macOS sends no key up while cmd is held: a key held on a button of the title bar when cmd
+/// goes down goes up for its page, so pressing it again is heard, as on the page.
+#[gpui::test]
+fn cmd_lets_go_of_a_key_held_on_a_button_of_the_title_bar(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    press_key(&mut window, "shift-tab");
+    window.keys("r");
+    let cmd = |platform| gpui::ModifiersChangedEvent {
+        modifiers: Modifiers {
+            platform,
+            ..Modifiers::default()
+        },
+        capslock: Default::default(),
+    };
+    window.cx.simulate_event(cmd(true));
+    window.cx.simulate_event(cmd(false));
+    window.keys("r");
+    window.until("key-r key-r", |window| {
+        window.record("titled")["heard"] == "key-r key-r"
+    });
+}
+
+/// A key held on a button of the title bar goes up for its page when the focus leaves the title
+/// bar, as when the composer of the agent is clicked, so pressing it again is heard.
+#[gpui::test]
+fn the_focus_leaving_the_title_bar_lets_go_of_a_held_key(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    // GPUI tells a focus leaving only in the active window.
+    window.cx.update(|window, _| window.activate_window());
+    window.cx.run_until_parked();
+    press_key(&mut window, "shift-tab");
+    window.keys("r");
+    // The focus goes on, out of the title bar, and comes back.
+    press_key(&mut window, "tab");
+    press_key(&mut window, "shift-tab");
+    window.keys("r");
+    window.until("key-r key-r", |window| {
+        window.record("titled")["heard"] == "key-r key-r"
     });
 }
