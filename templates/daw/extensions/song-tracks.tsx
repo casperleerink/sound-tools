@@ -1,4 +1,4 @@
-import { Button, For, Fragment, h, Icon, Input, onCleanup, PeakMeter, Select, Show, Toggle, untrack, type Color } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, Label, now, onCleanup, PeakMeter, Select, Show, Space, Toggle, untrack, type Color } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
@@ -38,7 +38,13 @@ export const Heads = ({ page }: { page: Page }) => {
       <Show when={() => memory.tempoLane}>
         {() => (
           <div style={{ height: TEMPO }}>
-            <div style={{ grow: true, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8, fontSize: 12, color: "gray-800" }}>Tempo</div>
+            <div style={{ grow: true, justify: "center", gap: 2, paddingLeft: 36, paddingRight: 8 }}>
+              <div style={{ fontSize: 12, color: "gray-800" }}>Tempo</div>
+              <div style={{ direction: "row", align: "center", gap: 3 }}>
+                <Space key="tempo-value" width={28} height={16}><Label x={0} y={1} text={now.bpm.round()} size={12} color="gray-700" /></Space>
+                <div style={{ fontSize: 12, color: "gray-700" }}>bpm</div>
+              </div>
+            </div>
             <div style={{ height: 1, background: "alpha/5", keep: true }} />
           </div>
         )}

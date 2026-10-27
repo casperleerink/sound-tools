@@ -200,6 +200,9 @@ pub(crate) struct Moved {
     pub max: f32,
     /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
     pub scale: &'static str,
+    /// How a value of it reads, see `unit_of` of the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'static str>,
     /// What its record holds now.
     pub value: Option<f32>,
 }

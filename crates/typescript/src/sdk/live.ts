@@ -347,6 +347,8 @@ export interface MovedNumber {
   max: number;
   /** `"log"` for a frequency or a time, `"fader"` for a volume in dB (`-inf` at the bottom). */
   scale: "linear" | "log" | "fader";
+  /** How a value of it reads: by the unit its name ends in, `pan` for a pan, `percent` for a share of 0 to 1; none for a plugin's. */
+  unit?: "hz" | "db" | "ms" | "seconds" | "percent" | "pan";
   /** What its record holds now; `null` for a number that has none, such as one of a plugin that is not loaded. */
   value: number | null;
 }
