@@ -38,6 +38,7 @@ expression: "replay(\"permission_mode\")"
             "6d9832d6-d7a3-411e-b921-5aff49aebe8c",
         ),
         title: "Write a.txt",
+        command: None,
     },
     StepDone {
         id: StepId(

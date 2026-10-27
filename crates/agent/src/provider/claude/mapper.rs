@@ -143,7 +143,7 @@ impl Mapper {
                         tool_use_id,
                     },
             } => {
-                let title = Action::of(&tool_name, &input, &self.folder).request_title();
+                let (title, command) = question(&tool_name, &input, &self.folder);
                 self.approvals.insert(
                     request_id.clone(),
                     Approval {
@@ -156,6 +156,7 @@ impl Mapper {
                 vec![AgentEvent::ApprovalRequested {
                     id: ApprovalId(request_id),
                     title,
+                    command,
                 }]
             }
             Incoming::ControlResponse { response } => self.response(response),
@@ -552,6 +553,18 @@ impl Action {
     }
 }
 
+/// What an approval asks: the request's title, and for a command the whole command apart, as
+/// it will run, since that is what the composer allows. A step's title keeps only its first
+/// line.
+fn question(tool: &str, input: &Value, folder: &Path) -> (String, Option<String>) {
+    match (tool, input.get("command").and_then(Value::as_str)) {
+        ("Bash" | "PowerShell", Some(command)) => {
+            ("Run".to_string(), Some(command.trim().to_string()))
+        }
+        _ => (Action::of(tool, input, folder).request_title(), None),
+    }
+}
+
 /// A path inside the project as the composer knows it, from the project folder.
 fn relative(path: &str, folder: &Path) -> String {
     Path::new(path)
@@ -586,12 +599,25 @@ fn code(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{plain, shorten};
+    use serde_json::json;
+
+    use super::{plain, question, shorten};
 
     #[test]
     fn a_command_that_starts_with_a_blank_line_shows_its_first_line() {
         assert_eq!(shorten("\n  cargo build\n"), "cargo build");
         assert_eq!(shorten("\ncargo build\ncargo test"), "cargo build…");
+    }
+
+    #[test]
+    fn an_approval_asks_with_the_whole_command() {
+        let folder = std::path::Path::new("/tmp/project");
+        let long = "cargo build --release -p drums && cargo test -p drums --no-fail-fast";
+        let script: Vec<String> = (1..=20).map(|line| format!("echo `date` {line}")).collect();
+        for command in [long.to_string(), script.join("\n")] {
+            let asked = question("Bash", &json!({ "command": command }), folder);
+            assert_eq!(asked, ("Run".to_string(), Some(command)));
+        }
     }
 
     #[test]

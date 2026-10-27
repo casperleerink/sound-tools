@@ -122,6 +122,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
             AgentEvent::ApprovalRequested {
                 id: ApprovalId("build".to_string()),
                 title: "Run `cargo build`".to_string(),
+                command: None,
             },
             AgentEvent::TurnEnded {
                 outcome: TurnOutcome::Interrupted,
@@ -427,6 +428,7 @@ fn every_event_saves_as_the_same_line() {
         AgentEvent::ApprovalRequested {
             id: ApprovalId(text("request-1")),
             title: text("Run `cargo build`"),
+            command: None,
         },
         AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {

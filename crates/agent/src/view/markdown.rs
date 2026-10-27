@@ -129,17 +129,13 @@ impl Markdown {
         }
     }
 
-    /// [`Self::inline_code`] for a question, with a command that ends it, as in "Run `cargo
-    /// build`", under its words: inline, the command would wrap anywhere.
-    pub fn question(line: &str) -> Self {
-        let Some((words, command)) = line.strip_suffix('`').and_then(|rest| rest.split_once('`'))
-        else {
-            return Self::inline_code(line);
-        };
-        let words = Self::inline_code(words.trim_end());
-        let command = Block::Command(command.to_string().into());
+    /// A question of the agent: its words as [`Self::inline_code`], and the command it asks to
+    /// run under them, as it is, every line and every backtick of it.
+    pub fn question(words: &str, command: Option<&str>) -> Self {
+        let words = Self::inline_code(words);
+        let command = command.map(|command| Block::Command(command.to_string().into()));
         Self {
-            blocks: words.blocks.iter().cloned().chain([command]).collect(),
+            blocks: words.blocks.iter().cloned().chain(command).collect(),
         }
     }
 
@@ -1400,15 +1396,19 @@ mod tests {
     }
 
     #[test]
-    fn a_command_that_ends_a_question_goes_under_its_words() {
-        let question = Markdown::question("Run `cargo build && cargo test`");
-        let [Block::Paragraph(words), Block::Command(command)] = question.blocks() else {
+    fn a_question_shows_its_command_as_it_is() {
+        let command = "rm `cat list`\n# keep the rest";
+        let question = Markdown::question("Run", Some(command));
+        let [Block::Paragraph(words), Block::Command(shown)] = question.blocks() else {
             panic!("not words and a command: {:?}", question.blocks());
         };
         assert_eq!(spans(words), [("Run", plain())]);
-        assert_eq!(command.as_ref(), "cargo build && cargo test");
-        let inside = "Search for `gain` in effects";
-        assert_eq!(Markdown::question(inside), Markdown::inline_code(inside));
+        assert_eq!(shown.as_ref(), command);
+        let words = "Search for `gain` in effects";
+        assert_eq!(
+            Markdown::question(words, None),
+            Markdown::inline_code(words)
+        );
     }
 
     /// The sidebar parses the whole streaming message again on each frame. Measured on an

@@ -214,8 +214,8 @@ export const Ruler = ({ page }: { page: Page }) => {
       </For>
       <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 6}
         width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={3} radius={1.5} color={band} />
-      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 11} width={timeline.pointX.times(2)} height={8} radius={1} color={band} />
-      <Rect x={() => moving!.dx.plus(ending!.dx).plus(repeat().to).minus(timeline.pointX.times(2))} y={RULER - 11} width={timeline.pointX.times(2)} height={8} radius={1} color={band} />
+      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 11} width={timeline.pointX.times(2)} height={5} color={band} />
+      <Rect x={() => moving!.dx.plus(ending!.dx).plus(repeat().to).minus(timeline.pointX.times(2))} y={RULER - 11} width={timeline.pointX.times(2)} height={5} color={band} />
       <Rect x={() => moving!.dx.plus(repeat().from)} y={RULER - 14} width={() => repeat().to - repeat().from} height={14}
         color={COLOR.clear} cursor="pointer" drag={repeatMove!} onClick={toggleRepeat} />
       <Rect x={() => starting!.dx.plus(repeat().from)} y={RULER - 14} width={handle} height={14}

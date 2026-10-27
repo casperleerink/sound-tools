@@ -257,8 +257,11 @@ pub enum AgentEvent {
     /// The agent waits for an answer. An approval still open when the turn ends is void.
     ApprovalRequested {
         id: ApprovalId,
-        /// One line of what the agent wants to do, such as "Run `cargo build`".
+        /// One line of what the agent wants to do, such as "Edit state/bass.json", or "Run".
         title: String,
+        /// The command a "Run" asks to run, whole, which the question shows as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
     },
     TurnEnded {
         outcome: TurnOutcome,

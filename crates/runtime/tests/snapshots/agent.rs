@@ -137,7 +137,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
 
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("build".to_string()),
-        title: "Run `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
+        title: "Run".to_string(),
+        command: Some(
+            "cargo build --release -p drums && cargo test -p drums --no-fail-fast".to_string(),
+        ),
     };
     cx.update(|cx| sidebar.update(cx, |sidebar, cx| sidebar.receive([question], cx)));
     cx.run_until_parked();

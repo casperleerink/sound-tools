@@ -213,6 +213,7 @@ fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext)
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("question".to_string()),
         title: "Run `cargo build`".to_string(),
+        command: None,
     };
     opened.receive([AgentEvent::TurnStarted, question.clone()]);
     assert_eq!(approval(&mut opened).as_deref(), Some("Run `cargo build`"));
@@ -1034,6 +1035,34 @@ fn a_turn_shows_the_problems_it_left(cx: &mut TestAppContext) {
     assert!(opened.find("agent-problems-3").is_none());
     // The first turn still says what it left.
     assert!(opened.find("agent-problems-1").is_some());
+}
+
+/// Under the problems the last turn left, one click asks the agent to fix them, as if typed.
+#[gpui::test]
+fn the_problems_of_the_last_turn_ask_the_agent_to_fix_them(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+
+    opened.begin("Add a bass line");
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(&mut opened, "state/bass.json", "{");
+    opened.receive([AgentEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+    }]);
+    let fix = opened.control("agent-fix");
+    opened.click(fix);
+    let Ok(Command::Send(Message { text, .. })) = commands.try_recv() else {
+        panic!("nothing went to the agent");
+    };
+    assert_eq!(text, "Fix the files that are not live.");
+    // The agent works on it, so the line goes.
+    assert!(opened.find("agent-fix").is_none());
 }
 
 /// The watcher applies a write after its grouping window, so the last write of a turn can

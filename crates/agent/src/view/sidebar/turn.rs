@@ -177,9 +177,8 @@ impl Sidebar {
         self.deliver(message, names, attachments, cx);
     }
 
-    /// `message` once more, as it was sent with nothing attached, and whether it went. The
-    /// composer keeps what is in it.
-    pub(super) fn send_again(&mut self, message: String, cx: &mut Context<Self>) -> bool {
+    /// `message` with nothing attached, and whether it went. The composer keeps what is in it.
+    pub(super) fn send_text(&mut self, message: String, cx: &mut Context<Self>) -> bool {
         let started = self.started(cx);
         if started {
             self.deliver(message, Vec::new(), Vec::new(), cx);

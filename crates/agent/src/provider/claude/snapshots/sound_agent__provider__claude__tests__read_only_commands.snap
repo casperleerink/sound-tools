@@ -59,7 +59,10 @@ expression: events
         id: ApprovalId(
             "83014153-b507-40a5-b77b-3d8fbde2900f",
         ),
-        title: "Run `for f in $(ls); do cat \"$f\"; done`",
+        title: "Run",
+        command: Some(
+            "for f in $(ls); do cat \"$f\"; done",
+        ),
     },
     StepDone {
         id: StepId(

@@ -35,7 +35,10 @@ expression: "replay(\"approval_allowed\")"
         id: ApprovalId(
             "aa5e25b8-3c0b-4505-8853-58e465a1c380",
         ),
-        title: "Run `touch marker.txt`",
+        title: "Run",
+        command: Some(
+            "touch marker.txt",
+        ),
     },
     StepDone {
         id: StepId(

@@ -35,7 +35,10 @@ expression: "replay(\"interrupt_approval\")"
         id: ApprovalId(
             "907aed0c-ae5e-4f3d-90a5-0f8cd94ca6a9",
         ),
-        title: "Run `git init`",
+        title: "Run",
+        command: Some(
+            "git init",
+        ),
     },
     StepDone {
         id: StepId(

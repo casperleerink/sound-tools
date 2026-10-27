@@ -46,7 +46,7 @@ use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Sco
 use super::markdown::{self, Markdown, MarkdownText};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
-use crate::conversation::{Conversation, Entry, Turn, TurnEnd};
+use crate::conversation::{Approval, Conversation, Entry, Turn, TurnEnd};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
 use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, TurnOutcome};
@@ -54,6 +54,8 @@ use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, 
 actions!(agent_sidebar, [Stop]);
 
 const KEY_CONTEXT: &str = "AgentSidebar";
+/// What "Ask the agent to fix them" sends. The agent reads what is not live itself.
+const FIX: &str = "Fix the files that are not live.";
 
 /// How far the list draws beyond what shows, so a short scroll needs no measuring.
 const OVERDRAW: f32 = 800.;
@@ -580,13 +582,28 @@ impl Sidebar {
             Some(Entry::Notice(text)) => entry::notice(text, cx),
             Some(Entry::Turn(turn)) => {
                 let below = match (turn.approval(), self.problems_left.get(&index)) {
-                    (Some(approval), _) => Some(self.approval_row(&approval.title, cx)),
+                    (Some(approval), _) => Some(self.approval_row(approval, cx)),
                     (None, Some(problems)) => {
                         let open = self.problems_open.contains(&index);
                         let toggle = cx.listener(move |sidebar, _, _, cx| {
                             sidebar.toggle(|sidebar| &mut sidebar.problems_open, index, cx);
                         });
-                        Some(entry::problems(problems, index, open, toggle, window, cx))
+                        let problems = entry::problems(problems, index, open, toggle, window, cx);
+                        let fix = self.goes_on_after(index).then(|| {
+                            let click = cx.listener(|sidebar, _, window, cx| {
+                                sidebar.ask(FIX.to_string(), window, cx);
+                            });
+                            entry::action(
+                                "fix",
+                                "wrench",
+                                "Ask the agent to fix them",
+                                click,
+                                window,
+                                cx,
+                            )
+                        });
+                        let lines = div().flex().flex_col().gap(px(8.)).child(problems);
+                        Some(lines.children(fix).into_any_element())
                     }
                     (None, None) => self
                         .retry_message(index)
@@ -613,6 +630,14 @@ impl Sidebar {
             .into_any_element()
     }
 
+    /// Whether the turn at `index` is the last thing of a thread that can go on, with nothing
+    /// asked of the composer: what it shows under it can send a message.
+    fn goes_on_after(&self, index: usize) -> bool {
+        index + 1 == self.conversation.entries().len()
+            && self.conversation.can_continue()
+            && !self.conversation.is_working()
+    }
+
     /// The message of the turn at `index` to send again: the last turn, which failed, of a
     /// thread that can go on, when its message had nothing attached (a saved thread keeps no
     /// pictures).
@@ -628,7 +653,7 @@ impl Sidebar {
                 ..
             }))
         );
-        if !failed || index + 1 != entries.len() || !self.conversation.can_continue() {
+        if !failed || !self.goes_on_after(index) {
             return None;
         }
         match entries.get(index.checked_sub(1)?)? {
@@ -637,21 +662,27 @@ impl Sidebar {
         }
     }
 
-    /// Under a turn that failed: its message again, as it was sent. Once it went, the composer
+    /// `message` sent as if typed, leaving the composer as it is. Once it went, the composer
     /// has the keys, as after a message.
+    fn ask(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.send_text(message, cx) {
+            window.focus(&self.focus_handle(cx), cx);
+        }
+    }
+
+    /// Under a turn that failed: its message again, as it was sent.
     fn try_again(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let click = cx.listener(move |sidebar, _, window, cx| {
-            let message = sidebar.retry_message(index).map(str::to_string);
-            if message.is_some_and(|message| sidebar.send_again(message, cx)) {
-                window.focus(&sidebar.focus_handle(cx), cx);
+            if let Some(message) = sidebar.retry_message(index).map(str::to_string) {
+                sidebar.ask(message, window, cx);
             }
         });
-        entry::try_again(click, window, cx)
+        entry::action("try-again", "redo-2", "Try again", click, window, cx)
     }
 
     /// The question the agent waits on, as the last thing of the thread. Nothing is modal:
     /// music and editing go on while it waits.
-    fn approval_row(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn approval_row(&self, approval: &Approval, cx: &mut Context<Self>) -> AnyElement {
         let (lavender, text) = (cx.theme().lavender, cx.theme().gray_950);
         let answers = [
             ("allow", "Allow", ApprovalAnswer::Allow),
@@ -689,7 +720,10 @@ impl Sidebar {
             .border_1()
             .border_color(lavender.opacity(0.3))
             .text_color(text)
-            .child(MarkdownText::new("approval", Markdown::question(title)))
+            .child(MarkdownText::new(
+                "approval",
+                Markdown::question(&approval.title, approval.command.as_deref()),
+            ))
             .child(div().flex().flex_wrap().gap(px(8.)).children(buttons))
             .into_any_element()
     }

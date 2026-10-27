@@ -83,6 +83,7 @@ impl Step {
 pub struct Approval {
     pub id: ApprovalId,
     pub title: String,
+    pub command: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -304,9 +305,8 @@ impl Conversation {
                     step.outcome = Some(outcome);
                 }
             }),
-            AgentEvent::ApprovalRequested { id, title } => {
-                self.update_open_turn(|turn| turn.approvals.push_back(Approval { id, title }))
-            }
+            AgentEvent::ApprovalRequested { id, title, command } => self
+                .update_open_turn(|turn| turn.approvals.push_back(Approval { id, title, command })),
             AgentEvent::TurnEnded { outcome } => {
                 self.update_open_turn(|turn| turn.finish(outcome, now))
             }
@@ -523,6 +523,7 @@ mod tests {
         let asked = AgentEvent::ApprovalRequested {
             id: ApprovalId("question".to_string()),
             title: "Run `cargo build`".to_string(),
+            command: None,
         };
         conversation.apply(asked.clone(), now);
         assert_eq!(
@@ -565,6 +566,7 @@ mod tests {
             let asked = AgentEvent::ApprovalRequested {
                 id: ApprovalId(id.to_string()),
                 title: title.to_string(),
+                command: None,
             };
             conversation.apply(asked, now);
         }

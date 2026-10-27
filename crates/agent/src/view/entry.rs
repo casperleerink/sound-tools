@@ -326,16 +326,20 @@ pub(super) fn problems(
         .into_any_element()
 }
 
-/// "Try again" under a turn that failed, as quiet as the lines over it.
-pub(super) fn try_again(
+/// An action under a turn, as quiet as the lines over it: "Try again", or asking the agent to
+/// fix what it left.
+pub(super) fn action(
+    id: &'static str,
+    icon: &'static str,
+    label: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme();
     let (muted, bright) = (theme.gray_700, theme.gray_900);
-    let line = tab_stop(div(), "try-again".into(), window, cx)
-        .debug_selector(|| "agent-try-again".to_string())
+    let line = tab_stop(div(), id.into(), window, cx)
+        .debug_selector(move || format!("agent-{id}"))
         .flex()
         .items_center()
         .gap(px(4.))
@@ -345,8 +349,8 @@ pub(super) fn try_again(
         .cursor_pointer()
         .hover(move |style| style.text_color(bright))
         .on_click(on_click)
-        .child(Icon::new("redo-2").size(12.))
-        .child("Try again");
+        .child(Icon::new(icon).size(12.))
+        .child(label);
     div().flex().child(line).into_any_element()
 }
 
