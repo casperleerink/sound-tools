@@ -138,6 +138,8 @@ props! {
         /// Quieter than its look, 0 to 1.
         opacity: f32,
         tooltip: String,
+        /// The keys that do it too, `cmd-k`, drawn in its tooltip.
+        shortcut: String,
         on_press: bool,
         on_release: bool,
         on_click: bool,
@@ -168,6 +170,8 @@ props! {
         color: Color,
         disabled: bool,
         tooltip: String,
+        /// The keys that do it too, `cmd-k`, drawn in its tooltip.
+        shortcut: String,
         on_press: bool,
         on_release: bool,
         on_click: bool,

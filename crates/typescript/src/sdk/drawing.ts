@@ -2,7 +2,7 @@
 
 import { SelectOption } from "./components";
 import { Unit } from "./fields";
-import { Drag, Dropped, Live, Num, PointerEvents, TakeList, WaveList } from "./live";
+import { Drag, Dropped, KeyName, Live, Num, PointerEvents, TakeList, WaveList } from "./live";
 import { Child, element, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
@@ -279,6 +279,8 @@ export type ToggleProps = (
   color?: Bind<Color>;
   disabled?: Bind<boolean>;
   tooltip?: Bind<string>;
+  /** The keys that do it too, drawn in its tooltip. */
+  shortcut?: KeyName;
 };
 
 /** A switch, see `ToggleProps`. */
@@ -300,6 +302,8 @@ export interface ButtonProps extends PointerEvents {
   /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
   opacity?: number;
   tooltip?: Bind<string>;
+  /** The keys that do it too, drawn in its tooltip. */
+  shortcut?: KeyName;
 }
 
 /** A button, see `ButtonProps`. */

@@ -2910,7 +2910,7 @@ impl Drawing<'_, '_> {
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
             .when_some(props.color, |toggle, color| toggle.color(color.0))
-            .when_some(props.tooltip.clone(), Toggle::tooltip)
+            .when_some(tooltip_of(&props.tooltip, &props.shortcut), Toggle::tooltip)
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
         let wrap = (div().flex_none().occlude().debug_selector(move || selector))
@@ -2956,10 +2956,13 @@ impl Drawing<'_, '_> {
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
             .when_some(props.opacity, |button, opacity| button.opacity(opacity))
-            .when_some(props.tooltip.clone(), |mut button, text| {
-                (button.interactivity()).tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx));
-                button
-            })
+            .when_some(
+                tooltip_of(&props.tooltip, &props.shortcut),
+                |mut button, tooltip| {
+                    (button.interactivity()).tooltip(move |_, cx| tooltip.clone().view(cx));
+                    button
+                },
+            )
             .debug_selector(move || selector);
         let wrap = div().flex_none().relative();
         self.hears_pointer(wrap, id, hears)
@@ -4985,6 +4988,15 @@ mod tests {
 
 /// How far a boxed part's box reaches past its text, across and down.
 const BOXED: (f32, f32) = (5., 2.);
+
+/// The tooltip of a button or a toggle, with its shortcut's keys after its words.
+fn tooltip_of(text: &Option<String>, shortcut: &Option<String>) -> Option<Tooltip> {
+    let tooltip = Tooltip::new(text.clone()?);
+    Some(match shortcut {
+        Some(keys) => tooltip.shortcut(&shortcut_of(keys)),
+        None => tooltip,
+    })
+}
 
 /// A key as the SDK names it, `cmd-alt-c`, as a menu draws it: `mod+alt+c`.
 fn shortcut_of(mut keys: &str) -> String {

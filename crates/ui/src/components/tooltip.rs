@@ -1,12 +1,14 @@
-//! Tooltip view for GPUI's `.tooltip(..)`: label text plus optional keyboard
-//! shortcut chips. Ported from the source design system's `tooltip.tsx`.
+//! Tooltip view for GPUI's `.tooltip(..)`: label text plus an optional keyboard shortcut as
+//! chips. Ported from the source design system's `tooltip.tsx`.
 
 use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,
 };
 
+use crate::components::kbd::key_label;
 use crate::theme::ActiveTheme;
 
+#[derive(Clone)]
 pub struct Tooltip {
     text: SharedString,
     keys: Vec<SharedString>,
@@ -20,9 +22,12 @@ impl Tooltip {
         }
     }
 
-    /// One keyboard key, drawn as a kbd chip. Call once per key.
-    pub fn key(mut self, key: impl Into<SharedString>) -> Self {
-        self.keys.push(key.into());
+    /// The keys that do it too, as [`Kbd`](crate::components::kbd::Kbd) takes them: `"mod+k"`.
+    pub fn shortcut(mut self, shortcut: &str) -> Self {
+        self.keys = shortcut
+            .split('+')
+            .map(|key| key_label(key).into())
+            .collect();
         self
     }
 

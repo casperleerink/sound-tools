@@ -100,9 +100,9 @@ export function Transport({ clock, record, end }: { clock: Clock; record: Transp
     <div key="transport" style={pill}>
       <div style={{ direction: "row", align: "center", gap: 4 }}>
         <Button key="play" icon={() => (clock.playing ? "pause" : "play")} variant={() => (clock.playing ? "subtle" : "ghost")} color="green" size="sm" rounded
-          tooltip={() => (clock.playing ? "Pause · Space" : "Play · Space")} onClick={() => (clock.playing ? clock.pause() : clock.play())} />
+          tooltip={() => (clock.playing ? "Pause" : "Play")} shortcut="space" onClick={() => (clock.playing ? clock.pause() : clock.play())} />
         <Button key="stop" icon="square" variant="ghost" size="sm" rounded tooltip="Stop" onClick={() => clock.stop()} />
-        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded tooltip="Record · R" onClick={record.press} />
+        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded tooltip="Record" shortcut="r" onClick={record.press} />
       </div>
       {clockText("transport-position", 28, "position")}
       {clockText("transport-time", 34, "time", "gray-700")}
@@ -133,7 +133,7 @@ export function Transport({ clock, record, end }: { clock: Clock; record: Transp
         <NumberBox key="transport-note" width={14} values={NOTES} unit="note"
           value={() => signature().note} onChange={(note) => setSignature(signature().beats, note)} show={now.tick} />
       </div>
-      <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded tooltip="Play notes with the computer keys"
+      <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded tooltip="Play notes with the computer keys" shortcut="cmd-k"
         onClick={() => clock.setComputerKeys(!clock.computerKeys)} />
       <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="sm" rounded tooltip="Metronome" onClick={() => clock.setClick(!clock.click)} />
       <PeakMeter key="transport-meter" horizontal />

@@ -59,7 +59,7 @@ pub struct Toggle {
     color: Option<Hsla>,
     disabled: bool,
     tab_stop: bool,
-    tooltip: Option<SharedString>,
+    tooltip: Option<Tooltip>,
     on_change: Option<ChangeHandler>,
 }
 
@@ -119,8 +119,8 @@ impl Toggle {
         self
     }
 
-    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(text.into());
+    pub fn tooltip(mut self, tooltip: Tooltip) -> Self {
+        self.tooltip = Some(tooltip);
         self
     }
 
@@ -212,8 +212,8 @@ impl RenderOnce for Toggle {
                     })
                     .on_click(move |_: &ClickEvent, window, cx| on_change(!on, window, cx))
             })
-            .when_some(self.tooltip, |toggle, text| {
-                toggle.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
+            .when_some(self.tooltip, |toggle, tooltip| {
+                toggle.tooltip(move |_, cx| tooltip.clone().view(cx))
             })
             .map(|toggle| match self.face {
                 Face::Label(label) => toggle.child(label),

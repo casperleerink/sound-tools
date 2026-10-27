@@ -150,6 +150,11 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     if cx.try_global::<OverlaysState>().is_none() {
         install(window, cx);
     }
+    // Open, as the pointer resting on a control shows them.
+    let open = [
+        Tooltip::new("Play").shortcut("space").view(cx),
+        (Tooltip::new("Play notes with the computer keys").shortcut("mod+k")).view(cx),
+    ];
     let state = cx.global::<OverlaysState>();
     let (menu, search) = (state.menu.clone(), state.search.clone());
     let (split, split_open) = (state.split.clone(), state.split_open.clone());
@@ -170,13 +175,22 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .child("Play")
-        .tooltip(|_window, cx| Tooltip::new("Play").key("Space").view(cx));
+        .tooltip(|_window, cx| Tooltip::new("Play").shortcut("space").view(cx));
 
     div()
         .flex()
         .flex_col()
         .gap(px(24.))
-        .child(row("Tooltip", cx, tooltip))
+        .child(row(
+            "Tooltip: on hover, and open with a shortcut",
+            cx,
+            div()
+                .flex()
+                .items_start()
+                .gap(px(16.))
+                .child(tooltip)
+                .children(open),
+        ))
         .child(row("Dropdown menu", cx, menu))
         .child(row("Dropdown menu with a search", cx, search))
         // Last, so the open menu hangs over nothing.

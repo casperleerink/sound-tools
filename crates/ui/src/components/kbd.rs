@@ -27,9 +27,11 @@ impl Styled for Kbd {
     }
 }
 
-fn key_label(key: &str) -> String {
+pub(crate) fn key_label(key: &str) -> String {
     let label = match key.to_lowercase().as_str() {
         "enter" => "↵",
+        "space" => "Space",
+        "escape" => "Esc",
         modifier if cfg!(target_os = "macos") => match modifier {
             "mod" => "⌘",
             "alt" | "option" => "⌥",

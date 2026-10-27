@@ -27,6 +27,7 @@ use sound_ui::components::select::Select;
 use sound_ui::components::slider::Slider;
 use sound_ui::components::split_button::SplitButton;
 use sound_ui::components::toggle::Toggle;
+use sound_ui::components::tooltip::Tooltip;
 
 use super::overlays::split_button;
 
@@ -469,18 +470,18 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
             sample(
                 "lanes",
                 cx,
-                Toggle::icon("lanes-off", "automation", false).tooltip("Automation"),
+                Toggle::icon("lanes-off", "automation", false).tooltip(Tooltip::new("Automation")),
             ),
             sample(
                 "lanes shown",
                 cx,
-                Toggle::icon("lanes-on", "automation", true).tooltip("Automation"),
+                Toggle::icon("lanes-on", "automation", true).tooltip(Tooltip::new("Automation")),
             ),
             sample(
                 "lanes, 2",
                 cx,
                 Toggle::icon("lanes-count", "automation", false)
-                    .tooltip("Automation")
+                    .tooltip(Tooltip::new("Automation"))
                     .count(2),
             ),
             sample(
