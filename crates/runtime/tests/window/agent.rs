@@ -47,7 +47,14 @@ fn install_sidebar_with(
             let settings = shared.clone();
             let sidebar = cx
                 .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
+            let (composer, asks) = (sidebar.clone(), sidebar.clone());
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+                .with_composer(move |cx| composer.read(cx).composer().clone())
+                .with_ask(move |message, window, cx| {
+                    asks.update(cx, |sidebar, cx| {
+                        sidebar.ask_from_outside(message, window, cx)
+                    })
+                })
         })
         .install(cx);
         settings
@@ -212,11 +219,11 @@ fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext)
     opened.begin("Build the extension");
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("question".to_string()),
-        title: "Run `cargo build`".to_string(),
-        command: None,
+        title: "Run".to_string(),
+        command: Some("cargo build".to_string()),
     };
     opened.receive([AgentEvent::TurnStarted, question.clone()]);
-    assert_eq!(approval(&mut opened).as_deref(), Some("Run `cargo build`"));
+    assert_eq!(approval(&mut opened).as_deref(), Some("Run"));
     let allow = opened.control("approval-allow");
     opened.click(allow);
     assert_eq!(approval(&mut opened), None);
@@ -1063,6 +1070,41 @@ fn the_problems_of_the_last_turn_ask_the_agent_to_fix_them(cx: &mut TestAppConte
     assert_eq!(text, "Fix the files that are not live.");
     // The agent works on it, so the line goes.
     assert!(opened.find("agent-fix").is_none());
+}
+
+/// The window's notice of files that are not live asks the agent to fix them, as the line
+/// under a turn does: the thread shows, over the instructions too, and a draft stays.
+#[gpui::test]
+fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Make the bass softer");
+    for control in ["agent-new-thread-menu", "menu-instructions-project"] {
+        let control = opened.control(control);
+        opened.click(control);
+    }
+    opened.cx.run_until_parked();
+    write_outside(&mut opened, "state/bass.json", "{");
+
+    let ask = opened.control("problems-ask");
+    opened.click(ask);
+    let Ok(Command::Send(Message { text, .. })) = commands.try_recv() else {
+        panic!("nothing went to the agent");
+    };
+    assert_eq!(text, sound_agent::FIX_NOT_LIVE);
+    assert!(opened.find("agent-instructions-back").is_none());
+    assert!(opened.composer_focused());
+    let draft = opened
+        .cx
+        .read(|cx| sidebar.read(cx).composer().read(cx).text().to_string());
+    assert_eq!(draft, "Make the bass softer");
 }
 
 /// The watcher applies a write after its grouping window, so the last write of a turn can

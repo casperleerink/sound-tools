@@ -10,4 +10,4 @@ mod sidebar;
 
 pub use markdown::{Markdown, MarkdownText};
 pub use onboarding::{Onboarding, Setup, SetupAction};
-pub use sidebar::Sidebar;
+pub use sidebar::{FIX_NOT_LIVE, Sidebar};

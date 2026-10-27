@@ -54,8 +54,9 @@ use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, 
 actions!(agent_sidebar, [Stop]);
 
 const KEY_CONTEXT: &str = "AgentSidebar";
-/// What "Ask the agent to fix them" sends. The agent reads what is not live itself.
-const FIX: &str = "Fix the files that are not live.";
+/// What the composer asks the agent about the files that are not live, from under a turn or
+/// from the window's notice. The agent reads what is not live itself.
+pub const FIX_NOT_LIVE: &str = "Fix the files that are not live.";
 
 /// How far the list draws beyond what shows, so a short scroll needs no measuring.
 const OVERDRAW: f32 = 800.;
@@ -591,7 +592,7 @@ impl Sidebar {
                         let problems = entry::problems(problems, index, open, toggle, window, cx);
                         let fix = self.goes_on_after(index).then(|| {
                             let click = cx.listener(|sidebar, _, window, cx| {
-                                sidebar.ask(FIX.to_string(), window, cx);
+                                sidebar.ask(FIX_NOT_LIVE.to_string(), window, cx);
                             });
                             entry::action(
                                 "fix",
@@ -664,10 +665,26 @@ impl Sidebar {
 
     /// `message` sent as if typed, leaving the composer as it is. Once it went, the composer
     /// has the keys, as after a message.
-    fn ask(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.send_text(message, cx) {
+    fn ask(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let sent = self.send_text(message, cx);
+        if sent {
             window.focus(&self.focus_handle(cx), cx);
         }
+        sent
+    }
+
+    /// [`Self::ask`] from outside the sidebar, such as the window's notice: the thread shows,
+    /// over the instructions too. Whether it went.
+    pub fn ask_from_outside(
+        &mut self,
+        message: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.instructions.is_some() {
+            self.close_instructions(window, cx);
+        }
+        self.ask(message.to_string(), window, cx)
     }
 
     /// Under a turn that failed: its message again, as it was sent.

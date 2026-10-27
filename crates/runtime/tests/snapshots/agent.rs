@@ -413,7 +413,14 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
             let sidebar = cx.new(|cx| {
                 Sidebar::with_program(session, Some(installed), None, settings, window, cx)
             });
+            let (composer, asks) = (sidebar.clone(), sidebar.clone());
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+                .with_composer(move |cx| composer.read(cx).composer().clone())
+                .with_ask(move |message, window, cx| {
+                    asks.update(cx, |sidebar, cx| {
+                        sidebar.ask_from_outside(message, window, cx)
+                    })
+                })
         })
         .install(cx)
     });

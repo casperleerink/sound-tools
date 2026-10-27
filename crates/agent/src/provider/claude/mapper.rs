@@ -554,8 +554,7 @@ impl Action {
 }
 
 /// What an approval asks: the request's title, and for a command the whole command apart, as
-/// it will run, since that is what the composer allows. A step's title keeps only its first
-/// line.
+/// it will run, since that is what the composer allows.
 fn question(tool: &str, input: &Value, folder: &Path) -> (String, Option<String>) {
     match (tool, input.get("command").and_then(Value::as_str)) {
         ("Bash" | "PowerShell", Some(command)) => {
