@@ -3,8 +3,7 @@
 //!
 //! It opens a copy of the folder, because opening a project writes into it. It plays no sound,
 //! since the engine runs offline, and writes nothing to the app's support folder: no agent
-//! panel, no plugin scan, no sampler library. Bun runs the tools as in the app. The window is
-//! 1470 x 920 points at scale 2. macOS only: gpui renders offscreen with Metal alone.
+//! panel, no plugin scan, no sampler library.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -16,7 +15,7 @@ use plugin_host::{Plugins, ScanCache, ScanCommand};
 use sound_core::Engine;
 use sound_ui::{Assets, POLL_INTERVAL, Session};
 
-use crate::window::Shell;
+use crate::window::{Shell, WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::{OFFLINE, open_with_extensions, views};
 
 /// How long the window runs before the picture: Bun draws a card within milliseconds, and a
@@ -24,7 +23,7 @@ use crate::{OFFLINE, open_with_extensions, views};
 const SETTLE: Duration = Duration::from_millis(500);
 
 pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
-    if !project.join("project.json").is_file() {
+    if !project.join(crate::PROJECT_FILE).is_file() {
         bail!("{} is not a Sound Tools project", project.display());
     }
     // The folder name is the project name in the window.
@@ -52,7 +51,7 @@ pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
     let plugins = Plugins::listing(Vec::new(), ScanCommand::this_program()?, ScanCache::none());
     let (project, extensions) = open_with_extensions(&copy, control, plugins.clone())?;
     let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
-    let window = cx.open_window(size(px(1470.), px(920.)), |window, cx| {
+    let window = cx.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), |window, cx| {
         cx.new(|cx| {
             let (mut views, mut devices) = views(plugins.downgrade());
             if let Some(extensions) = extensions {
