@@ -29,10 +29,11 @@ use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::gesture::ValueChange;
+use sound_ui::components::gesture::{ValueChange, ValueKey};
 use sound_ui::components::icon::Icon;
 use sound_ui::components::knob::{
-    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
+    FINE_KEY_STEP, KEY_STEP, decibels_readout, hertz_readout, milliseconds_readout, pan_readout,
+    percent_readout, short,
 };
 use sound_ui::components::meter::Meter;
 use sound_ui::components::notice::{Notice, NoticeTone};
@@ -739,11 +740,14 @@ impl TypeScriptCard {
         .detach();
         // What had the focus in it let go: a text field in an overlay on a press that nothing
         // focusable took, such as on a space, or a button that went, such as a panel's close.
-        // The card takes the keys from the window, for escape to close an overlay and for the
-        // keys of its page.
+        // The page, or its part in the title bar, takes the keys back from the window, for escape
+        // to close an overlay and for the keys of its page.
         cx.on_focus_lost(window, |view, window, cx| {
-            if window.focus_lost_restore_target(cx).as_ref() == Some(&view.focus) {
-                window.focus(&view.focus, cx);
+            let target = window.focus_lost_restore_target(cx);
+            if let Some(target) =
+                target.filter(|target| [&view.focus, &view.title_focus].contains(&target))
+            {
+                window.focus(&target, cx);
             }
         })
         .detach();
@@ -1502,6 +1506,12 @@ impl TypeScriptCard {
         }
     }
 
+    /// Whether its page takes the keys: its tool hears them, or it shows an overlay, for escape
+    /// to close it.
+    fn takes_keys(&self, info: Option<&ToolInfo>) -> bool {
+        info.is_some_and(|info| info.keys) || !self.overlays.is_empty()
+    }
+
     /// The record with each field it leaves out at its default, and its tool.
     fn record(&self, cx: &App) -> (Value, Option<ToolInfo>) {
         let info = self.live.read(cx).info(self.card);
@@ -1570,37 +1580,7 @@ impl TypeScriptCard {
             }
             return;
         }
-        let played = self.live.read(cx).played_of(&self.id).cloned();
-        let sources = Sources {
-            tick: 0.0,
-            watches: &BTreeMap::new(),
-            state: &state,
-            info: info.as_ref(),
-            played: played.as_ref(),
-            drag: None,
-            spaces: &HashMap::new(),
-            hovered: None,
-            feeds: &self.feeds,
-        };
-        let from = turns.map(|turns| {
-            let turns = turns.as_ref()?;
-            match turns.target(info.as_ref()) {
-                Turned::Field {
-                    child: Some(child),
-                    name,
-                } => {
-                    let child = self.id.child(child).ok()?;
-                    let record = state_of(self.session.read(cx).project(), &child)?;
-                    let value = record
-                        .get(name)
-                        .and_then(Value::as_f64)
-                        .map(|value| value as f32);
-                    value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
-                }
-                Turned::Field { child: None, name } => sources.field(name),
-                Turned::Input(name) => sources.input(name),
-            }
-        });
+        let from = turns.map(|turns| self.turned_value(turns.as_ref()?, &state, info.as_ref(), cx));
         let (across, down) = frame.view.scale();
         let held = Held {
             space: frame.key.clone(),
@@ -1742,6 +1722,72 @@ impl TypeScriptCard {
         true
     }
 
+    /// What `turns` turns is now.
+    fn turned_value(
+        &self,
+        turns: &tree::Turns,
+        state: &Value,
+        info: Option<&ToolInfo>,
+        cx: &App,
+    ) -> Option<f32> {
+        match turns.target(info) {
+            Turned::Field {
+                child: Some(child),
+                name,
+            } => {
+                let child = self.id.child(child).ok()?;
+                let record = state_of(self.session.read(cx).project(), &child)?;
+                let value = record.get(name).and_then(tree::number_of);
+                value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
+            }
+            target => {
+                let played = self.live.read(cx).played_of(&self.id).cloned();
+                let sources = Sources {
+                    tick: 0.0,
+                    watches: &BTreeMap::new(),
+                    state,
+                    info,
+                    played: played.as_ref(),
+                    drag: None,
+                    spaces: &HashMap::new(),
+                    hovered: None,
+                    feeds: &self.feeds,
+                };
+                match target {
+                    Turned::Input(name) => sources.input(name),
+                    Turned::Field { name, .. } => sources.field(name),
+                }
+            }
+        }
+    }
+
+    /// A key on the focused control of what `turns` turns, as a knob of the window takes it: an
+    /// arrow steps it a fiftieth of its travel, a five-hundredth with shift, backspace puts it at
+    /// its default. One undo step each. Whether the key was the control's: an arrow is, at an
+    /// end too; backspace only with a default; escape is what holds it.
+    fn turn_by_key(&mut self, turns: &tree::Turns, key: ValueKey, cx: &mut Context<Self>) -> bool {
+        let value = match key {
+            ValueKey::Cancel => return false,
+            ValueKey::Reset => match turns.default {
+                Some(default) => Some(default),
+                None => return false,
+            },
+            ValueKey::Step { up, fine } => {
+                let by = if fine { FINE_KEY_STEP } else { KEY_STEP };
+                let by = if up { by } else { -by };
+                let (state, info) = self.record(cx);
+                let range = range_of(info.as_ref(), turns).or_else(|| self.child_range(turns, cx));
+                let now = self.turned_value(turns, &state, info.as_ref(), cx);
+                (range.zip(now))
+                    .map(|(range, now)| range.value((range.position(now) + by).clamp(0.0, 1.0)))
+            }
+        };
+        if let Some(value) = value {
+            self.turn(turns, ValueChange::Set(value), cx);
+        }
+        true
+    }
+
     /// Turns what the drag turns to where the pointer is.
     fn turn_held(&mut self, held: &Held, cx: &mut Context<Self>) {
         let info = self.live.read(cx).info(self.card);
@@ -1812,7 +1858,7 @@ impl TypeScriptCard {
                     &id,
                     &label,
                     change,
-                    |state, value| tree::set_field(state, &field, tree::decimal(value)),
+                    |state, value| tree::set_field(state, &field, tree::number_value(value)),
                     cx,
                 );
             }
@@ -2408,6 +2454,8 @@ struct Drawing<'a, 'b> {
     under_tooltip: bool,
     /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
     takes_keys: bool,
+    /// The keys of what the page shows in the title bar, while the page hears keys.
+    title_focus: Option<FocusHandle>,
     /// The title bar's div the body left out.
     title_bar: Option<(usize, Vec<usize>)>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
@@ -2702,12 +2750,16 @@ impl Drawing<'_, '_> {
                             true => {
                                 let element = self.heard_div(element, id, pointer, carry, on_drop);
                                 match *tab_stop == Some(true) && pointer.click {
-                                    true => TabStop::new(
-                                        format!("tab-{name}"),
-                                        self.keyboard_control(element),
-                                    )
-                                    .on_click(self.clicked(id))
-                                    .into_any_element(),
+                                    true => {
+                                        let control = Control {
+                                            keys: Keys::Press,
+                                            menu: pointer.press.then_some(pointer),
+                                        };
+                                        let element = self.control(element, id, control);
+                                        TabStop::new(format!("tab-{name}"), element)
+                                            .on_click(self.clicked(id))
+                                            .into_any_element()
+                                    }
                                     false => element.into_any_element(),
                                 }
                             }
@@ -2967,7 +3019,11 @@ impl Drawing<'_, '_> {
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
         let wrap = self
-            .keyboard_control(div().flex_none().occlude().debug_selector(move || selector))
+            .control(
+                div().flex_none().occlude().debug_selector(move || selector),
+                id,
+                Control::press(),
+            )
             .when(hears.any(), Div::cursor_pointer);
         self.hears_pointer(wrap, id, hears)
             .child(toggle)
@@ -3020,27 +3076,29 @@ impl Drawing<'_, '_> {
                 },
             )
             .debug_selector(move || selector);
-        let wrap = self.keyboard_control(div().flex_none().relative());
+        let wrap = self.control(div().flex_none().relative(), id, Control::press());
         self.hears_pointer(wrap, id, hears)
             .child(button)
             .when(hears.any(), |wrap| wrap.child(placed(id, &self.placed)))
             .into_any_element()
     }
 
-    /// A button or a toggle: its keys, see [`control_keys`], and a press with the pointer leaves
-    /// the keys where a press on its page would, as a button of the system takes no focus from
-    /// the pointer, so that space after a click on play still pauses.
-    fn keyboard_control<E: InteractiveElement>(&mut self, wrap: E) -> E {
-        let page = (self.takes_keys && !self.out_of_page).then(|| self.focus.clone());
+    /// The one way a control of a tool meets the keys and the pointer, see [`Control`]. A press
+    /// with the pointer leaves the keys where a press on its page would, as a control of the
+    /// system takes no focus from the pointer: space after a click on play still pauses.
+    fn control<E: InteractiveElement>(&mut self, wrap: E, id: u64, control: Control) -> E {
+        let page = match self.out_of_page {
+            false => self.takes_keys.then(|| self.focus.clone()),
+            true => self.title_focus.clone(),
+        };
         let before = Rc::new(RefCell::new(None));
-        control_keys(wrap)
+        let wrap = wrap
             .capture_any_mouse_down({
                 let before = before.clone();
                 move |_, window, cx| *before.borrow_mut() = window.focused(cx)
             })
             // After GPUI gives the press's focus away: a div that is a tab stop takes it after
-            // this listener, on the same element. A text field in it keeps a press's focus,
-            // such as a track's name being renamed.
+            // this listener, on the same element. A text field in it keeps the focus.
             .on_any_mouse_down(move |_, window, cx| {
                 let focus = page.clone().or_else(|| before.borrow_mut().take());
                 window.defer(cx, move |window, cx| match focus {
@@ -3048,7 +3106,39 @@ impl Drawing<'_, '_> {
                     Some(focus) => window.focus(&focus, cx),
                     None => window.blur(cx),
                 });
-            })
+            });
+        let wrap = match control.menu {
+            Some(hears) => {
+                wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+                    let keys = &event.keystroke;
+                    let opens = keys.key == "menu" || (keys.key == "f10" && keys.modifiers.shift);
+                    if opens && !event.is_held {
+                        // A right press of it, as the pointer gives.
+                        let press =
+                            press_of((0.0, 0.0), MouseButton::Right, 1, Modifiers::default());
+                        view.hang_menus_under(id);
+                        view.event(id, EventKind::Press, press.clone(), cx);
+                        if hears.release {
+                            view.event(id, EventKind::Release, press, cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                }))
+            }
+            None => wrap,
+        };
+        match control.keys {
+            Keys::Press => press_keys(wrap),
+            Keys::Turn(turns) => {
+                wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+                    if let Some(key) = ValueKey::of(&event.keystroke)
+                        && view.turn_by_key(&turns, key, cx)
+                    {
+                        cx.stop_propagation();
+                    }
+                }))
+            }
+        }
     }
 
     /// The click of a button or a toggle, which is a tab stop: enter clicks it too. A mouse
@@ -3192,6 +3282,7 @@ impl Drawing<'_, '_> {
     ) -> AnyElement {
         let (key, view, fit) = self.space_view(space, index);
         let selector = format!("space-{key}");
+        let name = key.clone();
         let inner = match self.lifting.filter(|(lifted, _)| lifted.contains(&id)) {
             // The layer over the page draws it where this lays it out.
             Some((_, places)) => {
@@ -3230,7 +3321,35 @@ impl Drawing<'_, '_> {
         } else {
             holder.flex_none()
         };
-        holder.into_any_element()
+        match self.turned_by_keys(space, children) {
+            Some(turns) => {
+                let control = Control {
+                    keys: Keys::Turn(turns),
+                    menu: None,
+                };
+                // Round corners for its ring, as the window's controls have.
+                let holder = holder
+                    .id(ElementId::Name(name.clone().into()))
+                    .rounded(px(6.));
+                let holder = self.control(holder, id, control);
+                TabStop::new(format!("tab-{name}"), holder).into_any_element()
+            }
+            None => holder.into_any_element(),
+        }
+    }
+
+    /// What a space turns with the keys: a knob's or a fader's field, which it or one shape in it
+    /// drags, as a control of the window does. A space of more drags, such as a timeline, has none.
+    fn turned_by_keys(&self, space: &SpaceProps, children: &[usize]) -> Option<tree::Turns> {
+        let shapes = (children.iter()).filter_map(|child| match &self.table.get(*child)?.props {
+            Props::Shape(shape) => self.table.drag(shape.drag),
+            _ => None,
+        });
+        let mut turned = (self.table.drag(space.drag).into_iter())
+            .chain(shapes)
+            .flat_map(|drag| [drag.x.clone(), drag.y.clone()].into_iter().flatten());
+        let turns = turned.next()?;
+        turned.next().is_none().then_some(turns)
     }
 
     /// The key of a space, and where it is scrolled to and how far zoomed now, which the spaces
@@ -4750,7 +4869,10 @@ impl TypeScriptCard {
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
-        let takes_keys = info.as_ref().is_some_and(|info| info.keys) || !self.overlays.is_empty();
+        let takes_keys = self.takes_keys(info.as_ref());
+        let title_focus = (info.as_ref())
+            .is_some_and(|info| info.keys)
+            .then(|| self.title_focus.clone());
         Drawing {
             info,
             state,
@@ -4779,6 +4901,7 @@ impl TypeScriptCard {
             out_of_page: false,
             under_tooltip: false,
             takes_keys,
+            title_focus,
             title_bar: None,
             lifting: None,
             cx,
@@ -4925,7 +5048,7 @@ impl Render for TypeScriptCard {
         let (text, background) = (theme.gray_950, theme.gray_100);
         // A click in what takes the keys gives them: the body of a card, a whole page. Also while
         // it shows an overlay, for escape to close it.
-        let takes_keys = hears_keys || !self.overlays.is_empty();
+        let takes_keys = self.takes_keys(info.as_ref());
         let focus = self.focus.clone();
         let context = key_context.filter(|_| hears_keys);
         let takes_keys = move |element: Div, cx: &mut Context<Self>| match takes_keys {
@@ -5112,10 +5235,38 @@ fn hearing_keys(
         }))
 }
 
-/// The keys of a button or a toggle with the focus. Enter clicks it and is no key of its view,
+/// A control of a tool, as [`Drawing::control`] gives it the keys and the pointer: what it does
+/// with the keys while it has the focus, as a control of the window does, and whether the menu
+/// key opens its menu. Every other key goes on to its page.
+struct Control {
+    keys: Keys,
+    /// The menu key, or shift-F10 where there is none, presses it as the right button does: what
+    /// of the pointer it hears.
+    menu: Option<Hears>,
+}
+
+impl Control {
+    fn press() -> Self {
+        Self {
+            keys: Keys::Press,
+            menu: None,
+        }
+    }
+}
+
+enum Keys {
+    /// A button, a toggle, a select or a div that is a tab stop: enter clicks it, see
+    /// [`press_keys`].
+    Press,
+    /// A knob or a fader on a field: the arrows step it and backspace resets it, see
+    /// [`TypeScriptCard::turn_by_key`].
+    Turn(tree::Turns),
+}
+
+/// The keys of a pressed control with the focus. Enter clicks it and is no key of its view,
 /// such as the song's enter that opens the selected clip. Space stays its view's alone, such as
 /// the song's play and pause, which GPUI would follow with a click.
-fn control_keys<E: InteractiveElement>(wrap: E) -> E {
+fn press_keys<E: InteractiveElement>(wrap: E) -> E {
     wrap.capture_key_down(|event: &KeyDownEvent, window, _| {
         if event.keystroke.key == "space" {
             window.prevent_default();

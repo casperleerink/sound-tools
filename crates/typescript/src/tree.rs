@@ -2175,6 +2175,22 @@ pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_
     }
 }
 
+/// A number of a field as a record holds it: `"-inf"` for silence, which JSON has no number for.
+pub(crate) fn number_value(number: f32) -> serde_json::Value {
+    match number == f32::NEG_INFINITY {
+        true => serde_json::Value::from("-inf"),
+        false => decimal(number),
+    }
+}
+
+/// A number a record holds, `"-inf"` too, see [`number_value`].
+pub(crate) fn number_of(value: &serde_json::Value) -> Option<f32> {
+    match value.as_str() {
+        Some("-inf") => Some(f32::NEG_INFINITY),
+        _ => value.as_f64().map(|value| value as f32),
+    }
+}
+
 /// A number as a record writes it: the shortest decimal that reads back as the same `f32`. A
 /// knob at 16.7 writes 16.7, not the 16.700000762939453 that a widening to `f64` would.
 pub(crate) fn decimal(number: f32) -> serde_json::Value {

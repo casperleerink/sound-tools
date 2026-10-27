@@ -35,8 +35,8 @@ const SWEEP: f32 = 270.;
 /// Points of pointer travel for the whole travel.
 pub(crate) const TRAVEL: f32 = 200.;
 /// What one arrow key moves, as a part of the travel. With shift it is a tenth of this.
-const KEY_STEP: f32 = 0.02;
-const FINE_KEY_STEP: f32 = KEY_STEP * gesture::FINE;
+pub const KEY_STEP: f32 = 0.02;
+pub const FINE_KEY_STEP: f32 = KEY_STEP * gesture::FINE;
 
 const DIAL: f32 = CONTROL_HEIGHT;
 const TRACK_WIDTH: f32 = 2.5;

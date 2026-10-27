@@ -154,7 +154,10 @@ export interface SpaceProps extends PointerEvents {
   follow?: { x?: string; y?: string };
   background?: Bind<Color>;
   radius?: number;
-  /** A drag from where no shape that hears the pointer is, such as a marquee. */
+  /**
+   * A drag from where no shape that hears the pointer is, such as a marquee. A space whose one
+   * drag turns a field, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
+   */
   drag?: Drag;
   /** Files or a carried value let go on it, where in its units. */
   onDrop?: (drop: Dropped) => void;
@@ -383,7 +386,7 @@ interface DivProps extends PointerEvents {
   disabled?: Bind<boolean>;
   cursor?: Pointed["cursor"];
   tooltip?: Bind<string>;
-  /** With an `onClick`: Tab reaches it, its ring shows, and enter clicks it, as a button's, for a div that does what a button does, such as a track's head. */
+  /** With an `onClick`: Tab reaches it, its ring shows, and enter clicks it, as a button's, for a div that does what a button does, such as a track's head. The menu key, or shift-F10, presses it as the right button does, for its menu. */
   tabStop?: boolean;
   /** The pointer came over it, `true`, or left it, `false`, also over its children. */
   onHover?: (over: boolean) => void;

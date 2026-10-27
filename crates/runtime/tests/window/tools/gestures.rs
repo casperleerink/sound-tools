@@ -848,3 +848,138 @@ fn tab_and_enter_open_a_select_whose_keys_pick(cx: &mut TestAppContext) {
         window.record("picked")["grid"] == 480
     });
 }
+
+const STEPPED: &str = r#"import { h, Knob, number, tool } from "./sdk";
+
+tool({
+  name: "stepped",
+  title: "Stepped",
+  when: "A test",
+  doc: "A knob on a field, on a page that holds the keys first.",
+  state: { level: number({ default: 50, min: 0, max: 100 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h(Knob, { field: "level", label: "Level", min: 0, max: 100, default: 50 }),
+});
+"#;
+
+/// Tab reaches a knob on a field: an arrow steps it a fiftieth of its travel, as the window's
+/// knobs, and backspace puts it at its default.
+#[gpui::test]
+fn the_keys_step_a_knob_on_a_field_and_reset_it(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("stepped", STEPPED));
+    window.until_found("space-knob-level");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "up");
+    press_key(&mut window, "up");
+    window.until("two steps up", |window| {
+        window.record("stepped")["level"].as_f64() == Some(54.0)
+    });
+    press_key(&mut window, "backspace");
+    window.until("the default", |window| {
+        window.record("stepped")["level"].as_f64() == Some(50.0)
+    });
+}
+
+const MENUED: &str = r#"import { h, text, tool } from "./sdk";
+
+tool({
+  name: "menued",
+  title: "Menued",
+  when: "A test",
+  doc: "A row that is a tab stop and opens a menu on a right press, as a track's head.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: () => {},
+  view: ({ update }) =>
+    h("div", {
+      key: "row", tabStop: true, style: { width: 200, height: 40 },
+      onClick: () => {},
+      onPress: ({ button }) => update("press", ({ state }) => { state.heard = `${state.heard} ${button}`.trim(); }),
+    }),
+});
+"#;
+
+/// Shift-F10 on a div that is a tab stop presses it as the right button does, for its menu.
+#[gpui::test]
+fn shift_f10_on_a_tab_stop_is_its_right_press(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("menued", MENUED));
+    window.until_found("div-row");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "shift-f10");
+    window.until("a right press", |window| {
+        window.record("menued")["heard"] == "right"
+    });
+}
+
+const FADED: &str = r#"import { Fader, h, tool } from "./sdk";
+
+tool({
+  name: "faded",
+  title: "Faded",
+  when: "A test",
+  doc: "A fader on the gain of its child, on a page that holds the keys first.",
+  state: {},
+  behaviour: () => ({ connections: [] }),
+  onKey: () => {},
+  view: () => h(Fader, { field: "level.gain_db", length: 100, default: 0 }),
+});
+"#;
+
+/// A fader at silence stays there with down, and up moves it one step off the bottom, not to
+/// the middle of its travel; silence is written as `"-inf"`.
+#[gpui::test]
+fn the_keys_step_a_silent_fader_from_silence(cx: &mut TestAppContext) {
+    let files = [
+        (ONLY_THE_TOOL[0].0, ONLY_THE_TOOL[0].1),
+        ("extensions/faded.ts", FADED),
+        (
+            "state/faded/instance.json",
+            r#"{"tool": "faded", "state": {}}"#,
+        ),
+        (
+            "state/faded/level.json",
+            r#"{"tool": "fader", "state": {"gain_db": "-inf"}}"#,
+        ),
+    ];
+    let mut window = open(cx, &files);
+    window.until_found("space-fader-level.gain_db");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "down");
+    window.wait_for_bun();
+    assert_eq!(window.record("faded/level")["gain_db"], "-inf");
+    press_key(&mut window, "up");
+    window.until("one step off the bottom", |window| {
+        let gain = window.record("faded/level")["gain_db"].as_f64();
+        gain.is_some_and(|gain| gain < -30.0)
+    });
+}
+
+const NUMBERED: &str = r#"import { h, number, NumberBox, text, tool } from "./sdk";
+
+tool({
+  name: "numbered",
+  title: "Numbered",
+  when: "A test",
+  doc: "A number on a field with no default for its control, and the keys its page hears.",
+  state: { level: number({ default: 50, min: 0, max: 100 }), heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: () => h(NumberBox, { key: "level", field: "level", width: 40 }),
+});
+"#;
+
+/// A key a focused control does nothing with goes on to its page: backspace on a number with no
+/// default, as on the window's controls.
+#[gpui::test]
+fn a_key_a_control_does_nothing_with_is_its_pages(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("numbered", NUMBERED));
+    window.until_found("space-level");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "backspace");
+    window.until("key-backspace", |window| {
+        window.record("numbered")["heard"] == "key-backspace"
+    });
+}

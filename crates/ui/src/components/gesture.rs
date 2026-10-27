@@ -111,7 +111,7 @@ impl Travel {
 
 /// What a key does to a focused control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ValueKey {
+pub enum ValueKey {
     /// Up or right raise the value, down or left lower it. With shift the step is fine.
     Step { up: bool, fine: bool },
     /// Backspace or delete: the default value.
@@ -123,7 +123,7 @@ pub(crate) enum ValueKey {
 impl ValueKey {
     /// `None` for any other key, and for a key with control, alt or command, which belongs to
     /// something else.
-    pub(crate) fn of(keystroke: &Keystroke) -> Option<Self> {
+    pub fn of(keystroke: &Keystroke) -> Option<Self> {
         let modifiers = keystroke.modifiers;
         if modifiers.control || modifiers.alt || modifiers.platform {
             return None;
