@@ -2589,6 +2589,8 @@ impl Drawing<'_, '_> {
                 cursor,
                 tooltip,
                 tab_stop,
+                keys,
+                on_key,
                 on_release,
                 on_click,
                 on_hover,
@@ -2726,7 +2728,10 @@ impl Drawing<'_, '_> {
                     (false, None) => element,
                 };
                 let pressed = style.pressed().filter(|_| !disabled);
-                let inner = match hears || pressed.is_some() || tooltip.is_some() || cut.is_some() {
+                let own =
+                    (*on_key == Some(true) && !disabled).then(|| keys.clone().unwrap_or_default());
+                let stateful = hears || pressed.is_some() || tooltip.is_some() || cut.is_some();
+                let inner = match stateful || own.is_some() {
                     false => element.into_any_element(),
                     true => {
                         let name = element_name("div", key.as_deref(), index);
@@ -2746,22 +2751,25 @@ impl Drawing<'_, '_> {
                                     false => Tooltip::new(text.clone()).view(cx),
                                 })
                             });
-                        match hears {
+                        let element = match hears {
+                            true => self.heard_div(element, id, pointer, carry, on_drop),
+                            false => element,
+                        };
+                        let element = match &own {
+                            Some(keys) => element.on_key_down(self.own_keys(id, keys.clone())),
+                            None => element,
+                        };
+                        let click = hears && pointer.click;
+                        match *tab_stop == Some(true) && (click || own.is_some()) {
                             true => {
-                                let element = self.heard_div(element, id, pointer, carry, on_drop);
-                                match *tab_stop == Some(true) && pointer.click {
-                                    true => {
-                                        let control = Control {
-                                            keys: Keys::Press,
-                                            menu: pointer.press.then_some(pointer),
-                                        };
-                                        let element = self.control(element, id, control);
-                                        TabStop::new(format!("tab-{name}"), element)
-                                            .on_click(self.clicked(id))
-                                            .into_any_element()
-                                    }
-                                    false => element.into_any_element(),
-                                }
+                                let control = Control {
+                                    keys: if click { Keys::Press } else { Keys::Own },
+                                    menu: (hears && pointer.press).then_some(pointer),
+                                };
+                                let element = self.control(element, id, control);
+                                TabStop::new(format!("tab-{name}"), element)
+                                    .when(click, |stop| stop.on_click(self.clicked(id)))
+                                    .into_any_element()
                             }
                             false => element.into_any_element(),
                         }
@@ -3129,6 +3137,7 @@ impl Drawing<'_, '_> {
         };
         match control.keys {
             Keys::Press => press_keys(wrap),
+            Keys::Own => wrap,
             Keys::Turn(turns) => {
                 wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
                     if let Some(key) = ValueKey::of(&event.keystroke)
@@ -3139,6 +3148,28 @@ impl Drawing<'_, '_> {
                 }))
             }
         }
+    }
+
+    /// The keys `keys` of a div, while the focus is in it: its code hears them, and its page does
+    /// not. A text field in it has the keys first.
+    fn own_keys(
+        &mut self,
+        id: u64,
+        keys: Vec<String>,
+    ) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
+        (self.cx).listener(move |view, event: &KeyDownEvent, window, cx| {
+            let stroke = &event.keystroke;
+            if typing(window) || !keys.contains(&sound_ui::global_keys::chord_name(stroke)) {
+                return;
+            }
+            let modifiers = stroke.modifiers;
+            let key = json!({
+                "key": stroke.key, "down": true, "shift": modifiers.shift,
+                "alt": modifiers.alt, "cmd": modifiers.platform, "ctrl": modifiers.control,
+            });
+            view.event(id, EventKind::Key, key, cx);
+            cx.stop_propagation();
+        })
     }
 
     /// The click of a button or a toggle, which is a tab stop: enter clicks it too. A mouse
@@ -5261,6 +5292,8 @@ enum Keys {
     /// A knob or a fader on a field: the arrows step it and backspace resets it, see
     /// [`TypeScriptCard::turn_by_key`].
     Turn(tree::Turns),
+    /// A div that is a tab stop for its own `keys` alone, such as a number of what code keeps.
+    Own,
 }
 
 /// The keys of a pressed control with the focus. Enter clicks it and is no key of its view,

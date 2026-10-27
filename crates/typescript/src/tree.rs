@@ -61,6 +61,10 @@ props! {
         tooltip: String,
         /// Tab reaches it and enter clicks it, as a button's.
         tab_stop: bool,
+        /// The keys it takes while the focus is in it, by name, such as `up` or `cmd-c`.
+        keys: Vec<String>,
+        /// Its code hears its `keys`.
+        on_key: bool,
         /// The spaces whose scroll its children move with, by their keys.
         follow: Follow,
         /// What a drag of it carries to a node that hears a drop.

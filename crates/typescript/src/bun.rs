@@ -184,6 +184,8 @@ pub(crate) enum EventKind {
     Power,
     /// The close icon of an embedded card.
     Close,
+    /// A key a div takes, while the focus is in it.
+    Key,
     /// The title of an embedded card, which is a menu.
     Title,
     /// A pick in a select of the sidechain picker of an embedded card.

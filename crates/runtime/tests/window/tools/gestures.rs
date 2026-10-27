@@ -983,3 +983,37 @@ fn a_key_a_control_does_nothing_with_is_its_pages(cx: &mut TestAppContext) {
         window.record("numbered")["heard"] == "key-backspace"
     });
 }
+
+const TEMPO: &str = r#"import { h, number, NumberBox, tool } from "./sdk";
+
+tool({
+  name: "tempo",
+  title: "Tempo",
+  when: "A test",
+  doc: "A number its code keeps, as the transport's tempo, on a page that holds the keys first.",
+  state: { bpm: number({ default: 120, min: 10, max: 1000 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: ({ state, update }) =>
+    h(NumberBox, { key: "bpm", width: 40, min: 10, max: 1000, value: () => state.bpm, onChange: (bpm: number) => update("Change the tempo", ({ state }) => { state.bpm = bpm; }) }),
+});
+"#;
+
+/// Tab reaches a number its code keeps: the arrows step it, and enter types it.
+#[gpui::test]
+fn the_keys_step_and_type_a_number_its_code_keeps(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("tempo", TEMPO));
+    window.until_found("space-bpm");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "up");
+    press_key(&mut window, "up");
+    window.until("two steps up", |window| {
+        window.record("tempo")["bpm"].as_f64() == Some(122.0)
+    });
+    press_key(&mut window, "enter");
+    window.until_found("div-bpm-typed");
+    window.keys("cmd-a 9 0 enter");
+    window.until("typed", |window| {
+        window.record("tempo")["bpm"].as_f64() == Some(90.0)
+    });
+}

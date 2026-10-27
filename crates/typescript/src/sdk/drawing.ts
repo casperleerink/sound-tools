@@ -7,6 +7,7 @@ import { Child, element, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
 import type { Notes as NotesOfSound } from "./sound";
+import type { Key } from "./tools";
 
 /** `Input` is also the type of an input of a tool, `Notes` that of notes a sound sends. */
 export type Input = InputOfTool;
@@ -386,8 +387,11 @@ interface DivProps extends PointerEvents {
   disabled?: Bind<boolean>;
   cursor?: Pointed["cursor"];
   tooltip?: Bind<string>;
-  /** With an `onClick`: Tab reaches it, its ring shows, and enter clicks it, as a button's, for a div that does what a button does, such as a track's head. The menu key, or shift-F10, presses it as the right button does, for its menu. */
+  /** With an `onClick`: Tab reaches it, its ring shows, and enter clicks it, as a button's, for a div that does what a button does, such as a track's head. The menu key, or shift-F10, presses it as the right button does, for its menu. With `keys` alone, Tab reaches it for them. */
   tabStop?: boolean;
+  /** The keys it takes while the focus is in it, which `onKey` hears and its page does not: `["up", "down", "enter"]`. With `tabStop`, it holds the focus itself. */
+  keys?: readonly KeyName[];
+  onKey?: (key: Key) => void;
   /** The pointer came over it, `true`, or left it, `false`, also over its children. */
   onHover?: (over: boolean) => void;
   /** A drag of it carries this to a node that hears drops, such as another row of a list it reorders. */

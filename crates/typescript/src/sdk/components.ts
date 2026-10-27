@@ -3,10 +3,10 @@
 import { Arc, Button, Circle, Color, h, Icon, IconName, Input, Label, Line, Rect, Space, Style, Toggle } from "./drawing";
 import { Fields, Inputs, NumberField, Unit } from "./fields";
 import { Drawing } from "./host";
-import { Drag, DragResult, DragTurns, Live, now, Num, Press } from "./live";
+import { Drag, DragResult, DragTurns, KeyName, Live, now, Num, Press } from "./live";
 import { Child, currentCard, element, For, Show, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
-import { Context } from "./tools";
+import { Context, Key } from "./tools";
 
 /** The view that draws now, for the components below, which read its record and fields. */
 function drawing(): Drawing {
@@ -296,7 +296,8 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
 /**
  * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
  * or what code keeps, such as the tempo map, see `ValueProps`. A field's drag and a typed value
- * are one undo step each; what code keeps hears a value once, at the end of a drag.
+ * are one undo step each; what code keeps hears a value once, at the end of a drag. Tab reaches
+ * it: enter types, and the arrows step it.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const { key, unit, width, values, field } = props;
@@ -359,7 +360,18 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
       ],
     });
   };
-  return Show({
+  // Enter types a number. On what code keeps, which the window cannot step, the arrows step it
+  // as a drag does; a field's arrows are the window's, as a knob's.
+  const onKey = ({ key }: Key) => {
+    if (key === "enter") return type(true);
+    const by = key === "up" ? 1 : -1;
+    const next = values
+      ? values[Math.min(Math.max(Math.max(values.indexOf(taken(get())), 0) + by, 0), values.length - 1)]
+      : clamped(get() + by * step);
+    if (next !== undefined && next !== get()) set(next);
+  };
+  const keys: KeyName[] = field === undefined ? ["up", "down", "enter"] : ["enter"];
+  return h("div", { key: `${key}-keys`, tabStop: field === undefined, keys, onKey, style: { radius: 4, keep: true } }, Show({
     when: typing,
     children: () => {
       const before = untrack(get);
@@ -372,7 +384,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
       return h("div", { key: `${key}-typed` }, input);
     },
     fallback: box,
-  });
+  }));
 }
 
 /** A number field as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
