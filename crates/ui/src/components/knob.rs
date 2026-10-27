@@ -1,6 +1,5 @@
-//! Knob: a 36 pt dial in a cell, with its label and value under it. A 270 degree track with the
-//! value arc on it and a pointer on the face. A bipolar knob, such as pan, draws its arc from
-//! the top. Drag up and down, 200 pt for the whole travel; the rest of the gesture is in
+//! Knob: a dial in a cell, with its label and value under it. A bipolar knob, such as pan, draws
+//! its arc from the top. It drags up and down; the rest of the gesture is in
 //! [`gesture`](super::gesture), which the volume and the handles of a display share.
 //!
 //! Controlled: the caller owns the value, gives it on every render and hears a [`ValueChange`].
@@ -8,10 +7,8 @@
 //! once, also during a drag. The knob keeps only its focus handle and the open drag, in element
 //! state under its id.
 //!
-//! - The arrow keys step by a fiftieth of the travel, with shift by a five-hundredth.
-//! - The ring shows only when the focus came from the keyboard.
-//! - An automated knob shows the value its lane plays, with the mark of
-//!   [`automated`](super::automated), and does not drag, step or reset.
+//! An automated knob shows the value its lane plays, with the mark of
+//! [`automated`](super::automated), and does not drag, step or reset.
 //!
 //! [`KnobRange`] maps the value to the travel of the knob, linear or logarithmic, and gives
 //! values of three significant digits, so a readout and a saved file stay short.

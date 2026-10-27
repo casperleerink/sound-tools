@@ -56,8 +56,6 @@ impl<S: State> DeviceEdit<S> {
             let device = view.device();
             match event {
                 ProjectEvent::Changed(id) if id == device.instance.id() => cx.notify(),
-                // Deleted under a drag, from outside. The delete was the last write, so the
-                // gesture finishes and does not cancel: a cancel would bring the record back.
                 ProjectEvent::Deleted(id) if id == device.instance.id() => {
                     device.finish(cx);
                     cx.notify();

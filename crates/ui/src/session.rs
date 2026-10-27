@@ -1,9 +1,5 @@
-//! The bridge between a live project and GPUI views.
-//!
-//! One [`Session`] entity owns the [`Project`] on the main thread. It polls the engine and the
-//! file watcher from a timer, never from `render`, and tells views what changed. Views hold
-//! the entity and typed `Instance<S>` handles, read the current state in `render`, and keep
-//! no copy of saved state. `README.md` in this crate is the guide for view authors.
+//! The bridge between a live project and GPUI views: one [`Session`] entity per window owns the
+//! [`Project`] on the main thread.
 
 use std::fmt::Display;
 use std::ops::Range;

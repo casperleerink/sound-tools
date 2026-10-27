@@ -1,7 +1,6 @@
 //! Editable text field. GPUI ships no input widget, so this is the standard pattern: an
 //! `Entity` implementing `EntityInputHandler` plus a custom `Element` that shapes the text and
-//! paints selection and cursor. Heights 28/32 px, disabled renders at 40% opacity. Create
-//! with `cx.new(|cx| TextInput::new(cx))`.
+//! paints selection and cursor. Create with `cx.new(|cx| TextInput::new(cx))`.
 //!
 //! It behaves as a browser's input does on macOS. One line by default, which scrolls sideways
 //! to keep the caret in view. `multi_line(n)` wraps at the width of the box, grows up to `n`
