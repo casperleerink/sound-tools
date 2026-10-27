@@ -27,7 +27,7 @@ expression: "replay(\"interrupt_approval\")"
             "toolu_01TNwoh9etvJXQBWHNeN88VC",
         ),
         title: "Ran `git init`",
-        running_title: "Running `git init`",
+        running_title: "Running a command",
         request_title: "Run `git init`",
         kind: Run,
     },

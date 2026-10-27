@@ -486,7 +486,8 @@ fn plain(error: &str) -> String {
 
 /// What a tool use does, for its title.
 enum Action {
-    Run(String),
+    /// A command, cut to a line, and what the agent says it does, when it says.
+    Run(String, Option<String>),
     Read(String),
     Edit(String),
     Write(String),
@@ -499,7 +500,9 @@ impl Action {
         let text = |key: &str| input.get(key).and_then(Value::as_str);
         let path = || text("file_path").map(|path| relative(path, folder));
         let action = match tool {
-            "Bash" | "PowerShell" => text("command").map(|command| Action::Run(shorten(command))),
+            "Bash" | "PowerShell" => {
+                text("command").map(|command| Action::Run(shorten(command), described(input)))
+            }
             "Read" => path().map(Action::Read),
             "Edit" => path().map(Action::Edit),
             "Write" => path().map(Action::Write),
@@ -511,7 +514,7 @@ impl Action {
 
     fn kind(&self) -> StepKind {
         match self {
-            Action::Run(_) => StepKind::Run,
+            Action::Run(..) => StepKind::Run,
             Action::Read(path) => StepKind::Read { path: path.clone() },
             Action::Edit(path) | Action::Write(path) => StepKind::Change { path: path.clone() },
             Action::Search(_) => StepKind::Search,
@@ -521,7 +524,8 @@ impl Action {
 
     fn done_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Ran {}", code(command)),
+            Action::Run(_, Some(description)) => description.clone(),
+            Action::Run(command, None) => format!("Ran {}", code(command)),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edited {path}"),
             Action::Write(path) => format!("Wrote {path}"),
@@ -532,7 +536,8 @@ impl Action {
 
     fn running_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Running {}", code(command)),
+            Action::Run(_, Some(description)) => description.clone(),
+            Action::Run(_, None) => "Running a command".to_string(),
             Action::Read(path) => format!("Reading {path}"),
             Action::Edit(path) => format!("Editing {path}"),
             Action::Write(path) => format!("Writing {path}"),
@@ -543,7 +548,8 @@ impl Action {
 
     fn request_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Run {}", code(command)),
+            Action::Run(_, Some(description)) => description.clone(),
+            Action::Run(command, None) => format!("Run {}", code(command)),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edit {path}"),
             Action::Write(path) => format!("Write {path}"),
@@ -558,10 +564,18 @@ impl Action {
 fn question(tool: &str, input: &Value, folder: &Path) -> (String, Option<String>) {
     match (tool, input.get("command").and_then(Value::as_str)) {
         ("Bash" | "PowerShell", Some(command)) => {
-            ("Run".to_string(), Some(command.trim().to_string()))
+            let title = described(input).unwrap_or_else(|| "Run".to_string());
+            (title, Some(command.trim().to_string()))
         }
         _ => (Action::of(tool, input, folder).request_title(), None),
     }
+}
+
+/// What the agent says a command does, in its words: the composer's line for it, where the
+/// command itself is code.
+fn described(input: &Value) -> Option<String> {
+    let description = input.get("description").and_then(Value::as_str)?.trim();
+    (!description.is_empty()).then(|| description.to_string())
 }
 
 /// A path inside the project as the composer knows it, from the project folder.
@@ -617,6 +631,15 @@ mod tests {
             let asked = question("Bash", &json!({ "command": command }), folder);
             assert_eq!(asked, ("Run".to_string(), Some(command)));
         }
+        let described = json!({ "command": "touch marker.txt", "description": "Create a marker" });
+        let asked = question("Bash", &described, folder);
+        assert_eq!(
+            asked,
+            (
+                "Create a marker".to_string(),
+                Some("touch marker.txt".to_string())
+            )
+        );
     }
 
     #[test]

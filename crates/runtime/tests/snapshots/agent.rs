@@ -2,7 +2,8 @@
 //!
 //! - `agent-sidebar.png`: the piece with the sidebar open: a markdown answer that worked for
 //!   12 s, and a second turn that runs a command.
-//! - `agent-approval.png`: the same turn waiting on an approval, its command as code.
+//! - `agent-approval.png`: the same turn waiting on an approval: what the command does, and the
+//!   command as code.
 //! - `agent-closed-working.png`: the same with the sidebar closed, and the lavender indicator on
 //!   its icon in the title row.
 //! - `agent-failed.png`: open again, the command denied and the turn failed, its steps open.
@@ -121,10 +122,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("build"),
-                        title: "Ran `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
-                        request_title: "Run `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
-                        // Longer than the line: it ends in an ellipsis.
-                        running_title: "Running `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
+                        // What the agent says the command does.
+                        title: "Build and test the drums".to_string(),
+                        request_title: "Build and test the drums".to_string(),
+                        running_title: "Build and test the drums".to_string(),
                         kind: StepKind::Run,
                     },
                 ],
@@ -137,7 +138,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
 
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("build".to_string()),
-        title: "Run".to_string(),
+        title: "Build and test the drums".to_string(),
         command: Some(
             "cargo build --release -p drums && cargo test -p drums --no-fail-fast".to_string(),
         ),

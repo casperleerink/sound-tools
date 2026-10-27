@@ -223,7 +223,11 @@ pub(super) fn turn(
     let working = (working && turn.approvals.is_empty()).then(|| {
         // A step's icon and words while it runs; between steps the agent thinks.
         let step = turn.current_step().filter(|step| step.outcome.is_none());
-        let line = step.map_or("Working", |step| doing(&step.kind));
+        let line = step.map_or("Working", |step| match step.kind {
+            // What the agent says the command does, or "Running a command".
+            StepKind::Run => step.running_title.as_str(),
+            _ => doing(&step.kind),
+        });
         let mark = match step {
             Some(step) => Icon::new(icon(&step.kind))
                 .size(14.)
