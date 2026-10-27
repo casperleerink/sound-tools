@@ -870,14 +870,14 @@ impl Sidebar {
                     .flex_1()
                     .text_size(px(14.))
                     .text_color(cx.theme().gray_700)
-                    .child("This thread can't continue. Start a new one."),
+                    .child("This thread can't continue."),
             )
             .child(
-                Button::icon_only("new-thread-instead", "plus")
+                Button::new("new-thread-instead", "New thread")
+                    .icon("plus")
                     .debug_selector(|| "agent-cannot-continue".to_string())
                     .variant(ButtonVariant::Subtle)
                     .size(ButtonSize::Sm)
-                    .rounded(true)
                     .focus_handle(&self.send_focus)
                     .on_click(cx.listener(|sidebar, _, window, cx| sidebar.new_thread(window, cx))),
             )

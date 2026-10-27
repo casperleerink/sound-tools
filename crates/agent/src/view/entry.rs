@@ -16,7 +16,7 @@ use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::focus::KeyboardFocus;
 
 use super::markdown::{Markdown, MarkdownText};
-use crate::conversation::Turn;
+use crate::conversation::{Step, Turn};
 use crate::{StepKind, StepOutcome, TurnOutcome};
 
 /// The text of the thread: 15 on 22, as the mockup.
@@ -160,13 +160,9 @@ pub(super) fn turn(
                     .when(summary.is_some(), |line| line.flex_none())
                     .child(line),
             )
-            .children(summary.map(|summary| {
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(dim)
-                    .child(format!("· {summary}"))
-            }));
+            .children(
+                summary.map(|summary| div().min_w_0().truncate().child(format!("· {summary}"))),
+            );
         // As wide as its words, so that its ring is too.
         div().flex().child(row)
     });
@@ -177,7 +173,8 @@ pub(super) fn turn(
             .flex_col()
             .text_size(px(SMALL_TEXT_SIZE))
             .line_height(px(SMALL_LINE_HEIGHT))
-            .text_color(dim)
+            // Text reaches 4.5 : 1 on the window; icons need only 3 : 1, so theirs are dimmer.
+            .text_color(muted)
             .children(turn.steps.iter().map(|step| {
                 // A step that did not do what it says says so in words, a failure in red.
                 let outcome = match step.outcome {
@@ -190,17 +187,17 @@ pub(super) fn turn(
                     .items_center()
                     .gap(px(6.))
                     .h(px(20.))
-                    .child(Icon::new(icon(&step.kind)).size(12.))
+                    .child(Icon::new(icon(&step.kind)).size(12.).color(dim))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
                             .child(plain(step.finished_title())),
                     )
-                    .children(
-                        outcome
-                            .map(|(word, color)| div().flex_none().text_color(color).child(word)),
-                    )
+                    // The dot of its outcome as near its title as in the meta line.
+                    .children(outcome.map(|(word, color)| {
+                        div().flex_none().ml(px(-2.)).text_color(color).child(word)
+                    }))
             }))
     });
     let working = turn.end.is_none();
@@ -223,11 +220,7 @@ pub(super) fn turn(
     let working = (working && turn.approvals.is_empty()).then(|| {
         // A step's icon and words while it runs; between steps the agent thinks.
         let step = turn.current_step().filter(|step| step.outcome.is_none());
-        let line = step.map_or("Working", |step| match step.kind {
-            // What the agent says the command does, or "Running a command".
-            StepKind::Run => step.running_title.as_str(),
-            _ => doing(&step.kind),
-        });
+        let line = step.map_or("Working", doing);
         let mark = match step {
             Some(step) => Icon::new(icon(&step.kind))
                 .size(14.)
@@ -391,11 +384,12 @@ fn tab_stop(line: Div, id: ElementId, window: &mut Window, cx: &mut App) -> Stat
         })
 }
 
-/// What a step does, in the composer's words. Its own title names a command, a file or a tool
-/// of the agent; its line in the opened steps shows that.
-fn doing(kind: &StepKind) -> &'static str {
-    match kind {
-        StepKind::Run => "Running a command",
+/// What a step does, in the composer's words: a command as the agent says it does (or
+/// "Running a command", as the provider writes it), the others by their kind. Their own
+/// titles name a file or a tool of the agent; their lines in the opened steps show that.
+fn doing(step: &Step) -> &str {
+    match &step.kind {
+        StepKind::Run => &step.running_title,
         StepKind::Read { .. } => "Reading the project",
         StepKind::Change { .. } => "Changing the project",
         StepKind::Search => "Searching the project",

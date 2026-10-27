@@ -57,9 +57,10 @@ pub struct Turn {
 #[derive(Debug, PartialEq)]
 pub struct Step {
     pub id: StepId,
-    /// In the past tense, for the steps of a finished turn.
+    /// For the steps of a finished turn: what it did, or for a command what the agent says it
+    /// does.
     pub title: String,
-    /// In the present tense, for the working line while it runs.
+    /// For the working line while it runs.
     pub running_title: String,
     /// As it was asked for, for a step the composer denied. Empty in an older saved thread.
     pub request_title: String,

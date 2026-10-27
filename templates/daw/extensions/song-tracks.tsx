@@ -166,7 +166,7 @@ export const Returns = ({ page }: { page: Page }) => {
             <div style={{ fontSize: 12, color: "gray-900" }}>Returns</div>
             <div style={{ fontSize: 12, color: "gray-700" }}>{() => String(returns().length)}</div>
           </div>
-          <Button key="add-return" icon="plus" variant="ghost" size="xs" onClick={() => addTrack(page, 2)} />
+          <Button key="add-return" icon="plus" variant="ghost" size="xs" tooltip="Add a return" onClick={() => addTrack(page, 2)} />
         </div>
         <div style={{ width: 1, height: 31, background: "alpha/5" }} />
         <div key="returns-folded" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 16, paddingLeft: 16 }}
@@ -231,7 +231,8 @@ export const MasterRow = ({ page: { memory } }: { page: Page }) => (
     </div>
     <div style={{ width: 1, height: MASTER_ROW - 1, background: "alpha/5" }} />
     <div style={{ grow: true }} />
-    <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onClick={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
+    <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" tooltip={() => (memory.below?.kind === "mixer" ? "Hide the mixer" : "Show the mixer")}
+      onClick={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
     <div style={{ width: 8 }} />
   </div>
 );
