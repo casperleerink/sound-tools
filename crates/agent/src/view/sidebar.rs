@@ -38,7 +38,6 @@ use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
-use sound_ui::focus::KeyboardFocus;
 
 use self::attachments::Attached;
 use super::entry;
@@ -132,8 +131,6 @@ pub struct Sidebar {
     send_focus: FocusHandle,
     /// Allow, Allow for this thread, Deny.
     approval_focus: [FocusHandle; 3],
-    try_again_focus: FocusHandle,
-    try_again_keyboard: KeyboardFocus,
     agent: Option<Agent>,
     /// The thread shown, as it is saved. `None` until its first message.
     saved: Option<SavedThread>,
@@ -328,8 +325,6 @@ impl Sidebar {
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
-            try_again_focus: cx.focus_handle().tab_stop(true),
-            try_again_keyboard: KeyboardFocus::default(),
             agent: None,
             saved: None,
             writes: None,
@@ -591,7 +586,7 @@ impl Sidebar {
                         let toggle = cx.listener(move |sidebar, _, _, cx| {
                             sidebar.toggle(|sidebar| &mut sidebar.problems_open, index, cx);
                         });
-                        Some(entry::problems(problems, index, open, toggle, cx))
+                        Some(entry::problems(problems, index, open, toggle, window, cx))
                     }
                     (None, None) => self
                         .retry_message(index)
@@ -606,7 +601,7 @@ impl Sidebar {
                     .answers
                     .entry(index)
                     .or_insert_with(|| entry::answer(turn));
-                entry::turn(turn, index, answer, steps_open, toggle, below, cx)
+                entry::turn(turn, index, answer, steps_open, toggle, below, window, cx)
             }
             None => div().into_any_element(),
         };
@@ -644,16 +639,14 @@ impl Sidebar {
 
     /// Under a turn that failed: its message again, as it was sent. Once it went, the composer
     /// has the keys, as after a message.
-    fn try_again(&self, index: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let ring = (self.try_again_keyboard).shows_ring(&self.try_again_focus, window);
-        let press = cx.listener(|sidebar, _, _, cx| sidebar.try_again_keyboard.pressed(cx));
+    fn try_again(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let click = cx.listener(move |sidebar, _, window, cx| {
             let message = sidebar.retry_message(index).map(str::to_string);
             if message.is_some_and(|message| sidebar.send_again(message, cx)) {
                 window.focus(&sidebar.focus_handle(cx), cx);
             }
         });
-        entry::try_again(&self.try_again_focus, ring, press, click, cx)
+        entry::try_again(click, window, cx)
     }
 
     /// The question the agent waits on, as the last thing of the thread. Nothing is modal:

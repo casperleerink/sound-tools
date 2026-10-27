@@ -1,14 +1,10 @@
 import { Circle, For, Fragment, h, Label, Line, now, positionOf, Rect, signal, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Press } from "./sdk";
 import type { LanePoint } from "./song-clips";
-import { clamp, COLOR, lanesOf, nameFrom, type Child, type Page } from "./song-page";
+import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
 import { freeName, splitTarget } from "./track";
 
 // The automation of a track: the lanes under it, each a line of points that moves a number of
 // the track's fader or of one of its devices over the song.
-
-/** A name or a field in plain words, its unit left out: `osc_1.position` is `Osc 1 position`, `cutoff_hz` is `Cutoff`. */
-const words = (text: string) =>
-  text.replace(/_(hz|db|ms|seconds|cents|octaves|semitones)$/, "").replace(/[._-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
 
 /** The value a lane holds `up` its row, 0 to 1: a lane holds no -inf, so a volume's bottom is -100 dB. */
 const laneValue = (range: MovedNumber, up: number) => {

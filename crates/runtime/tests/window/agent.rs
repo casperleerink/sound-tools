@@ -265,13 +265,7 @@ fn try_again_sends_the_message_of_a_turn_that_failed_and_keeps_the_draft(cx: &mu
     // From the composer, past the picture's remove button, the keys reach it.
     opened.keys("shift-tab");
     opened.keys("shift-tab");
-    // GPUI clicks the focused element when enter goes up.
-    opened.keys("enter");
-    let up = gpui::KeyUpEvent {
-        keystroke: gpui::Keystroke::parse("enter").unwrap(),
-    };
-    opened.cx.simulate_event(up);
-    opened.cx.run_until_parked();
+    press_enter(&mut opened);
     let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
         panic!("the message did not go again");
     };
@@ -286,6 +280,58 @@ fn try_again_sends_the_message_of_a_turn_that_failed_and_keeps_the_draft(cx: &mu
         .read(|cx| sidebar.read(cx).composer().read(cx).text().to_string());
     assert_eq!(draft, "Make it softer");
     assert!(opened.composer_focused());
+}
+
+/// Enter going down and up on what has the focus, which GPUI takes as a click of it.
+fn press_enter(opened: &mut Opened<'_>) {
+    opened.keys("enter");
+    let up = gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+    };
+    opened.cx.simulate_event(up);
+    opened.cx.run_until_parked();
+}
+
+#[gpui::test]
+fn the_keys_open_the_steps_of_a_turn(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, _commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Read the bass");
+    opened.keys("enter");
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::StepStarted {
+            id: step("read"),
+            title: "Read state/bass.json".to_string(),
+            request_title: "Read state/bass.json".to_string(),
+            running_title: "Reading state/bass.json".to_string(),
+            kind: StepKind::Read {
+                path: "state/bass.json".to_string(),
+            },
+        },
+        AgentEvent::StepDone {
+            id: step("read"),
+            outcome: StepOutcome::Done,
+        },
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    assert!(opened.find("agent-steps-1").is_none());
+    // From the composer, "Worked for" is the stop before it.
+    assert!(opened.composer_focused());
+    opened.keys("shift-tab");
+    press_enter(&mut opened);
+    assert!(opened.find("agent-steps-1").is_some());
+    press_enter(&mut opened);
+    assert!(opened.find("agent-steps-1").is_none());
 }
 
 #[gpui::test]

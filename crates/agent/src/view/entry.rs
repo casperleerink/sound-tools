@@ -5,17 +5,18 @@ use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, FocusHandle, HighlightStyle, Hsla,
-    MouseButton, MouseDownEvent, SharedString, StyledText, Window, div, ease_out_quint, prelude::*,
-    px, relative,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Div, ElementId, FocusHandle,
+    HighlightStyle, Hsla, MouseButton, SharedString, Stateful, StyledText, Window, div,
+    ease_out_quint, prelude::*, px, relative,
 };
 use sound_core::Problem;
 use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
+use sound_ui::focus::KeyboardFocus;
 
 use super::markdown::{Markdown, MarkdownText};
-use crate::conversation::Turn;
+use crate::conversation::{Step, Turn};
 use crate::{StepKind, StepOutcome, TurnOutcome};
 
 /// The text of the thread: 15 on 22, as the mockup.
@@ -99,7 +100,8 @@ pub(super) fn turn(
     steps_open: bool,
     on_toggle_steps: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     below: Option<AnyElement>,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme();
     let (muted, bright, dim, red, lavender) = (
@@ -132,21 +134,23 @@ pub(super) fn turn(
         } else {
             "chevron-right"
         };
-        div()
-            .id("worked-for")
-            .debug_selector(move || format!("agent-worked-for-{index}"))
+        let row = div()
             .flex()
             .items_start()
             .gap(px(4.))
             .text_size(px(SMALL_TEXT_SIZE))
             .line_height(px(SMALL_LINE_HEIGHT))
-            .text_color(color)
-            .when(has_steps, |line| {
-                line.cursor_pointer()
-                    .hover(move |style| style.text_color(bright))
-                    .on_click(on_toggle_steps)
-                    .child(Icon::new(chevron).size(12.).mt(px(2.)))
-            })
+            .text_color(color);
+        let id = ElementId::from(("worked-for", index));
+        let row = match has_steps {
+            true => tab_stop(row, id, window, cx)
+                .cursor_pointer()
+                .hover(move |style| style.text_color(bright))
+                .on_click(on_toggle_steps)
+                .child(Icon::new(chevron).size(12.).mt(px(2.))),
+            false => row.id(id),
+        };
+        row.debug_selector(move || format!("agent-worked-for-{index}"))
             // A failure has no summary and may wrap; with a summary, the summary is cut.
             .child(
                 div()
@@ -164,6 +168,7 @@ pub(super) fn turn(
     });
     let steps = steps_open.then(|| {
         div()
+            .debug_selector(move || format!("agent-steps-{index}"))
             .flex()
             .flex_col()
             .text_size(px(SMALL_TEXT_SIZE))
@@ -213,10 +218,7 @@ pub(super) fn turn(
     // While a question waits, the question is what the agent does.
     let working = (working && turn.approvals.is_empty()).then(|| {
         let step = turn.current_step();
-        let line = step.map_or("Working", |step| match step.outcome {
-            None => step.running_title.as_str(),
-            Some(_) => step.finished_title(),
-        });
+        let line = step.map_or("Working", doing);
         let mark = match step {
             Some(step) => Icon::new(icon(&step.kind))
                 .size(14.)
@@ -266,7 +268,8 @@ pub(super) fn problems(
     index: usize,
     open: bool,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme();
     let (peach, muted, bright) = (theme.peach, theme.gray_800, theme.gray_900);
@@ -291,8 +294,7 @@ pub(super) fn problems(
         .text_size(px(SMALL_TEXT_SIZE))
         .line_height(px(SMALL_LINE_HEIGHT))
         .child(
-            div()
-                .id("problems")
+            tab_stop(div(), ("problems", index).into(), window, cx)
                 .debug_selector(move || format!("agent-problems-{index}"))
                 .flex()
                 .items_start()
@@ -317,44 +319,74 @@ pub(super) fn problems(
         .into_any_element()
 }
 
-/// "Try again" under a turn that failed, as quiet as the lines over it, its words on their
-/// edge. A tab stop: enter and space click it, and its ring shows when the keys brought it.
+/// "Try again" under a turn that failed, as quiet as the lines over it.
 pub(super) fn try_again(
-    focus: &FocusHandle,
-    ring: bool,
-    on_press: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme();
     let (muted, bright) = (theme.gray_700, theme.gray_900);
-    let border = if ring {
-        theme.lavender
-    } else {
-        Hsla::transparent_black()
-    };
-    let line = div()
-        .id("try-again")
+    let line = tab_stop(div(), "try-again".into(), window, cx)
         .debug_selector(|| "agent-try-again".to_string())
-        .track_focus(focus)
         .flex()
         .items_center()
         .gap(px(4.))
-        .ml(px(-5.))
-        .px(px(4.))
-        .rounded(px(4.))
-        .border_1()
-        .border_color(border)
         .text_size(px(SMALL_TEXT_SIZE))
         .line_height(px(SMALL_LINE_HEIGHT))
         .text_color(muted)
         .cursor_pointer()
         .hover(move |style| style.text_color(bright))
-        .on_mouse_down(MouseButton::Left, on_press)
         .on_click(on_click)
         .child(Icon::new("redo-2").size(12.))
         .child("Try again");
     div().flex().child(line).into_any_element()
+}
+
+/// The focus of a line the keys reach, kept between frames under the line's id.
+struct LineFocus {
+    focus: FocusHandle,
+    keyboard: KeyboardFocus,
+}
+
+/// `line`, which opens something or acts, as a tab stop: enter and space click it, and its
+/// lavender ring shows when the keys brought the focus. The ring sits around the line without
+/// moving its words off their edge.
+fn tab_stop(line: Div, id: ElementId, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let state = window.use_keyed_state(id.clone(), cx, |_, cx| LineFocus {
+        focus: cx.focus_handle().tab_stop(true),
+        keyboard: KeyboardFocus::default(),
+    });
+    let focus = state.read(cx).focus.clone();
+    let ring = state.read(cx).keyboard.shows_ring(&focus, window);
+    let border = match ring {
+        true => cx.theme().lavender,
+        false => Hsla::transparent_black(),
+    };
+    line.id(id)
+        .track_focus(&focus)
+        .ml(px(-5.))
+        .my(px(-1.))
+        .px(px(4.))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(border)
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            state.update(cx, |state, cx| state.keyboard.pressed(cx));
+        })
+}
+
+/// What the agent does now, in the composer's words. The step's own title names a command or
+/// a file; its line in the opened steps shows that.
+fn doing(step: &Step) -> &str {
+    match (&step.kind, &step.outcome) {
+        (_, Some(_)) => "Working",
+        (StepKind::Run, None) => "Running a command",
+        (StepKind::Read { .. }, None) => "Reading the project",
+        (StepKind::Change { .. }, None) => "Changing the project",
+        (StepKind::Search, None) => "Searching the project",
+        (StepKind::Other, None) => step.running_title.as_str(),
+    }
 }
 
 /// The icon of a step's line.
