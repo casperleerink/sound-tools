@@ -1,17 +1,15 @@
-//! Waveform display: a whole audio file in the display inset. The waveform is `alpha/30`, the
-//! part outside the start and end lines is shaded with `gray-50` at 72 %, and the start and end
-//! are 1 pt `gray-950` lines with hollow handles 8 pt above the bottom, which drag sideways. A
-//! part that repeats, from a loop start to the end line, is tinted `alpha/8`, and its start is a
-//! thin line with a hollow handle 8 pt under the top. A green line is where the sound plays. A curve over it, such as gain and fades or an envelope,
-//! and its handles follow the rules of every display.
+//! Waveform display: a whole audio file in the display inset. The part outside the start and
+//! end lines is shaded, and their handles drag sideways. A part that repeats, from a loop start
+//! to the end line, is tinted, with a handle of its own at the top. A green line is where the
+//! sound plays. A curve over it, such as gain and fades or an envelope, and its handles follow
+//! the rules of every display.
 //!
-//! The Sampler uses it. It knows no clip and no sampler:
-//! the owner gives the overview of the file, where it starts and ends in seconds, and hears the
-//! start and end handles. A value a handle moves also has a knob, as on every display.
+//! It knows no clip and no sampler: the owner gives the overview of the file, where it starts and
+//! ends in seconds, and hears the start and end handles.
 //!
-//! A display that takes a file dropped from the Finder has a [`FileDrop`]: while a file is
-//! dragged over it, the 2 pt lavender ring and a line that says what a drop does. [`NoFile`] is
-//! the display before there is a file: a line and a button in its middle.
+//! A display that takes a file dropped from the file manager has a [`FileDrop`]: while a file is
+//! dragged over it, the ring and a line that says what a drop does. [`NoFile`] is the display
+//! before there is a file: a line and a button in its middle.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -78,7 +76,7 @@ impl WaveformDisplay {
         }
     }
 
-    /// Takes a file dropped from the Finder, see [`FileDrop`].
+    /// Takes a file dropped from the file manager, see [`FileDrop`].
     pub fn drop_file(mut self, drop: FileDrop) -> Self {
         self.drop = Some(drop);
         self
@@ -219,12 +217,12 @@ impl RenderOnce for WaveformDisplay {
     }
 }
 
-/// Where a display takes a file dropped from the Finder. While a file is dragged over it, it
+/// Where a display takes a file dropped from the file manager. While a file is dragged over it, it
 /// shows the 2 pt lavender ring of a drop target and a line that says what a drop does, such as
 /// `Drop to replace the file`, over what the display shows. A drop gives the paths.
 ///
-/// GPUI turns a drag from the Finder into a drag of [`ExternalPaths`], so the ring is a style of
-/// that drag and needs no state of its own.
+/// GPUI turns a drag from the file manager into a drag of [`ExternalPaths`], so the ring is a
+/// style of that drag and needs no state of its own.
 #[derive(IntoElement)]
 pub struct FileDrop {
     message: SharedString,
@@ -308,7 +306,7 @@ impl NoFile {
         self
     }
 
-    /// Takes a file dropped from the Finder, see [`FileDrop`].
+    /// Takes a file dropped from the file manager, see [`FileDrop`].
     pub fn drop_file(mut self, drop: FileDrop) -> Self {
         self.drop = Some(drop);
         self

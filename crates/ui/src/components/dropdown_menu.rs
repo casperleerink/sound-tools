@@ -1,6 +1,5 @@
-//! Dropdown menu: labelled groups, radio items with an optional second line,
-//! separators and a group that scrolls. Ported from the source design system's
-//! `dropdown-menu.tsx` and the desktop app's model picker.
+//! Dropdown menu: labelled groups, radio items with an optional second line, separators and a
+//! group that scrolls.
 //!
 //! [`Trigger::Select`] makes it a select: a 24 pt trigger that says what is picked, for a list
 //! that does not fit as segments, such as the shape of an EQ band. When the picked item has an
@@ -22,9 +21,10 @@
 //!
 //! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
 //! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
-//! value holds it, so a plugin parameter is found by its id too, and the first of them is highlighted, so enter picks it. Up and down move from there and
-//! escape closes. It shows at most a hundred rows: drawing thousands of them on every frame
-//! the menu is open would cost more than typing a few letters.
+//! value holds it, so a plugin parameter is found by its id too, and the first of them is
+//! highlighted, so enter picks it. Up and down move from there and escape closes. It shows at
+//! most a hundred rows: drawing thousands of them on every frame the menu is open would cost
+//! more than typing a few letters.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -92,7 +92,7 @@ impl MenuItem {
         self
     }
 
-    /// Muted second line, as in the model picker.
+    /// Muted second line.
     pub fn description(mut self, text: impl Into<SharedString>) -> Self {
         self.description = Some(text.into());
         self

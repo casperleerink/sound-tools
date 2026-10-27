@@ -1,11 +1,9 @@
-//! Cell: the place of one control on a device card, 56 x 72 pt. The control in the top 36 pt,
-//! centred, so a 36 pt knob fills it and a 24 pt toggle sits 6 pt from the top, on the line of a
-//! knob's centre. Under it the label line at 38 and the value line at 54, 14 pt each, in 12 pt
-//! type. A control with no value leaves its value line empty, so every row of a card lines up.
+//! Cell: the place of one control on a device card. The control at the top, centred on the line
+//! of a knob's centre, then a label line and a value line. A control with no value leaves its
+//! value line empty, so every row of a card lines up.
 //!
 //! The knob is a cell of its own. `Cell` puts any other control into the same frame. A cell may
-//! span two columns for a control that needs the room, such as the `Sound` select of the Drum
-//! pad; its lines are centred on the whole width.
+//! span two columns for a control that needs the room; its lines are centred on the whole width.
 
 use gpui::{
     AnyElement, App, Div, Hsla, SharedString, StyleRefinement, Window, div, prelude::*, px,

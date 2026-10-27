@@ -1,13 +1,9 @@
-//! Segmented control: one choice of a few, 24 pt tall, on an `alpha/5` track with 6 pt corners.
-//! The chosen segment is white at 10 %, the others have muted text that lights on hover. It sits
-//! on the knob line of its cell, at the top of a display, or in the header of a card as its
-//! pages. A marked option has a 4 pt dot after its label, in the grey of its text: a page with
-//! something on it worth a look. Controlled: the caller owns the selected value and gets an
-//! `on_change(value)`.
+//! Segmented control: one choice of a few. It sits on the knob line of its cell, at the top of a
+//! display, or in the header of a card as its pages. A marked option has a dot after its label:
+//! a page with something on it worth a look. Controlled: the caller owns the selected value and
+//! gets an `on_change(value)`.
 //!
 //! Tab reaches the group as one stop, and left and right select the option before or after.
-//! The ring shows only when the focus came from the keyboard. The focus handle is kept in
-//! element state under the id of the control.
 
 use std::rc::Rc;
 
