@@ -109,7 +109,7 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
             memory.renaming === each.name ? (
               <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
             ) : (
-              <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
+              <div key={`name-${each.name}`} tooltip={() => titleOf(each)} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
                 {() => titleOf(each)}
               </div>
             )
@@ -208,7 +208,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
             memory.renaming === each.name ? (
               <Input value={() => titleOf(each)} width={110} focus onCommit={(title) => rename(page, each.name, title)} />
             ) : (
-              <div style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-950/40" : "gray-950" })}>{() => titleOf(each)}</div>
+              <div tooltip={() => titleOf(each)} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-950/40" : "gray-950" })}>{() => titleOf(each)}</div>
             )
           }
           <Toggle key={`mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />

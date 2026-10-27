@@ -265,6 +265,9 @@ export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<
 export const PeakMeter = (props: { key?: string; of?: string; input?: readonly number[]; horizontal?: boolean; length?: number }): UiNode =>
   element("meter", { ...props }, []);
 
+/** The tooltip of a button or a toggle, and the keys that do it too, drawn in it. */
+type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: KeyName };
+
 /**
  * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.
  * Coloured while `on`, `color` when given; its code turns it in `onClick`.
@@ -273,21 +276,18 @@ export type ToggleProps = (
   | { label: Bind<string>; icon?: never; count?: never; dot?: never }
   | { icon: Bind<IconName>; count?: Bind<number>; label?: never; dot?: never }
   | { dot: true; label?: never; icon?: never; count?: never }
-) & PointerEvents & {
+) & PointerEvents & Tip & {
   key?: string;
   on: Bind<boolean>;
   color?: Bind<Color>;
   disabled?: Bind<boolean>;
-  tooltip?: Bind<string>;
-  /** The keys that do it too, drawn in its tooltip. */
-  shortcut?: KeyName;
 };
 
 /** A switch, see `ToggleProps`. */
 export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
 
 /** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
-export interface ButtonProps extends PointerEvents {
+export type ButtonProps = PointerEvents & Tip & {
   key?: string;
   label?: Bind<string>;
   icon?: Bind<IconName>;
@@ -301,10 +301,7 @@ export interface ButtonProps extends PointerEvents {
   disabled?: Bind<boolean>;
   /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
   opacity?: number;
-  tooltip?: Bind<string>;
-  /** The keys that do it too, drawn in its tooltip. */
-  shortcut?: KeyName;
-}
+};
 
 /** A button, see `ButtonProps`. */
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);

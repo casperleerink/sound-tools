@@ -115,7 +115,7 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
       <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
         <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
-          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
+          <div tooltip={() => (row() ? titleOf(row()!) : name)} style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
           <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" onClick={() => (memory.below = null)} />
         </div>
         <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
