@@ -1,9 +1,9 @@
 """How much of its page a page uses: the box around what it draws, as a share of the page.
 
-    python3 -I tooling/agent-eval/fill.py <window.png>...
+    python3 -I tooling/agent-eval/fill.py <png>...
 
-Takes the `window.png` the screenshot example writes. The page is the window under its title
-row; its own colour is the colour at its top left, and what differs from it is drawn.
+Takes the PNG `runtime <project> --screenshot <png>` writes. The page is the window under
+its title row; its own colour is the colour at its top left, and what differs from it is drawn.
 """
 
 import sys

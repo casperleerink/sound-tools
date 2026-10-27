@@ -79,8 +79,8 @@ const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
 /// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
-const WINDOW_WIDTH: f32 = 1470.;
-const WINDOW_HEIGHT: f32 = 920.;
+pub(crate) const WINDOW_WIDTH: f32 = 1470.;
+pub(crate) const WINDOW_HEIGHT: f32 = 920.;
 /// The smallest window: the project menu beside a tool's page with room for a card.
 const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;

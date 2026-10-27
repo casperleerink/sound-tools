@@ -47,6 +47,12 @@ utility.workspace = true
 vocoder.workspace = true
 wavetable.workspace = true
 
+# `--screenshot` draws the window offscreen, which gpui offers under `test-support` and on
+# macOS only.
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
+
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
