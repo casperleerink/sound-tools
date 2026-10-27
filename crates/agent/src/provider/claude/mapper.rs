@@ -255,6 +255,7 @@ impl Mapper {
                     title: action.done_title(),
                     running_title: action.running_title(),
                     request_title: action.request_title(),
+                    command: action.command(),
                     kind: action.kind(),
                 })
             }
@@ -486,7 +487,7 @@ fn plain(error: &str) -> String {
 
 /// What a tool use does, for its title.
 enum Action {
-    /// A command, cut to a line, and what the agent says it does, when it says.
+    /// A command, whole, and what the agent says it does, when it says.
     Run(String, Option<String>),
     Read(String),
     Edit(String),
@@ -500,9 +501,8 @@ impl Action {
         let text = |key: &str| input.get(key).and_then(Value::as_str);
         let path = || text("file_path").map(|path| relative(path, folder));
         let action = match tool {
-            "Bash" | "PowerShell" => {
-                text("command").map(|command| Action::Run(shorten(command), described(input)))
-            }
+            "Bash" | "PowerShell" => text("command")
+                .map(|command| Action::Run(command.trim().to_string(), described(input))),
             "Read" => path().map(Action::Read),
             "Edit" => path().map(Action::Edit),
             "Write" => path().map(Action::Write),
@@ -510,6 +510,13 @@ impl Action {
             _ => None,
         };
         action.unwrap_or_else(|| Action::Use(tool.to_string()))
+    }
+
+    fn command(&self) -> Option<String> {
+        match self {
+            Action::Run(command, _) => Some(command.clone()),
+            _ => None,
+        }
     }
 
     fn kind(&self) -> StepKind {
@@ -525,7 +532,7 @@ impl Action {
     fn done_title(&self) -> String {
         match self {
             Action::Run(_, Some(description)) => description.clone(),
-            Action::Run(command, None) => format!("Ran {}", code(command)),
+            Action::Run(_, None) => "Ran a command".to_string(),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edited {path}"),
             Action::Write(path) => format!("Wrote {path}"),
@@ -549,7 +556,7 @@ impl Action {
     fn request_title(&self) -> String {
         match self {
             Action::Run(_, Some(description)) => description.clone(),
-            Action::Run(command, None) => format!("Run {}", code(command)),
+            Action::Run(_, None) => "Run a command".to_string(),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edit {path}"),
             Action::Write(path) => format!("Write {path}"),

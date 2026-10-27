@@ -135,6 +135,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
             id: step("write"),
             title: "Wrote state/bass.json".to_string(),
             request_title: "Write state/bass.json".to_string(),
+            command: None,
             running_title: "Writing state/bass.json".to_string(),
             kind: StepKind::Change {
                 path: "state/bass.json".to_string(),
@@ -157,6 +158,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
             id: step("edit"),
             title: "Edited state/bass.json".to_string(),
             request_title: "Edit state/bass.json".to_string(),
+            command: None,
             running_title: "Editing state/bass.json".to_string(),
             kind: StepKind::Change {
                 path: "state/bass.json".to_string(),
@@ -319,6 +321,7 @@ fn the_keys_open_the_steps_of_a_turn(cx: &mut TestAppContext) {
             id: step("read"),
             title: "Read state/bass.json".to_string(),
             request_title: "Read state/bass.json".to_string(),
+            command: None,
             running_title: "Reading state/bass.json".to_string(),
             kind: StepKind::Read {
                 path: "state/bass.json".to_string(),
@@ -633,6 +636,7 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
             id: step("write"),
             title: "Wrote state/bass.json".to_string(),
             request_title: "Write state/bass.json".to_string(),
+            command: None,
             running_title: "Writing state/bass.json".to_string(),
             kind: StepKind::Change {
                 path: "state/bass.json".to_string(),

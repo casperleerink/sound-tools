@@ -85,6 +85,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         id: step("read"),
                         title: "Read state/song/piano/verse.json".to_string(),
                         request_title: "Read state/song/piano/verse.json".to_string(),
+                        command: None,
                         running_title: "Reading state/song/piano/verse.json".to_string(),
                         kind: StepKind::Read {
                             path: "state/song/piano/verse.json".to_string(),
@@ -98,6 +99,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         id: step("write"),
                         title: "Wrote state/song/bass/clip-005.json".to_string(),
                         request_title: "Write state/song/bass/clip-005.json".to_string(),
+                        command: None,
                         running_title: "Writing state/song/bass/clip-005.json".to_string(),
                         kind: StepKind::Change {
                             path: "state/song/bass/clip-005.json".to_string(),
@@ -126,6 +128,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         title: "Build and test the drums".to_string(),
                         request_title: "Build and test the drums".to_string(),
                         running_title: "Build and test the drums".to_string(),
+                        command: Some(
+                            "cargo build --release -p drums && cargo test -p drums --no-fail-fast"
+                                .to_string(),
+                        ),
                         kind: StepKind::Run,
                     },
                 ],
@@ -197,6 +203,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         id: step("edit"),
                         title: "Edited state/song/drums/clip-001.json".to_string(),
                         request_title: "Edit state/song/drums/clip-001.json".to_string(),
+                        command: None,
                         running_title: "Editing state/song/drums/clip-001.json".to_string(),
                         kind: StepKind::Change {
                             path: "state/song/drums/clip-001.json".to_string(),
@@ -208,9 +215,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     },
                     AgentEvent::StepStarted {
                         id: step("test"),
-                        title: "Ran `cargo test -p drums`".to_string(),
-                        request_title: "Run `cargo test -p drums`".to_string(),
-                        running_title: "Running `cargo test -p drums`".to_string(),
+                        // A command the agent did not describe.
+                        title: "Ran a command".to_string(),
+                        request_title: "Run a command".to_string(),
+                        command: Some("cargo test -p drums".to_string()),
+                        running_title: "Running a command".to_string(),
                         kind: StepKind::Run,
                     },
                     AgentEvent::StepDone {

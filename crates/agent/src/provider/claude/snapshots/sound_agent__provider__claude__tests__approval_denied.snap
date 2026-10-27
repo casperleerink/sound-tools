@@ -29,6 +29,9 @@ expression: "replay(\"approval_denied\")"
         title: "Create an empty marker file",
         running_title: "Create an empty marker file",
         request_title: "Create an empty marker file",
+        command: Some(
+            "touch marker.txt",
+        ),
         kind: Run,
     },
     ApprovalRequested {

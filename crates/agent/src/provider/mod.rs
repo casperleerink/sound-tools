@@ -235,16 +235,18 @@ pub enum AgentEvent {
     },
     StepStarted {
         id: StepId,
-        /// One line in the past tense, such as "Edited state/song/bass/verse-a.json" or
-        /// "Ran \`cargo build\`". Text between backticks shows as code, here and in the
-        /// title of an approval.
+        /// One line of what it did, such as "Edited state/song/bass/verse-a.json", or for a
+        /// command what the agent says it does ("Ran a command" when it says nothing).
         title: String,
-        /// The same while it runs, such as "Running \`cargo build\`".
+        /// The same while it runs.
         running_title: String,
-        /// The same asked for, such as "Run \`cargo build\`", for a step the composer denied:
-        /// it never ran. Empty in a thread saved before it came.
+        /// The same asked for, for a step the composer denied: it never ran. Empty in a thread
+        /// saved before it came.
         #[serde(default)]
         request_title: String,
+        /// The command a command step runs, whole, which the opened steps show under its words.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
         /// What it does, for its icon and the summary of a finished turn. `Other` in a thread
         /// saved before it came.
         #[serde(default)]

@@ -26,27 +26,36 @@ expression: events
         id: StepId(
             "toolu_016sL9TpzGTZVuNbQY4VmMbu",
         ),
-        title: "Ran `ls`",
+        title: "Ran a command",
         running_title: "Running a command",
-        request_title: "Run `ls`",
+        request_title: "Run a command",
+        command: Some(
+            "ls",
+        ),
         kind: Run,
     },
     StepStarted {
         id: StepId(
             "toolu_01ByrDDcUqwcbtVtcScJwmu4",
         ),
-        title: "Ran `cat notes.txt | wc -l`",
+        title: "Ran a command",
         running_title: "Running a command",
-        request_title: "Run `cat notes.txt | wc -l`",
+        request_title: "Run a command",
+        command: Some(
+            "cat notes.txt | wc -l",
+        ),
         kind: Run,
     },
     StepStarted {
         id: StepId(
             "toolu_01ThTUCcJL3xdtErwk4sS9Qk",
         ),
-        title: "Ran `for f in $(ls); do cat \"$f\"; done`",
+        title: "Ran a command",
         running_title: "Running a command",
-        request_title: "Run `for f in $(ls); do cat \"$f\"; done`",
+        request_title: "Run a command",
+        command: Some(
+            "for f in $(ls); do cat \"$f\"; done",
+        ),
         kind: Run,
     },
     StepDone {

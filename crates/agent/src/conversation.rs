@@ -24,6 +24,8 @@ pub struct Conversation {
     turn_just_failed: bool,
     /// The agent no longer has the session of this thread, so no message can follow.
     session_lost: bool,
+    /// The turn the session was lost in says so, as the last entry.
+    loss_said: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -64,6 +66,8 @@ pub struct Step {
     pub running_title: String,
     /// As it was asked for, for a step the composer denied. Empty in an older saved thread.
     pub request_title: String,
+    /// The command of a command step, whole.
+    pub command: Option<String>,
     pub kind: StepKind,
     /// `None` while it runs.
     pub outcome: Option<StepOutcome>,
@@ -214,6 +218,11 @@ impl Conversation {
         !self.session_lost
     }
 
+    /// Whether the last entry already says why the thread can't continue.
+    pub fn loss_said(&self) -> bool {
+        self.loss_said
+    }
+
     /// Whether a turn runs, which includes one that waits on an approval.
     pub fn is_working(&self) -> bool {
         self.open_turn_index().is_some()
@@ -290,6 +299,7 @@ impl Conversation {
                 title,
                 running_title,
                 request_title,
+                command,
                 kind,
             } => self.update_open_turn(|turn| {
                 turn.steps.push(Step {
@@ -297,6 +307,7 @@ impl Conversation {
                     title,
                     running_title,
                     request_title,
+                    command,
                     kind,
                     outcome: None,
                 });
@@ -332,9 +343,11 @@ impl Conversation {
                     message: message.clone(),
                 };
                 if let Some(index) = self.update_open_turn(|turn| turn.finish(failed, now)) {
+                    self.loss_said = self.session_lost;
                     return Some(index);
                 }
                 if turn_just_failed || self.session_lost {
+                    self.loss_said = self.session_lost && turn_just_failed;
                     return None;
                 }
                 self.notice(message);
@@ -412,6 +425,7 @@ mod tests {
                     title: String::new(),
                     running_title: String::new(),
                     request_title: String::new(),
+                    command: None,
                     kind: kind.clone(),
                 };
                 let done = AgentEvent::StepDone {
@@ -474,6 +488,7 @@ mod tests {
                 id: step("one"),
                 title: "Wrote state/song/track-1/clip.json".to_string(),
                 request_title: "Write state/song/track-1/clip.json".to_string(),
+                command: None,
                 running_title: "Writing state/song/track-1/clip.json".to_string(),
                 kind: StepKind::Change {
                     path: "state/song/track-1/clip.json".to_string(),
@@ -669,7 +684,33 @@ mod tests {
         };
         assert_eq!(conversation.apply(lost, now), None);
         assert!(!conversation.can_continue());
+        assert!(conversation.loss_said());
         assert_eq!(notices(&conversation), Vec::<&str>::new());
+    }
+
+    /// Lost later than a turn that failed for another reason: that turn does not say why.
+    #[test]
+    fn a_session_lost_later_is_not_said_by_the_turn_before() {
+        let now = SystemTime::now();
+        let mut conversation = Conversation::default();
+        conversation.send("Hello", Vec::new(), now);
+        let busy = AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "Claude is busy. Try again in a moment.".to_string(),
+            },
+        };
+        conversation.apply(busy, now);
+        let started = AgentEvent::Started {
+            account: crate::Account::default(),
+            models: Vec::new(),
+        };
+        conversation.apply(started, now);
+        let lost = AgentEvent::Exited {
+            reason: ExitReason::SessionNotFound,
+        };
+        conversation.apply(lost, now);
+        assert!(!conversation.can_continue());
+        assert!(!conversation.loss_said());
     }
 
     #[test]

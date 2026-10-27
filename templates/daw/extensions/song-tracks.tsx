@@ -132,13 +132,13 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
               count={() => lanesOf(each).length} onClick={() => showLanes(page, each, !memory.lanes.has(each.name))} />}
           </Show>
           <Show when={() => each.tool === "tape" && (all() || memory.armed.has(each.name))}>
-            {() => <Toggle key={`arm-${each.name}`} dot on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(page, each.name)} />}
+            {() => <Toggle key={`arm-${each.name}`} dot tooltip="Arm for recording" on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(page, each.name)} />}
           </Show>
           <Show when={() => all() || muted(each)}>
-            {() => <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
+            {() => <Toggle key={`mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
           </Show>
           <Show when={() => all() || state.solo.includes(each.name)}>
-            {() => <Toggle key={`solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
+            {() => <Toggle key={`solo-${each.name}`} label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
           </Show>
         </div>
       </div>
@@ -211,7 +211,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
               <div style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-950/40" : "gray-950" })}>{() => titleOf(each)}</div>
             )
           }
-          <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
+          <Toggle key={`mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
         </div>
       </div>
       <div style={{ width: 1, height: RETURN_ROW, background: "alpha/5" }} />

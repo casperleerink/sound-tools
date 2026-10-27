@@ -14,6 +14,7 @@ use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::focus::KeyboardFocus;
+use sound_ui::typography::MONO;
 
 use super::markdown::{Markdown, MarkdownText};
 use crate::conversation::{Step, Turn};
@@ -182,22 +183,44 @@ pub(super) fn turn(
                     Some(StepOutcome::Denied) => Some(("· denied", muted)),
                     Some(StepOutcome::Done) | None => None,
                 };
-                div()
+                // The words, and the dot of the outcome as near them as in the meta line.
+                let words = div()
+                    .min_w_0()
                     .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(20.))
-                    .child(Icon::new(icon(&step.kind)).size(12.).color(dim))
+                    .gap(px(4.))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
                             .child(plain(step.finished_title())),
                     )
-                    // The dot of its outcome as near its title as in the meta line.
-                    .children(outcome.map(|(word, color)| {
-                        div().flex_none().ml(px(-2.)).text_color(color).child(word)
-                    }))
+                    .children(
+                        outcome
+                            .map(|(word, color)| div().flex_none().text_color(color).child(word)),
+                    );
+                let row = div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .h(px(20.))
+                    .child(Icon::new(icon(&step.kind)).size(12.).color(dim))
+                    .child(words);
+                // A command under its words, as an approval shows it: its first line, under
+                // the words and not the icon.
+                let command = step.command.as_deref().map(|command| {
+                    let mut lines = command.lines();
+                    let first = lines.next().unwrap_or_default();
+                    let more = if lines.next().is_some() { " …" } else { "" };
+                    div()
+                        .pl(px(18.))
+                        .pb(px(2.))
+                        .truncate()
+                        .font_family(MONO)
+                        // Menlo reads a size larger, as code does under the answer.
+                        .text_size(px(SMALL_TEXT_SIZE - 1.))
+                        .child(format!("{first}{more}"))
+                });
+                div().child(row).children(command)
             }))
     });
     let working = turn.end.is_none();

@@ -858,6 +858,7 @@ impl Sidebar {
     /// In place of the composer once the agent lost the session: the thread stays to read,
     /// and **+** is the way on, as **New** is.
     fn cannot_continue(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let said = self.conversation.loss_said();
         div()
             .flex_none()
             .flex()
@@ -865,13 +866,15 @@ impl Sidebar {
             .gap(px(12.))
             .p(px(24.))
             .pt(px(8.))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(14.))
-                    .text_color(cx.theme().gray_700)
-                    .child("This thread can't continue."),
-            )
+            .when(!said, |row| {
+                row.child(
+                    div()
+                        .flex_1()
+                        .text_size(px(14.))
+                        .text_color(cx.theme().gray_700)
+                        .child("This thread can't continue."),
+                )
+            })
             .child(
                 Button::new("new-thread-instead", "New thread")
                     .icon("plus")

@@ -125,9 +125,9 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
           <div style={{ align: "start" }}>
             <Knob field={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
             <div style={{ direction: "row", gap: 4, paddingTop: 6 }}>
-              <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onClick={() => toggleMute(name)} />
+              <Toggle key={`panel-mute-${name}`} label="M" tooltip="Mute" on={() => (row() ? muted(row()!) : false)} color="peach" onClick={() => toggleMute(name)} />
               <Show when={() => !isReturn()}>
-                {() => <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />}
+                {() => <Toggle key={`panel-solo-${name}`} label="S" tooltip="Solo" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />}
               </Show>
             </div>
             <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: 14 }}><InputSelect page={page} name={name} /></div>}</Show>

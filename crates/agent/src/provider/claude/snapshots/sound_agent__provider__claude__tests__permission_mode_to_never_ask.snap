@@ -29,6 +29,9 @@ expression: "replay(\"permission_bypass\")"
         title: "Initialize a git repository",
         running_title: "Initialize a git repository",
         request_title: "Initialize a git repository",
+        command: Some(
+            "git init",
+        ),
         kind: Run,
     },
     StepDone {
