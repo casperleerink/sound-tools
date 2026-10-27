@@ -271,7 +271,8 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
       part.state.order = [...rows().map((each) => each.name), name];
     } else if (picked === 1) {
       const name = freeName(names, "audio-1") as `audio-${string}`;
-      part.children.push({ name, tool: tape, state: { colour }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sends] });
+      const audio = rows().filter((each) => each.tool === "tape").length + 1;
+      part.children.push({ name, tool: tape, state: { colour, title: `Audio ${audio}` }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sends] });
       part.state.order = [...rows().map((each) => each.name), name];
     } else {
       const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);

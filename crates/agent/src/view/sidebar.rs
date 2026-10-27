@@ -642,14 +642,14 @@ impl Sidebar {
         }
     }
 
-    /// Under a turn that failed: its message again, as it was sent. The composer then has the
-    /// keys, as after a message.
+    /// Under a turn that failed: its message again, as it was sent. Once it went, the composer
+    /// has the keys, as after a message.
     fn try_again(&self, index: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let ring = (self.try_again_keyboard).shows_ring(&self.try_again_focus, window);
         let press = cx.listener(|sidebar, _, _, cx| sidebar.try_again_keyboard.pressed(cx));
         let click = cx.listener(move |sidebar, _, window, cx| {
-            if let Some(message) = sidebar.retry_message(index).map(str::to_string) {
-                sidebar.send_again(message, cx);
+            let message = sidebar.retry_message(index).map(str::to_string);
+            if message.is_some_and(|message| sidebar.send_again(message, cx)) {
                 window.focus(&sidebar.focus_handle(cx), cx);
             }
         });
