@@ -1931,6 +1931,11 @@ impl Style {
         lines.apply(element, false)
     }
 
+    /// Whether its text is cut off with "…" where it does not fit.
+    pub(crate) fn truncates(&self) -> bool {
+        self.truncate
+    }
+
     /// The axis its children scroll along, if any.
     pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
         self.scroll

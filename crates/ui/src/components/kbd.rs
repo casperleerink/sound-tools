@@ -29,7 +29,6 @@ impl Styled for Kbd {
 
 pub(crate) fn key_label(key: &str) -> String {
     let label = match key.to_lowercase().as_str() {
-        "enter" => "↵",
         "space" => "Space",
         "escape" => "Esc",
         "up" => "↑",
@@ -41,6 +40,7 @@ pub(crate) fn key_label(key: &str) -> String {
         "pageup" => "PgUp",
         "pagedown" => "PgDn",
         modifier if cfg!(target_os = "macos") => match modifier {
+            "enter" => "↵",
             "mod" => "⌘",
             "alt" | "option" => "⌥",
             "shift" => "⇧",
@@ -51,6 +51,7 @@ pub(crate) fn key_label(key: &str) -> String {
             _ => return key.to_uppercase(),
         },
         modifier => match modifier {
+            "enter" => "Enter",
             "mod" | "ctrl" => "Ctrl",
             "alt" | "option" => "Alt",
             "shift" => "Shift",

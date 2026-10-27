@@ -1266,6 +1266,20 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
     assert!(window.find("button-close-panel").is_none());
 }
 
+/// Escape closes a track's panel, as its close button does, once nothing is selected.
+#[gpui::test]
+fn escape_closes_a_tracks_panel(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found("button-close-panel");
+    window.keys("escape");
+    window.until("the panel closed", |window| {
+        window.find("button-close-panel").is_none()
+    });
+}
+
 #[gpui::test]
 fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(
     cx: &mut TestAppContext,

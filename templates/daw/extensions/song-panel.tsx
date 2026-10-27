@@ -115,8 +115,8 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
       <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
         <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
-          <div tooltip={() => (row() ? titleOf(row()!) : name)} style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-          <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" onClick={() => (memory.below = null)} />
+          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
+          <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="escape" onClick={() => (memory.below = null)} />
         </div>
         <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
           <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
@@ -260,7 +260,7 @@ export const MasterPanel = ({ page: { state, memory, update } }: { page: Page })
       <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
         <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
         <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-950" }}>Master</div>
-        <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" onClick={() => (memory.below = null)} />
+        <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="escape" onClick={() => (memory.below = null)} />
       </div>
       <div style={{ direction: "row", paddingLeft: 8 }}>
         <div style={{ align: "center", gap: 7, paddingTop: 5 }}>

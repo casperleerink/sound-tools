@@ -10,13 +10,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, ClickEvent, Context, DispatchPhase, Div, ElementId, Entity,
-    EventEmitter, ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, DispatchPhase, Div, ElementId, Empty,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla,
     KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
     PromptLevel, ScrollHandle, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
-    Task, TextAlign, TextRun, WeakEntity, WeakFocusHandle, Window, anchored, canvas, deferred, div,
-    fill, hsla, outline, point, prelude::*, px, size,
+    StyledText, Task, TextAlign, TextRun, WeakEntity, WeakFocusHandle, Window, anchored, canvas,
+    deferred, div, fill, hsla, outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -2404,6 +2404,8 @@ struct Drawing<'a, 'b> {
     in_title_bar: bool,
     /// Whether what it draws shows out of its page, in the title bar.
     out_of_page: bool,
+    /// Whether what it draws is inside a div with a tooltip.
+    under_tooltip: bool,
     /// The title bar's div the body left out.
     title_bar: Option<(usize, Vec<usize>)>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
@@ -2583,9 +2585,24 @@ impl Drawing<'_, '_> {
                         .clone()
                 });
                 let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
+                // A text it cuts off with "…" shows whole on hover, and only then. Under a div
+                // with a tooltip, GPUI would show this one in its place, even empty.
+                let own_tip = !self.under_tooltip && tooltip.is_none();
+                let text = match (style.truncates() && own_tip, &shown[..]) {
+                    (true, [child]) => match table.get(*child).map(|child| &child.props) {
+                        Some(Props::Text(TextProps { text })) => {
+                            Some(SharedString::from(text.clone().unwrap_or_default()))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let mut cut_text = text.clone().map(StyledText::new);
+                let cut = text.zip(cut_text.as_ref().map(|styled| styled.layout().clone()));
                 let mut children: Vec<AnyElement> = Vec::new();
                 let mut hidden = None::<f32>;
                 let mut at = 0.0;
+                let under_tooltip = std::mem::replace(&mut self.under_tooltip, !own_tip);
                 for (position, child) in shown.iter().enumerate() {
                     if let Some((heights, gap, showing)) = &rows {
                         let height = heights.get(position).copied().unwrap_or_default();
@@ -2600,8 +2617,12 @@ impl Drawing<'_, '_> {
                     if let Some(room) = hidden.take() {
                         children.push(div().flex_none().h(px(room)).into_any_element());
                     }
-                    children.push(self.draw(*child, &[index, &[position]].concat()));
+                    children.push(match cut_text.take() {
+                        Some(styled) => styled.into_any_element(),
+                        None => self.draw(*child, &[index, &[position]].concat()),
+                    });
                 }
+                self.under_tooltip = under_tooltip;
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
                 }
@@ -2655,7 +2676,7 @@ impl Drawing<'_, '_> {
                     (false, None) => element,
                 };
                 let pressed = style.pressed().filter(|_| !disabled);
-                let inner = match hears || pressed.is_some() || tooltip.is_some() {
+                let inner = match hears || pressed.is_some() || tooltip.is_some() || cut.is_some() {
                     false => element.into_any_element(),
                     true => {
                         let name = element_name("div", key.as_deref(), index);
@@ -2668,6 +2689,12 @@ impl Drawing<'_, '_> {
                             })
                             .when_some(tooltip.clone(), |element, text| {
                                 element.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
+                            })
+                            .when_some(cut, |element, (text, layout)| {
+                                element.tooltip(move |_, cx| match layout.text() == *text {
+                                    true => cx.new(|_| Nothing).into(),
+                                    false => Tooltip::new(text.clone()).view(cx),
+                                })
                             });
                         match hears {
                             true => {
@@ -4749,6 +4776,7 @@ impl TypeScriptCard {
             scroller: None,
             in_title_bar: false,
             out_of_page: false,
+            under_tooltip: false,
             title_bar: None,
             lifting: None,
             cx,
@@ -5040,6 +5068,15 @@ mod tests {
             ..wave
         };
         assert_eq!(plain.level_at(0.5), 1.0);
+    }
+}
+
+/// The tooltip of a text that fits: none.
+struct Nothing;
+
+impl Render for Nothing {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
     }
 }
 

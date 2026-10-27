@@ -365,7 +365,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       <div style={{ height: RULER, direction: "row", keep: true }}>
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
-          <div tooltip={name} style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
+          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
           <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="escape" onClick={onClose} />
         </div>
         <Rule />

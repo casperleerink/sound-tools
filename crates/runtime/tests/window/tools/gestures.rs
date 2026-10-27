@@ -772,3 +772,49 @@ fn a_field_in_a_tab_stop_keeps_the_focus_a_press_gives_it(cx: &mut TestAppContex
     };
     assert!(typing(&mut window));
 }
+
+const CUT: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "cut",
+  title: "Cut",
+  when: "A test",
+  doc: "A name that fits its row and one that does not.",
+  state: {},
+  sound: () => 0,
+  view: () =>
+    h("div", {},
+      h("div", { key: "short", style: { width: 80, truncate: true } }, "Bass"),
+      h("div", { key: "long", style: { width: 80, truncate: true } }, "Bass with a long name that is cut"),
+      h("div", { key: "parent", tooltip: "Open", style: { width: 200 } },
+        h("div", { key: "inner", style: { width: 80, truncate: true } }, "Bass")),
+    ),
+});
+"#;
+
+/// A text a div cuts off shows whole on hover; one that fits shows nothing, and leaves the
+/// tooltip of a div around it to show.
+#[gpui::test]
+fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("cut", CUT));
+    for (key, shows) in [
+        ("div-short", false),
+        ("div-long", true),
+        ("div-inner", true),
+    ] {
+        let at = window.until_found(key);
+        window.hover(at);
+        window
+            .cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        window.cx.run_until_parked();
+        assert_eq!(window.find("tooltip").is_some(), shows, "{key}");
+        window.hover(point(px(700.), px(700.)));
+        window
+            .cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        window.cx.run_until_parked();
+    }
+}

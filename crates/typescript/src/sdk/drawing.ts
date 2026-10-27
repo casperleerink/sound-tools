@@ -368,7 +368,7 @@ export interface Style {
   disabled?: Look;
   /** It never shrinks below what it needs, in a row too narrow. */
   keep?: boolean;
-  /** One line, cut with an ellipsis where it does not fit. */
+  /** One line, cut with an ellipsis where it does not fit. A text it cuts shows whole on hover, unless the div has a `tooltip`. */
   truncate?: boolean;
 }
 

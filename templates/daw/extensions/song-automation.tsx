@@ -90,18 +90,20 @@ export const editPoints = ({ update }: Pick<Page, "update">, label: string, trac
   });
 const rangeOf = ({ memory }: Page, track: string, target: string, points: readonly LanePoint[]): MovedNumber =>
   memory.ranges[`${track}/${target}`] ?? { name: target, label: words(target), value: null, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
-/** What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number, `Filter · Cutoff`. */
-const laneName = ({ memory }: Page, track: string, target: string) => {
+/**
+ * What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number,
+ * `Filter · Cutoff`. Unless `whole`, a long device is cut short, so the number shows.
+ */
+const laneName = ({ memory }: Page, track: string, target: string, whole = false) => {
   const [path, number] = splitTarget(target);
   const named = memory.ranges[`${track}/${target}`]?.label ?? words(number);
   if (path === "mix") return number === "gain_db" ? "Volume" : named;
-  // The device cut short when it is long, so the number shows.
   const device = memory.names[`${track}/${path}`] ?? words(path.split("/").at(-1) ?? path);
-  return `${device.length > 14 ? `${device.slice(0, 11).trimEnd()}...` : device} · ${named}`;
+  return `${device.length > 14 && !whole ? `${device.slice(0, 11).trimEnd()}…` : device} · ${named}`;
 };
 /** A lane's name; right-click it to remove the lane. */
 export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lane: { lane: string; target: string } }) => (
-  <div key={`lane-name-${track}-${lane.lane}`} style={{ grow: true, fontSize: 12, color: "gray-800", truncate: true }}
+  <div key={`lane-name-${track}-${lane.lane}`} tooltip={() => laneName(page, track, lane.target, true)} style={{ grow: true, fontSize: 12, color: "gray-800", truncate: true }}
     onPress={({ button }) => button === "right" && page.openMenu([{ label: "Remove lane" }]).then((picked) => picked === 0 && removeLane(page, track, lane.lane))}>
     {() => laneName(page, track, lane.target)}
   </div>
