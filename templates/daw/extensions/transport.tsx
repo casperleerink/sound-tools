@@ -1,9 +1,7 @@
-import { Button, h, Label, NumberBox, now, PeakMeter, Rect, Space, type Accessor, type Clock, type Color, type Frozen, type Live, type Style, type TempoMap } from "./sdk";
+import { Button, h, Label, NumberBox, now, PeakMeter, Space, type Accessor, type Clock, type Color, type Frozen, type Live, type Style, type TempoMap } from "./sdk";
 
 // The transport of the song, in the window's title bar, and the time of the tempo map.
 const BEAT = 960;
-/** The width of the position strip, and of its knob. */
-const STRIP = { width: 200, knob: 8 } as const;
 /** The note values a time signature takes. */
 const NOTES = [1, 2, 4, 8, 16, 32] as const;
 
@@ -67,11 +65,10 @@ export interface TransportRecord {
 
 /**
  * The window's transport, a pill: play and pause, stop, record, where the piece plays as a bar
- * and a beat and as a time, a strip to move through the piece up to `end`, the tempo and the
- * time signature that play at the playhead, which a drag up or down or a typed number changes as
+ * and a beat and as a time, the tempo and the time signature that play at the playhead, which a drag up or down or a typed number changes as
  * one undo step, the computer keys, the click and the meter of what the device plays.
  */
-export function Transport({ clock, record, end }: { clock: Clock; record: TransportRecord; end: Accessor<number> }) {
+export function Transport({ clock, record }: { clock: Clock; record: TransportRecord }) {
   const pill: Style = {
     direction: "row", align: "center", gap: 12, height: 36, paddingLeft: 4, paddingRight: 16,
     radius: 18, background: "#292b30", borderColor: "alpha/10", borderWidth: 1, keep: true,
@@ -106,21 +103,6 @@ export function Transport({ clock, record, end }: { clock: Clock; record: Transp
       </div>
       {clockText("transport-position", 28, "position")}
       {clockText("transport-time", 34, "time", "gray-700")}
-      {() => {
-        const last = end();
-        if (last <= 0) return null;
-        const seconds = secondsBetween(clock.tempo_map.tempo_changes, 0, last);
-        const knob = now.tick.over(last).clamp(0, 1).times(STRIP.width - STRIP.knob);
-        return [
-          <Space key="transport-strip" width={STRIP.width} height={16} cursor="pointer"
-            onPress={({ x }) => clock.jump(Math.round((Math.min(Math.max(x, 0), STRIP.width) / STRIP.width) * last))}>
-            <Rect x={0} y={7.5} width={STRIP.width} height={1} color="alpha/10" />
-            <Rect x={0} y={7.5} width={knob.plus(STRIP.knob / 2)} height={1} color="gray-950" />
-            <Rect x={knob} y={4} width={STRIP.knob} height={STRIP.knob} radius={STRIP.knob / 2} color="gray-950" />
-          </Space>,
-          <div style={{ font: "tabular", color: "gray-700" }}>{`${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`}</div>,
-        ];
-      }}
       <div style={{ direction: "row", align: "center" }}>
         <NumberBox key="transport-tempo" width={32} per={2} min={10} max={1000}
           value={() => clock.bpm} onChange={setTempo} show={now.bpm.round()} />

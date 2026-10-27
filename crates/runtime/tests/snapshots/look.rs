@@ -145,7 +145,7 @@ fn arm(row: f32) -> Point<Pixels> {
 }
 
 /// The record button of the transport in the title bar.
-const RECORD: (f32, f32) = (555., 24.);
+const RECORD: (f32, f32) = (680., 24.);
 
 /// What the input brings, as the arrangement's snapshots had it: the voice on the left and the
 /// guitar on the right, at half.

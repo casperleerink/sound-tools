@@ -1,10 +1,10 @@
 import { boolean, choice, Fragment, h, list, memo, Show, text, TitleBar, tool, untrack, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
-import { ClipEditor, lengthOf, type EditorMemory } from "./clip-editor";
+import { ClipEditor, type EditorMemory } from "./clip-editor";
 import type { Clipboard } from "./song-clips";
 import { songKey } from "./song-keys";
 import { Mixer } from "./song-mixer";
-import { BEAT, clipsOf, colourOf, COLOR, pageOf, regionsOf, titleOf } from "./song-page";
+import { BEAT, colourOf, COLOR, pageOf, titleOf } from "./song-page";
 import { MasterPanel, Rack } from "./song-panel";
 import { Ruler, SectionName, type Mark } from "./song-ruler";
 import { TempoLane } from "./song-tempo";
@@ -125,12 +125,6 @@ export const song = tool({
     memo(() => {
       if (!clock.playing && untrack(() => memory.recording) !== null) untrack(toggleRecording);
     });
-    // Where what the song holds ends: the strip of the transport goes this far.
-    const held = memo(() => {
-      const clips = rows().flatMap((each) => clipsOf(each).map((clip) => clip.state.start + lengthOf(clip.state)));
-      const regions = rows().flatMap((each) => regionsOf(each).map((region) => region.state.start));
-      return Math.max(0, ...clips, ...regions);
-    });
 
     const openKey = () => (memory.below?.kind === "editor" ? memory.below.clip : null);
     const open = () => {
@@ -168,7 +162,7 @@ export const song = tool({
     return (
       <div style={{ grow: true, background: COLOR.back }}>
         <TitleBar>
-          <Transport clock={clock} record={{ on: () => memory.recording !== null, press: toggleRecording }} end={held} />
+          <Transport clock={clock} record={{ on: () => memory.recording !== null, press: toggleRecording }} />
         </TitleBar>
         <div>
           <div style={{ direction: "row", gap: 8, align: "center" }}>
