@@ -43,6 +43,7 @@ use sound_ui::components::slider::Slider;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::focus::TabStop;
 use sound_ui::{
     ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, every_poll, typography,
 };
@@ -2535,6 +2536,7 @@ impl Drawing<'_, '_> {
                 disabled,
                 cursor,
                 tooltip,
+                tab_stop,
                 on_release,
                 on_click,
                 on_hover,
@@ -2657,7 +2659,7 @@ impl Drawing<'_, '_> {
                     false => element.into_any_element(),
                     true => {
                         let name = element_name("div", key.as_deref(), index);
-                        let element = (element.id(ElementId::Name(name.into())))
+                        let element = (element.id(ElementId::Name(name.clone().into())))
                             .when_some(pressed, |element, look| {
                                 // The hitbox the pressed look needs, on a div that hears nothing.
                                 element
@@ -2668,7 +2670,18 @@ impl Drawing<'_, '_> {
                                 element.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
                             });
                         match hears {
-                            true => self.heard_div(element, id, pointer, carry, on_drop),
+                            true => {
+                                let element = self.heard_div(element, id, pointer, carry, on_drop);
+                                match *tab_stop == Some(true) && pointer.click {
+                                    true => TabStop::new(
+                                        format!("tab-{name}"),
+                                        self.keyboard_control(element),
+                                    )
+                                    .on_click(self.clicked(id))
+                                    .into_any_element(),
+                                    false => element.into_any_element(),
+                                }
+                            }
                             false => element.into_any_element(),
                         }
                     }
@@ -2998,11 +3011,16 @@ impl Drawing<'_, '_> {
                 let before = before.clone();
                 move |_, window, cx| *before.borrow_mut() = window.focused(cx)
             })
+            // After GPUI gives the press's focus away: a div that is a tab stop takes it after
+            // this listener, on the same element. A text field in it keeps a press's focus,
+            // such as a track's name being renamed.
             .on_any_mouse_down(move |_, window, cx| {
-                match page.clone().or_else(|| before.borrow_mut().take()) {
+                let focus = page.clone().or_else(|| before.borrow_mut().take());
+                window.defer(cx, move |window, cx| match focus {
+                    _ if typing(window) => {}
                     Some(focus) => window.focus(&focus, cx),
                     None => window.blur(cx),
-                }
+                });
             })
     }
 
@@ -3071,7 +3089,7 @@ impl Drawing<'_, '_> {
         hears: Hears,
         carry: &Option<String>,
         on_drop: &Option<bool>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         {
             {
                 let lavender = self.cx.theme().lavender;
@@ -3087,7 +3105,7 @@ impl Drawing<'_, '_> {
                     None => element,
                 };
                 if *on_drop != Some(true) {
-                    return element.into_any_element();
+                    return element;
                 }
                 element
                     .drag_over::<ExternalPaths>(move |style, _, _, _| {
@@ -3103,7 +3121,6 @@ impl Drawing<'_, '_> {
                         let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
                         view.event(id, EventKind::Drop, dropped, cx);
                     }))
-                    .into_any_element()
             }
         }
     }

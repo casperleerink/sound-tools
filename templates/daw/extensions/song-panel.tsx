@@ -161,7 +161,7 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
             </div>
           )}
         </For>
-        <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "alpha/5" }, keep: true }} onClick={addEffect}
+        <div key="add-effect" tabStop style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "alpha/5" }, keep: true }} onClick={addEffect}
           onDrop={({ carried }) => carried && moveBefore(carried, null)}>
           <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
           <Icon name="chevron-down" size={14} color="gray-700" />

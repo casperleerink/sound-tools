@@ -709,3 +709,66 @@ fn the_focus_leaving_the_title_bar_lets_go_of_a_held_key(cx: &mut TestAppContext
         window.record("titled")["heard"] == "key-r key-r"
     });
 }
+
+const TABBED: &str = r#"import { h, text, tool } from "./sdk";
+
+tool({
+  name: "tabbed",
+  title: "Tabbed",
+  when: "A test",
+  doc: "Writes down the clicks of a div that is a tab stop and the keys it hears.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: ({ update }) =>
+    h("div", { key: "stop", tabStop: true, style: { width: 100, height: 40 }, onClick: () => update("stop", ({ state }) => { state.heard = `${state.heard} stop`.trim(); }) }),
+});
+"#;
+
+/// A div that is a tab stop is a button to the keys: Tab reaches it and enter clicks it. A click
+/// takes no focus to it, so enter after a click is its view's.
+#[gpui::test]
+fn enter_clicks_a_div_that_is_a_tab_stop(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("tabbed", TABBED));
+    let stop = window.until_found("div-stop");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "enter");
+    window.click(stop);
+    press_key(&mut window, "enter");
+    window.until("stop stop key-enter", |window| {
+        window.record("tabbed")["heard"] == "stop stop key-enter"
+    });
+}
+
+const RENAMED: &str = r#"import { h, Input, text, tool } from "./sdk";
+
+tool({
+  name: "renamed",
+  title: "Renamed",
+  when: "A test",
+  doc: "A row that is a tab stop with a name field in it, as a track's head being renamed.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: () => {},
+  view: () =>
+    h("div", { key: "row", tabStop: true, style: { width: 300, height: 40 }, onClick: () => {} },
+      h(Input, { key: "name", value: "Bass", width: 200 })),
+});
+"#;
+
+/// A press in a text field inside a div that is a tab stop leaves the keys in the field.
+#[gpui::test]
+fn a_field_in_a_tab_stop_keeps_the_focus_a_press_gives_it(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("renamed", RENAMED));
+    let row = window.until_found("div-row");
+    window.click(row);
+    window.cx.run_until_parked();
+    let typing = |window: &mut Opened<'_>| {
+        window.cx.update(|window, _| {
+            (window.context_stack().iter()).any(|context| context.contains("TextInput"))
+        })
+    };
+    assert!(typing(&mut window));
+}

@@ -50,7 +50,7 @@ export const Mixer = ({ page }: { page: Page }) => {
           {each ? <Toggle key={`strip-mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
           {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
         </div>
-        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tooltip={each ? () => titleOf(each) : undefined}
+        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tabStop tooltip={each ? () => titleOf(each) : undefined}
           style={{ width: STRIP - 4, height: 22, paddingX: 4, radius: 6, direction: "row", align: "center", justify: "center", gap: 5, hover: { background: "alpha/5" } }}
           onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
           <div style={() => ({

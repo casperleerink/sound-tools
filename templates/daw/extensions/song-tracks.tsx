@@ -48,7 +48,7 @@ export const Heads = ({ page }: { page: Page }) => {
           {({ each, lane, add }) =>
             add ? (
               <div style={{ height: ADD_LANE, paddingX: 8, paddingY: 4 }}>
-                <div key={`add-lane-${each.name}`} style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: { background: "alpha/8" } }}
+                <div key={`add-lane-${each.name}`} tabStop style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: { background: "alpha/8" } }}
                   onClick={() => addLane(page, each)}>
                   <div style={{ grow: true, fontSize: 13, weight: "medium", color: "gray-950" }}>Add lane</div>
                   <Icon name="chevron-down" size={14} color="gray-700" />
@@ -72,13 +72,13 @@ export const Heads = ({ page }: { page: Page }) => {
         </For>
         <div style={{ height: 1, background: "alpha/5", keep: true }} />
         <div style={{ height: ROW, direction: "row", align: "center", paddingX: 8 }}>
-          <div key="add-track" style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
+          <div key="add-track" tabStop style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
             onClick={() => addTrack(page, 0)}>
             <Icon name="plus" size={14} color="gray-800" />
             <div style={{ fontSize: 12, weight: "medium", color: "gray-800" }}>Add track</div>
           </div>
           <div style={{ width: 1, height: 12, background: "alpha/10" }} />
-          <div key="add-track-kind" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onClick={() => addTrack(page)}>
+          <div key="add-track-kind" tabStop tooltip="Add an audio or return track" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onClick={() => addTrack(page)}>
             <Icon name="chevron-down" size={14} color="gray-700" />
           </div>
         </div>
@@ -98,10 +98,10 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   // A head drawn anew, as when lanes show, hears no leave of the one it replaces.
   onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
-    <div style={() => ({ height: ROW - 1, direction: "row", align: "center", gap: 8, paddingRight: 8, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
+    <div key={`track-head-${each.name}`} style={() => ({ height: ROW - 1, direction: "row", align: "center", gap: 8, paddingRight: 8, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
       onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
-      onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
+      onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))} tabStop>
       <div style={() => ({ width: 3, height: ROW - 13, radius: 1.5, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
       <div style={{ grow: true, minWidth: 0, gap: 2, paddingLeft: 5 }}>
         <div style={{ direction: "row", align: "center", gap: 8 }}>
@@ -160,7 +160,7 @@ export const Returns = ({ page }: { page: Page }) => {
       <div style={{ height: 1, background: "alpha/5", keep: true }} />
       <div style={{ height: 31, direction: "row", align: "center", keep: true }}>
         <div style={{ width: HEADER - 1, height: 31, direction: "row", align: "center", paddingRight: 12, keep: true }}>
-          <div key="returns-header" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 5, paddingLeft: 17 }}
+          <div key="returns-header" tabStop style={{ grow: true, height: 31, direction: "row", align: "center", gap: 5, paddingLeft: 17 }}
             onClick={() => (memory.returnsOpen = !memory.returnsOpen)}>
             <Icon name={() => (memory.returnsOpen ? "chevron-down" : "chevron-right")} size={14} color="gray-700" />
             <div style={{ fontSize: 12, color: "gray-900" }}>Returns</div>
@@ -200,7 +200,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
   return (
     <div style={{ height: RETURN_ROW, direction: "row", keep: true }}>
       <div style={{ width: HEADER - 1, height: RETURN_ROW, paddingX: 8, paddingY: 4, keep: true }}>
-        <div key={`return-${each.name}`} style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 12, paddingRight: 4, radius: 6, background: panelOf() === each.name ? "alpha/5" : COLOR.clear })}
+        <div key={`return-${each.name}`} tabStop style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 12, paddingRight: 4, radius: 6, background: panelOf() === each.name ? "alpha/5" : COLOR.clear })}
           onPress={({ button }) => button === "right" && trackMenu(page, each)}
           onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
@@ -223,7 +223,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
 export const MasterRow = ({ page: { memory } }: { page: Page }) => (
   <div style={{ height: MASTER_ROW - 1, direction: "row", align: "center", keep: true }}>
     <div style={{ width: HEADER - 1, height: MASTER_ROW - 1, paddingX: 8, paddingY: 4, keep: true }}>
-      <div key="master-row" style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.below?.kind === "master" ? "alpha/5" : COLOR.clear })}
+      <div key="master-row" tabStop style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.below?.kind === "master" ? "alpha/5" : COLOR.clear })}
         onClick={() => (memory.below = { kind: "master" })}>
         <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
         <div style={{ fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>

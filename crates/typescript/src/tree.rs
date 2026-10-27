@@ -59,6 +59,8 @@ props! {
         disabled: bool,
         cursor: Cursor,
         tooltip: String,
+        /// Tab reaches it and enter clicks it, as a button's.
+        tab_stop: bool,
         /// The spaces whose scroll its children move with, by their keys.
         follow: Follow,
         /// What a drag of it carries to a node that hears a drop.
