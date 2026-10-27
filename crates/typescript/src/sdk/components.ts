@@ -99,14 +99,26 @@ function turned(kind: string, props: ValueProps<number> & { key?: string; played
   return { key, value: () => liveValueAt(travel, fraction()), fraction, drag: { id: key, axis: along, onEnd }, onPress };
 }
 
-export type KnobProps = ValueProps<number> & { key?: string; label?: string; min: number; max: number; default: number; unit?: Unit | "pan"; played?: boolean; bipolar?: boolean; size?: "sm" | "md" };
+export type KnobProps = ValueProps<number> & {
+  key?: string;
+  label?: string;
+  /** Its value alone under it, with `label` still naming its undo step: for knobs whose names a column beside them says once. */
+  bare?: boolean;
+  min: number;
+  max: number;
+  default: number;
+  unit?: Unit | "pan";
+  played?: boolean;
+  bipolar?: boolean;
+  size?: "sm" | "md";
+};
 
 /**
  * A knob on a number, as the app's knobs look: a field of the record such as `rate`, whose drag
  * is smooth and one undo step, a number input, which nothing saves, or what code keeps, see
  * `ValueProps`. With `played`, it shows the field as it plays, so it moves with a lane. A
  * double click puts it at `default`. A `bipolar` one, such as a pan, draws its arc from the top;
- * `unit: "pan"` reads `C`, `25L`, `100R`. It shows `label` and the value under it; `size: "sm"`
+ * `unit: "pan"` reads `C`, `25L`, `100R`. It shows `label`, unless `bare`, and the value under it; `size: "sm"`
  * is a 28-point dial alone.
  */
 export function Knob(props: KnobProps): UiNode {
@@ -120,14 +132,15 @@ export function Knob(props: KnobProps): UiNode {
     const radians = angle().times(2 * Math.PI);
     return [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
   };
+  const named = label !== undefined && !props.bare;
   const texts = small ? [] : [
-    ...(label === undefined ? [] : [Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" })]),
-    Label({ x: centreX, y: label === undefined ? 38 : 54, text: value, unit, color: "gray-950", size: 12, align: "center" }),
+    ...(named ? [Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" })] : []),
+    Label({ x: centreX, y: named ? 54 : 38, text: value, unit, color: "gray-950", size: 12, align: "center" }),
   ];
   return Space({
     key,
     width: small ? 28 : 56,
-    height: small ? 28 : label === undefined ? 56 : 72,
+    height: small ? 28 : named ? 72 : 56,
     cursor: "ns-resize",
     drag,
     onPress,

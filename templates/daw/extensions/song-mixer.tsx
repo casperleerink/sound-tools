@@ -4,8 +4,12 @@ import { colourOf, muted, titleOf, type Child, type Page } from "./song-page";
 // The mixer under the timeline: a strip per track and per return, and the master's.
 const STRIP = 72;
 const MIXER_FADER = 140;
-/** A knob with its name and value under it. */
-const KNOB = 72;
+/** The most the mixer is tall, with three rows of sends; more scroll, with the faders under them. */
+const MIXER_HEIGHT = 480;
+/** A knob with its value under it; its name is in the column of names. */
+const KNOB = 56;
+/** The column of names at the left of the strips, which stays as they scroll: what each row of knobs turns. */
+const NAMES = 56;
 /** The strips of the tracks, of the returns or the master's, between the full-height lines. */
 const GROUP = { direction: "row", gap: 4, paddingX: 8, paddingTop: 12, paddingBottom: 8, keep: true } as const;
 
@@ -29,20 +33,37 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
 /** A strip per track, the returns' strips after them, then the master's, which stays in view while they scroll; its limiter is in the master's panel. */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, memory, rows, returns, openPanel, toggleMute, toggleSolo } = page;
-  const mostSends = memo(() => Math.max(0, ...rows().map((each) => sendsOf(each).length)));
+  /** The returns some strip sends to, in their order: a row of knobs each. */
+  const sent = memo(() => returns().filter((back) => rows().some((each) => sendsOf(each).includes(`send-${back.name}`))));
+  /** What each row of knobs turns, said once at the left of the strips. */
+  const Names = () => {
+    const name = (text: () => string) => <div style={{ height: KNOB, paddingTop: 10, fontSize: 12, color: "gray-700", truncate: true }}>{text}</div>;
+    return (
+      <div style={{ width: NAMES, keep: true }}>
+        <For each={sent}>{(back) => name(() => titleOf(back))}</For>
+        {name(() => "Pan")}
+      </div>
+    );
+  };
   /**
-   * A strip of the mixer, as the track panel's: a knob per send, its pan, its volume over its
-   * meter, then mute and solo and its name. Every strip keeps the room of the most sends a
-   * strip has and of mute and solo, so the faders line up.
+   * A strip of the mixer, as the track panel's: a knob in each row of sends, its pan, its volume
+   * over its meter, then mute and solo and its name. A strip that does not send to a return keeps
+   * its row empty, so the rows and the faders line up.
    */
   const Strip = ({ each, master }: { each?: Child; master?: true }) => {
     const path = each ? `${each.name}/mix` : "master";
-    const sends = () => (each ? sendsOf(each) : []);
     return (
       <div style={{ width: STRIP, align: "center" }}>
-        <For each={sends}>{(send) => <Knob field={`${each!.name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" />}</For>
-        <div style={() => ({ height: (mostSends() - sends().length) * KNOB, keep: true })} />
-        <Knob field={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
+        <For each={sent}>
+          {(back) => (
+            <div style={{ height: KNOB, keep: true }}>
+              {() => each && sendsOf(each).includes(`send-${back.name}`)
+                ? <Knob field={`${each.name}/send-${back.name}.gain_db`} label={untrack(() => titleOf(back))} bare min={-60} max={6} default={0} unit="db" />
+                : null}
+            </div>
+          )}
+        </For>
+        <Knob field={`${path}.pan`} label="Pan" bare min={-1} max={1} default={0} unit="pan" bipolar />
         <div style={{ align: "center", gap: 7, paddingTop: 4 }}>
           <Volume path={path} length={MIXER_FADER} meter={master ? "device" : { of: path }} />
         </div>
@@ -63,7 +84,11 @@ export const Mixer = ({ page }: { page: Page }) => {
     );
   };
   return (
-    <div key="mixer" style={{ direction: "row", keep: true }}>
+    <div key="mixer" style={{ maxHeight: MIXER_HEIGHT, scroll: "y", keep: true }}>
+      <div style={{ direction: "row", keep: true }}>
+      <div style={{ ...GROUP, paddingRight: 0 }}>
+        <Names />
+      </div>
       <div style={{ direction: "row", scroll: "x" }}>
         <div style={GROUP}>
           <For each={rows}>{(each) => <Strip each={each} />}</For>
@@ -82,6 +107,7 @@ export const Mixer = ({ page }: { page: Page }) => {
       <div style={{ width: 1, background: "alpha/5", keep: true }} />
       <div style={GROUP}>
         <Strip master />
+      </div>
       </div>
     </div>
   );
