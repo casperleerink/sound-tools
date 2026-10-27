@@ -101,9 +101,13 @@ pub(super) fn turn(
     steps_open: bool,
     on_toggle_steps: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     below: Option<AnyElement>,
+    name: Name,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let titles: Vec<String> = (turn.steps.iter())
+        .map(|step| title(step, name, cx))
+        .collect();
     let theme = cx.theme();
     let (muted, bright, dim, red, lavender) = (
         theme.gray_700,
@@ -176,7 +180,7 @@ pub(super) fn turn(
             .line_height(px(SMALL_LINE_HEIGHT))
             // Text reaches 4.5 : 1 on the window; icons need only 3 : 1, so theirs are dimmer.
             .text_color(muted)
-            .children(turn.steps.iter().map(|step| {
+            .children(turn.steps.iter().zip(titles).map(|(step, title)| {
                 // A step that did not do what it says says so in words, a failure in red.
                 let outcome = match step.outcome {
                     Some(StepOutcome::Failed) => Some(("· failed", red)),
@@ -188,12 +192,7 @@ pub(super) fn turn(
                     .min_w_0()
                     .flex()
                     .gap(px(4.))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .child(plain(step.finished_title())),
-                    )
+                    .child(div().min_w_0().truncate().child(plain(&title)))
                     .children(
                         outcome
                             .map(|(word, color)| div().flex_none().text_color(color).child(word)),
@@ -293,9 +292,13 @@ pub(super) fn problems(
     index: usize,
     open: bool,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    name: Name,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let lines_of: Vec<String> = (problems.iter())
+        .map(|problem| format!("{}: {}", name(&problem.path, cx), problem.message))
+        .collect();
     let theme = cx.theme();
     let (peach, muted, bright) = (theme.peach, theme.gray_800, theme.gray_900);
     let chevron = if open {
@@ -335,12 +338,12 @@ pub(super) fn problems(
         )
         // Under the words of the line, past its chevron.
         .when(open, |lines| {
-            lines.children(problems.iter().enumerate().map(|(number, problem)| {
+            lines.children(lines_of.into_iter().enumerate().map(|(number, line)| {
                 div()
                     .debug_selector(move || format!("agent-problem-{index}-{number}"))
                     .pl(px(16.))
                     .text_color(muted)
-                    .child(format!("{}: {}", problem.path, problem.message))
+                    .child(line)
             }))
         })
         .into_any_element()
@@ -405,6 +408,22 @@ fn tab_stop(line: Div, id: ElementId, window: &mut Window, cx: &mut App) -> Stat
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             state.update(cx, |state, cx| state.keyboard.pressed(cx));
         })
+}
+
+/// The words of a file of the project for a composer, see `sound_ui::names::file_name`.
+pub(super) type Name<'a> = &'a dyn Fn(&str, &App) -> String;
+
+/// A step's line: what it read or changed by the name of that part, the others as the
+/// provider says them.
+fn title(step: &Step, name: Name, cx: &App) -> String {
+    match (&step.kind, &step.outcome) {
+        (StepKind::Read { path }, _) => format!("Read {}", name(path, cx)),
+        (StepKind::Change { path }, Some(StepOutcome::Denied)) => {
+            format!("Change {}", name(path, cx))
+        }
+        (StepKind::Change { path }, _) => format!("Changed {}", name(path, cx)),
+        _ => step.finished_title().to_string(),
+    }
 }
 
 /// What a step does, in the composer's words: a command as the agent says it does (or

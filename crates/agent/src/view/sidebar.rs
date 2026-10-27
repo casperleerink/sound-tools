@@ -578,6 +578,8 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let session = self.session.clone();
+        let name = move |path: &str, cx: &App| sound_ui::names::file_name(&session, path, cx);
         let content = match self.conversation.entries().get(index) {
             Some(Entry::Message { text, attachments }) => entry::message(text, attachments, cx),
             Some(Entry::Notice(text)) => entry::notice(text, cx),
@@ -589,7 +591,8 @@ impl Sidebar {
                         let toggle = cx.listener(move |sidebar, _, _, cx| {
                             sidebar.toggle(|sidebar| &mut sidebar.problems_open, index, cx);
                         });
-                        let problems = entry::problems(problems, index, open, toggle, window, cx);
+                        let problems =
+                            entry::problems(problems, index, open, toggle, &name, window, cx);
                         let fix = self.goes_on_after(index).then(|| {
                             let click = cx.listener(|sidebar, _, window, cx| {
                                 sidebar.ask(FIX_NOT_LIVE.to_string(), window, cx);
@@ -619,7 +622,9 @@ impl Sidebar {
                     .answers
                     .entry(index)
                     .or_insert_with(|| entry::answer(turn));
-                entry::turn(turn, index, answer, steps_open, toggle, below, window, cx)
+                entry::turn(
+                    turn, index, answer, steps_open, toggle, below, &name, window, cx,
+                )
             }
             None => div().into_any_element(),
         };
