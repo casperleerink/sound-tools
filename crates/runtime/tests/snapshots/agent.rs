@@ -8,6 +8,7 @@
 //! - `agent-failed.png`: open again, the command denied and the turn failed, its steps open.
 //! - `agent-steps-problems.png`: a turn with a failed step that left two files not live, its
 //!   steps and its problems open.
+//! - `agent-focus.png`: the same, shift-tab from the composer: the ring of the line before it.
 //! - `agent-menu.png`: the composer's model menu: the models and the account.
 //! - `agent-access-menu.png`: the composer's access menu: the approval modes.
 //! - `agent-cannot-continue.png`: a message the agent no longer has the session for: the
@@ -246,6 +247,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     });
     cx.run_until_parked();
     save(cx, opened.window.into(), "agent-steps-problems")?;
+    // Shift-tab from the composer: the ring of the line before it, from the keys.
+    opened.key("shift-tab", cx)?;
+    save(cx, opened.window.into(), "agent-focus")?;
 
     let (model_menu, access_menu, new_menu) = cx.update(|cx| {
         let sidebar = sidebar.read(cx);

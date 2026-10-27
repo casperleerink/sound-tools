@@ -698,38 +698,33 @@ impl Sidebar {
     /// back at the left.
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let editing = self.instructions.is_some();
+        // On the left edge of the thread under it.
+        let title = div()
+            .flex_1()
+            .text_size(px(14.))
+            .font_weight(FontWeight::MEDIUM)
+            .child(if editing { "Instructions" } else { "Agent" });
         let header = div()
-            .relative()
             .flex()
             .flex_none()
             .items_center()
-            .justify_center()
+            .gap(px(4.))
             .h(px(56.))
-            .child(
-                div()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(if editing { "Instructions" } else { "Agent" }),
-            );
+            .pr(px(16.));
         if !editing {
-            return header.child(
-                div()
-                    .absolute()
-                    .right(px(16.))
-                    .child(self.new_button.clone()),
-            );
+            return header
+                .pl(px(24.))
+                .child(title)
+                .child(self.new_button.clone());
         }
-        header.child(
-            div().absolute().left(px(16.)).child(
-                Button::icon_only("instructions-back", "arrow-left")
-                    .debug_selector(|| "agent-instructions-back".to_string())
-                    .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Xs)
-                    .on_click(cx.listener(|sidebar, _, window, cx| {
-                        sidebar.close_instructions(window, cx);
-                    })),
-            ),
-        )
+        let back = Button::icon_only("instructions-back", "arrow-left")
+            .debug_selector(|| "agent-instructions-back".to_string())
+            .variant(ButtonVariant::Ghost)
+            .size(ButtonSize::Xs)
+            .on_click(cx.listener(|sidebar, _, window, cx| {
+                sidebar.close_instructions(window, cx);
+            }));
+        header.pl(px(16.)).child(back).child(title)
     }
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {

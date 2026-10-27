@@ -1,4 +1,4 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, type Clock, type Drag, type Press, type TextPart } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
 import { ACROSS, barStarts, BEAT, COLOR, LEAD, RULER, type Page, type Runs } from "./song-page";
 
 // The ruler: the sections on its top line; bars, time signatures and tempo changes on the line
@@ -140,6 +140,8 @@ export const Ruler = ({ page }: { page: Page }) => {
   // The repeat's bar under the ruler, as the arrangement had it: a click turns it on or off,
   // its body moves it, an edge moves that end, on the beats. Off, it keeps its range.
   const repeat = () => clock.repeat ?? memory.repeatRange;
+  // A line with its two ends standing up, bright while it repeats.
+  const band = (): Color => (clock.repeat ? "gray-900" : "alpha/20");
   const setRepeatRange = (from: number, to: number) => {
     if (to <= from) return;
     if (clock.repeat) clock.setRepeat({ from, to });
@@ -210,15 +212,17 @@ export const Ruler = ({ page }: { page: Page }) => {
             color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />,
         ]}
       </For>
-      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 10}
-        width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={8} radius={2} color={() => (clock.repeat ? "gray-900" : "alpha/15")} />
+      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 6}
+        width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={3} radius={1.5} color={band} />
+      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 11} width={timeline.pointX.times(2)} height={8} radius={1} color={band} />
+      <Rect x={() => moving!.dx.plus(ending!.dx).plus(repeat().to).minus(timeline.pointX.times(2))} y={RULER - 11} width={timeline.pointX.times(2)} height={8} radius={1} color={band} />
       <Rect x={() => moving!.dx.plus(repeat().from)} y={RULER - 14} width={() => repeat().to - repeat().from} height={14}
         color={COLOR.clear} cursor="pointer" drag={repeatMove!} onClick={toggleRepeat} />
       <Rect x={() => starting!.dx.plus(repeat().from)} y={RULER - 14} width={handle} height={14}
         color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} onClick={toggleRepeat} />
       <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
         anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} onClick={toggleRepeat} />
-      <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active.times(loop.dx.abs().gt(0))} />
+      <Rect x={loop.startX.min(loop.x)} y={RULER - 6} width={loop.dx.abs()} height={3} radius={1.5} color="gray-900" opacity={loop.active.times(loop.dx.abs().gt(0))} />
       <For each={tempos}>
         {(change) => {
           const text = `${bpmText(change.bpm)} bpm`;

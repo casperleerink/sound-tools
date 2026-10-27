@@ -16,7 +16,7 @@ use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::focus::KeyboardFocus;
 
 use super::markdown::{Markdown, MarkdownText};
-use crate::conversation::{Step, Turn};
+use crate::conversation::Turn;
 use crate::{StepKind, StepOutcome, TurnOutcome};
 
 /// The text of the thread: 15 on 22, as the mockup.
@@ -150,7 +150,9 @@ pub(super) fn turn(
                 .child(Icon::new(chevron).size(12.).mt(px(2.))),
             false => row.id(id),
         };
-        row.debug_selector(move || format!("agent-worked-for-{index}"))
+        let row = row
+            .debug_selector(move || format!("agent-worked-for-{index}"))
+            .min_w_0()
             // A failure has no summary and may wrap; with a summary, the summary is cut.
             .child(
                 div()
@@ -164,7 +166,9 @@ pub(super) fn turn(
                     .truncate()
                     .text_color(dim)
                     .child(format!("· {summary}"))
-            }))
+            }));
+        // As wide as its words, so that its ring is too.
+        div().flex().child(row)
     });
     let steps = steps_open.then(|| {
         div()
@@ -217,8 +221,9 @@ pub(super) fn turn(
     });
     // While a question waits, the question is what the agent does.
     let working = (working && turn.approvals.is_empty()).then(|| {
-        let step = turn.current_step();
-        let line = step.map_or("Working", doing);
+        // A step's icon and words while it runs; between steps the agent thinks.
+        let step = turn.current_step().filter(|step| step.outcome.is_none());
+        let line = step.map_or("Working", |step| doing(&step.kind));
         let mark = match step {
             Some(step) => Icon::new(icon(&step.kind))
                 .size(14.)
@@ -294,17 +299,19 @@ pub(super) fn problems(
         .text_size(px(SMALL_TEXT_SIZE))
         .line_height(px(SMALL_LINE_HEIGHT))
         .child(
-            tab_stop(div(), ("problems", index).into(), window, cx)
-                .debug_selector(move || format!("agent-problems-{index}"))
-                .flex()
-                .items_start()
-                .gap(px(4.))
-                .text_color(peach)
-                .cursor_pointer()
-                .hover(move |style| style.text_color(bright))
-                .on_click(on_toggle)
-                .child(Icon::new(chevron).size(12.).mt(px(2.)))
-                .child(line),
+            div().flex().child(
+                tab_stop(div(), ("problems", index).into(), window, cx)
+                    .debug_selector(move || format!("agent-problems-{index}"))
+                    .flex()
+                    .items_start()
+                    .gap(px(4.))
+                    .text_color(peach)
+                    .cursor_pointer()
+                    .hover(move |style| style.text_color(bright))
+                    .on_click(on_toggle)
+                    .child(Icon::new(chevron).size(12.).mt(px(2.)))
+                    .child(line),
+            ),
         )
         // Under the words of the line, past its chevron.
         .when(open, |lines| {
@@ -376,16 +383,15 @@ fn tab_stop(line: Div, id: ElementId, window: &mut Window, cx: &mut App) -> Stat
         })
 }
 
-/// What the agent does now, in the composer's words. The step's own title names a command or
-/// a file; its line in the opened steps shows that.
-fn doing(step: &Step) -> &str {
-    match (&step.kind, &step.outcome) {
-        (_, Some(_)) => "Working",
-        (StepKind::Run, None) => "Running a command",
-        (StepKind::Read { .. }, None) => "Reading the project",
-        (StepKind::Change { .. }, None) => "Changing the project",
-        (StepKind::Search, None) => "Searching the project",
-        (StepKind::Other, None) => step.running_title.as_str(),
+/// What a step does, in the composer's words. Its own title names a command, a file or a tool
+/// of the agent; its line in the opened steps shows that.
+fn doing(kind: &StepKind) -> &'static str {
+    match kind {
+        StepKind::Run => "Running a command",
+        StepKind::Read { .. } => "Reading the project",
+        StepKind::Change { .. } => "Changing the project",
+        StepKind::Search => "Searching the project",
+        StepKind::Other => "Working",
     }
 }
 
