@@ -120,8 +120,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                         StepOutcome::Failed => println!("    failed"),
                         StepOutcome::Denied => println!("    denied"),
                     },
-                    AgentEvent::ApprovalRequested { id, title } => {
-                        println!("? {title}  [y] allow, [a] allow for this thread, [n] deny");
+                    AgentEvent::ApprovalRequested { id, title, command } => {
+                        let command = command.map(|command| format!("\n{command}"));
+                        let command = command.unwrap_or_default();
+                        println!(
+                            "? {title}{command}  [y] allow, [a] allow for this thread, [n] deny"
+                        );
                         approval = Some(id);
                     }
                     AgentEvent::TurnEnded { outcome } => {

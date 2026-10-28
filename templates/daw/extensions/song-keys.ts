@@ -129,8 +129,10 @@ function itemKey(key: Key, order: readonly string[], tool: Song) {
     // Its notes below, as a double click does.
     memory.below = { kind: "editor", clip };
     memory.notes = new Set();
-  } else if (key.key === "escape") {
+  } else if (key.key === "escape" && memory.selected.size > 0) {
     memory.selected = new Set();
+  } else if (key.key === "escape" && memory.below) {
+    memory.below = null;
   } else if (key.cmd && key.key === "a") {
     memory.selected = new Set(rows.flatMap(({ name }) => {
       const owner = children.find((child) => child.name === name);

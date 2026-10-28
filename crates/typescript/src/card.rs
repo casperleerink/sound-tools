@@ -10,13 +10,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollHandle,
-    ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement, Task, TextAlign, TextRun,
-    WeakEntity, WeakFocusHandle, Window, anchored, canvas, deferred, div, fill, hsla, outline,
-    point, prelude::*, px, size,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, DispatchPhase, Div, ElementId, Empty,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
+    PromptLevel, ScrollHandle, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
+    StyledText, Task, TextAlign, TextRun, WeakEntity, WeakFocusHandle, Window, anchored, canvas,
+    deferred, div, fill, hsla, outline, point, prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -29,10 +29,11 @@ use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::gesture::ValueChange;
+use sound_ui::components::gesture::{ValueChange, ValueKey};
 use sound_ui::components::icon::Icon;
 use sound_ui::components::knob::{
-    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
+    FINE_KEY_STEP, KEY_STEP, decibels_readout, hertz_readout, milliseconds_readout, pan_readout,
+    percent_readout, short,
 };
 use sound_ui::components::meter::Meter;
 use sound_ui::components::notice::{Notice, NoticeTone};
@@ -43,6 +44,7 @@ use sound_ui::components::slider::Slider;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::focus::TabStop;
 use sound_ui::{
     ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, every_poll, typography,
 };
@@ -96,6 +98,8 @@ pub(crate) struct TypeScriptCard {
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
     /// them, and a page takes them when it opens and nothing else has them.
     focus: FocusHandle,
+    /// The keys of what it shows in the title bar, out of the page, which hands them to the page.
+    title_focus: FocusHandle,
     /// The keys that went down and not up yet. They go up when it loses the keys, when cmd
     /// goes down and when it closes, so a note a key holds is not held for ever.
     keys_down: BTreeSet<String>,
@@ -722,6 +726,7 @@ impl TypeScriptCard {
         };
         let card = live.update(cx, |live, cx| live.add(id.clone(), tool, surface, cx));
         let focus = cx.focus_handle();
+        let title_focus = cx.focus_handle();
         let hears_keys = live.read(cx).info(card).is_some_and(|info| info.keys);
         // Not from what has the focus, such as the composer of the agent while it is typed in.
         if page && hears_keys && window.focused(cx).is_none() {
@@ -729,13 +734,20 @@ impl TypeScriptCard {
         }
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
             .detach();
-        // A text field in an overlay lets go of the keys on a press that nothing focusable took,
-        // such as on a space: the card takes them from the window, for escape to close it.
+        cx.on_focus_out(&title_focus, window, |view, _, _, cx| {
+            view.let_go_of_keys(cx)
+        })
+        .detach();
+        // What had the focus in it let go: a text field in an overlay on a press that nothing
+        // focusable took, such as on a space, or a button that went, such as a panel's close.
+        // The page, or its part in the title bar, takes the keys back from the window, for escape
+        // to close an overlay and for the keys of its page.
         cx.on_focus_lost(window, |view, window, cx| {
-            if !view.overlays.is_empty()
-                && window.focus_lost_restore_target(cx).as_ref() == Some(&view.focus)
+            let target = window.focus_lost_restore_target(cx);
+            if let Some(target) =
+                target.filter(|target| [&view.focus, &view.title_focus].contains(&target))
             {
-                window.focus(&view.focus, cx);
+                window.focus(&target, cx);
             }
         })
         .detach();
@@ -818,6 +830,7 @@ impl TypeScriptCard {
             pressed: Vec::new(),
             clicking: None,
             focus,
+            title_focus,
             keys_down: BTreeSet::new(),
             feeds: Feeds::default(),
             indexes: RefCell::default(),
@@ -1493,6 +1506,12 @@ impl TypeScriptCard {
         }
     }
 
+    /// Whether its page takes the keys: its tool hears them, or it shows an overlay, for escape
+    /// to close it.
+    fn takes_keys(&self, info: Option<&ToolInfo>) -> bool {
+        info.is_some_and(|info| info.keys) || !self.overlays.is_empty()
+    }
+
     /// The record with each field it leaves out at its default, and its tool.
     fn record(&self, cx: &App) -> (Value, Option<ToolInfo>) {
         let info = self.live.read(cx).info(self.card);
@@ -1561,37 +1580,7 @@ impl TypeScriptCard {
             }
             return;
         }
-        let played = self.live.read(cx).played_of(&self.id).cloned();
-        let sources = Sources {
-            tick: 0.0,
-            watches: &BTreeMap::new(),
-            state: &state,
-            info: info.as_ref(),
-            played: played.as_ref(),
-            drag: None,
-            spaces: &HashMap::new(),
-            hovered: None,
-            feeds: &self.feeds,
-        };
-        let from = turns.map(|turns| {
-            let turns = turns.as_ref()?;
-            match turns.target(info.as_ref()) {
-                Turned::Field {
-                    child: Some(child),
-                    name,
-                } => {
-                    let child = self.id.child(child).ok()?;
-                    let record = state_of(self.session.read(cx).project(), &child)?;
-                    let value = record
-                        .get(name)
-                        .and_then(Value::as_f64)
-                        .map(|value| value as f32);
-                    value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
-                }
-                Turned::Field { child: None, name } => sources.field(name),
-                Turned::Input(name) => sources.input(name),
-            }
-        });
+        let from = turns.map(|turns| self.turned_value(turns.as_ref()?, &state, info.as_ref(), cx));
         let (across, down) = frame.view.scale();
         let held = Held {
             space: frame.key.clone(),
@@ -1733,6 +1722,72 @@ impl TypeScriptCard {
         true
     }
 
+    /// What `turns` turns is now.
+    fn turned_value(
+        &self,
+        turns: &tree::Turns,
+        state: &Value,
+        info: Option<&ToolInfo>,
+        cx: &App,
+    ) -> Option<f32> {
+        match turns.target(info) {
+            Turned::Field {
+                child: Some(child),
+                name,
+            } => {
+                let child = self.id.child(child).ok()?;
+                let record = state_of(self.session.read(cx).project(), &child)?;
+                let value = record.get(name).and_then(tree::number_of);
+                value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
+            }
+            target => {
+                let played = self.live.read(cx).played_of(&self.id).cloned();
+                let sources = Sources {
+                    tick: 0.0,
+                    watches: &BTreeMap::new(),
+                    state,
+                    info,
+                    played: played.as_ref(),
+                    drag: None,
+                    spaces: &HashMap::new(),
+                    hovered: None,
+                    feeds: &self.feeds,
+                };
+                match target {
+                    Turned::Input(name) => sources.input(name),
+                    Turned::Field { name, .. } => sources.field(name),
+                }
+            }
+        }
+    }
+
+    /// A key on the focused control of what `turns` turns, as a knob of the window takes it: an
+    /// arrow steps it a fiftieth of its travel, a five-hundredth with shift, backspace puts it at
+    /// its default. One undo step each. Whether the key was the control's: an arrow is, at an
+    /// end too; backspace only with a default; escape is what holds it.
+    fn turn_by_key(&mut self, turns: &tree::Turns, key: ValueKey, cx: &mut Context<Self>) -> bool {
+        let value = match key {
+            ValueKey::Cancel => return false,
+            ValueKey::Reset => match turns.default {
+                Some(default) => Some(default),
+                None => return false,
+            },
+            ValueKey::Step { up, fine } => {
+                let by = if fine { FINE_KEY_STEP } else { KEY_STEP };
+                let by = if up { by } else { -by };
+                let (state, info) = self.record(cx);
+                let range = range_of(info.as_ref(), turns).or_else(|| self.child_range(turns, cx));
+                let now = self.turned_value(turns, &state, info.as_ref(), cx);
+                (range.zip(now))
+                    .map(|(range, now)| range.value((range.position(now) + by).clamp(0.0, 1.0)))
+            }
+        };
+        if let Some(value) = value {
+            self.turn(turns, ValueChange::Set(value), cx);
+        }
+        true
+    }
+
     /// Turns what the drag turns to where the pointer is.
     fn turn_held(&mut self, held: &Held, cx: &mut Context<Self>) {
         let info = self.live.read(cx).info(self.card);
@@ -1803,7 +1858,7 @@ impl TypeScriptCard {
                     &id,
                     &label,
                     change,
-                    |state, value| tree::set_field(state, &field, tree::decimal(value)),
+                    |state, value| tree::set_field(state, &field, tree::number_value(value)),
                     cx,
                 );
             }
@@ -2393,6 +2448,14 @@ struct Drawing<'a, 'b> {
     scroller: Option<ScrollHandle>,
     /// Whether it draws the title bar's div, which the body leaves out.
     in_title_bar: bool,
+    /// Whether what it draws shows out of its page, in the title bar.
+    out_of_page: bool,
+    /// Whether what it draws is inside a div with a tooltip.
+    under_tooltip: bool,
+    /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
+    takes_keys: bool,
+    /// The keys of what the page shows in the title bar, while the page hears keys.
+    title_focus: Option<FocusHandle>,
     /// The title bar's div the body left out.
     title_bar: Option<(usize, Vec<usize>)>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
@@ -2525,6 +2588,9 @@ impl Drawing<'_, '_> {
                 disabled,
                 cursor,
                 tooltip,
+                tab_stop,
+                keys,
+                on_key,
                 on_release,
                 on_click,
                 on_hover,
@@ -2571,9 +2637,24 @@ impl Drawing<'_, '_> {
                         .clone()
                 });
                 let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
+                // A text it cuts off with "…" shows whole on hover, and only then. Under a div
+                // with a tooltip, GPUI would show this one in its place, even empty.
+                let own_tip = !self.under_tooltip && tooltip.is_none();
+                let text = match (style.truncates() && own_tip, &shown[..]) {
+                    (true, [child]) => match table.get(*child).map(|child| &child.props) {
+                        Some(Props::Text(TextProps { text })) => {
+                            Some(SharedString::from(text.clone().unwrap_or_default()))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let mut cut_text = text.clone().map(StyledText::new);
+                let cut = text.zip(cut_text.as_ref().map(|styled| styled.layout().clone()));
                 let mut children: Vec<AnyElement> = Vec::new();
                 let mut hidden = None::<f32>;
                 let mut at = 0.0;
+                let under_tooltip = std::mem::replace(&mut self.under_tooltip, !own_tip);
                 for (position, child) in shown.iter().enumerate() {
                     if let Some((heights, gap, showing)) = &rows {
                         let height = heights.get(position).copied().unwrap_or_default();
@@ -2588,8 +2669,12 @@ impl Drawing<'_, '_> {
                     if let Some(room) = hidden.take() {
                         children.push(div().flex_none().h(px(room)).into_any_element());
                     }
-                    children.push(self.draw(*child, &[index, &[position]].concat()));
+                    children.push(match cut_text.take() {
+                        Some(styled) => styled.into_any_element(),
+                        None => self.draw(*child, &[index, &[position]].concat()),
+                    });
                 }
+                self.under_tooltip = under_tooltip;
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
                 }
@@ -2643,11 +2728,14 @@ impl Drawing<'_, '_> {
                     (false, None) => element,
                 };
                 let pressed = style.pressed().filter(|_| !disabled);
-                let inner = match hears || pressed.is_some() || tooltip.is_some() {
+                let own =
+                    (*on_key == Some(true) && !disabled).then(|| keys.clone().unwrap_or_default());
+                let stateful = hears || pressed.is_some() || tooltip.is_some() || cut.is_some();
+                let inner = match stateful || own.is_some() {
                     false => element.into_any_element(),
                     true => {
                         let name = element_name("div", key.as_deref(), index);
-                        let element = (element.id(ElementId::Name(name.into())))
+                        let element = (element.id(ElementId::Name(name.clone().into())))
                             .when_some(pressed, |element, look| {
                                 // The hitbox the pressed look needs, on a div that hears nothing.
                                 element
@@ -2656,9 +2744,33 @@ impl Drawing<'_, '_> {
                             })
                             .when_some(tooltip.clone(), |element, text| {
                                 element.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
+                            })
+                            .when_some(cut, |element, (text, layout)| {
+                                element.tooltip(move |_, cx| match layout.text() == *text {
+                                    true => cx.new(|_| Nothing).into(),
+                                    false => Tooltip::new(text.clone()).view(cx),
+                                })
                             });
-                        match hears {
+                        let element = match hears {
                             true => self.heard_div(element, id, pointer, carry, on_drop),
+                            false => element,
+                        };
+                        let element = match &own {
+                            Some(keys) => element.on_key_down(self.own_keys(id, keys.clone())),
+                            None => element,
+                        };
+                        let click = hears && pointer.click;
+                        match *tab_stop == Some(true) && (click || own.is_some()) {
+                            true => {
+                                let control = Control {
+                                    keys: if click { Keys::Press } else { Keys::Own },
+                                    menu: (hears && pointer.press).then_some(pointer),
+                                };
+                                let element = self.control(element, id, control);
+                                TabStop::new(format!("tab-{name}"), element)
+                                    .when(click, |stop| stop.on_click(self.clicked(id)))
+                                    .into_any_element()
+                            }
                             false => element.into_any_element(),
                         }
                     }
@@ -2909,11 +3021,17 @@ impl Drawing<'_, '_> {
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
+            .when(hears.click, |toggle| toggle.on_click(self.clicked(id)))
             .when_some(props.color, |toggle, color| toggle.color(color.0))
-            .when_some(props.tooltip.clone(), Toggle::tooltip)
+            .when_some(tooltip_of(&props.tooltip, &props.shortcut), Toggle::tooltip)
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
-        let wrap = (div().flex_none().occlude().debug_selector(move || selector))
+        let wrap = self
+            .control(
+                div().flex_none().occlude().debug_selector(move || selector),
+                id,
+                Control::press(),
+            )
             .when(hears.any(), Div::cursor_pointer);
         self.hears_pointer(wrap, id, hears)
             .child(toggle)
@@ -2951,21 +3069,122 @@ impl Drawing<'_, '_> {
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let button = button
+            .tab_stop(hears.click)
+            .when(hears.click, |button| button.on_click(self.clicked(id)))
             .variant(variant)
             .size(size)
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
             .when_some(props.opacity, |button, opacity| button.opacity(opacity))
-            .when_some(props.tooltip.clone(), |mut button, text| {
-                (button.interactivity()).tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx));
-                button
-            })
+            .when_some(
+                tooltip_of(&props.tooltip, &props.shortcut),
+                |mut button, tooltip| {
+                    (button.interactivity()).tooltip(move |_, cx| tooltip.clone().view(cx));
+                    button
+                },
+            )
             .debug_selector(move || selector);
-        let wrap = div().flex_none().relative();
+        let wrap = self.control(div().flex_none().relative(), id, Control::press());
         self.hears_pointer(wrap, id, hears)
             .child(button)
             .when(hears.any(), |wrap| wrap.child(placed(id, &self.placed)))
             .into_any_element()
+    }
+
+    /// The one way a control of a tool meets the keys and the pointer, see [`Control`]. A press
+    /// with the pointer leaves the keys where a press on its page would, as a control of the
+    /// system takes no focus from the pointer: space after a click on play still pauses.
+    fn control<E: InteractiveElement>(&mut self, wrap: E, id: u64, control: Control) -> E {
+        let page = match self.out_of_page {
+            false => self.takes_keys.then(|| self.focus.clone()),
+            true => self.title_focus.clone(),
+        };
+        let before = Rc::new(RefCell::new(None));
+        let wrap = wrap
+            .capture_any_mouse_down({
+                let before = before.clone();
+                move |_, window, cx| *before.borrow_mut() = window.focused(cx)
+            })
+            // After GPUI gives the press's focus away: a div that is a tab stop takes it after
+            // this listener, on the same element. A text field in it keeps the focus.
+            .on_any_mouse_down(move |_, window, cx| {
+                let focus = page.clone().or_else(|| before.borrow_mut().take());
+                window.defer(cx, move |window, cx| match focus {
+                    _ if typing(window) => {}
+                    Some(focus) => window.focus(&focus, cx),
+                    None => window.blur(cx),
+                });
+            });
+        let wrap = match control.menu {
+            Some(hears) => {
+                wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+                    let keys = &event.keystroke;
+                    let opens = keys.key == "menu" || (keys.key == "f10" && keys.modifiers.shift);
+                    if opens && !event.is_held {
+                        // A right press of it, as the pointer gives.
+                        let press =
+                            press_of((0.0, 0.0), MouseButton::Right, 1, Modifiers::default());
+                        view.hang_menus_under(id);
+                        view.event(id, EventKind::Press, press.clone(), cx);
+                        if hears.release {
+                            view.event(id, EventKind::Release, press, cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                }))
+            }
+            None => wrap,
+        };
+        match control.keys {
+            Keys::Press => press_keys(wrap),
+            Keys::Own => wrap,
+            Keys::Turn(turns) => {
+                wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+                    if let Some(key) = ValueKey::of(&event.keystroke)
+                        && view.turn_by_key(&turns, key, cx)
+                    {
+                        cx.stop_propagation();
+                    }
+                }))
+            }
+        }
+    }
+
+    /// The keys `keys` of a div, while the focus is in it: its code hears them, and its page does
+    /// not. A text field in it has the keys first.
+    fn own_keys(
+        &mut self,
+        id: u64,
+        keys: Vec<String>,
+    ) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
+        (self.cx).listener(move |view, event: &KeyDownEvent, window, cx| {
+            let stroke = &event.keystroke;
+            if typing(window) || !keys.contains(&sound_ui::global_keys::chord_name(stroke)) {
+                return;
+            }
+            let modifiers = stroke.modifiers;
+            let key = json!({
+                "key": stroke.key, "down": true, "shift": modifiers.shift,
+                "alt": modifiers.alt, "cmd": modifiers.platform, "ctrl": modifiers.control,
+            });
+            view.event(id, EventKind::Key, key, cx);
+            cx.stop_propagation();
+        })
+    }
+
+    /// The click of a button or a toggle, which is a tab stop: enter clicks it too. A mouse
+    /// click is the one its press began, as on a div.
+    fn clicked(&mut self, id: u64) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        (self.cx).listener(
+            move |view, event: &ClickEvent, _, cx| match event.is_keyboard() {
+                true => {
+                    let press = press_of((0.0, 0.0), MouseButton::Left, 1, event.modifiers());
+                    view.hang_menus_under(id);
+                    view.event(id, EventKind::Click, press, cx);
+                }
+                false => view.released_over(id, cx),
+            },
+        )
     }
 
     /// `element`, the node `id`, tells its code what of the pointer `hears` asks for.
@@ -3018,7 +3237,7 @@ impl Drawing<'_, '_> {
         hears: Hears,
         carry: &Option<String>,
         on_drop: &Option<bool>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         {
             {
                 let lavender = self.cx.theme().lavender;
@@ -3034,7 +3253,7 @@ impl Drawing<'_, '_> {
                     None => element,
                 };
                 if *on_drop != Some(true) {
-                    return element.into_any_element();
+                    return element;
                 }
                 element
                     .drag_over::<ExternalPaths>(move |style, _, _, _| {
@@ -3050,7 +3269,6 @@ impl Drawing<'_, '_> {
                         let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
                         view.event(id, EventKind::Drop, dropped, cx);
                     }))
-                    .into_any_element()
             }
         }
     }
@@ -3095,6 +3313,7 @@ impl Drawing<'_, '_> {
     ) -> AnyElement {
         let (key, view, fit) = self.space_view(space, index);
         let selector = format!("space-{key}");
+        let name = key.clone();
         let inner = match self.lifting.filter(|(lifted, _)| lifted.contains(&id)) {
             // The layer over the page draws it where this lays it out.
             Some((_, places)) => {
@@ -3133,7 +3352,35 @@ impl Drawing<'_, '_> {
         } else {
             holder.flex_none()
         };
-        holder.into_any_element()
+        match self.turned_by_keys(space, children) {
+            Some(turns) => {
+                let control = Control {
+                    keys: Keys::Turn(turns),
+                    menu: None,
+                };
+                // Round corners for its ring, as the window's controls have.
+                let holder = holder
+                    .id(ElementId::Name(name.clone().into()))
+                    .rounded(px(6.));
+                let holder = self.control(holder, id, control);
+                TabStop::new(format!("tab-{name}"), holder).into_any_element()
+            }
+            None => holder.into_any_element(),
+        }
+    }
+
+    /// What a space turns with the keys: a knob's or a fader's field, which it or one shape in it
+    /// drags, as a control of the window does. A space of more drags, such as a timeline, has none.
+    fn turned_by_keys(&self, space: &SpaceProps, children: &[usize]) -> Option<tree::Turns> {
+        let shapes = (children.iter()).filter_map(|child| match &self.table.get(*child)?.props {
+            Props::Shape(shape) => self.table.drag(shape.drag),
+            _ => None,
+        });
+        let mut turned = (self.table.drag(space.drag).into_iter())
+            .chain(shapes)
+            .flat_map(|drag| [drag.x.clone(), drag.y.clone()].into_iter().flatten());
+        let turns = turned.next()?;
+        turned.next().is_none().then_some(turns)
     }
 
     /// The key of a space, and where it is scrolled to and how far zoomed now, which the spaces
@@ -3212,17 +3459,26 @@ impl Drawing<'_, '_> {
                       window: &mut Window,
                       cx: &mut App| {
                     painted_at.set(Some(bounds));
-                    // The card draws again, for the spaces that follow it to see the fit.
-                    if fit.is_some() {
+                    // The size it was laid out at, for live values of what shows and the next scroll.
+                    let size = (
+                        f64::from(f32::from(bounds.size.width)),
+                        f64::from(f32::from(bounds.size.height)),
+                    );
+                    let first = spaces.borrow_mut().get_mut(&frame.key).is_some_and(|view| {
+                        let first = view.width == 0.0 && size.0 > 0.0;
+                        (view.width, view.height) = size;
+                        first
+                    });
+                    // The card draws again, for the spaces that follow it and the live values
+                    // that read it to see its fit, or its size on its first paint. Lifted spaces
+                    // draw every frame anyway; a page with a div over it draws only when told.
+                    // Only the first paint: drawing again on every resize made `tools::nested`
+                    // fail, for a cause not found.
+                    if fit.is_some() || first {
                         let card = card.clone();
                         window.on_next_frame(move |_, cx| {
                             card.update(cx, |_, cx| cx.notify()).ok();
                         });
-                    }
-                    // The size it was laid out at, for live values of what shows and the next scroll.
-                    if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
-                        view.width = f64::from(f32::from(bounds.size.width));
-                        view.height = f64::from(f32::from(bounds.size.height));
                     }
                     paint(&frame, bounds, &hitbox, &painted, window, cx);
                     listen(&frame, &card, bounds, hitbox, painted, window);
@@ -4191,7 +4447,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                         Some(Weight::Medium) => gpui::FontWeight::MEDIUM,
                         Some(Weight::Semibold) => gpui::FontWeight::SEMIBOLD,
                     },
-                    ..typography::tabular()
+                    ..typography::ui_font()
                 },
                 color,
                 background_color: None,
@@ -4205,6 +4461,14 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                     .map(|part| run(part.len, part.color.unwrap_or(color), part.weight))
                     .collect(),
             };
+            let mut at = 0;
+            let runs: Vec<TextRun> = (runs.iter())
+                .flat_map(|run| {
+                    let part = text.get(at..at + run.len).unwrap_or_default();
+                    at += run.len;
+                    typography::tabular_runs(part, run)
+                })
+                .collect();
             let shaped = window
                 .text_system()
                 .shape_line(text.clone(), px(*font_size), &runs, None);
@@ -4636,6 +4900,10 @@ impl TypeScriptCard {
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
+        let takes_keys = self.takes_keys(info.as_ref());
+        let title_focus = (info.as_ref())
+            .is_some_and(|info| info.keys)
+            .then(|| self.title_focus.clone());
         Drawing {
             info,
             state,
@@ -4661,6 +4929,10 @@ impl TypeScriptCard {
             button_down: self.button_down.get(),
             scroller: None,
             in_title_bar: false,
+            out_of_page: false,
+            under_tooltip: false,
+            takes_keys,
+            title_focus,
             title_bar: None,
             lifting: None,
             cx,
@@ -4684,19 +4956,28 @@ impl TypeScriptCard {
         };
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.in_title_bar = true;
+        drawing.out_of_page = true;
         let bar = drawing.draw(slot, &index);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
         let moved = self.feeds.moving.replace(body_moving);
         (self.feeds.title_moving).set(self.feeds.title_moving.get() || moved);
         let theme = cx.theme();
-        Some(
-            div()
-                .text_size(px(12.))
-                .text_color(theme.gray_950)
-                .child(bar)
-                .into_any_element(),
-        )
+        let bar = div()
+            .text_size(px(12.))
+            .text_color(theme.gray_950)
+            .child(bar);
+        // Out of the page, it hands the page the keys its controls do not keep, such as R to
+        // record with Play focused, and lets go of them when the focus leaves it.
+        let info = self.live.read(cx).info(self.card).filter(|info| info.keys);
+        let bar = match info {
+            Some(info) => {
+                let context = crate::key_context(info.takes.as_deref());
+                hearing_keys(bar, &self.title_focus.clone(), Some(context), cx)
+            }
+            None => bar,
+        };
+        Some(bar.into_any_element())
     }
 }
 
@@ -4798,32 +5079,12 @@ impl Render for TypeScriptCard {
         let (text, background) = (theme.gray_950, theme.gray_100);
         // A click in what takes the keys gives them: the body of a card, a whole page. Also while
         // it shows an overlay, for escape to close it.
-        let takes_keys = |element: Div| {
-            element.when(hears_keys || !self.overlays.is_empty(), |element| {
-                element
-                    .track_focus(&self.focus)
-                    .when_some(
-                        key_context.clone().filter(|_| hears_keys),
-                        |element, context| element.key_context(context),
-                    )
-                    .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                        // A text field in it has the keys first.
-                        if !typing(window) {
-                            view.key(&event.keystroke, true, event.is_held, cx)
-                        }
-                    }))
-                    .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
-                        view.key(&event.keystroke, false, false, cx)
-                    }))
-                    // macOS sends no key up while cmd is held.
-                    .on_modifiers_changed(cx.listener(
-                        |view, event: &ModifiersChangedEvent, _, cx| {
-                            if event.modifiers.platform {
-                                view.let_go_of_keys(cx);
-                            }
-                        },
-                    ))
-            })
+        let takes_keys = self.takes_keys(info.as_ref());
+        let focus = self.focus.clone();
+        let context = key_context.filter(|_| hears_keys);
+        let takes_keys = move |element: Div, cx: &mut Context<Self>| match takes_keys {
+            true => hearing_keys(element, &focus, context.clone(), cx),
+            false => element,
         };
         let body = div()
             .text_size(px(12.))
@@ -4839,7 +5100,7 @@ impl Render for TypeScriptCard {
             Some(frame) => frame
                 .card()
                 .min_w(px(PLAIN_CARD_WIDTH))
-                .child(takes_keys(body))
+                .child(takes_keys(body, cx))
                 .into_any_element(),
             None => {
                 // The room the page draws in: the whole main area.
@@ -4863,7 +5124,7 @@ impl Render for TypeScriptCard {
                     .child(measure)
                     // A column, so a page whose top div grows fills the window and no more.
                     .child(body.size_full().flex().flex_col());
-                takes_keys(div().size_full().bg(background).child(room)).into_any_element()
+                takes_keys(div().size_full().bg(background).child(room), cx).into_any_element()
             }
         }
     }
@@ -4966,8 +5227,114 @@ mod tests {
     }
 }
 
+/// The tooltip of a text that fits: none.
+struct Nothing;
+
+impl Render for Nothing {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// How far a boxed part's box reaches past its text, across and down.
 const BOXED: (f32, f32) = (5., 2.);
+
+/// `element` takes the keys of the page of `cx`'s card on `focus`, and hands them to its code.
+fn hearing_keys(
+    element: Div,
+    focus: &FocusHandle,
+    context: Option<gpui::KeyContext>,
+    cx: &mut Context<TypeScriptCard>,
+) -> Div {
+    element
+        .track_focus(focus)
+        .when_some(context, |element, context| element.key_context(context))
+        .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+            // A text field in it has the keys first.
+            if !typing(window) {
+                view.key(&event.keystroke, true, event.is_held, cx)
+            }
+        }))
+        .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
+            view.key(&event.keystroke, false, false, cx)
+        }))
+        // macOS sends no key up while cmd is held.
+        .on_modifiers_changed(cx.listener(|view, event: &ModifiersChangedEvent, _, cx| {
+            if event.modifiers.platform {
+                view.let_go_of_keys(cx);
+            }
+        }))
+}
+
+/// A control of a tool, as [`Drawing::control`] gives it the keys and the pointer: what it does
+/// with the keys while it has the focus, as a control of the window does, and whether the menu
+/// key opens its menu. Every other key goes on to its page.
+struct Control {
+    keys: Keys,
+    /// The menu key, or shift-F10 where there is none, presses it as the right button does: what
+    /// of the pointer it hears.
+    menu: Option<Hears>,
+}
+
+impl Control {
+    fn press() -> Self {
+        Self {
+            keys: Keys::Press,
+            menu: None,
+        }
+    }
+}
+
+enum Keys {
+    /// A button, a toggle, a select or a div that is a tab stop: enter clicks it, see
+    /// [`press_keys`].
+    Press,
+    /// A knob or a fader on a field: the arrows step it and backspace resets it, see
+    /// [`TypeScriptCard::turn_by_key`].
+    Turn(tree::Turns),
+    /// A div that is a tab stop for its own `keys` alone, such as a number of what code keeps.
+    Own,
+}
+
+/// The keys of a pressed control with the focus. Enter clicks it and is no key of its view,
+/// such as the song's enter that opens the selected clip. Space stays its view's alone, such as
+/// the song's play and pause, which GPUI would follow with a click.
+fn press_keys<E: InteractiveElement>(wrap: E) -> E {
+    wrap.capture_key_down(|event: &KeyDownEvent, window, _| {
+        if event.keystroke.key == "space" {
+            window.prevent_default();
+        }
+    })
+    .capture_key_up(|event: &KeyUpEvent, window, _| {
+        if event.keystroke.key == "space" {
+            window.prevent_default();
+        }
+    })
+    .on_key_down(|event: &KeyDownEvent, _, cx| {
+        if clicks(&event.keystroke) {
+            cx.stop_propagation();
+        }
+    })
+    .on_key_up(|event: &KeyUpEvent, _, cx| {
+        if clicks(&event.keystroke) {
+            cx.stop_propagation();
+        }
+    })
+}
+
+/// Enter with no modifier, which GPUI turns into a click.
+fn clicks(key: &Keystroke) -> bool {
+    key.key == "enter" && !key.modifiers.modified()
+}
+
+/// The tooltip of a button or a toggle, with its shortcut's keys after its words.
+fn tooltip_of(text: &Option<String>, shortcut: &Option<String>) -> Option<Tooltip> {
+    let tooltip = Tooltip::new(text.clone()?);
+    Some(match shortcut {
+        Some(keys) => tooltip.shortcut(&shortcut_of(keys)),
+        None => tooltip,
+    })
+}
 
 /// A key as the SDK names it, `cmd-alt-c`, as a menu draws it: `mod+alt+c`.
 fn shortcut_of(mut keys: &str) -> String {

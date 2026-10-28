@@ -26,16 +26,22 @@ expression: "replay(\"approval_denied\")"
         id: StepId(
             "toolu_012eNgXhPHPr9pmCqcq7vA7M",
         ),
-        title: "Ran `touch marker.txt`",
-        running_title: "Running `touch marker.txt`",
-        request_title: "Run `touch marker.txt`",
+        title: "Create an empty marker file",
+        running_title: "Create an empty marker file",
+        request_title: "Create an empty marker file",
+        command: Some(
+            "touch marker.txt",
+        ),
         kind: Run,
     },
     ApprovalRequested {
         id: ApprovalId(
             "f761f169-2e24-49ed-ada9-0317152b5803",
         ),
-        title: "Run `touch marker.txt`",
+        title: "Create an empty marker file",
+        command: Some(
+            "touch marker.txt",
+        ),
     },
     StepDone {
         id: StepId(

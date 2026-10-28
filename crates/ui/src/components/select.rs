@@ -14,7 +14,9 @@ use gpui::{
     StyleRefinement, Window, div, prelude::*, px,
 };
 
-use crate::components::dropdown_menu::{MenuEntry, MenuList, flat, highlight_step, select_trigger};
+use crate::components::dropdown_menu::{
+    MenuEntry, MenuList, flat, highlight_step, row_of, select_trigger,
+};
 use crate::components::icon::Icon;
 use crate::components::popover::{Align, Side, anchor, surface};
 use crate::theme::ActiveTheme;
@@ -169,6 +171,8 @@ impl RenderOnce for Select {
                 cx.stop_propagation();
             }
         };
+        // It opens on the option it holds, so the keys move from there.
+        let held = row_of(&entries, &self.value).unwrap_or(usize::MAX);
         let toggle = {
             let (state, menu_focus) = (state.clone(), menu_focus.clone());
             move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
@@ -177,10 +181,23 @@ impl RenderOnce for Select {
                 }
                 state.update(cx, |state, cx| {
                     state.open = true;
+                    state.highlighted = held;
                     cx.notify();
                 });
                 window.focus(&menu_focus, cx);
             }
+        };
+        // The pointer moves the one highlight the keys move too.
+        let point: Rc<dyn Fn((SharedString, bool), &mut Window, &mut App)> = {
+            let (state, rows) = (state.clone(), entries.clone());
+            Rc::new(move |(value, hovered), _, cx| {
+                if let Some(row) = row_of(&rows, &value).filter(|_| hovered) {
+                    state.update(cx, |state, cx| {
+                        state.highlighted = row;
+                        cx.notify();
+                    });
+                }
+            })
         };
         let close_outside =
             move |_: &MouseDownEvent, window: &mut Window, cx: &mut App| close(&state, window, cx);
@@ -226,6 +243,7 @@ impl RenderOnce for Select {
                             MenuList::new(entries)
                                 .selected(Some(self.value))
                                 .highlighted(highlighted)
+                                .on_point(point)
                                 .on_select(pick),
                         ),
                 ))

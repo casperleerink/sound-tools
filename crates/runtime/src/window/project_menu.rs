@@ -118,6 +118,8 @@ impl ProjectMenu {
                 .debug_name("project-menu")
                 .trigger(Trigger::Subtle)
                 .width(280.)
+                // All its commands in view: the default height cuts the last one off.
+                .max_height(560.)
         });
         // Undo and redo say what they would do. A finished edit changes the label and sends no
         // project event, so this follows every notify, and it is cheap: a few small values to

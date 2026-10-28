@@ -372,7 +372,8 @@ impl Devices {
         devices.notes.iter().flat_map(|list| list()).collect()
     }
 
-    /// Everything on offer that takes `takes`, from the installed registry.
+    /// Everything on offer that takes `takes`, from the installed registry, by [`OfferGroup`]
+    /// and in the order of its source within a group.
     pub fn offered(takes: Takes, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {
             return Vec::new();
@@ -381,7 +382,9 @@ impl Devices {
             Takes::Notes => &devices.instruments,
             Takes::Audio => &devices.effects,
         };
-        sources.iter().flat_map(|list| list()).collect()
+        let mut offers: Vec<DeviceOffer> = sources.iter().flat_map(|list| list()).collect();
+        offers.sort_by_key(|offer| offer.group);
+        offers
     }
 
     /// A number that changes when the offers do. A view builds its menus once, because a

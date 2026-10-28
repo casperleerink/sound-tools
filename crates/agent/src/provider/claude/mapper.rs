@@ -19,6 +19,9 @@ use crate::provider::{
 /// What the CLI says when `--resume` names a session it does not have.
 const SESSION_NOT_FOUND: &str = "no conversation found with session id";
 
+/// What an API error says when the service is too busy: "Overloaded", or `overloaded_error`.
+const OVERLOADED: &str = "overloaded";
+
 /// The model the CLI picks itself, in its list of models.
 const DEFAULT_MODEL: &str = "default";
 
@@ -140,7 +143,7 @@ impl Mapper {
                         tool_use_id,
                     },
             } => {
-                let title = Action::of(&tool_name, &input, &self.folder).request_title();
+                let (title, command) = question(&tool_name, &input, &self.folder);
                 self.approvals.insert(
                     request_id.clone(),
                     Approval {
@@ -153,6 +156,7 @@ impl Mapper {
                 vec![AgentEvent::ApprovalRequested {
                     id: ApprovalId(request_id),
                     title,
+                    command,
                 }]
             }
             Incoming::ControlResponse { response } => self.response(response),
@@ -172,7 +176,7 @@ impl Mapper {
             let message = said.unwrap_or("Claude Code stopped during the turn.");
             events.push(AgentEvent::TurnEnded {
                 outcome: TurnOutcome::Failed {
-                    message: message.to_string(),
+                    message: plain(message),
                 },
             });
         }
@@ -251,6 +255,7 @@ impl Mapper {
                     title: action.done_title(),
                     running_title: action.running_title(),
                     request_title: action.request_title(),
+                    command: action.command(),
                     kind: action.kind(),
                 })
             }
@@ -461,13 +466,29 @@ fn failure(result: &TurnResult) -> String {
         .iter()
         .find(|error| !error.starts_with("[ede_diagnostic]"))
         .or(result.result.as_ref())
-        .cloned()
-        .unwrap_or_else(|| "Claude Code ended the turn with an error.".to_string())
+        .map_or_else(
+            || "Claude Code ended the turn with an error.".to_string(),
+            |error| plain(error),
+        )
+}
+
+/// A failure in words for the composer: an error of the service that nothing in the project
+/// can fix gets a sentence of ours, without its codes and ids.
+fn plain(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains(SESSION_NOT_FOUND) {
+        "Claude no longer has this thread.".to_string()
+    } else if lower.contains(OVERLOADED) {
+        "Claude is busy. Try again in a moment.".to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 /// What a tool use does, for its title.
 enum Action {
-    Run(String),
+    /// A command, whole, and what the agent says it does, when it says.
+    Run(String, Option<String>),
     Read(String),
     Edit(String),
     Write(String),
@@ -480,7 +501,8 @@ impl Action {
         let text = |key: &str| input.get(key).and_then(Value::as_str);
         let path = || text("file_path").map(|path| relative(path, folder));
         let action = match tool {
-            "Bash" | "PowerShell" => text("command").map(|command| Action::Run(shorten(command))),
+            "Bash" | "PowerShell" => text("command")
+                .map(|command| Action::Run(command.trim().to_string(), described(input))),
             "Read" => path().map(Action::Read),
             "Edit" => path().map(Action::Edit),
             "Write" => path().map(Action::Write),
@@ -490,9 +512,16 @@ impl Action {
         action.unwrap_or_else(|| Action::Use(tool.to_string()))
     }
 
+    fn command(&self) -> Option<String> {
+        match self {
+            Action::Run(command, _) => Some(command.clone()),
+            _ => None,
+        }
+    }
+
     fn kind(&self) -> StepKind {
         match self {
-            Action::Run(_) => StepKind::Run,
+            Action::Run(..) => StepKind::Run,
             Action::Read(path) => StepKind::Read { path: path.clone() },
             Action::Edit(path) | Action::Write(path) => StepKind::Change { path: path.clone() },
             Action::Search(_) => StepKind::Search,
@@ -502,7 +531,8 @@ impl Action {
 
     fn done_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Ran {}", code(command)),
+            Action::Run(_, Some(description)) => description.clone(),
+            Action::Run(_, None) => "Ran a command".to_string(),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edited {path}"),
             Action::Write(path) => format!("Wrote {path}"),
@@ -513,7 +543,8 @@ impl Action {
 
     fn running_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Running {}", code(command)),
+            Action::Run(_, Some(description)) => description.clone(),
+            Action::Run(_, None) => "Running a command".to_string(),
             Action::Read(path) => format!("Reading {path}"),
             Action::Edit(path) => format!("Editing {path}"),
             Action::Write(path) => format!("Writing {path}"),
@@ -524,7 +555,8 @@ impl Action {
 
     fn request_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Run {}", code(command)),
+            Action::Run(_, Some(description)) => description.clone(),
+            Action::Run(_, None) => "Run a command".to_string(),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edit {path}"),
             Action::Write(path) => format!("Write {path}"),
@@ -532,6 +564,25 @@ impl Action {
             Action::Use(tool) => format!("Use {tool}"),
         }
     }
+}
+
+/// What an approval asks: the request's title, and for a command the whole command apart, as
+/// it will run, since that is what the composer allows.
+fn question(tool: &str, input: &Value, folder: &Path) -> (String, Option<String>) {
+    match (tool, input.get("command").and_then(Value::as_str)) {
+        ("Bash" | "PowerShell", Some(command)) => {
+            let title = described(input).unwrap_or_else(|| "Run".to_string());
+            (title, Some(command.trim().to_string()))
+        }
+        _ => (Action::of(tool, input, folder).request_title(), None),
+    }
+}
+
+/// What the agent says a command does, in its words: the composer's line for it, where the
+/// command itself is code.
+fn described(input: &Value) -> Option<String> {
+    let description = input.get("description").and_then(Value::as_str)?.trim();
+    (!description.is_empty()).then(|| description.to_string())
 }
 
 /// A path inside the project as the composer knows it, from the project folder.
@@ -568,11 +619,41 @@ fn code(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::shorten;
+    use serde_json::json;
+
+    use super::{plain, question, shorten};
 
     #[test]
     fn a_command_that_starts_with_a_blank_line_shows_its_first_line() {
         assert_eq!(shorten("\n  cargo build\n"), "cargo build");
         assert_eq!(shorten("\ncargo build\ncargo test"), "cargo build…");
+    }
+
+    #[test]
+    fn an_approval_asks_with_the_whole_command() {
+        let folder = std::path::Path::new("/tmp/project");
+        let long = "cargo build --release -p drums && cargo test -p drums --no-fail-fast";
+        let script: Vec<String> = (1..=20).map(|line| format!("echo `date` {line}")).collect();
+        for command in [long.to_string(), script.join("\n")] {
+            let asked = question("Bash", &json!({ "command": command }), folder);
+            assert_eq!(asked, ("Run".to_string(), Some(command)));
+        }
+        let described = json!({ "command": "touch marker.txt", "description": "Create a marker" });
+        let asked = question("Bash", &described, folder);
+        assert_eq!(
+            asked,
+            (
+                "Create a marker".to_string(),
+                Some("touch marker.txt".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn a_busy_service_is_said_in_words_and_other_errors_as_they_are() {
+        let busy = r#"API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        assert_eq!(plain(busy), "Claude is busy. Try again in a moment.");
+        let model = "There's an issue with the selected model (claude-no-such-model).";
+        assert_eq!(plain(model), model);
     }
 }

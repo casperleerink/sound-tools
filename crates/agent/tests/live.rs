@@ -127,14 +127,19 @@ fn ignores_settings_in_the_project() {
     let asked = smol::block_on(async {
         while let Some(event) = events.next().await {
             match event {
-                AgentEvent::ApprovalRequested { title, .. } => return Some(title),
+                AgentEvent::ApprovalRequested { title, command, .. } => {
+                    return Some((title, command));
+                }
                 AgentEvent::TurnEnded { .. } | AgentEvent::Exited { .. } => return None,
                 _ => {}
             }
         }
         None
     });
-    assert_eq!(asked.as_deref(), Some("Run `git init`"));
+    assert_eq!(
+        asked,
+        Some(("Run".to_string(), Some("git init".to_string())))
+    );
     assert!(!folder.path().join(".git").exists());
     assert!(!folder.path().join("hook-ran").exists());
     close(thread, events);
@@ -153,9 +158,9 @@ fn each_approval_mode_asks_as_it_says() {
     for (mode, expected) in [
         (
             ApprovalMode::AskForEverything,
-            &["Write notes.txt", "Run `git init`"][..],
+            &["Write notes.txt", "Run git init"][..],
         ),
-        (ApprovalMode::AskBeforeCommands, &["Run `git init`"][..]),
+        (ApprovalMode::AskBeforeCommands, &["Run git init"][..]),
         (ApprovalMode::NeverAsk, &[][..]),
     ] {
         let folder = tempfile::tempdir().unwrap();
@@ -165,8 +170,14 @@ fn each_approval_mode_asks_as_it_says() {
         smol::block_on(async {
             while let Some(event) = events.next().await {
                 match event {
-                    AgentEvent::ApprovalRequested { id, title } => {
-                        asked.push(title);
+                    AgentEvent::ApprovalRequested { id, title, command } => {
+                        asked.push(
+                            [Some(title), command]
+                                .into_iter()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        );
                         thread.answer(id, ApprovalAnswer::Allow).unwrap();
                     }
                     AgentEvent::TurnEnded { outcome } => {

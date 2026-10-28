@@ -29,6 +29,7 @@ expression: "replay(\"permission_mode\")"
         title: "Wrote a.txt",
         running_title: "Writing a.txt",
         request_title: "Write a.txt",
+        command: None,
         kind: Change {
             path: "a.txt",
         },
@@ -38,6 +39,7 @@ expression: "replay(\"permission_mode\")"
             "6d9832d6-d7a3-411e-b921-5aff49aebe8c",
         ),
         title: "Write a.txt",
+        command: None,
     },
     StepDone {
         id: StepId(
@@ -62,6 +64,7 @@ expression: "replay(\"permission_mode\")"
         title: "Wrote b.txt",
         running_title: "Writing b.txt",
         request_title: "Write b.txt",
+        command: None,
         kind: Change {
             path: "b.txt",
         },

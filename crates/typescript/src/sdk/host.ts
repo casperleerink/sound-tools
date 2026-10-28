@@ -4,7 +4,7 @@ import { Fields, Inputs } from "./fields";
 import { PLAIN_KEYS, Press } from "./live";
 import { CardRoot, Child, forget, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
 import { adopted, batch, isRead, listener, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
-import { Context, ToolSpec } from "./tools";
+import { Context, Key, ToolSpec } from "./tools";
 
 /** What the components of a card read while it is made. */
 export type Drawing = { fields: Fields } & Pick<Context<Record<string, unknown>>, "state" | "children" | "update" | "openMenu">;
@@ -57,7 +57,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 const releases = new Map<string, { release: (press: Press) => void; scope: Owner }>();
 
 /** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "release" | "click" | "hover" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change", payload: never) {
+function nodeEvent(id: number, kind: "press" | "release" | "click" | "hover" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change" | "key", payload: never) {
   if (kind === "release") {
     const pressed = `${id} ${(payload as Press).button}`;
     const held = releases.get(pressed);
@@ -87,6 +87,8 @@ function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "rele
       return made.onClose?.();
     case "title":
       return made.onTitle?.();
+    case "key":
+      return made.onKey?.(payload as Key);
     case "sidechain": {
       const { select, option } = payload as { select: number; option: number };
       return made.onSidechain?.(select, option);

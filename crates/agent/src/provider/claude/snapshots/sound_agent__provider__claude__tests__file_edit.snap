@@ -29,6 +29,7 @@ expression: "replay(\"edit\")"
         title: "Wrote notes.txt",
         running_title: "Writing notes.txt",
         request_title: "Write notes.txt",
+        command: None,
         kind: Change {
             path: "notes.txt",
         },
@@ -46,6 +47,7 @@ expression: "replay(\"edit\")"
         title: "Edited notes.txt",
         running_title: "Editing notes.txt",
         request_title: "Edit notes.txt",
+        command: None,
         kind: Change {
             path: "notes.txt",
         },

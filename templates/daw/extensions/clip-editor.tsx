@@ -4,10 +4,10 @@ import { blend, Button, For, Fragment, h, Label, Line, memo, now, Rect, Select, 
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
 // expression lanes. Times are ticks from the clip's start.
 const BEAT = 960;
-// Rows of 12 points, keys 32 wide at the right of a header 176 wide, a ruler 32 tall and a lane 56.
+// Rows of 12 points, keys 40 wide at the right of a header 176 wide, a ruler 32 tall and a lane 56.
 const ROW = 12;
 const HEADER = 176;
-const KEYS = 32;
+const KEYS = 40;
 const RULER = 32;
 const LANE = 56;
 // Points per tick at zoom 1, 24 a beat; it opens fitted to the clip, up to 192 a beat.
@@ -41,6 +41,16 @@ export interface EditorMemory {
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 const isBlack = (pitch: number) => [1, 3, 6, 8, 10].includes(pitch % 12);
+// The keys of a piano: C to E share 5 rows and F to B share 7, so white keys are as wide as on a
+// real keyboard, and the black keys lie over them.
+const BLACK_KEY = 24;
+const WHITE_KEYS = Array.from({ length: 11 }, (_, octave) => {
+  const lowKeys = [0, 2, 4].map((step, index) => ({ step, low: (index * 5) / 3, high: ((index + 1) * 5) / 3 }));
+  const highKeys = [5, 7, 9, 11].map((step, index) => ({ step, low: 5 + (index * 7) / 4, high: 5 + ((index + 1) * 7) / 4 }));
+  return [...lowKeys, ...highKeys].map(({ step, low, high }) => ({ pitch: octave * 12 + step, low: octave * 12 + low, high: Math.min(octave * 12 + high, 128) }));
+})
+  .flat()
+  .filter(({ pitch }) => pitch < 128);
 const rowOf = (pitch: number) => 127 - pitch;
 const snapped = (tick: number, snap: number) => (snap > 0 ? Math.floor(tick / snap) * snap : Math.round(tick));
 /** A note by what it is: an undo or an edit of another tool that moves notes in the list keeps it chosen. */
@@ -356,7 +366,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
           <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
-          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} onClick={onClose} />
+          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="escape" onClick={onClose} />
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}
@@ -372,8 +382,12 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       <div style={{ height: 1, background: "alpha/5", keep: true }} />
       <div style={{ height: roll, direction: "row", keep: true }}>
         <Space key={`${key}-keys`} width={HEADER - 1} height={roll} unit={{ y: ROW }} extent={{ y: [0, 128] }} scroll={{ y: middleRow }} follow={{ y: key }}>
-          {pitches.map((pitch) => (
-            <Rect x={HEADER - 1 - KEYS} y={rowOf(pitch) + 0.5 / ROW} width={KEYS} height={(ROW - 1) / ROW} color={isBlack(pitch) ? "alpha/3" : "alpha/10"}
+          {WHITE_KEYS.map(({ pitch, low, high }) => (
+            <Rect x={HEADER - 1 - KEYS} y={128 - high + 0.5 / ROW} width={KEYS} height={high - low - 1 / ROW} radius={2} color="alpha/10"
+              onPress={() => preview(pitch)} />
+          ))}
+          {pitches.filter(isBlack).map((pitch) => (
+            <Rect x={HEADER - 1 - KEYS} y={rowOf(pitch) + 1 / ROW} width={BLACK_KEY} height={(ROW - 2) / ROW} radius={2} color="gray-50"
               onPress={() => preview(pitch)} />
           ))}
           {pitches.filter((pitch) => pitch % 12 === 0).map((pitch) => (

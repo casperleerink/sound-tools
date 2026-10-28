@@ -146,14 +146,14 @@ fn model_change() {
 #[test]
 fn read_only_commands() {
     let events = replay("read_only");
-    let asked: Vec<&str> = events
+    let asked: Vec<Option<&str>> = events
         .iter()
         .filter_map(|event| match event {
-            AgentEvent::ApprovalRequested { title, .. } => Some(title.as_str()),
+            AgentEvent::ApprovalRequested { command, .. } => Some(command.as_deref()),
             _ => None,
         })
         .collect();
-    assert_eq!(asked, [r#"Run `for f in $(ls); do cat "$f"; done`"#]);
+    assert_eq!(asked, [Some(r#"for f in $(ls); do cat "$f"; done"#)]);
     insta::assert_debug_snapshot!(events);
 }
 

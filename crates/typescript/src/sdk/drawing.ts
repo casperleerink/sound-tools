@@ -2,11 +2,12 @@
 
 import { SelectOption } from "./components";
 import { Unit } from "./fields";
-import { Drag, Dropped, Live, Num, PointerEvents, TakeList, WaveList } from "./live";
+import { Drag, Dropped, KeyName, Live, Num, PointerEvents, TakeList, WaveList } from "./live";
 import { Child, element, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
 import type { Notes as NotesOfSound } from "./sound";
+import type { Key } from "./tools";
 
 /** `Input` is also the type of an input of a tool, `Notes` that of notes a sound sends. */
 export type Input = InputOfTool;
@@ -154,7 +155,10 @@ export interface SpaceProps extends PointerEvents {
   follow?: { x?: string; y?: string };
   background?: Bind<Color>;
   radius?: number;
-  /** A drag from where no shape that hears the pointer is, such as a marquee. */
+  /**
+   * A drag from where no shape that hears the pointer is, such as a marquee. A space whose one
+   * drag turns a field, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
+   */
   drag?: Drag;
   /** Files or a carried value let go on it, where in its units. */
   onDrop?: (drop: Dropped) => void;
@@ -265,6 +269,9 @@ export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<
 export const PeakMeter = (props: { key?: string; of?: string; input?: readonly number[]; horizontal?: boolean; length?: number }): UiNode =>
   element("meter", { ...props }, []);
 
+/** The tooltip of a button or a toggle, and the keys that do it too, drawn in it. */
+type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: KeyName };
+
 /**
  * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.
  * Coloured while `on`, `color` when given; its code turns it in `onClick`.
@@ -273,19 +280,18 @@ export type ToggleProps = (
   | { label: Bind<string>; icon?: never; count?: never; dot?: never }
   | { icon: Bind<IconName>; count?: Bind<number>; label?: never; dot?: never }
   | { dot: true; label?: never; icon?: never; count?: never }
-) & PointerEvents & {
+) & PointerEvents & Tip & {
   key?: string;
   on: Bind<boolean>;
   color?: Bind<Color>;
   disabled?: Bind<boolean>;
-  tooltip?: Bind<string>;
 };
 
 /** A switch, see `ToggleProps`. */
 export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
 
 /** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
-export interface ButtonProps extends PointerEvents {
+export type ButtonProps = PointerEvents & Tip & {
   key?: string;
   label?: Bind<string>;
   icon?: Bind<IconName>;
@@ -299,8 +305,7 @@ export interface ButtonProps extends PointerEvents {
   disabled?: Bind<boolean>;
   /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
   opacity?: number;
-  tooltip?: Bind<string>;
-}
+};
 
 /** A button, see `ButtonProps`. */
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
@@ -367,7 +372,7 @@ export interface Style {
   disabled?: Look;
   /** It never shrinks below what it needs, in a row too narrow. */
   keep?: boolean;
-  /** One line, cut with an ellipsis where it does not fit. */
+  /** One line, cut with an ellipsis where it does not fit. A text it cuts shows whole on hover, unless the div has a `tooltip`. */
   truncate?: boolean;
 }
 
@@ -382,6 +387,11 @@ interface DivProps extends PointerEvents {
   disabled?: Bind<boolean>;
   cursor?: Pointed["cursor"];
   tooltip?: Bind<string>;
+  /** With an `onClick`: Tab reaches it, its ring shows, and enter clicks it, as a button's, for a div that does what a button does, such as a track's head. The menu key, or shift-F10, presses it as the right button does, for its menu. With `keys` alone, Tab reaches it for them. */
+  tabStop?: boolean;
+  /** The keys it takes while the focus is in it, which `onKey` hears and its page does not: `["up", "down", "enter"]`. With `tabStop`, it holds the focus itself. */
+  keys?: readonly KeyName[];
+  onKey?: (key: Key) => void;
   /** The pointer came over it, `true`, or left it, `false`, also over its children. */
   onHover?: (over: boolean) => void;
   /** A drag of it carries this to a node that hears drops, such as another row of a list it reorders. */

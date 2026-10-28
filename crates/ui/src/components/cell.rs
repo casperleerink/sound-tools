@@ -99,13 +99,15 @@ pub(crate) fn frame(
                 .justify_center()
                 .children(control),
         )
-        .children(label.map(|label| line(LINE_TOP, width, label_color, false).child(label)))
-        .children(value.map(|value| line(VALUE_LINE, width, value_color, true).child(value)))
+        .children(label.map(|label| line(LINE_TOP, width, label_color).child(label)))
+        .children(value.map(|value| {
+            line(VALUE_LINE, width, value_color).child(typography::tabular_text(value, value_color))
+        }))
 }
 
 /// One line of 12 pt text, centred on the cell. It may be wider than the cell: a long label
 /// such as `Resonance` runs into the air next to it rather than being cut.
-fn line(top: f32, width: f32, color: Hsla, tabular: bool) -> Div {
+fn line(top: f32, width: f32, color: Hsla) -> Div {
     div()
         .absolute()
         .top(px(top))
@@ -118,5 +120,4 @@ fn line(top: f32, width: f32, color: Hsla, tabular: bool) -> Div {
         .line_height(px(LINE_HEIGHT))
         .text_color(color)
         .whitespace_nowrap()
-        .when(tabular, |line| line.font(typography::tabular()))
 }

@@ -91,6 +91,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
                 id: step.clone(),
                 title: "Wrote state/song/bass/clip.json".to_string(),
                 request_title: "Write state/song/bass/clip.json".to_string(),
+                command: None,
                 running_title: "Writing state/song/bass/clip.json".to_string(),
                 kind: StepKind::Change {
                     path: "state/song/bass/clip.json".to_string(),
@@ -122,6 +123,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
             AgentEvent::ApprovalRequested {
                 id: ApprovalId("build".to_string()),
                 title: "Run `cargo build`".to_string(),
+                command: None,
             },
             AgentEvent::TurnEnded {
                 outcome: TurnOutcome::Interrupted,
@@ -415,6 +417,7 @@ fn every_event_saves_as_the_same_line() {
             id: step(),
             title: text("Edited song.json"),
             request_title: text("Edit song.json"),
+            command: None,
             running_title: text("Editing song.json"),
             kind: StepKind::Change {
                 path: text("song.json"),
@@ -427,6 +430,7 @@ fn every_event_saves_as_the_same_line() {
         AgentEvent::ApprovalRequested {
             id: ApprovalId(text("request-1")),
             title: text("Run `cargo build`"),
+            command: None,
         },
         AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {

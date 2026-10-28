@@ -5,16 +5,19 @@ use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, ElementId, HighlightStyle, Hsla,
-    SharedString, StyledText, Window, div, ease_out_quint, prelude::*, px, relative,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Div, ElementId, FocusHandle,
+    HighlightStyle, Hsla, MouseButton, SharedString, Stateful, StyledText, Window, div,
+    ease_out_quint, prelude::*, px, relative,
 };
 use sound_core::Problem;
 use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
+use sound_ui::focus::KeyboardFocus;
+use sound_ui::typography::MONO;
 
 use super::markdown::{Markdown, MarkdownText};
-use crate::conversation::Turn;
+use crate::conversation::{Step, Turn};
 use crate::{StepKind, StepOutcome, TurnOutcome};
 
 /// The text of the thread: 15 on 22, as the mockup.
@@ -78,11 +81,6 @@ pub(super) fn notice(text: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// A line the app writes, such as a step or a question, with its commands as code.
-pub(super) fn title(id: impl Into<ElementId>, line: &str) -> MarkdownText {
-    MarkdownText::new(id, Markdown::inline_code(line))
-}
-
 /// The answers of the agent, its blocks parsed once per batch of events.
 pub(super) fn answer(turn: &Turn) -> Vec<Markdown> {
     let streaming = (!turn.streaming.is_empty()).then_some(&turn.streaming);
@@ -103,8 +101,13 @@ pub(super) fn turn(
     steps_open: bool,
     on_toggle_steps: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     below: Option<AnyElement>,
-    cx: &App,
+    name: Name,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
+    let titles: Vec<String> = (turn.steps.iter())
+        .map(|step| title(step, name, cx))
+        .collect();
     let theme = cx.theme();
     let (muted, bright, dim, red, lavender) = (
         theme.gray_700,
@@ -136,21 +139,25 @@ pub(super) fn turn(
         } else {
             "chevron-right"
         };
-        div()
-            .id("worked-for")
-            .debug_selector(move || format!("agent-worked-for-{index}"))
+        let row = div()
             .flex()
             .items_start()
             .gap(px(4.))
             .text_size(px(SMALL_TEXT_SIZE))
             .line_height(px(SMALL_LINE_HEIGHT))
-            .text_color(color)
-            .when(has_steps, |line| {
-                line.cursor_pointer()
-                    .hover(move |style| style.text_color(bright))
-                    .on_click(on_toggle_steps)
-                    .child(Icon::new(chevron).size(12.).mt(px(2.)))
-            })
+            .text_color(color);
+        let id = ElementId::from(("worked-for", index));
+        let row = match has_steps {
+            true => tab_stop(row, id, window, cx)
+                .cursor_pointer()
+                .hover(move |style| style.text_color(bright))
+                .on_click(on_toggle_steps)
+                .child(Icon::new(chevron).size(12.).mt(px(2.))),
+            false => row.id(id),
+        };
+        let row = row
+            .debug_selector(move || format!("agent-worked-for-{index}"))
+            .min_w_0()
             // A failure has no summary and may wrap; with a summary, the summary is cut.
             .child(
                 div()
@@ -158,44 +165,61 @@ pub(super) fn turn(
                     .when(summary.is_some(), |line| line.flex_none())
                     .child(line),
             )
-            .children(summary.map(|summary| {
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(dim)
-                    .child(format!("· {summary}"))
-            }))
+            .children(
+                summary.map(|summary| div().min_w_0().truncate().child(format!("· {summary}"))),
+            );
+        // As wide as its words, so that its ring is too.
+        div().flex().child(row)
     });
     let steps = steps_open.then(|| {
         div()
+            .debug_selector(move || format!("agent-steps-{index}"))
             .flex()
             .flex_col()
             .text_size(px(SMALL_TEXT_SIZE))
             .line_height(px(SMALL_LINE_HEIGHT))
-            .text_color(dim)
-            .children(turn.steps.iter().map(|step| {
+            // Text reaches 4.5 : 1 on the window; icons need only 3 : 1, so theirs are dimmer.
+            .text_color(muted)
+            .children(turn.steps.iter().zip(titles).map(|(step, title)| {
                 // A step that did not do what it says says so in words, a failure in red.
                 let outcome = match step.outcome {
                     Some(StepOutcome::Failed) => Some(("· failed", red)),
                     Some(StepOutcome::Denied) => Some(("· denied", muted)),
                     Some(StepOutcome::Done) | None => None,
                 };
-                div()
+                // The words, and the dot of the outcome as near them as in the meta line.
+                let words = div()
+                    .min_w_0()
+                    .flex()
+                    .gap(px(4.))
+                    .child(div().min_w_0().truncate().child(plain(&title)))
+                    .children(
+                        outcome
+                            .map(|(word, color)| div().flex_none().text_color(color).child(word)),
+                    );
+                let row = div()
                     .flex()
                     .items_center()
                     .gap(px(6.))
                     .h(px(20.))
-                    .child(Icon::new(icon(&step.kind)).size(12.))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .child(plain(step.finished_title())),
-                    )
-                    .children(
-                        outcome
-                            .map(|(word, color)| div().flex_none().text_color(color).child(word)),
-                    )
+                    .child(Icon::new(icon(&step.kind)).size(12.).color(dim))
+                    .child(words);
+                // A command under its words, as an approval shows it: its first line, under
+                // the words and not the icon.
+                let command = step.command.as_deref().map(|command| {
+                    let mut lines = command.lines();
+                    let first = lines.next().unwrap_or_default();
+                    let more = if lines.next().is_some() { " …" } else { "" };
+                    div()
+                        .pl(px(18.))
+                        .pb(px(2.))
+                        .truncate()
+                        .font_family(MONO)
+                        // Menlo reads a size larger, as code does under the answer.
+                        .text_size(px(SMALL_TEXT_SIZE - 1.))
+                        .child(format!("{first}{more}"))
+                });
+                div().child(row).children(command)
             }))
     });
     let working = turn.end.is_none();
@@ -216,11 +240,9 @@ pub(super) fn turn(
     });
     // While a question waits, the question is what the agent does.
     let working = (working && turn.approvals.is_empty()).then(|| {
-        let step = turn.current_step();
-        let line = step.map_or("Working", |step| match step.outcome {
-            None => step.running_title.as_str(),
-            Some(_) => step.finished_title(),
-        });
+        // A step's icon and words while it runs; between steps the agent thinks.
+        let step = turn.current_step().filter(|step| step.outcome.is_none());
+        let line = step.map_or("Working", doing);
         let mark = match step {
             Some(step) => Icon::new(icon(&step.kind))
                 .size(14.)
@@ -270,10 +292,20 @@ pub(super) fn problems(
     index: usize,
     open: bool,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &App,
+    name: Name,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
+    let lines_of: Vec<String> = (problems.iter())
+        .map(|problem| format!("{}: {}", name(&problem.path, cx), problem.message))
+        .collect();
     let theme = cx.theme();
-    let (peach, muted) = (theme.peach, theme.gray_800);
+    let (peach, muted, bright) = (theme.peach, theme.gray_800, theme.gray_900);
+    let chevron = if open {
+        "chevron-down"
+    } else {
+        "chevron-right"
+    };
     let files = problems
         .iter()
         .map(|problem| problem.path.as_str())
@@ -290,23 +322,121 @@ pub(super) fn problems(
         .text_size(px(SMALL_TEXT_SIZE))
         .line_height(px(SMALL_LINE_HEIGHT))
         .child(
-            div()
-                .id("problems")
-                .debug_selector(move || format!("agent-problems-{index}"))
-                .text_color(peach)
-                .cursor_pointer()
-                .on_click(on_toggle)
-                .child(line),
+            div().flex().child(
+                tab_stop(div(), ("problems", index).into(), window, cx)
+                    .debug_selector(move || format!("agent-problems-{index}"))
+                    .flex()
+                    .items_start()
+                    .gap(px(4.))
+                    .text_color(peach)
+                    .cursor_pointer()
+                    .hover(move |style| style.text_color(bright))
+                    .on_click(on_toggle)
+                    .child(Icon::new(chevron).size(12.).mt(px(2.)))
+                    .child(line),
+            ),
         )
+        // Under the words of the line, past its chevron.
         .when(open, |lines| {
-            lines.children(problems.iter().enumerate().map(|(number, problem)| {
+            lines.children(lines_of.into_iter().enumerate().map(|(number, line)| {
                 div()
                     .debug_selector(move || format!("agent-problem-{index}-{number}"))
+                    .pl(px(16.))
                     .text_color(muted)
-                    .child(format!("{}: {}", problem.path, problem.message))
+                    .child(line)
             }))
         })
         .into_any_element()
+}
+
+/// An action under a turn, as quiet as the lines over it: "Try again", or asking the agent to
+/// fix what it left.
+pub(super) fn action(
+    id: &'static str,
+    icon: &'static str,
+    label: &'static str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let (muted, bright) = (theme.gray_700, theme.gray_900);
+    let line = tab_stop(div(), id.into(), window, cx)
+        .debug_selector(move || format!("agent-{id}"))
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .text_size(px(SMALL_TEXT_SIZE))
+        .line_height(px(SMALL_LINE_HEIGHT))
+        .text_color(muted)
+        .cursor_pointer()
+        .hover(move |style| style.text_color(bright))
+        .on_click(on_click)
+        .child(Icon::new(icon).size(12.))
+        .child(label);
+    div().flex().child(line).into_any_element()
+}
+
+/// The focus of a line the keys reach, kept between frames under the line's id.
+struct LineFocus {
+    focus: FocusHandle,
+    keyboard: KeyboardFocus,
+}
+
+/// `line`, which opens something or acts, as a tab stop: enter and space click it, and its
+/// lavender ring shows when the keys brought the focus. The ring sits around the line without
+/// moving its words off their edge.
+fn tab_stop(line: Div, id: ElementId, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let state = window.use_keyed_state(id.clone(), cx, |_, cx| LineFocus {
+        focus: cx.focus_handle().tab_stop(true),
+        keyboard: KeyboardFocus::default(),
+    });
+    let focus = state.read(cx).focus.clone();
+    let ring = state.read(cx).keyboard.shows_ring(&focus, window);
+    let border = match ring {
+        true => cx.theme().lavender,
+        false => Hsla::transparent_black(),
+    };
+    line.id(id)
+        .track_focus(&focus)
+        .ml(px(-5.))
+        .my(px(-1.))
+        .px(px(4.))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(border)
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            state.update(cx, |state, cx| state.keyboard.pressed(cx));
+        })
+}
+
+/// The words of a file of the project for a composer, see `sound_ui::names::file_name`.
+pub(super) type Name<'a> = &'a dyn Fn(&str, &App) -> String;
+
+/// A step's line: what it read or changed by the name of that part, the others as the
+/// provider says them.
+fn title(step: &Step, name: Name, cx: &App) -> String {
+    match (&step.kind, &step.outcome) {
+        (StepKind::Read { path }, _) => format!("Read {}", name(path, cx)),
+        (StepKind::Change { path }, Some(StepOutcome::Denied)) => {
+            format!("Change {}", name(path, cx))
+        }
+        (StepKind::Change { path }, _) => format!("Changed {}", name(path, cx)),
+        _ => step.finished_title().to_string(),
+    }
+}
+
+/// What a step does, in the composer's words: a command as the agent says it does (or
+/// "Running a command", as the provider writes it), the others by their kind. Their own
+/// titles name a file or a tool of the agent; their lines in the opened steps show that.
+fn doing(step: &Step) -> &str {
+    match &step.kind {
+        StepKind::Run => &step.running_title,
+        StepKind::Read { .. } => "Reading the project",
+        StepKind::Change { .. } => "Changing the project",
+        StepKind::Search => "Searching the project",
+        StepKind::Other => "Working",
+    }
 }
 
 /// The icon of a step's line.

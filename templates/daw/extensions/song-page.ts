@@ -63,7 +63,19 @@ export type Child = Song["children"][number];
 /** A track of the song as code reads it. */
 type TrackRow = Extract<Child, { tool: typeof track }>;
 
-export const titleOf = (each: Child) => ((each.tool === "track" || each.tool === "tape" || each.tool === "bus") && each.state.title) || each.name;
+/** A name or a field in plain words, its unit left out: `osc_1.position` is `Osc 1 position`, `cutoff_hz` is `Cutoff`. */
+export const words = (text: string) =>
+  text.replace(/_(hz|db|ms|seconds|cents|octaves|semitones)$/, "").replace(/[._-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
+const KINDS = { audio: "Audio", ret: "Return" } as const;
+/** A name with no title, in words: `t00` is Track 1, `audio-voice` Voice, `audio-1` Audio 1. */
+const wordsOf = (name: string) => {
+  const track = /^t(\d+)$/.exec(name);
+  if (track) return `Track ${Number(track[1]) + 1}`;
+  const [, kind, rest = name] = /^(audio|ret)-(.*)$/.exec(name) ?? [];
+  if (kind && /^(\d+|[a-z])$/i.test(rest)) return `${KINDS[kind as keyof typeof KINDS]} ${rest.toUpperCase()}`;
+  return words(rest);
+};
+export const titleOf = (each: Child) => ((each.tool === "track" || each.tool === "tape" || each.tool === "bus") && each.state.title) || wordsOf(each.name);
 const mixOf = (each: Child) => (each.tool === "track" || each.tool === "tape" || each.tool === "bus" ? each.children.find((child) => child.name === "mix") : undefined);
 export const muted = (each: Child) => {
   const mix = mixOf(each);

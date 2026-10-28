@@ -306,9 +306,14 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let bun_folder = bun_folder.clone();
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
-        let composer = sidebar.clone();
+        let (composer, asks) = (sidebar.clone(), sidebar.clone());
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
             .with_composer(move |cx| composer.read(cx).composer().clone())
+            .with_ask(move |message, window, cx| {
+                asks.update(cx, |sidebar, cx| {
+                    sidebar.ask_from_outside(message, window, cx)
+                })
+            })
     })
 }
 

@@ -37,4 +37,4 @@ pub use provider::{
     StepKind, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
-pub use view::{Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};
+pub use view::{FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};

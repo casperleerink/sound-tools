@@ -123,6 +123,19 @@ fn a_knob_on_the_card_of_an_effect_turns_its_record_as_one_undo_step(cx: &mut Te
     assert_eq!(window.problems(), []);
 }
 
+/// A picker lists each group of offers once: the effects come by what they do to the sound,
+/// whichever crate registered them first.
+#[gpui::test]
+fn the_offers_come_group_by_group(cx: &mut TestAppContext) {
+    let window = open_rack(cx);
+    let groups: Vec<_> = window.cx.update(|_, cx| {
+        (Devices::offered(Takes::Audio, cx).iter())
+            .map(|offer| offer.group)
+            .collect()
+    });
+    assert!(groups.is_sorted(), "{groups:?}");
+}
+
 #[gpui::test]
 fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
     cx: &mut TestAppContext,

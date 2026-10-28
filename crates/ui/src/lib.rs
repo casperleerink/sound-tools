@@ -11,6 +11,7 @@ pub mod global_keys;
 pub mod import;
 pub mod lanes;
 pub mod metering;
+pub mod names;
 pub mod recording;
 pub mod render;
 pub mod session;
