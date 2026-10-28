@@ -230,7 +230,6 @@ fn a_line_cut_off_does_not_take_the_next_one_with_it() {
     );
 }
 
-/// The app quit while the agent worked: the turn shows as stopped, not working forever.
 #[test]
 fn a_turn_the_app_quit_during_ends_stopped() {
     let machine = tempfile::tempdir().unwrap();
@@ -356,7 +355,7 @@ fn the_index_keeps_every_thread_and_names_the_current_one() {
     };
     assert_eq!(recent(&store), ["First"]);
 
-    // **+**: no thread is current, and both stay, the one last shown first.
+    // **New**: no thread is current, and both stay, the one last shown first.
     store.write(&Write::Current(None)).unwrap();
     assert!(store.current().unwrap().is_none());
     assert_eq!(recent(&store), ["Second", "First"]);

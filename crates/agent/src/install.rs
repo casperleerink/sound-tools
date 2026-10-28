@@ -1,11 +1,11 @@
 //! The download of a provider's pinned program into the machine's support folder. The app's
 //! own updates come the same way.
 //!
-//! The system's curl ([`crate::curl`]) fetches it unmodified, so the app needs no HTTP or TLS
-//! code of its own, and the file is checked against the pinned sha256 before it is used. It is
-//! written under a temporary name and renamed only once it checks out, so a half file never
-//! runs. A broken download resumes where it stopped. A lock in the version's folder keeps two
-//! windows from downloading into the same file.
+//! The system's curl fetches it unmodified, so the app needs no HTTP or TLS code of its own,
+//! and the file is checked against the pinned sha256 before it is used. It is written under a
+//! temporary name and renamed only once it checks out, so a half file never runs. A broken
+//! download resumes where it stopped. A lock in the version's folder keeps two windows from
+//! downloading into the same file.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};

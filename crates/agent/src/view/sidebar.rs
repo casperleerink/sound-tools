@@ -7,15 +7,6 @@
 //! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
 //! also opens the composer's instructions to the agent in place of the thread
 //! (`super::instructions`).
-//!
-//! This file holds the view itself: its fields, the menus and the settings, the instructions,
-//! and the render. The rest is in `sidebar/`, as more `impl Sidebar`:
-//! - `attachments`: the pictures and files the composer attaches to a message.
-//! - `turn`: the agent's process, a turn from the send to its end, approvals, and the problems
-//!   a turn left.
-//! - `setup`: finding the program, its download, the sign-in and the sign-out.
-//! - `threads`: the saved threads: the project's last one, **New**, **Open recent**, and
-//!   writing them in order.
 
 mod attachments;
 mod setup;
@@ -76,7 +67,7 @@ fn install_bindings(cx: &mut App) {
     ]);
 }
 
-/// The process of the thread, from the first send until **+** or until it ends.
+/// The process of the thread, from the first send until **New** or until it ends.
 struct Agent {
     thread: Thread,
     /// Reads the process on the background executor. Dropping it ends the process.
@@ -861,7 +852,7 @@ impl Sidebar {
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
-    /// and **+** is the way on, as **New** is.
+    /// and **New thread** is the way on, as **New** is.
     fn cannot_continue(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let said = self.conversation.loss_said();
         div()

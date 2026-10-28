@@ -150,8 +150,7 @@ impl SignInChoice {
     }
 }
 
-/// How much the agent may do without asking. One setting for the machine, never saved in a
-/// project, so the agent cannot raise its own access by editing a file there.
+/// How much the agent may do without asking.
 ///
 /// Serde gives its name in the settings file, see `crate::settings`: renaming a variant
 /// resets the choice of every composer to the default.
@@ -462,8 +461,7 @@ impl Thread {
     }
 
     /// The session the agent works in: the one [`ThreadOptions::resume`] named, or the new
-    /// one.
-    /// Saved with the thread from its first message, to resume it later.
+    /// one. Saved with the thread from its first message, to resume it later.
     pub fn session_id(&self) -> &str {
         &self.session_id
     }

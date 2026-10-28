@@ -568,8 +568,6 @@ mod tests {
         assert_eq!(turn(&conversation).blocks, ["Half"]);
     }
 
-    /// The agent can ask a second question before the first is answered. Each waits for its
-    /// own answer, the oldest first.
     #[test]
     fn a_second_approval_waits_behind_the_first() {
         let now = SystemTime::now();
@@ -649,7 +647,6 @@ mod tests {
         assert_eq!(notices(&conversation), ["Could not stop", gone]);
     }
 
-    /// A crash ends the turn as failed and then exits with the same message: it shows once.
     #[test]
     fn a_crash_mid_turn_says_so_once() {
         let now = SystemTime::now();
