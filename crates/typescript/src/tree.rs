@@ -2086,9 +2086,10 @@ impl Style {
             element = element.pb(px(padding));
         }
         match self.scroll {
-            // As large as its children along the axis, and as its box across it.
-            Some(ScrollAxis::X) => element = element.flex_none().h_full(),
-            Some(ScrollAxis::Y) => element = element.flex_none().w_full(),
+            // As large as its children along the axis, and at least its box, so a child that
+            // grows fills what they leave; as its box across it.
+            Some(ScrollAxis::X) => element = element.flex_none().min_w_full().h_full(),
+            Some(ScrollAxis::Y) => element = element.flex_none().min_h_full().w_full(),
             None => element = self.sized(element),
         }
         // Its lines one after another, not spread over a box taller than they are.

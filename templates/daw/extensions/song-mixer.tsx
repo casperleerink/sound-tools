@@ -30,7 +30,7 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
   </>
 );
 
-/** A strip per track, the returns' strips after them, then the master's, which stays in view while they scroll; its limiter is in the master's panel. */
+/** A strip per track, the returns' strips after them at the right while they fit, then the master's, which stays in view while they scroll; its limiter is in the master's panel. */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, memory, rows, returns, openPanel, toggleMute, toggleSolo } = page;
   /** The returns some strip sends to, in their order: a row of knobs each. */
@@ -89,13 +89,14 @@ export const Mixer = ({ page }: { page: Page }) => {
       <div style={{ ...GROUP, paddingRight: 0 }}>
         <Names />
       </div>
-      <div style={{ direction: "row", scroll: "x" }}>
+      <div style={{ grow: true, direction: "row", scroll: "x" }}>
         <div style={GROUP}>
           <For each={rows}>{(each) => <Strip each={each} />}</For>
         </div>
         <Show when={() => returns().length > 0}>
           {() => (
             <>
+              <div style={{ grow: true }} />
               <div style={{ width: 1, background: "alpha/5", keep: true }} />
               <div style={GROUP}>
                 <For each={returns}>{(each) => <Strip each={each} />}</For>
