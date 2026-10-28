@@ -1,6 +1,5 @@
 //! Button: `primary`, `subtle`, `ghost` plus colour variants (solid, subtle, ghost) taking any
-//! accent. Heights 24/28/32 px, optional icon, icon-only squares, pill `rounded`, disabled at 40%
-//! opacity.
+//! accent, with an optional icon, icon-only squares and a pill shape.
 
 use std::rc::Rc;
 
@@ -142,7 +141,7 @@ impl Button {
         self
     }
 
-    /// Lucide icon name, drawn before the label.
+    /// Icon name, drawn before the label.
     pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
         self.icon = Some(icon.into());
         self
@@ -197,7 +196,6 @@ struct Look {
     hover_fg: Hsla,
 }
 
-/// Colours per variant, following the source design system's button variants.
 fn look(variant: ButtonVariant, cx: &App) -> Look {
     let theme = cx.theme();
     let clear = Hsla::transparent_black();

@@ -1,11 +1,8 @@
 //! Meter: the level of a stereo signal as two bars, and the gain reduction of a dynamics device.
 //!
 //! The meter only shows a [`Level`]. Where the level comes from is the owner's business; the
-//! owner keeps a [`Ballistics`] to hold the peak and let the bars fall. Colours: green up to
-//! -6 dBFS, yellow above, a red clip light over the bars until it is clicked, and a 1 pt peak
-//! line. Nothing shows at rest.
-//!
-//! The scale: -inf at the bottom, 0 dB at 80 % of the height and +6 dB at the top.
+//! owner keeps a [`Ballistics`] to hold the peak and let the bars fall. The clip light stays
+//! until it is clicked. Nothing shows at rest.
 
 use std::rc::Rc;
 
@@ -55,10 +52,10 @@ const SCALE_TOP: f32 = LIGHT + LIGHT_GAP;
 /// Which way the bars of a meter run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Orientation {
-    /// Up, 5 pt bars with the clip light on top: the meter under the volume.
+    /// Up, with the clip light on top: the meter under the volume.
     #[default]
     Vertical,
-    /// To the right, 40 x 3 pt bars with the clip light at the right end: the master meter.
+    /// To the right, with the clip light at the right end: the master meter.
     Horizontal,
 }
 
@@ -259,7 +256,7 @@ impl Meter {
         }
     }
 
-    /// The master meter: 40 x 3 pt bars that run to the right.
+    /// The master meter: thin bars that run to the right.
     pub fn horizontal(mut self) -> Self {
         self.orientation = Orientation::Horizontal;
         self

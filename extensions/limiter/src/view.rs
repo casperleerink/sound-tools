@@ -1,8 +1,7 @@
-//! The card of the limiter: the display the master's limiter has too, the last four seconds of
-//! what the limiter sent out under the ceiling line and how much it took, then Gain and Release,
-//! Ceiling and Lookahead. Four controls fit, so the card has nothing behind expand. The rack
-//! gives the view a [`CardFrame`]: the picker of the slot as the title, and the power and close
-//! icons.
+//! The card of the limiter: the last four seconds of what the limiter sent out under the ceiling
+//! line and how much it took, then Gain and Release, Ceiling and Lookahead. Four controls fit, so
+//! the card has nothing behind expand. The rack gives the view a [`CardFrame`]: the picker of the
+//! slot as the title, and the power and close icons.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
 //! through the session, by [`DeviceEdit`]: a drag of a knob or of the ceiling handle is one

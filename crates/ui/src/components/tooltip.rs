@@ -1,5 +1,4 @@
-//! Tooltip view for GPUI's `.tooltip(..)`: label text plus an optional keyboard shortcut as
-//! chips. Ported from the source design system's `tooltip.tsx`.
+//! Tooltip view for GPUI's `.tooltip(..)`: label text plus optional keyboard shortcut chips.
 
 use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,

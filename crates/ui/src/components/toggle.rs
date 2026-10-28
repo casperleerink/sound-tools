@@ -1,15 +1,11 @@
-//! Toggle: a 24 pt button that is on or off, such as M and S of a track or `Freeze` of a reverb.
-//! 28 pt wide for a letter or a glyph and as wide as its word otherwise. The arm toggle of an
-//! audio track is a 10 pt circle in a 24 pt square, the size of an icon of a card header, hollow
-//! while off and filled while on ([`Toggle::dot`]). The automation toggle of a track is an icon
-//! in the same square ([`Toggle::icon`]), wider when it holds a count. Off it is `alpha/5` with
-//! muted text. On it is white at 10 %, or its colour at 16 % with that colour as text: mute is
-//! peach and solo yellow, the one place a control fills with colour.
+//! Toggle: a button that is on or off, such as M and S of a track or `Freeze` of a reverb. Its
+//! face is a word, a circle ([`Toggle::dot`]) or an icon ([`Toggle::icon`]). On, it may take a
+//! colour ([`Toggle::color`]): mute is peach and solo yellow, the one place a control fills with
+//! colour.
 //!
 //! Controlled: the caller gives `on` and hears the new state. A click toggles it, and so do
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
-//! plays and pauses first, as it does on any focused button. The ring shows only when the
-//! focus came from the keyboard. The focus handle is kept in element state under the id.
+//! plays and pauses first, as it does on any focused button.
 
 use std::rc::Rc;
 

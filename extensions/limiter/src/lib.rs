@@ -4,9 +4,8 @@
 //! for a louder track with the same peaks. A lookahead lets it turn down before a peak arrives,
 //! so the top of the wave keeps its shape.
 //!
-//! It is the limiter at the end of the master as a device: both are [`sound_core::PeakLimiter`],
-//! so they sound the same for the same settings. Under the ceiling it leaves every sample as it
-//! was, one lookahead later.
+//! The song template ends its master with one too. Under the ceiling it leaves every sample as
+//! it was, one lookahead later.
 //!
 //! A record on disk, `<name>.json` in a track folder, named in the track's `effects`:
 //!

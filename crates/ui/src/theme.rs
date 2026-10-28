@@ -1,7 +1,6 @@
 use gpui::{App, Global, Hsla, Rgba, rgb};
 
-/// The colour tokens: a grey scale from the source design system and the colours that mean
-/// something. The names are roles, not hues, so each colour keeps one meaning.
+/// The colour tokens: a grey scale and the accent colours.
 #[derive(Clone, Debug)]
 pub struct Theme {
     pub gray_50: Hsla,
@@ -38,7 +37,6 @@ fn c(hex: u32) -> Hsla {
 }
 
 impl Theme {
-    /// Our own palette since September 25, 2026.
     pub fn dark() -> Self {
         Self {
             gray_50: c(0x0c0d10),

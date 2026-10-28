@@ -1,13 +1,10 @@
 //! Slider: a value on a short line, for a row with no room for a knob, such as the amount of a
-//! route of a matrix. 24 pt tall to take a press, with a 2 pt track of `alpha/10`, the value as
-//! one bright line on it and a 8 pt dot at its end. A bipolar slider draws its line from the
-//! middle, as a bipolar knob does from the top.
+//! route of a matrix. A bipolar slider draws its line from the middle, as a bipolar knob does
+//! from the top.
 //!
 //! It drags sideways and the dot follows the pointer, which a short line can afford. The rest
-//! is the gesture of the knob, see [`gesture`](super::gesture): shift ten times finer, escape
-//! puts the value back, double click or backspace sets the default, the arrows step a fiftieth
-//! of the travel. Controlled: the owner gives the value on every render and hears a
-//! [`ValueChange`].
+//! is the gesture of the knob, see [`gesture`](super::gesture). Controlled: the owner gives the
+//! value on every render and hears a [`ValueChange`].
 
 use std::rc::Rc;
 

@@ -1,10 +1,7 @@
-//! Pad: one pad of a drum pad, 72 x 32 pt with 6 pt corners, the fill and border of a clip and
-//! its name in 12 pt medium, 8 pt in. Selected, it has the `gray-950` border of a selected
-//! clip. While it sounds it is green, at 24 % that fades with the sound: sound is moving. A
-//! sample pad carries a 12 pt waveform glyph at its right, and a pad whose file is missing a
-//! peach warning glyph instead. A pad with no glyph is synthesized. A long name ends in an
-//! ellipsis. Where a file from the Finder would land, it has the 2 pt lavender ring of a drop
-//! target.
+//! Pad: one pad of a drum pad, drawn as a clip is. While it sounds it is green, fading with the
+//! sound: sound is moving. A sample pad carries a waveform glyph at its right, and a pad whose
+//! file is missing a warning glyph instead. A pad with no glyph is synthesized. Where a file from
+//! the file manager would land, it has the ring of a drop target.
 //!
 //! Controlled: the owner gives every state and hears a press and a drop of files. A pad is no
 //! tab stop: the grid it sits in is one, and the owner moves the selection with the arrows.
@@ -97,7 +94,8 @@ impl Pad {
         self
     }
 
-    /// Files from the Finder let go of on the pad. While they are over it, it has the ring.
+    /// Files from the file manager let go of on the pad. While they are over it, it has the
+    /// ring.
     pub fn on_drop_files(
         mut self,
         f: impl Fn(Vec<PathBuf>, &mut Window, &mut App) + 'static,

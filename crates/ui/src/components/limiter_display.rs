@@ -1,7 +1,6 @@
 //! The display of a limiter: the last four seconds of what it sent out, in green under the
 //! ceiling line, and how much it took, hanging from the top. The handle at the right end of the
-//! ceiling line drags the ceiling up and down. The limiter of the master and the Limiter effect
-//! both show it.
+//! ceiling line drags the ceiling up and down.
 //!
 //! The owner keeps a [`LimiterHistory`], feeds it one reading per poll, and builds the display
 //! from it when it renders, with a handle whose change it handles itself.
