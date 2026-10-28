@@ -1060,8 +1060,6 @@ mod tests {
         );
     }
 
-    /// A link in an answer is written by the agent, and a `file:` or app URL could start
-    /// something on the machine.
     #[test]
     fn only_web_and_mail_links_open() {
         let inline = only_paragraph(
@@ -1411,10 +1409,9 @@ mod tests {
         );
     }
 
-    /// The sidebar parses the whole streaming message again on each frame. Measured on an
-    /// M-series Mac: 5.1 KB in 58 µs in release and 400 µs in a debug build, against a 16 ms
-    /// frame. Ignored so a slow CI runner cannot fail it; run
-    /// `cargo test --release -p sound-ui long_answer -- --ignored --nocapture`.
+    /// Measured on an M-series Mac: 5.1 KB in 58 µs in release and 400 µs in a debug build,
+    /// against a 16 ms frame. Ignored so a slow CI runner cannot fail it; run
+    /// `cargo test --release -p sound-agent long_answer -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn a_long_answer_parses_in_a_small_part_of_a_frame() {

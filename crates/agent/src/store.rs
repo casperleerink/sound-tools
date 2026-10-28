@@ -53,7 +53,7 @@ impl SavedThread {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Index {
-    /// The id of the thread the sidebar shows. `None` after **+**: the next message starts
+    /// The id of the thread the sidebar shows. `None` after **New**: the next message starts
     /// a thread.
     current: Option<String>,
     threads: Vec<SavedThread>,
@@ -103,7 +103,7 @@ impl Line {
 /// What the sidebar keeps, in the order it happened.
 #[derive(Debug)]
 pub(crate) enum Write {
-    /// The thread the sidebar shows, added to the index or updated there, or none after **+**.
+    /// The thread the sidebar shows, added to the index or updated there, or none after **New**.
     Current(Option<SavedThread>),
     /// Adds to the log of the thread with this id.
     Lines { thread: String, lines: Vec<Line> },

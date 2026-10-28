@@ -20,7 +20,7 @@ use super::markdown::{Markdown, MarkdownText};
 use crate::conversation::{Step, Turn};
 use crate::{StepKind, StepOutcome, TurnOutcome};
 
-/// The text of the thread: 15 on 22, as the mockup.
+/// The text of the thread.
 const TEXT_SIZE: f32 = 15.;
 const LINE_HEIGHT: f32 = 22.;
 /// Meta lines and steps.

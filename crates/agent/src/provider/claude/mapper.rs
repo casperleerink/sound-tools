@@ -25,7 +25,7 @@ const OVERLOADED: &str = "overloaded";
 /// The model the CLI picks itself, in its list of models.
 const DEFAULT_MODEL: &str = "default";
 
-/// The longest command or pattern a title shows, in characters.
+/// The longest pattern a title shows, in characters.
 const TITLE_DETAIL_CHARACTERS: usize = 60;
 
 #[derive(Debug)]
@@ -595,7 +595,7 @@ fn relative(path: &str, folder: &Path) -> String {
 
 /// The first line, cut to fit one line of the sidebar.
 fn shorten(text: &str) -> String {
-    // Trimmed first, so a command that starts with a blank line is not shown empty.
+    // Trimmed first, so a pattern that starts with a blank line is not shown empty.
     let mut lines = text.trim().lines();
     let line = lines.next().unwrap_or_default().trim();
     let more = lines.next().is_some();
@@ -606,9 +606,9 @@ fn shorten(text: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
-/// A command or a pattern in backticks, which the sidebar shows as code. One that has a
-/// backtick of its own is left bare: its backtick would close ours early, and the line would
-/// show the wrong part as code.
+/// A pattern in backticks, which the sidebar shows as code. One that has a backtick of its own
+/// is left bare: its backtick would close ours early, and the line would show the wrong part
+/// as code.
 fn code(text: &str) -> String {
     if text.contains('`') {
         text.to_string()
@@ -624,9 +624,9 @@ mod tests {
     use super::{plain, question, shorten};
 
     #[test]
-    fn a_command_that_starts_with_a_blank_line_shows_its_first_line() {
-        assert_eq!(shorten("\n  cargo build\n"), "cargo build");
-        assert_eq!(shorten("\ncargo build\ncargo test"), "cargo build…");
+    fn a_pattern_that_starts_with_a_blank_line_shows_its_first_line() {
+        assert_eq!(shorten("\n  *.json\n"), "*.json");
+        assert_eq!(shorten("\n*.json\n*.tsx"), "*.json…");
     }
 
     #[test]
