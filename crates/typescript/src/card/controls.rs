@@ -454,39 +454,32 @@ impl Drawing<'_, '_> {
         carry: &Option<String>,
         on_drop: &Option<bool>,
     ) -> Stateful<Div> {
-        {
-            {
-                let lavender = self.cx.theme().lavender;
-                let element = (self.hears_pointer(element, id, hears))
-                    .when(hears.any(), |element| {
-                        element.child(placed(id, &self.placed))
-                    });
-                let element = match carry {
-                    Some(carry) => element
-                        .on_drag(Carried(carry.clone()), |carried: &Carried, _, _, cx| {
-                            cx.new(|_| carried.clone())
-                        }),
-                    None => element,
-                };
-                if *on_drop != Some(true) {
-                    return element;
-                }
-                element
-                    .drag_over::<ExternalPaths>(move |style, _, _, _| {
-                        style.bg(lavender.opacity(0.2))
-                    })
-                    .drag_over::<Carried>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
-                    .on_drop(
-                        (self.cx).listener(move |view, paths: &ExternalPaths, _, cx| {
-                            view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
-                        }),
-                    )
-                    .on_drop((self.cx).listener(move |view, carried: &Carried, _, cx| {
-                        let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
-                        view.event(id, EventKind::Drop, dropped, cx);
-                    }))
-            }
+        let lavender = self.cx.theme().lavender;
+        let element = (self.hears_pointer(element, id, hears)).when(hears.any(), |element| {
+            element.child(placed(id, &self.placed))
+        });
+        let element = match carry {
+            Some(carry) => element
+                .on_drag(Carried(carry.clone()), |carried: &Carried, _, _, cx| {
+                    cx.new(|_| carried.clone())
+                }),
+            None => element,
+        };
+        if *on_drop != Some(true) {
+            return element;
         }
+        element
+            .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
+            .drag_over::<Carried>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
+            .on_drop(
+                (self.cx).listener(move |view, paths: &ExternalPaths, _, cx| {
+                    view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
+                }),
+            )
+            .on_drop((self.cx).listener(move |view, carried: &Carried, _, cx| {
+                let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
+                view.event(id, EventKind::Drop, dropped, cx);
+            }))
     }
 }
 

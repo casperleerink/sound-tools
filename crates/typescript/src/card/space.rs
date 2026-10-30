@@ -364,7 +364,6 @@ fn followed(
     view
 }
 
-/// `view` scrolled inside `extent`: an axis without one shows from 0.
 /// `view` zoomed and scrolled so `fit` spans its width, as far as `zoom` goes.
 fn fitted(mut view: SpaceView, fit: tree::Fit, zoom: Option<[f32; 2]>) -> SpaceView {
     let [from, to] = fit.x.map(f64::from);
@@ -379,6 +378,7 @@ fn fitted(mut view: SpaceView, fit: tree::Fit, zoom: Option<[f32; 2]>) -> SpaceV
     view
 }
 
+/// `view` scrolled inside `extent`: an axis without one shows from 0.
 fn clamped(mut view: SpaceView, extent: &tree::Ranges) -> SpaceView {
     let (across, down) = view.scale();
     let hold = |edge: f64, range: Option<[f32; 2]>, shown: f64| match range {

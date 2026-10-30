@@ -440,12 +440,12 @@ impl Drawing<'_, '_> {
     }
 }
 
-/// An id for an element, from its key, else from where it is in the tree.
 /// Whether a text field has the keys.
 pub(super) fn typing(window: &Window) -> bool {
     (window.context_stack().iter()).any(|context| context.contains(text_input::KEY_CONTEXT))
 }
 
+/// An id for an element, from its key, else from where it is in the tree.
 pub(super) fn element_name(kind: &str, key: Option<&str>, index: &[usize]) -> String {
     match key {
         Some(key) => key.to_string(),

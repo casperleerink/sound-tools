@@ -328,7 +328,6 @@ impl TypeScriptCard {
                 view.edit.finish(&view.session, cx);
             }
             ProjectEvent::Created(id) if *id == view.id => view.state = None,
-            // Its code reads the records of its children too.
             // Its live values read the record.
             ProjectEvent::Changed(id) if *id == view.id => {
                 view.state = None;

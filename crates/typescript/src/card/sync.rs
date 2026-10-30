@@ -90,7 +90,6 @@ fn sidechain_column(
     }
 }
 
-/// The title of an embedded card.
 /// The title of an embedded card, as the window's cards have theirs: 14 pt medium, and with a
 /// menu, a chevron after it and the wash of the pointer over it.
 struct CardTitle {
@@ -487,26 +486,13 @@ impl TypeScriptCard {
             .map(|(_, group)| group.map_or(MenuEntry::Separator, MenuEntry::Group))
             .chain(notes.into_iter().map(|note| MenuEntry::Note(note.into())))
             .collect();
+        self.answer_menu(None, cx);
         // A menu with a search field is another menu than one without.
-        let cached = self.menu.take();
-        let cached = match cached {
-            Some((menu, waiting)) if menu.read(cx).is_searchable() != search => {
-                if let Some(waiting) = waiting {
-                    self.live
-                        .update(cx, |live, _| live.menu_picked(waiting, None));
-                }
-                None
-            }
-            cached => cached,
-        };
+        let cached = (self.menu.take())
+            .map(|(menu, _)| menu)
+            .filter(|menu| menu.read(cx).is_searchable() == search);
         let menu = match cached {
-            Some((menu, waiting)) => {
-                if let Some(waiting) = waiting {
-                    self.live
-                        .update(cx, |live, _| live.menu_picked(waiting, None));
-                }
-                menu
-            }
+            Some(menu) => menu,
             None => {
                 let menu = cx.new(|cx| {
                     let menu = DropdownMenu::new("", Vec::new(), cx)
