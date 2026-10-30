@@ -108,20 +108,14 @@ Only a pinned parameter takes a lane, and not one `--plugin-params` prints with 
 
 ## When it does not play
 
-The usual lines in `problems.txt`:
+`problems.txt` says what is wrong. Some lines need more:
 
-- `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or the
-  plugin is not installed. Fix `plugin_id`; it plays at once.
-- `a vst3 plugin_id is the class id as thirty-two hex digits`: you wrote a CLAP-style id or a
-  name.
 - `the plugins of this machine are still being looked at`: nothing is wrong. Read
   `problems.txt` again in a few seconds.
 - `the state of the plugin ... could not be read`: usually two records name one `state_asset`
   for different plugins. Give each its own name.
 - `... offers the host no way to send the sustain pedal`, or `... asked to be started again ...
   and did not start`: nothing to fix in the file.
-- `... has no parameter with the id ...`: correct the pin's id, or take the pin out.
-- `` `parameters.<id>.value` is ..., outside the range ``: write a value inside the range.
 - On the parent, a connection to `parameters.<id>.value` that the plugin takes no number of:
   the pin is missing, has steps, may not be automated, or is out of range.
 

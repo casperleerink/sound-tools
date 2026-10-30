@@ -5,23 +5,13 @@ Free sampled instruments for the Sampler. They sound basic: when the composer ha
 ```json state/song/violins/synth.json
 {
   "tool": "sampler",
-  "state": {
-    "library": "strings/violin-section",
-    "root": 60,
-    "start_seconds": 0.0,
-    "attack_seconds": 0.002,
-    "decay_seconds": 0.4,
-    "sustain": 1.0,
-    "release_seconds": 0.3,
-    "velocity_to_volume": 0.5,
-    "gain_db": 0.0
-  }
+  "state": {"library": "strings/violin-section"}
 }
 ```
 
-`{"library": "strings/violin-section"}` is enough. Only `gain_db` of the record applies.
+Of the other fields of the Sampler, only `gain_db` applies.
 
-Then ask the composer to click **Download** on the Sampler card, and give the size. Until then `problems.txt` says it is not downloaded.
+After writing it, ask the composer to click **Download** on the Sampler card, and give the size. Until then `problems.txt` says it is not downloaded.
 
 Range is where the instrument has samples. Write parts in the range of the real instrument, which is often narrower.
 
