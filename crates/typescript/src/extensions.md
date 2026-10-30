@@ -16,18 +16,7 @@ This doc is enough for a first tool. Open a deeper one when the tool needs it:
 
 ## Where it goes
 
-One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own view. Make the folder, then run `sound-tools . --inspect` once: the runtime writes the SDK, `extensions/sdk.ts` and `extensions/sdk/`, with `bun.d.ts` and `tsconfig.json`. Do not edit them. Import everything from `./sdk`. Every type and function has its doc in the module that declares it, and `sdk.ts` lists them by module:
-
-| Module of `extensions/sdk/` | Holds |
-| --- | --- |
-| `fields.ts` | fields and inputs |
-| `sound.ts` | signals and their functions |
-| `tools.ts` | `tool`, `Context`, children, connections, `NoteEvent` |
-| `live.ts` | live values (`now`), `Clock`, pointer events, drags, keys, menus |
-| `drawing.ts` | `div` and its `Style`, `Space` and its shapes, `Button`, `Input`, `Icon`, `DeviceCard` |
-| `components.ts` | `Knob`, `Fader`, `NumberBox`, `Select`, `Steps`, `Meter`, `Pad` |
-| `nodes.ts`, `reactivity.ts` | `For`, `Show`, `Popover`, `Dialog`; `memo`, `selector`, `timeout` |
-| `records.ts` | the records of the built-in tools |
+One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own view. Make the folder, then run `sound-tools . --inspect` once: the runtime writes the SDK, `extensions/sdk.ts` and `extensions/sdk/`, with `bun.d.ts` and `tsconfig.json`. Do not edit them. Import everything from `./sdk`. `sdk.ts` lists every name by the module that declares it with its doc.
 
 A tool needs no entry in `project.json`. While the app has the project open, a save in `extensions/` starts the tools again in a moment: every file loads again, every `memory` starts over, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 

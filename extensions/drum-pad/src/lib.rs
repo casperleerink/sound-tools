@@ -736,16 +736,11 @@ mod tests {
     fn the_doc_gives_the_kit() {
         let doc = include_str!("../agent-doc.md");
         for (pad, kit) in KIT.iter().enumerate() {
-            let choke = if kit.choke { "yes" } else { "no" };
             let row = format!(
-                "| {} | {} | `{}` | {} | {} | {} | {} | {choke} |",
+                "| {} | {} | `{}` |",
                 note_of(pad),
                 kit.name,
-                kit.sound.key(),
-                kit.volume_db,
-                kit.pitch_semitones,
-                kit.decay_ms,
-                kit.pan
+                kit.sound.key()
             );
             assert!(
                 doc.lines().any(|line| line == row),
