@@ -6,7 +6,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use gpui::{Context, Entity, IntoElement, Render, TestAppContext, Window, div, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -46,8 +45,7 @@ fn open(cx: &mut TestAppContext) -> Opened {
     let mut registry = Registry::new();
     registry.tool::<Marker>("markers").unwrap();
     let (control, engine) = Engine::new(EngineConfig::new(48_000, 2));
-    let mut project = Project::open(folder.path(), registry, control).unwrap();
-    project.watch().unwrap();
+    let project = Project::open(folder.path(), registry, control).unwrap();
     let session = cx.new(|cx| Session::new(project, cx));
     Opened {
         folder,
@@ -72,21 +70,6 @@ fn create_marker(session: &Entity<Session>, cx: &mut TestAppContext) -> Instance
     created.unwrap()
 }
 
-/// Lets the poll timer fire until `done`, while real time passes for the file watcher.
-fn poll_until(
-    cx: &mut TestAppContext,
-    what: &str,
-    mut done: impl FnMut(&mut TestAppContext) -> bool,
-) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(10));
-        cx.executor().advance_clock(POLL_INTERVAL);
-        cx.run_until_parked();
-    }
-}
-
 #[gpui::test]
 fn an_outside_change_notifies_observers_and_names_the_instance(cx: &mut TestAppContext) {
     let opened = open(cx);
@@ -104,18 +87,20 @@ fn an_outside_change_notifies_observers_and_names_the_instance(cx: &mut TestAppC
         })
         .detach();
     });
-    // The watcher needs a moment before it sees changes.
-    std::thread::sleep(Duration::from_millis(200));
-
-    let state = opened.folder.path().join("state");
-    std::fs::create_dir_all(&state).unwrap();
-    std::fs::write(
-        state.join("marker-a.json"),
-        r#"{"tool": "marker", "state": {"value": 7}}"#,
-    )
-    .unwrap();
-
-    poll_until(cx, "the outside change", |_| !events.borrow().is_empty());
+    let root = opened
+        .session
+        .read_with(cx, |session, _| session.project().root().to_owned());
+    std::fs::create_dir_all(root.join("state")).unwrap();
+    let record = root.join("state/marker-a.json");
+    std::fs::write(&record, r#"{"tool": "marker", "state": {"value": 7}}"#).unwrap();
+    // As the watcher, which the project's tests cover.
+    opened
+        .session
+        .update(cx, |session, cx| {
+            session.background(cx, |project| project.apply_outside_changes(&[record]))
+        })
+        .unwrap();
+    cx.run_until_parked();
     assert_eq!(*events.borrow(), [ProjectEvent::Created(marker_id())]);
     assert_eq!(*notified.borrow(), 1);
     opened.session.read_with(cx, |session, _| {
@@ -123,7 +108,7 @@ fn an_outside_change_notifies_observers_and_names_the_instance(cx: &mut TestAppC
         assert_eq!(session.project().state(&marker), Some(&Marker { value: 7 }));
     });
 
-    // Undo goes the same way, and nothing more is heard once the folder is quiet.
+    // Undo goes the same way, and the polls of an idle project notify nothing.
     opened.session.update(cx, |session, cx| {
         assert_eq!(
             session.edit(cx, Project::undo),
@@ -137,7 +122,6 @@ fn an_outside_change_notifies_observers_and_names_the_instance(cx: &mut TestAppC
     );
     let heard = *notified.borrow();
     for _ in 0..30 {
-        std::thread::sleep(Duration::from_millis(10));
         cx.executor().advance_clock(POLL_INTERVAL);
         cx.run_until_parked();
     }

@@ -17,6 +17,7 @@ use runtime::window::other_apps::AppSounds;
 use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
+use sound_typescript::CodeChanges;
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
 
@@ -39,6 +40,8 @@ pub(crate) struct Opened<'a> {
     /// What the scan had found the last time a poll asked for a frame, as the window's own
     /// poll keeps it.
     scanned: u64,
+    /// How the test tells the window it changed code: `None` when the window watches.
+    code_changes: Option<CodeChanges>,
     pub cx: &'a mut VisualTestContext,
 }
 
@@ -125,11 +128,27 @@ pub(crate) fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_
     open_folder_with(cx, folder, no_plugins, DeviceAccess::default())
 }
 
+/// The window does not watch `extensions/`: the test saves code with [`Opened::save_code`].
 pub(crate) fn open_folder_with<'a>(
     cx: &'a mut TestAppContext,
     folder: TempDir,
     host: impl FnOnce(&Path) -> Plugins,
     device: DeviceAccess,
+) -> Opened<'a> {
+    open_window(cx, folder, host, device, false)
+}
+
+/// [`open_folder`], watching `extensions/` as the app does.
+pub(crate) fn open_folder_watched(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_> {
+    open_window(cx, folder, no_plugins, DeviceAccess::default(), true)
+}
+
+fn open_window<'a>(
+    cx: &'a mut TestAppContext,
+    folder: TempDir,
+    host: impl FnOnce(&Path) -> Plugins,
+    device: DeviceAccess,
+    watched: bool,
 ) -> Opened<'a> {
     assert!(
         sound_typescript::has_bun(),
@@ -145,12 +164,24 @@ pub(crate) fn open_folder_with<'a>(
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let plugins = plugins.downgrade();
+    let mut code_changes = None;
     let (shell, cx) = cx.add_window_view({
         let (session, plugins) = (session.clone(), plugins.clone());
+        let code_changes = &mut code_changes;
         move |window, cx| {
             let (mut views, mut devices) = views(plugins);
-            if let Some(extensions) = extensions {
-                sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
+            match extensions {
+                Some(extensions) if watched => {
+                    let (views, devices) = (&mut views, &mut devices);
+                    sound_typescript::start_window(extensions, &session, views, devices, cx);
+                }
+                Some(extensions) => {
+                    let (views, devices) = (&mut views, &mut devices);
+                    *code_changes = Some(sound_typescript::start_window_unwatched(
+                        extensions, &session, views, devices, cx,
+                    ));
+                }
+                None => {}
             }
             let name = "Test device".into();
             Shell::with_device(session, (views, devices), name, device, window, cx)
@@ -164,6 +195,7 @@ pub(crate) fn open_folder_with<'a>(
         session,
         shell,
         scanned: 0,
+        code_changes,
         cx,
     }
 }
@@ -337,6 +369,22 @@ pub(crate) fn open_with_devices(cx: &mut TestAppContext, list: ListDevices) -> O
 }
 
 impl Opened<'_> {
+    /// Writes code of the project's tools from outside and tells the window, as its watcher
+    /// does.
+    pub(crate) fn save_code(&mut self, relative: &str, contents: &str) {
+        let path = self.folder.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+        self.code_changed();
+    }
+
+    /// Tells the window that code of the project's tools changed, as its watcher does.
+    pub(crate) fn code_changed(&mut self) {
+        (self.code_changes.as_ref())
+            .expect("a window that watches hears the change itself")
+            .tell();
+    }
+
     /// Lets the engine take what was sent to it, the poll timer see the result, and what Bun
     /// answered land.
     pub(crate) fn settle(&mut self) {
@@ -578,6 +626,7 @@ impl Opened<'_> {
             session,
             shell,
             scanned: _,
+            code_changes: _,
             cx,
         } = self;
         drop(plugins);

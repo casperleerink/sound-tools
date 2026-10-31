@@ -96,7 +96,7 @@ pub(crate) struct Live {
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
     /// Hears the changes in `extensions/`.
-    _watcher: Option<RecommendedWatcher>,
+    watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
     watch_problem: Option<Problem>,
     changed: smol::channel::Sender<()>,
@@ -175,9 +175,45 @@ pub fn start_window(
     devices: &mut Devices,
     cx: &mut App,
 ) {
+    start(extensions, session, views, devices, true, cx);
+}
+
+/// Tells a window of a change in `extensions/`, as its watcher does.
+#[cfg(feature = "test-support")]
+pub struct CodeChanges(smol::channel::Sender<()>);
+
+#[cfg(feature = "test-support")]
+impl CodeChanges {
+    pub fn tell(&self) {
+        self.0.try_send(()).ok();
+    }
+}
+
+/// [`start_window`] with no watcher: the test tells it of each change, as the system can take
+/// seconds to.
+#[cfg(feature = "test-support")]
+pub fn start_window_unwatched(
+    extensions: Extensions,
+    session: &Entity<Session>,
+    views: &mut Views,
+    devices: &mut Devices,
+    cx: &mut App,
+) -> CodeChanges {
+    CodeChanges(start(extensions, session, views, devices, false, cx))
+}
+
+fn start(
+    extensions: Extensions,
+    session: &Entity<Session>,
+    views: &mut Views,
+    devices: &mut Devices,
+    watched: bool,
+    cx: &mut App,
+) -> smol::channel::Sender<()> {
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
-    let live = Live::start(extensions, session, &tools, &generation, cx);
+    let live = Live::start(extensions, session, &tools, &generation, watched, cx);
+    let changed = live.read(cx).changed.clone();
     // The keys the tool of the main view takes wherever the focus is.
     GlobalKeys::set(
         {
@@ -250,6 +286,7 @@ pub fn start_window(
             name: info.title.clone().into(),
         })
     });
+    changed
 }
 
 /// Watches `folder` and its folders but `node_modules`, and says on `changed` when a file
@@ -332,6 +369,7 @@ impl Live {
         session: &Entity<Session>,
         tools: &Rc<RefCell<Vec<ToolInfo>>>,
         generation: &Rc<Cell<u64>>,
+        watched: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         let Extensions {
@@ -345,7 +383,11 @@ impl Live {
         *tools.borrow_mut() = loaded;
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
-            let (watcher, watch_problem) = watch(&folder, changed.clone());
+            let (watcher, watch_problem) = if watched {
+                watch(&folder, changed.clone())
+            } else {
+                (None, None)
+            };
             let hearing_changes = cx.spawn(async move |live, cx| {
                 while changes.recv().await.is_ok() {
                     // Until it is quiet: an editor saves in several writes, an agent several
@@ -413,7 +455,7 @@ impl Live {
                 performed_on: HashSet::new(),
                 last_frame: Instant::now(),
                 problems,
-                _watcher: watcher,
+                watcher,
                 watch_problem,
                 changed,
                 _tasks: [hearing_changes, framing],
@@ -2010,8 +2052,10 @@ impl Live {
     /// Something changed in `extensions/`: maybe a fix, so every file runs again.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.skipped.clear();
-        // A new folder is watched too.
-        (self._watcher, self.watch_problem) = watch(&self.folder, self.changed.clone());
+        // A new folder is watched too. No watcher, no events: a test told of this change.
+        if self.watcher.is_some() {
+            (self.watcher, self.watch_problem) = watch(&self.folder, self.changed.clone());
+        }
         self.restart(cx);
     }
 
