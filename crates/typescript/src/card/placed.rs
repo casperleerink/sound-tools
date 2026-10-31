@@ -6,12 +6,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Context, Entity, Pixels, Point, Size, WeakEntity, Window,
-    canvas, div, prelude::*,
+    AnyElement, AnyView, App, Bounds, Context, Entity, FocusHandle, Pixels, Point, Size,
+    WeakEntity, Window, canvas, div, prelude::*,
 };
 
 use super::TypeScriptCard;
-use super::input::hands_keys;
+use super::input::hearing_keys;
 
 /// Where the page made room for a card, and where it cuts it off, as by a div that scrolls.
 #[derive(Clone, Copy)]
@@ -33,15 +33,21 @@ impl Placing {
     pub(super) fn new(
         card: AnyView,
         origin: Rc<Cell<Point<Pixels>>>,
+        window: &mut Window,
         cx: &mut Context<TypeScriptCard>,
     ) -> Self {
         let (room, size) = (Rc::default(), Rc::default());
+        // The keys of the page that its controls hand on, held while the focus is in it.
+        let focus = cx.focus_handle();
+        cx.on_focus_out(&focus, window, |page, _, _, cx| page.let_go_of_keys(cx))
+            .detach();
         let page = cx.entity();
         let view = cx.new(|cx| {
             // The page drew again: its room may have moved.
             cx.observe(&page, |_, _, cx| cx.notify()).detach();
             Placed {
                 card,
+                focus,
                 room: Rc::clone(&room),
                 size: Rc::clone(&size),
                 origin,
@@ -104,6 +110,7 @@ fn measured(
 /// the page's draw it again.
 pub(crate) struct Placed {
     card: AnyView,
+    focus: FocusHandle,
     room: Rc<Cell<Option<Room>>>,
     size: Rc<Cell<Option<Size<Pixels>>>>,
     /// Where the page is in the window.
@@ -134,7 +141,7 @@ impl Render for Placed {
         // The keys the card's controls do not keep reach the page, as they did inside it.
         let keys = (self.page.upgrade()).and_then(|page| page.read(cx).keys_of_page(cx));
         let at = match keys {
-            Some(context) => hands_keys(at, context, &self.page),
+            Some(context) => hearing_keys(at, &self.focus, context, &self.page),
             None => at,
         };
         let cut = div()

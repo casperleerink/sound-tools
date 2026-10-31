@@ -937,16 +937,8 @@ pub(super) fn hearing_keys(
     context: Option<gpui::KeyContext>,
     card: &WeakEntity<TypeScriptCard>,
 ) -> Div {
-    hands_keys(element.track_focus(focus), context, card)
-}
-
-/// `element` hands the keys that reach it to the code of the page of `card`.
-pub(super) fn hands_keys(
-    element: Div,
-    context: Option<gpui::KeyContext>,
-    card: &WeakEntity<TypeScriptCard>,
-) -> Div {
     element
+        .track_focus(focus)
         .when_some(context, |element, context| element.key_context(context))
         .on_key_down(listener(card, |view, event: &KeyDownEvent, window, cx| {
             // A text field in it has the keys first.

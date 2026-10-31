@@ -436,7 +436,7 @@ impl TypeScriptCard {
         let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx);
         let placing = (view.clone())
             .filter(|_| self.frame.is_none())
-            .map(|view| Placing::new(view, self.origin.clone(), cx));
+            .map(|view| Placing::new(view, self.origin.clone(), window, cx));
         Some(Embedded {
             instance,
             tool,
