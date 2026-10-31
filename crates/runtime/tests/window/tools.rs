@@ -1599,17 +1599,16 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     assert!(window.playing());
 
     // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
-    let to_the_bar = |window: &mut Opened| {
+    let playhead_and_bar = |window: &mut Opened| {
         let session = window.session.clone();
         let status = window
             .cx
             .update(|_, cx| session.update(cx, |session, _| session.engine().poll().unwrap()));
         let frame = status.playhead_frame.0 as usize;
-        let bar = frame.div_ceil(BAR_FRAMES) * BAR_FRAMES;
-        let before = window.loudest(bar - frame);
-        (bar, before)
+        (frame, frame.div_ceil(BAR_FRAMES) * BAR_FRAMES)
     };
-    let (bar, before) = to_the_bar(&mut window);
+    let (frame, bar) = playhead_and_bar(&mut window);
+    let before = window.loudest(bar - frame);
     assert_eq!(before, 0.0, "before the bar line at {bar}");
     let mut first = vec![0.0_f32; 64 * OFFLINE.channels];
     window.engine.process_block(&mut first);
@@ -1621,9 +1620,12 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         window.cx.simulate_click(middle, Modifiers::default());
         queued(window) == Some(-1.0)
     });
-    // It plays on to the bar line, and is silent from a release after it.
-    let (bar, before) = to_the_bar(&mut window);
-    assert!(before > 0.1, "{before} before the bar line at {bar}");
+    // It plays on to the bar line, and is silent from a release after it. Heard in the last
+    // tenth of a second: how much of the note's attack is left depends on when Bun answered.
+    let (frame, bar) = playhead_and_bar(&mut window);
+    window.render(bar - frame - 4_800);
+    let before = window.loudest(4_800);
+    assert!(before > 0.05, "{before} just before the bar line at {bar}");
     window.loudest(960);
     assert_eq!(window.loudest(2 * BAR_FRAMES), 0.0);
     assert_eq!(window.problems(), []);
