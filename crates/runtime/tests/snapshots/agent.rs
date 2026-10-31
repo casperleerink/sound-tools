@@ -2,12 +2,14 @@
 //!
 //! - `agent-sidebar.png`: the piece with the sidebar open: a markdown answer that worked for
 //!   12 s, and a second turn that runs a command.
-//! - `agent-approval.png`: the same turn waiting on an approval, its command as code.
+//! - `agent-approval.png`: the same turn waiting on an approval: what the command does, and the
+//!   command as code.
 //! - `agent-closed-working.png`: the same with the sidebar closed, and the lavender indicator on
 //!   its icon in the title row.
 //! - `agent-failed.png`: open again, the command denied and the turn failed, its steps open.
 //! - `agent-steps-problems.png`: a turn with a failed step that left two files not live, its
 //!   steps and its problems open.
+//! - `agent-focus.png`: the same, shift-tab from the composer: the ring of the line before it.
 //! - `agent-menu.png`: the composer's model menu: the models and the account.
 //! - `agent-access-menu.png`: the composer's access menu: the approval modes.
 //! - `agent-cannot-continue.png`: a message the agent no longer has the session for: the
@@ -15,17 +17,19 @@
 //! - `agent-never-ask.png`: a new thread under "Full access", which its pill says, in a composer of
 //!   three lines.
 //! - `agent-composer-full.png`: the composer at its eight rows, scrolled to the caret.
+//! - `agent-attachments.png`: a message sent with a picture and a file, which it names, and a
+//!   picture attached to the next.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
-use gpui::{AppContext, Entity, HeadlessAppContext};
+use gpui::{AppContext, Entity, Focusable, HeadlessAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ExitReason, Installed, Model, Sidebar, StepId,
-    StepKind, StepOutcome, TurnOutcome,
+    StepKind, StepOutcome, Thread, TurnOutcome,
 };
 use sound_ui::components::dropdown_menu::MenuPicked;
 
@@ -72,7 +76,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                 model("haiku", "Haiku 4.5", "Fastest for quick answers"),
             ];
             let message = "Add a bass line in bars 5 to 8 that follows the piano";
-            sidebar.begin_at(message, started, cx);
+            sidebar.begin_at(message, Vec::new(), started, cx);
             sidebar.receive(
                 [
                     AgentEvent::Started { account, models },
@@ -81,6 +85,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         id: step("read"),
                         title: "Read state/song/piano/verse.json".to_string(),
                         request_title: "Read state/song/piano/verse.json".to_string(),
+                        command: None,
                         running_title: "Reading state/song/piano/verse.json".to_string(),
                         kind: StepKind::Read {
                             path: "state/song/piano/verse.json".to_string(),
@@ -94,6 +99,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         id: step("write"),
                         title: "Wrote state/song/bass/clip-005.json".to_string(),
                         request_title: "Write state/song/bass/clip-005.json".to_string(),
+                        command: None,
                         running_title: "Writing state/song/bass/clip-005.json".to_string(),
                         kind: StepKind::Change {
                             path: "state/song/bass/clip-005.json".to_string(),
@@ -118,10 +124,14 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("build"),
-                        title: "Ran `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
-                        request_title: "Run `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
-                        // Longer than the line: it ends in an ellipsis.
-                        running_title: "Running `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
+                        // What the agent says the command does.
+                        title: "Build and test the drums".to_string(),
+                        request_title: "Build and test the drums".to_string(),
+                        running_title: "Build and test the drums".to_string(),
+                        command: Some(
+                            "cargo build --release -p drums && cargo test -p drums --no-fail-fast"
+                                .to_string(),
+                        ),
                         kind: StepKind::Run,
                     },
                 ],
@@ -134,7 +144,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
 
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("build".to_string()),
-        title: "Run `cargo build --release -p drums && cargo test -p drums --no-fail…`".to_string(),
+        title: "Build and test the drums".to_string(),
+        command: Some(
+            "cargo build --release -p drums && cargo test -p drums --no-fail-fast".to_string(),
+        ),
     };
     cx.update(|cx| sidebar.update(cx, |sidebar, cx| sidebar.receive([question], cx)));
     cx.run_until_parked();
@@ -159,8 +172,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     },
                     AgentEvent::TurnEnded {
                         outcome: TurnOutcome::Failed {
-                            message: "API Error: 529 Overloaded. Try again in a moment."
-                                .to_string(),
+                            message: "Claude is busy. Try again in a moment.".to_string(),
                         },
                     },
                 ],
@@ -183,7 +195,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
         .collect();
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
-            sidebar.begin_at("Make the drums swing", drums_started, cx);
+            sidebar.begin_at("Make the drums swing", Vec::new(), drums_started, cx);
             sidebar.receive(
                 [
                     AgentEvent::TurnStarted,
@@ -191,6 +203,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                         id: step("edit"),
                         title: "Edited state/song/drums/clip-001.json".to_string(),
                         request_title: "Edit state/song/drums/clip-001.json".to_string(),
+                        command: None,
                         running_title: "Editing state/song/drums/clip-001.json".to_string(),
                         kind: StepKind::Change {
                             path: "state/song/drums/clip-001.json".to_string(),
@@ -202,9 +215,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     },
                     AgentEvent::StepStarted {
                         id: step("test"),
-                        title: "Ran `cargo test -p drums`".to_string(),
-                        request_title: "Run `cargo test -p drums`".to_string(),
-                        running_title: "Running `cargo test -p drums`".to_string(),
+                        // A command the agent did not describe.
+                        title: "Ran a command".to_string(),
+                        request_title: "Run a command".to_string(),
+                        command: Some("cargo test -p drums".to_string()),
+                        running_title: "Running a command".to_string(),
                         kind: StepKind::Run,
                     },
                     AgentEvent::StepDone {
@@ -245,6 +260,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     });
     cx.run_until_parked();
     save(cx, opened.window.into(), "agent-steps-problems")?;
+    // Shift-tab from the composer: the ring of the line before it, from the keys.
+    opened.key("shift-tab", cx)?;
+    save(cx, opened.window.into(), "agent-focus")?;
 
     let (model_menu, access_menu, new_menu) = cx.update(|cx| {
         let sidebar = sidebar.read(cx);
@@ -270,8 +288,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
             sidebar.begin("Which clips did you add?", cx);
-            let lost =
-                "No conversation found with session ID: 0b6c2a4e-6f0f-4c43-9d43-6f5ad1c5a0e2";
+            let lost = "Claude no longer has this thread.";
             sidebar.receive(
                 [
                     AgentEvent::TurnStarted,
@@ -331,6 +348,63 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     });
     cx.run_until_parked();
     save(cx, opened.window.into(), "agent-instructions")?;
+    drop(opened);
+
+    // A message sent with a picture and a file, and the next one with a picture attached.
+    let (opened, sidebar) = open_with_sidebar(cx)?;
+    let (thread, _commands) = Thread::without_agent(None);
+    let outside = tempfile::tempdir()?;
+    let picture = outside.path().join("Groove sketch.png");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tooling/icon/sound-tools-512.png"
+        ),
+        &picture,
+    )?;
+    let take = outside.path().join("Vocal take 3.wav");
+    std::fs::write(&take, "")?;
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.connect(thread);
+            sidebar.attach_files(vec![picture.clone(), take], cx);
+            sidebar.composer().update(cx, |composer, cx| {
+                composer.set_text(
+                    "Make the bass follow this groove, and tune it to the take",
+                    cx,
+                );
+            });
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        window.focus(&sidebar.focus_handle(cx), cx);
+    })?;
+    opened.key("enter", cx)?;
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.receive(
+                [
+                    AgentEvent::TurnStarted,
+                    AgentEvent::TextDone {
+                        text:
+                            "The bass follows the kick of the sketch now, in the key of the take."
+                                .to_string(),
+                    },
+                    AgentEvent::TurnEnded {
+                        outcome: TurnOutcome::Completed,
+                    },
+                ],
+                cx,
+            );
+            sidebar.attach_files(vec![picture], cx);
+            sidebar.composer().update(cx, |composer, cx| {
+                composer.set_text("And this one?", cx);
+            });
+        })
+    });
+    cx.run_until_parked();
+    save(cx, opened.window.into(), "agent-attachments")?;
     Ok(())
 }
 
@@ -349,7 +423,14 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
             let sidebar = cx.new(|cx| {
                 Sidebar::with_program(session, Some(installed), None, settings, window, cx)
             });
+            let (composer, asks) = (sidebar.clone(), sidebar.clone());
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+                .with_composer(move |cx| composer.read(cx).composer().clone())
+                .with_ask(move |message, window, cx| {
+                    asks.update(cx, |sidebar, cx| {
+                        sidebar.ask_from_outside(message, window, cx)
+                    })
+                })
         })
         .install(cx)
     });

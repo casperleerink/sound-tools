@@ -1,16 +1,13 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
-//! sound, 118 pt tall, with the line of its numbers or its scale under it on the value line of
-//! row 2. A curve is 1.5 pt over a fill of `alpha/5`, or over bands of colour by height for a
-//! level ([`Display::fill_bands`]). Grid lines are `alpha/4` and the 0 dB line `alpha/8`. Thin
-//! marks up from the bottom and a dashed second line are 1 pt of `gray-950` at 50 %. Controls
-//! such as a segmented control go at its top as children.
+//! sound, with the line of its numbers or its scale under it on the value line of row 2. A curve
+//! is drawn over a fill, or over bands of colour by height for a level ([`Display::fill_bands`]).
+//! Controls such as a segmented control go at its top as children.
 //!
 //! The display is not only a picture: its handles drag. A [`Handle`] moves one or two values,
 //! sideways and up and down, each on a [`KnobRange`] across the width or the height of the
-//! display. It follows the pointer from where it is, so a press never jumps; with shift ten
-//! times finer; a double click resets what it moves; escape during a drag puts it back. That is
-//! the gesture of the knob, see [`gesture`](super::gesture). A handle is not a tab stop: every
-//! value a handle moves also has a knob or a hidden control, which is the path for the keys.
+//! display, with the gesture of the knob, see [`gesture`](super::gesture). A handle is not a tab
+//! stop: every value a handle moves also has a knob or a hidden control, which is the path for
+//! the keys.
 //!
 //! A handle may carry a number, such as the band of an EQ: its dot is then larger, with the
 //! number in it, and [`Handle::on_press`] hears every press on it, so that a click selects it.
@@ -23,7 +20,7 @@
 //! handles with their values, and hears what a handle moves.
 //!
 //! A display can also show a waveform under its curve, with the part outside two lines shaded
-//! and a green line where the sound plays: that is the waveform display of the Sampler, see [`waveform_display`](super::waveform_display).
+//! and a green line where the sound plays, see [`waveform_display`](super::waveform_display).
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -234,7 +231,7 @@ impl Display {
         }
     }
 
-    /// A display that takes a file dropped from the Finder: while a file is dragged over it,
+    /// A display that takes a file dropped from the file manager: while a file is dragged over it,
     /// its handles hide, so none shows past the ring of the drop.
     pub fn takes_files(mut self, takes_files: bool) -> Self {
         self.takes_files = takes_files;
@@ -819,12 +816,13 @@ impl RenderOnce for Display {
                     .h(px(CAPTION_HEIGHT))
                     .flex()
                     .justify_center()
-                    .font(typography::tabular())
                     .text_size(px(12.))
                     .line_height(px(CAPTION_HEIGHT))
-                    .text_color(caption_color)
                     .whitespace_nowrap()
-                    .children(self.caption),
+                    .children(
+                        self.caption
+                            .map(|caption| typography::tabular_text(caption, caption_color)),
+                    ),
             )
     }
 }

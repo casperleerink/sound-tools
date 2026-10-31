@@ -5,7 +5,7 @@
 use super::{Opened, open};
 use crate::song::{ACROSS, BAR, HEADER, LEAD, NAME, ROW, song_files};
 use gpui::{
-    Modifiers, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
+    Modifiers, Pixels, Point, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px,
 };
 
 pub(super) fn open_song(cx: &mut TestAppContext, tracks: usize, clips: usize) -> Opened<'_> {
@@ -123,11 +123,12 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     // Only the heads that show are drawn.
     assert!(window.find("div-name-t00").is_some());
     assert!(window.find("div-name-t35").is_none());
-    window.cx.simulate_event(ScrollWheelEvent {
+    window.cx.simulate_event(ScrollEvent {
         position: timeline + point(px(200.), px(100.)),
         delta: ScrollDelta::Pixels(point(px(0.), px(-10. * ROW))),
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::Moved,
+        ..Default::default()
     });
     window.cx.run_until_parked();
     assert!(window.find("div-name-t00").is_none());
@@ -295,4 +296,41 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
         window.record("song/t00/mix")["gain_db"],
         serde_json::Value::Null
     );
+}
+
+/// The sidebar names a file of the song by the parts it is in, each by its title, else by what
+/// it is: a composer reads "Bass · Verse", not a path.
+#[gpui::test]
+fn a_file_of_the_song_is_named_by_its_parts(cx: &mut TestAppContext) {
+    let mut files = song_files(2, 2);
+    for (path, text) in &mut files {
+        if let "state/song/t00/instance.json" | "state/song/t00/c00.json" = path.as_str() {
+            let title = if path.ends_with("c00.json") {
+                "Verse"
+            } else {
+                "Bass"
+            };
+            let mut record: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+            record["state"]["title"] = title.into();
+            *text = record.to_string();
+        }
+    }
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let window = open(cx, &files);
+    let session = window.session.clone();
+    let name = |path: &str| {
+        window
+            .cx
+            .read(|cx| sound_ui::names::file_name(&session, path, cx))
+    };
+    assert_eq!(name("state/song/t00/c00.json"), "Bass · Verse");
+    assert_eq!(name("state/song/t01/instance.json"), "T01");
+    assert_eq!(name("project.json"), "the project's settings");
+    assert_eq!(
+        name("extensions/song-tracks.tsx"),
+        "the code of Song tracks"
+    );
+    assert_eq!(name("notes.txt"), "notes.txt");
 }

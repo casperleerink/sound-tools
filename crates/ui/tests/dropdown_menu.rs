@@ -55,6 +55,53 @@ fn new_labels_keep_the_highlight_and_new_items_drop_it(cx: &mut TestAppContext) 
     assert!(menu.read_with(cx, |menu, _| menu.is_open()));
 }
 
+/// The pointer and the keys move one highlight: enter picks the row the pointer is on.
+#[gpui::test]
+fn the_pointer_moves_the_highlight_the_keys_move(cx: &mut TestAppContext) {
+    cx.update(sound_ui::init);
+    let (menu, cx) = cx.add_window_view(|_, cx| {
+        DropdownMenu::new("Project", entries("first", &["add", "undo", "redo"]), cx)
+    });
+    let picked: Rc<RefCell<Vec<SharedString>>> = Rc::default();
+    cx.update(|_, cx| {
+        let picked = picked.clone();
+        cx.subscribe(&menu, move |_, event: &MenuPicked, _| {
+            picked.borrow_mut().push(event.0.clone())
+        })
+        .detach();
+    });
+    menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
+    cx.run_until_parked();
+    let redo = cx.debug_bounds("menu-redo").unwrap();
+    cx.simulate_mouse_move(redo.center(), None, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    assert_eq!(*picked.borrow(), ["redo"]);
+}
+
+/// A select opens on what it holds: down picks the option after it.
+#[gpui::test]
+fn a_select_opens_on_what_it_holds(cx: &mut TestAppContext) {
+    cx.update(sound_ui::init);
+    let (menu, cx) = cx.add_window_view(|_, cx| {
+        DropdownMenu::new("Shape", entries("first", &["add", "undo", "redo"]), cx)
+            .trigger(Trigger::Select)
+            .selected("undo")
+    });
+    let picked: Rc<RefCell<Vec<SharedString>>> = Rc::default();
+    cx.update(|_, cx| {
+        let picked = picked.clone();
+        cx.subscribe(&menu, move |_, event: &MenuPicked, _| {
+            picked.borrow_mut().push(event.0.clone())
+        })
+        .detach();
+    });
+    menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down enter");
+    assert_eq!(*picked.borrow(), ["redo"]);
+}
+
 #[gpui::test]
 fn enter_on_a_row_that_turned_disabled_picks_nothing(cx: &mut TestAppContext) {
     cx.update(sound_ui::init);

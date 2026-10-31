@@ -1,16 +1,17 @@
 //! The agent sidebar in the left panel: a turn fed as events with no process, the request it
 //! makes one undo step, the approval row, cmd-L and escape, the panel remembered closed, the
-//! thread saved and opened again, and the project's instructions.
+//! thread saved and opened again, pictures and files attached, and the project's instructions.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{AppContext, Entity, Focusable, TestAppContext};
+use gpui::{AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
-    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
-    Installed, Model, Sidebar, StepId, StepKind, StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Attachment, Command, Entry,
+    ExitReason, Image, ImageFormat, Installed, Message, Model, Sidebar, StepId, StepKind,
+    StepOutcome, Thread, TurnOutcome,
 };
 use tempfile::TempDir;
 
@@ -18,7 +19,7 @@ use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
 /// hands the sidebar the events instead. `support` is the support folder of the machine.
-fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity<AgentSettings> {
+pub(crate) fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity<AgentSettings> {
     install_sidebar_with(cx, support, Some(nonexistent_claude()))
 }
 
@@ -46,7 +47,14 @@ fn install_sidebar_with(
             let settings = shared.clone();
             let sidebar = cx
                 .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
+            let (composer, asks) = (sidebar.clone(), sidebar.clone());
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+                .with_composer(move |cx| composer.read(cx).composer().clone())
+                .with_ask(move |message, window, cx| {
+                    asks.update(cx, |sidebar, cx| {
+                        sidebar.ask_from_outside(message, window, cx)
+                    })
+                })
         })
         .install(cx);
         settings
@@ -127,6 +135,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
             id: step("write"),
             title: "Wrote state/bass.json".to_string(),
             request_title: "Write state/bass.json".to_string(),
+            command: None,
             running_title: "Writing state/bass.json".to_string(),
             kind: StepKind::Change {
                 path: "state/bass.json".to_string(),
@@ -149,6 +158,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
             id: step("edit"),
             title: "Edited state/bass.json".to_string(),
             request_title: "Edit state/bass.json".to_string(),
+            command: None,
             running_title: "Editing state/bass.json".to_string(),
             kind: StepKind::Change {
                 path: "state/bass.json".to_string(),
@@ -179,7 +189,8 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
     opened.cx.read(|cx| {
         let conversation = sidebar.read(cx).conversation();
         assert!(!conversation.is_working());
-        let [Entry::Message(message), Entry::Turn(turn)] = conversation.entries() else {
+        let [Entry::Message { text: message, .. }, Entry::Turn(turn)] = conversation.entries()
+        else {
             panic!("{:?}", conversation.entries());
         };
         assert_eq!(message, MESSAGE);
@@ -210,10 +221,11 @@ fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext)
     opened.begin("Build the extension");
     let question = AgentEvent::ApprovalRequested {
         id: ApprovalId("question".to_string()),
-        title: "Run `cargo build`".to_string(),
+        title: "Run".to_string(),
+        command: Some("cargo build".to_string()),
     };
     opened.receive([AgentEvent::TurnStarted, question.clone()]);
-    assert_eq!(approval(&mut opened).as_deref(), Some("Run `cargo build`"));
+    assert_eq!(approval(&mut opened).as_deref(), Some("Run"));
     let allow = opened.control("approval-allow");
     opened.click(allow);
     assert_eq!(approval(&mut opened), None);
@@ -227,6 +239,110 @@ fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext)
     }]);
     assert_eq!(approval(&mut opened), None);
     assert!(opened.find("approval-deny").is_none());
+}
+
+#[gpui::test]
+fn try_again_sends_the_message_of_a_turn_that_failed_and_keeps_the_draft(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Make the drums swing");
+    opened.keys("enter");
+    assert!(matches!(commands.try_recv(), Ok(Command::Send(_))));
+    assert!(opened.find("agent-try-again").is_none());
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "Claude is busy. Try again in a moment.".to_string(),
+            },
+        },
+    ]);
+
+    // A draft and a picture for the next message are in the composer.
+    opened.cx.simulate_input("Make it softer");
+    let pasted = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, BMP.to_vec());
+    opened
+        .cx
+        .write_to_clipboard(ClipboardItem::new_image(&pasted));
+    opened.keys("secondary-v");
+    // From the composer, past the picture's remove button, the keys reach it.
+    opened.keys("shift-tab");
+    opened.keys("shift-tab");
+    press_enter(&mut opened);
+    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+        panic!("the message did not go again");
+    };
+    assert_eq!(
+        (text.as_str(), attachments.len()),
+        ("Make the drums swing", 0)
+    );
+    // The new turn works, so the failed one is no longer the last.
+    assert!(opened.find("agent-try-again").is_none());
+    let draft = opened
+        .cx
+        .read(|cx| sidebar.read(cx).composer().read(cx).text().to_string());
+    assert_eq!(draft, "Make it softer");
+    assert!(opened.composer_focused());
+}
+
+/// Enter going down and up on what has the focus, which GPUI takes as a click of it.
+fn press_enter(opened: &mut Opened<'_>) {
+    opened.keys("enter");
+    let up = gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+    };
+    opened.cx.simulate_event(up);
+    opened.cx.run_until_parked();
+}
+
+#[gpui::test]
+fn the_keys_open_the_steps_of_a_turn(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, _commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Read the bass");
+    opened.keys("enter");
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::StepStarted {
+            id: step("read"),
+            title: "Read state/bass.json".to_string(),
+            request_title: "Read state/bass.json".to_string(),
+            command: None,
+            running_title: "Reading state/bass.json".to_string(),
+            kind: StepKind::Read {
+                path: "state/bass.json".to_string(),
+            },
+        },
+        AgentEvent::StepDone {
+            id: step("read"),
+            outcome: StepOutcome::Done,
+        },
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    assert!(opened.find("agent-steps-1").is_none());
+    // From the composer, "Worked for" is the stop before it.
+    assert!(opened.composer_focused());
+    opened.keys("shift-tab");
+    press_enter(&mut opened);
+    assert!(opened.find("agent-steps-1").is_some());
+    press_enter(&mut opened);
+    assert!(opened.find("agent-steps-1").is_none());
 }
 
 #[gpui::test]
@@ -416,7 +532,7 @@ fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
     opened.cx.read(|cx| {
         let conversation = sidebar.read(cx).conversation();
         assert!(!conversation.is_working());
-        let [Entry::Message(_), Entry::Turn(turn)] = conversation.entries() else {
+        let [Entry::Message { .. }, Entry::Turn(turn)] = conversation.entries() else {
             panic!("{:?}", conversation.entries());
         };
         let outcome = turn.end.as_ref().map(|end| &end.outcome);
@@ -479,7 +595,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     assert_eq!(
         sent,
         [
-            Command::Send("Hello".to_string()),
+            Command::Send("Hello".into()),
             Command::Interrupt,
             Command::Interrupt
         ]
@@ -520,6 +636,7 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
             id: step("write"),
             title: "Wrote state/bass.json".to_string(),
             request_title: "Write state/bass.json".to_string(),
+            command: None,
             running_title: "Writing state/bass.json".to_string(),
             kind: StepKind::Change {
                 path: "state/bass.json".to_string(),
@@ -561,14 +678,14 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     opened.keys("enter");
     assert_eq!(
         commands.try_recv().ok(),
-        Some(Command::Send("Which file was it?".to_string()))
+        Some(Command::Send("Which file was it?".into()))
     );
     opened.cx.read(|cx| {
         let entries = sidebar.read(cx).conversation().entries();
         let [
-            Entry::Message(_),
+            Entry::Message { .. },
             Entry::Turn(_),
-            Entry::Message(next),
+            Entry::Message { text: next, .. },
             Entry::Turn(_),
         ] = entries
         else {
@@ -576,6 +693,141 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
         };
         assert_eq!(next, "Which file was it?");
     });
+}
+
+/// One red pixel.
+const PNG: [u8; 69] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+    0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0, 3, 1,
+    1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+/// One red pixel, as the clipboard of Windows holds a screenshot.
+const BMP: [u8; 58] = [
+    66, 77, 58, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0,
+    0, 0, 0, 0, 4, 0, 0, 0, 19, 11, 0, 0, 19, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0,
+];
+
+/// A picture pasted and files dropped on the composer go with the next message: a picture as
+/// itself, or as PNG when the agent cannot see its format, and any other file as its path. One
+/// taken out stays behind. The message shows their names, also when the thread opens again.
+#[gpui::test]
+fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    let outside = tempfile::tempdir().unwrap();
+    let [score, take, notes] = ["Score.PNG", "Take 3.wav", "notes.pdf"].map(|name| {
+        let path = outside.path().join(name);
+        std::fs::write(&path, PNG).unwrap();
+        path
+    });
+
+    opened.keys("secondary-l");
+    let pasted = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, BMP.to_vec());
+    opened
+        .cx
+        .write_to_clipboard(ClipboardItem::new_image(&pasted));
+    opened.keys("secondary-v");
+    let composer = opened.control("agent-composer");
+    // GPUI takes a drop only when the last input was the pointer's, not the keys'.
+    opened
+        .cx
+        .simulate_mouse_move(composer, None, Modifiers::default());
+    opened.drop_files(&[score, take.clone(), notes], composer);
+    let remove_notes = opened.control("agent-remove-attachment-3");
+    opened.click(remove_notes);
+    // The paste went to the chips, not into the text.
+    opened.cx.simulate_input("Make the bass follow this");
+    opened.keys("enter");
+
+    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+        panic!("no message went");
+    };
+    assert_eq!(text, "Make the bass follow this");
+    let [
+        Attachment::Image(Image {
+            format: ImageFormat::Png,
+            bytes: pasted,
+        }),
+        score,
+        file,
+    ] = attachments.as_slice()
+    else {
+        panic!("{attachments:?}");
+    };
+    assert!(
+        pasted.starts_with(&PNG[..8]),
+        "the pasted picture is no PNG"
+    );
+    let picture = Attachment::Image(Image {
+        format: ImageFormat::Png,
+        bytes: PNG.to_vec(),
+    });
+    assert_eq!((score, file), (&picture, &Attachment::File(take)));
+    assert_eq!(opened.find("agent-remove-attachment-0"), None);
+    opened.cx.read(|cx| {
+        let entries = sidebar.read(cx).conversation().entries();
+        let [Entry::Message { attachments, .. }, Entry::Turn(_)] = entries else {
+            panic!("{entries:?}");
+        };
+        assert_eq!(attachments, &["Pasted image", "Score.PNG", "Take 3.wav"]);
+    });
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    let shown = entries(&mut opened);
+    drop(sidebar);
+    let folder = opened.close();
+
+    let mut opened = open_again(cx, folder);
+    assert_eq!(entries(&mut opened), shown);
+}
+
+/// A message sent while a dropped file is still being read waits for it, so the file never goes
+/// with the next message instead.
+#[gpui::test]
+fn a_message_waits_for_a_file_still_being_read(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    let outside = tempfile::tempdir().unwrap();
+    let take = outside.path().join("take.wav");
+    std::fs::write(&take, "").unwrap();
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Tune the bass to this");
+
+    let attach = vec![take.clone()];
+    opened.cx.update(|_, cx| {
+        sidebar.update(cx, |sidebar, cx| sidebar.attach_files(attach, cx));
+    });
+    opened
+        .cx
+        .dispatch_action(sound_ui::components::text_input::Submit);
+    assert!(
+        commands.try_recv().is_err(),
+        "it went before the file was in"
+    );
+    opened.cx.run_until_parked();
+    opened.keys("enter");
+    let message = Message {
+        text: "Tune the bass to this".to_string(),
+        attachments: vec![Attachment::File(take)],
+    };
+    assert_eq!(commands.try_recv().ok(), Some(Command::Send(message)));
 }
 
 /// The thread the sidebar shows, by its id in the index of the project's threads.
@@ -796,6 +1048,69 @@ fn a_turn_shows_the_problems_it_left(cx: &mut TestAppContext) {
     assert!(opened.find("agent-problems-1").is_some());
 }
 
+/// Under the problems the last turn left, one click asks the agent to fix them, as if typed.
+#[gpui::test]
+fn the_problems_of_the_last_turn_ask_the_agent_to_fix_them(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+
+    opened.begin("Add a bass line");
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(&mut opened, "state/bass.json", "{");
+    opened.receive([AgentEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+    }]);
+    let fix = opened.control("agent-fix");
+    opened.click(fix);
+    let Ok(Command::Send(Message { text, .. })) = commands.try_recv() else {
+        panic!("nothing went to the agent");
+    };
+    assert_eq!(text, "Fix the files that are not live.");
+    // The agent works on it, so the line goes.
+    assert!(opened.find("agent-fix").is_none());
+}
+
+/// The window's notice of files that are not live asks the agent to fix them, as the line
+/// under a turn does: the thread shows, over the instructions too, and a draft stays.
+#[gpui::test]
+fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Make the bass softer");
+    for control in ["agent-new-thread-menu", "menu-instructions-project"] {
+        let control = opened.control(control);
+        opened.click(control);
+    }
+    opened.cx.run_until_parked();
+    write_outside(&mut opened, "state/bass.json", "{");
+
+    let ask = opened.control("problems-ask");
+    opened.click(ask);
+    let Ok(Command::Send(Message { text, .. })) = commands.try_recv() else {
+        panic!("nothing went to the agent");
+    };
+    assert_eq!(text, sound_agent::FIX_NOT_LIVE);
+    assert!(opened.find("agent-instructions-back").is_none());
+    assert!(opened.composer_focused());
+    let draft = opened
+        .cx
+        .read(|cx| sidebar.read(cx).composer().read(cx).text().to_string());
+    assert_eq!(draft, "Make the bass softer");
+}
+
 /// The watcher applies a write after its grouping window, so the last write of a turn can
 /// come just after the turn ended. Its problem is the turn's; one heard later is not.
 #[gpui::test]
@@ -926,7 +1241,7 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     opened.keys("enter");
     assert_eq!(
         commands.try_recv().ok(),
-        Some(Command::Send("Hello".to_string()))
+        Some(Command::Send("Hello".into()))
     );
 
     // While the turn runs, a change goes to the agent at once too.

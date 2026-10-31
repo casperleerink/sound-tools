@@ -7,8 +7,6 @@
 //!
 //! A tool whose instances sit in the slots of a rack registers a card instead: a view that
 //! draws a whole device card from the [`CardFrame`] the rack gives it.
-//!
-//! Provisional and small. Composing a workspace from many views is later work.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -41,9 +39,8 @@ impl Views {
         Self::default()
     }
 
-    /// Makes this the registry of the application. The window of the runtime takes a `Views`
-    /// and calls this, so the runtime cannot forget it. Another host, or a test without that
-    /// window, calls it once before its first view.
+    /// Makes this the registry of the application. A host without the runtime's window, such
+    /// as a test, calls it once before its first view.
     pub fn install(self, cx: &mut App) {
         cx.set_global(self);
     }

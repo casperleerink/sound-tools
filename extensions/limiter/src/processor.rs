@@ -19,7 +19,7 @@ const RAMP_SECONDS: f32 = 0.02;
 
 /// What the limiter shows on its card, from the audio thread: the peaks of what it sends out,
 /// and the largest reduction of each block on channel 0, as the factor the sound was above what
-/// came out. The master keeps the same two, so both show one display.
+/// came out.
 #[derive(Clone, Debug, Default)]
 pub struct Meters {
     pub output: Peaks,

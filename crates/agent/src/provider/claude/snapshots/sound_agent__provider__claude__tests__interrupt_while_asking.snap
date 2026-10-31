@@ -26,16 +26,22 @@ expression: "replay(\"interrupt_approval\")"
         id: StepId(
             "toolu_01TNwoh9etvJXQBWHNeN88VC",
         ),
-        title: "Ran `git init`",
-        running_title: "Running `git init`",
-        request_title: "Run `git init`",
+        title: "Ran a command",
+        running_title: "Running a command",
+        request_title: "Run a command",
+        command: Some(
+            "git init",
+        ),
         kind: Run,
     },
     ApprovalRequested {
         id: ApprovalId(
             "907aed0c-ae5e-4f3d-90a5-0f8cd94ca6a9",
         ),
-        title: "Run `git init`",
+        title: "Run",
+        command: Some(
+            "git init",
+        ),
     },
     StepDone {
         id: StepId(

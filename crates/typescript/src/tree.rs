@@ -59,6 +59,12 @@ props! {
         disabled: bool,
         cursor: Cursor,
         tooltip: String,
+        /// Tab reaches it and enter clicks it, as a button's.
+        tab_stop: bool,
+        /// The keys it takes while the focus is in it, by name, such as `up` or `cmd-c`.
+        keys: Vec<String>,
+        /// Its code hears its `keys`.
+        on_key: bool,
         /// The spaces whose scroll its children move with, by their keys.
         follow: Follow,
         /// What a drag of it carries to a node that hears a drop.
@@ -138,6 +144,8 @@ props! {
         /// Quieter than its look, 0 to 1.
         opacity: f32,
         tooltip: String,
+        /// The keys that do it too, `cmd-k`, drawn in its tooltip.
+        shortcut: String,
         on_press: bool,
         on_release: bool,
         on_click: bool,
@@ -168,6 +176,8 @@ props! {
         color: Color,
         disabled: bool,
         tooltip: String,
+        /// The keys that do it too, `cmd-k`, drawn in its tooltip.
+        shortcut: String,
         on_press: bool,
         on_release: bool,
         on_click: bool,
@@ -1925,6 +1935,11 @@ impl Style {
         lines.apply(element, false)
     }
 
+    /// Whether its text is cut off with "…" where it does not fit.
+    pub(crate) fn truncates(&self) -> bool {
+        self.truncate
+    }
+
     /// The axis its children scroll along, if any.
     pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
         self.scroll
@@ -2071,9 +2086,10 @@ impl Style {
             element = element.pb(px(padding));
         }
         match self.scroll {
-            // As large as its children along the axis, and as its box across it.
-            Some(ScrollAxis::X) => element = element.flex_none().h_full(),
-            Some(ScrollAxis::Y) => element = element.flex_none().w_full(),
+            // As large as its children along the axis, and at least its box, so a child that
+            // grows fills what they leave; as its box across it.
+            Some(ScrollAxis::X) => element = element.flex_none().min_w_full().h_full(),
+            Some(ScrollAxis::Y) => element = element.flex_none().min_h_full().w_full(),
             None => element = self.sized(element),
         }
         // Its lines one after another, not spread over a box taller than they are.
@@ -2161,6 +2177,22 @@ impl Style {
 pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_json::Value) {
     if let Some(fields) = state.as_object_mut() {
         fields.insert(name.to_string(), value);
+    }
+}
+
+/// A number of a field as a record holds it: `"-inf"` for silence, which JSON has no number for.
+pub(crate) fn number_value(number: f32) -> serde_json::Value {
+    match number == f32::NEG_INFINITY {
+        true => serde_json::Value::from("-inf"),
+        false => decimal(number),
+    }
+}
+
+/// A number a record holds, `"-inf"` too, see [`number_value`].
+pub(crate) fn number_of(value: &serde_json::Value) -> Option<f32> {
+    match value.as_str() {
+        Some("-inf") => Some(f32::NEG_INFINITY),
+        _ => value.as_f64().map(|value| value as f32),
     }
 }
 

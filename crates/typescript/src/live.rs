@@ -113,9 +113,7 @@ impl Sources<'_> {
 
     /// What a field of the record holds now.
     pub(crate) fn field(&self, name: &str) -> Option<f32> {
-        (self.state.get(name))
-            .and_then(Value::as_f64)
-            .map(|value| value as f32)
+        self.state.get(name).and_then(crate::tree::number_of)
     }
 
     /// Where a number input was put last, else where it starts.

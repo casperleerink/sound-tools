@@ -150,8 +150,7 @@ impl SignInChoice {
     }
 }
 
-/// How much the agent may do without asking. One setting for the machine, never saved in a
-/// project, so the agent cannot raise its own access by editing a file there.
+/// How much the agent may do without asking.
 ///
 /// Serde gives its name in the settings file, see `crate::settings`: renaming a variant
 /// resets the choice of every composer to the default.
@@ -235,16 +234,18 @@ pub enum AgentEvent {
     },
     StepStarted {
         id: StepId,
-        /// One line in the past tense, such as "Edited state/song/bass/verse-a.json" or
-        /// "Ran \`cargo build\`". Text between backticks shows as code, here and in the
-        /// title of an approval.
+        /// One line of what it did, such as "Edited state/song/bass/verse-a.json", or for a
+        /// command what the agent says it does ("Ran a command" when it says nothing).
         title: String,
-        /// The same while it runs, such as "Running \`cargo build\`".
+        /// The same while it runs.
         running_title: String,
-        /// The same asked for, such as "Run \`cargo build\`", for a step the composer denied:
-        /// it never ran. Empty in a thread saved before it came.
+        /// The same asked for, for a step the composer denied: it never ran. Empty in a thread
+        /// saved before it came.
         #[serde(default)]
         request_title: String,
+        /// The command a command step runs, whole, which the opened steps show under its words.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
         /// What it does, for its icon and the summary of a finished turn. `Other` in a thread
         /// saved before it came.
         #[serde(default)]
@@ -257,8 +258,11 @@ pub enum AgentEvent {
     /// The agent waits for an answer. An approval still open when the turn ends is void.
     ApprovalRequested {
         id: ApprovalId,
-        /// One line of what the agent wants to do, such as "Run `cargo build`".
+        /// One line of what the agent wants to do, such as "Edit state/bass.json", or "Run".
         title: String,
+        /// The command a "Run" asks to run, whole, which the question shows as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
     },
     TurnEnded {
         outcome: TurnOutcome,
@@ -350,10 +354,55 @@ fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// What the composer sends: the text, and what is attached to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Message {
+    pub text: String,
+    pub attachments: Vec<Attachment>,
+}
+
+impl From<String> for Message {
+    fn from(text: String) -> Self {
+        Message {
+            text,
+            attachments: Vec::new(),
+        }
+    }
+}
+
+impl From<&str> for Message {
+    fn from(text: &str) -> Self {
+        text.to_string().into()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Attachment {
+    /// A picture the agent sees.
+    Image(Image),
+    /// Any other file. The agent gets its path and reads it itself; nothing is copied.
+    File(PathBuf),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Image {
+    pub format: ImageFormat,
+    pub bytes: Vec<u8>,
+}
+
+/// The formats a picture can be sent in. Any other picture goes as a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Jpeg,
+    Gif,
+    Webp,
+}
+
 /// What a [`Thread`] asks its driver to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    Send(String),
+    Send(Message),
     Interrupt,
     Answer(ApprovalId, ApprovalAnswer),
     SetApprovalMode(ApprovalMode),
@@ -412,8 +461,7 @@ impl Thread {
     }
 
     /// The session the agent works in: the one [`ThreadOptions::resume`] named, or the new
-    /// one.
-    /// Saved with the thread from its first message, to resume it later.
+    /// one. Saved with the thread from its first message, to resume it later.
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
@@ -421,8 +469,8 @@ impl Thread {
     /// Sends a message of the composer. A turn starts. Send only between turns: a message
     /// sent while a turn runs becomes a turn of its own, queued, which the events do not
     /// show apart.
-    pub fn send(&self, text: impl Into<String>) -> Result<(), ThreadClosed> {
-        self.command(Command::Send(text.into()))
+    pub fn send(&self, message: impl Into<Message>) -> Result<(), ThreadClosed> {
+        self.command(Command::Send(message.into()))
     }
 
     /// Stops the running turn. It ends with [`TurnOutcome::Interrupted`].

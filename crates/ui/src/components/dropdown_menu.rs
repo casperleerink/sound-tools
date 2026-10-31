@@ -1,6 +1,5 @@
-//! Dropdown menu: labelled groups, radio items with an optional second line,
-//! separators and a group that scrolls. Ported from the source design system's
-//! `dropdown-menu.tsx` and the desktop app's model picker.
+//! Dropdown menu: labelled groups, radio items with an optional second line, separators and a
+//! group that scrolls.
 //!
 //! [`Trigger::Select`] makes it a select: a 24 pt trigger that says what is picked, for a list
 //! that does not fit as segments, such as the shape of an EQ band. When the picked item has an
@@ -22,9 +21,10 @@
 //!
 //! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
 //! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
-//! value holds it, so a plugin parameter is found by its id too, and the first of them is highlighted, so enter picks it. Up and down move from there and
-//! escape closes. It shows at most a hundred rows: drawing thousands of them on every frame
-//! the menu is open would cost more than typing a few letters.
+//! value holds it, so a plugin parameter is found by its id too, and the first of them is
+//! highlighted, so enter picks it. Up and down move from there and escape closes. It shows at
+//! most a hundred rows: drawing thousands of them on every frame the menu is open would cost
+//! more than typing a few letters.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -92,7 +92,7 @@ impl MenuItem {
         self
     }
 
-    /// Muted second line, as in the model picker.
+    /// Muted second line.
     pub fn description(mut self, text: impl Into<SharedString>) -> Self {
         self.description = Some(text.into());
         self
@@ -202,6 +202,11 @@ pub(crate) fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
             MenuEntry::Separator | MenuEntry::Note(_) => [].as_slice().iter(),
         })
         .collect()
+}
+
+/// The row of the item `value` among `entries`, as the highlight counts them.
+pub(crate) fn row_of(entries: &[MenuEntry], value: &SharedString) -> Option<usize> {
+    flat(entries).iter().position(|item| item.value == *value)
 }
 
 /// The row the highlight moves to from `highlighted`, `delta` rows on, skipping disabled rows
@@ -374,9 +379,14 @@ impl RenderOnce for MenuList {
             .entries
             .into_iter()
             .filter_map(|entry| match entry {
-                MenuEntry::Separator => {
-                    Some(div().h(px(1.)).mx(px(8.)).bg(line).into_any_element())
-                }
+                MenuEntry::Separator => Some(
+                    div()
+                        .flex_none()
+                        .h(px(1.))
+                        .mx(px(8.))
+                        .bg(line)
+                        .into_any_element(),
+                ),
                 MenuEntry::Note(note) => {
                     notes.push(note);
                     None
@@ -461,6 +471,7 @@ impl RenderOnce for MenuList {
 
                     let element = div()
                         .flex()
+                        .flex_none()
                         .flex_col()
                         .gap(px(2.))
                         .px(px(8.))
@@ -482,12 +493,14 @@ impl RenderOnce for MenuList {
                 }
             })
             .collect::<Vec<_>>();
+        // Under items, a line sets the notes apart. Their text lines up with the items'.
+        let ruled = !notes.is_empty() && !groups.is_empty();
         let notes = notes.into_iter().enumerate().map(|(note_ix, note)| {
             div()
                 .id(("menu-note", note_ix))
                 // What a test looks a quiet line up by, as a row is looked up by its value.
                 .debug_selector(move || format!("menu-note-{note_ix}"))
-                .px(px(12.))
+                .px(px(18.))
                 .py(px(6.))
                 .text_size(px(11.))
                 .line_height(px(15.))
@@ -509,6 +522,9 @@ impl RenderOnce for MenuList {
                         .max_h(px(height)),
                 ),
                 None => d.child(groups),
+            })
+            .when(ruled, |d| {
+                d.child(div().h(px(1.)).mx(px(8.)).mb(px(4.)).bg(line))
             })
             .children(notes)
     }
@@ -1036,6 +1052,12 @@ impl DropdownMenu {
 
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
+        // A select opens on what it holds, so the keys move from there.
+        if matches!(self.trigger, Trigger::Select)
+            && let Some(row) = (self.selected.as_ref()).and_then(|held| row_of(self.shown(), held))
+        {
+            self.highlighted = row;
+        }
         match &self.search {
             // A search starts empty each time, with the keys in its field.
             Some(search) => {
@@ -1067,7 +1089,8 @@ impl DropdownMenu {
     }
 
     /// Opens a [`Trigger::Pointer`] menu with its top left at `position`, under what opened it,
-    /// moved up or left as far as it must to stay inside the window, as a select's list does.
+    /// moved up or left as far as it must to stay inside the window, as a select's list does,
+    /// with its checked row highlighted.
     pub fn open_under(
         &mut self,
         position: Point<Pixels>,
@@ -1076,6 +1099,10 @@ impl DropdownMenu {
     ) {
         self.open_at(position, window, cx);
         self.snapped = true;
+        // The option it holds, so the keys move from there.
+        self.highlighted = (flat(self.shown()).iter())
+            .position(|item| item.checked)
+            .unwrap_or(usize::MAX);
     }
 
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1105,6 +1132,10 @@ impl DropdownMenu {
     }
 
     fn point(&mut self, value: SharedString, hovered: bool, cx: &mut Context<Self>) {
+        // The pointer moves the one highlight the keys move too.
+        if hovered && let Some(row) = row_of(self.shown(), &value) {
+            self.highlighted = row;
+        }
         let pointer_on = match hovered {
             true => Some(value),
             false => self.pointer_on.take().filter(|on| *on != value),

@@ -1,14 +1,10 @@
-import { Circle, For, Fragment, h, Label, Line, now, positionOf, Rect, signal, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Press } from "./sdk";
+import { Circle, For, Fragment, h, Label, Line, now, positionOf, Rect, signal, Space, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Press } from "./sdk";
 import type { LanePoint } from "./song-clips";
-import { clamp, COLOR, lanesOf, nameFrom, type Child, type Page } from "./song-page";
+import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
 import { freeName, splitTarget } from "./track";
 
 // The automation of a track: the lanes under it, each a line of points that moves a number of
 // the track's fader or of one of its devices over the song.
-
-/** A name or a field in plain words, its unit left out: `osc_1.position` is `Osc 1 position`, `cutoff_hz` is `Cutoff`. */
-const words = (text: string) =>
-  text.replace(/_(hz|db|ms|seconds|cents|octaves|semitones)$/, "").replace(/[._-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
 
 /** The value a lane holds `up` its row, 0 to 1: a lane holds no -inf, so a volume's bottom is -100 dB. */
 const laneValue = (range: MovedNumber, up: number) => {
@@ -94,29 +90,49 @@ export const editPoints = ({ update }: Pick<Page, "update">, label: string, trac
   });
 const rangeOf = ({ memory }: Page, track: string, target: string, points: readonly LanePoint[]): MovedNumber =>
   memory.ranges[`${track}/${target}`] ?? { name: target, label: words(target), value: null, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
-/** What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number, `Filter · Cutoff`. */
-const laneName = ({ memory }: Page, track: string, target: string) => {
+/**
+ * What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number,
+ * `Filter · Cutoff`. Unless `whole`, a long device is cut short, so the number shows.
+ */
+const laneName = ({ memory }: Page, track: string, target: string, whole = false) => {
   const [path, number] = splitTarget(target);
   const named = memory.ranges[`${track}/${target}`]?.label ?? words(number);
   if (path === "mix") return number === "gain_db" ? "Volume" : named;
-  // The device cut short when it is long, so the number shows.
   const device = memory.names[`${track}/${path}`] ?? words(path.split("/").at(-1) ?? path);
-  return `${device.length > 14 ? `${device.slice(0, 11).trimEnd()}...` : device} · ${named}`;
+  return `${device.length > 14 && !whole ? `${device.slice(0, 11).trimEnd()}…` : device} · ${named}`;
 };
-/** A lane's name; right-click it to remove the lane. */
-export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lane: { lane: string; target: string } }) => (
-  <div key={`lane-name-${track}-${lane.lane}`} style={{ grow: true, fontSize: 12, color: "gray-800", truncate: true }}
-    onPress={({ button }) => button === "right" && page.openMenu([{ label: "Remove lane" }]).then((picked) => picked === 0 && removeLane(page, track, lane.lane))}>
-    {() => laneName(page, track, lane.target)}
-  </div>
-);
+/**
+ * A lane's name, and under it what it plays at the playhead, once its number is known; right-click
+ * the name to remove the lane.
+ */
+export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lane: { lane: string; target: string } }) => {
+  const played = now.value(`${track}/${lane.target}`, { played: true });
+  const known = () => page.memory.ranges[`${track}/${lane.target}`];
+  return (
+    <div style={{ grow: true, minWidth: 0, gap: 2 }}>
+      <div key={`lane-name-${track}-${lane.lane}`} tooltip={() => laneName(page, track, lane.target, true)} style={{ fontSize: 12, color: "gray-800", truncate: true }}
+        onPress={({ button }) => button === "right" && page.openMenu([{ label: "Remove lane" }]).then((picked) => picked === 0 && removeLane(page, track, lane.lane))}>
+        {() => laneName(page, track, lane.target)}
+      </div>
+      {() => {
+        const number = known();
+        if (!number) return null;
+        const { unit, times } = readoutOf(number);
+        return (
+          <Space key={`lane-value-${track}-${lane.lane}`} width={READOUT} height={16}>
+            <Label x={0} y={1} text={played.times(times)} unit={unit} size={12} color="gray-700" />
+          </Space>
+        );
+      }}
+    </div>
+  );
+};
+/** The room of what a lane plays, in its head. */
+const READOUT = 96;
 
-/** How the readout of a point shows its value: by the unit its name ends in, or as a share of 0 to 1. */
-function readoutOf(target: string, range: MovedNumber): { unit?: "hz" | "db" | "ms" | "pan" | "percent"; times: number } {
-  const [, number] = splitTarget(target);
-  if (number.endsWith("_seconds")) return { unit: "ms", times: 1000 };
-  const unit = /_(hz|db|ms)$/.exec(number)?.[1] as "hz" | "db" | "ms" | undefined;
-  return { unit: unit ?? (number === "pan" ? "pan" : range.min === 0 && range.max === 1 ? "percent" : undefined), times: 1 };
+/** How a value of a lane's number reads: in the unit its name ends in, seconds as milliseconds. */
+function readoutOf(range: MovedNumber): { unit?: "hz" | "db" | "ms" | "pan" | "percent"; times: number } {
+  return range.unit === "seconds" ? { unit: "ms", times: 1000 } : { unit: range.unit, times: 1 };
 }
 
 /**
@@ -211,7 +227,7 @@ export const LaneRow = ({ page, track, lane, row, colour, snap }: { page: Page; 
           const [x, y] = [() => at(index())[0], () => at(index())[1]];
           // The readout shows under the pointer, and while a drag moves the point, also one a press just added.
           const shown = () => (pressed() === point.tick ? hovered().max(moved.active) : hovered());
-          const readout = () => readoutOf(lane.target, range());
+          const readout = () => readoutOf(range());
           const value = () => {
             const [, live] = at(index());
             const up = typeof live === "number" ? undefined : live.minus(top() + 0.1).over(-0.8).plus(1);

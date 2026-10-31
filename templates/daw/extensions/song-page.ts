@@ -10,11 +10,12 @@ export const BEAT = 960;
 // The song shows at least 64 bars of 4/4, and 32 more after what it holds.
 const SHOWN = 64 * 4 * BEAT;
 const AFTER = 32 * 4 * BEAT;
-// As the window drew a song before it was a tool: rows of 64 points, headers 176 wide, a ruler
-// 32 tall, and bar 1 eight points right of the headers.
+// Rows of 64 points, headers 176 wide, a ruler of two lines, and bar 1 eight points right of the
+// headers. The tempo lane under the ruler, while it shows, is as tall as the ruler's old one line.
 export const ROW = 64;
 export const HEADER = 176;
-export const RULER = 32;
+export const RULER = 44;
+export const TEMPO = 32;
 export const MASTER_ROW = 40;
 // The row under a track's lanes that adds one.
 export const ADD_LANE = 40;
@@ -62,7 +63,19 @@ export type Child = Song["children"][number];
 /** A track of the song as code reads it. */
 type TrackRow = Extract<Child, { tool: typeof track }>;
 
-export const titleOf = (each: Child) => ((each.tool === "track" || each.tool === "tape" || each.tool === "bus") && each.state.title) || each.name;
+/** A name or a field in plain words, its unit left out: `osc_1.position` is `Osc 1 position`, `cutoff_hz` is `Cutoff`. */
+export const words = (text: string) =>
+  text.replace(/_(hz|db|ms|seconds|cents|octaves|semitones)$/, "").replace(/[._-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
+const KINDS = { audio: "Audio", ret: "Return" } as const;
+/** A name with no title, in words: `t00` is Track 1, `audio-voice` Voice, `audio-1` Audio 1. */
+const wordsOf = (name: string) => {
+  const track = /^t(\d+)$/.exec(name);
+  if (track) return `Track ${Number(track[1]) + 1}`;
+  const [, kind, rest = name] = /^(audio|ret)-(.*)$/.exec(name) ?? [];
+  if (kind && /^(\d+|[a-z])$/i.test(rest)) return `${KINDS[kind as keyof typeof KINDS]} ${rest.toUpperCase()}`;
+  return words(rest);
+};
+export const titleOf = (each: Child) => ((each.tool === "track" || each.tool === "tape" || each.tool === "bus") && each.state.title) || wordsOf(each.name);
 const mixOf = (each: Child) => (each.tool === "track" || each.tool === "tape" || each.tool === "bus" ? each.children.find((child) => child.name === "mix") : undefined);
 export const muted = (each: Child) => {
   const mix = mixOf(each);

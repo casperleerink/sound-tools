@@ -48,19 +48,15 @@ registries and installs them as GPUI globals:
   slot in a rack. A host calls `Views::card_of` or `Views::view_of` to show the view of an
   instance whose tool it does not know.
 - `Devices`: what a rack says about a slot (`describe`), what the lanes need of a device whose
-  numbers are known only as it runs, such as a plugin (`numbers`: their names, the text of a
-  value, and which ones a lane can be added for), and what a composer can pick for it
-  (`instruments`, `effects`). A picker reads the offers when it is made, not per frame,
-  because a source may have to look at the machine. It fills itself again when
-  `Devices::offers_generation` changes. Every offer names its `OfferGroup`, and the picker
-  lists the groups in that order. A built-in device registers its name and its offer with one
-  `built_in` call in its own `view::register`, with its group and its icon, `device-<name>` in
-  `assets/icons`; the order of those calls in `views` is the order inside a group. A plugin
-  shows the plug.
+  numbers are known only as it runs, such as a plugin (`numbers`), and what a composer can pick
+  for it (`instruments`, `effects`). A picker reads the offers when it is made, not per frame,
+  because a source may have to look at the machine, and again when
+  `Devices::offers_generation` changes. A built-in device registers its name, offer, group and
+  icon (`device-<name>` in `assets/icons`) with one `built_in` call in its own `view::register`;
+  the order of those calls in the runtime's `views` is the order inside a group.
 
 ## Rules that are easy to miss
 
-- No `cx.notify()` and no entity updates inside `render` or a paint callback.
 - Publish into a `DragEdit` only when something changes. A plain press must not publish, so a
   plain click is no undo step.
 - Work out each move from the value at the press and the distance moved, not from the live

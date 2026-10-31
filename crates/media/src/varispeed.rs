@@ -6,18 +6,15 @@
 //! of the rates, so this reads the file at any place `position + n * step`, in `f64`. It keeps
 //! no state, like the resampler: the caller keeps the place and moves it on by `step` per frame.
 //!
-//! The filter is one windowed sinc (Kaiser, beta 8) of 32 taps at a step up to 1, from a table
-//! of 256 phases with a straight line between two. There it is an interpolating filter: its
-//! cutoff is the Nyquist frequency of the file, so at a whole place it gives the sample of the
-//! file exactly, and a file played at its own rate and speed comes out sample for sample.
+//! At a step up to 1 the filter is one windowed sinc from a table of phases, with its cutoff at
+//! the Nyquist frequency of the file: at a whole place it gives the sample of the file exactly,
+//! and a file played at its own rate and speed comes out sample for sample.
 //!
 //! Above a step of 1 the file goes by faster than the engine plays it, and what the file holds
 //! above the Nyquist frequency of the engine would fold back. So the same kernel is stretched by
-//! `step / 0.85`, read from a fine table of it at `distance / stretch`, with as many more taps
-//! and the weights of each frame summed to 1: its cutoff follows the output, flat to about
-//! 17 kHz at 48 kHz and down by the stop band of the window from the output's Nyquist frequency
-//! on. The stretch stops at a step of 8 (`MAX_STEP`), 302 taps; above it the part of the file
-//! above `8 / step` of the output's Nyquist frequency folds back.
+//! `step / CUTOFF`, with as many more taps and the weights of each frame summed to 1: its cutoff
+//! follows the output. The stretch stops at [`MAX_STEP`]; above it the part of the file above
+//! `MAX_STEP / step` of the output's Nyquist frequency folds back.
 
 use std::sync::LazyLock;
 
@@ -88,8 +85,7 @@ impl Varispeed {
     /// frames of the file. `scratch` holds file frames on the way and is at least
     /// [`SCRATCH_FRAMES`](crate::SCRATCH_FRAMES) long. A place outside the file is silence.
     ///
-    /// Realtime safe: no allocation, lock or system call. Above a step of 1 a frame costs
-    /// about `2 * ceil(16 * step / 0.85)` taps, up to 302 at a step of 8.
+    /// Realtime safe: no allocation, lock or system call.
     pub fn render(
         &self,
         audio: &Audio,

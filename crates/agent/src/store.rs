@@ -53,7 +53,7 @@ impl SavedThread {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Index {
-    /// The id of the thread the sidebar shows. `None` after **+**: the next message starts
+    /// The id of the thread the sidebar shows. `None` after **New**: the next message starts
     /// a thread.
     current: Option<String>,
     threads: Vec<SavedThread>,
@@ -75,6 +75,9 @@ pub(crate) enum Line {
     Sent {
         at: SystemTime,
         message: String,
+        /// The names of what it attached. The pictures themselves are not kept.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<String>,
     },
     Event {
         at: SystemTime,
@@ -100,7 +103,7 @@ impl Line {
 /// What the sidebar keeps, in the order it happened.
 #[derive(Debug)]
 pub(crate) enum Write {
-    /// The thread the sidebar shows, added to the index or updated there, or none after **+**.
+    /// The thread the sidebar shows, added to the index or updated there, or none after **New**.
     Current(Option<SavedThread>),
     /// Adds to the log of the thread with this id.
     Lines { thread: String, lines: Vec<Line> },
@@ -298,8 +301,12 @@ fn replay(text: &str) -> Conversation {
     let mut last = None;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         match serde_json::from_str::<Line>(line) {
-            Ok(Line::Sent { at, message }) => {
-                conversation.send(&message, at);
+            Ok(Line::Sent {
+                at,
+                message,
+                attachments,
+            }) => {
+                conversation.send(&message, attachments, at);
                 last = Some(at);
             }
             Ok(Line::Event { at, event }) => {

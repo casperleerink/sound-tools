@@ -480,6 +480,103 @@ fn a_toggle_and_a_button_tell_how_many_clicks(cx: &mut TestAppContext) {
     window.heard_by_the_pointer("toggle-click-1 toggle-click-2 button-click-1 button-click-2");
 }
 
+/// `key` down and up, as GPUI clicks what has the focus on the key up of enter.
+fn press_key(window: &mut Opened<'_>, key: &str) {
+    window.keys(key);
+    let up = gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse(key).unwrap(),
+    };
+    window.cx.simulate_event(up);
+    window.cx.run_until_parked();
+}
+
+const KEYED: &str = r#"import { Button, h, text, Toggle, tool } from "./sdk";
+
+tool({
+  name: "keyed",
+  title: "Keyed",
+  when: "A test",
+  doc: "Writes down its button's clicks and the keys it hears.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: ({ update }) => {
+    const hear = (what: string) => () => update(what, ({ state }) => { state.heard = `${state.heard} ${what}`.trim(); });
+    return h("div", {},
+      h(Button, { key: "go", label: "Go", onClick: hear("click") }),
+      h(Toggle, { key: "switch", label: "S", on: false, onClick: hear("toggle") }),
+    );
+  },
+});
+"#;
+
+impl Opened<'_> {
+    fn heard_by_the_keys(&mut self, heard: &str) {
+        self.until(heard, |window| window.record("keyed")["heard"] == heard);
+    }
+}
+
+/// Tab reaches the button, then the toggle; enter clicks each and is not a key of its view,
+/// while the others, space and cmd-enter too, are its view's and click nothing.
+#[gpui::test]
+fn enter_clicks_what_tab_reaches_and_is_no_key_of_its_view(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("keyed", KEYED));
+    window.until_found("button-go");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "space");
+    press_key(&mut window, "enter");
+    press_key(&mut window, "a");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "enter");
+    press_key(&mut window, "cmd-enter");
+    window.heard_by_the_keys("key-space click key-a toggle key-enter");
+}
+
+const TITLED: &str = r#"import { Button, h, text, tool } from "./sdk";
+
+tool({
+  name: "titled",
+  title: "Titled",
+  when: "A test",
+  doc: "A button in the window's title bar, and the keys its page hears.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: ({ update }) =>
+    h("div", {}, h("div", { titleBar: true }, h(Button, { key: "go", label: "Go", onClick: () => update("go", ({ state }) => { state.heard = `${state.heard} click`.trim(); }) }))),
+});
+"#;
+
+/// A button in the title bar, out of its page, hands the page the keys it does not click with.
+#[gpui::test]
+fn a_button_in_the_title_bar_hands_its_page_the_keys(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    press_key(&mut window, "shift-tab");
+    press_key(&mut window, "enter");
+    press_key(&mut window, "a");
+    window.until("click key-a", |window| {
+        window.record("titled")["heard"] == "click key-a"
+    });
+}
+
+/// A click takes no focus from the page: space after it is the page's, each time, and clicks
+/// nothing, as a click on play then space pauses.
+#[gpui::test]
+fn space_after_a_click_on_a_button_is_its_views(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("keyed", KEYED));
+    let button = window.until_found("button-go");
+    window.click(button);
+    press_key(&mut window, "space");
+    press_key(&mut window, "space");
+    press_key(&mut window, "enter");
+    window.heard_by_the_keys("click key-space key-space key-enter");
+}
+
 #[gpui::test]
 fn the_right_button_ends_no_left_click_of_a_div_a_toggle_or_a_button(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
@@ -567,5 +664,356 @@ fn a_card_that_goes_while_its_pad_is_held_sends_the_release(cx: &mut TestAppCont
     window.until("the card gone", |window| window.find("div-key").is_none());
     window.until("the release", |window| {
         window.record("rig/pad")["heard"] == "press release"
+    });
+}
+
+/// macOS sends no key up while cmd is held: a key held on a button of the title bar when cmd
+/// goes down goes up for its page, so pressing it again is heard, as on the page.
+#[gpui::test]
+fn cmd_lets_go_of_a_key_held_on_a_button_of_the_title_bar(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    press_key(&mut window, "shift-tab");
+    window.keys("r");
+    let cmd = |platform| gpui::ModifiersChangedEvent {
+        modifiers: Modifiers {
+            platform,
+            ..Modifiers::default()
+        },
+        capslock: Default::default(),
+    };
+    window.cx.simulate_event(cmd(true));
+    window.cx.simulate_event(cmd(false));
+    window.keys("r");
+    window.until("key-r key-r", |window| {
+        window.record("titled")["heard"] == "key-r key-r"
+    });
+}
+
+/// A key held on a button of the title bar goes up for its page when the focus leaves the title
+/// bar, as when the composer of the agent is clicked, so pressing it again is heard.
+#[gpui::test]
+fn the_focus_leaving_the_title_bar_lets_go_of_a_held_key(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    // GPUI tells a focus leaving only in the active window.
+    window.cx.update(|window, _| window.activate_window());
+    window.cx.run_until_parked();
+    press_key(&mut window, "shift-tab");
+    window.keys("r");
+    // The focus goes on, out of the title bar, and comes back.
+    press_key(&mut window, "tab");
+    press_key(&mut window, "shift-tab");
+    window.keys("r");
+    window.until("key-r key-r", |window| {
+        window.record("titled")["heard"] == "key-r key-r"
+    });
+}
+
+const TABBED: &str = r#"import { h, text, tool } from "./sdk";
+
+tool({
+  name: "tabbed",
+  title: "Tabbed",
+  when: "A test",
+  doc: "Writes down the clicks of a div that is a tab stop and the keys it hears.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: ({ update }) =>
+    h("div", { key: "stop", tabStop: true, style: { width: 100, height: 40 }, onClick: () => update("stop", ({ state }) => { state.heard = `${state.heard} stop`.trim(); }) }),
+});
+"#;
+
+/// A div that is a tab stop is a button to the keys: Tab reaches it and enter clicks it. A click
+/// takes no focus to it, so enter after a click is its view's.
+#[gpui::test]
+fn enter_clicks_a_div_that_is_a_tab_stop(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("tabbed", TABBED));
+    let stop = window.until_found("div-stop");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "enter");
+    window.click(stop);
+    press_key(&mut window, "enter");
+    window.until("stop stop key-enter", |window| {
+        window.record("tabbed")["heard"] == "stop stop key-enter"
+    });
+}
+
+const RENAMED: &str = r#"import { h, Input, text, tool } from "./sdk";
+
+tool({
+  name: "renamed",
+  title: "Renamed",
+  when: "A test",
+  doc: "A row that is a tab stop with a name field in it, as a track's head being renamed.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: () => {},
+  view: () =>
+    h("div", { key: "row", tabStop: true, style: { width: 300, height: 40 }, onClick: () => {} },
+      h(Input, { key: "name", value: "Bass", width: 200 })),
+});
+"#;
+
+/// A press in a text field inside a div that is a tab stop leaves the keys in the field.
+#[gpui::test]
+fn a_field_in_a_tab_stop_keeps_the_focus_a_press_gives_it(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("renamed", RENAMED));
+    let row = window.until_found("div-row");
+    window.click(row);
+    window.cx.run_until_parked();
+    let typing = |window: &mut Opened<'_>| {
+        window.cx.update(|window, _| {
+            (window.context_stack().iter()).any(|context| context.contains("TextInput"))
+        })
+    };
+    assert!(typing(&mut window));
+}
+
+const CUT: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "cut",
+  title: "Cut",
+  when: "A test",
+  doc: "A name that fits its row and one that does not.",
+  state: {},
+  sound: () => 0,
+  view: () =>
+    h("div", {},
+      h("div", { key: "short", style: { width: 80, truncate: true } }, "Bass"),
+      h("div", { key: "long", style: { width: 80, truncate: true } }, "Bass with a long name that is cut"),
+      h("div", { key: "parent", tooltip: "Open", style: { width: 200 } },
+        h("div", { key: "inner", style: { width: 80, truncate: true } }, "Bass")),
+    ),
+});
+"#;
+
+/// A text a div cuts off shows whole on hover; one that fits shows nothing, and leaves the
+/// tooltip of a div around it to show.
+#[gpui::test]
+fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("cut", CUT));
+    for (key, shows) in [
+        ("div-short", false),
+        ("div-long", true),
+        ("div-inner", true),
+    ] {
+        let at = window.until_found(key);
+        window.hover(at);
+        window
+            .cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        window.cx.run_until_parked();
+        assert_eq!(window.find("tooltip").is_some(), shows, "{key}");
+        window.hover(point(px(700.), px(700.)));
+        window
+            .cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        window.cx.run_until_parked();
+    }
+}
+
+const PICKED: &str = r#"import { h, number, Select, tool } from "./sdk";
+
+tool({
+  name: "picked",
+  title: "Picked",
+  when: "A test",
+  doc: "A select of three grids, on a page that hears the keys and so holds them first.",
+  state: { grid: number({ default: 240, min: 0, max: 960 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h(Select, { key: "grid", field: "grid", options: [{ value: 240, label: "1/16" }, { value: 480, label: "1/8" }, { value: 960, label: "1/4" }] }),
+});
+"#;
+
+/// A select is a tab stop: enter opens its list, whose keys pick another option.
+#[gpui::test]
+fn tab_and_enter_open_a_select_whose_keys_pick(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("picked", PICKED));
+    window.until_found("div-grid");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "enter");
+    window.until_found("menu-1");
+    // The list opens on what it holds, 1/16; down is the next.
+    press_key(&mut window, "down");
+    press_key(&mut window, "enter");
+    window.until("1/8 picked", |window| {
+        window.record("picked")["grid"] == 480
+    });
+}
+
+const STEPPED: &str = r#"import { h, Knob, number, tool } from "./sdk";
+
+tool({
+  name: "stepped",
+  title: "Stepped",
+  when: "A test",
+  doc: "A knob on a field, on a page that holds the keys first.",
+  state: { level: number({ default: 50, min: 0, max: 100 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h(Knob, { field: "level", label: "Level", min: 0, max: 100, default: 50 }),
+});
+"#;
+
+/// Tab reaches a knob on a field: an arrow steps it a fiftieth of its travel, as the window's
+/// knobs, and backspace puts it at its default.
+#[gpui::test]
+fn the_keys_step_a_knob_on_a_field_and_reset_it(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("stepped", STEPPED));
+    window.until_found("space-knob-level");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "up");
+    press_key(&mut window, "up");
+    window.until("two steps up", |window| {
+        window.record("stepped")["level"].as_f64() == Some(54.0)
+    });
+    press_key(&mut window, "backspace");
+    window.until("the default", |window| {
+        window.record("stepped")["level"].as_f64() == Some(50.0)
+    });
+}
+
+const MENUED: &str = r#"import { h, text, tool } from "./sdk";
+
+tool({
+  name: "menued",
+  title: "Menued",
+  when: "A test",
+  doc: "A row that is a tab stop and opens a menu on a right press, as a track's head.",
+  state: { heard: text() },
+  sound: () => 0,
+  onKey: () => {},
+  view: ({ update }) =>
+    h("div", {
+      key: "row", tabStop: true, style: { width: 200, height: 40 },
+      onClick: () => {},
+      onPress: ({ button }) => update("press", ({ state }) => { state.heard = `${state.heard} ${button}`.trim(); }),
+    }),
+});
+"#;
+
+/// Shift-F10 on a div that is a tab stop presses it as the right button does, for its menu.
+#[gpui::test]
+fn shift_f10_on_a_tab_stop_is_its_right_press(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("menued", MENUED));
+    window.until_found("div-row");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "shift-f10");
+    window.until("a right press", |window| {
+        window.record("menued")["heard"] == "right"
+    });
+}
+
+const FADED: &str = r#"import { Fader, h, tool } from "./sdk";
+
+tool({
+  name: "faded",
+  title: "Faded",
+  when: "A test",
+  doc: "A fader on the gain of its child, on a page that holds the keys first.",
+  state: {},
+  behaviour: () => ({ connections: [] }),
+  onKey: () => {},
+  view: () => h(Fader, { field: "level.gain_db", length: 100, default: 0 }),
+});
+"#;
+
+/// A fader at silence stays there with down, and up moves it one step off the bottom, not to
+/// the middle of its travel; silence is written as `"-inf"`.
+#[gpui::test]
+fn the_keys_step_a_silent_fader_from_silence(cx: &mut TestAppContext) {
+    let files = [
+        (ONLY_THE_TOOL[0].0, ONLY_THE_TOOL[0].1),
+        ("extensions/faded.ts", FADED),
+        (
+            "state/faded/instance.json",
+            r#"{"tool": "faded", "state": {}}"#,
+        ),
+        (
+            "state/faded/level.json",
+            r#"{"tool": "fader", "state": {"gain_db": "-inf"}}"#,
+        ),
+    ];
+    let mut window = open(cx, &files);
+    window.until_found("space-fader-level.gain_db");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "down");
+    window.wait_for_bun();
+    assert_eq!(window.record("faded/level")["gain_db"], "-inf");
+    press_key(&mut window, "up");
+    window.until("one step off the bottom", |window| {
+        let gain = window.record("faded/level")["gain_db"].as_f64();
+        gain.is_some_and(|gain| gain < -30.0)
+    });
+}
+
+const NUMBERED: &str = r#"import { h, number, NumberBox, text, tool } from "./sdk";
+
+tool({
+  name: "numbered",
+  title: "Numbered",
+  when: "A test",
+  doc: "A number on a field with no default for its control, and the keys its page hears.",
+  state: { level: number({ default: 50, min: 0, max: 100 }), heard: text() },
+  sound: () => 0,
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: () => h(NumberBox, { key: "level", field: "level", width: 40 }),
+});
+"#;
+
+/// A key a focused control does nothing with goes on to its page: backspace on a number with no
+/// default, as on the window's controls.
+#[gpui::test]
+fn a_key_a_control_does_nothing_with_is_its_pages(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("numbered", NUMBERED));
+    window.until_found("space-level");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "backspace");
+    window.until("key-backspace", |window| {
+        window.record("numbered")["heard"] == "key-backspace"
+    });
+}
+
+const TEMPO: &str = r#"import { h, number, NumberBox, tool } from "./sdk";
+
+tool({
+  name: "tempo",
+  title: "Tempo",
+  when: "A test",
+  doc: "A number its code keeps, as the transport's tempo, on a page that holds the keys first.",
+  state: { bpm: number({ default: 120, min: 10, max: 1000 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: ({ state, update }) =>
+    h(NumberBox, { key: "bpm", width: 40, min: 10, max: 1000, value: () => state.bpm, onChange: (bpm: number) => update("Change the tempo", ({ state }) => { state.bpm = bpm; }) }),
+});
+"#;
+
+/// Tab reaches a number its code keeps: the arrows step it, and enter types it.
+#[gpui::test]
+fn the_keys_step_and_type_a_number_its_code_keeps(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("tempo", TEMPO));
+    window.until_found("space-bpm");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "up");
+    press_key(&mut window, "up");
+    window.until("two steps up", |window| {
+        window.record("tempo")["bpm"].as_f64() == Some(122.0)
+    });
+    press_key(&mut window, "enter");
+    window.until_found("div-bpm-typed");
+    window.keys("cmd-a 9 0 enter");
+    window.until("typed", |window| {
+        window.record("tempo")["bpm"].as_f64() == Some(90.0)
     });
 }

@@ -1,33 +1,60 @@
-import { Button, For, Fragment, h, Icon, Input, onCleanup, PeakMeter, Select, Show, Toggle, untrack, type Color } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, Label, now, onCleanup, PeakMeter, Select, Show, Space, Toggle, untrack, type Color } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
 import type { Song } from "./song";
 import { addLane, LaneHead, learnName, showLanes } from "./song-automation";
 import { copyOf } from "./song-clips";
-import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, titleOf, type Child, type Page } from "./song-page";
+import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, TEMPO, titleOf, type Child, type Page } from "./song-page";
 import { tape } from "./tape";
 import { freeName, track } from "./track";
 
 // The heads of the rows: a track's name and toggles left of its clips, its lanes' names, the
 // returns, and the master; adding, moving, naming, arming and deleting tracks.
 
+/** Over the timeline while the song has no track: what to start with, as the window's empty project says it. */
+export const EmptySong = ({ page }: { page: Page }) => (
+  <div style={{ absolute: { top: 0, left: 0, right: 0, bottom: 0 }, align: "center", justify: "center", gap: 4 }}>
+    <div style={{ fontSize: 16, weight: "medium", color: "gray-950" }}>An empty song</div>
+    <div style={{ fontSize: 14, color: "gray-700" }}>Add a track to play or record, or ask the agent for one.</div>
+    <div style={{ direction: "row", gap: 8, paddingTop: 12 }}>
+      <Button key="empty-instrument" label="Instrument track" icon="plus" variant="subtle" size="sm" onClick={() => addTrack(page, 0)} />
+      <Button key="empty-audio" label="Audio track" icon="plus" variant="subtle" size="sm" onClick={() => addTrack(page, 1)} />
+    </div>
+  </div>
+);
+
 /** The column of heads left of the timeline, under the snap, which scrolls with it. */
 export const Heads = ({ page }: { page: Page }) => {
   const { memory, layout } = page;
   return (
     <div style={{ width: HEADER - 1, keep: true }}>
-      <div style={{ height: RULER, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8 }}>
+      <div style={{ height: RULER, direction: "row", align: "center", gap: 8, paddingLeft: 8, paddingRight: 8 }}>
+        <Toggle key="tempo-lane" icon="tempo-change" tooltip="Tempo" on={() => memory.tempoLane} onClick={() => (memory.tempoLane = !memory.tempoLane)} />
         <div style={{ grow: true, fontSize: 12, color: "gray-700" }}>Snap</div>
         <Select key="song-snap" title="Snap" value={() => memory.snap} options={snapsOf(4 * BEAT).map(({ label, ticks }) => ({ value: ticks, label }))}
           onChange={(snap) => (memory.snap = snap)} />
       </div>
+      <Show when={() => memory.tempoLane}>
+        {() => (
+          <div style={{ height: TEMPO }}>
+            <div style={{ grow: true, justify: "center", gap: 2, paddingLeft: 36, paddingRight: 8 }}>
+              <div style={{ fontSize: 12, color: "gray-800" }}>Tempo</div>
+              <div style={{ direction: "row", align: "center", gap: 3 }}>
+                <Space key="tempo-value" width={28} height={16}><Label x={0} y={1} text={now.bpm.round()} size={12} color="gray-700" /></Space>
+                <div style={{ fontSize: 12, color: "gray-700" }}>bpm</div>
+              </div>
+            </div>
+            <div style={{ height: 1, background: "alpha/5", keep: true }} />
+          </div>
+        )}
+      </Show>
       <div style={{ grow: true }} follow={{ y: "timeline" }}>
         <For each={layout}>
           {({ each, lane, add }) =>
             add ? (
               <div style={{ height: ADD_LANE, paddingX: 8, paddingY: 4 }}>
-                <div key={`add-lane-${each.name}`} style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: { background: "alpha/8" } }}
+                <div key={`add-lane-${each.name}`} tabStop style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: { background: "alpha/8" } }}
                   onClick={() => addLane(page, each)}>
                   <div style={{ grow: true, fontSize: 13, weight: "medium", color: "gray-950" }}>Add lane</div>
                   <Icon name="chevron-down" size={14} color="gray-700" />
@@ -51,13 +78,13 @@ export const Heads = ({ page }: { page: Page }) => {
         </For>
         <div style={{ height: 1, background: "alpha/5", keep: true }} />
         <div style={{ height: ROW, direction: "row", align: "center", paddingX: 8 }}>
-          <div key="add-track" style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
+          <div key="add-track" tabStop style={{ grow: true, direction: "row", align: "center", gap: 5, height: ROW - 8, paddingLeft: 9, paddingRight: 10, radius: 6, hover: { background: "alpha/5" } }}
             onClick={() => addTrack(page, 0)}>
             <Icon name="plus" size={14} color="gray-800" />
             <div style={{ fontSize: 12, weight: "medium", color: "gray-800" }}>Add track</div>
           </div>
           <div style={{ width: 1, height: 12, background: "alpha/10" }} />
-          <div key="add-track-kind" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onClick={() => addTrack(page)}>
+          <div key="add-track-kind" tabStop tooltip="Add an audio or return track" style={{ width: 24, height: 24, align: "center", justify: "center", radius: 6, hover: { background: "alpha/8" } }} onClick={() => addTrack(page)}>
             <Icon name="chevron-down" size={14} color="gray-700" />
           </div>
         </div>
@@ -77,10 +104,10 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   // A head drawn anew, as when lanes show, hears no leave of the one it replaces.
   onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
-    <div style={() => ({ height: ROW - 1, direction: "row", align: "center", gap: 8, paddingRight: 8, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
+    <div key={`track-head-${each.name}`} style={() => ({ height: ROW - 1, direction: "row", align: "center", gap: 8, paddingRight: 8, background: panelOf() === each.name && ![...memory.selected].some((key) => key.startsWith(`${each.name}/`) && itemTool(children, key) === "region") ? "alpha/5" : COLOR.clear })}
       onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
-      onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
+      onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))} tabStop>
       <div style={() => ({ width: 3, height: ROW - 13, radius: 1.5, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
       <div style={{ grow: true, minWidth: 0, gap: 2, paddingLeft: 5 }}>
         <div style={{ direction: "row", align: "center", gap: 8 }}>
@@ -111,13 +138,13 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
               count={() => lanesOf(each).length} onClick={() => showLanes(page, each, !memory.lanes.has(each.name))} />}
           </Show>
           <Show when={() => each.tool === "tape" && (all() || memory.armed.has(each.name))}>
-            {() => <Toggle key={`arm-${each.name}`} dot on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(page, each.name)} />}
+            {() => <Toggle key={`arm-${each.name}`} dot tooltip="Arm for recording" on={() => memory.armed.has(each.name)} color="red" onClick={() => toggleArm(page, each.name)} />}
           </Show>
           <Show when={() => all() || muted(each)}>
-            {() => <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
+            {() => <Toggle key={`mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
           </Show>
           <Show when={() => all() || state.solo.includes(each.name)}>
-            {() => <Toggle key={`solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
+            {() => <Toggle key={`solo-${each.name}`} label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
           </Show>
         </div>
       </div>
@@ -139,13 +166,13 @@ export const Returns = ({ page }: { page: Page }) => {
       <div style={{ height: 1, background: "alpha/5", keep: true }} />
       <div style={{ height: 31, direction: "row", align: "center", keep: true }}>
         <div style={{ width: HEADER - 1, height: 31, direction: "row", align: "center", paddingRight: 12, keep: true }}>
-          <div key="returns-header" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 5, paddingLeft: 17 }}
+          <div key="returns-header" tabStop style={{ grow: true, height: 31, direction: "row", align: "center", gap: 5, paddingLeft: 17 }}
             onClick={() => (memory.returnsOpen = !memory.returnsOpen)}>
             <Icon name={() => (memory.returnsOpen ? "chevron-down" : "chevron-right")} size={14} color="gray-700" />
             <div style={{ fontSize: 12, color: "gray-900" }}>Returns</div>
             <div style={{ fontSize: 12, color: "gray-700" }}>{() => String(returns().length)}</div>
           </div>
-          <Button key="add-return" icon="plus" variant="ghost" size="xs" onClick={() => addTrack(page, 2)} />
+          <Button key="add-return" icon="plus" variant="ghost" size="xs" tooltip="Add a return" onClick={() => addTrack(page, 2)} />
         </div>
         <div style={{ width: 1, height: 31, background: "alpha/5" }} />
         <div key="returns-folded" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 16, paddingLeft: 16 }}
@@ -179,7 +206,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
   return (
     <div style={{ height: RETURN_ROW, direction: "row", keep: true }}>
       <div style={{ width: HEADER - 1, height: RETURN_ROW, paddingX: 8, paddingY: 4, keep: true }}>
-        <div key={`return-${each.name}`} style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 12, paddingRight: 4, radius: 6, background: panelOf() === each.name ? "alpha/5" : COLOR.clear })}
+        <div key={`return-${each.name}`} tabStop style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 12, paddingRight: 4, radius: 6, background: panelOf() === each.name ? "alpha/5" : COLOR.clear })}
           onPress={({ button }) => button === "right" && trackMenu(page, each)}
           onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
@@ -190,7 +217,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
               <div style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-950/40" : "gray-950" })}>{() => titleOf(each)}</div>
             )
           }
-          <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
+          <Toggle key={`mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />
         </div>
       </div>
       <div style={{ width: 1, height: RETURN_ROW, background: "alpha/5" }} />
@@ -202,7 +229,7 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
 export const MasterRow = ({ page: { memory } }: { page: Page }) => (
   <div style={{ height: MASTER_ROW - 1, direction: "row", align: "center", keep: true }}>
     <div style={{ width: HEADER - 1, height: MASTER_ROW - 1, paddingX: 8, paddingY: 4, keep: true }}>
-      <div key="master-row" style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.below?.kind === "master" ? "alpha/5" : COLOR.clear })}
+      <div key="master-row" tabStop style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.below?.kind === "master" ? "alpha/5" : COLOR.clear })}
         onClick={() => (memory.below = { kind: "master" })}>
         <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
         <div style={{ fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
@@ -210,7 +237,8 @@ export const MasterRow = ({ page: { memory } }: { page: Page }) => (
     </div>
     <div style={{ width: 1, height: MASTER_ROW - 1, background: "alpha/5" }} />
     <div style={{ grow: true }} />
-    <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onClick={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
+    <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" tooltip={() => (memory.below?.kind === "mixer" ? "Hide the mixer" : "Show the mixer")}
+      onClick={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
     <div style={{ width: 8 }} />
   </div>
 );
@@ -250,7 +278,8 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
       part.state.order = [...rows().map((each) => each.name), name];
     } else if (picked === 1) {
       const name = freeName(names, "audio-1") as `audio-${string}`;
-      part.children.push({ name, tool: tape, state: { colour }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sends] });
+      const audio = rows().filter((each) => each.tool === "tape").length + 1;
+      part.children.push({ name, tool: tape, state: { colour, title: `Audio ${audio}` }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sends] });
       part.state.order = [...rows().map((each) => each.name), name];
     } else {
       const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);

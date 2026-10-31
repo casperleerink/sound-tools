@@ -15,7 +15,7 @@ use super::{Opened, write_sine};
 use crate::song::{ACROSS, BAR, HEADER, LEAD, song_files};
 
 /// The note editor's rows and lane, as `clip-editor.tsx` has them: 12 points a pitch, a lane 56
-/// tall, and as it opens on a clip, 8 points before it and 96 after it, 24 to 192 points a beat.
+/// tall, and as it opens on a clip, 8 points before it and 96 after it, 2.4 to 192 points a beat.
 const EDITOR_ROW: f32 = 12.;
 const EDITOR_LANE: f32 = 56.;
 
@@ -54,7 +54,7 @@ impl Opened<'_> {
         let roll = self
             .cx
             .debug_bounds(selector)
-            .map_or(Bounds::new(roll, Default::default()), |bounds| bounds);
+            .unwrap_or(Bounds::new(roll, Default::default()));
         let lane = self.space_at(&format!("{key}-lane"));
         let record = self.record(&format!("song/{clip}"));
         let notes = record["notes"].as_array().cloned().unwrap_or_default();
@@ -67,7 +67,7 @@ impl Opened<'_> {
             .as_f64()
             .map_or(end, |length| length as f32);
         let width = f32::from(roll.size.width);
-        let across = ((width - 104.) / length).clamp(0.025, 0.2);
+        let across = ((width - 104.) / length).clamp(0.0025, 0.2);
         let pitches = notes.iter().map(|note| field(note, "pitch"));
         let middle = match (pitches.clone().reduce(f32::min), pitches.reduce(f32::max)) {
             (Some(low), Some(high)) => (low + high) / 2.,
@@ -647,7 +647,7 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
     // The repeat's bar is at the foot of the ruler, over bars 1 to 4 until it moves.
     let ruler = window.space_at("ruler");
     let on_bar =
-        |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(26.));
+        |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(38.));
     // Each press waits for the bar where the last change put it.
     let drag = |window: &mut Opened<'_>, from: Point<Pixels>, by: f32| {
         window.wait_for_bun();
@@ -1008,6 +1008,36 @@ fn notes_pasted_into_a_clip_with_no_length_are_kept(cx: &mut TestAppContext) {
     window.until("the notes pasted", |window| notes(window) == 2 * count);
 }
 
+/// The editor of a clip 64 bars long opens on all of it: a note is added in its last bar.
+#[gpui::test]
+fn the_editor_of_a_long_clip_opens_on_its_end(cx: &mut TestAppContext) {
+    let length = 64 * BAR;
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        record["state"]["length"] = length.into();
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    let editor = window.editor("t00/c00");
+    let notes = window.record("song/t00/c00")["notes"]
+        .as_array()
+        .map_or(0, Vec::len);
+    let tick = (length - BAR / 2) as f32;
+    let pitch = free_pitch(&window.record("song/t00/c00"), tick);
+    window.double_click(editor.at(tick, pitch));
+    window.until("a note added", |window| {
+        window.record("song/t00/c00")["notes"]
+            .as_array()
+            .map(Vec::len)
+            == Some(notes + 1)
+    });
+    let added = window.record("song/t00/c00")["notes"][notes]["start"]
+        .as_u64()
+        .unwrap();
+    assert!(added >= length - 2 * BAR, "{added}");
+}
+
 /// The timeline reaches past its last clip, wherever that is: a clip at bar 88 scrolled to the
 /// left edge is chosen and deleted there.
 #[gpui::test]
@@ -1017,11 +1047,12 @@ fn the_timeline_scrolls_to_its_last_clip(cx: &mut TestAppContext) {
     assert!(last > 64 * BAR);
     let timeline = window.space_at("timeline");
     window.wait_for_bun();
-    window.cx.simulate_event(gpui::ScrollWheelEvent {
+    window.cx.simulate_event(gpui::ScrollEvent {
         position: timeline + point(px(200.), px(10.)),
         delta: gpui::ScrollDelta::Pixels(point(px(-(last as f32) * ACROSS), px(0.))),
         modifiers: Modifiers::default(),
         touch_phase: gpui::TouchPhase::Moved,
+        ..Default::default()
     });
     window.cx.run_until_parked();
     let at = window.on_lane(BAR / 2, 0);
@@ -1198,7 +1229,7 @@ fn a_clip_added_after_the_song_opened_is_drawn_once_after_its_track_lays_out_aga
     let nodes = |window: &mut Opened<'_>| {
         window.cx.read(|cx| {
             let page = shell.read(cx).main_view().unwrap();
-            sound_typescript::node_count(page, cx)
+            sound_typescript::node_counts(page, cx)["song"]
         })
     };
     window.show_toggles("t00");
@@ -1234,6 +1265,20 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
     window.wait_for_bun();
     assert!(window.find("div-strip-name-t01").is_none());
     assert!(window.find("button-close-panel").is_none());
+}
+
+/// Escape closes a track's panel, as its close button does, once nothing is selected.
+#[gpui::test]
+fn escape_closes_a_tracks_panel(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found("button-close-panel");
+    window.keys("escape");
+    window.until("the panel closed", |window| {
+        window.find("button-close-panel").is_none()
+    });
 }
 
 #[gpui::test]

@@ -2,8 +2,8 @@
 //! of what the window offers, a text field and rows dragged onto each other.
 
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent,
+    TestAppContext, TouchPhase, point, px,
 };
 use sound_ui::{Devices, Takes};
 
@@ -121,6 +121,19 @@ fn a_knob_on_the_card_of_an_effect_turns_its_record_as_one_undo_step(cx: &mut Te
     window.undo();
     assert_eq!(window.record("song/t00/chain/room"), before);
     assert_eq!(window.problems(), []);
+}
+
+/// A picker lists each group of offers once: the effects come by what they do to the sound,
+/// whichever crate registered them first.
+#[gpui::test]
+fn the_offers_come_group_by_group(cx: &mut TestAppContext) {
+    let window = open_rack(cx);
+    let groups: Vec<_> = window.cx.update(|_, cx| {
+        (Devices::offered(Takes::Audio, cx).iter())
+            .map(|offer| offer.group)
+            .collect()
+    });
+    assert!(groups.is_sorted(), "{groups:?}");
 }
 
 #[gpui::test]
@@ -387,11 +400,12 @@ fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
     assert!(window.find(last).is_none());
     let rack = window.until_found("div-rack");
     window.until(last, |window| {
-        window.cx.simulate_event(ScrollWheelEvent {
+        window.cx.simulate_event(ScrollEvent {
             position: rack,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            ..Default::default()
         });
         window.find(last).is_some()
     });

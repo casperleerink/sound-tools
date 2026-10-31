@@ -7,15 +7,8 @@
 //! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
 //! also opens the composer's instructions to the agent in place of the thread
 //! (`super::instructions`).
-//!
-//! This file holds the view itself: its fields, the menus and the settings, the instructions,
-//! and the render. The rest is in `sidebar/`, as more `impl Sidebar`:
-//! - `turn`: the agent's process, a turn from the send to its end, approvals, and the problems
-//!   a turn left.
-//! - `setup`: finding the program, its download, the sign-in and the sign-out.
-//! - `threads`: the saved threads: the project's last one, **New**, **Open recent**, and
-//!   writing them in order.
 
+mod attachments;
 mod setup;
 mod threads;
 mod turn;
@@ -25,9 +18,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FollowMode, FontWeight,
-    Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions, div, hsla,
-    list, point, prelude::*, px,
+    AnyElement, App, BoxShadow, Context, Entity, ExternalPaths, FocusHandle, Focusable, FollowMode,
+    FontWeight, Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions,
+    div, hsla, list, point, prelude::*, px,
 };
 use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
@@ -35,22 +28,26 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
-use sound_ui::components::text_input::{Arrow, TextInput};
+use sound_ui::components::text_input::{Arrow, Paste, TextInput};
 
+use self::attachments::Attached;
 use super::entry;
 use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
-use super::markdown::{self, Markdown};
+use super::markdown::{self, Markdown, MarkdownText};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
-use crate::conversation::{Conversation, Entry};
+use crate::conversation::{Approval, Conversation, Entry, Turn, TurnEnd};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
-use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread};
+use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, TurnOutcome};
 
 actions!(agent_sidebar, [Stop]);
 
 const KEY_CONTEXT: &str = "AgentSidebar";
+/// What asking the agent to fix the files that are not live sends, from under a turn or from
+/// the window's notice. The agent reads what is not live itself.
+pub const FIX_NOT_LIVE: &str = "Fix the files that are not live.";
 
 /// How far the list draws beyond what shows, so a short scroll needs no measuring.
 const OVERDRAW: f32 = 800.;
@@ -70,7 +67,7 @@ fn install_bindings(cx: &mut App) {
     ]);
 }
 
-/// The process of the thread, from the first send until **+** or until it ends.
+/// The process of the thread, from the first send until **New** or until it ends.
 struct Agent {
     thread: Thread,
     /// Reads the process on the background executor. Dropping it ends the process.
@@ -117,6 +114,10 @@ pub struct Sidebar {
     /// The turns whose problems show line by line, by entry.
     problems_open: HashSet<usize>,
     input: Entity<TextInput>,
+    /// What goes with the next message.
+    attachments: Vec<Attached>,
+    /// Reads of attachments not in yet. No message goes until they are.
+    attachments_reading: usize,
     /// Where up and down in the composer are among the earlier messages.
     history: History,
     /// The sidebar itself, for when it has no composer.
@@ -312,6 +313,8 @@ impl Sidebar {
             problems_left: HashMap::new(),
             problems_open: HashSet::new(),
             input,
+            attachments: Vec::new(),
+            attachments_reading: 0,
             history: History::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
@@ -560,21 +563,47 @@ impl Sidebar {
         }
     }
 
-    fn render_entry(&mut self, index: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let session = self.session.clone();
+        let name = move |path: &str, cx: &App| sound_ui::names::file_name(&session, path, cx);
         let content = match self.conversation.entries().get(index) {
-            Some(Entry::Message(text)) => entry::message(text, cx),
+            Some(Entry::Message { text, attachments }) => entry::message(text, attachments, cx),
             Some(Entry::Notice(text)) => entry::notice(text, cx),
             Some(Entry::Turn(turn)) => {
                 let below = match (turn.approval(), self.problems_left.get(&index)) {
-                    (Some(approval), _) => Some(self.approval_row(&approval.title, cx)),
+                    (Some(approval), _) => Some(self.approval_row(approval, cx)),
                     (None, Some(problems)) => {
                         let open = self.problems_open.contains(&index);
                         let toggle = cx.listener(move |sidebar, _, _, cx| {
                             sidebar.toggle(|sidebar| &mut sidebar.problems_open, index, cx);
                         });
-                        Some(entry::problems(problems, index, open, toggle, cx))
+                        let problems =
+                            entry::problems(problems, index, open, toggle, &name, window, cx);
+                        let fix = self.goes_on_after(index).then(|| {
+                            let click = cx.listener(|sidebar, _, window, cx| {
+                                sidebar.ask(FIX_NOT_LIVE.to_string(), window, cx);
+                            });
+                            entry::action(
+                                "fix",
+                                "wrench",
+                                "Ask the agent to fix them",
+                                click,
+                                window,
+                                cx,
+                            )
+                        });
+                        let lines = div().flex().flex_col().gap(px(8.)).child(problems);
+                        Some(lines.children(fix).into_any_element())
                     }
-                    (None, None) => None,
+                    (None, None) => self
+                        .retry_message(index)
+                        .is_some()
+                        .then(|| self.try_again(index, window, cx)),
                 };
                 let toggle = cx.listener(move |sidebar, _, _, cx| {
                     sidebar.toggle(|sidebar| &mut sidebar.expanded, index, cx);
@@ -584,7 +613,9 @@ impl Sidebar {
                     .answers
                     .entry(index)
                     .or_insert_with(|| entry::answer(turn));
-                entry::turn(turn, index, answer, steps_open, toggle, below, cx)
+                entry::turn(
+                    turn, index, answer, steps_open, toggle, below, &name, window, cx,
+                )
             }
             None => div().into_any_element(),
         };
@@ -596,10 +627,76 @@ impl Sidebar {
             .into_any_element()
     }
 
+    /// Whether the turn at `index` is the last thing of a thread that can go on, with nothing
+    /// asked of the composer: what it shows under it can send a message.
+    fn goes_on_after(&self, index: usize) -> bool {
+        index + 1 == self.conversation.entries().len()
+            && self.conversation.can_continue()
+            && !self.conversation.is_working()
+    }
+
+    /// The message of the turn at `index` to send again: the last turn, which failed, of a
+    /// thread that can go on, when its message had nothing attached (a saved thread keeps no
+    /// pictures).
+    fn retry_message(&self, index: usize) -> Option<&str> {
+        let entries = self.conversation.entries();
+        let failed = matches!(
+            entries.get(index),
+            Some(Entry::Turn(Turn {
+                end: Some(TurnEnd {
+                    outcome: TurnOutcome::Failed { .. },
+                    ..
+                }),
+                ..
+            }))
+        );
+        if !failed || !self.goes_on_after(index) {
+            return None;
+        }
+        match entries.get(index.checked_sub(1)?)? {
+            Entry::Message { text, attachments } if attachments.is_empty() => Some(text),
+            _ => None,
+        }
+    }
+
+    /// `message` sent as if typed, leaving the composer as it is. Once it went, the composer
+    /// has the keys, as after a message.
+    fn ask(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let sent = self.send_text(message, cx);
+        if sent {
+            window.focus(&self.focus_handle(cx), cx);
+        }
+        sent
+    }
+
+    /// [`Self::ask`] from outside the sidebar, such as the window's notice: the thread shows,
+    /// over the instructions too. Whether it went.
+    pub fn ask_from_outside(
+        &mut self,
+        message: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.instructions.is_some() {
+            self.close_instructions(window, cx);
+        }
+        self.ask(message.to_string(), window, cx)
+    }
+
+    /// Under a turn that failed: its message again, as it was sent.
+    fn try_again(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let click = cx.listener(move |sidebar, _, window, cx| {
+            if let Some(message) = sidebar.retry_message(index).map(str::to_string) {
+                sidebar.ask(message, window, cx);
+            }
+        });
+        entry::action("try-again", "redo-2", "Try again", click, window, cx)
+    }
+
     /// The question the agent waits on, as the last thing of the thread. Nothing is modal:
     /// music and editing go on while it waits.
-    fn approval_row(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
-        let lavender = cx.theme().lavender;
+    fn approval_row(&self, approval: &Approval, cx: &mut Context<Self>) -> AnyElement {
+        let (lavender, text) = (cx.theme().lavender, cx.theme().gray_950);
         let answers = [
             ("allow", "Allow", ApprovalAnswer::Allow),
             (
@@ -615,10 +712,9 @@ impl Sidebar {
                 .zip(&self.approval_focus)
                 .map(|((id, label, answer), focus)| {
                     let variant = match answer {
-                        ApprovalAnswer::Allow => ButtonVariant::SubtleColor(lavender),
-                        ApprovalAnswer::AllowForThread | ApprovalAnswer::Deny => {
-                            ButtonVariant::GhostColor(lavender)
-                        }
+                        ApprovalAnswer::Allow => ButtonVariant::Solid(lavender),
+                        ApprovalAnswer::AllowForThread => ButtonVariant::SubtleColor(lavender),
+                        ApprovalAnswer::Deny => ButtonVariant::Ghost,
                     };
                     Button::new(id, label)
                         .debug_selector(move || format!("approval-{id}"))
@@ -630,9 +726,17 @@ impl Sidebar {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .text_color(lavender)
-            .child(entry::title("approval", title))
+            .gap(px(12.))
+            .p(px(14.))
+            .rounded(px(12.))
+            .bg(lavender.opacity(0.06))
+            .border_1()
+            .border_color(lavender.opacity(0.3))
+            .text_color(text)
+            .child(MarkdownText::new(
+                "approval",
+                Markdown::question(&approval.title, approval.command.as_deref()),
+            ))
             .child(div().flex().flex_wrap().gap(px(8.)).children(buttons))
             .into_any_element()
     }
@@ -641,46 +745,42 @@ impl Sidebar {
     /// back at the left.
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let editing = self.instructions.is_some();
+        // On the left edge of the thread under it.
+        let title = div()
+            .flex_1()
+            .text_size(px(14.))
+            .font_weight(FontWeight::MEDIUM)
+            .child(if editing { "Instructions" } else { "Agent" });
         let header = div()
-            .relative()
             .flex()
             .flex_none()
             .items_center()
-            .justify_center()
+            .gap(px(4.))
             .h(px(56.))
-            .child(
-                div()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(if editing { "Instructions" } else { "Agent" }),
-            );
+            .pr(px(16.));
         if !editing {
-            return header.child(
-                div()
-                    .absolute()
-                    .right(px(16.))
-                    .child(self.new_button.clone()),
-            );
+            return header
+                .pl(px(24.))
+                .child(title)
+                .child(self.new_button.clone());
         }
-        header.child(
-            div().absolute().left(px(16.)).child(
-                Button::icon_only("instructions-back", "arrow-left")
-                    .debug_selector(|| "agent-instructions-back".to_string())
-                    .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Xs)
-                    .on_click(cx.listener(|sidebar, _, window, cx| {
-                        sidebar.close_instructions(window, cx);
-                    })),
-            ),
-        )
+        let back = Button::icon_only("instructions-back", "arrow-left")
+            .debug_selector(|| "agent-instructions-back".to_string())
+            .variant(ButtonVariant::Ghost)
+            .size(ButtonSize::Xs)
+            .on_click(cx.listener(|sidebar, _, window, cx| {
+                sidebar.close_instructions(window, cx);
+            }));
+        header.pl(px(16.)).child(back).child(title)
     }
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
-        let (blue, stop) = (theme.blue, theme.gray_950);
+        let (blue, stop, lavender) = (theme.blue, theme.gray_950, theme.lavender);
         let working = self.conversation.is_working();
-        let can_send = !self.input.read(cx).text().trim().is_empty();
+        let can_send =
+            !self.input.read(cx).text().trim().is_empty() && self.attachments_reading == 0;
         // While a turn runs the send button stops it: one turn at a time.
         let button = if working {
             Button::icon_only("stop", "square")
@@ -699,6 +799,18 @@ impl Sidebar {
         // The access pill always says the mode, so it is never a surprise.
         div().flex_none().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
             div()
+                .id("agent-composer")
+                .debug_selector(|| "agent-composer".to_string())
+                // Before the field's own paste, which takes only text.
+                .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
+                    if sidebar.paste_attachments(cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
+                .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
+                    sidebar.attach_files(paths.paths().to_vec(), cx);
+                }))
                 .flex()
                 .flex_col()
                 .gap(px(8.))
@@ -716,6 +828,7 @@ impl Sidebar {
                     spread_radius: px(-8.),
                     inset: false,
                 }])
+                .children(self.attachment_chips(cx))
                 .child(div().min_h(px(44.)).child(self.input.clone()))
                 .child(
                     div()
@@ -739,8 +852,9 @@ impl Sidebar {
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
-    /// and **+** is the way on, as **New** is.
+    /// and **New thread** is the way on, as **New** is.
     fn cannot_continue(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let said = self.conversation.loss_said();
         div()
             .flex_none()
             .flex()
@@ -748,19 +862,21 @@ impl Sidebar {
             .gap(px(12.))
             .p(px(24.))
             .pt(px(8.))
+            .when(!said, |row| {
+                row.child(
+                    div()
+                        .flex_1()
+                        .text_size(px(14.))
+                        .text_color(cx.theme().gray_700)
+                        .child("This thread can't continue."),
+                )
+            })
             .child(
-                div()
-                    .flex_1()
-                    .text_size(px(14.))
-                    .text_color(cx.theme().gray_700)
-                    .child("This thread can't continue. Start a new one."),
-            )
-            .child(
-                Button::icon_only("new-thread-instead", "plus")
+                Button::new("new-thread-instead", "New thread")
+                    .icon("plus")
                     .debug_selector(|| "agent-cannot-continue".to_string())
                     .variant(ButtonVariant::Subtle)
                     .size(ButtonSize::Sm)
-                    .rounded(true)
                     .focus_handle(&self.send_focus)
                     .on_click(cx.listener(|sidebar, _, window, cx| sidebar.new_thread(window, cx))),
             )
@@ -807,6 +923,7 @@ impl Focusable for Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
         let theme = cx.theme();
         // The hairline of the window's other lines, so the edges weigh the same.
         let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);

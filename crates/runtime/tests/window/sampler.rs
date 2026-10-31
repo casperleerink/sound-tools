@@ -2,9 +2,9 @@
 //! from the Finder or chosen in the file panel becomes its sample as one undo step, every knob and handle is one undo step, the
 //! green line follows the last note, and a missing file shows on the card.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use gpui::{Entity, ExternalPaths, FileDropEvent, Pixels, Point, TestAppContext, point, px};
+use gpui::{Entity, Pixels, Point, TestAppContext, point, px};
 use sampler::SamplerState;
 use sampler::view::{LOAD_LABEL, SamplerView};
 use sound_media::AudioAsset;
@@ -65,28 +65,6 @@ fn state(opened: &mut Opened<'_>) -> SamplerState {
 
 fn view(opened: &mut Opened<'_>) -> Entity<SamplerView> {
     opened.card::<SamplerView>(SLOT)
-}
-
-/// A file dragged from the Finder over `to` and let go of there.
-fn drop_files(opened: &mut Opened<'_>, paths: &[PathBuf], to: Point<Pixels>) {
-    let paths = ExternalPaths(paths.iter().cloned().collect());
-    let position = to - point(px(30.), px(0.));
-    opened
-        .cx
-        .simulate_event(FileDropEvent::Entered { position, paths });
-    for step in [20., 10., 0.] {
-        opened.cx.update(|window, _| window.refresh());
-        opened.cx.run_until_parked();
-        let position = to - point(px(step), px(0.));
-        opened
-            .cx
-            .simulate_event(FileDropEvent::Pending { position });
-    }
-    opened
-        .cx
-        .simulate_event(FileDropEvent::Submit { position: to });
-    opened.cx.run_until_parked();
-    opened.settle();
 }
 
 /// Plays the note of the clip from the start for `frames`.
@@ -160,7 +138,7 @@ fn a_file_dropped_on_the_card_is_copied_in_and_becomes_the_sample_in_one_undo_st
     assert_eq!(support::peak(&silent), 0.0);
 
     let target = opened.control("file-drop");
-    drop_files(&mut opened, &[source], target);
+    opened.drop_files(&[source], target);
     assert_eq!(
         state(&mut opened).sample,
         Some(AudioAsset::new("my-kalimba.wav").unwrap())
@@ -176,14 +154,14 @@ fn a_file_dropped_on_the_card_is_copied_in_and_becomes_the_sample_in_one_undo_st
     let other = outside.path().join("bell.wav");
     write_wav(&other, 1.);
     let target = opened.control("file-drop");
-    drop_files(&mut opened, &[other], target);
+    opened.drop_files(&[other], target);
     assert_eq!(state(&mut opened).sample.unwrap().to_string(), "bell.wav");
 
     // A file that does not play is not copied, and the notice says why.
     let text = outside.path().join("notes.wav");
     std::fs::write(&text, "not audio").unwrap();
     let target = opened.control("file-drop");
-    drop_files(&mut opened, &[text], target);
+    opened.drop_files(&[text], target);
     assert_eq!(state(&mut opened).sample.unwrap().to_string(), "bell.wav");
     assert!(!opened.path("assets/audio/notes.wav").exists());
     let notice = opened.notice().unwrap();
@@ -375,7 +353,7 @@ fn a_missing_file_shows_on_the_card_and_a_drop_brings_one(cx: &mut TestAppContex
     let source = outside.path().join("gone.wav");
     write_wav(&source, 1.);
     let target = opened.control("file-drop");
-    drop_files(&mut opened, &[source], target);
+    opened.drop_files(&[source], target);
     assert_eq!(opened.project(|project| project.problems()), []);
     assert_eq!(state(&mut opened), trimmed);
     assert_eq!(opened.undo_label(), None);

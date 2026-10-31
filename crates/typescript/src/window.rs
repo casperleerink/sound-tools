@@ -572,6 +572,18 @@ fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffe
 }
 
 impl Live {
+    /// How many nodes each card keeps, by instance.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn node_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        for card in self.cards.values() {
+            if let Some(Ok(table)) = &card.tree {
+                *counts.entry(card.id.to_string()).or_default() += table.entries().count();
+            }
+        }
+        counts
+    }
+
     /// The nodes of a card. `None` until its first ops came.
     pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<NodeTable>, String>> {
         self.cards.get(&card)?.tree.as_ref()
@@ -2303,10 +2315,30 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str, cx: &App)
                 min: range.min,
                 max: range.max,
                 scale,
+                unit: unit_of(name, &range),
                 value: number.record,
             })
         })
         .collect()
+}
+
+/// How a value of the number `field` reads: by the unit its name ends in, as a pan, or as a
+/// share of 0 to 1. A built-in device names its numbers so; a plugin's say nothing.
+fn unit_of(field: &str, range: &sound_core::ValueRange) -> Option<&'static str> {
+    const UNITS: [(&str, &str); 5] = [
+        ("_hz", "hz"),
+        ("_db", "db"),
+        ("_ms", "ms"),
+        ("_seconds", "seconds"),
+        ("_percent", "percent"),
+    ];
+    let unit = UNITS.iter().find(|(end, _)| field.ends_with(end));
+    match unit {
+        Some((_, unit)) => Some(unit),
+        None if field.rsplit('.').next() == Some("pan") => Some("pan"),
+        None if range.min == 0.0 && range.max == 1.0 => Some("percent"),
+        None => None,
+    }
 }
 
 /// A field in plain words, its unit left out: `lfo_rate_hz` is LFO rate, `osc_1.position` is
@@ -2405,12 +2437,31 @@ pub(crate) struct OpenedMenu {
 
 #[cfg(test)]
 mod tests {
-    use super::number_name;
+    use sound_core::ValueRange;
+
+    use super::{number_name, unit_of};
 
     #[test]
     fn a_field_reads_in_plain_words() {
         assert_eq!(number_name("osc_1.position"), "Osc 1 position");
         assert_eq!(number_name("lfo_rate_hz"), "LFO rate");
         assert_eq!(number_name("bands[0].gain_db"), "Band 1 gain");
+    }
+
+    /// A value reads by the unit its name ends in, a pan as a pan, a share of 0 to 1 as a
+    /// percent, and any other number, such as a compressor's ratio, as itself.
+    #[test]
+    fn a_number_reads_by_its_name_and_range() {
+        let share = ValueRange::linear(0.0, 1.0);
+        assert_eq!(unit_of("chain/filter.cutoff_hz", &share), Some("hz"));
+        assert_eq!(
+            unit_of("mix.pan", &ValueRange::linear(-1.0, 1.0)),
+            Some("pan")
+        );
+        assert_eq!(unit_of("chain/reverb.mix", &share), Some("percent"));
+        assert_eq!(
+            unit_of("chain/comp.ratio", &ValueRange::linear(1.0, 20.0)),
+            None
+        );
     }
 }

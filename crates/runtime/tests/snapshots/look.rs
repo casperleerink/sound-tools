@@ -46,7 +46,7 @@ pub(crate) mod takes;
 pub(crate) mod timeline;
 
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
-const TOP: f32 = 48.0 + 32.0;
+const TOP: f32 = 48.0 + 44.0;
 
 /// The title of the first card of a track's panel, and its Add effect after a plugin's card.
 const PICKER: (f32, f32) = (230., 920. - 216. + 12. + 22.);
@@ -145,7 +145,7 @@ fn arm(row: f32) -> Point<Pixels> {
 }
 
 /// The record button of the transport in the title bar.
-const RECORD: (f32, f32) = (555., 24.);
+const RECORD: (f32, f32) = (680., 24.);
 
 /// What the input brings, as the arrangement's snapshots had it: the voice on the left and the
 /// guitar on the right, at half.
@@ -233,6 +233,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         })
         .collect();
     let opened = super::Opened::open(cx, &files)?;
+    // Two frames, as the window draws them: the ruler sees the timeline from the second.
+    for _ in 0..2 {
+        cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+    }
     save(cx, opened.window.into(), "look-empty")?;
     drop(opened);
 
@@ -355,6 +360,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(60.), px(bottom - panel - 60.)), 1, cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-returns")?;
+    // The mixer's button at the right of the master's row: three tracks, then the returns.
+    click(&opened, point(px(1449.), px(684.)), 1, cx)?;
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-mixer")?;
     drop(opened);
 
     // Track 1 alone, its instrument the test plugin.

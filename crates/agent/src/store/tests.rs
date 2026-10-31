@@ -1,4 +1,3 @@
-use std::io::Write as _;
 use std::time::Duration;
 
 use super::*;
@@ -26,10 +25,11 @@ fn keep(
     sent: u64,
     events: Vec<AgentEvent>,
 ) {
-    conversation.send(message, at(sent));
+    conversation.send(message, Vec::new(), at(sent));
     let mut lines = vec![Line::Sent {
         at: at(sent),
         message: message.to_string(),
+        attachments: Vec::new(),
     }];
     for (event, second) in events.into_iter().zip(sent + 1..) {
         lines.extend(Line::of(&event, at(second)));
@@ -58,7 +58,7 @@ fn shown(conversation: &Conversation) -> Vec<&str> {
         .entries()
         .iter()
         .map(|entry| match entry {
-            Entry::Message(text) | Entry::Notice(text) => text.as_str(),
+            Entry::Message { text, .. } | Entry::Notice(text) => text.as_str(),
             Entry::Turn(turn) => turn.blocks.first().map_or("", String::as_str),
         })
         .collect()
@@ -90,6 +90,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
                 id: step.clone(),
                 title: "Wrote state/song/bass/clip.json".to_string(),
                 request_title: "Write state/song/bass/clip.json".to_string(),
+                command: None,
                 running_title: "Writing state/song/bass/clip.json".to_string(),
                 kind: StepKind::Change {
                     path: "state/song/bass/clip.json".to_string(),
@@ -121,6 +122,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
             AgentEvent::ApprovalRequested {
                 id: ApprovalId("build".to_string()),
                 title: "Run `cargo build`".to_string(),
+                command: None,
             },
             AgentEvent::TurnEnded {
                 outcome: TurnOutcome::Interrupted,
@@ -227,7 +229,6 @@ fn a_line_cut_off_does_not_take_the_next_one_with_it() {
     );
 }
 
-/// The app quit while the agent worked: the turn shows as stopped, not working forever.
 #[test]
 fn a_turn_the_app_quit_during_ends_stopped() {
     let machine = tempfile::tempdir().unwrap();
@@ -353,7 +354,7 @@ fn the_index_keeps_every_thread_and_names_the_current_one() {
     };
     assert_eq!(recent(&store), ["First"]);
 
-    // **+**: no thread is current, and both stay, the one last shown first.
+    // **New**: no thread is current, and both stay, the one last shown first.
     store.write(&Write::Current(None)).unwrap();
     assert!(store.current().unwrap().is_none());
     assert_eq!(recent(&store), ["Second", "First"]);
@@ -414,6 +415,7 @@ fn every_event_saves_as_the_same_line() {
             id: step(),
             title: text("Edited song.json"),
             request_title: text("Edit song.json"),
+            command: None,
             running_title: text("Editing song.json"),
             kind: StepKind::Change {
                 path: text("song.json"),
@@ -426,6 +428,7 @@ fn every_event_saves_as_the_same_line() {
         AgentEvent::ApprovalRequested {
             id: ApprovalId(text("request-1")),
             title: text("Run `cargo build`"),
+            command: None,
         },
         AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {
@@ -443,6 +446,13 @@ fn every_event_saves_as_the_same_line() {
         serde_json::to_string(&Line::Sent {
             at: at(0),
             message: text("Hello"),
+            attachments: Vec::new(),
+        })
+        .unwrap(),
+        serde_json::to_string(&Line::Sent {
+            at: at(0),
+            message: text("Like this"),
+            attachments: vec![text("take.wav")],
         })
         .unwrap(),
     ];
@@ -469,6 +479,7 @@ fn every_event_saves_as_the_same_line() {
     let at = r#""at":{"secs_since_epoch":1800000000,"nanos_since_epoch":0}"#;
     let expected = [
         format!(r#"{{"sent":{{{at},"message":"Hello"}}}}"#),
+        format!(r#"{{"sent":{{{at},"message":"Like this","attachments":["take.wav"]}}}}"#),
         format!(r#"{{"event":{{{at},"event":"turn_started"}}}}"#),
         format!(r#"{{"event":{{{at},"event":{{"text_done":{{"text":"Done."}}}}}}}}"#),
         format!(

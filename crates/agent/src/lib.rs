@@ -15,9 +15,6 @@
 //!
 //! No async runtime of its own: the futures run on smol, so gpui's executors or
 //! `smol::block_on` drive them.
-//!
-//! `cargo run -p sound-agent --example chat -- <folder>` chats with Claude Code in the
-//! terminal, with a `claude` on the `PATH` ([`program_on_path`]).
 
 mod conversation;
 mod environment;
@@ -32,9 +29,9 @@ pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Command, Events, ExitReason,
-    Installed, Model, Provider, SignInChoice, StepId, StepKind, StepOutcome, Thread, ThreadClosed,
-    ThreadOptions, TurnOutcome,
+    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command, Events,
+    ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, SignInChoice, StepId,
+    StepKind, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
-pub use view::{Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};
+pub use view::{FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};

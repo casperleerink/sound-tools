@@ -4,6 +4,7 @@
 import { Shape, shapeNode, ShapeProps } from "./drawing";
 import { Drawing } from "./host";
 import { Drag, Dropped, PointerEvents } from "./live";
+import type { Key } from "./tools";
 import { Accessor, dispose, effect, memo, onCleanup, owner, Owner, RAW, root, setup, signal, untrack } from "./reactivity";
 
 declare const nodeBrand: unique symbol;
@@ -43,6 +44,7 @@ export interface Made extends PointerEvents {
   onClose?: () => void;
   onTitle?: () => void;
   onSidechain?: (select: number, option: number) => void;
+  onKey?: (key: Key) => void;
   drag?: Drag;
   /** Where its handlers run, made at the first: what they start, such as a timer, goes with the node. */
   scope?: Owner;
@@ -130,7 +132,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onRelease", "onClick", "onHover", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange"]);
+const HANDLERS = new Set(["onPress", "onRelease", "onClick", "onHover", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange", "onKey"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 export function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {

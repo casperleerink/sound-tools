@@ -184,6 +184,8 @@ pub(crate) enum EventKind {
     Power,
     /// The close icon of an embedded card.
     Close,
+    /// A key a div takes, while the focus is in it.
+    Key,
     /// The title of an embedded card, which is a menu.
     Title,
     /// A pick in a select of the sidechain picker of an embedded card.
@@ -200,6 +202,9 @@ pub(crate) struct Moved {
     pub max: f32,
     /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
     pub scale: &'static str,
+    /// How a value of it reads, see `unit_of` of the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'static str>,
     /// What its record holds now.
     pub value: Option<f32>,
 }

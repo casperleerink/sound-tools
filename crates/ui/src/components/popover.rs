@@ -1,5 +1,5 @@
-//! The anchoring, surface and trigger helpers of the overlays: the dropdown menu, which is also
-//! the select. Ported from the source design system's `popover.tsx`.
+//! The anchoring, surface and trigger helpers of the overlays: the dropdown menu, the select and
+//! the split button.
 
 use gpui::{
     Anchor, App, BoxShadow, Div, FontWeight, Stateful, anchored, deferred, div, hsla, point,
@@ -8,7 +8,7 @@ use gpui::{
 
 use crate::theme::ActiveTheme;
 
-/// Which side of the trigger the content opens on, like the React `side` prop.
+/// Which side of the trigger the content opens on.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Side {
     #[default]
@@ -16,7 +16,7 @@ pub enum Side {
     Top,
 }
 
-/// Which edge the content lines up with, like the React `align` prop.
+/// Which edge the content lines up with.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Align {
     #[default]
@@ -27,7 +27,6 @@ pub enum Align {
 /// Standard height of the small trigger buttons in this file.
 pub(crate) const TRIGGER_HEIGHT: f32 = 32.;
 
-/// The dropdown shadow from `globals.css`: `0 4px 24px -8px rgba(0,0,0,0.2)`.
 pub fn shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
         color: hsla(0., 0., 0., 0.2),
@@ -38,8 +37,7 @@ pub fn shadow() -> Vec<BoxShadow> {
     }]
 }
 
-/// The shared overlay surface: `gray_200` with an `alpha/10` border and the
-/// dropdown [`shadow`].
+/// The shared overlay surface, with the dropdown [`shadow`].
 pub fn surface(cx: &App) -> Div {
     let theme = cx.theme();
     div()

@@ -24,12 +24,17 @@ pub struct Conversation {
     turn_just_failed: bool,
     /// The agent no longer has the session of this thread, so no message can follow.
     session_lost: bool,
+    /// The turn the session was lost in says so, as the last entry.
+    loss_said: bool,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Entry {
-    /// What the composer sent.
-    Message(String),
+    /// What the composer sent, and the names of what it attached.
+    Message {
+        text: String,
+        attachments: Vec<String>,
+    },
     /// What the agent did for one message.
     Turn(Turn),
     /// A quiet line that is no turn: an error, or why the agent stopped.
@@ -54,12 +59,15 @@ pub struct Turn {
 #[derive(Debug, PartialEq)]
 pub struct Step {
     pub id: StepId,
-    /// In the past tense, for the steps of a finished turn.
+    /// For the steps of a finished turn: what it did, or for a command what the agent says it
+    /// does.
     pub title: String,
-    /// In the present tense, for the working line while it runs.
+    /// For the working line while it runs.
     pub running_title: String,
     /// As it was asked for, for a step the composer denied. Empty in an older saved thread.
     pub request_title: String,
+    /// The command of a command step, whole.
+    pub command: Option<String>,
     pub kind: StepKind,
     /// `None` while it runs.
     pub outcome: Option<StepOutcome>,
@@ -80,6 +88,7 @@ impl Step {
 pub struct Approval {
     pub id: ApprovalId,
     pub title: String,
+    pub command: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -198,7 +207,7 @@ impl Conversation {
     /// What the composer sent, oldest first.
     pub fn messages(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().filter_map(|entry| match entry {
-            Entry::Message(message) => Some(message.as_str()),
+            Entry::Message { text, .. } => Some(text.as_str()),
             Entry::Turn(_) | Entry::Notice(_) => None,
         })
     }
@@ -207,6 +216,11 @@ impl Conversation {
     /// new thread can go on.
     pub fn can_continue(&self) -> bool {
         !self.session_lost
+    }
+
+    /// Whether the last entry already says why the thread can't continue.
+    pub fn loss_said(&self) -> bool {
+        self.loss_said
     }
 
     /// Whether a turn runs, which includes one that waits on an approval.
@@ -223,8 +237,11 @@ impl Conversation {
     }
 
     /// The composer's message, and the turn that answers it, working from now.
-    pub fn send(&mut self, message: &str, now: SystemTime) {
-        self.entries.push(Entry::Message(message.to_string()));
+    pub fn send(&mut self, message: &str, attachments: Vec<String>, now: SystemTime) {
+        self.entries.push(Entry::Message {
+            text: message.to_string(),
+            attachments,
+        });
         self.entries.push(Entry::Turn(Turn::new(now)));
     }
 
@@ -282,6 +299,7 @@ impl Conversation {
                 title,
                 running_title,
                 request_title,
+                command,
                 kind,
             } => self.update_open_turn(|turn| {
                 turn.steps.push(Step {
@@ -289,6 +307,7 @@ impl Conversation {
                     title,
                     running_title,
                     request_title,
+                    command,
                     kind,
                     outcome: None,
                 });
@@ -298,9 +317,8 @@ impl Conversation {
                     step.outcome = Some(outcome);
                 }
             }),
-            AgentEvent::ApprovalRequested { id, title } => {
-                self.update_open_turn(|turn| turn.approvals.push_back(Approval { id, title }))
-            }
+            AgentEvent::ApprovalRequested { id, title, command } => self
+                .update_open_turn(|turn| turn.approvals.push_back(Approval { id, title, command })),
             AgentEvent::TurnEnded { outcome } => {
                 self.update_open_turn(|turn| turn.finish(outcome, now))
             }
@@ -325,9 +343,11 @@ impl Conversation {
                     message: message.clone(),
                 };
                 if let Some(index) = self.update_open_turn(|turn| turn.finish(failed, now)) {
+                    self.loss_said = self.session_lost;
                     return Some(index);
                 }
                 if turn_just_failed || self.session_lost {
+                    self.loss_said = self.session_lost && turn_just_failed;
                     return None;
                 }
                 self.notice(message);
@@ -397,7 +417,7 @@ mod tests {
         let start = SystemTime::now();
         let summary = |steps: &[(StepKind, StepOutcome)]| {
             let mut conversation = Conversation::default();
-            conversation.send("Go", start);
+            conversation.send("Go", Vec::new(), start);
             for (number, (kind, outcome)) in steps.iter().enumerate() {
                 let id = step(&number.to_string());
                 let started = AgentEvent::StepStarted {
@@ -405,6 +425,7 @@ mod tests {
                     title: String::new(),
                     running_title: String::new(),
                     request_title: String::new(),
+                    command: None,
                     kind: kind.clone(),
                 };
                 let done = AgentEvent::StepDone {
@@ -459,7 +480,7 @@ mod tests {
     fn a_turn_streams_its_text_and_ends_with_how_long_it_worked() {
         let start = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Add a clip", start);
+        conversation.send("Add a clip", Vec::new(), start);
         assert!(conversation.is_working());
         let events = [
             AgentEvent::TurnStarted,
@@ -467,6 +488,7 @@ mod tests {
                 id: step("one"),
                 title: "Wrote state/song/track-1/clip.json".to_string(),
                 request_title: "Write state/song/track-1/clip.json".to_string(),
+                command: None,
                 running_title: "Writing state/song/track-1/clip.json".to_string(),
                 kind: StepKind::Change {
                     path: "state/song/track-1/clip.json".to_string(),
@@ -513,10 +535,11 @@ mod tests {
     fn an_approval_waits_until_answered_and_is_void_when_the_turn_ends() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Build it", now);
+        conversation.send("Build it", Vec::new(), now);
         let asked = AgentEvent::ApprovalRequested {
             id: ApprovalId("question".to_string()),
             title: "Run `cargo build`".to_string(),
+            command: None,
         };
         conversation.apply(asked.clone(), now);
         assert_eq!(
@@ -545,13 +568,11 @@ mod tests {
         assert_eq!(turn(&conversation).blocks, ["Half"]);
     }
 
-    /// The agent can ask a second question before the first is answered. Each waits for its
-    /// own answer, the oldest first.
     #[test]
     fn a_second_approval_waits_behind_the_first() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Build it", now);
+        conversation.send("Build it", Vec::new(), now);
         for (id, title) in [
             ("first", "Run `cargo build`"),
             ("second", "Run `cargo test`"),
@@ -559,6 +580,7 @@ mod tests {
             let asked = AgentEvent::ApprovalRequested {
                 id: ApprovalId(id.to_string()),
                 title: title.to_string(),
+                command: None,
             };
             conversation.apply(asked, now);
         }
@@ -599,7 +621,7 @@ mod tests {
     fn an_error_is_a_quiet_line_and_an_exit_ends_an_open_turn() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Hello", now);
+        conversation.send("Hello", Vec::new(), now);
         let error = AgentEvent::Error {
             message: "Could not stop".to_string(),
         };
@@ -625,12 +647,11 @@ mod tests {
         assert_eq!(notices(&conversation), ["Could not stop", gone]);
     }
 
-    /// A crash ends the turn as failed and then exits with the same message: it shows once.
     #[test]
     fn a_crash_mid_turn_says_so_once() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Hello", now);
+        conversation.send("Hello", Vec::new(), now);
         let failed = AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {
                 message: "Killed".to_string(),
@@ -647,7 +668,7 @@ mod tests {
     fn a_lost_session_ends_the_thread() {
         let now = SystemTime::now();
         let mut conversation = Conversation::default();
-        conversation.send("Hello", now);
+        conversation.send("Hello", Vec::new(), now);
         assert!(conversation.can_continue());
         let failed = AgentEvent::TurnEnded {
             outcome: TurnOutcome::Failed {
@@ -660,7 +681,33 @@ mod tests {
         };
         assert_eq!(conversation.apply(lost, now), None);
         assert!(!conversation.can_continue());
+        assert!(conversation.loss_said());
         assert_eq!(notices(&conversation), Vec::<&str>::new());
+    }
+
+    /// Lost later than a turn that failed for another reason: that turn does not say why.
+    #[test]
+    fn a_session_lost_later_is_not_said_by_the_turn_before() {
+        let now = SystemTime::now();
+        let mut conversation = Conversation::default();
+        conversation.send("Hello", Vec::new(), now);
+        let busy = AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "Claude is busy. Try again in a moment.".to_string(),
+            },
+        };
+        conversation.apply(busy, now);
+        let started = AgentEvent::Started {
+            account: crate::Account::default(),
+            models: Vec::new(),
+        };
+        conversation.apply(started, now);
+        let lost = AgentEvent::Exited {
+            reason: ExitReason::SessionNotFound,
+        };
+        conversation.apply(lost, now);
+        assert!(!conversation.can_continue());
+        assert!(!conversation.loss_said());
     }
 
     #[test]

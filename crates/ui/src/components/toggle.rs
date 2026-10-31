@@ -1,15 +1,11 @@
-//! Toggle: a 24 pt button that is on or off, such as M and S of a track or `Freeze` of a reverb.
-//! 28 pt wide for a letter or a glyph and as wide as its word otherwise. The arm toggle of an
-//! audio track is a 10 pt circle in a 24 pt square, the size of an icon of a card header, hollow
-//! while off and filled while on ([`Toggle::dot`]). The automation toggle of a track is an icon
-//! in the same square ([`Toggle::icon`]), wider when it holds a count. Off it is `alpha/5` with
-//! muted text. On it is white at 10 %, or its colour at 16 % with that colour as text: mute is
-//! peach and solo yellow, the one place a control fills with colour.
+//! Toggle: a button that is on or off, such as M and S of a track or `Freeze` of a reverb. Its
+//! face is a word, a circle ([`Toggle::dot`]) or an icon ([`Toggle::icon`]). On, it may take a
+//! colour ([`Toggle::color`]): mute is peach and solo yellow, the one place a control fills with
+//! colour.
 //!
 //! Controlled: the caller gives `on` and hears the new state. A click toggles it, and so do
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
-//! plays and pauses first, as it does on any focused button. The ring shows only when the
-//! focus came from the keyboard. The focus handle is kept in element state under the id.
+//! plays and pauses first, as it does on any focused button.
 
 use std::rc::Rc;
 
@@ -30,7 +26,7 @@ const DOT: f32 = 10.;
 /// The glyph of [`Toggle::icon`].
 const GLYPH: f32 = 14.;
 
-type ChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 struct ToggleState {
     focus_handle: FocusHandle,
@@ -59,8 +55,8 @@ pub struct Toggle {
     color: Option<Hsla>,
     disabled: bool,
     tab_stop: bool,
-    tooltip: Option<SharedString>,
-    on_change: Option<ChangeHandler>,
+    tooltip: Option<Tooltip>,
+    on_click: Option<ClickHandler>,
 }
 
 impl Toggle {
@@ -74,7 +70,7 @@ impl Toggle {
             disabled: false,
             tab_stop: true,
             tooltip: None,
-            on_change: None,
+            on_click: None,
         }
     }
 
@@ -119,8 +115,8 @@ impl Toggle {
         self
     }
 
-    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(text.into());
+    pub fn tooltip(mut self, tooltip: Tooltip) -> Self {
+        self.tooltip = Some(tooltip);
         self
     }
 
@@ -130,8 +126,14 @@ impl Toggle {
         self
     }
 
-    pub fn on_change(mut self, f: impl Fn(bool, &mut Window, &mut App) + 'static) -> Self {
-        self.on_change = Some(Rc::new(f));
+    pub fn on_change(self, f: impl Fn(bool, &mut Window, &mut App) + 'static) -> Self {
+        let on = self.on;
+        self.on_click(move |_, window, cx| f(!on, window, cx))
+    }
+
+    /// As [`Toggle::on_change`], for a caller that needs the click, such as its modifiers.
+    pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Rc::new(f));
         self
     }
 }
@@ -173,7 +175,7 @@ impl RenderOnce for Toggle {
             Face::Label(_) => None,
         };
         let on = self.on;
-        let on_change = self.on_change.filter(|_| !disabled);
+        let on_click = self.on_click.filter(|_| !disabled);
         // For tests, which find a toggle by its id: `toggle-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
 
@@ -204,16 +206,16 @@ impl RenderOnce for Toggle {
             .font_weight(FontWeight::MEDIUM)
             .text_color(text)
             .when(disabled, |d| d.opacity(0.4).cursor_not_allowed())
-            .when_some(on_change, |d, on_change| {
+            .when_some(on_click, |d, on_click| {
                 d.cursor_pointer()
                     .track_focus(&focus_handle)
                     .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                         state.update(cx, |state, cx| state.keyboard_focus.pressed(cx));
                     })
-                    .on_click(move |_: &ClickEvent, window, cx| on_change(!on, window, cx))
+                    .on_click(move |event, window, cx| on_click(event, window, cx))
             })
-            .when_some(self.tooltip, |toggle, text| {
-                toggle.tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
+            .when_some(self.tooltip, |toggle, tooltip| {
+                toggle.tooltip(move |_, cx| tooltip.clone().view(cx))
             })
             .map(|toggle| match self.face {
                 Face::Label(label) => toggle.child(label),

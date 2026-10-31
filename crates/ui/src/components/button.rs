@@ -1,6 +1,5 @@
 //! Button: `primary`, `subtle`, `ghost` plus colour variants (solid, subtle, ghost) taking any
-//! accent. Heights 24/28/32 px, optional icon, icon-only squares, pill `rounded`, disabled at 40%
-//! opacity.
+//! accent, with an optional icon, icon-only squares and a pill shape.
 
 use std::rc::Rc;
 
@@ -10,6 +9,7 @@ use gpui::{
 };
 
 use crate::components::icon::Icon;
+use crate::focus::KeyboardFocus;
 use crate::theme::ActiveTheme;
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
@@ -95,7 +95,15 @@ pub struct Button {
     rounded: bool,
     disabled: bool,
     focus_handle: Option<FocusHandle>,
+    tab_stop: bool,
     on_click: Option<ClickHandler>,
+}
+
+/// Kept under the button's id: its own focus handle, for [`Button::tab_stop`], and whether a
+/// focus came from the keyboard.
+struct ButtonState {
+    focus_handle: FocusHandle,
+    keyboard_focus: KeyboardFocus,
 }
 
 impl Button {
@@ -110,6 +118,7 @@ impl Button {
             rounded: false,
             disabled: false,
             focus_handle: None,
+            tab_stop: false,
             on_click: None,
         }
     }
@@ -132,7 +141,7 @@ impl Button {
         self
     }
 
-    /// Lucide icon name, drawn before the label.
+    /// Icon name, drawn before the label.
     pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
         self.icon = Some(icon.into());
         self
@@ -152,6 +161,12 @@ impl Button {
     /// Give the button a focus handle so it can be reached by keyboard and show a focus ring.
     pub fn focus_handle(mut self, handle: &FocusHandle) -> Self {
         self.focus_handle = Some(handle.clone());
+        self
+    }
+
+    /// A tab stop with a focus handle of its own, for a button whose caller keeps none.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
         self
     }
 
@@ -181,7 +196,6 @@ struct Look {
     hover_fg: Hsla,
 }
 
-/// Colours per variant, following the source design system's button variants.
 fn look(variant: ButtonVariant, cx: &App) -> Look {
     let theme = cx.theme();
     let clear = Hsla::transparent_black();
@@ -233,7 +247,20 @@ fn look(variant: ButtonVariant, cx: &App) -> Look {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let own = self.tab_stop && !self.disabled;
+        let focus = (self.focus_handle.is_some() || own).then(|| {
+            let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| ButtonState {
+                focus_handle: cx.focus_handle().tab_stop(true),
+                keyboard_focus: KeyboardFocus::default(),
+            });
+            let handle =
+                (self.focus_handle.clone()).unwrap_or_else(|| state.read(cx).focus_handle.clone());
+            (handle, state)
+        });
+        let ring_shows = (focus.as_ref()).is_some_and(|(handle, state)| {
+            state.read(cx).keyboard_focus.shows_ring(handle, window)
+        });
         let Look {
             bg,
             fg,
@@ -241,7 +268,12 @@ impl RenderOnce for Button {
             hover_bg,
             hover_fg,
         } = look(self.variant, cx);
-        let ring = cx.theme().lavender;
+        // A solid lavender button has the ring's colour already, so its focus is bright.
+        let ring = if border == cx.theme().lavender {
+            cx.theme().gray_950
+        } else {
+            cx.theme().lavender
+        };
         let size = self.size;
         let disabled = self.disabled;
         let icon_only = self.label.is_none();
@@ -281,9 +313,13 @@ impl RenderOnce for Button {
                     .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
                     .active(move |s| s.bg(hover_bg.opacity(0.7)).text_color(hover_fg))
             })
-            .when_some(self.focus_handle.as_ref(), |b, handle| {
-                b.track_focus(handle).focus(|s| s.border_color(ring))
+            .when_some(focus, |b, (handle, state)| {
+                b.track_focus(&handle)
+                    .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                        state.update(cx, |state, cx| state.keyboard_focus.pressed(cx));
+                    })
             })
+            .when(ring_shows, |b| b.border_color(ring))
             .when_some(self.icon, |b, name| {
                 b.child(Icon::new(name).size(icon_size))
             })

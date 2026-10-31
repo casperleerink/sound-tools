@@ -79,8 +79,8 @@ const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
 /// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
-const WINDOW_WIDTH: f32 = 1470.;
-const WINDOW_HEIGHT: f32 = 920.;
+pub(crate) const WINDOW_WIDTH: f32 = 1470.;
+pub(crate) const WINDOW_HEIGHT: f32 = 920.;
 /// The smallest window: the project menu beside a tool's page with room for a card.
 const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
@@ -128,12 +128,21 @@ pub struct LeftPanel {
     busy: bool,
     /// Where the window can write words for the agent, such as the merge of a template.
     composer: Option<Box<dyn Fn(&App) -> Entity<TextInput>>>,
+    /// Sends the agent a message as if typed, and says whether it went.
+    ask: Option<Asks>,
     _observing: Subscription,
 }
+
+type Asks = Box<dyn Fn(&str, &mut Window, &mut App) -> bool>;
 
 impl LeftPanel {
     pub fn with_composer(mut self, composer: impl Fn(&App) -> Entity<TextInput> + 'static) -> Self {
         self.composer = Some(Box::new(composer));
+        self
+    }
+
+    pub fn with_ask(mut self, ask: impl Fn(&str, &mut Window, &mut App) -> bool + 'static) -> Self {
+        self.ask = Some(Box::new(ask));
         self
     }
 
@@ -159,6 +168,7 @@ impl LeftPanel {
             },
             view: view.into(),
             composer: None,
+            ask: None,
             _observing: observing,
         }
     }
@@ -186,7 +196,6 @@ pub struct Shell {
     /// The machine's live input and the meter of the device, see [`LiveInput`].
     live: Entity<LiveInput>,
     focus_handle: FocusHandle,
-    dismiss_focus: FocusHandle,
     left_panel: Option<LeftPanel>,
     left_panel_open: bool,
     /// See [`LeftPanelSlot::remembered`].
@@ -307,7 +316,6 @@ impl Shell {
             main: None,
             title_bar: None,
             focus_handle,
-            dismiss_focus: cx.focus_handle().tab_stop(true),
             left_panel,
             left_panel_open,
             left_panel_file,
@@ -591,13 +599,26 @@ impl Shell {
                 .max_w_full()
         });
         let problems = session.project().problems().len();
-        let files = match problems {
-            0 => None,
-            1 => Some("1 file is not live. Ask the agent to fix it.".to_string()),
-            count => Some(format!(
+        let agent = (self.left_panel.as_ref()).is_some_and(|panel| panel.ask.is_some());
+        let files = match (problems, agent) {
+            (0, _) => None,
+            (1, true) => Some("1 file is not live.".to_string()),
+            (count, true) => Some(format!("{count} files are not live.")),
+            (1, false) => Some("1 file is not live. Ask the agent to fix it.".to_string()),
+            (count, false) => Some(format!(
                 "{count} files are not live. Ask the agent to fix them."
             )),
         };
+        let fix = agent.then(|| {
+            let label = if problems == 1 {
+                "Ask the agent to fix it"
+            } else {
+                "Ask the agent to fix them"
+            };
+            Button::new("problems-ask", label)
+                .debug_selector(|| "problems-ask".to_string())
+                .on_click(cx.listener(|shell, _, window, cx| shell.ask_to_fix(window, cx)))
+        });
         let error = session.notice().cloned();
         // Top-right, under the title row: clear of the transport, and of the left panel and the
         // left edge of the main view, where a song has its track headers. Not in the
@@ -618,14 +639,17 @@ impl Shell {
             .children(update)
             .children(self.template_notice(cx))
             .children(files.map(|files| {
-                Notice::new("problems", files)
+                let notice = Notice::new("problems", files)
                     .tone(NoticeTone::Warning)
-                    .max_w_full()
+                    .max_w_full();
+                match fix {
+                    Some(fix) => notice.action(fix),
+                    None => notice,
+                }
             }))
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()
-                    .dismiss_focus(&self.dismiss_focus)
                     .on_dismiss(cx.listener(|shell, _, _, cx| {
                         shell
                             .session
@@ -689,6 +713,21 @@ impl Shell {
             input.update(cx, |input, cx| input.set_text(ask, cx));
         }
         self.focus_left_panel(window, cx);
+        cx.notify();
+    }
+
+    /// Asks the agent to fix the files that are not live, as the line under its turn does: the
+    /// panel opens on the thread and the message goes. When the agent cannot take a message
+    /// now, the panel opens on what it is doing.
+    fn ask_to_fix(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_focus(window, cx);
+        if !self.left_panel_open {
+            self.set_left_panel_open(true, window, cx);
+        }
+        let ask = (self.left_panel.as_ref()).and_then(|panel| panel.ask.as_ref());
+        if !ask.is_some_and(|ask| ask(sound_agent::FIX_NOT_LIVE, window, cx)) {
+            self.focus_left_panel(window, cx);
+        }
         cx.notify();
     }
 
@@ -779,6 +818,7 @@ impl Focusable for Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Shell, "window");
         let theme = cx.theme();
         let (background, text) = (theme.gray_100, theme.gray_950);
         let main = match &self.main {

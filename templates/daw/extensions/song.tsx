@@ -1,14 +1,15 @@
 import { boolean, choice, Fragment, h, list, memo, Show, text, TitleBar, tool, untrack, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
-import { ClipEditor, lengthOf, type EditorMemory } from "./clip-editor";
+import { ClipEditor, type EditorMemory } from "./clip-editor";
 import type { Clipboard } from "./song-clips";
 import { songKey } from "./song-keys";
 import { Mixer } from "./song-mixer";
-import { BEAT, clipsOf, colourOf, COLOR, pageOf, regionsOf, titleOf } from "./song-page";
+import { BEAT, colourOf, COLOR, pageOf, titleOf } from "./song-page";
 import { MasterPanel, Rack } from "./song-panel";
 import { Ruler, SectionName, type Mark } from "./song-ruler";
+import { TempoLane } from "./song-tempo";
 import { ClipName, Timeline } from "./song-timeline";
-import { Heads, MasterRow, notesTrackOf, Returns, toggleRecordingOf } from "./song-tracks";
+import { EmptySong, Heads, MasterRow, notesTrackOf, Returns, toggleRecordingOf } from "./song-tracks";
 import { tape } from "./tape";
 import { track } from "./track";
 import { Transport } from "./transport";
@@ -39,6 +40,8 @@ type Memory = {
   renaming: string | null;
   renamingClip: string | null;
   clipboard: Clipboard | null;
+  /** Whether the tempo shows as a line under the ruler. */
+  tempoLane: boolean;
   /** The tracks whose automation lanes show under them, and each lane's range by `track/target`. */
   lanes: Set<string>;
   ranges: Record<string, MovedNumber>;
@@ -60,12 +63,12 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner; cmd held drags off it. Clips and regions are one selection. Drag one to move the chosen (alt copies them, up and down to another track of their kind; the automation under them goes along, a device's lane on its own track only), drag either end of a clip to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose what is there, shift- or cmd-click to add one; right-click it to cut, copy, duplicate, rename, render or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips and regions, cut and paste with the automation under them, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, renders it, or deletes it; a render (Render to audio track, with or without the tail) plays the track alone, after its effects, from its first chosen clip to its last (all its clips from a track's menu), onto a new audio track `audio-*` under it that takes the track's fader, sends, their automation, solo and post-fader sidechains, and mutes the track; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: press to add a point, chosen, and drag on to move it; drag a point to move it between its neighbours, alt-drag to erase the points it covers; delete removes the chosen one and alt-click any; the last point takes its lane along. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change or a time signature, which the transport then changes, or a section, T adds a tempo change at the playhead, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region chosen alone: an edge trims it, its handles change its gain and fades, alt-up and alt-down its gain. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`: into its effects, out of them or out of its fader; a compressor's or a gate's card picks it behind its expand.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner; cmd held drags off it. Clips and regions are one selection. Drag one to move the chosen (alt copies them, up and down to another track of their kind; the automation under them goes along, a device's lane on its own track only), drag either end of a clip to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose what is there, shift- or cmd-click to add one; right-click it to cut, copy, duplicate, rename, render or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips and regions, cut and paste with the automation under them, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it; escape with nothing chosen closes what shows below, a panel or the mixer. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, renders it, or deletes it; a render (Render to audio track, with or without the tail) plays the track alone, after its effects, from its first chosen clip to its last (all its clips from a track's menu), onto a new audio track `audio-*` under it that takes the track's fader, sends, their automation, solo and post-fader sidechains, and mutes the track; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: press to add a point, chosen, and drag on to move it; drag a point to move it between its neighbours, alt-drag to erase the points it covers; delete removes the chosen one and alt-click any; the last point takes its lane along. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change or a time signature, which the transport then changes, or a section, T adds a tempo change at the playhead, drag over it to repeat a range; the tempo toggle left of it shows the tempo changes as a line under it, chosen and removed as in the ruler; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region chosen alone: an edge trims it, its handles change its gain and fades, alt-up and alt-down its gain. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`: into its effects, out of them or out of its fader; a compressor's or a gate's card picks it behind its expand.",
   state: fields,
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), below: null, armed: new Set(), recording: null, track: null, hovered: null, renaming: null, renamingClip: null,
-    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {},
+    clipboard: null, tempoLane: false, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {},
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r", "enter", "cmd-down", "t"],
@@ -122,12 +125,6 @@ export const song = tool({
     memo(() => {
       if (!clock.playing && untrack(() => memory.recording) !== null) untrack(toggleRecording);
     });
-    // Where what the song holds ends: the strip of the transport goes this far.
-    const held = memo(() => {
-      const clips = rows().flatMap((each) => clipsOf(each).map((clip) => clip.state.start + lengthOf(clip.state)));
-      const regions = rows().flatMap((each) => regionsOf(each).map((region) => region.state.start));
-      return Math.max(0, ...clips, ...regions);
-    });
 
     const openKey = () => (memory.below?.kind === "editor" ? memory.below.clip : null);
     const open = () => {
@@ -165,7 +162,7 @@ export const song = tool({
     return (
       <div style={{ grow: true, background: COLOR.back }}>
         <TitleBar>
-          <Transport clock={clock} record={{ on: () => memory.recording !== null, press: toggleRecording }} end={held} />
+          <Transport clock={clock} record={{ on: () => memory.recording !== null, press: toggleRecording }} />
         </TitleBar>
         <div>
           <div style={{ direction: "row", gap: 8, align: "center" }}>
@@ -179,7 +176,18 @@ export const song = tool({
           <div style={{ grow: true }}>
             <Ruler page={page} />
             <div style={{ height: 1, background: "alpha/5", keep: true }} />
-            <Timeline page={page} />
+            <Show when={() => memory.tempoLane}>
+              {() => (
+                <>
+                  <TempoLane page={page} />
+                  <div style={{ height: 1, background: "alpha/5", keep: true }} />
+                </>
+              )}
+            </Show>
+            <div style={{ grow: true }}>
+              <Timeline page={page} />
+              <Show when={() => rows().length === 0}>{() => <EmptySong page={page} />}</Show>
+            </div>
           </div>
         </div>
         <Show when={() => returns().length > 0}>{() => <Returns page={page} />}</Show>

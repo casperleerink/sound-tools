@@ -1,5 +1,4 @@
-//! Shifts the pitch of one voice and keeps its length: what pitch correction plays, and what a
-//! region that plays faster or slower than its file can feed.
+//! Shifts the pitch of one voice and keeps its length: what pitch correction plays.
 //!
 //! The sound goes into a ring and a head reads it back at `ratio` times its speed, 2 an octave
 //! up. A head that reads faster than the sound comes in would catch up with it, and a slower
@@ -8,8 +7,8 @@
 //! from where it was over [`FADE`] of a period. A jump of one period lands on the same part of
 //! the wave, so the fade joins two nearly equal sounds: whole periods play twice or not at all,
 //! and the length stays. When the readings lose the period, it holds for [`HOLD_PERIODS`] of
-//! itself, as through a short consonant; after that a jump takes the last period heard, 440 Hz
-//! before any.
+//! itself, as through a short consonant; after that a jump takes the last period heard, or
+//! [`UNHEARD_HZ`] before any.
 //!
 //! Every frame comes with what a pitch tracker read, which describes the sound some frames
 //! back ([`Shift::age`]). The shifter keeps each reading with the frame it describes, so a
@@ -85,7 +84,7 @@ const LEVEL_SECONDS: f64 = 0.01;
 const TILT_HZ: f64 = 360.0;
 
 /// Reflection factors of the envelope, and frames from one envelope to the next, per step of
-/// the rate: 1 under 50 kHz, 2 under 100 kHz, else 4. So both are the same in time.
+/// [`rate_steps`], so both are the same in time at any rate.
 const ORDER: usize = 50;
 const DESIGN_FRAMES: usize = 128;
 /// How many envelopes are averaged.

@@ -25,3 +25,21 @@ passes `reverb.py` when, against A, for every setting:
 - echo density at 0.95 no later than A + 20 ms
 - correlation per band within ±0.1
 - the highest narrow tail peak at most A + 3 dB (ringing)
+
+## The window
+
+```sh
+python3 tooling/perf/ui.py                        # the song of the DAW template, 8 tracks of 32 clips
+python3 tooling/perf/ui.py path/to/project        # any project; the song's own scenarios are skipped
+python3 tooling/perf/ui.py --against before.json  # and compares with a saved run
+```
+
+It runs each scenario of `crates/runtime/tests/window/tools/scenarios.rs` in a new test window
+(offline engine, simulated polls, the system's text, no GPU) and writes JSON: per update, time,
+draw time and allocations of the window's thread; renders and own render time per part and
+instance; gpui's self time per view type (phases of 0.5 ms or more); nodes per card. Renders
+and allocations repeat exactly; times move about 15% between runs.
+
+It builds the `perf` profile with the runtime's `perf` feature, which rebuilds gpui, so
+`cargo verify` never sets it. Rejected: `#[gpui::bench]`, which times one view under Criterion
+in real time; the scenarios need Bun, the offline engine and polls stepped by hand.

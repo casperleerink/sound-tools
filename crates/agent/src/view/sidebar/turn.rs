@@ -11,7 +11,10 @@ use super::{Agent, Sidebar};
 use crate::conversation::request_label;
 use crate::store::{Line, SavedThread, Write};
 use crate::view::onboarding::Setup;
-use crate::{AgentEvent, ApprovalAnswer, Events, Installed, Thread, ThreadOptions, TurnOutcome};
+use crate::{
+    AgentEvent, ApprovalAnswer, Attachment, Events, Installed, Message, Thread, ThreadOptions,
+    TurnOutcome,
+};
 
 /// Events that come within one frame are applied together, so a fast stream of text measures
 /// the growing entry once a frame and not once a token.
@@ -21,22 +24,30 @@ impl Sidebar {
     /// Shows the composer's message and opens its request. [`Self::send`] calls it before the
     /// message goes to the agent; a test calls it to replay a recorded turn with no process.
     pub fn begin(&mut self, message: &str, cx: &mut Context<Self>) {
-        self.begin_at(message, SystemTime::now(), cx);
+        self.begin_at(message, Vec::new(), SystemTime::now(), cx);
     }
 
-    /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
-    /// worked.
-    pub fn begin_at(&mut self, message: &str, started: SystemTime, cx: &mut Context<Self>) {
+    /// [`Self::begin`] with the names of what the message has attached, and the turn started
+    /// at `started`, so a snapshot shows how long it worked.
+    pub fn begin_at(
+        &mut self,
+        message: &str,
+        attachments: Vec<String>,
+        started: SystemTime,
+        cx: &mut Context<Self>,
+    ) {
         let label = request_label(message);
         self.session
             .update(cx, |session, _| session.begin_request(&label));
         self.problems_before = self.session.read(cx).project().problems();
         self.just_ended = None;
-        self.conversation.send(message, started);
+        self.conversation
+            .send(message, attachments.clone(), started);
         let saved = self.saved.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
             at: started,
             message: message.to_string(),
+            attachments,
         };
         let writes = [
             Write::Current(Some(saved.clone())),
@@ -151,33 +162,72 @@ impl Sidebar {
         cx.notify();
     }
 
+    /// The composer's message, with what it has attached.
     pub(super) fn send(&mut self, cx: &mut Context<Self>) {
         let message = self.input.read(cx).text().trim().to_string();
+        if message.is_empty() || self.attachments_reading > 0 || !self.started(cx) {
+            return;
+        }
+        self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.history.reset();
+        let (names, attachments) = std::mem::take(&mut self.attachments)
+            .into_iter()
+            .map(|attached| (attached.read.name, attached.read.attachment))
+            .unzip();
+        self.deliver(message, names, attachments, cx);
+    }
+
+    /// `message` with nothing attached, and whether it went. The composer keeps what is in it.
+    pub(super) fn send_text(&mut self, message: String, cx: &mut Context<Self>) -> bool {
+        let started = self.started(cx);
+        if started {
+            self.deliver(message, Vec::new(), Vec::new(), cx);
+        }
+        started
+    }
+
+    /// Whether a message can go now, with the agent started for it.
+    fn started(&mut self, cx: &mut Context<Self>) -> bool {
         let ready = self.loading.is_none()
             && self.opening.is_none()
             && self.settings.read(cx).is_read()
             && self.conversation.can_continue();
-        if message.is_empty() || self.conversation.is_working() || !ready {
-            return;
+        if self.conversation.is_working() || !ready {
+            return false;
         }
-        if self.agent.is_none() {
-            let (Setup::Ready { .. }, Some(installed)) = (&self.setup, &self.installed) else {
-                return;
-            };
-            match self.start(installed.clone(), cx) {
-                Ok(agent) => self.attach(agent),
-                Err(error) => {
-                    let name = self.provider.name();
-                    self.conversation
-                        .notice(format!("{name} did not start: {error}"));
-                    self.show(None, cx);
-                    return;
-                }
+        if self.agent.is_some() {
+            return true;
+        }
+        let (Setup::Ready { .. }, Some(installed)) = (&self.setup, &self.installed) else {
+            return false;
+        };
+        match self.start(installed.clone(), cx) {
+            Ok(agent) => {
+                self.attach(agent);
+                true
+            }
+            Err(error) => {
+                let name = self.provider.name();
+                self.conversation
+                    .notice(format!("{name} did not start: {error}"));
+                self.show(None, cx);
+                false
             }
         }
-        self.input.update(cx, |input, cx| input.set_text("", cx));
-        self.history.reset();
-        self.begin(&message, cx);
+    }
+
+    fn deliver(
+        &mut self,
+        message: String,
+        names: Vec<String>,
+        attachments: Vec<Attachment>,
+        cx: &mut Context<Self>,
+    ) {
+        self.begin_at(&message, names, SystemTime::now(), cx);
+        let message = Message {
+            text: message,
+            attachments,
+        };
         let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {
             let outcome = TurnOutcome::Failed {

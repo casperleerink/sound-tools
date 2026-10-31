@@ -1,16 +1,12 @@
-//! Device card: one device of a rack, 192 pt tall. A 32 pt header, a body of two rows of 72 pt
-//! and 16 pt under it. The body is a display at the left, 8 pt of air, then columns of cells,
-//! 16 pt from each side of the card. So a card is 32 pt plus its display plus 8 plus 56 per
-//! column wide. Expanding it shows the columns it hides to the right of a hairline: the card
-//! gets wider and never taller. A card with much behind expand, such as the Wavetable, hides
-//! [`Section`]s: each a display and its columns, or a list, after a hairline of its own, and
-//! picks which of them show with tabs in its header.
+//! Device card: one device of a rack, always [`CARD_HEIGHT`] tall. The body is a display at the
+//! left, then columns of cells in two rows. Expanding it shows the columns it hides to the right
+//! of a hairline: the card gets wider and never taller. A card with much behind expand, such as
+//! the Wavetable, hides [`Section`]s, each after a hairline of its own, and picks the page of
+//! them that shows with tabs in its header.
 //!
-//! The header: the title at 16 pt from the left, which is the picker of the slot in a rack, and
-//! at the right, 8 pt from the edge, icons in 24 pt targets 4 pt apart: expand, power and close,
-//! each only when the owner gives it. Left of them, while the card is expanded, its tabs: a card
-//! with many sections, such as the Wavetable, shows one page of them at a time. Power off draws the glyph and the title muted and the body
-//! at 40 %.
+//! The header: the title, which is the picker of the slot in a rack, and at the right the
+//! expand, power and close icons, each only when the owner gives it. Power off mutes the title
+//! and the body.
 //!
 //! The card knows no device. It shows what it is given and reports clicks; whether it is
 //! expanded is the owner's interface state and whether it is on the owner's record.
@@ -29,9 +25,12 @@ use gpui::{
     StyleRefinement, Window, div, prelude::*, px,
 };
 
+use sound_core::InstanceId;
+
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
+use crate::renders::{self, Part};
 use crate::theme::ActiveTheme;
 
 pub const CARD_HEIGHT: f32 = 192.;
@@ -68,6 +67,8 @@ type SidechainColumn = Rc<dyn Fn(&App) -> Column>;
 /// whole card with [`CardFrame::card`] and add its display and cells.
 #[derive(Clone)]
 pub struct CardFrame {
+    /// The device it shows.
+    instance: SharedString,
     /// Tells this card from every other in the rack, so that two cards with controls of one
     /// name keep a drag and a focus each, and names its icons for tests: `<id>-close`.
     id: SharedString,
@@ -79,9 +80,10 @@ pub struct CardFrame {
 }
 
 impl CardFrame {
-    pub fn new(id: impl Into<SharedString>, title: impl Into<AnyView>) -> Self {
+    pub fn new(instance: &InstanceId, title: impl Into<AnyView>) -> Self {
         Self {
-            id: id.into(),
+            instance: instance.as_str().to_string().into(),
+            id: format!("card-{instance}").into(),
             title: title.into(),
             power: None,
             close: None,
@@ -122,6 +124,7 @@ impl CardFrame {
     /// A card with the id, the title, and the power and close icons of this frame. The view
     /// adds the rest.
     pub fn card(&self) -> DeviceCard {
+        renders::count(Part::Card, &self.instance);
         // The trigger brings its own padding, so it moves left by that much and its text lands
         // where a card title is.
         let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());

@@ -1,11 +1,6 @@
-//! What a composer can put in a device slot of a rack, and what to call what is in one.
-//!
-//! A rack of slots knows no instrument and no plugin, so it has to be told. This registry is that
-//! telling: a list of offers, and a name per tool. Whoever makes the window fills it, as it
+//! What a composer can put in a device slot of a rack, and what to call what is in one. A rack
+//! knows no instrument and no plugin, so whoever makes the window fills this registry, as it
 //! fills [`crate::Views`], and installs it as a GPUI global.
-//!
-//! Provisional and small, like the view registry. An offer is asked for by what its device takes
-//! in, see [`Takes`].
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -377,7 +372,8 @@ impl Devices {
         devices.notes.iter().flat_map(|list| list()).collect()
     }
 
-    /// Everything on offer that takes `takes`, from the installed registry.
+    /// Everything on offer that takes `takes`, from the installed registry, by [`OfferGroup`]
+    /// and in the order of its source within a group.
     pub fn offered(takes: Takes, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {
             return Vec::new();
@@ -386,12 +382,14 @@ impl Devices {
             Takes::Notes => &devices.instruments,
             Takes::Audio => &devices.effects,
         };
-        sources.iter().flat_map(|list| list()).collect()
+        let mut offers: Vec<DeviceOffer> = sources.iter().flat_map(|list| list()).collect();
+        offers.sort_by_key(|offer| offer.group);
+        offers
     }
 
     /// A number that changes when the offers do. A view builds its menus once, because a
     /// source may have to look at the machine, and builds them again when this changes; the
-    /// plugin host looks for the plugins of this Mac on a thread of its own, so a menu built
+    /// plugin host looks for the plugins of this machine on a thread of its own, so a menu built
     /// while that runs holds a part of the list and the line that says so.
     ///
     /// It reads a counter per source and nothing else, so a poll may ask on every frame.

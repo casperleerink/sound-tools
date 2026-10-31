@@ -77,8 +77,8 @@ fn the_agent_adds_a_clip_as_one_undo_step() {
             Some(Some(AgentEvent::TextDone { text })) => println!("text: {text}"),
             // "Ask before commands" asks even for a command that only reads, such as `find`.
             // The composer would allow it.
-            Some(Some(AgentEvent::ApprovalRequested { id, title })) => {
-                println!("allowed: {title}");
+            Some(Some(AgentEvent::ApprovalRequested { id, title, command })) => {
+                println!("allowed: {title} {}", command.unwrap_or_default());
                 thread.answer(id, ApprovalAnswer::Allow).unwrap();
             }
             Some(Some(AgentEvent::TurnEnded { outcome })) => {

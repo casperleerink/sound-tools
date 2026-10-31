@@ -285,7 +285,7 @@ impl Events {
 
     fn command(&mut self, command: Command) {
         match command {
-            Command::Send(text) => self.outbox.push_back(Outgoing::user(text)),
+            Command::Send(message) => self.outbox.push_back(Outgoing::user(message)),
             Command::Interrupt => self.request(Request::Interrupt),
             Command::Answer(approval, answer) => {
                 // An approval the turn already ended has nobody waiting for the answer.

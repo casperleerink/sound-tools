@@ -7,10 +7,17 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# What `tooling/perf/ui.py` measures the window with: gpui's frame and view timings, its
+# allocation counter and the real text system. It rebuilds gpui, so `cargo verify` never sets it.
+perf = ["gpui/bench-support", "dep:bench_metrics", "dep:criterion", "dep:gpui_apple"]
+
 [dependencies]
 analyzer.workspace = true
 anyhow.workspace = true
+bench_metrics = { workspace = true, optional = true }
 chrono.workspace = true
+criterion = { workspace = true, optional = true }
 compressor.workspace = true
 delay.workspace = true
 drum-pad.workspace = true
@@ -46,6 +53,13 @@ tone.workspace = true
 utility.workspace = true
 vocoder.workspace = true
 wavetable.workspace = true
+
+# `--screenshot` draws the window offscreen, which gpui offers under `test-support` and on
+# macOS only.
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+gpui_apple = { workspace = true, optional = true }
+gpui_platform = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
