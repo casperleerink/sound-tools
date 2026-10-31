@@ -9,17 +9,16 @@ use gpui::{
     ScrollHandle, SharedString, Size, StyledText, Window, canvas, div, prelude::*, px,
 };
 use serde_json::Value;
+use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
-use sound_ui::components::meter::Meter;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::TabStop;
-use sound_ui::{ActiveTheme, Metering};
 
 use crate::feeds::Feeds;
 use crate::live::{DragNumbers, Sources, SpaceView};
 use crate::tools::ToolInfo;
-use crate::tree::{self, DivProps, IconProps, InputProps, MeterProps, NodeTable, Props, TextProps};
+use crate::tree::{self, DivProps, IconProps, InputProps, NodeTable, Props, TextProps};
 
 use super::controls::{Control, Keys};
 use super::input::{Hears, Hovers, hears_hover};
@@ -50,7 +49,6 @@ pub(super) struct Drawing<'a, 'b> {
     /// The size of the window, which a dialog's backdrop covers.
     pub(super) viewport: Size<Pixels>,
     pub(super) embedded: &'a HashMap<u64, Embedded>,
-    pub(super) meters: &'a RefCell<HashMap<u64, Metering>>,
     pub(super) placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) hovers: Rc<RefCell<Hovers>>,
     pub(super) scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
@@ -123,55 +121,6 @@ impl Drawing<'_, '_> {
             Props::Segmented(props) => self.segmented(id, props, index),
             Props::Notice(props) => self.notice(id, props, index),
             Props::Overlay(props) => self.overlay(id, props, &entry.children, index),
-            Props::Meter(MeterProps {
-                of,
-                input,
-                horizontal,
-                length,
-                ..
-            }) => {
-                let amplitudes = match (of, input) {
-                    // One channel shows on both bars.
-                    (_, Some(channels)) => {
-                        let level = |at: usize| {
-                            let channel = channels.get(at).or(channels.first());
-                            channel
-                                .and_then(|channel| self.feeds.input.get(*channel))
-                                .copied()
-                        };
-                        [level(0).unwrap_or(0.0), level(1).unwrap_or(0.0)]
-                    }
-                    (Some(name), None) => self.feeds.peaks.get(name).copied().unwrap_or_default(),
-                    (None, None) => self.feeds.output,
-                };
-                let mut meters = self.meters.borrow_mut();
-                let metering = meters.entry(id).or_default();
-                metering.read_amplitudes(amplitudes);
-                if !metering.level().rests() {
-                    self.feeds.moving.set(true);
-                }
-                let card = self.cx.entity().downgrade();
-                let meter = Meter::new(ElementId::Integer(id), metering.level()).on_clear_clip(
-                    move |_, cx| {
-                        card.update(cx, |card, cx| {
-                            if let Some(metering) = card.meters.borrow_mut().get_mut(&id) {
-                                metering.clear_clip();
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-                    },
-                );
-                let meter = if *horizontal == Some(true) {
-                    meter.horizontal()
-                } else {
-                    meter
-                };
-                match length {
-                    Some(length) => meter.length(*length).into_any_element(),
-                    None => meter.into_any_element(),
-                }
-            }
             Props::Icon(IconProps { name, size, color }) => {
                 let color = color.map_or(self.cx.theme().gray_950, |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())

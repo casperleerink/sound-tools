@@ -153,18 +153,6 @@ props! {
 }
 
 props! {
-    /// A stereo meter of the app: the peaks of `of` as `now.peak` names them, of the channels of
-    /// the audio input `input` names, or of what the device plays.
-    MeterProps / MeterChange {
-        key: String,
-        of: String,
-        input: Vec<usize>,
-        horizontal: bool,
-        length: f32,
-    }
-}
-
-props! {
     /// A switch of the app: a letter, an icon with a count, or a dot, coloured while `on`.
     ToggleProps / ToggleChange {
         key: String,
@@ -352,7 +340,6 @@ pub(crate) enum Props {
     Card(CardProps),
     Button(ButtonProps),
     Icon(IconProps),
-    Meter(MeterProps),
     Toggle(ToggleProps),
     Slider(SliderProps),
     Segmented(SegmentedProps),
@@ -372,7 +359,6 @@ pub(crate) enum Change {
     Card(CardChange),
     Button(ButtonChange),
     Icon(IconChange),
-    Meter(MeterChange),
     Toggle(ToggleChange),
     Slider(SliderChange),
     Segmented(SegmentedChange),
@@ -438,7 +424,6 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "card" => Props::Card(next(&mut seq, "props")?),
                         "button" => Props::Button(next(&mut seq, "props")?),
                         "icon" => Props::Icon(next(&mut seq, "props")?),
-                        "meter" => Props::Meter(next(&mut seq, "props")?),
                         "toggle" => Props::Toggle(next(&mut seq, "props")?),
                         "slider" => Props::Slider(next(&mut seq, "props")?),
                         "segmented" => Props::Segmented(next(&mut seq, "props")?),
@@ -465,7 +450,6 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "card" => Change::Card(next(&mut seq, "props")?),
                         "button" => Change::Button(next(&mut seq, "props")?),
                         "icon" => Change::Icon(next(&mut seq, "props")?),
-                        "meter" => Change::Meter(next(&mut seq, "props")?),
                         "toggle" => Change::Toggle(next(&mut seq, "props")?),
                         "slider" => Change::Slider(next(&mut seq, "props")?),
                         "segmented" => Change::Segmented(next(&mut seq, "props")?),
@@ -506,7 +490,6 @@ const FAMILIES: &[&str] = &[
     "card",
     "button",
     "icon",
-    "meter",
     "toggle",
     "slider",
     "segmented",
@@ -837,7 +820,6 @@ impl NodeTable {
                         (Props::Input(props), Change::Input(change)) => props.apply(change),
                         (Props::Button(props), Change::Button(change)) => props.apply(change),
                         (Props::Icon(props), Change::Icon(change)) => props.apply(change),
-                        (Props::Meter(props), Change::Meter(change)) => props.apply(change),
                         (Props::Toggle(props), Change::Toggle(change)) => props.apply(change),
                         (Props::Slider(props), Change::Slider(change)) => props.apply(change),
                         (Props::Segmented(props), Change::Segmented(change)) => {
@@ -950,15 +932,6 @@ impl NodeTable {
 fn uses_of(props: &Props) -> Uses {
     match props {
         Props::Shape(shape) => shape.uses(),
-        Props::Meter(MeterProps { of, input, .. }) => {
-            let mut uses = Uses::default();
-            match (of, input) {
-                (_, Some(_)) => uses.input = true,
-                (Some(name), None) => _ = uses.peaks.insert(name.clone()),
-                (None, None) => uses.output = true,
-            }
-            uses
-        }
         Props::Slider(SliderProps {
             value: Some(value), ..
         }) => {

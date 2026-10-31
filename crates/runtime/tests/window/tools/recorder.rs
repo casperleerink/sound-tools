@@ -18,7 +18,7 @@ use crate::song::song_files;
 use crate::support::SimulatedInput;
 use crate::support::open_folder_with;
 
-const STUDIO: &str = r#"import { h, PeakMeter, tool, type Declaration } from "./sdk";
+const STUDIO: &str = r#"import { h, Meter, tool, type Declaration } from "./sdk";
 
 tool({
   name: "studio",
@@ -40,7 +40,7 @@ tool({
       h("div", { key: "done", onClick: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
       h("div", { key: "arm-2", onClick: () => send({ child: "rec-2", number: "record" }, 1) }, "Arm 2"),
       h("div", { key: "done-2", onClick: () => send({ child: "rec-2", number: "record" }, 0) }, "Done 2"),
-      h(PeakMeter, { key: "input", input: [1] }),
+      h(Meter, { key: "input", peaks: { input: [1] } }),
     ),
   onTake: ({ update }, take) =>
     update("Record", ({ children }) => {

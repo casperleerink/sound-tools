@@ -29,7 +29,7 @@ use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::DropdownMenu;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::renders::{self, Part};
-use sound_ui::{ActiveTheme, ControlEdit, Metering, Session, Waveforms, every_poll};
+use sound_ui::{ActiveTheme, ControlEdit, Session, Waveforms, every_poll};
 
 use crate::bun::PageSize;
 use crate::feeds::Feeds;
@@ -108,8 +108,6 @@ pub(crate) struct TypeScriptCard {
     origin: Rc<Cell<Point<Pixels>>>,
     /// The title bar draws again alone, and reads the feeds for its frame.
     title_reads: bool,
-    /// How each meter node falls and holds its peak, by node.
-    meters: Rc<RefCell<HashMap<u64, Metering>>>,
     /// Where each node that hears a press was last laid out, by node, so a menu its press opens
     /// hangs under it.
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
@@ -412,7 +410,6 @@ impl TypeScriptCard {
             lifted: Rc::default(),
             origin: Rc::default(),
             title_reads: false,
-            meters: Rc::default(),
             placed: Rc::default(),
             hovers: Rc::default(),
             anchor: Rc::default(),
@@ -681,7 +678,6 @@ impl TypeScriptCard {
             focus: &self.focus,
             viewport: window.viewport_size(),
             embedded: &self.embedded,
-            meters: &self.meters,
             placed: self.placed.clone(),
             hovers: self.hovers.clone(),
             scrolls: &self.scrolls,

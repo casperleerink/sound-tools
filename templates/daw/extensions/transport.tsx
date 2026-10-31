@@ -1,4 +1,4 @@
-import { Button, h, Label, NumberBox, now, PeakMeter, Space, type Accessor, type Clock, type Color, type Frozen, type Live, type Style, type TempoMap } from "./sdk";
+import { Button, h, Label, Meter, NumberBox, now, Space, type Accessor, type Clock, type Color, type Frozen, type Live, type Style, type TempoMap } from "./sdk";
 
 // The transport of the song, in the window's title bar, and the time of the tempo map.
 const BEAT = 960;
@@ -118,7 +118,7 @@ export function Transport({ clock, record }: { clock: Clock; record: TransportRe
       <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded tooltip="Play notes with the computer keys" shortcut="cmd-k"
         onClick={() => clock.setComputerKeys(!clock.computerKeys)} />
       <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="sm" rounded tooltip="Metronome" onClick={() => clock.setClick(!clock.click)} />
-      <PeakMeter key="transport-meter" horizontal />
+      <Meter key="transport-meter" peaks="device" horizontal />
     </div>
   );
 }
