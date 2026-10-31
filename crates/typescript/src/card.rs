@@ -28,6 +28,7 @@ use sound_media::AudioAsset;
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::DropdownMenu;
 use sound_ui::components::text_input::TextInput;
+use sound_ui::renders::{self, Part};
 use sound_ui::{ActiveTheme, ControlEdit, Metering, Session, Waveforms, every_poll};
 
 use crate::bun::PageSize;
@@ -147,26 +148,15 @@ pub fn run_frame(page: &AnyView, cx: &mut App) {
     }
 }
 
+/// How many nodes the window keeps for each card of a tool of the project, by instance, in the
+/// window of the page `page`: for tests that a list leaves none behind, and for measurements.
 #[cfg(feature = "test-support")]
-static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// How many times a card of a tool of the project was drawn, for a test of what an idle page draws.
-#[cfg(feature = "test-support")]
-pub fn card_renders() -> u64 {
-    RENDERS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// How many nodes the window keeps for the page `page`, for tests that a list leaves none behind.
-#[cfg(feature = "test-support")]
-pub fn node_count(page: &AnyView, cx: &App) -> usize {
+pub fn node_counts(page: &AnyView, cx: &App) -> std::collections::BTreeMap<String, usize> {
     let Ok(page) = page.clone().downcast::<Page>() else {
-        return 0;
+        return Default::default();
     };
     let card = page.read(cx).0.read(cx);
-    match card.live.read(cx).tree(card.card) {
-        Some(Ok(table)) => table.entries().count(),
-        _ => 0,
-    }
+    card.live.read(cx).node_counts()
 }
 
 /// Flushes pending watches, and checks that the window applied Bun's replies.
@@ -243,6 +233,7 @@ impl Over {
 
 impl Render for Over {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _rendering = renders::start(Part::Over, self.0.read(cx).id.as_str());
         let spaces = self.0.update(cx, |card, cx| card.draw_over(window, cx));
         div().size_full().children(spaces)
     }
@@ -769,6 +760,7 @@ impl TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _rendering = renders::start(Part::TitleBar, self.0.read(cx).id.as_str());
         let bar = self
             .0
             .update(cx, |card, cx| card.draw_title_bar(window, cx));
@@ -779,8 +771,7 @@ impl Render for TitleBar {
 
 impl Render for TypeScriptCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(feature = "test-support")]
-        RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _rendering = renders::start(Part::Body, self.id.as_str());
         let Some(state) = self.state(cx) else {
             return div().into_any_element();
         };

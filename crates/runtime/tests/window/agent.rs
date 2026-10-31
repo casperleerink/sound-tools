@@ -19,7 +19,7 @@ use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
 /// hands the sidebar the events instead. `support` is the support folder of the machine.
-fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity<AgentSettings> {
+pub(crate) fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity<AgentSettings> {
     install_sidebar_with(cx, support, Some(nonexistent_claude()))
 }
 

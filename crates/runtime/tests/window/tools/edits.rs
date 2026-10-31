@@ -29,7 +29,7 @@ impl Opened<'_> {
             .read(|cx| session.read(cx).project().redo_label().map(String::from))
     }
 
-    fn middle(&mut self) -> gpui::Point<gpui::Pixels> {
+    pub(super) fn middle(&mut self) -> gpui::Point<gpui::Pixels> {
         let middle = self.cx.update(|window, _| window.viewport_size()) / 2.;
         point(middle.width, middle.height)
     }

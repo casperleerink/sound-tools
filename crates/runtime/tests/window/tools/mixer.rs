@@ -4,6 +4,7 @@
 
 use gpui::{TestAppContext, point, px};
 use serde_json::json;
+use sound_ui::renders::Part;
 
 use super::{Opened, open};
 
@@ -194,8 +195,12 @@ fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in
     window.until_found("space-level");
     assert_eq!(window.problems(), []);
     window.wait_for_bun();
-    window.cards_drawn_in(10);
-    assert_eq!(window.cards_drawn_in(60), 0, "a second of silence");
+    window.renders_in(10);
+    assert_eq!(
+        window.renders_in(60).all_of(Part::Body),
+        0,
+        "a second of silence"
+    );
 
     let gain = |window: &mut Opened, gain: f64| {
         window.edit(|project| {
@@ -207,19 +212,22 @@ fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in
         });
     };
     gain(&mut window, 0.3);
-    assert!(window.cards_drawn_in(60) > 50, "a second of the tone");
+    assert!(
+        window.renders_in(60).all_of(Part::Body) > 50,
+        "a second of the tone"
+    );
     let shown = sound_typescript::shown_by_live_values("peak:meter").unwrap();
     assert!(shown > 0.2, "{shown}");
 
     gain(&mut window, 0.0);
-    let falling = window.cards_drawn_in(60);
+    let falling = window.renders_in(60).all_of(Part::Body);
     assert!(
         falling > 50,
         "the second after the tone, as the meter falls: {falling}"
     );
     // An ease falls in real time, which these frames outrun.
     let mut seconds = 1;
-    while window.cards_drawn_in(60) > 0 {
+    while window.renders_in(60).all_of(Part::Body) > 0 {
         seconds += 1;
         assert!(seconds < 60, "the meter never rested");
     }
@@ -279,8 +287,12 @@ fn a_meter_in_the_title_bar_draws_the_title_bar_alone(cx: &mut TestAppContext) {
     window.until_found("space-level");
     assert_eq!(window.problems(), []);
     window.wait_for_bun();
-    window.cards_drawn_in(10);
-    assert_eq!(window.cards_drawn_in(60), 0, "a second of the tone");
+    window.renders_in(10);
+    assert_eq!(
+        window.renders_in(60).all_of(Part::Body),
+        0,
+        "a second of the tone"
+    );
     let shown = sound_typescript::shown_by_live_values("peak:meter").unwrap();
     assert!(shown > 0.2, "the title bar reads the meter: {shown}");
 
@@ -291,11 +303,11 @@ fn a_meter_in_the_title_bar_draws_the_title_bar_alone(cx: &mut TestAppContext) {
         })?;
         project.finish(edit)
     });
-    window.cards_drawn_in(1);
+    window.renders_in(1);
     let mut seconds = 0;
     while sound_typescript::shown_by_live_values("peak:meter") != Some(0.0) {
         assert_eq!(
-            window.cards_drawn_in(60),
+            window.renders_in(60).all_of(Part::Body),
             0,
             "the meter falls in the title bar alone"
         );
@@ -351,7 +363,7 @@ fn a_number_a_page_shows_as_it_plays_draws_again_when_the_record_of_its_child_ch
     window.until_found("space-gain");
     assert_eq!(window.problems(), []);
     window.wait_for_bun();
-    window.cards_drawn_in(10);
+    window.renders_in(10);
     let shown = || sound_typescript::shown_by_live_values("played:tone.gain");
     assert_eq!(shown(), Some(0.25));
 
@@ -362,6 +374,6 @@ fn a_number_a_page_shows_as_it_plays_draws_again_when_the_record_of_its_child_ch
         })?;
         project.finish(edit)
     });
-    window.cards_drawn_in(1);
+    window.renders_in(1);
     assert_eq!(shown(), Some(0.5));
 }

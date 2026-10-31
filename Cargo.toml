@@ -47,6 +47,12 @@ utility = { path = "extensions/utility" }
 vocoder = { path = "extensions/vocoder" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
+# For the window's measurements, at gpui's rev: Zed's allocation counter, which counts through
+# `criterion`'s measurement trait, and the macOS text system, which `gpui_platform` makes only on
+# the main thread.
+bench_metrics = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c" }
+criterion = "0.8"
+gpui_apple = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c", features = ["font-kit"] }
 # The pictures sent to the agent of the sidebar. The version usvg uses for gpui. MIT OR Apache-2.0.
 base64 = "0.22"
 cargo_metadata = "0.23"
@@ -224,3 +230,14 @@ inherits = "release"
 lto = false
 codegen-units = 16
 debug = "full"
+
+# The window's measurements, `tooling/perf/ui.py`. gpui finds an element by its test name only
+# with its debug assertions on, and its macros must match.
+[profile.perf]
+inherits = "release-fast"
+
+[profile.perf.package.gpui]
+debug-assertions = true
+
+[profile.perf.package.gpui_macros]
+debug-assertions = true

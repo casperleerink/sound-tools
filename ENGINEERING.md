@@ -87,11 +87,12 @@ How the engine keeps to that:
 - Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
+- Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule. A budget that does not hold yet is printed, not asserted, until the change that fixes its cause.
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 - Verify with `cargo verify`, never the whole workspace: it tests the crates the branch changed and runs clippy on those and every crate that uses them, one run at a time per machine, so parallel agents fit in 8 GB. Its arguments go to nextest: `-E 'test(name)'` while iterating, `-p runtime -E 'test(song)'` when you changed behaviour a dependent tests. The pull request's Linux job runs every test, and main runs them on all three systems.
 
-CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux, Windows) run side by side. Lint and test run on macOS; the Linux and Windows jobs build and run the tests on Ubuntu and Windows. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
+CI runs the commands of [README.md](README.md), "Checks", side by side, with the realtime sanitizer on for the macOS tests. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
 
 To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 
