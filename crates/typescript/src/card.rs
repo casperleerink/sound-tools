@@ -564,11 +564,12 @@ impl TypeScriptCard {
         {
             return parts.clone();
         }
-        // Not where something may lie over it: drawn over the page, a space would hide it.
+        // Not where it must draw in the page: over the page, a space would hide what lies over
+        // it, or lose the fade of a div it is in.
         let page = self.frame.is_none();
         let spaces: Vec<(usize, u64)> = (table.spaces().into_iter())
             .filter(|(slot, _)| page && title.is_none_or(|title| !table.within(*slot, title)))
-            .filter(|(slot, _)| !table.lain_over(*slot))
+            .filter(|(slot, _)| !table.kept_in_page(*slot))
             .collect();
         let slots: Vec<usize> = spaces.iter().map(|(slot, _)| *slot).collect();
         let (_, each) = table.uses_split(&slots);

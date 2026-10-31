@@ -137,8 +137,8 @@ impl Drawing<'_> {
                     .into_any_element()
             }
             Props::Card(_) => {
-                // Not where something may lie over it, which it would hide.
-                let placing = !self.out_of_page && !table.lain_over(slot);
+                // Not where it must draw in the page, as for a space.
+                let placing = !self.out_of_page && !table.kept_in_page(slot);
                 let card = match self.embedded.get(&id) {
                     Some(Embedded {
                         view: Some(view),

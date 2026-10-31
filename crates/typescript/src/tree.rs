@@ -777,9 +777,10 @@ impl NodeTable {
             .collect()
     }
 
-    /// Whether something may lie over the node in `slot`: a div placed with `absolute` in a
-    /// div the node is in, or an overlay the node is in.
-    pub(crate) fn lain_over(&self, slot: usize) -> bool {
+    /// Whether the node in `slot` must draw in the page, not over it: something may lie over it
+    /// (a div placed with `absolute` in a div the node is in, or an overlay the node is in), or
+    /// a div it is in fades it, which fades only what draws inside it.
+    pub(crate) fn kept_in_page(&self, slot: usize) -> bool {
         let mut at = self.get(slot).and_then(|entry| entry.parent);
         while let Some(parent) = at {
             let Some(entry) = self.get(parent) else {
@@ -791,7 +792,18 @@ impl NodeTable {
                 }
                 _ => false,
             };
-            if matches!(entry.props, Props::Overlay(_)) || entry.children.iter().any(absolute) {
+            let fades = match &entry.props {
+                // With no style, a disabled div takes the look of one.
+                Props::Div(div) => match &div.style {
+                    Some(style) => style.fades(div.disabled == Some(true)),
+                    None => div.disabled == Some(true),
+                },
+                _ => false,
+            };
+            if matches!(entry.props, Props::Overlay(_))
+                || fades
+                || entry.children.iter().any(absolute)
+            {
                 return true;
             }
             at = entry.parent;
@@ -1953,6 +1965,15 @@ impl TryFrom<String> for Color {
 }
 
 impl Style {
+    /// Whether it may draw what is in it at less than full opacity.
+    fn fades(&self, disabled: bool) -> bool {
+        let looks = [self.hover, self.pressed].into_iter().flatten();
+        self.opacity.is_some()
+            || looks
+                .chain(disabled.then(|| self.disabled_look()))
+                .any(|look| look.opacity.is_some())
+    }
+
     /// How it lines its children up, and nothing of its size or looks: the inside of a div
     /// whose children scroll.
     pub(crate) fn lines_up(&self, element: Div) -> Div {
