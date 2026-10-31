@@ -18,7 +18,7 @@ use crate::live::SpaceView;
 use crate::tree::{self, Cursor, Drag, Props, SpaceProps};
 
 use super::controls::{Control, Keys};
-use super::drawing::{Drawing, element_name};
+use super::drawing::Drawing;
 use super::input::{Carried, Hears, heard};
 use super::paint::{Painted, found, paint, prepaint};
 use super::shapes::{Placed, Placing, Pointer, Shown};
@@ -140,7 +140,7 @@ impl Drawing<'_> {
         id: u64,
         space: &SpaceProps,
     ) -> (String, SpaceView, Option<tree::Fit>) {
-        let key = element_name("space", space.key.as_deref(), id);
+        let key = self.element_name("space", space.key.as_deref(), id);
         let (unit_x, unit_y) = space.unit();
         let extent = space.extent.unwrap_or_default();
         let scroll = space.scroll.unwrap_or_default();

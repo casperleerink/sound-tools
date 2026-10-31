@@ -690,6 +690,22 @@ impl NodeTable {
         self.ids.contains_key(&id)
     }
 
+    /// Whether the node in `slot`, or one in it, may take the keys: the window finds what tab
+    /// goes to among what it drew.
+    pub(crate) fn holds_focus(&self, slot: usize) -> bool {
+        let Some(entry) = self.get(slot) else {
+            return false;
+        };
+        let takes = match &entry.props {
+            Props::Div(div) => div.tab_stop == Some(true),
+            Props::Space(space) => space.drag.is_some(),
+            Props::Shape(shape) => shape.drag.is_some(),
+            Props::Text(_) | Props::Icon(_) | Props::Marker => false,
+            _ => true,
+        };
+        takes || entry.children.iter().any(|child| self.holds_focus(*child))
+    }
+
     pub(crate) fn get(&self, slot: usize) -> Option<&Entry> {
         self.slots.get(slot)?.as_ref()
     }
@@ -986,6 +1002,12 @@ impl NodeTable {
             self.tidy(parent);
         }
         self.uses = self.counts.uses();
+        if let Some((kind, key)) = keyed.iter().find(|(_, key)| key.starts_with('#')) {
+            return Err(format!(
+                "the key \"{key}\" of a {kind} starts with \"#\", which the window keeps for \
+                 what has no key: start it with another character"
+            ));
+        }
         match keyed.iter().find(|key| self.keyed.get(*key) > Some(&1)) {
             Some((kind, key)) => Err(format!(
                 "two {kind}s of this view have the key \"{key}\": give each its own, such as \
@@ -2134,9 +2156,13 @@ impl Style {
         }
     }
 
-    /// The height its style fixes, if any.
+    /// The height it lays out at whatever it holds, if its style fixes one: no minimum,
+    /// maximum or growth changes it, and it takes its room in its parent.
     pub(crate) fn fixed_height(&self) -> Option<f32> {
-        self.height
+        match (self.min_height, self.max_height, self.grow, self.absolute) {
+            (None, None, false, None) => self.height,
+            _ => None,
+        }
     }
 
     /// Whether it stacks its children down, one under the other, and the room between them.
@@ -2428,5 +2454,15 @@ mod tests {
             error.contains("two divs") && error.contains("\"free\""),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_key_that_starts_with_a_hash_is_an_error_and_one_with_a_hash_inside_is_not() {
+        let mut table = NodeTable::default();
+        let fine = ops(serde_json::json!([["create", 1, "div", { "key": "list#1000000" }]]));
+        table.apply(fine.unwrap()).unwrap();
+        let taken = ops(serde_json::json!([["create", 2, "space", { "key": "#space-0-5" }]]));
+        let error = table.apply(taken.unwrap()).unwrap_err();
+        assert!(error.contains("starts with"), "{error}");
     }
 }

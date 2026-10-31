@@ -26,13 +26,13 @@ use crate::tree::{
 };
 
 use super::TypeScriptCard;
-use super::drawing::{Drawing, element_name, typing};
+use super::drawing::{Drawing, typing};
 use super::input::{Carried, Hears, placed, press_of};
 
 impl Drawing<'_> {
     /// A slider of the app, which turns its field or input as a knob's drag does.
     pub(super) fn slider(&mut self, id: u64, props: &SliderProps) -> AnyElement {
-        let name = element_name("slider", props.key.as_deref(), id);
+        let name = self.element_name("slider", props.key.as_deref(), id);
         let (min, max) = (props.min.unwrap_or(0.0), props.max.unwrap_or(1.0));
         let value = (props.value.as_ref()).map_or(min, |value| self.sources().number(value) as f32);
         let slider = Slider::new(ElementId::Name(name.into()), props.width.unwrap_or(120.0))
@@ -62,7 +62,7 @@ impl Drawing<'_> {
 
     /// One of a few options side by side, which tells its code the place of a pick.
     pub(super) fn segmented(&mut self, id: u64, props: &SegmentedProps) -> AnyElement {
-        let name = element_name("segmented", props.key.as_deref(), id);
+        let name = self.element_name("segmented", props.key.as_deref(), id);
         let options = (props.options.iter().flatten().enumerate())
             .map(|(place, label)| (SharedString::from(place.to_string()), label.clone()));
         let chosen = props.chosen.unwrap_or(-1).to_string();
@@ -89,7 +89,7 @@ impl Drawing<'_> {
 
     /// A quiet line of the app, whose button tells a click and whose close button a close.
     pub(super) fn notice(&mut self, id: u64, props: &NoticeProps) -> AnyElement {
-        let name = element_name("notice", props.key.as_deref(), id);
+        let name = self.element_name("notice", props.key.as_deref(), id);
         let tone = match props.tone {
             Some(NoticeToned::Error) | None => NoticeTone::Error,
             Some(NoticeToned::Warning) => NoticeTone::Warning,
@@ -210,7 +210,7 @@ impl Drawing<'_> {
 
     /// A switch of the app, which tells the pointer as a div does: its code turns it.
     pub(super) fn toggle(&mut self, id: u64, props: &ToggleProps) -> AnyElement {
-        let name: SharedString = element_name("toggle", props.key.as_deref(), id).into();
+        let name: SharedString = self.element_name("toggle", props.key.as_deref(), id).into();
         let on = props.on == Some(true);
         let toggle = match (&props.icon, props.dot == Some(true)) {
             (Some(icon), _) => Toggle::icon(name, icon.clone(), on)
@@ -241,7 +241,7 @@ impl Drawing<'_> {
 
     /// A button of the app, which tells the pointer as a div does.
     pub(super) fn button(&mut self, id: u64, props: &ButtonProps) -> AnyElement {
-        let name = element_name("button", props.key.as_deref(), id);
+        let name = self.element_name("button", props.key.as_deref(), id);
         let accent = props.color.map(|color| color.0);
         let variant = match (props.variant, accent) {
             (Some(ButtonLook::Subtle), Some(accent)) => ButtonVariant::SubtleColor(accent),

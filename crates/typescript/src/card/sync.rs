@@ -177,8 +177,11 @@ impl TypeScriptCard {
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
         };
-        // What a node that has no key kept goes with it.
-        let kept = |name: &String| named_node(name).is_none_or(|node| table.has(node));
+        // What a node that has no key kept goes with it, and with the Bun that made it.
+        let generation = self.live.read(cx).generation();
+        let kept = |name: &String| {
+            named_node(name).is_none_or(|(made, node)| made == generation && table.has(node))
+        };
         self.spaces.borrow_mut().retain(|name, _| kept(name));
         self.indexes.borrow_mut().retain(|name, _| kept(name));
         self.scrolls.borrow_mut().retain(|name, _| kept(name));

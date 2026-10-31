@@ -6,7 +6,7 @@ use gpui::{ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px};
 
 use super::{ONLY_THE_TOOL, Opened, open};
 
-fn page<'a>(cx: &'a mut TestAppContext, name: &str, code: &str) -> Opened<'a> {
+pub(super) fn page<'a>(cx: &'a mut TestAppContext, name: &str, code: &str) -> Opened<'a> {
     let state = format!(r#"{{"tool": "{name}", "state": {{}}}}"#);
     let (state_path, code_path) = (
         format!("state/{name}.json"),

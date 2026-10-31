@@ -72,6 +72,8 @@ pub(super) struct Drawing<'a> {
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
     pub(super) lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
     pub(super) card: WeakEntity<TypeScriptCard>,
+    /// Which Bun made the nodes, whose ids start again with each.
+    pub(super) generation: u64,
     pub(super) cx: &'a App,
 }
 
@@ -82,6 +84,16 @@ impl Drawing<'_> {
         hear: impl Fn(&mut TypeScriptCard, &E, &mut Window, &mut Context<TypeScriptCard>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         listener(&self.card, hear)
+    }
+
+    /// An id for an element, from its key, else from its node: a row put in before it leaves it
+    /// its hover, press, tooltip and scroll. Keys never start with `#`, so neither meets the
+    /// other.
+    pub(super) fn element_name(&self, kind: &str, key: Option<&str>, node: u64) -> String {
+        match key {
+            Some(key) => key.to_string(),
+            None => format!("#{kind}-{}-{node}", self.generation),
+        }
     }
 
     pub(super) fn sources(&self) -> Sources<'_> {
@@ -192,10 +204,11 @@ impl Drawing<'_> {
                     .copied()
                     .collect();
                 let scroller = (style.scroll()).map(|_| {
-                    (self
-                        .scrolls
-                        .borrow_mut()
-                        .entry(element_name("scroll", key.as_deref(), id)))
+                    (self.scrolls.borrow_mut().entry(self.element_name(
+                        "scroll",
+                        key.as_deref(),
+                        id,
+                    )))
                     .or_default()
                     .clone()
                 });
@@ -210,7 +223,11 @@ impl Drawing<'_> {
                         let top = (view.top * view.scale().1) as f32;
                         top..top + view.height as f32
                     }),
-                    (None, Some(scroller)) if style.scroll() == Some(tree::ScrollAxis::Y) => {
+                    // Rows that hold what tab goes to all draw: tab finds only what is drawn.
+                    (None, Some(scroller))
+                        if style.scroll() == Some(tree::ScrollAxis::Y)
+                            && !shown.iter().any(|child| table.holds_focus(*child)) =>
+                    {
                         let shown = shown_of(scroller, self.viewport);
                         let top = style.padding_top();
                         Some(shown.start - top..shown.end - top)
@@ -270,6 +287,11 @@ impl Drawing<'_> {
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
                 }
+                let scrolled_rows =
+                    (scroller.clone()).filter(|_| rows.is_some() && follow.is_none());
+                if let Some(scroller) = scrolled_rows {
+                    children.push(drawn_again_when_more_shows(scroller, self.viewport));
+                }
                 if *on_hover == Some(true) {
                     let card = self.card.clone();
                     let hovered = hears_hover(id, self.hovers.clone(), card);
@@ -326,7 +348,7 @@ impl Drawing<'_> {
                 let inner = match stateful || own.is_some() {
                     false => element.into_any_element(),
                     true => {
-                        let name = element_name("div", key.as_deref(), id);
+                        let name = self.element_name("div", key.as_deref(), id);
                         let element = (element.id(ElementId::Name(name.clone().into())))
                             .when_some(pressed, |element, look| {
                                 // The hitbox the pressed look needs, on a div that hears nothing.
@@ -369,7 +391,7 @@ impl Drawing<'_> {
                 };
                 if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
-                    let name = element_name("scroll", key.as_deref(), id);
+                    let name = self.element_name("scroll", key.as_deref(), id);
                     let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
                     let scrolling = style.fade(scrolling, disabled).track_scroll(&scroller);
                     let scrolling = match axis {
@@ -423,18 +445,12 @@ pub(super) fn typing(window: &Window) -> bool {
     (window.context_stack().iter()).any(|context| context.contains(text_input::KEY_CONTEXT))
 }
 
-/// An id for an element, from its key, else from its node: a row put in before it leaves it
-/// its hover, press, tooltip and scroll.
-pub(super) fn element_name(kind: &str, key: Option<&str>, node: u64) -> String {
-    match key {
-        Some(key) => key.to_string(),
-        None => format!("{kind}#{node}"),
-    }
-}
-
-/// The node an element was named after, when it has no key.
-pub(super) fn named_node(name: &str) -> Option<u64> {
-    name.rsplit_once('#')?.1.parse().ok()
+/// The Bun and the node an element with no key was named after, see
+/// [`Drawing::element_name`].
+pub(super) fn named_node(name: &str) -> Option<(u64, u64)> {
+    let (rest, node) = name.strip_prefix('#')?.rsplit_once('-')?;
+    let generation = rest.rsplit_once('-')?.1;
+    Some((generation.parse().ok()?, node.parse().ok()?))
 }
 
 static DRAWN_NODES: AtomicU64 = AtomicU64::new(0);
@@ -460,6 +476,23 @@ fn shown_of(scroller: &ScrollHandle, viewport: Size<Pixels>) -> Range<f32> {
     };
     let top = -f32::from(clamped_offset(scroller).y);
     top..top + f32::from(height)
+}
+
+/// Asks for another draw of the rows of `scroller` when its layout shows more of them than
+/// this draw did, as when it grew taller.
+fn drawn_again_when_more_shows(scroller: ScrollHandle, viewport: Size<Pixels>) -> AnyElement {
+    let drawn = shown_of(&scroller, viewport);
+    canvas(
+        move |_, window, _| {
+            let shows = shown_of(&scroller, viewport);
+            if shows.start < drawn.start || shows.end > drawn.end {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .into_any_element()
 }
 
 /// The tooltip of a text that fits: none.

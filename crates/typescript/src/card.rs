@@ -794,6 +794,7 @@ impl TypeScriptCard {
             title_focus,
             lifting: None,
             card: self.handle.clone(),
+            generation: live.generation(),
             cx,
         }
     }
