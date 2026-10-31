@@ -31,9 +31,9 @@ use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, DispatchPhase,
     ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, Global,
     GlobalElementId, Hsla, KeyBinding, KeyContext, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollWheelEvent, SharedString, Style,
-    Task, TextAlign, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine,
-    actions, div, fill, point, prelude::*, px, relative, size,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Task,
+    TextAlign, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions,
+    div, fill, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -975,12 +975,7 @@ impl TextInput {
         });
     }
 
-    fn on_scroll_wheel(
-        &mut self,
-        event: &ScrollWheelEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_scroll(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
         let (Some(layout), Some(bounds)) = (self.last_layout.as_ref(), self.last_bounds) else {
             return;
         };
@@ -1742,7 +1737,7 @@ impl Render for TextInput {
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
                     .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
                     .on_mouse_down_out(cx.listener(Self::on_press_outside))
-                    .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+                    .on_scroll(cx.listener(Self::on_scroll))
             })
             .child(TextElement { input: cx.entity() });
         // The menu is outside the field's key context, so enter and escape are the menu's.

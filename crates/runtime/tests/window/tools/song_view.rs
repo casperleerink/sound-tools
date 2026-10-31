@@ -54,7 +54,7 @@ impl Opened<'_> {
         let roll = self
             .cx
             .debug_bounds(selector)
-            .map_or(Bounds::new(roll, Default::default()), |bounds| bounds);
+            .unwrap_or(Bounds::new(roll, Default::default()));
         let lane = self.space_at(&format!("{key}-lane"));
         let record = self.record(&format!("song/{clip}"));
         let notes = record["notes"].as_array().cloned().unwrap_or_default();
@@ -1047,11 +1047,12 @@ fn the_timeline_scrolls_to_its_last_clip(cx: &mut TestAppContext) {
     assert!(last > 64 * BAR);
     let timeline = window.space_at("timeline");
     window.wait_for_bun();
-    window.cx.simulate_event(gpui::ScrollWheelEvent {
+    window.cx.simulate_event(gpui::ScrollEvent {
         position: timeline + point(px(200.), px(10.)),
         delta: gpui::ScrollDelta::Pixels(point(px(-(last as f32) * ACROSS), px(0.))),
         modifiers: Modifiers::default(),
         touch_phase: gpui::TouchPhase::Moved,
+        ..Default::default()
     });
     window.cx.run_until_parked();
     let at = window.on_lane(BAR / 2, 0);

@@ -2,8 +2,8 @@
 //! of what the window offers, a text field and rows dragged onto each other.
 
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent,
+    TestAppContext, TouchPhase, point, px,
 };
 use sound_ui::{Devices, Takes};
 
@@ -400,11 +400,12 @@ fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
     assert!(window.find(last).is_none());
     let rack = window.until_found("div-rack");
     window.until(last, |window| {
-        window.cx.simulate_event(ScrollWheelEvent {
+        window.cx.simulate_event(ScrollEvent {
             position: rack,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            ..Default::default()
         });
         window.find(last).is_some()
     });
