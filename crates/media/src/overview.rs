@@ -235,8 +235,6 @@ mod tests {
         assert_eq!(columns.iter().filter(|peak| **peak > 0.0).count(), 2);
     }
 
-    /// One loud sample shows in a column at every width of column, from a frame to the whole
-    /// file, wherever the columns start.
     #[test]
     fn a_single_sample_click_shows_at_every_zoom() {
         let frames = 1_000_000_u64;

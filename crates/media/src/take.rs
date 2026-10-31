@@ -208,8 +208,6 @@ mod tests {
         assert_eq!(spec.sample_format, hound::SampleFormat::Float);
     }
 
-    /// A program that ends in the middle of a take leaves a file that plays up to the last
-    /// whole second it wrote.
     #[test]
     fn a_take_that_is_never_finished_still_plays_up_to_its_last_second() {
         let folder = tempfile::tempdir().unwrap();

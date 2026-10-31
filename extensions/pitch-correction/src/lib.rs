@@ -4,7 +4,7 @@
 //! its formants can stay too.
 //!
 //! The pitch comes from [`sound_media::analysis::PitchTracker`] and the shift from
-//! [`sound_media::Shifter`], which a region can drive too.
+//! [`sound_media::Shifter`].
 //!
 //! [`view`] is the card of the pitch correction, and the only module here that uses GPUI.
 
