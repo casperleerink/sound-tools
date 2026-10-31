@@ -5,36 +5,36 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, ElementId, Empty, Entity, FocusHandle, MouseButton, Pixels, Point,
-    ScrollHandle, SharedString, Size, StyledText, Window, canvas, div, prelude::*, px,
+    AnyElement, App, Bounds, Context, ElementId, Empty, Entity, FocusHandle, MouseButton, Pixels,
+    Point, ScrollHandle, SharedString, Size, StyledText, WeakEntity, Window, canvas, div,
+    prelude::*, px,
 };
 use serde_json::Value;
+use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
-use sound_ui::components::meter::Meter;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::TabStop;
-use sound_ui::{ActiveTheme, Metering};
 
 use crate::feeds::Feeds;
 use crate::live::{DragNumbers, Sources, SpaceView};
 use crate::tools::ToolInfo;
-use crate::tree::{self, DivProps, IconProps, InputProps, MeterProps, NodeTable, Props, TextProps};
+use crate::tree::{self, DivProps, IconProps, InputProps, NodeTable, Props, TextProps};
 
 use super::controls::{Control, Keys};
-use super::input::{Hears, Hovers, hears_hover};
+use super::input::{Hears, Hovers, hears_hover, listener};
 use super::shapes::SpaceIndex;
 use super::sync::Embedded;
 use super::{Lifted, TypeScriptCard};
 
 /// What one draw of the card reads.
-pub(super) struct Drawing<'a, 'b> {
+pub(super) struct Drawing<'a> {
     /// The tool, as it last loaded.
-    pub(super) info: Option<ToolInfo>,
+    pub(super) info: Option<Rc<ToolInfo>>,
     /// The record, with each field it leaves out at its default.
     pub(super) state: Rc<Value>,
-    pub(super) watches: BTreeMap<String, f32>,
-    pub(super) played: Option<BTreeMap<String, f32>>,
+    pub(super) watches: &'a BTreeMap<String, f32>,
+    pub(super) played: Option<&'a BTreeMap<String, f32>>,
     pub(super) tick: f64,
     pub(super) spaces: HashMap<String, SpaceView>,
     /// The card's own, which the paint of a space writes its size in.
@@ -50,7 +50,6 @@ pub(super) struct Drawing<'a, 'b> {
     /// The size of the window, which a dialog's backdrop covers.
     pub(super) viewport: Size<Pixels>,
     pub(super) embedded: &'a HashMap<u64, Embedded>,
-    pub(super) meters: &'a RefCell<HashMap<u64, Metering>>,
     pub(super) placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) hovers: Rc<RefCell<Hovers>>,
     pub(super) scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
@@ -68,21 +67,28 @@ pub(super) struct Drawing<'a, 'b> {
     pub(super) takes_keys: bool,
     /// The keys of what the page shows in the title bar, while the page hears keys.
     pub(super) title_focus: Option<FocusHandle>,
-    /// The title bar's div the body left out.
-    pub(super) title_bar: Option<(usize, Vec<usize>)>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
     pub(super) lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
-    pub(super) cx: &'a mut Context<'b, TypeScriptCard>,
+    pub(super) card: WeakEntity<TypeScriptCard>,
+    pub(super) cx: &'a App,
 }
 
-impl Drawing<'_, '_> {
+impl Drawing<'_> {
+    /// A callback of an element that the card hears, as `Context::listener` makes one.
+    pub(super) fn listener<E: ?Sized>(
+        &self,
+        hear: impl Fn(&mut TypeScriptCard, &E, &mut Window, &mut Context<TypeScriptCard>) + 'static,
+    ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+        listener(&self.card, hear)
+    }
+
     pub(super) fn sources(&self) -> Sources<'_> {
         Sources {
             tick: self.tick,
-            watches: &self.watches,
+            watches: self.watches,
             state: &self.state,
-            info: self.info.as_ref(),
-            played: self.played.as_ref(),
+            info: self.info.as_deref(),
+            played: self.played,
             drag: (self.drag.as_ref()).map(|(id, numbers)| (id.as_str(), *numbers)),
             spaces: &self.spaces,
             hovered: (self.hovered.as_ref()).and_then(|(_, node)| self.table.shape_key(*node)),
@@ -123,55 +129,6 @@ impl Drawing<'_, '_> {
             Props::Segmented(props) => self.segmented(id, props, index),
             Props::Notice(props) => self.notice(id, props, index),
             Props::Overlay(props) => self.overlay(id, props, &entry.children, index),
-            Props::Meter(MeterProps {
-                of,
-                input,
-                horizontal,
-                length,
-                ..
-            }) => {
-                let amplitudes = match (of, input) {
-                    // One channel shows on both bars.
-                    (_, Some(channels)) => {
-                        let level = |at: usize| {
-                            let channel = channels.get(at).or(channels.first());
-                            channel
-                                .and_then(|channel| self.feeds.input.get(*channel))
-                                .copied()
-                        };
-                        [level(0).unwrap_or(0.0), level(1).unwrap_or(0.0)]
-                    }
-                    (Some(name), None) => self.feeds.peaks.get(name).copied().unwrap_or_default(),
-                    (None, None) => self.feeds.output,
-                };
-                let mut meters = self.meters.borrow_mut();
-                let metering = meters.entry(id).or_default();
-                metering.read_amplitudes(amplitudes);
-                if !metering.level().rests() {
-                    self.feeds.moving.set(true);
-                }
-                let card = self.cx.entity().downgrade();
-                let meter = Meter::new(ElementId::Integer(id), metering.level()).on_clear_clip(
-                    move |_, cx| {
-                        card.update(cx, |card, cx| {
-                            if let Some(metering) = card.meters.borrow_mut().get_mut(&id) {
-                                metering.clear_clip();
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-                    },
-                );
-                let meter = if *horizontal == Some(true) {
-                    meter.horizontal()
-                } else {
-                    meter
-                };
-                match length {
-                    Some(length) => meter.length(*length).into_any_element(),
-                    None => meter.into_any_element(),
-                }
-            }
             Props::Icon(IconProps { name, size, color }) => {
                 let color = color.map_or(self.cx.theme().gray_950, |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())
@@ -180,7 +137,14 @@ impl Drawing<'_, '_> {
                     .into_any_element()
             }
             Props::Card(_) => {
+                // Not where it must draw in the page, as for a space.
+                let placing = !self.out_of_page && !table.kept_in_page(slot);
                 let card = match self.embedded.get(&id) {
+                    Some(Embedded {
+                        view: Some(view),
+                        placing: Some(placed),
+                        ..
+                    }) if placing => placed.room(view, &self.card),
                     Some(Embedded {
                         view: Some(view), ..
                     }) => view.clone().into_any_element(),
@@ -212,7 +176,6 @@ impl Drawing<'_, '_> {
                 title_bar,
             }) => {
                 if *title_bar == Some(true) && !std::mem::take(&mut self.in_title_bar) {
-                    self.title_bar = Some((slot, index.to_vec()));
                     return div().into_any_element();
                 }
                 let style = style.clone().unwrap_or_default();
@@ -291,7 +254,7 @@ impl Drawing<'_, '_> {
                     children.push(div().flex_none().h(px(room)).into_any_element());
                 }
                 if *on_hover == Some(true) {
-                    let card = self.cx.entity().downgrade();
+                    let card = self.card.clone();
                     let hovered = hears_hover(id, self.hovers.clone(), card);
                     children.push(hovered.into_any_element());
                 }

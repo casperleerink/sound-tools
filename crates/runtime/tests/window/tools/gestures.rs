@@ -551,6 +551,23 @@ tool({
 });
 "#;
 
+/// An edit of the record of a page, as a knob of the window makes, keeps what the page shows in
+/// the title bar: the title bar draws before the page reads the record again.
+#[gpui::test]
+fn an_edit_of_the_record_of_a_page_keeps_its_title_bar(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    window.edit(|project| {
+        let mut edit = project.begin("Heard");
+        project.update_json(&mut edit, &crate::support::id("titled"), |state| {
+            state["heard"] = "edited".into();
+        })?;
+        project.finish(edit)
+    });
+    window.settle();
+    assert!(window.cx.debug_bounds("button-go").is_some());
+}
+
 /// A button in the title bar, out of its page, hands the page the keys it does not click with.
 #[gpui::test]
 fn a_button_in_the_title_bar_hands_its_page_the_keys(cx: &mut TestAppContext) {
@@ -707,6 +724,58 @@ fn the_focus_leaving_the_title_bar_lets_go_of_a_held_key(cx: &mut TestAppContext
     window.keys("r");
     window.until("key-r key-r", |window| {
         window.record("titled")["heard"] == "key-r key-r"
+    });
+}
+
+/// A page that shows the card of its filter under a div that hears the keys.
+const FILTERED: &str = r#"import { DeviceCard, h, text, tool } from "./sdk";
+
+tool({
+  name: "filtered",
+  title: "Filtered",
+  when: "A test",
+  doc: "The card of its filter, and the keys its page hears.",
+  state: { heard: text() },
+  behaviour: () => ({ connections: [] }),
+  onKey: ({ update }, { key, down }) => {
+    if (down) update(key, ({ state }) => { state.heard = `${state.heard} key-${key}`.trim(); });
+  },
+  view: () => h("div", { key: "page", style: { width: 600, height: 400 } }, DeviceCard({ path: "filter" })),
+});
+"#;
+
+/// A key held on a control of a device card on a page goes up for the page when the focus
+/// leaves the card, so pressing it again is heard.
+#[gpui::test]
+fn the_focus_leaving_a_device_card_lets_go_of_a_held_key(cx: &mut TestAppContext) {
+    let project = ONLY_THE_TOOL[0]
+        .1
+        .replace(r#""extensions": []"#, r#""extensions": ["filter"]"#);
+    let files = [
+        ("project.json".into(), project),
+        (
+            "state/filtered/instance.json".into(),
+            r#"{"tool": "filtered", "state": {}}"#.into(),
+        ),
+        (
+            "state/filtered/filter.json".into(),
+            r#"{"tool": "filter", "state": {}}"#.into(),
+        ),
+        ("extensions/filtered.ts".into(), FILTERED.into()),
+    ];
+    let mut window = open_project(cx, &files);
+    let page = window.until_found("div-page");
+    window.until_found("card-title-filtered/filter");
+    // GPUI tells a focus leaving only in the active window.
+    window.cx.update(|window, _| window.activate_window());
+    window.cx.run_until_parked();
+    press_key(&mut window, "tab");
+    window.keys("r");
+    window.focus_the_window();
+    window.click(page);
+    window.keys("r");
+    window.until("key-r key-r", |window| {
+        window.record("filtered")["heard"] == "key-r key-r"
     });
 }
 

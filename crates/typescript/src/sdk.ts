@@ -59,7 +59,7 @@ export type {
 // the elements of a view: `div` and its `Style`, `Space` and its shapes, `Button`, `Input`
 export {
   Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  PeakMeter, Rect, Space, TitleBar, Toggle, Wave
+  Rect, Space, TitleBar, Toggle, Wave
 } from "./sdk/drawing";
 export type {
   ButtonProps, CardSelect, Color, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint,
@@ -71,7 +71,7 @@ export {
   Slider, Steps, valueAt, words
 } from "./sdk/components";
 export type {
-  FaderProps, Kept, KnobProps, NumberBoxProps, PadProps, Peaks, SegmentedControlProps,
+  FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, SegmentedControlProps,
   SelectOption, SelectProps, SliderProps, StepsProps, Travel, ValueProps
 } from "./sdk/components";
 // what the runtime calls

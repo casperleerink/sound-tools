@@ -146,8 +146,8 @@ fn a_pan_knob_shows_the_pan_a_cable_plays_and_not_its_record(cx: &mut TestAppCon
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
 }
 
-/// A meter of a tone, as a bar of the window and as a shape that falls after the sound.
-const LEVEL: &str = r##"import { h, now, PeakMeter, Rect, Space, tool, type Declaration } from "./sdk";
+/// A meter of a tone: a shape that falls after the sound.
+const LEVEL: &str = r##"import { h, now, Rect, Space, tool, type Declaration } from "./sdk";
 
 tool({
   name: "level",
@@ -157,7 +157,6 @@ tool({
   state: {},
   behaviour: (): Declaration => ({ connections: [{ from: { child: "tone" }, to: { child: "meter" } }] }),
   view: () => h("div", null,
-    h(PeakMeter, { of: "meter" }),
     h(Space, { key: "level", width: 20, height: 100 },
       h(Rect, { x: 0, y: 0, width: 10, height: now.peak("meter").fall(0.5).times(100), color: "#7ee0a0" }),
     ),
@@ -166,7 +165,7 @@ tool({
 "##;
 
 #[gpui::test]
-fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in_silence(
+fn a_meter_draws_over_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in_silence(
     cx: &mut TestAppContext,
 ) {
     let project = json!({
@@ -197,7 +196,7 @@ fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in
     window.wait_for_bun();
     window.renders_in(10);
     assert_eq!(
-        window.renders_in(60).all_of(Part::Body),
+        window.renders_in(60).all_of(Part::Over),
         0,
         "a second of silence"
     );
@@ -212,22 +211,18 @@ fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in
         });
     };
     gain(&mut window, 0.3);
-    assert!(
-        window.renders_in(60).all_of(Part::Body) > 50,
-        "a second of the tone"
-    );
+    let renders = window.renders_in(60);
+    assert!(renders.all_of(Part::Over) > 50, "a second of the tone");
+    assert_eq!(renders.all_of(Part::Body), 0, "the page under it");
     let shown = sound_typescript::shown_by_live_values("peak:meter").unwrap();
     assert!(shown > 0.2, "{shown}");
 
     gain(&mut window, 0.0);
-    let falling = window.renders_in(60).all_of(Part::Body);
-    assert!(
-        falling > 50,
-        "the second after the tone, as the meter falls: {falling}"
-    );
+    let falling = window.renders_in(60).all_of(Part::Over);
+    assert!(falling > 0, "the second after the tone, as the meter falls");
     // An ease falls in real time, which these frames outrun.
     let mut seconds = 1;
-    while window.renders_in(60).all_of(Part::Body) > 0 {
+    while window.renders_in(60).all_of(Part::Over) > 0 {
         seconds += 1;
         assert!(seconds < 60, "the meter never rested");
     }
@@ -238,7 +233,7 @@ fn a_meter_draws_its_page_while_it_hears_a_sound_and_until_it_rests_and_never_in
 }
 
 /// [`LEVEL`] with its meter and its falling shape in the window's title bar.
-const TITLE_LEVEL: &str = r##"import { h, now, PeakMeter, Rect, Space, tool, type Declaration } from "./sdk";
+const TITLE_LEVEL: &str = r##"import { h, now, Rect, Space, tool, type Declaration } from "./sdk";
 
 tool({
   name: "level",
@@ -249,8 +244,7 @@ tool({
   behaviour: (): Declaration => ({ connections: [{ from: { child: "tone" }, to: { child: "meter" } }] }),
   view: () => h("div", null,
     h("div", { titleBar: true },
-      h(PeakMeter, { of: "meter" }),
-      h(Space, { key: "level", width: 20, height: 20 },
+        h(Space, { key: "level", width: 20, height: 20 },
         h(Rect, { x: 0, y: 0, width: 10, height: now.peak("meter").fall(0.5).times(20), color: "#7ee0a0" }),
       ),
     ),

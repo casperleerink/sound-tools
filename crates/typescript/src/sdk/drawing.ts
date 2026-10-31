@@ -260,15 +260,6 @@ export type IconName =
 /** An icon of the app, 16 points when `size` is left out, in the text's colour unless `color` says. */
 export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<Color> }): UiNode => element("icon", { ...props }, []);
 
-/**
- * A stereo meter as the window draws its own: bars that fall, a peak line that holds, a clip light
- * a click clears. Of the peaks `of` names as `now.peak` does, of the channels of the audio input
- * `input` names (one shows on both bars), or of what the device plays. Up the side unless
- * `horizontal`; `length` along its bars, in points.
- */
-export const PeakMeter = (props: { key?: string; of?: string; input?: readonly number[]; horizontal?: boolean; length?: number }): UiNode =>
-  element("meter", { ...props }, []);
-
 /** The tooltip of a button or a toggle, and the keys that do it too, drawn in it. */
 type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: KeyName };
 

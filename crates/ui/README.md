@@ -67,7 +67,8 @@ registries and installs them as GPUI globals:
 - A callback that a control keeps holds the view weakly: `cx.listener`, `weak_callback` or
   `weak_action`, not `cx.processor`. A strong one keeps a closed view and its drag alive.
 - Keep what repaints with the playhead apart from heavy views, and put `.cached(..)` on the
-  heavy one. A notified view also renders every view above it.
+  heavy one, under a view that is not cached. A notified view also renders every view above
+  it, and a cached view that renders again renders every cached view inside it.
 - A meter reads `sound_core::Peaks` once per poll with `Metering` and `every_poll`, and
   notifies only when what it shows changed.
 - Draw only what is visible. A view of many records paints on one `canvas`.

@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, PathPromptOptions, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
@@ -66,7 +66,7 @@ pub(crate) struct Live {
     opening: u64,
     skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
-    tools: Rc<RefCell<Vec<ToolInfo>>>,
+    tools: Rc<RefCell<Vec<Rc<ToolInfo>>>>,
     /// Goes up when the tools do, so the pickers fill themselves again.
     generation: Rc<Cell<u64>>,
     cards: HashMap<u64, Card>,
@@ -156,6 +156,24 @@ struct Card {
     /// A menu its code opened and the card did not show yet, with its question.
     menu: Option<OpenedMenu>,
 }
+
+/// What changed for the cards of the window, which each card filters.
+pub(crate) enum CardsChanged {
+    One(u64),
+    /// Every card, as when the tools loaded again.
+    All,
+}
+
+impl CardsChanged {
+    pub(crate) fn concerns(&self, card: u64) -> bool {
+        match self {
+            Self::One(one) => *one == card,
+            Self::All => true,
+        }
+    }
+}
+
+impl EventEmitter<CardsChanged> for Live {}
 
 /// What a tree is drawn on.
 #[derive(Clone, Copy, PartialEq)]
@@ -367,7 +385,7 @@ impl Live {
     fn start(
         extensions: Extensions,
         session: &Entity<Session>,
-        tools: &Rc<RefCell<Vec<ToolInfo>>>,
+        tools: &Rc<RefCell<Vec<Rc<ToolInfo>>>>,
         generation: &Rc<Cell<u64>>,
         watched: bool,
         cx: &mut App,
@@ -380,7 +398,7 @@ impl Live {
             skipped,
             problems,
         } = extensions;
-        *tools.borrow_mut() = loaded;
+        *tools.borrow_mut() = loaded.into_iter().map(Rc::new).collect();
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
             let (watcher, watch_problem) = if watched {
@@ -503,7 +521,7 @@ impl Live {
 }
 
 /// The tool named `name`, as it last loaded.
-fn find<'a>(tools: &'a [ToolInfo], name: &str) -> Option<&'a ToolInfo> {
+fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
     tools.iter().find(|info| info.name == name)
 }
 
@@ -531,7 +549,7 @@ fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
 
 /// Whether Bun holds the record of `id`: one of a tool of the project, or one inside one at
 /// any depth, which the code of that tool reads.
-fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
+fn told_to_bun(project: &Project, tools: &[Rc<ToolInfo>], id: &InstanceId) -> bool {
     let ours =
         |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
     ours(id) || id.ancestors().any(|owner| ours(&owner))
@@ -593,7 +611,7 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
 
 /// What a picker offers of the tools of `kind`: each one's record at its defaults. Not an owner,
 /// whose place is the top of the project.
-fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
+fn offers(tools: &[Rc<ToolInfo>], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools
         .iter()
         .filter(|info| kind(info.tool_kind()) && !info.behaviour);
@@ -649,7 +667,7 @@ impl Live {
         self.generation.get()
     }
 
-    pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
+    pub(crate) fn info(&self, card: u64) -> Option<Rc<ToolInfo>> {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
 
@@ -958,6 +976,13 @@ impl Live {
         self.played.get(id)
     }
 
+    /// Tells the cards of the instance `id` that they changed.
+    fn cards_of(&self, id: &InstanceId, cx: &mut Context<Self>) {
+        for (card, _) in self.cards.iter().filter(|(_, entry)| entry.id == *id) {
+            cx.emit(CardsChanged::One(*card));
+        }
+    }
+
     /// Sends what `update` makes for the tool of instance `id` to its processor, as the
     /// keyboard or a knob of a built-in tool would, or says why it does not.
     fn send_update(
@@ -1032,7 +1057,7 @@ impl Live {
                 .or_default()
                 .insert(name.to_string(), value);
             // A pad or a knob of the card shows where it is, also while nothing else redraws.
-            cx.notify();
+            self.cards_of(id, cx);
         }
         Ok(())
     }
@@ -1403,7 +1428,7 @@ impl Live {
         self.last_frame = Instant::now();
         let clock = clock_of(&session, cx);
         let ticks =
-            |tools: &[ToolInfo], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
+            |tools: &[Rc<ToolInfo>], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
         // Only for code that runs now: a knob turned on a card tells Bun nothing.
         if (session.read(cx).project().instances())
             .any(|(_, tool)| ticks(&self.tools.borrow(), tool))
@@ -1438,15 +1463,16 @@ impl Live {
             return;
         };
         let mut moved = BTreeMap::new();
-        let mut shown_watches_moved = false;
+        let mut shown_moved = Vec::new();
         let tools = self.tools.borrow();
-        for entry in self.cards.values_mut() {
+        for (card, entry) in self.cards.iter_mut() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
             if watches != entry.watches {
-                shown_watches_moved |= entry
-                    .tree
-                    .as_ref()
-                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
+                if (entry.tree.as_ref())
+                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches))
+                {
+                    shown_moved.push(*card);
+                }
                 entry.watches = watches.clone();
             }
             let told = self.told_watches.get(&entry.id);
@@ -1483,8 +1509,8 @@ impl Live {
             }
         }
         self.tell_song(cx);
-        if shown_watches_moved {
-            cx.notify();
+        for card in shown_moved {
+            cx.emit(CardsChanged::One(card));
         }
     }
 
@@ -1513,6 +1539,10 @@ impl Live {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
+                // An answer that changes nothing, as when a record its code reads changed.
+                if mount || event || !ops.as_ref().is_ok_and(Vec::is_empty) {
+                    cx.emit(CardsChanged::One(card));
+                }
                 if event {
                     entry.events_answered += 1;
                 }
@@ -1603,7 +1633,8 @@ impl Live {
                     detail,
                     confirm,
                 });
-                cx.notify();
+                // The first card that hears it asks.
+                cx.emit(CardsChanged::All);
             }
             Event::OpenMenu {
                 question,
@@ -1612,17 +1643,19 @@ impl Live {
                 width,
                 max_height,
                 search,
-            } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
+            } => match (self.last_event_card).filter(|card| self.cards.contains_key(card)) {
                 Some(card) => {
-                    card.menu = Some(OpenedMenu {
-                        question,
-                        items,
-                        notes,
-                        width,
-                        max_height,
-                        search,
-                    });
-                    cx.notify();
+                    if let Some(entry) = self.cards.get_mut(&card) {
+                        entry.menu = Some(OpenedMenu {
+                            question,
+                            items,
+                            notes,
+                            width,
+                            max_height,
+                            search,
+                        });
+                    }
+                    cx.emit(CardsChanged::One(card));
                 }
                 None => self.menu_picked(question, None),
             },
@@ -1706,7 +1739,6 @@ impl Live {
                 );
             }
         }
-        cx.notify();
     }
 
     /// Tells Bun the tempo map and the sections when they are not what it was told.
@@ -2084,7 +2116,7 @@ impl Live {
             "its {} {why}, so the tools run without this file: fix it and save",
             runs.what
         ));
-        self.skipped.insert(info.file, problem.message);
+        self.skipped.insert(info.file.clone(), problem.message);
         self.restart(cx);
     }
 
@@ -2109,7 +2141,7 @@ impl Live {
                 None => {
                     let tools = self.tools.borrow();
                     let info = (project.tool_of(&id)).and_then(|tool| find(&tools, tool));
-                    let Some(processor) = info.map(ToolInfo::processor) else {
+                    let Some(processor) = info.map(|info| info.processor()) else {
                         return Ok(());
                     };
                     project.send::<Signals>(&id, processor, SignalsUpdate::PerformerGone)
@@ -2204,8 +2236,8 @@ impl Live {
                     .collect(),
             }
         });
-        let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
-            .filter(|info| find(&tools, &info.name).is_none())
+        let gone: Vec<Rc<ToolInfo>> = (self.tools.borrow().iter())
+            .filter(|info| !tools.iter().any(|tool| tool.name == info.name))
             .cloned()
             .collect();
         // A file Bun runs without says why already.
@@ -2217,7 +2249,10 @@ impl Live {
         }));
         self.problems = problems;
         self.report(cx);
-        *self.tools.borrow_mut() = gone.into_iter().chain(tools).collect();
+        *self.tools.borrow_mut() = gone
+            .into_iter()
+            .chain(tools.into_iter().map(Rc::new))
+            .collect();
         self.generation.set(self.generation.get() + 1);
         // The new Bun knows no card and has read nothing yet.
         self.reads.clear();
@@ -2237,6 +2272,7 @@ impl Live {
                 self.take(&take, cx);
             }
         }
+        cx.emit(CardsChanged::All);
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.

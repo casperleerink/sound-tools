@@ -96,6 +96,7 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
             let toggle = window.until_found("button-mixer-toggle");
             window.click(toggle);
             window.until_found("div-mixer");
+            window.away_from_tooltips();
             window.start_playing();
             window.measure(POLLS, |_, _| {})
         }
@@ -108,6 +109,7 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
             });
             window.press_found("button-record");
             window.until("the song plays", Opened::playing);
+            window.away_from_tooltips();
             window.measure(POLLS, |window, _| {
                 input.write_until(window.engine.frames(), |_| [0.5, 0.25]);
             })
@@ -185,6 +187,11 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
 }
 
 impl Opened<'_> {
+    /// The pointer leaves what it pressed: a tooltip that shows later draws the page.
+    fn away_from_tooltips(&mut self) {
+        self.hover(point(px(1.), px(1.)));
+    }
+
     /// One poll of the engine, with its timers and the frame it asked for, as the app does.
     pub(super) fn poll(&mut self) {
         let frames = sound_ui::POLL_INTERVAL.as_millis() as usize
@@ -273,18 +280,12 @@ fn add_absolute_div(folder: &Path) {
     std::fs::write(&path, song.replace(anchor, &format!("{anchor}{badge}"))).unwrap();
 }
 
-/// A budget that holds: the test fails when it is broken, with the rule it breaks.
+/// A budget: the test fails when it is broken, with the rule it breaks.
 fn holds(rule: &str, rendered: u64, budget: u64) {
     assert!(
         rendered <= budget,
         "{rule}: {rendered} renders, the budget is {budget}"
     );
-}
-
-/// A budget that does not hold yet: the test says how far off it is, and passes. The change
-/// that fixes the cause makes it [`holds`].
-fn not_yet(rule: &str, rendered: u64, budget: u64) {
-    println!("not held yet, {rule}: {rendered} renders, the budget is {budget}");
 }
 
 const STILL: &str = "a still window renders nothing";
@@ -318,32 +319,32 @@ fn playing_renders_the_layer_over_the_page_and_not_the_page(cx: &mut TestAppCont
     let renders = run_on_the_song(Scenario::Playing, cx);
     holds(PLAYHEAD, renders.of(Part::Body, "song"), 0);
     holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
-    not_yet(SIDEBAR, renders.of(Part::Sidebar, "agent"), 0);
+    holds(SIDEBAR, renders.of(Part::Sidebar, "agent"), 0);
 }
 
 #[gpui::test]
 fn playing_with_the_mixer_renders_only_the_layer_over_the_page(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::PlayingWithTheMixer, cx);
-    not_yet(LEVELS, renders.of(Part::Body, "song"), 0);
-    not_yet(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
+    holds(LEVELS, renders.of(Part::Body, "song"), 0);
+    holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
 }
 
 #[gpui::test]
 fn recording_renders_only_the_layer_over_the_page(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::Recording, cx);
-    not_yet(TAKE, renders.of(Part::Body, "song"), 0);
-    not_yet(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
+    holds(TAKE, renders.of(Part::Body, "song"), 0);
+    holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
 }
 
 #[gpui::test]
 fn a_knob_drag_on_one_card_renders_no_other_card(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::KnobDrag, cx);
-    not_yet(KNOB, renders.of(Part::Card, "song/t00/chain/filter"), 0);
-    not_yet(KNOB, renders.of(Part::Body, "song"), 0);
+    holds(KNOB, renders.of(Part::Card, "song/t00/chain/filter"), 0);
+    holds(KNOB, renders.of(Part::Body, "song"), 0);
 }
 
 #[gpui::test]
 fn an_absolute_div_keeps_the_page_still_while_it_plays(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::AbsoluteDiv, cx);
-    not_yet(ABSOLUTE, renders.of(Part::Body, "song"), 0);
+    holds(ABSOLUTE, renders.of(Part::Body, "song"), 0);
 }

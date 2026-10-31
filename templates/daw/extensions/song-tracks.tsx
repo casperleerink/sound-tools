@@ -1,4 +1,4 @@
-import { Button, For, Fragment, h, Icon, Input, Label, now, onCleanup, PeakMeter, Select, Show, Space, Toggle, untrack, type Color } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, Label, Meter, now, onCleanup, Select, Show, Space, Toggle, untrack, type Color } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
@@ -120,7 +120,7 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
               </div>
             )
           }
-          {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
+          {() => (memory.armed.has(each.name) ? <Meter key={`input-${each.name}`} peaks={{ input: inputOf(each) }} horizontal /> : null)}
         </div>
         <div style={{ height: 24, direction: "row", align: "center", gap: 4 }}>
           <div style={() => ({ grow: true, fontSize: 12, truncate: true, color: muted(each) ? "gray-700/40" : "gray-700" })}>

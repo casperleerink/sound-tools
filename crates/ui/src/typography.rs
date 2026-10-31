@@ -20,14 +20,22 @@ fn font(weight: FontWeight, features: &[&str]) -> Font {
     }
 }
 
+thread_local! {
+    /// Made once: a text is drawn every frame, and a font's features are a list of strings.
+    static FONTS: [Font; 2] = [
+        font(FontWeight::NORMAL, &["ss03", "cv01"]),
+        font(FontWeight::NORMAL, &["ss03", "cv01", "tnum", "lnum"]),
+    ];
+}
+
 /// InterDisplay with `ss03` and `cv01`, the app's default text font.
 pub fn ui_font() -> Font {
-    font(FontWeight::NORMAL, &["ss03", "cv01"])
+    FONTS.with(|[ui, _]| ui.clone())
 }
 
 /// Same font with tabular lining numbers, for meters, times and values.
 pub fn tabular() -> Font {
-    font(FontWeight::NORMAL, &["ss03", "cv01", "tnum", "lnum"])
+    FONTS.with(|[_, tabular]| tabular.clone())
 }
 
 /// `run` over `text` split so that its numbers have tabular figures and its words do not:
@@ -38,23 +46,25 @@ pub fn tabular_runs(text: &str, run: &TextRun) -> Vec<TextRun> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let digit = |at: Option<&(usize, char)>| at.is_some_and(|(_, c)| c.is_ascii_digit());
     let mut runs: Vec<TextRun> = Vec::new();
+    let in_run = |font: Font| Font {
+        weight: run.font.weight,
+        style: run.font.style,
+        ..font
+    };
+    let (numbers, words) = (in_run(tabular()), in_run(ui_font()));
     for (index, &(at, c)) in chars.iter().enumerate() {
         let before = index.checked_sub(1).and_then(|before| chars.get(before));
         let after = chars.get(index + 1);
         let number = c.is_ascii_digit()
             || matches!(c, '.' | ',' | ':') && digit(before) && digit(after)
             || matches!(c, '\u{2212}' | '+') && digit(after);
-        let font = Font {
-            weight: run.font.weight,
-            style: run.font.style,
-            ..if number { tabular() } else { ui_font() }
-        };
+        let font = if number { &numbers } else { &words };
         let len = after.map_or(text.len(), |(next, _)| *next) - at;
         match runs.last_mut() {
-            Some(last) if last.font == font => last.len += len,
+            Some(last) if last.font == *font => last.len += len,
             _ => runs.push(TextRun {
                 len,
-                font,
+                font: font.clone(),
                 ..run.clone()
             }),
         }

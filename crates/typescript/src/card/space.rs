@@ -24,7 +24,7 @@ use super::paint::{Painted, found, paint, prepaint};
 use super::shapes::{Placed, Placing, Pointer, Shown};
 use super::{Lifted, TypeScriptCard};
 
-impl Drawing<'_, '_> {
+impl Drawing<'_> {
     fn place(
         &self,
         children: &[usize],
@@ -38,8 +38,8 @@ impl Drawing<'_, '_> {
             hovered: (self.hovered.as_ref())
                 .filter(|(space, _)| space == key)
                 .map(|(_, shape)| *shape),
-            placed: Vec::with_capacity(children.len()),
-            pointed: Vec::with_capacity(children.len()),
+            placed: Vec::new(),
+            pointed: Vec::new(),
         };
         let mut indexes = self.indexes.borrow_mut();
         let version = self.table.version();
@@ -193,7 +193,7 @@ impl Drawing<'_, '_> {
             zoom: space.zoom.unwrap_or_default(),
             follow: space.follow.clone().unwrap_or_default(),
         });
-        let card = self.cx.entity().downgrade();
+        let card = self.card.clone();
         let spaces = self.laid_out.clone();
         // Where it was painted, for where a drop falls in its units.
         let painted_at = Rc::new(Cell::new(None));
@@ -222,9 +222,8 @@ impl Drawing<'_, '_> {
                         first
                     });
                     // The card draws again, for the spaces that follow it and the live values
-                    // that read it to see its fit, or its size on its first paint. Lifted spaces
-                    // draw every frame anyway; a page with a div over it draws only when told.
-                    // Only the first paint: drawing again on every resize made `tools::nested`
+                    // that read it to see its fit, or its size on its first paint. Only the first
+                    // paint: drawing again on every resize made `tools::nested`
                     // fail, for a cause not found.
                     if fit.is_some() || first {
                         let card = card.clone();
@@ -252,18 +251,16 @@ impl Drawing<'_, '_> {
             .id(element_id)
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.1)))
             .on_drop(
-                (self.cx).listener(move |view, paths: &ExternalPaths, window, cx| {
+                self.listener(move |view, paths: &ExternalPaths, window, cx| {
                     let at = dropped_files(window);
                     view.drop_files(id, paths.paths().to_vec(), at, cx);
                 }),
             )
-            .on_drop(
-                (self.cx).listener(move |view, carried: &Carried, window, cx| {
-                    let (x, y) = units(window);
-                    let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
-                    view.event(id, EventKind::Drop, dropped, cx);
-                }),
-            )
+            .on_drop(self.listener(move |view, carried: &Carried, window, cx| {
+                let (x, y) = units(window);
+                let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
+                view.event(id, EventKind::Drop, dropped, cx);
+            }))
             .into_any_element()
     }
 }
@@ -280,7 +277,7 @@ pub(super) struct SpaceFrame {
     pub(super) background: Option<Hsla>,
     pub(super) radius: f32,
     pub(super) hears: Hears,
-    pub(super) drag: Option<Drag>,
+    pub(super) drag: Option<Rc<Drag>>,
     pub(super) cursor: Option<Cursor>,
     extent: tree::Ranges,
     zoom: tree::Ranges,

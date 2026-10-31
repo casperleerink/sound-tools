@@ -211,7 +211,7 @@ pub(super) struct Held {
     node: u64,
     /// Whether it holds a shape, whose drag it takes again as the shape changes.
     on_shape: bool,
-    pub(super) drag: Drag,
+    pub(super) drag: Rc<Drag>,
     /// Where it was pressed and where the pointer is, in the window.
     start: Point<Pixels>,
     now: Point<Pixels>,
@@ -398,7 +398,7 @@ impl TypeScriptCard {
         let key = keystroke.key.clone();
         // A tool that names its keys leaves the rest to the window, such as space to play. A key
         // it took comes up here all the same.
-        if let Some(takes) = info.takes
+        if let Some(takes) = &info.takes
             && !takes.contains(&sound_ui::global_keys::chord_name(keystroke))
             && (down || !self.keys_down.contains(&key))
         {
@@ -538,7 +538,8 @@ impl TypeScriptCard {
             }
             return;
         }
-        let from = turns.map(|turns| self.turned_value(turns.as_ref()?, &state, info.as_ref(), cx));
+        let from =
+            turns.map(|turns| self.turned_value(turns.as_ref()?, &state, info.as_deref(), cx));
         let (across, down) = frame.view.scale();
         let held = Held {
             space: frame.key.clone(),
@@ -627,7 +628,7 @@ impl TypeScriptCard {
         let fields = [&held.drag.x, &held.drag.y]
             .into_iter()
             .flatten()
-            .any(|turns| matches!(turns.target(info.as_ref()), Turned::Field { .. }));
+            .any(|turns| matches!(turns.target(info.as_deref()), Turned::Field { .. }));
         if fields {
             self.edit.apply_json(
                 &self.session,
@@ -660,7 +661,7 @@ impl TypeScriptCard {
         self.clicking = None;
         let turns = [&held.drag.x, &held.drag.y];
         let info = self.live.read(cx).info(self.card);
-        let target = |turns: &tree::Turns| turns.target(info.as_ref()).to_owned_input();
+        let target = |turns: &tree::Turns| turns.target(info.as_deref()).to_owned_input();
         if turns
             .iter()
             .copied()
@@ -744,8 +745,9 @@ impl TypeScriptCard {
                 let by = if fine { FINE_KEY_STEP } else { KEY_STEP };
                 let by = if up { by } else { -by };
                 let (state, info) = self.record(cx);
-                let range = range_of(info.as_ref(), turns).or_else(|| self.child_range(turns, cx));
-                let now = self.turned_value(turns, &state, info.as_ref(), cx);
+                let range =
+                    range_of(info.as_deref(), turns).or_else(|| self.child_range(turns, cx));
+                let now = self.turned_value(turns, &state, info.as_deref(), cx);
                 (range.zip(now))
                     .map(|(range, now)| range.value((range.position(now) + by).clamp(0.0, 1.0)))
             }
@@ -765,7 +767,7 @@ impl TypeScriptCard {
                 continue;
             };
             let Some(range) =
-                range_of(info.as_ref(), turns).or_else(|| self.child_range(turns, cx))
+                range_of(info.as_deref(), turns).or_else(|| self.child_range(turns, cx))
             else {
                 continue;
             };
@@ -814,7 +816,7 @@ impl TypeScriptCard {
         cx: &mut Context<Self>,
     ) {
         let info = self.live.read(cx).info(self.card);
-        match turns.target(info.as_ref()) {
+        match turns.target(info.as_deref()) {
             Turned::Field { child, name } => {
                 let label = (turns.label.clone())
                     .unwrap_or_else(|| format!("Change {}", name.replace('_', " ")));
@@ -916,29 +918,44 @@ impl Hears {
     }
 }
 
-/// `element` takes the keys of the page of `cx`'s card on `focus`, and hands them to its code.
+/// A callback of an element that `card` hears, as `Context::listener` makes one.
+pub(super) fn listener<E: ?Sized>(
+    card: &WeakEntity<TypeScriptCard>,
+    hear: impl Fn(&mut TypeScriptCard, &E, &mut Window, &mut Context<TypeScriptCard>) + 'static,
+) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+    let card = card.clone();
+    move |event, window, cx| {
+        card.update(cx, |view, cx| hear(view, event, window, cx))
+            .ok();
+    }
+}
+
+/// `element` takes the keys of the page of `card` on `focus`, and hands them to its code.
 pub(super) fn hearing_keys(
     element: Div,
     focus: &FocusHandle,
     context: Option<gpui::KeyContext>,
-    cx: &mut Context<TypeScriptCard>,
+    card: &WeakEntity<TypeScriptCard>,
 ) -> Div {
     element
         .track_focus(focus)
         .when_some(context, |element, context| element.key_context(context))
-        .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+        .on_key_down(listener(card, |view, event: &KeyDownEvent, window, cx| {
             // A text field in it has the keys first.
             if !typing(window) {
                 view.key(&event.keystroke, true, event.is_held, cx)
             }
         }))
-        .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
+        .on_key_up(listener(card, |view, event: &KeyUpEvent, _, cx| {
             view.key(&event.keystroke, false, false, cx)
         }))
         // macOS sends no key up while cmd is held.
-        .on_modifiers_changed(cx.listener(|view, event: &ModifiersChangedEvent, _, cx| {
-            if event.modifiers.platform {
-                view.let_go_of_keys(cx);
-            }
-        }))
+        .on_modifiers_changed(listener(
+            card,
+            |view, event: &ModifiersChangedEvent, _, cx| {
+                if event.modifiers.platform {
+                    view.let_go_of_keys(cx);
+                }
+            },
+        ))
 }

@@ -158,6 +158,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/ui` and `crates/runtime/src/window`.
 
 - Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
+- What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. A level is shapes in a space. Rejected: a meter node of the window, which drew the whole page as it moved; cached parts of the page, not needed yet.
 - "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 

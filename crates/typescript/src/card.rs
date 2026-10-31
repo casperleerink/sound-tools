@@ -8,19 +8,20 @@ mod controls;
 mod drawing;
 mod input;
 mod paint;
+mod placed;
 mod shapes;
 mod space;
 mod sync;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, MouseButton,
-    Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakFocusHandle, Window, canvas, div,
-    prelude::*, px,
+    Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity, WeakFocusHandle, Window,
+    canvas, div, prelude::*, px,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -29,17 +30,18 @@ use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::DropdownMenu;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::renders::{self, Part};
-use sound_ui::{ActiveTheme, ControlEdit, Metering, Session, Waveforms, every_poll};
+use sound_ui::{ActiveTheme, ControlEdit, Session, Waveforms, every_poll};
 
 use crate::bun::PageSize;
-use crate::feeds::Feeds;
+use crate::feeds::{Drawn, Feeds};
 use crate::live::SpaceView;
 use crate::tools::ToolInfo;
 use crate::tree::{NodeTable, Props, Uses};
-use crate::window::{Live, Surface, state_of};
+use crate::window::{CardsChanged, Live, Surface, state_of};
 
 use self::drawing::Drawing;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
+use self::placed::Placing;
 use self::shapes::SpaceIndex;
 use self::sync::Embedded;
 
@@ -106,10 +108,6 @@ pub(crate) struct TypeScriptCard {
     lifted: Rc<RefCell<HashMap<u64, Lifted>>>,
     /// Where the page is in the window, which the layer over it draws from.
     origin: Rc<Cell<Point<Pixels>>>,
-    /// The title bar draws again alone, and reads the feeds for its frame.
-    title_reads: bool,
-    /// How each meter node falls and holds its peak, by node.
-    meters: Rc<RefCell<HashMap<u64, Metering>>>,
     /// Where each node that hears a press was last laid out, by node, so a menu its press opens
     /// hangs under it.
     placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
@@ -126,6 +124,8 @@ pub(crate) struct TypeScriptCard {
     /// Whether a mouse button is down in the window. A card out of view is drawn then too, so
     /// a knob dragged while the rack scrolls hears its mouse up.
     button_down: Rc<Cell<bool>>,
+    /// Itself, for what its draws hand the window to call back.
+    handle: WeakEntity<Self>,
     _polling: Task<()>,
 }
 
@@ -193,7 +193,8 @@ pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {
 }
 
 /// A page, which draws again only when it changed, while the window draws again with every
-/// move of the playhead: the spaces that show the playhead draw on the layer over it.
+/// move of the playhead: what moves every frame draws on the layer over it, and the cards of
+/// other instances each on their own.
 pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>, Entity<Over>);
 
 impl Page {
@@ -204,8 +205,17 @@ impl Page {
 }
 
 impl Render for Page {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let over = StyleRefinement::default().absolute().top_0().left_0();
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let layer = || {
+            StyleRefinement::default()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+        };
+        let cards = (self.0.read(cx).embedded.values())
+            .filter_map(|card| card.placing.as_ref())
+            .map(|placing| placing.view.clone().cached(layer()));
         div()
             .relative()
             .size_full()
@@ -214,11 +224,12 @@ impl Render for Page {
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
             )
-            .child(self.1.clone().cached(over.size_full()))
+            .children(cards)
+            .child(self.1.clone().cached(layer()))
     }
 }
 
-/// The spaces of a page that show the playhead, drawn over the page where it laid them out.
+/// The spaces of a page that move every frame, drawn over the page where it laid them out.
 /// While nothing else moves, they draw again and the page does not.
 pub(crate) struct Over(Entity<TypeScriptCard>);
 
@@ -233,10 +244,22 @@ impl Over {
 
 impl Render for Over {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _rendering = renders::start(Part::Over, self.0.read(cx).id.as_str());
-        let spaces = self.0.update(cx, |card, cx| card.draw_over(window, cx));
-        div().size_full().children(spaces)
+        let card = self.0.read(cx);
+        let _rendering = renders::start(Part::Over, card.id.as_str());
+        if card.parts(cx).over.animates {
+            next_frame(&self.0, Drawn::Over, window);
+        }
+        div().size_full().children(card.draw_over(window, cx))
     }
+}
+
+/// The frame after this one draws `part` again, which moves on every frame.
+fn next_frame(card: &Entity<TypeScriptCard>, part: Drawn, window: &Window) {
+    let card = card.downgrade();
+    window.on_next_frame(move |_, cx| {
+        let title_bar = matches!(part, Drawn::TitleBar);
+        (card.update(cx, |card, cx| card.draw_alone(title_bar, !title_bar, cx))).ok();
+    });
 }
 
 /// Only what the spaces over a page show changed.
@@ -250,7 +273,7 @@ pub(crate) struct Parts {
     /// Those the card draws itself.
     body: Uses,
     title_bar: Uses,
-    /// The spaces of a page that show the playhead, which the layer over it draws, together.
+    /// The spaces of a page that move every frame, which the layer over it draws, together.
     over: Uses,
     lifted: HashSet<u64>,
 }
@@ -318,18 +341,23 @@ impl TypeScriptCard {
                 view.state = None;
                 view.edit.finish(&view.session, cx);
             }
-            ProjectEvent::Created(id) if *id == view.id => view.state = None,
-            // Its live values read the record.
-            ProjectEvent::Changed(id) if *id == view.id => {
+            // Its live values read the record: read again here, as the title bar draws before
+            // the page.
+            ProjectEvent::Created(id) | ProjectEvent::Changed(id) if *id == view.id => {
                 view.state = None;
+                view.state(cx);
                 cx.notify();
             }
-            // And the records of instances inside it.
-            ProjectEvent::Changed(id)
-                if id.is_inside(&view.id)
-                    && !view.live.read(cx).uses(view.card).inside.is_empty() =>
-            {
-                cx.notify();
+            // And the records of instances inside it, where it reads them.
+            ProjectEvent::Changed(id) if id.is_inside(&view.id) => {
+                let parts = view.parts(cx);
+                let reads = |uses: &Uses| {
+                    (uses.inside.iter())
+                        .filter_map(|name| view.id.child(name.split_once('.')?.0).ok())
+                        .any(|inside| inside == *id)
+                };
+                let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
+                view.draw_again([reads(body), reads(title_bar), reads(over)], cx);
             }
             _ => {}
         })
@@ -341,9 +369,25 @@ impl TypeScriptCard {
             view.draw_again([parts.body.tick, parts.title_bar.tick, parts.over.tick], cx);
         })
         .detach();
-        cx.observe_in(&live, window, |view, _, window, cx| {
-            view.sync(window, cx);
-            cx.notify();
+        cx.subscribe_in(
+            &live,
+            window,
+            |view, _, changed: &CardsChanged, window, cx| {
+                if changed.concerns(view.card) {
+                    view.let_go_of_ended_drag(cx);
+                    view.sync(window, cx);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+        // A take that starts or ends, or a note that comes into one.
+        let recording = session.read(cx).recording().clone();
+        cx.observe(&recording, |view, _, cx| {
+            let parts = view.parts(cx);
+            let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
+            let shown = |uses: &Uses| !uses.takes.is_empty();
+            view.draw_again([shown(body), shown(title_bar), shown(over)], cx);
         })
         .detach();
         // A waveform it draws is made in the background.
@@ -405,45 +449,91 @@ impl TypeScriptCard {
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),
-            title_reads: false,
-            meters: Rc::default(),
             placed: Rc::default(),
             hovers: Rc::default(),
             anchor: Rc::default(),
             scrolls: RefCell::default(),
             scrolled_cards: Rc::default(),
             button_down: Rc::default(),
+            handle: cx.weak_entity(),
             _polling: every_poll(cx, Self::poll),
         }
     }
 
+    /// An ended drag lets go once the answer to its end arrived. Whether it did.
+    fn let_go_of_ended_drag(&mut self, cx: &App) -> bool {
+        let answered = self.live.read(cx).events_answered(self.card);
+        let Some(Held {
+            ended: Some((number, at)),
+            ..
+        }) = &self.held
+        else {
+            return false;
+        };
+        let ends = answered >= *number || at.elapsed() > ENDED_DRAG;
+        if ends {
+            self.held = None;
+        }
+        ends
+    }
+
     /// Draws again when what it reads of the engine changed since it last drew, or still moves.
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if self.let_go_of_ended_drag(cx) {
+            cx.notify();
+        }
         let Some(state) = self.state(cx) else {
             return;
         };
         let parts = self.parts(cx);
         let session = self.session.read(cx);
         let tick = session.playhead().read(cx).tick;
-        let input = session.recording().read(cx).input_levels();
+        let recording = session.recording().read(cx);
+        let input = recording.input_levels();
+        // A take grows with every poll while it records, as a held note does.
+        let growing = |uses: &Uses| {
+            (uses.takes.iter())
+                .filter_map(|name| self.id.child(name).ok())
+                .any(|recorder| {
+                    recording.take_of(&recorder).is_some()
+                        || recording.notes_of(&recorder).is_some()
+                })
+        };
         let feeds = &mut self.feeds;
-        let mut changed =
-            |uses, title| feeds.changed(session, (&self.id, &state), (uses, title), tick, input);
-        let body = changed(&parts.body, false);
-        let title_bar = !body && self.title_bar.is_some() && changed(&parts.title_bar, true);
-        let over = !body && !parts.lifted.is_empty() && changed(&parts.over, false);
+        let mut changed = |uses, part| {
+            growing(uses) || feeds.changed(session, (&self.id, &state), (uses, part), tick, input)
+        };
+        let body = changed(&parts.body, Drawn::Body);
+        let title_bar =
+            !body && self.title_bar.is_some() && changed(&parts.title_bar, Drawn::TitleBar);
+        let over = !body && !parts.lifted.is_empty() && changed(&parts.over, Drawn::Over);
         self.draw_again([body, title_bar, over], cx);
     }
 
     /// Draws the whole card again, or only its title bar or the layer over the page when
-    /// nothing else changed.
+    /// nothing else changed. A part that moves on every frame draws in the next one anyway.
     fn draw_again(&mut self, [body, title_bar, over]: [bool; 3], cx: &mut Context<Self>) {
         if body {
             cx.notify();
             return;
         }
+        let parts = self.parts(cx);
+        let title_bar = title_bar && !parts.title_bar.animates;
+        let over = over && !parts.over.animates;
+        self.draw_alone(title_bar, over, cx);
+    }
+
+    /// Reads the feeds for a frame, and draws the title bar or the layer over the page again.
+    fn draw_alone(&mut self, title_bar: bool, over: bool, cx: &mut Context<Self>) {
+        if !title_bar && !over {
+            return;
+        }
+        if let Some(state) = self.state(cx) {
+            let uses = self.live.read(cx).uses(self.card);
+            let tick = self.session.read(cx).playhead().read(cx).tick;
+            self.read_frame(&state, &uses, tick, cx);
+        }
         if title_bar {
-            self.title_reads = true;
             cx.emit(TitleBarChanged);
         }
         if over {
@@ -451,7 +541,12 @@ impl TypeScriptCard {
         }
     }
 
-    /// What its nodes read: in the title bar, in the spaces of a page that show the playhead,
+    /// The record as last read.
+    fn read_state(&self) -> Option<Rc<Value>> {
+        self.state.as_ref().map(|(_, state)| state.clone())
+    }
+
+    /// What its nodes read: in the title bar, in the spaces of a page that move every frame,
     /// which the layer over the page draws, and the rest.
     fn parts(&self, cx: &App) -> Rc<Parts> {
         let live = self.live.read(cx);
@@ -469,15 +564,17 @@ impl TypeScriptCard {
         {
             return parts.clone();
         }
-        // Not where a div lies over others: drawn over the page, a space would hide it.
-        let page = self.frame.is_none() && !table.lays_over();
+        // Not where it must draw in the page: over the page, a space would hide what lies over
+        // it, or lose the fade of a div it is in.
+        let page = self.frame.is_none();
         let spaces: Vec<(usize, u64)> = (table.spaces().into_iter())
             .filter(|(slot, _)| page && title.is_none_or(|title| !table.within(*slot, title)))
+            .filter(|(slot, _)| !table.kept_in_page(*slot))
             .collect();
         let slots: Vec<usize> = spaces.iter().map(|(slot, _)| *slot).collect();
         let (_, each) = table.uses_split(&slots);
         let lifted: Vec<(usize, u64)> = (spaces.into_iter().zip(&each))
-            .filter(|(_, uses)| uses.tick)
+            .filter(|(_, uses)| uses.per_frame())
             .map(|(space, _)| space)
             .collect();
         let parts_of: Vec<usize> = (title.into_iter())
@@ -506,8 +603,18 @@ impl TypeScriptCard {
         info.is_some_and(|info| info.keys) || !self.overlays.is_empty()
     }
 
+    /// When its page takes the keys, the key context of its tool if it hears them: what of the
+    /// plain keys the computer keys leave to it, all or those it names.
+    fn keys_of_page(&self, cx: &App) -> Option<Option<gpui::KeyContext>> {
+        let info = self.live.read(cx).info(self.card);
+        let context = (info.as_deref())
+            .filter(|info| info.keys)
+            .map(|info| crate::key_context(info.takes.as_deref()));
+        self.takes_keys(info.as_deref()).then_some(context)
+    }
+
     /// The record with each field it leaves out at its default, and its tool.
-    fn record(&self, cx: &App) -> (Value, Option<ToolInfo>) {
+    fn record(&self, cx: &App) -> (Value, Option<Rc<ToolInfo>>) {
         let info = self.live.read(cx).info(self.card);
         let state = state_of(self.session.read(cx).project(), &self.id).unwrap_or(Value::Null);
         let state = match &info {
@@ -581,7 +688,7 @@ impl TypeScriptCard {
         self.feeds.take_notes = (uses.takes.iter())
             .filter_map(|name| {
                 let notes = recording.notes_of(&self.id.child(name).ok()?)?;
-                Some((name.clone(), Rc::new(notes.clone())))
+                Some((name.clone(), notes.clone()))
             })
             .collect();
         let now = cx.background_executor().now();
@@ -589,23 +696,21 @@ impl TypeScriptCard {
         (self.feeds).read(session, &self.id, state, uses, tick, now);
     }
 
-    /// The spaces the layer over the page draws, each where the page laid it out.
-    fn draw_over(&mut self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The spaces the layer over the page draws, each where the page laid it out, from the
+    /// feeds as last read.
+    fn draw_over(&self, window: &Window, cx: &App) -> Vec<AnyElement> {
         let places: Vec<(u64, Lifted)> = (self.lifted.borrow().iter())
             .map(|(id, place)| (*id, place.clone()))
             .collect();
         if places.is_empty() {
             return Vec::new();
         }
-        let Some(state) = self.state(cx) else {
+        let Some(state) = self.read_state() else {
             return Vec::new();
         };
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return Vec::new();
         };
-        let uses = self.live.read(cx).uses(self.card);
-        let tick = self.session.read(cx).playhead().read(cx).tick;
-        self.read_frame(&state, &uses, tick, cx);
         let origin = self.origin.get();
         let mut drawing = self.drawing(state, &table, window, cx);
         let spaces = (places.into_iter())
@@ -634,28 +739,29 @@ impl TypeScriptCard {
                 Some(cut.child(at.child(element)).into_any_element())
             })
             .collect();
-        let kept = drawing.spaces;
-        self.keep_spaces(kept);
+        drop(drawing);
+        self.feeds.drawn(Drawn::Over);
         spaces
     }
 
     /// A drawing of its nodes in `table`, with what they read now.
-    fn drawing<'a, 'b>(
+    fn drawing<'a>(
         &'a self,
         state: Rc<Value>,
         table: &'a NodeTable,
         window: &Window,
-        cx: &'a mut Context<'b, Self>,
-    ) -> Drawing<'a, 'b> {
+        cx: &'a App,
+    ) -> Drawing<'a> {
         let live = self.live.read(cx);
         let info = live.info(self.card);
-        let watches = live.watches(self.card).cloned().unwrap_or_default();
-        let played = live.played_of(&self.id).cloned();
+        static NONE: BTreeMap<String, f32> = BTreeMap::new();
+        let watches = live.watches(self.card).unwrap_or(&NONE);
+        let played = live.played_of(&self.id);
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
-        let takes_keys = self.takes_keys(info.as_ref());
-        let title_focus = (info.as_ref())
+        let takes_keys = self.takes_keys(info.as_deref());
+        let title_focus = (info.as_deref())
             .is_some_and(|info| info.keys)
             .then(|| self.title_focus.clone());
         Drawing {
@@ -675,7 +781,6 @@ impl TypeScriptCard {
             focus: &self.focus,
             viewport: window.viewport_size(),
             embedded: &self.embedded,
-            meters: &self.meters,
             placed: self.placed.clone(),
             hovers: self.hovers.clone(),
             scrolls: &self.scrolls,
@@ -687,24 +792,16 @@ impl TypeScriptCard {
             under_tooltip: false,
             takes_keys,
             title_focus,
-            title_bar: None,
             lifting: None,
+            card: self.handle.clone(),
             cx,
         }
     }
 
-    /// The div its view shows in the window's title bar, with what the body last read, or what
-    /// it reads itself when it draws alone.
-    fn draw_title_bar(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The div its view shows in the window's title bar, from the feeds as last read.
+    fn draw_title_bar(&self, window: &Window, cx: &App) -> Option<AnyElement> {
         let (slot, index) = self.title_bar.clone()?;
-        let state = self.state(cx)?;
-        if std::mem::take(&mut self.title_reads) {
-            let uses = self.live.read(cx).uses(self.card);
-            let tick = self.session.read(cx).playhead().read(cx).tick;
-            self.read_frame(&state, &uses, tick, cx);
-        }
-        // What moves in it moves the title bar alone.
-        let body_moving = self.feeds.moving.take();
+        let state = self.read_state()?;
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return None;
         };
@@ -714,8 +811,7 @@ impl TypeScriptCard {
         let bar = drawing.draw(slot, &index);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
-        let moved = self.feeds.moving.replace(body_moving);
-        (self.feeds.title_moving).set(self.feeds.title_moving.get() || moved);
+        self.feeds.drawn(Drawn::TitleBar);
         let theme = cx.theme();
         let bar = div()
             .text_size(px(12.))
@@ -727,7 +823,7 @@ impl TypeScriptCard {
         let bar = match info {
             Some(info) => {
                 let context = crate::key_context(info.takes.as_deref());
-                hearing_keys(bar, &self.title_focus.clone(), Some(context), cx)
+                hearing_keys(bar, &self.title_focus, Some(context), &self.handle)
             }
             None => bar,
         };
@@ -760,10 +856,12 @@ impl TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _rendering = renders::start(Part::TitleBar, self.0.read(cx).id.as_str());
-        let bar = self
-            .0
-            .update(cx, |card, cx| card.draw_title_bar(window, cx));
+        let card = self.0.read(cx);
+        let _rendering = renders::start(Part::TitleBar, card.id.as_str());
+        if card.parts(cx).title_bar.animates {
+            next_frame(&self.0, Drawn::TitleBar, window);
+        }
+        let bar = card.draw_title_bar(window, cx);
         // A click on it does not move the window, as the rest of the title row does.
         div().flex_none().occlude().children(bar)
     }
@@ -775,49 +873,36 @@ impl Render for TypeScriptCard {
         let Some(state) = self.state(cx) else {
             return div().into_any_element();
         };
-        // An ended drag lets go once the answer to its end arrived.
-        let answered = self.live.read(cx).events_answered(self.card);
-        if let Some(Held {
-            ended: Some((number, at)),
-            ..
-        }) = &self.held
-            && (answered >= *number || at.elapsed() > ENDED_DRAG)
-        {
-            self.held = None;
-        }
         let live = self.live.read(cx);
-        let info = live.info(self.card);
-        let hears_keys = info.as_ref().is_some_and(|info| info.keys);
-        // What of the plain keys the computer keys leave to it: all, or those it names.
-        let key_context = (info.as_ref()).map(|info| crate::key_context(info.takes.as_deref()));
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
         let playhead = *self.session.read(cx).playhead().read(cx);
-        if uses.animates {
+        if self.parts(cx).body.animates {
             window.request_animation_frame();
         }
         self.read_frame(&state, &uses, playhead.tick, cx);
-        self.title_reads = false;
         let body = match tree {
             Some(Ok(table)) => {
                 let parts = self.parts(cx);
-                self.lifted
-                    .borrow_mut()
-                    .retain(|id, _| parts.lifted.contains(id));
+                // A space left out of this frame, as in a row scrolled out of view, is drawn
+                // nowhere.
+                self.lifted.borrow_mut().clear();
                 // A div left out of this frame, as a head scrolled out of view, is over nothing.
                 self.hovers.borrow_mut().placed.clear();
+                let placings = self
+                    .embedded
+                    .values()
+                    .filter_map(|card| card.placing.as_ref());
+                placings.for_each(Placing::forget_room);
                 let mut drawing = self.drawing(state, &table, window, cx);
                 drawing.lifting = Some((&parts.lifted, &self.lifted));
                 let body = match table.root() {
                     Some(root) => drawing.draw(root, &[]),
                     None => div().into_any_element(),
                 };
-                let (spaces, title_bar) = (drawing.spaces, drawing.title_bar);
-                if self.title_bar != title_bar {
-                    self.title_bar = title_bar;
-                    cx.emit(TitleBarChanged);
-                }
+                let spaces = drawing.spaces;
                 self.keep_spaces(spaces);
+                self.feeds.drawn(Drawn::Body);
                 body
             }
             Some(Err(error)) => div()
@@ -831,14 +916,13 @@ impl Render for TypeScriptCard {
         };
         let theme = cx.theme();
         let (text, background) = (theme.gray_950, theme.gray_100);
-        // A click in what takes the keys gives them: the body of a card, a whole page. Also while
-        // it shows an overlay, for escape to close it.
-        let takes_keys = self.takes_keys(info.as_ref());
+        // A click in what takes the keys gives them: the body of a card, a whole page.
+        let keys = self.keys_of_page(cx);
         let focus = self.focus.clone();
-        let context = key_context.filter(|_| hears_keys);
-        let takes_keys = move |element: Div, cx: &mut Context<Self>| match takes_keys {
-            true => hearing_keys(element, &focus, context.clone(), cx),
-            false => element,
+        let handle = self.handle.clone();
+        let takes_keys = move |element: Div| match keys.clone() {
+            Some(context) => hearing_keys(element, &focus, context, &handle),
+            None => element,
         };
         let body = div()
             .text_size(px(12.))
@@ -854,7 +938,7 @@ impl Render for TypeScriptCard {
             Some(frame) => frame
                 .card()
                 .min_w(px(PLAIN_CARD_WIDTH))
-                .child(takes_keys(body, cx))
+                .child(takes_keys(body))
                 .into_any_element(),
             None => {
                 // The room the page draws in: the whole main area.
@@ -878,7 +962,7 @@ impl Render for TypeScriptCard {
                     .child(measure)
                     // A column, so a page whose top div grows fills the window and no more.
                     .child(body.size_full().flex().flex_col());
-                takes_keys(div().size_full().bg(background).child(room), cx).into_any_element()
+                takes_keys(div().size_full().bg(background).child(room)).into_any_element()
             }
         }
     }
