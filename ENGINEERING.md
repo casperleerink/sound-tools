@@ -87,7 +87,7 @@ How the engine keeps to that:
 - Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
-- Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule. A budget that does not hold yet is printed, not asserted, until the change that fixes its cause.
+- Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule.
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 - Verify with `cargo verify`, never the whole workspace: it tests the crates the branch changed and runs clippy on those and every crate that uses them, one run at a time per machine, so parallel agents fit in 8 GB. Its arguments go to nextest: `-E 'test(name)'` while iterating, `-p runtime -E 'test(song)'` when you changed behaviour a dependent tests. The pull request's Linux job runs every test, and main runs them on all three systems.
