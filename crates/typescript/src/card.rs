@@ -14,7 +14,7 @@ mod space;
 mod sync;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -572,14 +572,14 @@ impl TypeScriptCard {
     /// plain keys the computer keys leave to it, all or those it names.
     fn keys_of_page(&self, cx: &App) -> Option<Option<gpui::KeyContext>> {
         let info = self.live.read(cx).info(self.card);
-        let context = (info.as_ref())
+        let context = (info.as_deref())
             .filter(|info| info.keys)
             .map(|info| crate::key_context(info.takes.as_deref()));
-        self.takes_keys(info.as_ref()).then_some(context)
+        self.takes_keys(info.as_deref()).then_some(context)
     }
 
     /// The record with each field it leaves out at its default, and its tool.
-    fn record(&self, cx: &App) -> (Value, Option<ToolInfo>) {
+    fn record(&self, cx: &App) -> (Value, Option<Rc<ToolInfo>>) {
         let info = self.live.read(cx).info(self.card);
         let state = state_of(self.session.read(cx).project(), &self.id).unwrap_or(Value::Null);
         let state = match &info {
@@ -653,7 +653,7 @@ impl TypeScriptCard {
         self.feeds.take_notes = (uses.takes.iter())
             .filter_map(|name| {
                 let notes = recording.notes_of(&self.id.child(name).ok()?)?;
-                Some((name.clone(), Rc::new(notes.clone())))
+                Some((name.clone(), notes.clone()))
             })
             .collect();
         let now = cx.background_executor().now();
@@ -719,13 +719,14 @@ impl TypeScriptCard {
     ) -> Drawing<'a> {
         let live = self.live.read(cx);
         let info = live.info(self.card);
-        let watches = live.watches(self.card).cloned().unwrap_or_default();
-        let played = live.played_of(&self.id).cloned();
+        static NONE: BTreeMap<String, f32> = BTreeMap::new();
+        let watches = live.watches(self.card).unwrap_or(&NONE);
+        let played = live.played_of(&self.id);
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
-        let takes_keys = self.takes_keys(info.as_ref());
-        let title_focus = (info.as_ref())
+        let takes_keys = self.takes_keys(info.as_deref());
+        let title_focus = (info.as_deref())
             .is_some_and(|info| info.keys)
             .then(|| self.title_focus.clone());
         Drawing {

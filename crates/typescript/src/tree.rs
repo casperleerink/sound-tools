@@ -3,6 +3,7 @@
 //! does not know is an error on the card, not something left out.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui::{Div, Hsla, Stateful, prelude::*, px};
 use serde::de::value::MapAccessDeserializer;
@@ -668,7 +669,7 @@ pub(crate) struct NodeTable {
     slots: Vec<Option<Entry>>,
     ids: HashMap<u64, usize>,
     root: Option<usize>,
-    drags: HashMap<u64, Drag>,
+    drags: HashMap<u64, Rc<Drag>>,
     counts: UseCounts,
     /// What the nodes use together, worked out again after a batch that changed it.
     uses: Uses,
@@ -705,7 +706,7 @@ impl NodeTable {
         }
     }
 
-    pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Drag> {
+    pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Rc<Drag>> {
         self.drags.get(&id?)
     }
 
@@ -953,7 +954,7 @@ impl NodeTable {
                 }
                 Op::Root(id) => self.root = Some(self.slot(id)?),
                 Op::Drag(id, drag) => {
-                    self.drags.insert(id, drag);
+                    self.drags.insert(id, Rc::new(drag));
                 }
             }
         }

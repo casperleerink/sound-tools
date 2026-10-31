@@ -38,8 +38,8 @@ impl Drawing<'_> {
             hovered: (self.hovered.as_ref())
                 .filter(|(space, _)| space == key)
                 .map(|(_, shape)| *shape),
-            placed: Vec::with_capacity(children.len()),
-            pointed: Vec::with_capacity(children.len()),
+            placed: Vec::new(),
+            pointed: Vec::new(),
         };
         let mut indexes = self.indexes.borrow_mut();
         let version = self.table.version();
@@ -278,7 +278,7 @@ pub(super) struct SpaceFrame {
     pub(super) background: Option<Hsla>,
     pub(super) radius: f32,
     pub(super) hears: Hears,
-    pub(super) drag: Option<Drag>,
+    pub(super) drag: Option<Rc<Drag>>,
     pub(super) cursor: Option<Cursor>,
     extent: tree::Ranges,
     zoom: tree::Ranges,

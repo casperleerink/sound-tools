@@ -30,11 +30,11 @@ use super::{Lifted, TypeScriptCard};
 /// What one draw of the card reads.
 pub(super) struct Drawing<'a> {
     /// The tool, as it last loaded.
-    pub(super) info: Option<ToolInfo>,
+    pub(super) info: Option<Rc<ToolInfo>>,
     /// The record, with each field it leaves out at its default.
     pub(super) state: Rc<Value>,
-    pub(super) watches: BTreeMap<String, f32>,
-    pub(super) played: Option<BTreeMap<String, f32>>,
+    pub(super) watches: &'a BTreeMap<String, f32>,
+    pub(super) played: Option<&'a BTreeMap<String, f32>>,
     pub(super) tick: f64,
     pub(super) spaces: HashMap<String, SpaceView>,
     /// The card's own, which the paint of a space writes its size in.
@@ -85,10 +85,10 @@ impl Drawing<'_> {
     pub(super) fn sources(&self) -> Sources<'_> {
         Sources {
             tick: self.tick,
-            watches: &self.watches,
+            watches: self.watches,
             state: &self.state,
-            info: self.info.as_ref(),
-            played: self.played.as_ref(),
+            info: self.info.as_deref(),
+            played: self.played,
             drag: (self.drag.as_ref()).map(|(id, numbers)| (id.as_str(), *numbers)),
             spaces: &self.spaces,
             hovered: (self.hovered.as_ref()).and_then(|(_, node)| self.table.shape_key(*node)),

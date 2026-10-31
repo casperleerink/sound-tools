@@ -443,7 +443,9 @@ impl LiveInput {
 /// each of its children that plays them.
 pub fn notes_inputs(project: &Project, selected: Option<&InstanceId>) -> Vec<InputEndpoint> {
     let Some(selected) = selected else {
-        let top = project.instances().filter(|(id, _)| id.parent().is_none());
+        let top = project
+            .instances()
+            .filter(|(id, _)| !id.as_str().contains('/'));
         return top
             .filter_map(|(id, _)| project.input_port(id, NOTES_INPUT))
             .collect();

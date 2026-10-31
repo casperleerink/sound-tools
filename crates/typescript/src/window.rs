@@ -66,7 +66,7 @@ pub(crate) struct Live {
     opening: u64,
     skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
-    tools: Rc<RefCell<Vec<ToolInfo>>>,
+    tools: Rc<RefCell<Vec<Rc<ToolInfo>>>>,
     /// Goes up when the tools do, so the pickers fill themselves again.
     generation: Rc<Cell<u64>>,
     cards: HashMap<u64, Card>,
@@ -385,7 +385,7 @@ impl Live {
     fn start(
         extensions: Extensions,
         session: &Entity<Session>,
-        tools: &Rc<RefCell<Vec<ToolInfo>>>,
+        tools: &Rc<RefCell<Vec<Rc<ToolInfo>>>>,
         generation: &Rc<Cell<u64>>,
         watched: bool,
         cx: &mut App,
@@ -398,7 +398,7 @@ impl Live {
             skipped,
             problems,
         } = extensions;
-        *tools.borrow_mut() = loaded;
+        *tools.borrow_mut() = loaded.into_iter().map(Rc::new).collect();
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
             let (watcher, watch_problem) = if watched {
@@ -521,7 +521,7 @@ impl Live {
 }
 
 /// The tool named `name`, as it last loaded.
-fn find<'a>(tools: &'a [ToolInfo], name: &str) -> Option<&'a ToolInfo> {
+fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
     tools.iter().find(|info| info.name == name)
 }
 
@@ -549,7 +549,7 @@ fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
 
 /// Whether Bun holds the record of `id`: one of a tool of the project, or one inside one at
 /// any depth, which the code of that tool reads.
-fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
+fn told_to_bun(project: &Project, tools: &[Rc<ToolInfo>], id: &InstanceId) -> bool {
     let ours =
         |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
     ours(id) || id.ancestors().any(|owner| ours(&owner))
@@ -611,7 +611,7 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
 
 /// What a picker offers of the tools of `kind`: each one's record at its defaults. Not an owner,
 /// whose place is the top of the project.
-fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
+fn offers(tools: &[Rc<ToolInfo>], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools
         .iter()
         .filter(|info| kind(info.tool_kind()) && !info.behaviour);
@@ -667,7 +667,7 @@ impl Live {
         self.generation.get()
     }
 
-    pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
+    pub(crate) fn info(&self, card: u64) -> Option<Rc<ToolInfo>> {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
 
@@ -1428,7 +1428,7 @@ impl Live {
         self.last_frame = Instant::now();
         let clock = clock_of(&session, cx);
         let ticks =
-            |tools: &[ToolInfo], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
+            |tools: &[Rc<ToolInfo>], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
         // Only for code that runs now: a knob turned on a card tells Bun nothing.
         if (session.read(cx).project().instances())
             .any(|(_, tool)| ticks(&self.tools.borrow(), tool))
@@ -2116,7 +2116,7 @@ impl Live {
             "its {} {why}, so the tools run without this file: fix it and save",
             runs.what
         ));
-        self.skipped.insert(info.file, problem.message);
+        self.skipped.insert(info.file.clone(), problem.message);
         self.restart(cx);
     }
 
@@ -2141,7 +2141,7 @@ impl Live {
                 None => {
                     let tools = self.tools.borrow();
                     let info = (project.tool_of(&id)).and_then(|tool| find(&tools, tool));
-                    let Some(processor) = info.map(ToolInfo::processor) else {
+                    let Some(processor) = info.map(|info| info.processor()) else {
                         return Ok(());
                     };
                     project.send::<Signals>(&id, processor, SignalsUpdate::PerformerGone)
@@ -2236,8 +2236,8 @@ impl Live {
                     .collect(),
             }
         });
-        let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
-            .filter(|info| find(&tools, &info.name).is_none())
+        let gone: Vec<Rc<ToolInfo>> = (self.tools.borrow().iter())
+            .filter(|info| !tools.iter().any(|tool| tool.name == info.name))
             .cloned()
             .collect();
         // A file Bun runs without says why already.
@@ -2249,7 +2249,10 @@ impl Live {
         }));
         self.problems = problems;
         self.report(cx);
-        *self.tools.borrow_mut() = gone.into_iter().chain(tools).collect();
+        *self.tools.borrow_mut() = gone
+            .into_iter()
+            .chain(tools.into_iter().map(Rc::new))
+            .collect();
         self.generation.set(self.generation.get() + 1);
         // The new Bun knows no card and has read nothing yet.
         self.reads.clear();

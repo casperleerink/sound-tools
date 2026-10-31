@@ -6,6 +6,7 @@
 //! [`Session`](crate::Session) holds the one entity of a window.
 
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use gpui::{Context, EventEmitter};
 use sound_core::{InstanceId, Ticks};
@@ -57,7 +58,8 @@ pub struct FinishedTake {
 pub struct Recording {
     armed: BTreeSet<InstanceId>,
     takes: Vec<LiveTake>,
-    notes: Vec<LiveNotes>,
+    /// Shared with what draws them on every frame.
+    notes: Vec<Rc<LiveNotes>>,
     input: Vec<f32>,
 }
 
@@ -101,11 +103,12 @@ impl Recording {
     }
 
     /// The notes of the take of `recorder` that runs.
-    pub fn notes_of(&self, recorder: &InstanceId) -> Option<&LiveNotes> {
+    pub fn notes_of(&self, recorder: &InstanceId) -> Option<&Rc<LiveNotes>> {
         self.notes.iter().find(|take| take.recorder == *recorder)
     }
 
     pub fn set_notes(&mut self, notes: Vec<LiveNotes>, cx: &mut Context<Self>) {
+        let notes: Vec<Rc<LiveNotes>> = notes.into_iter().map(Rc::new).collect();
         if self.notes != notes {
             self.notes = notes;
             cx.notify();

@@ -24,7 +24,7 @@ use super::input::Hears;
 pub(super) struct Pointer {
     pub(super) node: u64,
     pub(super) hears: Hears,
-    pub(super) drag: Option<Drag>,
+    pub(super) drag: Option<Rc<Drag>>,
     pub(super) cursor: Option<Cursor>,
     pub(super) anchor: (f64, f64),
 }
@@ -399,6 +399,8 @@ struct Kept {
     reads: Option<Reads>,
     /// By the place of each shape in `shapes`: what it gave, unless it is not steady.
     shaped: Vec<Option<Option<Showing>>>,
+    /// How many shapes showed, and how many of those were placed, in the last frame.
+    shown: (usize, usize),
 }
 
 /// All a steady shape reads: how the spaces show, the drag, and what the pointer is over.
@@ -616,6 +618,9 @@ impl Placing<'_> {
     /// gives what it gave in the frame before, while what it reads is the same.
     pub(super) fn indexed(&mut self, index: &mut SpaceIndex) {
         let kept = &mut index.kept;
+        // As many as in the last frame, rather than growing from none.
+        self.pointed.reserve(kept.shown.0);
+        self.placed.reserve(kept.shown.1);
         let same =
             (kept.reads.as_ref()).is_some_and(|reads| reads.are(&self.sources, self.hovered));
         if !same || kept.shaped.len() != index.shapes.len() {
@@ -638,6 +643,7 @@ impl Placing<'_> {
             };
             self.put(shaped);
         }
+        index.kept.shown = (self.pointed.len(), self.placed.len());
     }
 
     /// What `indexed` gives this frame.

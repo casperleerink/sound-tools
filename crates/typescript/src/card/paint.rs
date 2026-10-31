@@ -127,7 +127,7 @@ pub(super) fn prepaint(
     frame_view.height = f64::from(f32::from(bounds.size.height));
     let (across, down) = frame_view.scale();
     let at = |(x, y): (f64, f64)| frame.point_at(bounds, (x, y));
-    let mut painted = Vec::new();
+    let mut painted = Vec::with_capacity(frame.placed.len());
     for placed in &frame.placed {
         let shape = match &placed.geometry {
             Geometry::Rect {
