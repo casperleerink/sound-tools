@@ -8,9 +8,9 @@ use midi::Played;
 use plugin_host::{Plugins, ScanCache};
 use runtime::window::DeviceAccess;
 use serde_json::Value;
-use sound_ui::renders::Part;
 use sound_core::InstanceId;
 use sound_notes::{Amount, Bend};
+use sound_ui::renders::Part;
 use std::sync::atomic::Ordering;
 
 use super::{Opened, write};
@@ -153,7 +153,9 @@ fn a_take_of_notes_draws_as_it_grows(cx: &mut TestAppContext) {
         let session = window.session.clone();
         window.cx.read(|cx| {
             let recording = session.read(cx).recording().read(cx);
-            recording.notes_of(&recorder).is_some_and(|take| !take.notes.is_empty())
+            recording
+                .notes_of(&recorder)
+                .is_some_and(|take| !take.notes.is_empty())
         })
     });
     window.renders_in(2);

@@ -748,7 +748,9 @@ tool({
 /// leaves the card, so pressing it again is heard.
 #[gpui::test]
 fn the_focus_leaving_a_device_card_lets_go_of_a_held_key(cx: &mut TestAppContext) {
-    let project = ONLY_THE_TOOL[0].1.replace(r#""extensions": []"#, r#""extensions": ["filter"]"#);
+    let project = ONLY_THE_TOOL[0]
+        .1
+        .replace(r#""extensions": []"#, r#""extensions": ["filter"]"#);
     let files = [
         ("project.json".into(), project),
         (
