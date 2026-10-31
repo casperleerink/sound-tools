@@ -381,6 +381,15 @@ impl TypeScriptCard {
             },
         )
         .detach();
+        // A take that starts or ends, or a note that comes into one.
+        let recording = session.read(cx).recording().clone();
+        cx.observe(&recording, |view, _, cx| {
+            let parts = view.parts(cx);
+            let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
+            let shown = |uses: &Uses| !uses.takes.is_empty();
+            view.draw_again([shown(body), shown(title_bar), shown(over)], cx);
+        })
+        .detach();
         // A waveform it draws is made in the background.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |view, _, cx| {
@@ -481,11 +490,14 @@ impl TypeScriptCard {
         let tick = session.playhead().read(cx).tick;
         let recording = session.recording().read(cx);
         let input = recording.input_levels();
-        // A take grows with every poll while it records.
+        // A take grows with every poll while it records, as a held note does.
         let growing = |uses: &Uses| {
             (uses.takes.iter())
                 .filter_map(|name| self.id.child(name).ok())
-                .any(|recorder| recording.take_of(&recorder).is_some())
+                .any(|recorder| {
+                    recording.take_of(&recorder).is_some()
+                        || recording.notes_of(&recorder).is_some()
+                })
         };
         let feeds = &mut self.feeds;
         let mut changed = |uses, part| {
