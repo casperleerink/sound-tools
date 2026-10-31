@@ -229,7 +229,7 @@ impl Render for Page {
     }
 }
 
-/// The spaces of a page that show the playhead, drawn over the page where it laid them out.
+/// The spaces of a page that move every frame, drawn over the page where it laid them out.
 /// While nothing else moves, they draw again and the page does not.
 pub(crate) struct Over(Entity<TypeScriptCard>);
 
@@ -373,6 +373,7 @@ impl TypeScriptCard {
             window,
             |view, _, changed: &CardsChanged, window, cx| {
                 if changed.concerns(view.card) {
+                    view.let_go_of_ended_drag(cx);
                     view.sync(window, cx);
                     cx.notify();
                 }
@@ -449,8 +450,28 @@ impl TypeScriptCard {
         }
     }
 
+    /// An ended drag lets go once the answer to its end arrived. Whether it did.
+    fn let_go_of_ended_drag(&mut self, cx: &App) -> bool {
+        let answered = self.live.read(cx).events_answered(self.card);
+        let Some(Held {
+            ended: Some((number, at)),
+            ..
+        }) = &self.held
+        else {
+            return false;
+        };
+        let ends = answered >= *number || at.elapsed() > ENDED_DRAG;
+        if ends {
+            self.held = None;
+        }
+        ends
+    }
+
     /// Draws again when what it reads of the engine changed since it last drew, or still moves.
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if self.let_go_of_ended_drag(cx) {
+            cx.notify();
+        }
         let Some(state) = self.state(cx) else {
             return;
         };
@@ -512,7 +533,7 @@ impl TypeScriptCard {
         self.state.as_ref().map(|(_, state)| state.clone())
     }
 
-    /// What its nodes read: in the title bar, in the spaces of a page that show the playhead,
+    /// What its nodes read: in the title bar, in the spaces of a page that move every frame,
     /// which the layer over the page draws, and the rest.
     fn parts(&self, cx: &App) -> Rc<Parts> {
         let live = self.live.read(cx);
@@ -838,16 +859,6 @@ impl Render for TypeScriptCard {
         let Some(state) = self.state(cx) else {
             return div().into_any_element();
         };
-        // An ended drag lets go once the answer to its end arrived.
-        let answered = self.live.read(cx).events_answered(self.card);
-        if let Some(Held {
-            ended: Some((number, at)),
-            ..
-        }) = &self.held
-            && (answered >= *number || at.elapsed() > ENDED_DRAG)
-        {
-            self.held = None;
-        }
         let live = self.live.read(cx);
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
