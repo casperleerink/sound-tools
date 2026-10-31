@@ -84,7 +84,7 @@ jobs:
           bun-version: 1.4.3
       # With the realtime sanitizer on: any test that allocates, locks or makes a system call
       # inside Engine::process_block aborts.
-      - run: cargo nextest run --workspace --locked
+      - run: cargo nextest run --workspace --locked --profile ci
         env:
           RTSAN_ENABLE: 1
       # The window rendered offscreen, which nextest leaves out: it has no test harness.
@@ -119,7 +119,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
-      - run: cargo nextest run --workspace --locked
+      - run: cargo nextest run --workspace --locked --profile ci
 
   # Windows lints, and on main builds and runs the tests. Nobody here has a Windows computer, so
   # this job is how Windows-only failures show up. Its tests take about 15 minutes, too slow for
@@ -150,4 +150,4 @@ jobs:
         with:
           bun-version: 1.4.3
       - if: github.event_name == 'push'
-        run: cargo nextest run --workspace --locked --no-fail-fast
+        run: cargo nextest run --workspace --locked --profile ci --no-fail-fast

@@ -2,4 +2,13 @@
 slow-timeout = { period = "60s", terminate-after = 1 }
 # The snapshot renderers of the gallery and the runtime have no test harness. Run them with
 # `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`.
+# The two tests of the real file watchers run in CI, `--profile ci`: on a Mac where other
+# builds run, the system drops file events for minutes.
+default-filter = """
+not binary(snapshots)
+- test(=watching::the_watcher_applies_a_burst_of_files_and_skips_own_writes)
+- test(=tools::a_change_of_a_file_a_tool_imports_changes_its_sound)
+"""
+
+[profile.ci]
 default-filter = "not binary(snapshots)"

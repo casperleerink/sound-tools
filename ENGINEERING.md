@@ -81,7 +81,7 @@ How the engine keeps to that:
 ## Testing
 
 - DSP, graph, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio testable: render frames, then assert on samples or snapshot a summary with `insta`.
-- Project folder tests call `Project::apply_outside_changes` with explicit paths, the function the file watcher calls, so they do not depend on timing.
+- A test that changes a file tells the code, as the watcher does: `Project::apply_outside_changes`, or `Opened::save_code` for tools. A busy Mac drops file events for minutes, so only CI runs the two tests of the real watchers.
 - Property tests (`proptest`) cover the graph compiler, the clock round trips, transport events over random tempo maps and buffer sizes, and state application.
 - `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
 - Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
