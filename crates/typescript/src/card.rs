@@ -341,10 +341,11 @@ impl TypeScriptCard {
                 view.state = None;
                 view.edit.finish(&view.session, cx);
             }
-            ProjectEvent::Created(id) if *id == view.id => view.state = None,
-            // Its live values read the record.
-            ProjectEvent::Changed(id) if *id == view.id => {
+            // Its live values read the record: read again here, as the title bar draws before
+            // the page.
+            ProjectEvent::Created(id) | ProjectEvent::Changed(id) if *id == view.id => {
                 view.state = None;
+                view.state(cx);
                 cx.notify();
             }
             // And the records of instances inside it, where it reads them.

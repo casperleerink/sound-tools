@@ -551,6 +551,23 @@ tool({
 });
 "#;
 
+/// An edit of the record of a page, as a knob of the window makes, keeps what the page shows in
+/// the title bar: the title bar draws before the page reads the record again.
+#[gpui::test]
+fn an_edit_of_the_record_of_a_page_keeps_its_title_bar(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("titled", TITLED));
+    window.until_found("button-go");
+    window.edit(|project| {
+        let mut edit = project.begin("Heard");
+        project.update_json(&mut edit, &crate::support::id("titled"), |state| {
+            state["heard"] = "edited".into();
+        })?;
+        project.finish(edit)
+    });
+    window.settle();
+    assert!(window.cx.debug_bounds("button-go").is_some());
+}
+
 /// A button in the title bar, out of its page, hands the page the keys it does not click with.
 #[gpui::test]
 fn a_button_in_the_title_bar_hands_its_page_the_keys(cx: &mut TestAppContext) {
