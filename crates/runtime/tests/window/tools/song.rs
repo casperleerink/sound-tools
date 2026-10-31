@@ -5,7 +5,7 @@
 use super::{Opened, open};
 use crate::song::{ACROSS, BAR, HEADER, LEAD, NAME, ROW, song_files};
 use gpui::{
-    Modifiers, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
+    Modifiers, Pixels, Point, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px,
 };
 
 pub(super) fn open_song(cx: &mut TestAppContext, tracks: usize, clips: usize) -> Opened<'_> {
@@ -123,11 +123,12 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     // Only the heads that show are drawn.
     assert!(window.find("div-name-t00").is_some());
     assert!(window.find("div-name-t35").is_none());
-    window.cx.simulate_event(ScrollWheelEvent {
+    window.cx.simulate_event(ScrollEvent {
         position: timeline + point(px(200.), px(100.)),
         delta: ScrollDelta::Pixels(point(px(0.), px(-10. * ROW))),
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::Moved,
+        ..Default::default()
     });
     window.cx.run_until_parked();
     assert!(window.find("div-name-t00").is_none());

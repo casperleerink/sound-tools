@@ -1,11 +1,11 @@
 ---
 name: gpui-pitfalls
-description: Concrete gotchas for gpui (Zed v1.20.2) - renamed APIs that make online examples fail to compile, closure/borrow traps with cx.listener and entity.update, missing repaint, element id collisions, deferred/anchored, text truncation and sizing, child vs children, SharedString, px vs rems, plus how to run + screenshot on macOS and write a #[gpui::test]. Use when a build fails, a click does nothing, the screen does not update, or before verifying UI visually.
+description: Concrete gotchas for gpui (Zed v1.26.2) - renamed APIs that make online examples fail to compile, closure/borrow traps with cx.listener and entity.update, missing repaint, element id collisions, deferred/anchored, text truncation and sizing, child vs children, SharedString, px vs rems, plus how to run + screenshot on macOS and write a #[gpui::test]. Use when a build fails, a click does nothing, the screen does not update, or before verifying UI visually.
 ---
 
-# gpui (Zed v1.20.2) pitfalls
+# gpui (Zed v1.26.2) pitfalls
 
-Checked against the pinned git checkout, `~/.cargo/git/checkouts/zed-*/7c451e6/crates/gpui`.
+Checked against the pinned git checkout, `~/.cargo/git/checkouts/zed-*/c427327/crates/gpui`.
 Zed's repo (https://github.com/zed-industries/zed) shows real usage, but its main branch may be newer than
 our pin; verify names against the checkout. Project builds with `cargo build -p gallery` from the repo root.
 The crates.io `gpui` 0.2.2 (Oct 2025) and blog posts based on it are out of date for this project.
@@ -28,6 +28,7 @@ The crates.io `gpui` 0.2.2 (Oct 2025) and blog posts based on it are out of date
 | `Render::render(&mut self, cx)` | `render(&mut self, window: &mut Window, cx: &mut Context<Self>)` |
 | `RenderOnce::render(self, cx)` | `render(self, window: &mut Window, cx: &mut App)` |
 | `on_click(\|ev, cx\|)` | `on_click(\|ev: &ClickEvent, window, cx\|)`; `ClickEvent` is an enum, use `ev.position()`/`ev.modifiers()` |
+| `ScrollWheelEvent`, `on_scroll_wheel` | `ScrollEvent`, `on_scroll`; one built by hand needs `..Default::default()` for `source` |
 | `cx.add_window` (app) | only exists on `TestAppContext` |
 | `#[derive(IntoElement)]` needing `Component` impl | derive only; it generates `IntoElement` for any `RenderOnce` type |
 | `impl Element` with `layout/paint` | `request_layout / prepaint / paint` + `id()` + `source_location()` |

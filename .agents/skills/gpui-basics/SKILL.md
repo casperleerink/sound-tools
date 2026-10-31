@@ -1,14 +1,14 @@
 ---
 name: gpui-basics
-description: Core model of gpui (Zed v1.20.2) (App, Window, Entity, Context, Render vs RenderOnce), how state reaches the screen (notify/observe/subscribe, the macOS repaint pitfall), focus/actions/key bindings, events, text input, scrolling, layout, popovers, svg icons and fonts. Use before writing any GPUI view or porting a React component to Rust.
+description: Core model of gpui (Zed v1.26.2) (App, Window, Entity, Context, Render vs RenderOnce), how state reaches the screen (notify/observe/subscribe, the macOS repaint pitfall), focus/actions/key bindings, events, text input, scrolling, layout, popovers, svg icons and fonts. Use before writing any GPUI view or porting a React component to Rust.
 ---
 
-# gpui (Zed v1.20.2) basics
+# gpui (Zed v1.26.2) basics
 
-Every API name here was checked against `~/.cargo/git/checkouts/zed-*/7c451e6/crates/gpui/src`.
+Every API name here was checked against `~/.cargo/git/checkouts/zed-*/c427327/crates/gpui/src`.
 Project: `crates/ui` (theme in `crates/ui/src/theme.rs`, fonts `crates/ui/assets/fonts`, lucide
 icons `crates/ui/assets/icons`) and `crates/gallery`. Build: `cargo build -p gallery` from repo root.
-Workspace deps: `gpui` and `gpui_platform` from Zed git, pinned to v1.20.2 in the root `Cargo.toml`; `gpui_platform` has the `runtime_shaders` and `font-kit` features. Edition 2024. Apps start with `gpui_platform::application()`.
+Workspace deps: `gpui` and `gpui_platform` from Zed git, pinned to v1.26.2 in the root `Cargo.toml`; `gpui_platform` has the `runtime_shaders` and `font-kit` features. Edition 2024. Apps start with `gpui_platform::application()`.
 
 ## 1. The object model
 
@@ -134,7 +134,7 @@ div().id("btn")                                   // .id() is required for on_cl
     .on_mouse_down(MouseButton::Left, |ev: &MouseDownEvent, window, cx| { ev.position; ev.click_count; })
     .on_mouse_up(MouseButton::Left, ..).on_mouse_move(|ev: &MouseMoveEvent, ..| ..)
     .on_mouse_down_out(..)            // click outside (for closing popovers)
-    .on_scroll_wheel(|ev: &ScrollWheelEvent, ..| { ev.delta; })
+    .on_scroll(|ev: &ScrollEvent, ..| { ev.delta; })
     .on_hover(|hovered: &bool, window, cx| ..)     // stateful only
     .on_key_down(|ev: &KeyDownEvent, ..| { ev.keystroke.key.as_str(); ev.keystroke.modifiers.shift; })
     .on_drag(MyDragData, |data: &MyDragData, offset, window, cx| cx.new(|_| DragPreview))  // preview is a view
@@ -147,7 +147,7 @@ Cursor: `.cursor_pointer()`, `.cursor(CursorStyle::IBeam)`.
 
 ## 5. Text input (no built-in widget)
 
-gpui (Zed v1.20.2) ships no text field. The pattern (from the crate's `examples/input.rs`; project version in
+gpui (Zed v1.26.2) ships no text field. The pattern (from the crate's `examples/input.rs`; project version in
 `crates/ui/src/components/text_input.rs`) is:
 1. An `Entity<TextInput>` holding `content: SharedString`, `selected_range`, `marked_range`,
    `focus_handle`, and implementing `EntityInputHandler` (IME + `replace_text_in_range`).

@@ -5,8 +5,8 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent,
+    TestAppContext, TouchPhase, point, px,
 };
 
 use super::piano_roll::{ROW, open_roll};
@@ -242,11 +242,12 @@ fn measure_roll(cx: &mut TestAppContext, count: usize, rows: usize) {
         &format!("{count} notes: a frame as the pointer hovers on and off a note"),
         hovering,
     );
-    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
+    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollEvent {
         position: roll + point(px(300.), px(200.)),
         delta: ScrollDelta::Pixels(delta),
         modifiers,
         touch_phase: TouchPhase::Moved,
+        ..Default::default()
     };
     let scrolling: Vec<Duration> = (0..MOVES)
         .map(|step| {
@@ -420,11 +421,12 @@ fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
         .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
         .collect();
     print(&format!("{what}: an idle frame"), idle);
-    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
+    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollEvent {
         position: timeline + point(px(300.), px(100.)),
         delta: ScrollDelta::Pixels(delta),
         modifiers,
         touch_phase: TouchPhase::Moved,
+        ..Default::default()
     };
     for (name, delta) in [
         ("across", point(px(30.), px(0.))),
@@ -483,11 +485,12 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
         .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
         .collect();
     print(&format!("{what}: an idle frame"), idle);
-    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
+    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollEvent {
         position: timeline + point(px(300.), px(100.)),
         delta: ScrollDelta::Pixels(delta),
         modifiers,
         touch_phase: TouchPhase::Moved,
+        ..Default::default()
     };
     let scrolling: Vec<Duration> = (0..MOVES)
         .map(|step| {
@@ -656,11 +659,12 @@ fn measure_rack(cx: &mut TestAppContext, count: usize) {
     let scrolling: Vec<Duration> = (0..MOVES)
         .map(|step| {
             let sign = if step < MOVES / 2 { -1. } else { 1. };
-            let event = ScrollWheelEvent {
+            let event = ScrollEvent {
                 position: rack,
                 delta: ScrollDelta::Pixels(point(px(sign * 30.), px(0.))),
                 modifiers: Modifiers::default(),
                 touch_phase: TouchPhase::Moved,
+                ..Default::default()
             };
             window.timed(|window| window.cx.simulate_event(event))
         })

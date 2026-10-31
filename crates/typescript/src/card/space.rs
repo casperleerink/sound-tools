@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, DispatchPhase, ElementId, ExternalPaths, Hitbox, Hsla, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollEvent,
     WeakEntity, Window, canvas, div, point, prelude::*, px,
 };
 use serde_json::json;
@@ -307,7 +307,7 @@ impl SpaceFrame {
     }
 
     /// The view after a wheel: it scrolls over the extent, and zooms with cmd.
-    fn scrolled(&self, event: &ScrollWheelEvent, bounds: Bounds<Pixels>) -> SpaceView {
+    fn scrolled(&self, event: &ScrollEvent, bounds: Bounds<Pixels>) -> SpaceView {
         let delta = event.delta.pixel_delta(px(32.));
         if event.modifiers.secondary() {
             let factor = (f64::from(f32::from(delta.y)) * 0.01).exp();
@@ -474,7 +474,7 @@ fn listen(
     }
     window.on_mouse_event({
         let (frame, card, hitbox) = (frame.clone(), card.clone(), hitbox.clone());
-        move |event: &ScrollWheelEvent, phase, window, cx| {
+        move |event: &ScrollEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                 return;
             }

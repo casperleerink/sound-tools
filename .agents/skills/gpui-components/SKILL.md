@@ -1,9 +1,9 @@
 ---
 name: gpui-components
-description: How to build a reusable component library in gpui (Zed v1.20.2) (RenderOnce builder components, when to use stateful Entity views, exposing Styled/InteractiveElement on custom types, ElementId rules, theme Global, variants/sizes/disabled, hover/active/focus styling, tooltips, group hover, animation, colors, borders/shadows, and a storybook gallery). Use when porting a React/Tailwind design-system component into crates/ui.
+description: How to build a reusable component library in gpui (Zed v1.26.2) (RenderOnce builder components, when to use stateful Entity views, exposing Styled/InteractiveElement on custom types, ElementId rules, theme Global, variants/sizes/disabled, hover/active/focus styling, tooltips, group hover, animation, colors, borders/shadows, and a storybook gallery). Use when porting a React/Tailwind design-system component into crates/ui.
 ---
 
-# gpui (Zed v1.20.2) components
+# gpui (Zed v1.26.2) components
 
 Project: components live in `crates/ui/src/components/*.rs`,
 theme in `crates/ui/src/theme.rs` (`Theme: Global`, `cx.theme()` via `ActiveTheme`), showcase in
