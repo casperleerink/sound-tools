@@ -8,6 +8,7 @@ mod controls;
 mod drawing;
 mod input;
 mod paint;
+mod placed;
 mod shapes;
 mod space;
 mod sync;
@@ -40,6 +41,7 @@ use crate::window::{CardsChanged, Live, Surface, state_of};
 
 use self::drawing::Drawing;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
+use self::placed::Placing;
 use self::shapes::SpaceIndex;
 use self::sync::Embedded;
 
@@ -191,7 +193,8 @@ pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {
 }
 
 /// A page, which draws again only when it changed, while the window draws again with every
-/// move of the playhead: the spaces that show the playhead draw on the layer over it.
+/// move of the playhead: what moves every frame draws on the layer over it, and the cards of
+/// other instances each on their own.
 pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>, Entity<Over>);
 
 impl Page {
@@ -202,8 +205,17 @@ impl Page {
 }
 
 impl Render for Page {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let over = StyleRefinement::default().absolute().top_0().left_0();
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let layer = || {
+            StyleRefinement::default()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+        };
+        let cards = (self.0.read(cx).embedded.values())
+            .filter_map(|card| card.placing.as_ref())
+            .map(|placing| placing.view.clone().cached(layer()));
         div()
             .relative()
             .size_full()
@@ -212,7 +224,8 @@ impl Render for Page {
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
             )
-            .child(self.1.clone().cached(over.size_full()))
+            .children(cards)
+            .child(self.1.clone().cached(layer()))
     }
 }
 
@@ -334,12 +347,16 @@ impl TypeScriptCard {
                 view.state = None;
                 cx.notify();
             }
-            // And the records of instances inside it.
-            ProjectEvent::Changed(id)
-                if id.is_inside(&view.id)
-                    && !view.live.read(cx).uses(view.card).inside.is_empty() =>
-            {
-                cx.notify();
+            // And the records of instances inside it, where it reads them.
+            ProjectEvent::Changed(id) if id.is_inside(&view.id) => {
+                let parts = view.parts(cx);
+                let reads = |uses: &Uses| {
+                    (uses.inside.iter())
+                        .filter_map(|name| view.id.child(name.split_once('.')?.0).ok())
+                        .any(|inside| inside == *id)
+                };
+                let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
+                view.draw_again([reads(body), reads(title_bar), reads(over)], cx);
             }
             _ => {}
         })
@@ -549,6 +566,16 @@ impl TypeScriptCard {
     /// to close it.
     fn takes_keys(&self, info: Option<&ToolInfo>) -> bool {
         info.is_some_and(|info| info.keys) || !self.overlays.is_empty()
+    }
+
+    /// When its page takes the keys, the key context of its tool if it hears them: what of the
+    /// plain keys the computer keys leave to it, all or those it names.
+    fn keys_of_page(&self, cx: &App) -> Option<Option<gpui::KeyContext>> {
+        let info = self.live.read(cx).info(self.card);
+        let context = (info.as_ref())
+            .filter(|info| info.keys)
+            .map(|info| crate::key_context(info.takes.as_deref()));
+        self.takes_keys(info.as_ref()).then_some(context)
     }
 
     /// The record with each field it leaves out at its default, and its tool.
@@ -821,10 +848,6 @@ impl Render for TypeScriptCard {
             self.held = None;
         }
         let live = self.live.read(cx);
-        let info = live.info(self.card);
-        let hears_keys = info.as_ref().is_some_and(|info| info.keys);
-        // What of the plain keys the computer keys leave to it: all, or those it names.
-        let key_context = (info.as_ref()).map(|info| crate::key_context(info.takes.as_deref()));
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
         let playhead = *self.session.read(cx).playhead().read(cx);
@@ -840,6 +863,11 @@ impl Render for TypeScriptCard {
                 self.lifted.borrow_mut().clear();
                 // A div left out of this frame, as a head scrolled out of view, is over nothing.
                 self.hovers.borrow_mut().placed.clear();
+                let placings = self
+                    .embedded
+                    .values()
+                    .filter_map(|card| card.placing.as_ref());
+                placings.for_each(Placing::forget_room);
                 let mut drawing = self.drawing(state, &table, window, cx);
                 drawing.lifting = Some((&parts.lifted, &self.lifted));
                 let body = match table.root() {
@@ -862,15 +890,13 @@ impl Render for TypeScriptCard {
         };
         let theme = cx.theme();
         let (text, background) = (theme.gray_950, theme.gray_100);
-        // A click in what takes the keys gives them: the body of a card, a whole page. Also while
-        // it shows an overlay, for escape to close it.
-        let takes_keys = self.takes_keys(info.as_ref());
+        // A click in what takes the keys gives them: the body of a card, a whole page.
+        let keys = self.keys_of_page(cx);
         let focus = self.focus.clone();
-        let context = key_context.filter(|_| hears_keys);
         let handle = self.handle.clone();
-        let takes_keys = move |element: Div| match takes_keys {
-            true => hearing_keys(element, &focus, context.clone(), &handle),
-            false => element,
+        let takes_keys = move |element: Div| match keys.clone() {
+            Some(context) => hearing_keys(element, &focus, context, &handle),
+            None => element,
         };
         let body = div()
             .text_size(px(12.))

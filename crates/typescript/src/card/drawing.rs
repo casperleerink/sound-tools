@@ -137,7 +137,14 @@ impl Drawing<'_> {
                     .into_any_element()
             }
             Props::Card(_) => {
+                // Not where something may lie over it, which it would hide.
+                let placing = !self.out_of_page && !table.lain_over(slot);
                 let card = match self.embedded.get(&id) {
+                    Some(Embedded {
+                        view: Some(view),
+                        placing: Some(placed),
+                        ..
+                    }) if placing => placed.room(view, &self.card),
                     Some(Embedded {
                         view: Some(view), ..
                     }) => view.clone().into_any_element(),

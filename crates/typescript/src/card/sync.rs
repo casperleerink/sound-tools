@@ -28,6 +28,7 @@ use crate::window::OpenedMenu;
 
 use super::controls::shortcut_of;
 use super::input::under;
+use super::placed::Placing;
 use super::{TitleBarChanged, TypeScriptCard};
 
 /// The card of another instance, as a node shows it.
@@ -42,6 +43,8 @@ pub(super) struct Embedded {
     sidechain: Rc<RefCell<Vec<CardSelect>>>,
     pub(super) frame: CardFrame,
     pub(super) view: Option<AnyView>,
+    /// On a page, which draws the card over itself.
+    pub(super) placing: Option<Placing>,
 }
 
 /// The picker of what keys an embedded card, as the arrangement's racks had it: a select over
@@ -431,6 +434,9 @@ impl TypeScriptCard {
             frame = frame.sidechain(move |_| sidechain_column(&selects.borrow(), &card, node));
         }
         let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx);
+        let placing = (view.clone())
+            .filter(|_| self.frame.is_none())
+            .map(|view| Placing::new(view, self.origin.clone(), cx));
         Some(Embedded {
             instance,
             tool,
@@ -439,6 +445,7 @@ impl TypeScriptCard {
             sidechain,
             frame,
             view,
+            placing,
         })
     }
 

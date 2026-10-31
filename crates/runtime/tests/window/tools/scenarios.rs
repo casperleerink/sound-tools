@@ -338,8 +338,8 @@ fn recording_renders_only_the_layer_over_the_page(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_knob_drag_on_one_card_renders_no_other_card(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::KnobDrag, cx);
-    not_yet(KNOB, renders.of(Part::Card, "song/t00/chain/filter"), 0);
-    not_yet(KNOB, renders.of(Part::Body, "song"), 0);
+    holds(KNOB, renders.of(Part::Card, "song/t00/chain/filter"), 0);
+    holds(KNOB, renders.of(Part::Body, "song"), 0);
 }
 
 #[gpui::test]

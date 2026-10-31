@@ -1539,7 +1539,10 @@ impl Live {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
-                cx.emit(CardsChanged::One(card));
+                // An answer that changes nothing, as when a record its code reads changed.
+                if mount || event || !ops.as_ref().is_ok_and(Vec::is_empty) {
+                    cx.emit(CardsChanged::One(card));
+                }
                 if event {
                     entry.events_answered += 1;
                 }
