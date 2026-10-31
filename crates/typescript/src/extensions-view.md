@@ -24,7 +24,7 @@ A view and a component run once. A value that changes (a field, a child, an outp
 ## A control loop
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance.
-- `tick: ({ state, memory, dt, time, play, update }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. In `--render` it does not run.
+- `tick: ({ state, memory, dt, time, play, update }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart, not in `--render`. A view that reads what it writes draws again each time: what moves goes on a shape, from `now`.
 - What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a `timeline` child (`agent-docs/extensions-children.md`). For a rhythm the loop makes up, play ahead: `time` is the clock of the sound, in seconds, and `play`, and `send` of a bang or notes, with `{ at }` happen on the sample of `at`:
 
   ```ts

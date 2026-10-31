@@ -374,12 +374,12 @@ tool({
       style: box,
       onClick: () => {
         memory.started = true;
-        interval(() => { memory.ticks += 1; }, 5);
+        interval(() => { memory.ticks += 1; }, 100);
       },
     }, "Start");
     return h("div", {},
       h(Show, { when: () => memory.shown }, () => {
-        interval(() => { memory.ticks += 1; }, 5);
+        interval(() => { memory.ticks += 1; }, 100);
         return "Counting";
       }),
       () => memory.shown && start,
@@ -390,7 +390,7 @@ tool({
         onClick: () => {
           memory.shown = false;
           const ticks = memory.ticks;
-          timeout(() => { memory.result = memory.ticks === ticks ? "stopped" : "counting"; }, 100);
+          timeout(() => { memory.result = memory.ticks === ticks ? "stopped" : "counting"; }, 250);
         },
       }, "Hide"),
       () => memory.result && h("div", { key: memory.result }, memory.result),
@@ -429,10 +429,10 @@ tool({
       key: "hides",
       style: box,
       onPress: () => { memory.shown = false; },
-      onRelease: () => timeout(() => { memory.hides += 1; }, 5),
+      onRelease: () => timeout(() => { memory.hides += 1; }, 100),
     }, "Hides");
     return h("div", {},
-      h("div", { key: "stays", style: box, onRelease: () => timeout(() => { memory.stays += 1; }, 5) }, "Stays"),
+      h("div", { key: "stays", style: box, onRelease: () => timeout(() => { memory.stays += 1; }, 100) }, "Stays"),
       () => memory.shown && hides,
       () => h("div", { key: `counted-${memory.stays}-${memory.hides}` }, "Counted"),
     );
@@ -509,7 +509,7 @@ tool({
       h(Space, { key: "board", width: 100, height: 100 },
         h(Rect, {
           x: 0, y: 0, width: 100, height: 100, color: "#ffffff",
-          drag: { id: "block", onEnd: () => timeout(() => { memory.ended = true; }, 5) },
+          drag: { id: "block", onEnd: () => timeout(() => { memory.ended = true; }, 100) },
         }),
       ),
       () => memory.ended && h("div", { key: "ended" }, "Ended"),
@@ -650,4 +650,48 @@ fn a_row_put_in_first_leaves_the_others_their_scroll(cx: &mut TestAppContext) {
     window.until_found("div-row-new");
     assert_eq!(scrolled(&mut window, "b"), px(50.));
     assert_eq!(scrolled(&mut window, "a"), px(0.));
+}
+
+/// A view of two divs with one key, or with a timer that would run every frame.
+fn misused(misuse: &str) -> String {
+    format!(
+        r#"import {{ h, interval, tool }} from "./sdk";
+
+tool({{
+  name: "misused",
+  title: "Misused",
+  when: "Never",
+  doc: "A view that misuses the SDK.",
+  state: {{}},
+  view: () => {{
+    {misuse}
+  }},
+}});
+"#
+    )
+}
+
+#[gpui::test]
+fn two_divs_of_one_key_or_a_timer_of_every_frame_is_a_problem_that_says_the_fix(
+    cx: &mut TestAppContext,
+) {
+    let misuses = [
+        (
+            r#"return h("div", {}, h("div", { key: "row" }), h("div", { key: "row" }));"#,
+            "give each its own",
+        ),
+        (
+            r#"interval(() => {}, 16); return h("div", {});"#,
+            "give a shape a live value from `now`",
+        ),
+    ];
+    for (misuse, fix) in misuses {
+        let mut window = page(cx, "misused", &misused(misuse));
+        window.until("the problem", |window| !window.problems().is_empty());
+        let problems = window.problems();
+        assert!(
+            problems.iter().any(|problem| problem.message.contains(fix)),
+            "{problems:?}"
+        );
+    }
 }
