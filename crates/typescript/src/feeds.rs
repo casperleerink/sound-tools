@@ -51,6 +51,15 @@ const LONGEST_FRAME: f64 = 0.1;
 /// An eased number this close to where it goes is there.
 const SETTLED: f64 = 1e-6;
 
+/// A part of a card that draws on its own, from the same feeds.
+#[derive(Clone, Copy)]
+pub(crate) enum Drawn {
+    Body,
+    TitleBar,
+    /// The layer over a page.
+    Over,
+}
+
 #[derive(Default)]
 pub(crate) struct Feeds {
     /// Counts the frames, so what eases moves once a frame, however often it is drawn.
@@ -76,14 +85,13 @@ pub(crate) struct Feeds {
     /// The last frames of each scope the tree draws, oldest first, and how far it was read.
     pub scopes: HashMap<String, (VecDeque<[f32; 2]>, u64)>,
     pub eased: RefCell<HashMap<String, Eased>>,
-    /// What was drawn since the last poll still moves with no new sound: a meter that falls or
-    /// a number that eases. The title bar draws from these feeds too, before or after the body.
+    /// What the draw now eased still moves with no new sound: a meter that falls or a number
+    /// that eases.
     pub moving: Cell<bool>,
-    /// The same of the title bar, which draws again on its own when only it moves.
-    pub title_moving: Cell<bool>,
-    /// The frame the last poll saw, and whether what was drawn until then still moved, in the
-    /// body and in the title bar.
-    polled: (u64, bool, bool),
+    /// Whether what each part drew since the last poll still moves.
+    moved: Cell<[bool; 3]>,
+    /// The frame the last poll saw, and what had moved until then.
+    polled: (u64, [bool; 3]),
     pub histories: RefCell<HashMap<String, (u64, VecDeque<f32>)>>,
     /// The clock of the project, for the tempo and the places in the piece a tree shows.
     pub clock: Option<Clock>,
@@ -227,18 +235,14 @@ impl Feeds {
         &mut self,
         session: &Session,
         (id, state): (&InstanceId, &Value),
-        (uses, title_bar): (&Uses, bool),
+        (uses, part): (&Uses, Drawn),
         tick: Ticks,
         input: &[f32],
     ) -> bool {
         if self.polled.0 != self.frame {
-            self.polled = (self.frame, self.moving.take(), self.title_moving.take());
+            self.polled = (self.frame, self.moved.take());
         }
-        let moving = if title_bar {
-            self.polled.2
-        } else {
-            self.polled.1
-        };
+        let moving = self.polled.1[part as usize];
         let loud = |peaks: &[f32; 2]| peaks.iter().any(|peak| *peak > 0.0);
         let peaks = (uses.peaks.iter()).filter_map(|name| self.peaks.get(name));
         if moving || peaks.into_iter().any(loud) || (uses.output && loud(&self.output)) {
@@ -262,6 +266,13 @@ impl Feeds {
             now.map(|(value, _)| value) != self.played.get(name).map(|(value, _)| *value)
         });
         new_peaks || new_output || (uses.input && self.input != input) || new_played
+    }
+
+    /// `part` drew: whether what it eased still moves counts for it alone.
+    pub(crate) fn drawn(&self, part: Drawn) {
+        let mut moved = self.moved.get();
+        moved[part as usize] |= self.moving.take();
+        self.moved.set(moved);
     }
 
     /// The waveform of a take as it is now, in the form of [`Self::wave`].

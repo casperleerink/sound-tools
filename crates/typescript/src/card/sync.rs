@@ -26,9 +26,9 @@ use crate::bun::EventKind;
 use crate::tree::{CardProps, CardSelect, InputProps, Props};
 use crate::window::OpenedMenu;
 
-use super::TypeScriptCard;
 use super::controls::shortcut_of;
 use super::input::under;
+use super::{TitleBarChanged, TypeScriptCard};
 
 /// The card of another instance, as a node shows it.
 pub(super) struct Embedded {
@@ -173,6 +173,11 @@ impl TypeScriptCard {
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
         };
+        let title_bar = table.title_bar();
+        if self.title_bar != title_bar {
+            self.title_bar = title_bar;
+            cx.emit(TitleBarChanged);
+        }
         let open: Vec<u64> = (table.entries())
             .filter(|entry| matches!(entry.props, Props::Overlay(_)))
             .map(|entry| entry.id)

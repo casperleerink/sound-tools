@@ -345,5 +345,5 @@ fn a_knob_drag_on_one_card_renders_no_other_card(cx: &mut TestAppContext) {
 #[gpui::test]
 fn an_absolute_div_keeps_the_page_still_while_it_plays(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::AbsoluteDiv, cx);
-    not_yet(ABSOLUTE, renders.of(Part::Body, "song"), 0);
+    holds(ABSOLUTE, renders.of(Part::Body, "song"), 0);
 }

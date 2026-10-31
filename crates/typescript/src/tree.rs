@@ -504,9 +504,9 @@ const FAMILIES: &[&str] = &[
 pub(crate) struct Uses {
     pub watches: bool,
     pub tick: bool,
-    /// It moves on every frame by itself: with the time since it opened, a history, a scope or
-    /// a take as it grows. What moves with the engine's levels, what a lane or a cable plays or
-    /// as it eases draws again only when that changed, see `Feeds::changed`.
+    /// It moves on every frame by itself: with the time since it opened, a history or a scope.
+    /// What moves with the engine's levels, a take, what a lane or a cable plays or as it eases
+    /// draws again only when that changed, see `Feeds::changed`.
     pub animates: bool,
     /// The peaks it reads, by name, and whether it reads the device output.
     pub peaks: BTreeSet<String>,
@@ -526,6 +526,27 @@ pub(crate) struct Uses {
 }
 
 impl Uses {
+    /// It may change on every frame with no code running.
+    pub(crate) fn per_frame(&self) -> bool {
+        let Self {
+            tick,
+            animates,
+            output,
+            input,
+            peaks,
+            played,
+            takes,
+            ..
+        } = self;
+        *tick
+            || *animates
+            || *output
+            || *input
+            || !peaks.is_empty()
+            || !played.is_empty()
+            || !takes.is_empty()
+    }
+
     pub(crate) fn join(&mut self, other: &Uses) {
         self.watches |= other.watches;
         self.tick |= other.tick;
@@ -755,15 +776,54 @@ impl NodeTable {
             .collect()
     }
 
-    /// Whether a div is placed over the others.
-    pub(crate) fn lays_over(&self) -> bool {
-        (self.entries()).any(|entry| match &entry.props {
-            Props::Div(div) => div
-                .style
-                .as_ref()
-                .is_some_and(|style| style.absolute.is_some()),
-            _ => false,
-        })
+    /// Whether something may lie over the node in `slot`: a div placed with `absolute` in a
+    /// div the node is in, or an overlay the node is in.
+    pub(crate) fn lain_over(&self, slot: usize) -> bool {
+        let mut at = self.get(slot).and_then(|entry| entry.parent);
+        while let Some(parent) = at {
+            let Some(entry) = self.get(parent) else {
+                return false;
+            };
+            let absolute = |child: &usize| match self.get(*child).map(|child| &child.props) {
+                Some(Props::Div(div)) => {
+                    (div.style.as_ref()).is_some_and(|style| style.absolute.is_some())
+                }
+                _ => false,
+            };
+            if matches!(entry.props, Props::Overlay(_)) || entry.children.iter().any(absolute) {
+                return true;
+            }
+            at = entry.parent;
+        }
+        false
+    }
+
+    /// The div that says `titleBar`: its slot, and its place in the tree as a draw names it,
+    /// the place of each node among what its parent shows.
+    pub(crate) fn title_bar(&self) -> Option<(usize, Vec<usize>)> {
+        let mut todo = vec![(self.root?, Vec::new())];
+        while let Some((slot, index)) = todo.pop() {
+            let Some(entry) = self.get(slot) else {
+                continue;
+            };
+            match &entry.props {
+                Props::Div(div) if div.title_bar == Some(true) => return Some((slot, index)),
+                Props::Div(_) | Props::Overlay(_) => {
+                    let shown = (entry.children.iter()).filter(|child| {
+                        !matches!(
+                            self.get(**child).map(|child| &child.props),
+                            Some(Props::Marker)
+                        )
+                    });
+                    let places = shown.enumerate();
+                    todo.extend(
+                        places.map(|(place, child)| (*child, [&index[..], &[place]].concat())),
+                    );
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(crate) fn version(&self) -> u64 {
@@ -999,10 +1059,7 @@ impl ShapeProps {
             Some(List::File { asset, .. }) => {
                 uses.files.insert(asset.clone());
             }
-            Some(List::Take { name }) => {
-                uses.takes.insert(name.clone());
-                uses.animates = true;
-            }
+            Some(List::Take { name }) => _ = uses.takes.insert(name.clone()),
             None => {}
         }
         uses

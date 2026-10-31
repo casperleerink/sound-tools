@@ -916,29 +916,44 @@ impl Hears {
     }
 }
 
-/// `element` takes the keys of the page of `cx`'s card on `focus`, and hands them to its code.
+/// A callback of an element that `card` hears, as `Context::listener` makes one.
+pub(super) fn listener<E: ?Sized>(
+    card: &WeakEntity<TypeScriptCard>,
+    hear: impl Fn(&mut TypeScriptCard, &E, &mut Window, &mut Context<TypeScriptCard>) + 'static,
+) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+    let card = card.clone();
+    move |event, window, cx| {
+        card.update(cx, |view, cx| hear(view, event, window, cx))
+            .ok();
+    }
+}
+
+/// `element` takes the keys of the page of `card` on `focus`, and hands them to its code.
 pub(super) fn hearing_keys(
     element: Div,
     focus: &FocusHandle,
     context: Option<gpui::KeyContext>,
-    cx: &mut Context<TypeScriptCard>,
+    card: &WeakEntity<TypeScriptCard>,
 ) -> Div {
     element
         .track_focus(focus)
         .when_some(context, |element, context| element.key_context(context))
-        .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+        .on_key_down(listener(card, |view, event: &KeyDownEvent, window, cx| {
             // A text field in it has the keys first.
             if !typing(window) {
                 view.key(&event.keystroke, true, event.is_held, cx)
             }
         }))
-        .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
+        .on_key_up(listener(card, |view, event: &KeyUpEvent, _, cx| {
             view.key(&event.keystroke, false, false, cx)
         }))
         // macOS sends no key up while cmd is held.
-        .on_modifiers_changed(cx.listener(|view, event: &ModifiersChangedEvent, _, cx| {
-            if event.modifiers.platform {
-                view.let_go_of_keys(cx);
-            }
-        }))
+        .on_modifiers_changed(listener(
+            card,
+            |view, event: &ModifiersChangedEvent, _, cx| {
+                if event.modifiers.platform {
+                    view.let_go_of_keys(cx);
+                }
+            },
+        ))
 }
