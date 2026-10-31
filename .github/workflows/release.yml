@@ -46,6 +46,42 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # A release is signed with the Developer ID and notarized. A dry run without the secrets,
+      # as in a fork, stays ad hoc.
+      - name: Set up the Developer ID
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE_P12" ]]; then
+            if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+              echo "::error::A release needs the APPLE_* secrets to sign and notarize the app."
+              exit 1
+            fi
+            echo "::notice::No APPLE_* secrets: the app is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain
+          echo "$APPLE_NOTARY_KEY" > "$RUNNER_TEMP/notary-key.p8"
+          {
+            echo "APPLE_SIGNING_IDENTITY=Developer ID Application"
+            echo "APPLE_NOTARY_KEY_FILE=$RUNNER_TEMP/notary-key.p8"
+            echo "APPLE_NOTARY_KEY_ID=$APPLE_NOTARY_KEY_ID"
+            echo "APPLE_NOTARY_ISSUER=$APPLE_NOTARY_ISSUER"
+          } >> "$GITHUB_ENV"
       - run: tooling/bundle-macos.sh --zip
       - uses: actions/upload-artifact@v4
         with:
@@ -168,15 +204,9 @@ jobs:
           cat > notes.md <<'NOTES'
           ## Install
 
-          **macOS** (Apple silicon, macOS 11 or later): unzip `Sound-Tools-*-macos-arm64.zip` and drag `Sound Tools.app` to Applications. The app is not signed by a known developer, so macOS blocks the first open. Run this once in a terminal:
+          **macOS** (Apple silicon, macOS 11 or later): unzip `Sound-Tools-*-macos-arm64.zip` and drag `Sound Tools.app` to Applications.
 
-          ```sh
-          xattr -dr com.apple.quarantine "/Applications/Sound Tools.app"
-          ```
-
-          Or try to open it once, then click **Open Anyway** in System Settings, Privacy & Security.
-
-          **Updates**: the app checks for a new release when it opens and every day while it stays open, downloads it in the background and offers **Restart** to install it. On macOS the new build is signed ad hoc too, so macOS may ask for microphone access again after an update.
+          **Updates**: the app checks for a new release when it opens and every day while it stays open, downloads it in the background and offers **Restart** to install it.
 
           **Linux** (x86_64 or aarch64): extract the tarball for your machine and run its `install.sh`. It puts the app in `~/.local`, with a menu entry and the `sound-tools` command.
 
