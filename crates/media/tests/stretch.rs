@@ -132,8 +132,6 @@ fn largest_step(samples: &[f32]) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// Without warp points a region plays its file sample for sample, as it did before they were
-/// there.
 #[test]
 fn a_region_without_warp_points_plays_its_file_sample_for_sample() {
     let folder = tempfile::tempdir().unwrap();
@@ -150,8 +148,6 @@ fn a_region_without_warp_points_plays_its_file_sample_for_sample() {
     assert_eq!(played[inside], file[ramp..RATE as usize - ramp]);
 }
 
-/// A tone stretched to twice its length, or squeezed to half, keeps its pitch and lasts as
-/// long as its point says.
 #[test]
 fn a_tone_stretched_or_squeezed_keeps_its_pitch_and_lasts_as_long_as_its_point_says() {
     let folder = tempfile::tempdir().unwrap();
@@ -289,8 +285,6 @@ fn a_seek_into_a_warped_region_plays_what_playing_through_plays() {
     }
 }
 
-/// A loop over a stretched region goes back with no step in the sound, and every time round
-/// plays the same.
 #[test]
 fn a_loop_over_a_warped_region_does_not_click_and_repeats_the_same() {
     let folder = tempfile::tempdir().unwrap();

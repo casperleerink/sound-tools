@@ -1,14 +1,11 @@
-//! WAV and AIFF files, read whole into memory and kept as their own bytes, and FLAC files,
-//! decoded whole.
+//! WAV and AIFF files, kept in memory as their own bytes, and FLAC files, decoded whole.
 //!
-//! A file is parsed once, on the control side: where its samples start, how they are encoded,
-//! how many channels and frames it has and at what rate. The samples themselves are not
-//! converted. They stay as the bytes of the file, so a file costs its size on disk and no
-//! more, and [`Audio::read`] turns the frames a block needs into `f32` on the audio thread.
-//!
-//! A FLAC file is the exception: its samples are compressed, so it is decoded once into the
-//! plain samples a WAV file would hold. Reading it on the audio thread is then the same plain
-//! read, and it costs the size of those samples.
+//! The WAV and AIFF parser is our own: these files are a few chunks around plain samples, and a
+//! decoding library would only add a copy of what the file already holds. The samples stay as
+//! the bytes of the file, so a file costs its size on disk, and [`Audio::read`] turns the frames
+//! a block needs into `f32` on the audio thread. FLAC, which free sample libraries use, is
+//! decoded once with `claxon` into the plain samples a WAV file would hold, so the audio thread
+//! reads it the same way. Other compressed formats are not read.
 
 use std::fmt;
 
@@ -352,11 +349,10 @@ impl Audio {
             return;
         };
         let (start, end) = self.mapped_bytes(from, frames);
-        // Windows has no such hint; the reads below bring the pages in on their own.
+        // Only a hint, and Windows has none: the reads below are what brings the pages in.
         #[cfg(unix)]
         match map.advise_range(memmap2::Advice::WillNeed, start, end - start) {
             Ok(()) => {}
-            // Only a hint: the reads below are what brings the pages in.
             Err(_) => {}
         }
         for at in touches(start, end) {
@@ -574,9 +570,8 @@ fn flac_error(error: claxon::Error) -> FormatError {
 fn frames_of(layout: &Layout, size: usize) -> u64 {
     let frame_size = layout.encoding.size() * usize::from(layout.channels);
     let available = size.saturating_sub(layout.data);
-    // A header may say more than the file holds, for example after a recording that was
-    // cut off, and a writer that streams may leave the length at its largest. What is
-    // there is what plays.
+    // A header may say more than the file holds, as after a recording that was cut off: what
+    // is there is what plays.
     let length = layout.length.unwrap_or(available).min(available);
     (length / frame_size.max(1)) as u64
 }
