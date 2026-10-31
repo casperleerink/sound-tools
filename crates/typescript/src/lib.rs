@@ -54,6 +54,8 @@ pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use tools::forget_gone;
 pub use window::start_window;
+#[cfg(feature = "test-support")]
+pub use window::{CodeChanges, start_window_unwatched};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};

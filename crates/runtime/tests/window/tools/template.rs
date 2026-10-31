@@ -73,18 +73,15 @@ fn an_empty_project_starts_from_the_daw_template_in_place(cx: &mut TestAppContex
     // The window makes it for every project it opens.
     std::fs::create_dir_all(folder.path().join("extensions")).unwrap();
     let mut window = open_folder(cx, folder);
-    let session = window.session.clone();
-    window
-        .cx
-        .update(|_, cx| {
-            session.update(cx, |session, cx| {
-                session.background(cx, |project| project.watch())
-            })
-        })
-        .unwrap();
 
     let daw = window.until_found("template-DAW");
     window.click(daw);
+    let last = (window.folder.path().join(runtime::templates::KEPT)).join("template.json");
+    window.until("the template written", |_| last.exists());
+    // What the watchers hear.
+    let written = ["project.json", "state"].map(|path| window.path(path));
+    window.edit(|project| project.apply_outside_changes(&written));
+    window.code_changed();
     window.until_found("div-add-track");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);

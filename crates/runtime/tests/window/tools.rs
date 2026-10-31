@@ -15,7 +15,7 @@ use runtime::window::DeviceAccess;
 use sound_core::{Changes, Problem, Project, Ticks};
 use sound_notes::{Pitch, Velocity};
 
-use crate::support::{Opened, id, open_files, open_folder, peak};
+use crate::support::{Opened, id, open_files, open_folder, open_folder_watched, peak};
 
 mod edits;
 mod gestures;
@@ -847,7 +847,7 @@ fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again(cx: &mut
     file.set_modified(modified).unwrap();
 
     // The save plays the new sound, still with the sine it read at the start.
-    write(&root, "extensions/player.ts", &player(0.5));
+    window.save_code("extensions/player.ts", &player(0.5));
     window.until("the saved tool at half the level", |window| {
         (window.loudest(4_800) - 0.25).abs() < 0.02
     });
@@ -898,7 +898,6 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         ("extensions/stuck.ts", stuck.as_str()),
     ];
     let mut window = open(cx, &files);
-    let root = window.folder.path().to_path_buf();
     // The engine runs and the loops tick: Bun hangs in the tick of `stuck`.
     window.wait_for_bun();
 
@@ -930,7 +929,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         window.record("heard")["last"] == 64
     });
 
-    write(&root, "extensions/stuck.ts", &noted("stuck", false));
+    window.save_code("extensions/stuck.ts", &noted("stuck", false));
     window.until("the fix", |window| window.problems().is_empty());
     window.play_midi(65);
     window.until("the note in the fixed tool", |window| {
@@ -938,6 +937,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     });
 }
 
+/// The one test of the window's watcher on `extensions/`: the others tell it of their saves.
 #[gpui::test]
 fn a_change_of_a_file_a_tool_imports_changes_its_sound(cx: &mut TestAppContext) {
     let project = r#"{"format": 1, "extensions": [],
@@ -961,7 +961,11 @@ tool({
         ("extensions/hum.ts", hum),
         ("extensions/lib/level.ts", "export const LEVEL = 0.5;\n"),
     ];
-    let mut window = open(cx, &files);
+    let folder = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        write(folder.path(), path, contents);
+    }
+    let mut window = open_folder_watched(cx, folder);
     let level = window.loudest(4_800);
     assert!((level - 0.5).abs() < 0.02, "{level}");
 
@@ -1008,7 +1012,7 @@ tool({{
     let log = || std::fs::read_to_string(root.join("extensions/log.txt")).unwrap_or_default();
     window.until("the line of the code", |_| log().contains("level 0.5\n"));
 
-    write(&root, "extensions/hum.ts", &hum("0.25"));
+    window.save_code("extensions/hum.ts", &hum("0.25"));
     window.until("only the line of the new code", |_| {
         let log = log();
         log.contains("level 0.25\n") && !log.contains("level 0.5")
@@ -1110,8 +1114,7 @@ impl Opened<'_> {
 
     /// Saves the code of `pads` and waits for a new Bun to run it.
     fn save_pads(&mut self, on_child: bool) {
-        let root = self.folder.path().to_path_buf();
-        write(&root, "extensions/pads.ts", &pads(on_child, true));
+        self.save_code("extensions/pads.ts", &pads(on_child, true));
         self.until_found("div-saved");
     }
 }
@@ -1137,8 +1140,7 @@ fn held_until_a_save(window: &mut Opened<'_>, key: &str, file: &str, code: &str)
     window.wait_for_bun();
     window.cx.simulate_keystrokes(key);
     window.until(key, |window| window.loudest(480) > 0.05);
-    let root = window.folder.path().to_path_buf();
-    write(&root, file, &format!("{code}// Saved after {key}.\n"));
+    window.save_code(file, &format!("{code}// Saved after {key}.\n"));
     window.until("the release of the note", |window| {
         window.loudest(4_800) == 0.0
     });
@@ -1228,8 +1230,7 @@ fn a_bang_old_code_sent_for_later_does_not_fire_with_a_new_bun(cx: &mut TestAppC
     let files = files.map(|(path, text)| (path.to_string(), text));
     let mut window = open_files(cx, &files);
     window.press_on_pads("f");
-    let root = window.folder.path().to_path_buf();
-    write(&root, "extensions/pads.ts", &hits(true));
+    window.save_code("extensions/pads.ts", &hits(true));
     window.until_found("div-saved");
     // Past the frame the old code sent its bang for.
     window.render(6 * OFFLINE.sample_rate as usize);
