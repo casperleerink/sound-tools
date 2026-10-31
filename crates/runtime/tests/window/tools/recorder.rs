@@ -111,7 +111,7 @@ impl Opened<'_> {
 
     /// Presses `selector` and waits until Bun answered: what the press sends reaches the engine
     /// before the song plays on, so a take starts and ends where the test says.
-    fn press_found(&mut self, selector: &str) {
+    pub(super) fn press_found(&mut self, selector: &str) {
         let at = self.until_found(selector);
         self.cx.simulate_click(at, Modifiers::default());
         self.wait_for_bun();

@@ -1229,7 +1229,7 @@ fn a_clip_added_after_the_song_opened_is_drawn_once_after_its_track_lays_out_aga
     let nodes = |window: &mut Opened<'_>| {
         window.cx.read(|cx| {
             let page = shell.read(cx).main_view().unwrap();
-            sound_typescript::node_count(page, cx)
+            sound_typescript::node_counts(page, cx)["song"]
         })
     };
     window.show_toggles("t00");

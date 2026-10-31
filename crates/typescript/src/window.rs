@@ -572,6 +572,18 @@ fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffe
 }
 
 impl Live {
+    /// How many nodes each card keeps, by instance.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn node_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        for card in self.cards.values() {
+            if let Some(Ok(table)) = &card.tree {
+                *counts.entry(card.id.to_string()).or_default() += table.entries().count();
+            }
+        }
+        counts
+    }
+
     /// The nodes of a card. `None` until its first ops came.
     pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<NodeTable>, String>> {
         self.cards.get(&card)?.tree.as_ref()

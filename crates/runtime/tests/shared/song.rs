@@ -33,7 +33,7 @@ fn noise(seed: &mut u64) -> u64 {
 /// of the first channel of the input and no region yet.
 pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     let mut seed = 7;
-    song_with(tracks, true, |track| {
+    song_with(tracks, |track| {
         let mine = clips / tracks + usize::from(track < clips % tracks);
         (0..mine)
             .map(|clip| {
@@ -54,31 +54,10 @@ pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     })
 }
 
-/// The scale project, as the deleted Rust arrangement measured it: 100 tracks of 100 clips of
-/// one bar and four notes, clip `c` of track `t` at bar `8c + t mod 8`.
-pub(crate) fn scale_files() -> Vec<(String, String)> {
-    song_with(100, false, |track| {
-        let pitch = 36 + (track % 40) as u64;
-        let notes: Vec<Value> = (0..4)
-            .map(|beat| json!({ "start": beat * 960, "length": 900, "pitch": pitch + beat * 3, "velocity": 100 }))
-            .collect();
-        (0..100)
-            .map(|clip| {
-                let start = (clip as u64 * 8 + track as u64 % 8) * BAR;
-                (
-                    clip,
-                    json!({ "start": start, "length": BAR, "notes": notes }),
-                )
-            })
-            .collect()
-    })
-}
-
 /// The files of a song of `tracks` tracks, each with the clips `clips` gives it: the state of each
-/// by its number. With `returns`, the two returns and the sends into the first.
+/// by its number, with the two returns and the sends into the first.
 fn song_with(
     tracks: usize,
-    returns: bool,
     mut clips: impl FnMut(usize) -> Vec<(usize, Value)>,
 ) -> Vec<(String, String)> {
     let project = json!({
@@ -134,33 +113,31 @@ fn song_with(
             .filter(|(path, _)| path.starts_with("extensions/"))
             .map(|(path, contents)| (path.to_string(), contents.to_string())),
     );
-    if returns {
-        for (path, record) in [
-            (
-                "ret-a/instance.json",
-                r#"{"tool": "bus", "state": {"title": "Room"}}"#,
-            ),
-            ("ret-a/mix.json", r#"{"tool": "fader", "state": {}}"#),
-            (
-                "ret-a/chain/instance.json",
-                r#"{"tool": "chain", "state": {"order": ["verb"]}}"#,
-            ),
-            (
-                "ret-a/chain/verb.json",
-                r#"{"tool": "reverb", "state": {"mix": 1}}"#,
-            ),
-            (
-                "ret-b/instance.json",
-                r#"{"tool": "bus", "state": {"title": "Pre", "pre_fader": true}}"#,
-            ),
-            ("ret-b/mix.json", r#"{"tool": "fader", "state": {}}"#),
-            (
-                "ret-b/chain/instance.json",
-                r#"{"tool": "chain", "state": {}}"#,
-            ),
-        ] {
-            files.push((format!("state/song/{path}"), record.to_string()));
-        }
+    for (path, record) in [
+        (
+            "ret-a/instance.json",
+            r#"{"tool": "bus", "state": {"title": "Room"}}"#,
+        ),
+        ("ret-a/mix.json", r#"{"tool": "fader", "state": {}}"#),
+        (
+            "ret-a/chain/instance.json",
+            r#"{"tool": "chain", "state": {"order": ["verb"]}}"#,
+        ),
+        (
+            "ret-a/chain/verb.json",
+            r#"{"tool": "reverb", "state": {"mix": 1}}"#,
+        ),
+        (
+            "ret-b/instance.json",
+            r#"{"tool": "bus", "state": {"title": "Pre", "pre_fader": true}}"#,
+        ),
+        ("ret-b/mix.json", r#"{"tool": "fader", "state": {}}"#),
+        (
+            "ret-b/chain/instance.json",
+            r#"{"tool": "chain", "state": {}}"#,
+        ),
+    ] {
+        files.push((format!("state/song/{path}"), record.to_string()));
     }
     for track in 0..tracks {
         let folder = format!("state/song/t{track:02}");
@@ -181,12 +158,10 @@ fn song_with(
             format!("{folder}/mix.json"),
             r#"{"tool": "fader", "state": {}}"#.to_string(),
         ));
-        if returns {
-            files.push((
-                format!("{folder}/send-ret-a.json"),
-                r#"{"tool": "fader", "state": {"gain_db": -12}}"#.to_string(),
-            ));
-        }
+        files.push((
+            format!("{folder}/send-ret-a.json"),
+            r#"{"tool": "fader", "state": {"gain_db": -12}}"#.to_string(),
+        ));
         files.push((
             format!("{folder}/chain/instance.json"),
             r#"{"tool": "chain", "state": {"order": ["filter"]}}"#.to_string(),

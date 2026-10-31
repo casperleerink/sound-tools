@@ -397,7 +397,7 @@ impl TypeScriptCard {
             on_press,
             placed: Rc::default(),
         });
-        let mut frame = CardFrame::new(format!("card-{}", instance.as_str()), title);
+        let mut frame = CardFrame::new(&instance, title);
         let shown = Rc::new(Cell::new(on));
         if icons.0 {
             let (card, shown) = (cx.weak_entity(), shown.clone());

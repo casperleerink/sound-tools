@@ -923,6 +923,7 @@ impl Focusable for Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
         let theme = cx.theme();
         // The hairline of the window's other lines, so the edges weigh the same.
         let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);

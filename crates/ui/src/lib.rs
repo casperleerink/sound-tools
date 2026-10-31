@@ -14,6 +14,7 @@ pub mod metering;
 pub mod names;
 pub mod recording;
 pub mod render;
+pub mod renders;
 pub mod session;
 pub mod spare_keys;
 pub mod theme;

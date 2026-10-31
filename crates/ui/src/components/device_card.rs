@@ -25,9 +25,12 @@ use gpui::{
     StyleRefinement, Window, div, prelude::*, px,
 };
 
+use sound_core::InstanceId;
+
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
+use crate::renders::{self, Part};
 use crate::theme::ActiveTheme;
 
 pub const CARD_HEIGHT: f32 = 192.;
@@ -64,6 +67,8 @@ type SidechainColumn = Rc<dyn Fn(&App) -> Column>;
 /// whole card with [`CardFrame::card`] and add its display and cells.
 #[derive(Clone)]
 pub struct CardFrame {
+    /// The device it shows.
+    instance: SharedString,
     /// Tells this card from every other in the rack, so that two cards with controls of one
     /// name keep a drag and a focus each, and names its icons for tests: `<id>-close`.
     id: SharedString,
@@ -75,9 +80,10 @@ pub struct CardFrame {
 }
 
 impl CardFrame {
-    pub fn new(id: impl Into<SharedString>, title: impl Into<AnyView>) -> Self {
+    pub fn new(instance: &InstanceId, title: impl Into<AnyView>) -> Self {
         Self {
-            id: id.into(),
+            instance: instance.as_str().to_string().into(),
+            id: format!("card-{instance}").into(),
             title: title.into(),
             power: None,
             close: None,
@@ -118,6 +124,7 @@ impl CardFrame {
     /// A card with the id, the title, and the power and close icons of this frame. The view
     /// adds the rest.
     pub fn card(&self) -> DeviceCard {
+        renders::count(Part::Card, &self.instance);
         // The trigger brings its own padding, so it moves left by that much and its text lands
         // where a card title is.
         let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());
