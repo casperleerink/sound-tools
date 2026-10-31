@@ -36,7 +36,7 @@ use crate::feeds::Feeds;
 use crate::live::SpaceView;
 use crate::tools::ToolInfo;
 use crate::tree::{NodeTable, Props, Uses};
-use crate::window::{Live, Surface, state_of};
+use crate::window::{CardsChanged, Live, Surface, state_of};
 
 use self::drawing::Drawing;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
@@ -341,10 +341,16 @@ impl TypeScriptCard {
             view.draw_again([parts.body.tick, parts.title_bar.tick, parts.over.tick], cx);
         })
         .detach();
-        cx.observe_in(&live, window, |view, _, window, cx| {
-            view.sync(window, cx);
-            cx.notify();
-        })
+        cx.subscribe_in(
+            &live,
+            window,
+            |view, _, changed: &CardsChanged, window, cx| {
+                if changed.concerns(view.card) {
+                    view.sync(window, cx);
+                    cx.notify();
+                }
+            },
+        )
         .detach();
         // A waveform it draws is made in the background.
         let waveforms = Waveforms::entity(cx);

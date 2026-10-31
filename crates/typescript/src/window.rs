@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, PathPromptOptions, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
@@ -156,6 +156,24 @@ struct Card {
     /// A menu its code opened and the card did not show yet, with its question.
     menu: Option<OpenedMenu>,
 }
+
+/// What changed for the cards of the window, which each card filters.
+pub(crate) enum CardsChanged {
+    One(u64),
+    /// Every card, as when the tools loaded again.
+    All,
+}
+
+impl CardsChanged {
+    pub(crate) fn concerns(&self, card: u64) -> bool {
+        match self {
+            Self::One(one) => *one == card,
+            Self::All => true,
+        }
+    }
+}
+
+impl EventEmitter<CardsChanged> for Live {}
 
 /// What a tree is drawn on.
 #[derive(Clone, Copy, PartialEq)]
@@ -958,6 +976,13 @@ impl Live {
         self.played.get(id)
     }
 
+    /// Tells the cards of the instance `id` that they changed.
+    fn cards_of(&self, id: &InstanceId, cx: &mut Context<Self>) {
+        for (card, _) in self.cards.iter().filter(|(_, entry)| entry.id == *id) {
+            cx.emit(CardsChanged::One(*card));
+        }
+    }
+
     /// Sends what `update` makes for the tool of instance `id` to its processor, as the
     /// keyboard or a knob of a built-in tool would, or says why it does not.
     fn send_update(
@@ -1032,7 +1057,7 @@ impl Live {
                 .or_default()
                 .insert(name.to_string(), value);
             // A pad or a knob of the card shows where it is, also while nothing else redraws.
-            cx.notify();
+            self.cards_of(id, cx);
         }
         Ok(())
     }
@@ -1438,15 +1463,16 @@ impl Live {
             return;
         };
         let mut moved = BTreeMap::new();
-        let mut shown_watches_moved = false;
+        let mut shown_moved = Vec::new();
         let tools = self.tools.borrow();
-        for entry in self.cards.values_mut() {
+        for (card, entry) in self.cards.iter_mut() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
             if watches != entry.watches {
-                shown_watches_moved |= entry
-                    .tree
-                    .as_ref()
-                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
+                if (entry.tree.as_ref())
+                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches))
+                {
+                    shown_moved.push(*card);
+                }
                 entry.watches = watches.clone();
             }
             let told = self.told_watches.get(&entry.id);
@@ -1483,8 +1509,8 @@ impl Live {
             }
         }
         self.tell_song(cx);
-        if shown_watches_moved {
-            cx.notify();
+        for card in shown_moved {
+            cx.emit(CardsChanged::One(card));
         }
     }
 
@@ -1513,6 +1539,7 @@ impl Live {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
+                cx.emit(CardsChanged::One(card));
                 if event {
                     entry.events_answered += 1;
                 }
@@ -1603,7 +1630,8 @@ impl Live {
                     detail,
                     confirm,
                 });
-                cx.notify();
+                // The first card that hears it asks.
+                cx.emit(CardsChanged::All);
             }
             Event::OpenMenu {
                 question,
@@ -1612,17 +1640,19 @@ impl Live {
                 width,
                 max_height,
                 search,
-            } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
+            } => match (self.last_event_card).filter(|card| self.cards.contains_key(card)) {
                 Some(card) => {
-                    card.menu = Some(OpenedMenu {
-                        question,
-                        items,
-                        notes,
-                        width,
-                        max_height,
-                        search,
-                    });
-                    cx.notify();
+                    if let Some(entry) = self.cards.get_mut(&card) {
+                        entry.menu = Some(OpenedMenu {
+                            question,
+                            items,
+                            notes,
+                            width,
+                            max_height,
+                            search,
+                        });
+                    }
+                    cx.emit(CardsChanged::One(card));
                 }
                 None => self.menu_picked(question, None),
             },
@@ -1706,7 +1736,6 @@ impl Live {
                 );
             }
         }
-        cx.notify();
     }
 
     /// Tells Bun the tempo map and the sections when they are not what it was told.
@@ -2237,6 +2266,7 @@ impl Live {
                 self.take(&take, cx);
             }
         }
+        cx.emit(CardsChanged::All);
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.
