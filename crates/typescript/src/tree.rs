@@ -1937,7 +1937,7 @@ pub(crate) enum Weight {
     Semibold,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ScrollAxis {
     X,
@@ -2139,12 +2139,20 @@ impl Style {
         self.height
     }
 
-    /// Whether it stacks its children down, and the room between them.
+    /// Whether it stacks its children down, one under the other, and the room between them.
     pub(crate) fn stacks_down(&self) -> Option<f32> {
+        if self.wrap {
+            return None;
+        }
         match self.direction {
             Some(Direction::Row) => None,
             Some(Direction::Column) | None => Some(self.gap.unwrap_or(0.0)),
         }
+    }
+
+    /// The room above its first child.
+    pub(crate) fn padding_top(&self) -> f32 {
+        (self.padding_top.or(self.padding_y).or(self.padding)).unwrap_or(0.0)
     }
 
     /// Its layout and look, `disabled` or not.

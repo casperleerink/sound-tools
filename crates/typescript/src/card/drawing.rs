@@ -2,7 +2,9 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{
     AnyElement, App, Bounds, Context, ElementId, Empty, Entity, FocusHandle, MouseButton, Pixels,
@@ -98,6 +100,7 @@ impl Drawing<'_> {
 
     /// Draws the node in `slot`.
     pub(super) fn draw(&mut self, slot: usize) -> AnyElement {
+        DRAWN_NODES.fetch_add(1, Ordering::Relaxed);
         let table = self.table;
         let Some(entry) = table.get(slot) else {
             return div().into_any_element();
@@ -188,23 +191,6 @@ impl Drawing<'_> {
                     })
                     .copied()
                     .collect();
-                // Rows of fixed heights that follow a space down are drawn only where they show:
-                // the heads of a hundred tracks cost what the dozen on screen cost.
-                let rows = (follow.as_ref().and_then(|follow| follow.y.as_ref()))
-                    .and_then(|key| self.spaces.get(key))
-                    .zip(style.stacks_down())
-                    .and_then(|(view, gap)| {
-                        let heights: Option<Vec<f32>> = (shown.iter())
-                            .map(|child| match table.get(*child).map(|child| &child.props) {
-                                Some(Props::Div(child)) => {
-                                    child.style.as_ref().and_then(|style| style.fixed_height())
-                                }
-                                _ => None,
-                            })
-                            .collect();
-                        let top = (view.top * view.scale().1) as f32;
-                        Some((heights?, gap, top..top + view.height as f32))
-                    });
                 let scroller = (style.scroll()).map(|_| {
                     (self
                         .scrolls
@@ -212,6 +198,35 @@ impl Drawing<'_> {
                         .entry(element_name("scroll", key.as_deref(), id)))
                     .or_default()
                     .clone()
+                });
+                // Rows of fixed heights in a div that scrolls down, or that follows a space down,
+                // are drawn only where they show: a list of a thousand costs what the dozen on
+                // screen cost.
+                let showing = match (
+                    follow.as_ref().and_then(|follow| follow.y.as_ref()),
+                    &scroller,
+                ) {
+                    (Some(key), _) => (self.spaces.get(key)).map(|view| {
+                        let top = (view.top * view.scale().1) as f32;
+                        top..top + view.height as f32
+                    }),
+                    (None, Some(scroller)) if style.scroll() == Some(tree::ScrollAxis::Y) => {
+                        let shown = shown_of(scroller, self.viewport);
+                        let top = style.padding_top();
+                        Some(shown.start - top..shown.end - top)
+                    }
+                    _ => None,
+                };
+                let rows = showing.zip(style.stacks_down()).and_then(|(showing, gap)| {
+                    let heights: Option<Vec<f32>> = (shown.iter())
+                        .map(|child| match table.get(*child).map(|child| &child.props) {
+                            Some(Props::Div(child)) => {
+                                child.style.as_ref().and_then(|style| style.fixed_height())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    Some((heights?, gap, showing))
                 });
                 let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
                 // A text it cuts off with "…" shows whole on hover, and only then. Under a div
@@ -373,10 +388,7 @@ impl Drawing<'_> {
     /// is an empty box of its size: a rack of many effects costs what the cards on screen cost.
     fn scrolled_card(&self, node: u64, card: AnyElement, scroller: ScrollHandle) -> AnyElement {
         let showing = scroller.bounds();
-        // The scroll of a wheel past the end, as its div clamps it when laid out.
-        let offset = (scroller.offset())
-            .max(&-scroller.max_offset())
-            .min(&Point::default());
+        let offset = clamped_offset(&scroller);
         let last = self.scrolled_cards.borrow().get(&node).copied();
         let hidden = last.filter(|last| {
             !self.button_down && !showing.is_empty() && !(*last + offset).intersects(&showing)
@@ -423,6 +435,31 @@ pub(super) fn element_name(kind: &str, key: Option<&str>, node: u64) -> String {
 /// The node an element was named after, when it has no key.
 pub(super) fn named_node(name: &str) -> Option<u64> {
     name.rsplit_once('#')?.1.parse().ok()
+}
+
+static DRAWN_NODES: AtomicU64 = AtomicU64::new(0);
+
+/// How many nodes the cards of this process drew, for budgets of what a list costs.
+pub fn drawn_nodes() -> u64 {
+    DRAWN_NODES.load(Ordering::Relaxed)
+}
+
+/// The scroll of a div as its layout clamps it: a wheel may have taken it past the end.
+fn clamped_offset(scroller: &ScrollHandle) -> Point<Pixels> {
+    (scroller.offset())
+        .max(&-scroller.max_offset())
+        .min(&Point::default())
+}
+
+/// What a div that scrolls down shows of what it scrolls, from its top: before its first
+/// layout, as much as the window shows.
+fn shown_of(scroller: &ScrollHandle, viewport: Size<Pixels>) -> Range<f32> {
+    let height = match scroller.bounds().size.height {
+        height if height > px(0.) => height,
+        _ => viewport.height,
+    };
+    let top = -f32::from(clamped_offset(scroller).y);
+    top..top + f32::from(height)
 }
 
 /// The tooltip of a text that fits: none.

@@ -40,6 +40,7 @@ use crate::tree::{NodeTable, Props, Uses};
 use crate::window::{CardsChanged, Live, Surface, state_of};
 
 use self::drawing::Drawing;
+pub use self::drawing::drawn_nodes;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
