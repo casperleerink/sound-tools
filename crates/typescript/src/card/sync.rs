@@ -27,6 +27,7 @@ use crate::tree::{CardProps, CardSelect, InputProps, Props};
 use crate::window::OpenedMenu;
 
 use super::controls::shortcut_of;
+use super::drawing::named_node;
 use super::input::under;
 use super::placed::Placing;
 use super::{TitleBarChanged, TypeScriptCard};
@@ -176,6 +177,11 @@ impl TypeScriptCard {
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
         };
+        // What a node that has no key kept goes with it.
+        let kept = |name: &String| named_node(name).is_none_or(|node| table.has(node));
+        self.spaces.borrow_mut().retain(|name, _| kept(name));
+        self.indexes.borrow_mut().retain(|name, _| kept(name));
+        self.scrolls.borrow_mut().retain(|name, _| kept(name));
         let title_bar = table.title_bar();
         if self.title_bar != title_bar {
             self.title_bar = title_bar;

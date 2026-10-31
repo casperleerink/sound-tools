@@ -61,9 +61,8 @@ impl Drawing<'_> {
         id: u64,
         space: &SpaceProps,
         children: &[usize],
-        index: &[usize],
     ) -> AnyElement {
-        let (key, view, fit) = self.space_view(space, index);
+        let (key, view, fit) = self.space_view(id, space);
         let selector = format!("space-{key}");
         let name = key.clone();
         let inner = match self.lifting.filter(|(lifted, _)| lifted.contains(&id)) {
@@ -71,7 +70,6 @@ impl Drawing<'_> {
             Some((_, places)) => {
                 let place = Lifted {
                     slot,
-                    index: index.to_vec(),
                     bounds: Bounds::default(),
                     mask: Bounds::default(),
                 };
@@ -139,10 +137,10 @@ impl Drawing<'_> {
     /// that follow it see; the fit it still asks for.
     pub(super) fn space_view(
         &mut self,
+        id: u64,
         space: &SpaceProps,
-        index: &[usize],
     ) -> (String, SpaceView, Option<tree::Fit>) {
-        let key = element_name("space", space.key.as_deref(), index);
+        let key = element_name("space", space.key.as_deref(), id);
         let (unit_x, unit_y) = space.unit();
         let extent = space.extent.unwrap_or_default();
         let scroll = space.scroll.unwrap_or_default();

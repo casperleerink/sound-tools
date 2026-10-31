@@ -1,7 +1,8 @@
 //! Parts of a view that come and go: a popover and a dialog its code opens and closes, a timer
-//! that goes with the part that made it, and the one branch of a `Switch` that shows.
+//! that goes with the part that made it, the one branch of a `Switch` that shows, and rows put
+//! in before others.
 
-use gpui::{TestAppContext, point, px};
+use gpui::{ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px};
 
 use super::{ONLY_THE_TOOL, Opened, open};
 
@@ -604,4 +605,49 @@ fn a_grown_column_takes_its_parents_height_not_its_lists(cx: &mut TestAppContext
         window.bounds("div-grown").unwrap(),
     );
     assert_eq!(grown.size.height, parent.size.height);
+}
+
+/// Rows that each scroll what is in them, by a div with no key, and a click that puts a row in
+/// first.
+const ROWS: &str = r#"import { For, h, tool } from "./sdk";
+
+tool({
+  name: "rows",
+  title: "Rows",
+  when: "Never",
+  doc: "Rows that scroll, and a row put in first.",
+  state: {},
+  memory: () => ({ names: ["a", "b"] }),
+  view: ({ memory }) =>
+    h("div", { style: { gap: 8 } },
+      h("div", { key: "first", style: { width: 80, height: 20 }, onClick: () => { memory.names = ["new", ...memory.names]; } }, "First"),
+      h(For, { each: () => memory.names }, (name: string) =>
+        h("div", { key: `row-${name}`, style: { width: 80 } },
+          h("div", { style: { scroll: "y", height: 40 } },
+            h("div", { key: `inside-${name}`, style: { height: 200 } }, name)))),
+    ),
+});
+"#;
+
+#[gpui::test]
+fn a_row_put_in_first_leaves_the_others_their_scroll(cx: &mut TestAppContext) {
+    let mut window = page(cx, "rows", ROWS);
+    let scrolled = |window: &mut Opened, name: &str| {
+        let row = window.bounds(&format!("div-row-{name}")).unwrap();
+        let inside = window.bounds(&format!("div-inside-{name}")).unwrap();
+        row.top() - inside.top()
+    };
+    let row = window.until_found("div-row-b");
+    window.cx.simulate_event(ScrollEvent {
+        position: row,
+        delta: ScrollDelta::Pixels(point(px(0.), px(-50.))),
+        touch_phase: TouchPhase::Moved,
+        ..Default::default()
+    });
+    assert_eq!(scrolled(&mut window, "b"), px(50.));
+    let first = window.until_found("div-first");
+    window.click(first);
+    window.until_found("div-row-new");
+    assert_eq!(scrolled(&mut window, "b"), px(50.));
+    assert_eq!(scrolled(&mut window, "a"), px(0.));
 }

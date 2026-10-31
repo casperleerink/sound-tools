@@ -52,7 +52,7 @@ pub(super) struct Drawing<'a> {
     pub(super) embedded: &'a HashMap<u64, Embedded>,
     pub(super) placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) hovers: Rc<RefCell<Hovers>>,
-    pub(super) scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
+    pub(super) scrolls: &'a RefCell<HashMap<String, ScrollHandle>>,
     pub(super) scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) button_down: bool,
     /// The scroll of the div that scrolls what it draws now, the innermost.
@@ -96,9 +96,8 @@ impl Drawing<'_> {
         }
     }
 
-    /// Draws the node in `slot`. `index` tells siblings apart, so every element that needs an
-    /// id gets its own.
-    pub(super) fn draw(&mut self, slot: usize, index: &[usize]) -> AnyElement {
+    /// Draws the node in `slot`.
+    pub(super) fn draw(&mut self, slot: usize) -> AnyElement {
         let table = self.table;
         let Some(entry) = table.get(slot) else {
             return div().into_any_element();
@@ -108,7 +107,7 @@ impl Drawing<'_> {
             Props::Text(TextProps { text }) => {
                 SharedString::from(text.clone().unwrap_or_default()).into_any_element()
             }
-            Props::Space(space) => self.space(slot, id, space, &entry.children, index),
+            Props::Space(space) => self.space(slot, id, space, &entry.children),
             // A shape outside a space, or a marker, draws nothing.
             Props::Shape(_) | Props::Marker => div().into_any_element(),
             Props::Input(_) => match self.inputs.get(&id) {
@@ -123,12 +122,12 @@ impl Drawing<'_> {
                 }
                 None => div().into_any_element(),
             },
-            Props::Button(props) => self.button(id, props, index),
-            Props::Toggle(props) => self.toggle(id, props, index),
-            Props::Slider(props) => self.slider(props, index),
-            Props::Segmented(props) => self.segmented(id, props, index),
-            Props::Notice(props) => self.notice(id, props, index),
-            Props::Overlay(props) => self.overlay(id, props, &entry.children, index),
+            Props::Button(props) => self.button(id, props),
+            Props::Toggle(props) => self.toggle(id, props),
+            Props::Slider(props) => self.slider(id, props),
+            Props::Segmented(props) => self.segmented(id, props),
+            Props::Notice(props) => self.notice(id, props),
+            Props::Overlay(props) => self.overlay(id, props, &entry.children),
             Props::Icon(IconProps { name, size, color }) => {
                 let color = color.map_or(self.cx.theme().gray_950, |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())
@@ -207,9 +206,12 @@ impl Drawing<'_> {
                         Some((heights?, gap, top..top + view.height as f32))
                     });
                 let scroller = (style.scroll()).map(|_| {
-                    (self.scrolls.borrow_mut().entry(index.to_vec()))
-                        .or_default()
-                        .clone()
+                    (self
+                        .scrolls
+                        .borrow_mut()
+                        .entry(element_name("scroll", key.as_deref(), id)))
+                    .or_default()
+                    .clone()
                 });
                 let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
                 // A text it cuts off with "…" shows whole on hover, and only then. Under a div
@@ -246,7 +248,7 @@ impl Drawing<'_> {
                     }
                     children.push(match cut_text.take() {
                         Some(styled) => styled.into_any_element(),
-                        None => self.draw(*child, &[index, &[position]].concat()),
+                        None => self.draw(*child),
                     });
                 }
                 self.under_tooltip = under_tooltip;
@@ -309,7 +311,7 @@ impl Drawing<'_> {
                 let inner = match stateful || own.is_some() {
                     false => element.into_any_element(),
                     true => {
-                        let name = element_name("div", key.as_deref(), index);
+                        let name = element_name("div", key.as_deref(), id);
                         let element = (element.id(ElementId::Name(name.clone().into())))
                             .when_some(pressed, |element, look| {
                                 // The hitbox the pressed look needs, on a div that hears nothing.
@@ -352,12 +354,13 @@ impl Drawing<'_> {
                 };
                 if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
-                    let name = element_name("scroll", key.as_deref(), index);
+                    let name = element_name("scroll", key.as_deref(), id);
                     let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
                     let scrolling = style.fade(scrolling, disabled).track_scroll(&scroller);
                     let scrolling = match axis {
                         tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
-                        tree::ScrollAxis::Y => scrolling.overflow_y_scroll(),
+                        // A column, or it would stretch what it scrolls to its own height.
+                        tree::ScrollAxis::Y => scrolling.flex_col().overflow_y_scroll(),
                     };
                     return scrolling.child(inner).into_any_element();
                 }
@@ -408,15 +411,18 @@ pub(super) fn typing(window: &Window) -> bool {
     (window.context_stack().iter()).any(|context| context.contains(text_input::KEY_CONTEXT))
 }
 
-/// An id for an element, from its key, else from where it is in the tree.
-pub(super) fn element_name(kind: &str, key: Option<&str>, index: &[usize]) -> String {
+/// An id for an element, from its key, else from its node: a row put in before it leaves it
+/// its hover, press, tooltip and scroll.
+pub(super) fn element_name(kind: &str, key: Option<&str>, node: u64) -> String {
     match key {
         Some(key) => key.to_string(),
-        None => {
-            let path: Vec<String> = index.iter().map(usize::to_string).collect();
-            format!("{kind}-{}", path.join("-"))
-        }
+        None => format!("{kind}#{node}"),
     }
+}
+
+/// The node an element was named after, when it has no key.
+pub(super) fn named_node(name: &str) -> Option<u64> {
+    name.rsplit_once('#')?.1.parse().ok()
 }
 
 /// The tooltip of a text that fits: none.

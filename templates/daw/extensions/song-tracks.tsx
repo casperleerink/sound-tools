@@ -193,7 +193,7 @@ export const Returns = ({ page }: { page: Page }) => {
       </div>
       <Show when={() => memory.returnsOpen}>
         {() => (
-          <div style={() => ({ height: Math.min(returns().length, 4.5) * RETURN_ROW, scroll: "y", keep: true })}>
+          <div key="returns-list" style={() => ({ height: Math.min(returns().length, 4.5) * RETURN_ROW, scroll: "y", keep: true })}>
             <For each={returns}>{(each) => <ReturnRow page={page} each={each} />}</For>
           </div>
         )}
