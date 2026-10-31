@@ -26,8 +26,9 @@ use anyhow::Result;
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
     KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
-    WindowBounds, WindowControlArea, WindowOptions, actions, div, point, prelude::*, px, size,
+    MouseDownEvent, SharedString, StyleRefinement, Subscription, Task, TitlebarOptions,
+    WeakFocusHandle, Window, WindowBounds, WindowControlArea, WindowOptions, actions, div, point,
+    prelude::*, px, size,
 };
 use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
@@ -481,7 +482,13 @@ impl Shell {
                 .flex_none()
                 .w(px(LEFT_PANEL_WIDTH))
                 .h_full()
-                .child(panel.view.clone()),
+                // Not drawn again with every frame of the window, such as of the playhead.
+                .child(
+                    panel
+                        .view
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                ),
         )
     }
 

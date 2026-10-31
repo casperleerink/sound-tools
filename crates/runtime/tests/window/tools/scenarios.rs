@@ -318,7 +318,7 @@ fn playing_renders_the_layer_over_the_page_and_not_the_page(cx: &mut TestAppCont
     let renders = run_on_the_song(Scenario::Playing, cx);
     holds(PLAYHEAD, renders.of(Part::Body, "song"), 0);
     holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
-    not_yet(SIDEBAR, renders.of(Part::Sidebar, "agent"), 0);
+    holds(SIDEBAR, renders.of(Part::Sidebar, "agent"), 0);
 }
 
 #[gpui::test]
