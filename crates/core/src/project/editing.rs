@@ -4,6 +4,8 @@
 //! Interface edits, file changes, undo and redo all end in `Project::apply`. This module
 //! holds what they need around it.
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use super::file::{ProjectFile, SavedConnection};
@@ -88,7 +90,12 @@ pub(crate) struct Applied {
     pub records: Vec<RecordChange>,
     /// Before and after.
     pub project_file: Option<(ProjectFile, ProjectFile)>,
+    pub unloaded: Unloaded,
 }
+
+/// Record files that do not load, by path: their bytes before and after. `None` is no such
+/// file, or one that loads.
+pub(crate) type Unloaded = BTreeMap<PathBuf, (Option<Vec<u8>>, Option<Vec<u8>>)>;
 
 /// An edit in progress: a drag, or any other group of changes that becomes one undo step.
 /// It remembers the state before its first change, so finishing and cancelling need no
@@ -304,7 +311,7 @@ impl Project {
             .close(&mut step, |id| instances.get(id).cloned());
         self.sync_project_file();
         let applied = self.apply(step.changes(Side::Before), Source::History)?;
-        self.write_step(&step, &applied)
+        self.write_step(&step, Side::Before, &applied)
     }
 
     /// Ends the edit with no undo step and without going back: what it published stays. For an
@@ -344,7 +351,7 @@ impl Project {
         self.sync_project_file();
         self.history.end_outside_step();
         let applied = self.apply(step.changes(side), Source::History)?;
-        let written = self.write_step(&step, &applied);
+        let written = self.write_step(&step, side, &applied);
         let label = step.label.clone();
         self.history.put_back(side, step);
         written.map(|()| Some(label))
@@ -352,10 +359,21 @@ impl Project {
 
     /// Writes what the step names and what applying it touched. The two differ when a delete
     /// took along instances that were created after the step.
-    fn write_step(&mut self, step: &Step, applied: &Applied) -> Result<(), ProjectError> {
+    fn write_step(
+        &mut self,
+        step: &Step,
+        side: Side,
+        applied: &Applied,
+    ) -> Result<(), ProjectError> {
         let touched = applied.records.iter().map(|change| &change.id);
         let project_file = step.project_file.is_some() || applied.project_file.is_some();
-        self.write(step.records.keys().chain(touched), project_file)
+        let (gone, back): (Vec<_>, Vec<_>) =
+            (step.unloaded(side)).partition(|(_, bytes)| bytes.is_none());
+        // First, so that the folders of deleted records are empty and go too.
+        let removed = self.write_unloaded(gone);
+        let written = self.write(step.records.keys().chain(touched), project_file);
+        let restored = self.write_unloaded(back);
+        removed.and(written).and(restored)
     }
 
     /// Forgets every undo and redo step. A new project starts like this: making its default

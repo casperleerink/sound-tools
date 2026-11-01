@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use super::editing::{Applied, Change};
+use super::editing::{Applied, Change, Unloaded};
 use super::instance::{FOLDER_RECORD, InstanceId};
 use super::storage::{self, Form, OnDisk, PROJECT_FILE, PathTarget, RecordOnDisk, STATE_FOLDER};
 use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
@@ -122,19 +122,30 @@ impl Project {
         let mut created: BTreeMap<InstanceId, (&'static str, bool)> = BTreeMap::new();
         // Deleted instances of this group, with the path of their record.
         let mut deleted = BTreeMap::new();
+        // The record file on disk of each id that was not live, for those that do not load.
+        let mut found = Vec::new();
         while let Some((id, seen)) = queue.pop_first() {
             self.clear_record_problems(&id);
+            let live_form = self.instances.get(&id).map(Form::of);
+            let is_live = live_form.is_some();
             if id
                 .ancestors()
                 .any(|ancestor| deleted.contains_key(&ancestor))
             {
+                if !is_live {
+                    match self.storage.read_record(&id, seen) {
+                        Ok(RecordOnDisk::One(form, bytes)) => found.push((id, Some((form, bytes)))),
+                        Ok(RecordOnDisk::Missing) => found.push((id, None)),
+                        Ok(RecordOnDisk::Both) => {}
+                        Err(error) => self.report_storage_error(&error),
+                    }
+                }
                 continue;
             }
-            let live_form = self.instances.get(&id).map(Form::of);
-            let is_live = live_form.is_some();
             let (form, bytes) = match self.storage.read_record(&id, seen) {
                 Ok(RecordOnDisk::One(form, bytes)) => (form, bytes),
                 Ok(RecordOnDisk::Missing) => {
+                    found.push((id.clone(), None));
                     if let Some(form) = live_form {
                         changes.push(Change::Delete(id.clone()));
                         let path = self.storage.record_path(&id, form);
@@ -169,6 +180,9 @@ impl Project {
             };
             if is_live && self.storage.observed(&id) == Some(on_disk) {
                 continue;
+            }
+            if !is_live {
+                found.push((id.clone(), Some((form, bytes.clone()))));
             }
             let path = self.storage.record_path(&id, form);
             let path = self.storage.display_path(&path);
@@ -233,7 +247,7 @@ impl Project {
             observed.push((id, on_disk, path));
         }
 
-        let applied = match self.apply_leniently(changes, source) {
+        let mut applied = match self.apply_leniently(changes, source) {
             Ok(applied) => applied,
             Err(error) => {
                 // What the runtime last saw of these files stays known, so a delete in the
@@ -253,6 +267,7 @@ impl Project {
                 return Err(error);
             }
         };
+        applied.unloaded = self.note_unloaded(found);
         let observed = observed
             .into_iter()
             .filter(|(id, ..)| self.instances.contains_key(id));
@@ -287,6 +302,28 @@ impl Project {
         }
         self.rebind_waiting_for(&asset_folders)?;
         Ok(count)
+    }
+
+    /// Notes the bytes of each record file in `found` that did not load, and that the others
+    /// are gone or loaded. Returns what changed.
+    fn note_unloaded(&mut self, found: Vec<(InstanceId, Option<(Form, Vec<u8>)>)>) -> Unloaded {
+        let mut changed = Unloaded::new();
+        for (id, on_disk) in found {
+            let on_disk = on_disk.filter(|_| !self.instances.contains_key(&id));
+            for form in [Form::File, Form::Folder] {
+                let path = self.storage.record_path(&id, form);
+                let now = (on_disk.as_ref())
+                    .filter(|(found, _)| *found == form)
+                    .map(|(_, bytes)| bytes);
+                if self.storage.unloaded(&path) == now.map(Vec::as_slice) {
+                    continue;
+                }
+                let now = now.cloned();
+                let before = self.storage.set_unloaded(path.clone(), now.clone());
+                changed.insert(path, (before, now));
+            }
+        }
+        changed
     }
 
     /// Runs the behaviour again of every instance with a problem whose tool waits for files in
@@ -394,6 +431,8 @@ impl Project {
             None => self.instances.keys().cloned().collect(),
         };
         queue.extend(live.into_iter().map(|id| (id, None)));
+        let unloaded = self.storage.unloaded_inside(id);
+        queue.extend(unloaded.into_iter().map(|id| (id, None)));
         queue.extend(found);
     }
 

@@ -50,7 +50,7 @@ use history::History;
 use instance::{JsonState, Record};
 use live::LiveSources;
 use outside::NotApplied;
-use storage::{Form, Locked, RecordOnDisk, Storage};
+use storage::{Form, Locked, PathTarget, RecordOnDisk, Storage};
 use watcher::Watcher;
 
 use crate::automation::PlayedLanes;
@@ -650,7 +650,34 @@ impl Project {
             results.push(self.storage.write_project_file(&self.project_file));
             self.clear_problem(storage::PROJECT_FILE);
         }
+        self.report_write_errors(results)
+    }
 
+    /// Writes record files that do not load with these bytes, or removes them for `None`. A
+    /// file where a live record is now stays.
+    pub(crate) fn write_unloaded<'a>(
+        &mut self,
+        files: impl IntoIterator<Item = (&'a PathBuf, Option<&'a [u8]>)>,
+    ) -> Result<(), ProjectError> {
+        let mut results = Vec::new();
+        for (path, bytes) in files {
+            let live = match self.storage.target_of(path) {
+                PathTarget::Record(id) => (self.instances.get(&id))
+                    .is_some_and(|record| self.storage.record_path(&id, Form::of(record)) == *path),
+                _ => false,
+            };
+            if !live {
+                results.push(self.storage.write_unloaded(path, bytes));
+            }
+        }
+        self.report_write_errors(results)
+    }
+
+    /// Reports every failure as a problem and returns the first.
+    fn report_write_errors(
+        &mut self,
+        results: Vec<Result<(), StorageError>>,
+    ) -> Result<(), ProjectError> {
         let mut first = Ok(());
         for error in results.into_iter().filter_map(Result::err) {
             let (StorageError::Io { path, .. } | StorageError::Encode { path, .. }) = &error;

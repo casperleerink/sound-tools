@@ -181,6 +181,10 @@ pub(crate) struct Storage {
     /// Held for as long as the project is open. `None` for a read-only project.
     _lock: Option<fs::File>,
     records: BTreeMap<InstanceId, OnDisk>,
+    /// The bytes of record files that did not load, at ids that are not live, by path. A
+    /// record of an extension that is off may have no other copy, so undo of its delete
+    /// writes these back.
+    unloaded: BTreeMap<PathBuf, Vec<u8>>,
     project_file: Option<u64>,
 }
 
@@ -262,6 +266,7 @@ impl Storage {
             root,
             _lock: lock,
             records: BTreeMap::new(),
+            unloaded: BTreeMap::new(),
             project_file: None,
         }
     }
@@ -307,6 +312,57 @@ impl Storage {
 
     pub(super) fn forget(&mut self, id: &InstanceId) {
         self.records.remove(id);
+    }
+
+    pub(super) fn unloaded(&self, path: &Path) -> Option<&[u8]> {
+        self.unloaded.get(path).map(Vec::as_slice)
+    }
+
+    /// Notes the bytes at `path` of a record file that did not load, or that there is none.
+    /// Returns what was noted before.
+    pub(super) fn set_unloaded(
+        &mut self,
+        path: PathBuf,
+        bytes: Option<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        match bytes {
+            Some(bytes) => self.unloaded.insert(path, bytes),
+            None => self.unloaded.remove(&path),
+        }
+    }
+
+    /// The ids inside `parent` that have a record file that did not load. `None` is all of
+    /// `state/`.
+    pub(super) fn unloaded_inside(&self, parent: Option<&InstanceId>) -> Vec<InstanceId> {
+        let folder = match parent {
+            Some(parent) => self.instance_folder(parent),
+            None => self.state_folder(),
+        };
+        let inside = self
+            .unloaded
+            .keys()
+            .filter(|path| path.starts_with(&folder));
+        let ids = inside.filter_map(|path| match self.target_of(path) {
+            PathTarget::Record(id) => Some(id),
+            _ => None,
+        });
+        // The folder of `parent` also holds its own record.
+        ids.filter(|id| parent.is_none_or(|parent| id.is_inside(parent)))
+            .collect()
+    }
+
+    /// Writes a record file that does not load back with these bytes, or removes it.
+    pub(super) fn write_unloaded(
+        &mut self,
+        path: &Path,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), StorageError> {
+        match bytes {
+            Some(bytes) => self.write_atomically(path, bytes)?,
+            None => self.remove_file(path)?,
+        }
+        self.set_unloaded(path.to_path_buf(), bytes.map(<[u8]>::to_vec));
+        Ok(())
     }
 
     pub(super) fn project_file_fingerprint(&self) -> Option<u64> {
