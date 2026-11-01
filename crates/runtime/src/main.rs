@@ -294,6 +294,28 @@ impl Position {
     }
 }
 
+/// The longest a render or an analysis plays.
+const LONGEST_HOURS: u32 = 3;
+const LONGEST_SECONDS: f64 = (LONGEST_HOURS * 60 * 60) as f64;
+
+// A WAV file holds at most 4 GiB, and the tail of a render adds up to 10 seconds.
+const _: () = assert!(
+    (LONGEST_HOURS as u64 * 60 * 60 + 10)
+        * OFFLINE.sample_rate as u64
+        * OFFLINE.channels as u64
+        * 4
+        < u32::MAX as u64
+);
+
+fn parse_seconds(text: &str) -> Result<f64> {
+    match text.parse() {
+        Ok(seconds) if seconds > 0.0 && seconds <= LONGEST_SECONDS => Ok(seconds),
+        _ => bail!(
+            "--seconds takes a number of seconds above 0 and up to {LONGEST_SECONDS} ({LONGEST_HOURS} hours)"
+        ),
+    }
+}
+
 /// What a render and an analysis play: the flags after `--render <wav>` or `--analyze`.
 #[derive(Default)]
 struct Options {
@@ -318,7 +340,7 @@ impl Options {
             };
             match *flag {
                 "--seconds" => {
-                    options.seconds = Some(value.parse().context("--seconds takes a number")?);
+                    options.seconds = Some(parse_seconds(value)?);
                 }
                 "--from" => options.from = Some(Position::parse(value)?),
                 "--to" => options.to = Some(Position::parse(value)?),
@@ -330,10 +352,18 @@ impl Options {
         Ok(options)
     }
 
-    /// What a render of `project` plays. With neither `--from` nor `--to`, the project from the
-    /// start to the end of the last clip, and the tail.
-    fn span(&self, project: &Project) -> Result<Span> {
-        let clock = project.clock();
+    /// Where a range starts, as the composer gave it.
+    fn start(&self) -> &'static str {
+        if self.from.is_some() {
+            "--from"
+        } else {
+            "the start"
+        }
+    }
+
+    /// What a render plays. `end` is the end of the last clip: with neither `--from` nor
+    /// `--to`, the project from the start to there, and the tail.
+    fn span(&self, clock: &Clock, end: Option<Ticks>) -> Result<Span> {
         match (self.seconds, self.from, self.to) {
             (Some(_), _, _) if self.no_tail => bail!("--seconds has no tail to leave out"),
             (Some(seconds), None, None) => Ok(Span::Seconds(seconds)),
@@ -344,12 +374,31 @@ impl Options {
                 let from = from.map_or(Ticks(0), |from| from.tick(clock));
                 let to = match to {
                     Some(to) => to.tick(clock),
-                    None => project
-                        .end()
-                        .context("the project has no clips, so there is nothing to render")?,
+                    None => {
+                        end.context("the project has no clips, so there is nothing to render")?
+                    }
                 };
+                let start = self.start();
                 if to <= from {
-                    bail!("--to must come after --from");
+                    match self.to {
+                        Some(_) => bail!("--to must come after {start}"),
+                        None if self.from.is_some() => {
+                            bail!("--from must come before the end of the last clip")
+                        }
+                        None => {
+                            bail!("the last clip ends at the start, so there is nothing to render")
+                        }
+                    }
+                }
+                if clock.seconds_of(to) - clock.seconds_of(from) > LONGEST_SECONDS {
+                    match self.to {
+                        Some(_) => bail!(
+                            "--to is more than {LONGEST_HOURS} hours after {start}, and a render is at most {LONGEST_HOURS} hours"
+                        ),
+                        None => bail!(
+                            "the last clip ends more than {LONGEST_HOURS} hours after {start}, and a render is at most {LONGEST_HOURS} hours"
+                        ),
+                    }
                 }
                 Ok(Span::Range(from, to, !self.no_tail))
             }
@@ -363,6 +412,9 @@ impl Options {
         }
         if self.no_tail {
             bail!("--no-tail is for a project: a file has no tail");
+        }
+        if length <= 0.0 {
+            bail!("the file has no sound to measure");
         }
         let seconds = |position: Option<Position>, otherwise: f64| match position {
             None => Ok(otherwise),
@@ -378,8 +430,11 @@ impl Options {
             }
             (None, from, to) => (seconds(from, 0.0)?, seconds(to, length)?),
         };
+        if from >= length {
+            bail!("--from must come before the end of the file");
+        }
         if to <= from {
-            bail!("--to must come after --from, and --from before the end of the file");
+            bail!("--to must come after {}", self.start());
         }
         Ok((from, to))
     }
@@ -437,7 +492,7 @@ fn print_event_overflows(project: &mut Project) -> Result<()> {
 fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Result<()> {
     let (mut project, mut engine, plugins) = open_for_render(folder, options)?;
     // Before the file is made, so a render that cannot happen leaves no empty file behind.
-    let span = options.span(&project)?;
+    let span = options.span(project.clock(), project.end())?;
     let rate = f64::from(OFFLINE.sample_rate);
     let length = match span {
         Span::Seconds(seconds) => (seconds * rate) as u64,
@@ -493,7 +548,7 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
         return analyze_file(path, options);
     }
     let (mut project, mut engine, plugins) = open_for_render(path, options)?;
-    let span = options.span(&project)?;
+    let span = options.span(project.clock(), project.end())?;
     let clock = project.clock().clone();
     let timeline = match span {
         Span::Seconds(seconds) => Timeline::Project {
@@ -743,6 +798,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sound_core::TempoMap;
 
     #[test]
     fn a_position_is_ticks_a_time_or_seconds() {
@@ -760,5 +816,44 @@ mod tests {
         for wrong in ["1:75", "1:-5", "-3s", "1:2:3", "bar 5", "", "inf s"] {
             assert!(Position::parse(wrong).is_err(), "{wrong}");
         }
+    }
+
+    #[test]
+    fn seconds_are_above_zero_and_at_most_the_longest() {
+        for right in ["0.001", "10800"] {
+            assert!(Options::parse(&["--seconds", right]).is_ok(), "{right}");
+        }
+        for wrong in ["0", "-1", "NaN", "inf", "10800.5", "1e12"] {
+            assert!(Options::parse(&["--seconds", wrong]).is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn a_range_is_at_most_the_longest_and_says_which_option_made_it_longer() {
+        let clock = Clock::new(TempoMap::default(), OFFLINE.sample_rate);
+        let at = |seconds| Some(clock.tick_at_seconds(seconds));
+        let span = |arguments: &[&str], end| {
+            let options = Options::parse(arguments).unwrap();
+            options
+                .span(&clock, end)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        };
+        assert!(span(&[], at(LONGEST_SECONDS)).is_ok());
+        let error = span(&[], at(LONGEST_SECONDS + 1.0)).unwrap_err();
+        assert!(
+            error.contains("last clip") && !error.contains("--to"),
+            "{error}"
+        );
+        assert!(span(&["--to", "10800s"], None).is_ok());
+        let error = span(&["--to", "18446744073709551615", "--no-tail"], None).unwrap_err();
+        assert!(
+            error.contains("--to") && error.contains("the start"),
+            "{error}"
+        );
+        let error = span(&["--from", "1s", "--to", "10802s"], None).unwrap_err();
+        assert!(error.contains("after --from"), "{error}");
+        let error = span(&["--to", "0"], at(10.0)).unwrap_err();
+        assert!(error.contains("--to must come after the start"), "{error}");
     }
 }
