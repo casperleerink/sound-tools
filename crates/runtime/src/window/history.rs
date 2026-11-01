@@ -491,18 +491,27 @@ impl HistoryPanel {
             let name = (self.layout.versions.get(row.version))
                 .map(|version| name_of(version, row.version))
                 .unwrap_or_default();
+            // In the colour of its line, so the name reads as that line's across others.
+            let color = colors.version(row.version);
             div()
                 .flex()
                 .flex_col()
                 .gap(px(1.))
                 .min_w_0()
                 .child(
-                    div()
-                        .truncate()
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(text)
-                        .child(name),
+                    div().flex().min_w_0().child(
+                        div()
+                            .ml(px(-6.))
+                            .px(px(6.))
+                            .rounded(px(6.))
+                            .bg(color.opacity(0.16))
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(color)
+                            .child(name),
+                    ),
                 )
                 .child(
                     meta.child(ago)
