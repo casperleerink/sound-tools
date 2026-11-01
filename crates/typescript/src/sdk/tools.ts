@@ -66,8 +66,7 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
   tick?: (tool: Tick<ValuesOf<S>, I, M, K>) => void;
   /**
    * Its view, drawn in the room the window gives it: a card in a rack, or the whole window for
-   * an instance at the top of a project. Without one it gets a knob per number and a button per
-   * option, boolean and bang.
+   * an instance at the top of a project. Without one it gets `defaultView`.
    */
   view?: (view: View<ValuesOf<S>, I, M, K>) => Child;
   /**
