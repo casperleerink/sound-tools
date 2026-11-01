@@ -267,7 +267,12 @@ impl Project {
         // The project file first: it says which extensions are enabled.
         project.apply(changes, Source::Load)?;
         let state_folder = project.storage.state_folder();
-        project.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
+        project.apply_paths(
+            &[state_folder],
+            Source::Load,
+            std::time::Instant::now(),
+            None,
+        )?;
         project.events.clear();
         project.write_generated_files()?;
         Ok(project)
@@ -551,7 +556,7 @@ impl Project {
             .filter(|path| path.starts_with(&state_folder))
             .filter(|path| storage::tool_named_in(path).is_some_and(|tool| names.contains(&tool)));
         paths.extend(not_loaded);
-        self.apply_paths(&paths, Source::Load, std::time::Instant::now())?;
+        self.apply_paths(&paths, Source::Load, std::time::Instant::now(), None)?;
         for id in live {
             let path = record_path(self, &id);
             let path = self.storage.display_path(&path);

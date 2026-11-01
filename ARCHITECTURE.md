@@ -85,7 +85,7 @@ my-piece/
 - The watcher only says which paths changed; the runtime reads them again and applies the difference, so edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
 - An agent request is one undo step (`Project::begin_request`). Rejected: adding writes that come after a composer's edit to the older step: undo would go out of order.
-- Undo history lives only in the session. The folder is the truth; versions come from git.
+- Undo lives only in the session. The history (`crates/history`) keeps each finished step as a git commit in `.sound-tools/history`, found by looking at the folder, so undo and an agent need no hook. Rejected: the folder's own `.git`, which an agent's git commands would rewrite; gitoxide, 122 crates for a few hundred lines.
 
 ## Agent context
 

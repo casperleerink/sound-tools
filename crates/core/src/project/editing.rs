@@ -382,6 +382,12 @@ impl Project {
         self.history.clear();
     }
 
+    /// A number that changes whenever an undo step is made, grows, or is undone or redone:
+    /// whenever what the files hold became a result someone saw. For the history.
+    pub fn steps_changed(&self) -> u64 {
+        self.history.generation()
+    }
+
     /// The label of the step that `undo` would undo.
     pub fn undo_label(&self) -> Option<&str> {
         self.history.label(Side::Before)

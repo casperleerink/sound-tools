@@ -60,14 +60,56 @@ impl Project {
         paths: &[PathBuf],
         at: Instant,
     ) -> Result<usize, ProjectError> {
-        self.apply_paths(paths, Source::Outside, at)
+        self.apply_paths(paths, Source::Outside, at, None)
     }
 
+    /// Makes the files at `files`, relative to the project folder, hold these bytes, or
+    /// removes them for `None`, and applies them as one undo step named `label`: the road of a
+    /// change from outside, as if an agent wrote them. For going back to a point of the
+    /// history. Files outside `state/` and `project.json`, such as the code of the project's
+    /// tools, are only written; whoever watches them follows.
+    pub fn restore(
+        &mut self,
+        label: &str,
+        files: Vec<(PathBuf, Option<Vec<u8>>)>,
+    ) -> Result<usize, ProjectError> {
+        if self.read_only {
+            return Err(ProjectError::ReadOnly);
+        }
+        self.finish_all_runs()?;
+        let root = self.storage.root().to_path_buf();
+        let mut paths = Vec::new();
+        for (relative, bytes) in files {
+            let inside = relative
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)));
+            if !inside {
+                continue;
+            }
+            let path = root.join(&relative);
+            let written = match bytes {
+                Some(bytes) => storage::write_atomically(&path, &bytes),
+                None => remove_with_empty_folders(&path, &root),
+            };
+            written.map_err(|source| {
+                ProjectError::Storage(storage::StorageError::Io {
+                    path: relative.display().to_string(),
+                    source,
+                })
+            })?;
+            paths.push(path);
+        }
+        self.apply_paths(&paths, Source::Outside, Instant::now(), Some(label))
+    }
+
+    /// `label` gives the changes an undo step of their own with that name. Without it they
+    /// join the outside step they follow, see [`Self::apply_outside_changes`].
     pub(crate) fn apply_paths(
         &mut self,
         paths: &[PathBuf],
         source: Source,
         at: Instant,
+        label: Option<&str>,
     ) -> Result<usize, ProjectError> {
         // Ids to look at, with the one form a folder scan saw for it, if any.
         let mut queue = BTreeMap::new();
@@ -297,7 +339,10 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
-            self.history.push_outside(OUTSIDE_LABEL, applied, at);
+            match label {
+                Some(label) => self.history.push_own(label, applied),
+                None => self.history.push_outside(OUTSIDE_LABEL, applied, at),
+            }
             self.write([].iter(), write_project_file)?;
         }
         self.rebind_waiting_for(&asset_folders)?;
@@ -499,4 +544,25 @@ impl Project {
             error;
         self.report_problem(path.clone(), error.to_string());
     }
+}
+
+/// Removes the file, then each folder above it that it leaves empty, up to `root`.
+fn remove_with_empty_folders(
+    path: &std::path::Path,
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    let mut folder = path.parent();
+    while let Some(current) = folder.filter(|folder| *folder != root) {
+        // A folder that still holds something stays, and so does every one above it.
+        if std::fs::remove_dir(current).is_err() {
+            break;
+        }
+        folder = current.parent();
+    }
+    Ok(())
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/history", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -37,6 +37,7 @@ test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
 sound-agent = { path = "crates/agent" }
 sound-core = { path = "crates/core" }
+sound-history = { path = "crates/history" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
 sound-signals = { path = "crates/signals" }
@@ -76,6 +77,8 @@ embed-resource = "3.0.11"
 # read. The same as std elsewhere.
 dunce = "1.0.5"
 hound = "3.5"
+# The history's git objects: zlib, as git writes them. The version the lock already has. MIT OR Apache-2.0.
+flate2 = "1.1"
 memmap2 = "0.9.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Snapshots of what the agent driver makes of recorded runs.
@@ -115,6 +118,8 @@ sha2 = { version = "0.11", default-features = false }
 # The async runtime under gpui's executors. The agent's child process and its pipes.
 smol = "2"
 tempfile = "3"
+# The ids of the history's git objects. The version the lock already has. BSD-3-Clause.
+sha1_smol = "1.0.1"
 thiserror = "2"
 triple_buffer = "9"
 # Grapheme boundaries, so the caret steps over an emoji as one character. The version gpui uses.

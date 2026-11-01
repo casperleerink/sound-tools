@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result, bail};
 
 use crate::PROJECT_FILE;
 
-mod written;
+pub(crate) mod written;
 
 pub struct Template {
     pub name: &'static str,

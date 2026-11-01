@@ -139,6 +139,8 @@ pub(super) struct History {
     holders: BTreeMap<InstanceId, usize>,
     /// The same for `project.json`, which a tempo drag changes per mouse move.
     committed_project_file: Option<ProjectFile>,
+    /// Counts every change of the steps: a new one, one that grew, an undo and a redo.
+    generation: u64,
 }
 
 impl History {
@@ -237,6 +239,7 @@ impl History {
     pub(super) fn push(&mut self, step: Step) {
         self.last_outside = None;
         if !step.is_empty() {
+            self.generation += 1;
             self.undo.push(step);
             self.redo.clear();
         }
@@ -263,6 +266,7 @@ impl History {
             Some(step) => {
                 step.absorb(applied);
                 step.drop_unchanged();
+                self.generation += 1;
                 self.last_outside = Some(at);
                 // An agent that takes back what it just wrote leaves nothing to undo.
                 if step.is_empty() {
@@ -287,6 +291,15 @@ impl History {
         }
     }
 
+    /// A group of outside changes that is a step of its own, whatever came before it. Outside
+    /// changes after it make a new step too.
+    pub(super) fn push_own(&mut self, label: &str, applied: Applied) {
+        let mut step = Step::new(label);
+        step.absorb(applied);
+        step.drop_unchanged();
+        self.push(step);
+    }
+
     /// See [`Project::begin_request`](super::Project::begin_request).
     pub(super) fn begin_request(&mut self, label: &str) {
         self.request = Some(Request {
@@ -306,6 +319,7 @@ impl History {
 
     /// Takes the step whose `side` undo (before) or redo (after) brings back next.
     pub(super) fn take(&mut self, side: Side) -> Option<Step> {
+        self.generation += 1;
         match side {
             Side::Before => self.undo.pop(),
             Side::After => self.redo.pop(),
@@ -335,6 +349,12 @@ impl History {
     }
 
     pub(super) fn clear(&mut self) {
+        let generation = self.generation + 1;
         *self = Self::default();
+        self.generation = generation;
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 }

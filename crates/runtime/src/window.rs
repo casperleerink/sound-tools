@@ -10,6 +10,7 @@
 //! [`GlobalKeys`].
 
 pub mod audio_input;
+mod history;
 pub mod live_input;
 pub mod new_project;
 pub mod other_apps;
@@ -46,6 +47,7 @@ use sound_ui::{
 };
 
 use audio_input::OpenInput;
+use history::HistoryPanel;
 use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
@@ -65,6 +67,7 @@ actions!(
         FocusPrevious,
         ToggleLeftPanel,
         OpenCloseLeftPanel,
+        ToggleHistory,
         NewProject,
         OpenProject,
         Quit
@@ -87,6 +90,13 @@ const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.
 const LEFT_PANEL_WIDTH: f32 = 400.;
+const HISTORY_WIDTH: f32 = 320.;
+
+/// Installed by the app: its windows keep the history of their project. A test window keeps
+/// none, so its project folder holds only what the test wrote.
+pub struct KeepHistory;
+
+impl Global for KeepHistory {}
 
 /// What the window shows in its left panel, given by the composition root, which knows the
 /// agent: this module names no type of it. With none installed the window has no panel and
@@ -158,6 +168,10 @@ impl LeftPanel {
                 && panel.busy != now
             {
                 panel.busy = now;
+                // A turn that ended made a moment of the history.
+                if !now && let Some(history) = &shell.history {
+                    history.update(cx, HistoryPanel::turn_ended);
+                }
                 cx.notify();
             }
         });
@@ -215,6 +229,9 @@ pub struct Shell {
     /// A newer template's code for files the project changed, until the composer merges or
     /// dismisses it.
     template_update: Option<crate::templates::Update>,
+    /// The history of the project, in a window of the app, and whether it shows.
+    history: Option<Entity<HistoryPanel>>,
+    history_open: bool,
 }
 
 impl Shell {
@@ -310,6 +327,8 @@ impl Shell {
         });
         let live = cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, cx));
         let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
+        let history = (cx.has_global::<KeepHistory>())
+            .then(|| cx.new(|cx| HistoryPanel::new(session.clone(), window, cx)));
         let mut shell = Self {
             project_menu,
             live,
@@ -327,6 +346,8 @@ impl Shell {
             _other_apps: other_apps,
             recorders,
             template_update: None,
+            history,
+            history_open: true,
         };
         // Asked again after the open brought the rest up to date, which changes nothing more.
         let root = shell.session.read(cx).project().root().to_path_buf();
@@ -528,6 +549,38 @@ impl Shell {
                     )
                 }),
         )
+    }
+
+    /// The history right of the main area, when it is open.
+    fn history_element(&self) -> Option<impl IntoElement> {
+        let history = self.history.as_ref().filter(|_| self.history_open)?;
+        Some(
+            div()
+                .id("history")
+                .flex_none()
+                .w(px(HISTORY_WIDTH))
+                .h_full()
+                .child(history.clone()),
+        )
+    }
+
+    /// The icon at the right of the title row that shows and hides the history.
+    fn history_icon(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        self.history.as_ref()?;
+        Some(
+            div().flex_none().pr(px(12.)).child(
+                Button::icon_only("history-icon", "history")
+                    .debug_selector(|| "history-icon".to_string())
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|shell, _, _, cx| shell.toggle_history(cx))),
+            ),
+        )
+    }
+
+    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        self.history_open = !self.history_open;
+        cx.notify();
     }
 
     /// What the main area shows with no view: in an empty project, the ways to start one.
@@ -892,6 +945,7 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &OpenCloseLeftPanel, window, cx| {
                 shell.open_or_close_left_panel(window, cx)
             }))
+            .on_action(cx.listener(|shell, _: &ToggleHistory, _, cx| shell.toggle_history(cx)))
             .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
                 choose_new_project(shell.session.clone(), cx)
             }))
@@ -923,6 +977,7 @@ impl Render for Shell {
                     .child(Self::drag_region().flex_1())
                     .children(self.title_bar.clone())
                     .child(Self::drag_region().flex_1())
+                    .children(self.history_icon(cx))
                     .children(Self::window_controls(window)),
             )
             // The panel comes first, so tab reaches it before the main area, as it reads.
@@ -932,7 +987,8 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .children(self.left_panel_element(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(main)),
+                    .child(div().flex_1().min_w_0().h_full().child(main))
+                    .children(self.history_element()),
             )
             .child(self.notices(cx))
     }
@@ -974,6 +1030,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-y", ToggleHistory, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-o", OpenProject, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
@@ -1089,6 +1146,7 @@ fn init(cx: &mut App) {
         crate::update::check_in_background(support, cx);
     }
     crate::agent_panel(support, cx).install(cx);
+    cx.set_global(KeepHistory);
 }
 
 /// A project that is open and plays on the chosen output, ready for its window.

@@ -57,6 +57,7 @@ icons!(
     "eye",
     "eye-off",
     "folder",
+    "history",
     "info",
     "keyboard-music",
     "loader-circle",
