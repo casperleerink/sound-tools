@@ -22,12 +22,12 @@ env:
 # full set on every platform, and a release is tagged only on a commit that passed it.
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           # True when any changed file is outside docs/.
@@ -41,7 +41,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the pinned toolchain
         run: rustup toolchain install
       # Warnings fail CI only. The parent folder config merges with .cargo/config.toml for every cargo command.
@@ -66,7 +66,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - name: Deny warnings
@@ -90,14 +90,14 @@ jobs:
       # The window rendered offscreen, which nextest leaves out: it has no test harness.
       - run: cargo test -p runtime --test snapshots --locked
 
-  # Linux builds and runs the tests.
+  # Linux builds and runs the tests, on the oldest Ubuntu the Linux release supports (README).
   linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the system libraries
         run: |
           sudo apt-get update
@@ -133,7 +133,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - name: Deny warnings
