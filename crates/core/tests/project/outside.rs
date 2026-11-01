@@ -396,6 +396,87 @@ fn records_of_unknown_tools_stay_untouched() {
     assert_eq!(harness.project.instances().count(), 1);
 }
 
+/// An unknown tool loads the same way as a tool whose extension is off.
+const UNKNOWN: &str = r#"{"tool": "other.thing", "state": {"cutoff_hz": 321}}"#;
+const INVALID: &str = r#"{"tool": "test.level", "state": {"bogus_field": 1}}"#;
+
+#[test]
+fn undo_of_a_delete_brings_back_records_that_did_not_load() {
+    let mut harness = Harness::new();
+    harness.write("state/bank/instance.json", BANK_RECORD);
+    harness.write("state/bank/a.json", &level_record(0.5));
+    harness.write("state/bank/unknown.json", UNKNOWN);
+    harness.write("state/bank/invalid.json", INVALID);
+    let bank = harness.path("state/bank");
+    harness
+        .apply_outside_changes(std::slice::from_ref(&bank))
+        .unwrap();
+    assert_eq!(harness.project.problems().len(), 2);
+
+    std::fs::remove_dir_all(&bank).unwrap();
+    harness
+        .apply_outside_changes(std::slice::from_ref(&bank))
+        .unwrap();
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/bank/unknown.json"), UNKNOWN);
+    assert_eq!(harness.read("state/bank/invalid.json"), INVALID);
+    assert_eq!(harness.level(), 0.5);
+    // The watcher hears the files undo wrote.
+    assert_eq!(
+        harness
+            .apply_outside_changes(std::slice::from_ref(&bank))
+            .unwrap(),
+        0
+    );
+    assert_eq!(harness.project.problems().len(), 2);
+
+    harness.project.redo().unwrap();
+    assert!(!bank.exists());
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/bank/unknown.json"), UNKNOWN);
+
+    // One file on its own.
+    let unknown = harness.path("state/bank/unknown.json");
+    std::fs::remove_file(&unknown).unwrap();
+    harness.apply_outside_changes(&[unknown]).unwrap();
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/bank/unknown.json"), UNKNOWN);
+}
+
+#[test]
+fn undo_of_a_delete_brings_back_both_records_of_an_id() {
+    let mut harness = Harness::new();
+    harness.write("state/thing.json", UNKNOWN);
+    harness.write("state/thing/instance.json", INVALID);
+    let state = harness.path("state");
+    harness.apply_outside_changes(&[state]).unwrap();
+
+    let folder = harness.path("state/thing");
+    std::fs::remove_dir_all(&folder).unwrap();
+    harness.apply_outside_changes(&[folder]).unwrap();
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/thing.json"), UNKNOWN);
+    assert_eq!(harness.read("state/thing/instance.json"), INVALID);
+}
+
+#[test]
+fn undo_of_a_fix_brings_back_the_record_that_did_not_load() {
+    let mut harness = Harness::new();
+    harness.write_and_apply("state/bank/instance.json", BANK_RECORD);
+    harness.write_and_apply("state/bank/a.json", INVALID);
+    assert_eq!(
+        harness.write_and_apply("state/bank/a.json", &level_record(0.5)),
+        1
+    );
+
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/bank/a.json"), INVALID);
+    assert_eq!(harness.level(), 0.0);
+    harness.project.redo().unwrap();
+    assert_eq!(harness.level(), 0.5);
+    assert!(harness.read("state/bank/a.json").contains("0.5"));
+}
+
 #[test]
 fn a_folder_without_a_record_is_reported_until_the_record_arrives() {
     let mut harness = Harness::new();

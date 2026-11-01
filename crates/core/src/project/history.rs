@@ -2,9 +2,10 @@
 //! outside changes group into steps.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::editing::{Applied, Change, RecordChange};
+use super::editing::{Applied, Change, RecordChange, Unloaded};
 use super::file::ProjectFile;
 use super::instance::{InstanceId, Record};
 use super::{GROUPING_WINDOW, Source};
@@ -16,6 +17,8 @@ pub(super) struct Step {
     pub label: String,
     pub records: BTreeMap<InstanceId, (Option<Record>, Option<Record>)>,
     pub project_file: Option<(ProjectFile, ProjectFile)>,
+    /// Only outside changes touch these.
+    pub unloaded: Unloaded,
 }
 
 impl Step {
@@ -38,6 +41,9 @@ impl Step {
             let entry = self.project_file.get_or_insert((before, after.clone()));
             entry.1 = after;
         }
+        for (path, (before, after)) in applied.unloaded {
+            self.unloaded.entry(path).or_insert((before, None)).1 = after;
+        }
     }
 
     /// Forgets what ended where it began, for example a record that was made and deleted.
@@ -49,10 +55,22 @@ impl Step {
                 _ => true,
             });
         self.project_file.take_if(|(before, after)| before == after);
+        self.unloaded.retain(|_, (before, after)| before != after);
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.records.is_empty() && self.project_file.is_none()
+        self.records.is_empty() && self.project_file.is_none() && self.unloaded.is_empty()
+    }
+
+    /// The record files that do not load on one side of the step.
+    pub(super) fn unloaded(&self, side: Side) -> impl Iterator<Item = (&PathBuf, Option<&[u8]>)> {
+        self.unloaded.iter().map(move |(path, (before, after))| {
+            let bytes = match side {
+                Side::Before => before,
+                Side::After => after,
+            };
+            (path, bytes.as_deref())
+        })
     }
 
     /// The changes that bring back one side of the step.

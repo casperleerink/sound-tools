@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use super::editing::{Applied, Change};
+use super::editing::{Applied, Change, Unloaded};
 use super::instance::{FOLDER_RECORD, InstanceId};
 use super::storage::{self, Form, OnDisk, PROJECT_FILE, PathTarget, RecordOnDisk, STATE_FOLDER};
 use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
@@ -122,19 +122,25 @@ impl Project {
         let mut created: BTreeMap<InstanceId, (&'static str, bool)> = BTreeMap::new();
         // Deleted instances of this group, with the path of their record.
         let mut deleted = BTreeMap::new();
+        // What is at both record paths of each id read, for the files that do not load.
+        let mut found = Vec::new();
         while let Some((id, seen)) = queue.pop_first() {
             self.clear_record_problems(&id);
+            let live_form = self.instances.get(&id).map(Form::of);
+            let is_live = live_form.is_some();
             if id
                 .ancestors()
                 .any(|ancestor| deleted.contains_key(&ancestor))
             {
+                if !is_live {
+                    self.read_both_forms(&id, &mut found);
+                }
                 continue;
             }
-            let live_form = self.instances.get(&id).map(Form::of);
-            let is_live = live_form.is_some();
             let (form, bytes) = match self.storage.read_record(&id, seen) {
                 Ok(RecordOnDisk::One(form, bytes)) => (form, bytes),
                 Ok(RecordOnDisk::Missing) => {
+                    found.extend(Form::BOTH.map(|form| (id.clone(), form, None)));
                     if let Some(form) = live_form {
                         changes.push(Change::Delete(id.clone()));
                         let path = self.storage.record_path(&id, form);
@@ -149,6 +155,7 @@ impl Project {
                     continue;
                 }
                 Ok(RecordOnDisk::Both) => {
+                    self.read_both_forms(&id, &mut found);
                     let file = self.storage.record_path(&id, Form::File);
                     let folder = self.storage.record_path(&id, Form::Folder);
                     let message = format!(
@@ -170,6 +177,10 @@ impl Project {
             if is_live && self.storage.observed(&id) == Some(on_disk) {
                 continue;
             }
+            // The scan or the read saw no file of the other form.
+            found.extend(
+                Form::BOTH.map(|other| (id.clone(), other, (other == form).then(|| bytes.clone()))),
+            );
             let path = self.storage.record_path(&id, form);
             let path = self.storage.display_path(&path);
             let mut owner_tool = None;
@@ -233,7 +244,7 @@ impl Project {
             observed.push((id, on_disk, path));
         }
 
-        let applied = match self.apply_leniently(changes, source) {
+        let mut applied = match self.apply_leniently(changes, source) {
             Ok(applied) => applied,
             Err(error) => {
                 // What the runtime last saw of these files stays known, so a delete in the
@@ -245,6 +256,9 @@ impl Project {
                     self.report_problem(path, message.clone());
                     not_applied.records.insert(id);
                 }
+                not_applied
+                    .records
+                    .extend(found.into_iter().map(|(id, ..)| id));
                 if outside_project_file.is_some() {
                     self.report_problem(PROJECT_FILE.to_string(), message);
                     not_applied.project_file = true;
@@ -253,6 +267,7 @@ impl Project {
                 return Err(error);
             }
         };
+        applied.unloaded = self.note_unloaded(found, source);
         let observed = observed
             .into_iter()
             .filter(|(id, ..)| self.instances.contains_key(id));
@@ -287,6 +302,48 @@ impl Project {
         }
         self.rebind_waiting_for(&asset_folders)?;
         Ok(count)
+    }
+
+    /// Notes the bytes of each record file in `found` that does not load, and that the others
+    /// are gone or loaded. Returns what changed.
+    fn note_unloaded(
+        &mut self,
+        found: Vec<(InstanceId, Form, Option<Vec<u8>>)>,
+        source: Source,
+    ) -> Unloaded {
+        let mut changed = Unloaded::new();
+        for (id, form, bytes) in found {
+            let path = self.storage.record_path(&id, form);
+            let loaded = (self.instances.get(&id)).is_some_and(|record| Form::of(record) == form);
+            let now = bytes.filter(|_| !loaded);
+            let known = self.storage.unloaded(&path);
+            if known == now.as_deref() {
+                continue;
+            }
+            // A reload of tools may read a change the watcher has not delivered yet. Its
+            // delivery makes the undo step.
+            if source == Source::Load && !loaded && known.is_some() {
+                continue;
+            }
+            let before = self.storage.set_unloaded(path.clone(), now.clone());
+            changed.insert(path, (before, now));
+        }
+        changed
+    }
+
+    /// Reads both record paths of `id` into `found`.
+    fn read_both_forms(
+        &mut self,
+        id: &InstanceId,
+        found: &mut Vec<(InstanceId, Form, Option<Vec<u8>>)>,
+    ) {
+        for form in Form::BOTH {
+            match self.storage.read_record(id, Some(form)) {
+                Ok(RecordOnDisk::One(_, bytes)) => found.push((id.clone(), form, Some(bytes))),
+                Ok(_) => found.push((id.clone(), form, None)),
+                Err(error) => self.report_storage_error(&error),
+            }
+        }
     }
 
     /// Runs the behaviour again of every instance with a problem whose tool waits for files in
@@ -394,6 +451,8 @@ impl Project {
             None => self.instances.keys().cloned().collect(),
         };
         queue.extend(live.into_iter().map(|id| (id, None)));
+        let unloaded = self.storage.unloaded_inside(id);
+        queue.extend(unloaded.into_iter().map(|id| (id, None)));
         queue.extend(found);
     }
 

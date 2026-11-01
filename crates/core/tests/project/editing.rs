@@ -393,9 +393,10 @@ fn undo_does_not_write_over_a_file_that_took_the_id() {
         .apply_outside_changes(std::slice::from_ref(&path))
         .unwrap();
 
-    // An agent puts a record of a tool this runtime does not know at the same id.
+    // An agent puts a record of a tool this runtime does not know at the same id, and the
+    // watcher has not delivered it yet.
     let unknown = r#"{"tool": "other.thing", "state": {}}"#;
-    harness.write_and_apply("state/dc.json", unknown);
+    harness.write("state/dc.json", unknown);
     assert_eq!(harness.project.undo_label(), Some("File change"));
     let error = harness.project.undo().unwrap_err();
     assert!(matches!(error, ProjectError::IdTaken(_)), "{error}");
