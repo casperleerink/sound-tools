@@ -435,6 +435,7 @@ fn print_event_overflows(project: &mut Project) -> Result<()> {
 /// Renders the span of `options` to `wav`. With `progress` it prints each whole percent of the
 /// span it reaches.
 fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Result<()> {
+    refuse_to_replace(folder, wav)?;
     let (mut project, mut engine, plugins) = open_for_render(folder, options)?;
     // Before the file is made, so a render that cannot happen leaves no empty file behind.
     let span = options.span(&project)?;
@@ -480,6 +481,21 @@ fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Resul
         wav.display()
     );
     print_event_overflows(&mut project)
+}
+
+/// A render makes a new file in the project, such as one under `assets/audio/`, but never
+/// replaces one: records, recordings and imported files are never written over. Outside the
+/// project it may replace a file. Compared as resolved paths, so no spelling of the path gets
+/// past it.
+fn refuse_to_replace(folder: &Path, wav: &Path) -> Result<()> {
+    // Either fails when nothing is there: a new file, or a folder that the render reports.
+    let (Ok(folder), Ok(file)) = (folder.canonicalize(), wav.canonicalize()) else {
+        return Ok(());
+    };
+    if file.starts_with(folder) {
+        bail!("That file is part of the project and is never written over: pick a new name.");
+    }
+    Ok(())
 }
 
 /// How much earlier than its start a range of an analysis plays: long enough for most tails of
@@ -760,5 +776,37 @@ mod tests {
         for wrong in ["1:75", "1:-5", "-3s", "1:2:3", "bar 5", "", "inf s"] {
             assert!(Position::parse(wrong).is_err(), "{wrong}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_render_never_replaces_a_file_of_the_project() {
+        let outside = tempfile::tempdir().unwrap();
+        let folder = outside.path().join("piece");
+        std::fs::create_dir_all(folder.join("assets/audio")).unwrap();
+        std::fs::write(folder.join("project.json"), "{}").unwrap();
+        // The same folder spelled through a link, as /tmp is /private/tmp on macOS.
+        let alias = outside.path().join("alias");
+        std::os::unix::fs::symlink(&folder, &alias).unwrap();
+        let options = Options::parse(&["--seconds", "0.1"]).unwrap();
+        let spellings = [
+            folder.join("project.json"),
+            alias.join("project.json"),
+            folder.join("assets/../project.json"),
+        ];
+        for wav in spellings {
+            let refused = render(&folder, &wav, &options, false).unwrap_err();
+            assert!(
+                refused.to_string().contains("never written over"),
+                "{refused}"
+            );
+            assert!(render(&alias, &wav, &options, false).is_err());
+        }
+        assert_eq!(std::fs::read(folder.join("project.json")).unwrap(), b"{}");
+        let new = folder.join("assets/audio/bass.wav");
+        assert!(refuse_to_replace(&folder, &new).is_ok());
+        let beside = outside.path().join("piece.wav");
+        std::fs::write(&beside, "old").unwrap();
+        assert!(refuse_to_replace(&folder, &beside).is_ok());
     }
 }
