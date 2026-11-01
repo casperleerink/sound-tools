@@ -84,6 +84,19 @@ fn a_range_renders_from_its_start_and_stops_the_notes_at_its_end() {
 }
 
 #[test]
+fn a_drum_hit_on_the_last_beat_rings_out_in_the_tail() {
+    let crash = clip(0, BAR_TICKS, &[(BAR_TICKS - 480, 240, 49)]);
+    let drums = r#"{"tool": "drum-pad", "state": {"pads": {}}}"#;
+    let mut harness = Harness::rack(&[("instrument", drums), ("crash", &crash)]);
+    let rendered = export(&mut harness, Ticks(0), Ticks(BAR_TICKS), true);
+    // The crash still sounds 0.1 s after the end, and the render waits for it to die away.
+    let after_end = &rendered[2 * BAR..];
+    assert!(peak(&after_end[2 * 4_800..2 * 9_600]) > 1e-2);
+    let tail_frames = after_end.len() / 2;
+    assert!(tail_frames > 48_000 + 24_000, "{tail_frames}");
+}
+
+#[test]
 fn a_range_without_its_tail_stops_at_its_end_while_the_reverb_still_sounds() {
     let mut harness = chord_through_reverb();
     let rendered = export(&mut harness, Ticks(0), Ticks(2 * BAR_TICKS), false);

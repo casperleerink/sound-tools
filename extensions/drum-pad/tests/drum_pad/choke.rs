@@ -115,22 +115,3 @@ fn a_new_hit_of_a_pad_fades_its_last_one_out() {
             .all(|sample| sample.abs() < 1e-6)
     );
 }
-
-#[test]
-fn a_stop_fades_every_pad_out() {
-    let crash = 13;
-    let notes = vec![hit(0, note(crash), 110)];
-    let mut going_on = Harness::with_track(notes.clone(), DrumPadState::default());
-    going_on.play(4_800);
-    let continued = going_on.render(4_800).sum();
-    let mut harness = Harness::with_track(notes, DrumPadState::default());
-    harness.play(4_800);
-    harness.project.engine().stop();
-    let stopped = harness.render(4_800).sum();
-    let fade = (FADE_SECONDS * SAMPLE_RATE as f32).round() as usize;
-    for frame in 0..fade {
-        let expected = continued[frame] * (fade - frame) as f32 / fade as f32;
-        assert!((stopped[frame] - expected).abs() < 1e-6, "{frame}");
-    }
-    assert!(stopped[fade..].iter().all(|sample| *sample == 0.0));
-}
