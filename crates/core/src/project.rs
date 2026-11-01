@@ -693,7 +693,7 @@ impl Project {
 impl Project {
     /// Forgets what was reported about the record files of `id` and about its folder.
     pub(crate) fn clear_record_problems(&mut self, id: &InstanceId) {
-        for form in [Form::File, Form::Folder] {
+        for form in Form::BOTH {
             let path = self.storage.record_path(id, form);
             self.clear_problem(&self.storage.display_path(&path));
         }

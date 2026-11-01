@@ -34,6 +34,8 @@ pub(crate) enum Form {
 }
 
 impl Form {
+    pub(super) const BOTH: [Self; 2] = [Self::File, Self::Folder];
+
     pub(super) fn of(record: &Record) -> Self {
         if record.owns_children {
             Self::Folder
@@ -338,10 +340,9 @@ impl Storage {
             Some(parent) => self.instance_folder(parent),
             None => self.state_folder(),
         };
-        let inside = self
-            .unloaded
-            .keys()
-            .filter(|path| path.starts_with(&folder));
+        let inside = (self.unloaded.range(folder.clone()..))
+            .map(|(path, _)| path)
+            .take_while(|path| path.starts_with(&folder));
         let ids = inside.filter_map(|path| match self.target_of(path) {
             PathTarget::Record(id) => Some(id),
             _ => None,

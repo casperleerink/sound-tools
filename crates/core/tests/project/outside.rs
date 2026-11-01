@@ -444,6 +444,22 @@ fn undo_of_a_delete_brings_back_records_that_did_not_load() {
 }
 
 #[test]
+fn undo_of_a_delete_brings_back_both_records_of_an_id() {
+    let mut harness = Harness::new();
+    harness.write("state/thing.json", UNKNOWN);
+    harness.write("state/thing/instance.json", INVALID);
+    let state = harness.path("state");
+    harness.apply_outside_changes(&[state]).unwrap();
+
+    let folder = harness.path("state/thing");
+    std::fs::remove_dir_all(&folder).unwrap();
+    harness.apply_outside_changes(&[folder]).unwrap();
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/thing.json"), UNKNOWN);
+    assert_eq!(harness.read("state/thing/instance.json"), INVALID);
+}
+
+#[test]
 fn undo_of_a_fix_brings_back_the_record_that_did_not_load() {
     let mut harness = Harness::new();
     harness.write_and_apply("state/bank/instance.json", BANK_RECORD);

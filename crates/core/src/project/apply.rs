@@ -107,19 +107,19 @@ impl Project {
                         }
                         // A file the runtime did not load may sit at this id: a record of an
                         // unknown tool, or one with an error. Undo must not write over it
-                        // either, unless it knows the bytes: then the same step brings the
-                        // file back. A file the runtime knows is its own, from before a
+                        // either, unless the file holds the bytes it knows: then the same step
+                        // brings the file back. A file the runtime knows is its own, from before a
                         // delete that is not written yet.
                         let writes = matches!(source, Source::Interface | Source::History);
                         let taken = writes
                             && self.storage.observed(&id).is_none()
                             && match self.storage.read_record(&id, None)? {
                                 RecordOnDisk::Missing => false,
-                                RecordOnDisk::One(form, _) => {
+                                RecordOnDisk::One(form, bytes) => {
                                     let path = self.storage.record_path(&id, form);
                                     source != Source::History
                                         || form != Form::of(&record)
-                                        || self.storage.unloaded(&path).is_none()
+                                        || self.storage.unloaded(&path) != Some(bytes.as_slice())
                                 }
                                 RecordOnDisk::Both => true,
                             };
