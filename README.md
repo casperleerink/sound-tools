@@ -92,7 +92,7 @@ To make a release, run `/release` in Claude Code. With no argument it decides fr
 5. Click a track name for its devices: the synth, the filter and the effects of its chain. **+ Effect** adds one.
 6. Drag a WAV or AIFF file from the Finder onto the timeline for an audio region.
 7. Plug in a MIDI keyboard and play. The R of a track arms it; the record button records it.
-8. cmd-z undoes, shift-cmd-z redoes. cmd-q quits. There is no save; every edit is written to the folder.
+8. cmd-z undoes, shift-cmd-z redoes, alt-cmd-z undoes and keeps what it took back as a version. cmd-q quits. There is no save; every edit is written to the folder.
 
 The DAW's own gestures and keys are its code, in `templates/daw/extensions`. Their rules are in [DESIGN.md](DESIGN.md).
 

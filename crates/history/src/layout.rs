@@ -113,6 +113,9 @@ pub struct Version {
     pub split: Option<ObjectId>,
     pub name: Option<Named>,
     pub aside: bool,
+    /// Taken back with undo, see
+    /// [`History::note_undone`](sound_core::history::History::note_undone).
+    pub undone: bool,
     /// Whether it is now, which never folds away.
     pub now: bool,
 }
@@ -358,6 +361,7 @@ impl Graph {
                     split: split(version).map(|point| self.nodes[point].id),
                     name: self.names.get(&start).cloned(),
                     aside: self.aside.contains(&start),
+                    undone: self.undone.contains(&start),
                     now: Some(version) == now_version,
                 }
             })

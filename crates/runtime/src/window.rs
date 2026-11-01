@@ -62,6 +62,7 @@ actions!(
     [
         ToggleComputerKeys,
         Undo,
+        UndoKeepingVersion,
         Redo,
         FocusNext,
         FocusPrevious,
@@ -943,6 +944,9 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|shell, _: &Undo, _, cx| shell.session.update(cx, Session::undo)),
             )
+            .on_action(cx.listener(|shell, _: &UndoKeepingVersion, _, cx| {
+                shell.session.update(cx, Session::undo_keeping_version)
+            }))
             .on_action(
                 cx.listener(|shell, _: &Redo, _, cx| shell.session.update(cx, Session::redo)),
             )
@@ -1030,6 +1034,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-z", Undo, outside_text),
         KeyBinding::new("shift-secondary-z", Redo, outside_text),
+        KeyBinding::new("alt-secondary-z", UndoKeepingVersion, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),

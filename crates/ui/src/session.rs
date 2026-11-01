@@ -331,6 +331,14 @@ impl Session {
         }
     }
 
+    /// Undo that keeps what it takes back as a version, see
+    /// [`Project::undo_keeping_version`]. Ignored while a gesture is open, like [`Self::undo`].
+    pub fn undo_keeping_version(&mut self, cx: &mut Context<Self>) {
+        if self.gesture.is_none() {
+            self.edit(cx, Project::undo_keeping_version);
+        }
+    }
+
     /// Redo, ignored while a gesture is open, like [`Self::undo`].
     pub fn redo(&mut self, cx: &mut Context<Self>) {
         if self.gesture.is_none() {

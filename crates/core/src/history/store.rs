@@ -282,6 +282,14 @@ impl History {
         self.meta.undone.contains(&start.to_string())
     }
 
+    /// Makes undone work that starts at `start` a version.
+    pub fn keep_as_version(&mut self, start: ObjectId) -> Result<(), HistoryError> {
+        if self.meta.undone.remove(&start.to_string()) {
+            self.save_meta()?;
+        }
+        Ok(())
+    }
+
     /// The project went back by undo from the version that starts at `start`, and changed
     /// something: when that version is small, it was taken back rather than tried, and it
     /// shows as undone instead of as a version.

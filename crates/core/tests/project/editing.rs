@@ -664,4 +664,14 @@ fn undo_then_a_change_leaves_undone_work_and_going_back_leaves_a_version() {
     harness.project.go_to(start).unwrap();
     set(&mut harness, 0.125);
     assert!(!harness.project.history().unwrap().is_undone(left));
+
+    // Undo that keeps: a change after it starts a version too.
+    let kept = now(&harness);
+    harness.project.undo_keeping_version().unwrap();
+    set(&mut harness, 0.375);
+    assert!(!harness.project.history().unwrap().is_undone(kept));
+
+    // Undone work can be kept afterwards.
+    harness.project.keep_as_version(louder).unwrap();
+    assert!(!harness.project.history().unwrap().is_undone(louder));
 }

@@ -343,6 +343,23 @@ impl Project {
         }
     }
 
+    /// Undo that keeps what it takes back as a version: a change after it starts one, as after
+    /// going back to a point on purpose.
+    pub fn undo_keeping_version(&mut self) -> Result<Option<String>, ProjectError> {
+        self.finish_all_runs()?;
+        let label = self.undo_label().map(str::to_string);
+        let target = (self.history.store.as_ref()).and_then(|store| store.undo_target());
+        match target {
+            Some(target) => self.move_to(target, false).map(|()| label),
+            None => Ok(None),
+        }
+    }
+
+    /// Makes undone work that starts at `start` a version.
+    pub fn keep_as_version(&mut self, start: ObjectId) -> Result<(), ProjectError> {
+        Ok(self.store()?.keep_as_version(start)?)
+    }
+
     /// Goes to the newest point that came from the one now.
     pub fn redo(&mut self) -> Result<Option<String>, ProjectError> {
         self.finish_all_runs()?;

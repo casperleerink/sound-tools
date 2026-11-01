@@ -17,6 +17,7 @@ use sound_history::{Drawing, Graph, Layout, Row, Shape, Version};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
+use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{ActiveTheme, Session};
 
 use super::QuickAnswer;
@@ -132,6 +133,8 @@ pub(super) struct HistoryPanel {
     /// The context menu, and the version it is for.
     menu: Entity<DropdownMenu>,
     menu_version: Option<usize>,
+    /// The undone work the menu's "Keep as version" is for.
+    keep: Vec<ObjectId>,
     /// The question for a name that runs.
     naming: Option<Task<()>>,
     /// The rows in view reached the end of what is read of the history.
@@ -177,6 +180,7 @@ impl HistoryPanel {
             _watching: watching,
             menu,
             menu_version: None,
+            keep: Vec::new(),
             naming: None,
             wants_older: false,
             asked: BTreeSet::new(),
@@ -257,6 +261,16 @@ impl HistoryPanel {
         self.relayout(cx);
     }
 
+    fn keep_as_version(&mut self, cx: &mut Context<Self>) {
+        let keep = std::mem::take(&mut self.keep);
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                (keep.iter()).try_for_each(|start| project.keep_as_version(*start))
+            })
+        });
+        self.relayout(cx);
+    }
+
     fn toggle_fold(&mut self, key: ObjectId, cx: &mut Context<Self>) {
         if !self.open.remove(&key) {
             self.open.insert(key);
@@ -318,9 +332,12 @@ impl HistoryPanel {
         }));
     }
 
+    /// The menu of a row: of its version, and "Keep as version" for undone work, its own or
+    /// that which left it.
     fn open_menu(
         &mut self,
         version: usize,
+        undone_from: Option<ObjectId>,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -328,7 +345,25 @@ impl HistoryPanel {
         let Some(info) = self.layout.versions.get(version) else {
             return;
         };
+        let keep: Vec<ObjectId> = (self.layout.versions.iter())
+            .filter(|each| {
+                each.undone
+                    && (each.start == info.start
+                        || (undone_from.is_some() && each.split == undone_from))
+            })
+            .map(|each| each.start)
+            .collect();
+        let mut items = Vec::new();
+        if !keep.is_empty() {
+            items.push(
+                MenuItem::new("keep", "Keep as version")
+                    .description("Undone work, shown as a version of its own")
+                    .selectable(false),
+            );
+        }
+        self.keep = keep;
         if info.now {
+            self.show_menu(version, items, position, window, cx);
             return;
         }
         let into = (self.layout.versions.iter().enumerate())
@@ -340,7 +375,7 @@ impl HistoryPanel {
             true => "Bring back",
             false => "Fold away",
         };
-        let items = vec![
+        items.extend([
             MenuItem::new("merge", format!("Merge into {into}"))
                 .description("Where both changed something, this one wins")
                 .selectable(false),
@@ -348,7 +383,21 @@ impl HistoryPanel {
                 .description("Where both changed something, yours stays")
                 .selectable(false),
             MenuItem::new("aside", aside).selectable(false),
-        ];
+        ]);
+        self.show_menu(version, items, position, window, cx);
+    }
+
+    fn show_menu(
+        &mut self,
+        version: usize,
+        items: Vec<MenuItem>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if items.is_empty() {
+            return;
+        }
         self.menu_version = Some(version);
         self.menu.update(cx, |menu, cx| {
             menu.set_entries(vec![MenuEntry::Group(MenuGroup::new().items(items))], cx);
@@ -370,6 +419,7 @@ impl HistoryPanel {
             "merge" => self.merge(version, false, cx),
             "merge-mine" => self.merge(version, true, cx),
             "aside" => self.toggle_aside(version, cx),
+            "keep" => self.keep_as_version(cx),
             _ => {}
         }
     }
@@ -416,9 +466,10 @@ impl HistoryPanel {
         let graph = {
             let colors = colors.clone();
             let dot = Dot::of(&row);
+            let stub = row.undone.as_ref().is_some_and(|fold| !fold.open);
             canvas(
                 |_, _, _| {},
-                move |bounds, (), window, _| paint(bounds, &drawing, dot, &colors, window),
+                move |bounds, (), window, _| paint(bounds, &drawing, dot, stub, &colors, window),
             )
             .flex_none()
             .w(px(graph_width))
@@ -462,7 +513,13 @@ impl HistoryPanel {
                 true => "Hide undone".to_string(),
                 false => format!("{} undone", undone.count),
             };
-            link_to("undone", undone.key, words, cx)
+            link_to("undone", undone.key, words, cx).tooltip(|_, cx| {
+                Tooltip::new(
+                    "Taken back with undo. Click to show it. To keep work as a version, undo with",
+                )
+                .shortcut("mod+alt+z")
+                .view(cx)
+            })
         });
         let more = more.into_iter().chain(undone);
         let ago = div().text_color(muted).child(ago(now, row.time));
@@ -527,6 +584,9 @@ impl HistoryPanel {
                 .children(more)
                 .into_any_element()
         };
+        let undone_from = (row.undone.as_ref())
+            .filter(|fold| !fold.open)
+            .map(|fold| fold.key);
         let (point, key, version) = (
             row.point,
             row.changes.as_ref().map(|fold| fold.key),
@@ -550,7 +610,7 @@ impl HistoryPanel {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |panel, event: &MouseDownEvent, window, cx| {
-                    panel.open_menu(version, event.position, window, cx)
+                    panel.open_menu(version, undone_from, event.position, window, cx)
                 }),
             )
             .child(graph)
@@ -661,10 +721,12 @@ impl Colors {
     }
 }
 
+/// `stub` draws the work undone from this point: a faint branch that ends at once.
 fn paint(
     bounds: Bounds<Pixels>,
     drawing: &Drawing,
     dot: Dot,
+    stub: bool,
     colors: &Colors,
     window: &mut Window,
 ) {
@@ -713,6 +775,15 @@ fn paint(
     }
     let centre = point(x(drawing.dot), middle);
     let color = colors.version(drawing.version);
+    if stub {
+        let mut path = PathBuilder::stroke(px(1.5)).dash_array(&[px(2.), px(2.5)]);
+        let end = centre + point(px(LANE_WIDTH * 0.7), px(-ROW_HEIGHT * 0.4));
+        path.move_to(centre);
+        path.cubic_bezier_to(end, centre + point(px(LANE_WIDTH * 0.5), px(0.)), end);
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color.opacity(0.45));
+        }
+    }
     match dot {
         Dot::Fold => {
             for offset in [-5., 0., 5.] {
