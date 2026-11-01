@@ -394,8 +394,8 @@ pub const SCAN_AGAIN: &str = "plugins:scan-again";
 /// own. A host that was not told to scan on a thread scans on this one, the first time a
 /// record needs a plugin.
 ///
-/// A folder without a `project.json` becomes an empty project: 120 bpm, 4/4, every bundled
-/// extension.
+/// An empty or missing folder becomes an empty project: 120 bpm, 4/4, every bundled extension.
+/// A folder with other files and no `project.json` is refused, see [`app::check_project_folder`].
 ///
 /// With no window, it waits for what the behaviours of its own tools declare, so it plays what
 /// the records say from the start.
@@ -404,7 +404,7 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    let extensions = load_tools(folder)?;
+    let extensions = load_tools(folder, false)?;
     let mut project = open_with_loaded(folder, control, plugins, extensions)?.0;
     first(settle_behaviours(&mut project))?;
     Ok(project)
@@ -418,13 +418,20 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    open_with_loaded(folder, control, plugins, load_tools(folder)?)
+    open_with_loaded(folder, control, plugins, load_tools(folder, false)?)
 }
 
 /// The project's own tools, once the code of the template it was made from is this release's
 /// where the project never changed it, see [`templates::update`]. What waits for a merge the
-/// window asks again.
-pub(crate) fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
+/// window asks again. With `make_tools_folder`, `extensions/` is made when it is missing.
+///
+/// The first step of every open that may write: nothing is written into a folder that is not a
+/// project.
+pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<FirstLoad>> {
+    app::check_project_folder(folder)?;
+    if make_tools_folder {
+        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
+    }
     if let Err(error) = templates::update(folder) {
         eprintln!("error: {error:#}");
     }
