@@ -56,7 +56,7 @@ Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has t
 cargo run -p runtime -- ~/Music/my-piece
 ```
 
-The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. There is no save. The app writes every finished edit to the folder.
+The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. A folder with other files and no project does not open. There is no save: every finished edit is in the folder.
 
 ### Install the app
 

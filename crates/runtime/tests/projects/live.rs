@@ -18,7 +18,7 @@ fn a_new_folder_is_an_empty_project_of_every_extension() {
 }
 
 #[test]
-fn a_folder_without_a_project_file_becomes_a_new_project_whatever_else_is_in_it() {
+fn a_folder_with_hidden_files_only_becomes_a_new_project() {
     let folder = tempfile::tempdir().unwrap();
     std::fs::create_dir(folder.path().join(".git")).unwrap();
     std::fs::write(folder.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
@@ -26,18 +26,50 @@ fn a_folder_without_a_project_file_becomes_a_new_project_whatever_else_is_in_it(
     let harness = Harness::open(folder);
     assert!(harness.path("project.json").exists());
     assert!(harness.path(".git/HEAD").exists());
+}
 
-    // Records without a project file are someone's work, and they load.
+#[test]
+fn a_folder_with_files_and_no_project_file_is_refused_and_left_as_it_was() {
     let folder = tempfile::tempdir().unwrap();
-    let drone = r#"{"tool": "tone", "state": {"frequency_hz": 110.0, "gain": 0.1}}"#;
-    crate::support::write(folder.path(), "state/drone.json", drone);
-    let harness = Harness::open(folder);
-    let ids: Vec<String> = harness
-        .project
-        .instances()
-        .map(|(id, _)| id.to_string())
-        .collect();
-    assert_eq!(ids, ["drone"]);
+    let write = |path: &str, contents: &str| crate::support::write(folder.path(), path, contents);
+    write("CLAUDE.md", "# my rules\n");
+    write("AGENTS.md", "mine\n");
+    write("agent-docs/mine.md", "mine\n");
+    write("extensions/tool.ts", "export {};\n");
+    write("state/drone.json", r#"{"tool": "tone", "state": {}}"#);
+    write("main.rs", "fn main() {}\n");
+    let before = everything_in(folder.path());
+
+    let (control, _engine) = sound_core::Engine::new(runtime::OFFLINE);
+    let plugins = plugin_host::Plugins::new(
+        Vec::new(),
+        crate::plugin_hosts::scanner(),
+        plugin_host::ScanCache::none(),
+    );
+    let Err(error) = runtime::open_or_create_with(folder.path(), control, plugins) else {
+        panic!("a folder of someone's files opened as a project");
+    };
+    assert!(
+        error.to_string().contains("is not a Sound Tools project"),
+        "{error}"
+    );
+    assert_eq!(everything_in(folder.path()), before);
+}
+
+/// Every file and folder under `folder`, with the bytes of each file.
+fn everything_in(folder: &std::path::Path) -> Vec<(std::path::PathBuf, Option<Vec<u8>>)> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.push((path.clone(), None));
+            found.extend(everything_in(&path));
+        } else {
+            found.push((path.clone(), Some(std::fs::read(&path).unwrap())));
+        }
+    }
+    found.sort();
+    found
 }
 
 #[test]

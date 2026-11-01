@@ -106,6 +106,14 @@ fn no_plugins(_: &Path) -> Plugins {
     Plugins::new(Vec::new(), scanner(), ScanCache::none())
 }
 
+/// A new project, as the app makes one in an empty folder.
+pub(crate) fn new_project() -> TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, _engine) = Engine::new(OFFLINE);
+    runtime::open_or_create_with(folder.path(), control, no_plugins(folder.path())).unwrap();
+    folder
+}
+
 /// Opens the window on a project of `files` with the plugin host `host` makes for its folder,
 /// and what the window may open of the machine.
 pub(crate) fn open_with<'a>(
