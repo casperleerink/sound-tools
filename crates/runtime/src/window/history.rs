@@ -432,7 +432,7 @@ impl HistoryPanel {
                 .text_color(theme.gray_100)
                 .text_size(px(10.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child("Now")
+                .child("Current")
         });
         let link_to = |id: &str, key: ObjectId, words: String, cx: &mut Context<Self>| {
             div()
