@@ -36,6 +36,10 @@ pub(super) struct History {
     /// group was heard. Any other point or move clears it.
     last_outside: Option<Instant>,
     request: Option<Request>,
+    /// The project came to the point now by undo or redo, not by a click on a point: work
+    /// left for a change here may count as undone, see
+    /// [`note_undone`](crate::history::History::note_undone).
+    by_undo: bool,
     /// How many open edits have published over each record.
     holders: BTreeMap<InstanceId, usize>,
 }
@@ -60,10 +64,23 @@ impl History {
     /// Saves the folder as a point named `label`, when it changed.
     pub(super) fn record(&mut self, label: &str) -> Result<(), HistoryError> {
         self.last_outside = None;
-        match &mut self.store {
-            Some(store) => store.record(label).map(drop),
-            None => Ok(()),
+        self.record_new(label).map(drop)
+    }
+
+    /// Records a new point after the one now, and notes what an undo before it left.
+    fn record_new(&mut self, label: &str) -> Result<Option<ObjectId>, HistoryError> {
+        let Some(store) = &mut self.store else {
+            return Ok(None);
+        };
+        let left = (store.redo_target()).filter(|_| self.by_undo);
+        let point = store.record(label)?;
+        if point.is_some() {
+            self.by_undo = false;
+            if let Some(left) = left {
+                store.note_undone(left)?;
+            }
         }
+        Ok(point)
     }
 
     /// Saves outside changes heard at `at`. They join the point now when that is one of outside
@@ -80,19 +97,20 @@ impl History {
         let joins = self.last_outside.is_some_and(|last| {
             self.request.is_some() || at.saturating_duration_since(last) < OUTSIDE_UNDO_WINDOW
         });
-        let label = (self.request.as_ref()).map_or(label, |request| request.label.as_str());
-        let Some(store) = &mut self.store else {
-            return Ok(());
+        let label =
+            (self.request.as_ref()).map_or(label.to_string(), |request| request.label.clone());
+        let label = label.as_str();
+        let before = self.store.as_ref().and_then(|store| store.now());
+        let point = match (joins, &mut self.store) {
+            (_, None) => return Ok(()),
+            (true, Some(store)) => store.amend(label)?,
+            (false, Some(_)) => self.record_new(label)?,
         };
-        let before = store.now();
-        let point = match joins {
-            true => store.amend(label)?,
-            false => store.record(label)?,
-        };
+        let now = self.store.as_ref().and_then(|store| store.now());
         // An agent that takes back what it just wrote leaves nothing to undo.
         self.last_outside = match (point, joins) {
             (Some(_), _) => Some(at),
-            (None, true) if store.now() != before => None,
+            (None, true) if now != before => None,
             (None, _) => self.last_outside,
         };
         Ok(())
@@ -100,8 +118,9 @@ impl History {
 
     /// The project moved to another point, such as by undo: outside changes from here make
     /// a new point.
-    pub(super) fn moved(&mut self) {
+    pub(super) fn moved(&mut self, by_undo: bool) {
         self.last_outside = None;
+        self.by_undo = by_undo;
     }
 
     pub(super) fn begin_request(&mut self, label: &str) {

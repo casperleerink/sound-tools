@@ -76,20 +76,24 @@ fn undo_redo_and_a_click_move_through_one_history(cx: &mut TestAppContext) {
     assert_eq!(room_file(&mut opened), added);
     assert_eq!(rows(&mut opened), 2);
 
-    // A change after an undo starts a version beside the first.
+    // A change after an undo takes the undone work back: it shows as undone, no version.
     opened.keys("cmd-z");
     opened.edit(add_room(0.8));
     look(&mut opened);
+    assert_eq!(rows(&mut opened), 2);
+    let undone = opened.control("history-undone-1");
+    opened.click(undone);
+    look(&mut opened);
     assert_eq!(rows(&mut opened), 3);
 
-    // A click on the first version's latest point brings its file back byte for byte.
-    let first = opened.control("history-row-1");
-    opened.click(first);
+    // A click on the undone point brings its file back byte for byte.
+    let point = opened.control("history-row-1");
+    opened.click(point);
     look(&mut opened);
     assert_eq!(room_file(&mut opened), added);
     assert_eq!(opened.undo_label().as_deref(), Some("Add reverb"));
 
-    // More changes there fold between its first and its latest point.
+    // Changes from there make it a version, whose middle folds.
     for mix in [0.4, 0.5, 0.6] {
         opened.edit(set_mix(mix));
     }

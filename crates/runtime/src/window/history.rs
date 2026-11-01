@@ -12,7 +12,7 @@ use gpui::{
     MouseDownEvent, PathBuilder, Pixels, Point, SharedString, Task, UniformListScrollHandle,
     Window, canvas, div, point, prelude::*, px, uniform_list,
 };
-use sound_core::history::{FileChange, ObjectId};
+use sound_core::history::{FileChange, ObjectId, PAGE};
 use sound_history::{Drawing, Graph, Layout, Row, Shape, Version};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -134,6 +134,8 @@ pub(super) struct HistoryPanel {
     menu_version: Option<usize>,
     /// The question for a name that runs.
     naming: Option<Task<()>>,
+    /// The rows in view reached the end of what is read of the history.
+    wants_older: bool,
     /// Versions asked for a name, with the latest point they were asked for: one that failed
     /// is asked again only once it grew.
     asked: BTreeSet<(ObjectId, ObjectId)>,
@@ -176,12 +178,18 @@ impl HistoryPanel {
             menu,
             menu_version: None,
             naming: None,
+            wants_older: false,
             asked: BTreeSet::new(),
         }
     }
 
     /// Lays the tree out again when the history changed, and names what waits for a name.
     fn look(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.wants_older) {
+            self.session.update(cx, |session, cx| {
+                session.edit(cx, |project| project.read_more_history(PAGE))
+            });
+        }
         let changes = (self.session.read(cx).project().history()).map(|history| history.changes());
         if changes != self.laid_out {
             self.relayout(cx);
@@ -367,6 +375,10 @@ impl HistoryPanel {
     }
 
     fn rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        // Older points are read as the end comes into view.
+        let has_more =
+            (self.session.read(cx).project().history()).is_some_and(|history| history.has_more());
+        self.wants_older |= has_more && range.end + 20 >= self.layout.rows.len();
         let lanes = self.layout.lanes(range.clone());
         let graph_width = GRAPH_INSET + LANE_WIDTH * lanes.len().max(1) as f32;
         let colors = Colors::of(cx);
@@ -445,6 +457,14 @@ impl HistoryPanel {
             };
             link_to("more", more.key, words, cx)
         });
+        let undone = row.undone.as_ref().map(|undone| {
+            let words = match undone.open {
+                true => "Hide undone".to_string(),
+                false => format!("{} undone", undone.count),
+            };
+            link_to("undone", undone.key, words, cx)
+        });
+        let more = more.into_iter().chain(undone);
         let ago = div().text_color(muted).child(ago(now, row.time));
         let meta = div()
             .flex()

@@ -2,9 +2,9 @@
 //! folds away, and the lanes of the lines for the rows in view.
 //!
 //! A version is a line of points: a point continues the version of its first parent when it is
-//! that parent's first child, else it starts a version of its own. A version shows its first
+//! that parent's first child that was not undone, else it starts a version of its own. A version shows its first
 //! and its latest point; what lies between folds into one row, unless it is where the project
-//! is now or a merge.
+//! is now or a merge. A version that was undone shows as "undone" on the point it left.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -20,6 +20,7 @@ pub struct Graph {
     now: Option<usize>,
     names: BTreeMap<ObjectId, Named>,
     aside: BTreeSet<ObjectId>,
+    undone: BTreeSet<ObjectId>,
 }
 
 struct Node {
@@ -37,6 +38,7 @@ impl Graph {
             .collect();
         let mut names = BTreeMap::new();
         let mut aside = BTreeSet::new();
+        let mut undone = BTreeSet::new();
         let nodes = (history.order().iter())
             .filter_map(|id| history.point(*id))
             .map(|point| {
@@ -45,6 +47,9 @@ impl Graph {
                 }
                 if history.is_aside(point.id) {
                     aside.insert(point.id);
+                }
+                if history.is_undone(point.id) {
+                    undone.insert(point.id);
                 }
                 Node {
                     id: point.id,
@@ -60,6 +65,7 @@ impl Graph {
             now: history.now().and_then(|now| index.get(&now).copied()),
             names,
             aside,
+            undone,
         }
     }
 }
@@ -79,6 +85,9 @@ pub struct Row {
     pub changes: Option<Fold>,
     /// Versions that start from a point of this row and fold away.
     pub more: Option<Fold>,
+    /// Points that were undone from a point of this row, see
+    /// [`History::note_undone`](sound_core::history::History::note_undone).
+    pub undone: Option<Fold>,
 }
 
 impl Row {
@@ -173,15 +182,17 @@ impl Graph {
         let mut version_of = vec![0; count];
         let mut starts: Vec<usize> = Vec::new();
         for (index, node) in self.nodes.iter().enumerate() {
+            // Undone work is a line of its own, and what came after the undo goes on.
+            let undone = self.undone.contains(&node.id);
             let continues = (node.parents.first().copied())
-                .filter(|parent| first_child.get(*parent).copied().flatten().is_none());
+                .filter(|parent| !undone && first_child.get(*parent).copied().flatten().is_none());
             match continues {
                 Some(parent) => {
                     first_child[parent] = Some(index);
                     version_of[index] = version_of[parent];
                 }
                 None => {
-                    if let Some(parent) = node.parents.first() {
+                    if let Some(parent) = node.parents.first().filter(|_| !undone) {
                         first_child[*parent].get_or_insert(index);
                     }
                     version_of[index] = starts.len();
@@ -207,6 +218,7 @@ impl Graph {
             Some(version) != now_version
                 && (merged.contains(&version)
                     || self.aside.contains(&start)
+                    || self.undone.contains(&start)
                     || count - 1 - tips[version] >= FOLD_AFTER)
         };
         let mut shown: BTreeSet<usize> = (0..starts.len())
@@ -297,12 +309,22 @@ impl Graph {
             let key = self.nodes[point].id;
             let folded = folds(version) && (open.contains(&key) || !shown.contains(&version));
             if let (true, Some(row)) = (folded, row_at(point)) {
-                let more = rows[row].1.more.get_or_insert(Fold {
+                let undone = self.undone.contains(&self.nodes[starts[version]].id);
+                let row = &mut rows[row].1;
+                let fold = match undone {
+                    true => &mut row.undone,
+                    false => &mut row.more,
+                };
+                let fold = fold.get_or_insert(Fold {
                     key,
                     count: 0,
                     open: open.contains(&key),
                 });
-                more.count += 1;
+                // Undone work counts its points, versions count themselves.
+                fold.count += match undone {
+                    true => members[version].len(),
+                    false => 1,
+                };
             }
         }
 
@@ -357,6 +379,7 @@ impl Graph {
             tip: tips[version] == index,
             changes: None,
             more: None,
+            undone: None,
         }
     }
 }
@@ -435,6 +458,7 @@ mod tests {
             now: Some(now),
             names: BTreeMap::new(),
             aside: BTreeSet::new(),
+            undone: BTreeSet::new(),
         }
     }
 
@@ -511,6 +535,20 @@ mod tests {
         let (shown, more) = shown(points.len());
         assert!(!shown);
         assert_eq!(more.map(|fold| (fold.key, fold.count)), Some((id(0), 1)));
+    }
+
+    #[test]
+    fn undone_work_shows_on_the_point_it_left_and_opens_there() {
+        // 0 1 2: undone back to 0, then 3 changed there and is now.
+        let mut graph = graph(&[&[], &[0], &[1], &[0]], 3);
+        graph.undone.insert(id(1));
+        let layout = graph.layout(&BTreeSet::new());
+        assert_eq!(points(&layout), [id(3), id(0)]);
+        let undone = layout.rows[1].undone.clone().unwrap();
+        assert_eq!((undone.key, undone.count), (id(0), 2));
+        assert!(layout.rows[1].more.is_none());
+        let layout = graph.layout(&BTreeSet::from([id(0)]));
+        assert_eq!(points(&layout), [id(3), id(2), id(1), id(0)]);
     }
 
     #[test]

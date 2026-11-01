@@ -338,7 +338,7 @@ impl Project {
         let label = self.undo_label().map(str::to_string);
         let target = (self.history.store.as_ref()).and_then(|store| store.undo_target());
         match target {
-            Some(target) => self.go_to(target).map(|()| label),
+            Some(target) => self.move_to(target, true).map(|()| label),
             None => Ok(None),
         }
     }
@@ -349,7 +349,7 @@ impl Project {
         let label = self.redo_label().map(str::to_string);
         let target = (self.history.store.as_ref()).and_then(|store| store.redo_target());
         match target {
-            Some(target) => self.go_to(target).map(|()| label),
+            Some(target) => self.move_to(target, true).map(|()| label),
             None => Ok(None),
         }
     }
@@ -358,13 +358,25 @@ impl Project {
     /// change from outside. The next change starts a version from there. What the folder holds
     /// that the history has not seen yet, such as a write of an agent the watcher has not
     /// delivered, is saved as a point first, so nothing is lost.
+    ///
+    /// Going back on purpose: a change from there is a version of its own, which undo and redo
+    /// may not make, see [`crate::history::History::note_undone`].
     pub fn go_to(&mut self, point: ObjectId) -> Result<(), ProjectError> {
         self.finish_all_runs()?;
+        self.move_to(point, false)
+    }
+
+    fn move_to(&mut self, point: ObjectId, by_undo: bool) -> Result<(), ProjectError> {
         self.store()?;
         self.history.record(super::outside::OUTSIDE_LABEL)?;
         let files = self.store()?.go_to(point)?;
-        self.history.moved();
+        self.history.moved(by_undo);
         self.write_and_apply(files)
+    }
+
+    /// Reads up to `count` older points of the history, for a view scrolled to the end of it.
+    pub fn read_more_history(&mut self, count: usize) -> Result<(), ProjectError> {
+        Ok(self.store()?.read_more(count)?)
     }
 
     /// Merges the version whose latest point is `tip` into where the project is now, as a new

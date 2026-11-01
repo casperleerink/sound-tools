@@ -5,4 +5,6 @@ mod git;
 mod store;
 
 pub use git::{GitError, ObjectId};
-pub use store::{FileChange, Files, HISTORY_FOLDER, History, HistoryError, Named, Point, Scope};
+pub use store::{
+    FileChange, Files, HISTORY_FOLDER, History, HistoryError, Named, PAGE, Point, Scope,
+};

@@ -640,3 +640,28 @@ fn a_project_with_one_time_signature_is_written_with_the_list() {
     );
     assert!(!written.contains(r#""time_signature":"#), "{written}");
 }
+
+/// A change after a few undos takes the undone work back, as undo always did. A change after
+/// going back to a point on purpose starts a version, and what it left stays one.
+#[test]
+fn undo_then_a_change_leaves_undone_work_and_going_back_leaves_a_version() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let now = |harness: &Harness| harness.project.history().unwrap().now().unwrap();
+    let start = now(&harness);
+    let set = |harness: &mut Harness, value: f32| {
+        let mut changes = Changes::new();
+        changes.set(&dc, Dc { value });
+        harness.project.commit("Level", changes).unwrap();
+    };
+    set(&mut harness, 0.5);
+    let louder = now(&harness);
+    harness.project.undo().unwrap();
+    set(&mut harness, 0.75);
+    assert!(harness.project.history().unwrap().is_undone(louder));
+
+    let left = now(&harness);
+    harness.project.go_to(start).unwrap();
+    set(&mut harness, 0.125);
+    assert!(!harness.project.history().unwrap().is_undone(left));
+}
