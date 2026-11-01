@@ -2,10 +2,9 @@
 //! of its own inside the folder, with where the project is now.
 //!
 //! A point is saved by looking at the folder, not by being told what changed: the folder is
-//! the truth. So undo and redo need no hook. The state after an undo is one the history
-//! already has, near where it is now, and it moves there instead of saving a new point.
+//! the truth. Two states are the same when git says so, byte for byte.
 
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,29 +12,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::git::{Commit, Entry, GitError, ObjectId, Repository};
+use super::git::{Commit, Entry, GitError, ObjectId, Repository};
 
 /// Where the history lives, inside the project folder. Hidden, and outside every folder the
 /// runtime or an agent reads.
 pub const HISTORY_FOLDER: &str = ".sound-tools/history";
 
-/// The state of the history that git has no place for: which points are moments, the names
-/// of versions, and where the project was lately.
+/// What git has no place for: the names of versions and which are set aside.
 const META_FILE: &str = "sound-tools.json";
-
-/// How many places the project was at lately are remembered, so that undoing a jump goes
-/// back to where it came from instead of saving a new point there.
-const RECENT: usize = 32;
-
-/// How far from where the project is a state is looked for before it is a new point.
-const NEAR: usize = 64;
 
 const TIME_TRAILER: &str = "Sound-Tools-Time: ";
 
 /// What of the folder the history keeps. Paths are relative to the project folder.
 #[derive(Clone, Debug)]
 pub struct Scope {
-    /// Files and folders that are part of the piece.
+    /// Files and folders that are part of the project.
     pub roots: Vec<PathBuf>,
     /// Whether a path inside them is not, such as what the runtime writes itself. Paths have
     /// forward slashes.
@@ -49,19 +40,20 @@ pub struct Point {
     pub parents: Vec<ObjectId>,
     /// Milliseconds since 1970.
     pub time: u64,
-    /// The undo step that led here, such as "Change frequency".
+    /// The change that led here, such as "Change frequency", for the undo menu.
     pub label: String,
     tree: ObjectId,
 }
 
-/// What [`History::record`] did.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Recorded {
-    /// The folder is as the point it is at.
-    Unchanged,
-    /// The folder is as a point near it, such as after an undo, and it moved there.
-    Moved(ObjectId),
-    New(ObjectId),
+/// Files to write, or to remove for `None`, relative to the project folder.
+pub type Files = Vec<(PathBuf, Option<Vec<u8>>)>;
+
+/// One file that differs between two points.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileChange {
+    pub path: PathBuf,
+    pub before: Option<Vec<u8>>,
+    pub after: Option<Vec<u8>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,20 +66,22 @@ pub enum HistoryError {
     UnknownPoint,
 }
 
+/// The name of a version, and the latest point it was made for: a version that grew since
+/// is named again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Named {
+    pub name: String,
+    pub tip: String,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Meta {
-    /// Points that are moments, with their name.
+    /// By the first point of the version.
     #[serde(default)]
-    moments: BTreeMap<String, String>,
-    /// Names of versions, by their first point.
-    #[serde(default)]
-    names: BTreeMap<String, String>,
+    names: BTreeMap<String, Named>,
     /// Versions set aside by hand, by their first point.
     #[serde(default)]
     aside: BTreeSet<String>,
-    /// Where the project was lately, newest last.
-    #[serde(default)]
-    recent: Vec<String>,
 }
 
 /// A file as last seen, so an unchanged one is not read again.
@@ -110,6 +104,7 @@ pub struct History {
     seen: BTreeMap<PathBuf, Seen>,
     /// The tip of a version being merged in: the next point gets it as a second parent.
     merging: Option<ObjectId>,
+    changes: u64,
 }
 
 impl History {
@@ -117,7 +112,7 @@ impl History {
     pub fn open(root: &Path, scope: Scope) -> Result<Self, HistoryError> {
         let repository = Repository::open(&root.join(HISTORY_FOLDER))?;
         let meta = match repository.read_file(Path::new(META_FILE))? {
-            // A damaged file loses names and moments, not points.
+            // A damaged file loses names, not points.
             Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
             None => Meta::default(),
         };
@@ -132,27 +127,23 @@ impl History {
             meta,
             seen: BTreeMap::new(),
             merging: None,
+            changes: 0,
         };
-        history.load()?;
-        Ok(history)
-    }
-
-    fn load(&mut self) -> Result<(), HistoryError> {
         let mut waiting: Vec<ObjectId> = Vec::new();
-        for name in self.repository.refs_in("refs/tips")? {
-            waiting.extend(self.repository.read_ref(&name)?);
+        for name in history.repository.refs_in("refs/tips")? {
+            waiting.extend(history.repository.read_ref(&name)?);
         }
-        waiting.extend(self.now);
+        waiting.extend(now);
         while let Some(id) = waiting.pop() {
-            if self.points.contains_key(&id) {
+            if history.points.contains_key(&id) {
                 continue;
             }
-            let commit = self.repository.read_commit(id)?;
+            let commit = history.repository.read_commit(id)?;
             waiting.extend(commit.parents.iter().copied());
-            self.points.insert(id, point(id, commit));
+            history.points.insert(id, point(id, commit));
         }
-        self.order = topological(&self.points);
-        Ok(())
+        history.order = topological(&history.points);
+        Ok(history)
     }
 
     /// Where the project is now. `None` before the first point.
@@ -169,40 +160,70 @@ impl History {
         &self.order
     }
 
-    /// The name of the moment at `id`, when it is one.
-    pub fn moment(&self, id: ObjectId) -> Option<&str> {
-        self.meta.moments.get(&id.to_string()).map(String::as_str)
+    /// A number that changes with every change of the history, for a view that follows it.
+    pub fn changes(&self) -> u64 {
+        self.changes
     }
 
     /// The name given to the version that starts at `start`.
-    pub fn name(&self, start: ObjectId) -> Option<&str> {
-        self.meta.names.get(&start.to_string()).map(String::as_str)
+    pub fn name(&self, start: ObjectId) -> Option<&Named> {
+        self.meta.names.get(&start.to_string())
     }
 
     pub fn is_aside(&self, start: ObjectId) -> bool {
         self.meta.aside.contains(&start.to_string())
     }
 
-    /// Looks at the folder and saves it as a point when it is new, named `label`. When it is
-    /// a state near where the project is, such as after an undo or a redo, it moves there.
-    pub fn record(&mut self, label: &str) -> Result<Recorded, HistoryError> {
+    /// Looks at the folder and saves it as a new point after the one it is at, named `label`,
+    /// when it differs from that one. Gives the new point.
+    pub fn record(&mut self, label: &str) -> Result<Option<ObjectId>, HistoryError> {
         let tree = self.snapshot()?;
         let merging = self.merging.take();
-        if merging.is_none() {
-            if self
-                .now
-                .and_then(|now| self.points.get(&now))
-                .map(|point| point.tree)
-                == Some(tree)
-            {
-                return Ok(Recorded::Unchanged);
-            }
-            if let Some(near) = self.near_with(tree) {
-                self.move_to(near)?;
-                return Ok(Recorded::Moved(near));
-            }
+        if merging.is_none() && self.now_tree() == Some(tree) {
+            return Ok(None);
         }
         let parents: Vec<ObjectId> = self.now.into_iter().chain(merging).collect();
+        self.add(tree, parents, label).map(Some)
+    }
+
+    /// Like [`Self::record`], but the folder takes the place of the point the project is at,
+    /// which must be the latest of its version: for changes that belong to the one before,
+    /// such as the writes of one request of an agent. A folder that is back to where that
+    /// point came from leaves no point.
+    pub fn amend(&mut self, label: &str) -> Result<Option<ObjectId>, HistoryError> {
+        let Some(now) = self.now else {
+            return self.record(label);
+        };
+        let has_children = (self.points.values()).any(|point| point.parents.contains(&now));
+        let parents = self.points.get(&now).map(|point| point.parents.clone());
+        let parents = parents.unwrap_or_default();
+        if has_children || parents.is_empty() || self.merging.is_some() {
+            return self.record(label);
+        }
+        let tree = self.snapshot()?;
+        if self.now_tree() == Some(tree) {
+            return Ok(None);
+        }
+        self.points.remove(&now);
+        self.order.retain(|id| *id != now);
+        self.repository.remove_ref(&format!("refs/tips/{now}"))?;
+        let first = parents[0];
+        if self.points.get(&first).map(|point| point.tree) == Some(tree) {
+            self.repository
+                .write_ref(&format!("refs/tips/{first}"), first)?;
+            self.move_to(first)?;
+            return Ok(None);
+        }
+        self.now = Some(first);
+        self.add(tree, parents, label).map(Some)
+    }
+
+    fn add(
+        &mut self,
+        tree: ObjectId,
+        parents: Vec<ObjectId>,
+        label: &str,
+    ) -> Result<ObjectId, HistoryError> {
         let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_millis() as u64);
@@ -222,31 +243,35 @@ impl History {
         }
         self.repository.write_ref(&format!("refs/tips/{id}"), id)?;
         self.move_to(id)?;
-        Ok(Recorded::New(id))
+        Ok(id)
     }
 
-    /// Makes the point the project is at a moment, named after what led there. Says whether
-    /// it was not one yet.
-    pub fn mark_moment(&mut self) -> Result<bool, HistoryError> {
-        let Some(now) = self.now else {
-            return Ok(false);
-        };
-        let key = now.to_string();
-        if self.meta.moments.contains_key(&key) {
-            return Ok(false);
-        }
-        let label = self.points.get(&now).map(|point| point.label.clone());
-        self.meta.moments.insert(key, label.unwrap_or_default());
-        self.save_meta()?;
-        Ok(true)
+    /// Where undo goes: the point the one now came from.
+    pub fn undo_target(&self) -> Option<ObjectId> {
+        self.points.get(&self.now?)?.parents.first().copied()
     }
 
-    pub fn set_name(&mut self, start: ObjectId, name: &str) -> Result<(), HistoryError> {
-        let name = name.trim();
-        match name.is_empty() {
-            true => self.meta.names.remove(&start.to_string()),
-            false => self.meta.names.insert(start.to_string(), name.to_string()),
+    /// Where redo goes: the newest point that came from the one now.
+    pub fn redo_target(&self) -> Option<ObjectId> {
+        let now = self.now?;
+        (self.order.iter().rev())
+            .find(|id| {
+                (self.points.get(id)).is_some_and(|point| point.parents.first() == Some(&now))
+            })
+            .copied()
+    }
+
+    pub fn set_name(
+        &mut self,
+        start: ObjectId,
+        name: &str,
+        tip: ObjectId,
+    ) -> Result<(), HistoryError> {
+        let named = Named {
+            name: name.trim().to_string(),
+            tip: tip.to_string(),
         };
+        self.meta.names.insert(start.to_string(), named);
         self.save_meta()
     }
 
@@ -258,77 +283,75 @@ impl History {
         self.save_meta()
     }
 
-    /// The files to write and remove to bring the folder from where it is now to `target`, and
-    /// the project is at `target` from here. Record first, so that the folder is a point.
-    pub fn go_to(
-        &mut self,
-        target: ObjectId,
-    ) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, HistoryError> {
-        let to = self
-            .points
-            .get(&target)
-            .ok_or(HistoryError::UnknownPoint)?
-            .tree;
-        let from = self
-            .now
-            .and_then(|now| self.points.get(&now))
-            .map(|point| point.tree);
-        let plan = self.difference(from, to)?;
+    /// The files that bring the folder from where it is now to `target`, and the project is
+    /// at `target` from here. Record first, so that the folder is a point.
+    pub fn go_to(&mut self, target: ObjectId) -> Result<Files, HistoryError> {
+        let to = self.points.get(&target).ok_or(HistoryError::UnknownPoint)?;
+        let to = to.tree;
+        let changes = self.difference(self.now_tree(), Some(to))?;
         self.move_to(target)?;
-        Ok(plan)
+        Ok(changes
+            .into_iter()
+            .map(|change| (change.path, change.after))
+            .collect())
     }
 
-    /// The files to write and remove to merge the version whose latest point is `tip` into
-    /// where the project is now. A file only `tip` changed since the two split comes over. A
-    /// file both changed comes over too, unless `keep_mine`. The next point is the merge, with
-    /// `tip` as its second parent.
-    pub fn merge(
-        &mut self,
-        tip: ObjectId,
-        keep_mine: bool,
-    ) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, HistoryError> {
+    /// The files that merge the version whose latest point is `tip` into where the project is
+    /// now. A file only `tip` changed since the two split comes over. A file both changed
+    /// comes over too, unless `keep_mine`. The next point is the merge, with `tip` as its
+    /// second parent.
+    pub fn merge(&mut self, tip: ObjectId, keep_mine: bool) -> Result<Files, HistoryError> {
         let now = self.now.ok_or(HistoryError::UnknownPoint)?;
-        let theirs = self
-            .points
-            .get(&tip)
-            .ok_or(HistoryError::UnknownPoint)?
-            .tree;
-        let ours = self
-            .points
-            .get(&now)
-            .ok_or(HistoryError::UnknownPoint)?
-            .tree;
-        let base = self.merge_base(now, tip);
-        let base = base
-            .and_then(|base| self.points.get(&base))
-            .map(|point| point.tree);
-        let (base, ours_files, theirs_files) = (
+        let tree_of = |id: ObjectId| self.points.get(&id).map(|point| point.tree);
+        let theirs = tree_of(tip).ok_or(HistoryError::UnknownPoint)?;
+        let ours = tree_of(now).ok_or(HistoryError::UnknownPoint)?;
+        let base = self.merge_base(now, tip).and_then(tree_of);
+        let (base, ours, theirs) = (
             self.files(base)?,
             self.files(Some(ours))?,
             self.files(Some(theirs))?,
         );
         let paths: BTreeSet<&PathBuf> = base
             .keys()
-            .chain(ours_files.keys())
-            .chain(theirs_files.keys())
+            .chain(ours.keys())
+            .chain(theirs.keys())
             .collect();
-        let mut plan = Vec::new();
+        let mut files = Vec::new();
         for path in paths {
-            let (old, mine, their) = (base.get(path), ours_files.get(path), theirs_files.get(path));
-            if their == old || their == mine {
+            let (old, mine, their) = (base.get(path), ours.get(path), theirs.get(path));
+            if their == old || their == mine || (keep_mine && mine != old) {
                 continue;
             }
-            if keep_mine && mine != old {
-                continue;
-            }
-            let bytes = match their {
-                Some(blob) => Some(self.repository.read_blob(*blob)?),
-                None => None,
-            };
-            plan.push((path.clone(), bytes));
+            files.push((path.clone(), self.read(their.copied())?));
         }
         self.merging = Some(tip);
-        Ok(plan)
+        Ok(files)
+    }
+
+    /// What differs from the point `from`, or from an empty folder, to `to`.
+    pub fn difference_between(
+        &self,
+        from: Option<ObjectId>,
+        to: ObjectId,
+    ) -> Result<Vec<FileChange>, HistoryError> {
+        let tree_of = |id: ObjectId| self.points.get(&id).map(|point| point.tree);
+        let to = tree_of(to).ok_or(HistoryError::UnknownPoint)?;
+        self.difference(from.and_then(tree_of), Some(to))
+    }
+
+    /// Forgets every point: the folder as it is becomes the first, named `label`.
+    pub fn start_again(&mut self, label: &str) -> Result<(), HistoryError> {
+        for name in self.repository.refs_in("refs/tips")? {
+            self.repository.remove_ref(&name)?;
+        }
+        self.points.clear();
+        self.order.clear();
+        self.now = None;
+        self.merging = None;
+        self.meta = Meta::default();
+        self.save_meta()?;
+        self.record(label)?;
+        Ok(())
     }
 
     /// The newest point both `one` and `other` come from.
@@ -355,73 +378,27 @@ impl History {
         found
     }
 
-    /// A point near where the project is whose state is `tree`: one it was at lately, one it
-    /// came from, or one that came from it.
-    fn near_with(&self, tree: ObjectId) -> Option<ObjectId> {
-        let matches = |id: &ObjectId| self.points.get(id).is_some_and(|point| point.tree == tree);
-        let recent = self.meta.recent.iter().rev();
-        if let Some(found) = recent.filter_map(|hex| ObjectId::parse(hex)).find(matches) {
-            return Some(found);
-        }
-        let now = self.now?;
-        let mut up = Some(now);
-        for _ in 0..NEAR {
-            let point = self.points.get(&up?)?;
-            up = point.parents.first().copied();
-            if let Some(parent) = up.filter(matches) {
-                return Some(parent);
-            }
-        }
-        let children = self.children();
-        let mut waiting = VecDeque::from([now]);
-        let mut looked = 0;
-        while let Some(id) = waiting.pop_front() {
-            looked += 1;
-            if looked > NEAR {
-                break;
-            }
-            for child in children.get(&id).into_iter().flatten() {
-                if matches(child) {
-                    return Some(*child);
-                }
-                waiting.push_back(*child);
-            }
-        }
-        None
-    }
-
-    /// The children of every point that has any.
-    pub fn children(&self) -> BTreeMap<ObjectId, Vec<ObjectId>> {
-        let mut children: BTreeMap<ObjectId, Vec<ObjectId>> = BTreeMap::new();
-        for id in &self.order {
-            for parent in self
-                .points
-                .get(id)
-                .into_iter()
-                .flat_map(|point| &point.parents)
-            {
-                children.entry(*parent).or_default().push(*id);
-            }
-        }
-        children
+    fn now_tree(&self) -> Option<ObjectId> {
+        self.points.get(&self.now?).map(|point| point.tree)
     }
 
     fn move_to(&mut self, id: ObjectId) -> Result<(), HistoryError> {
-        if let Some(previous) = self.now.filter(|previous| *previous != id) {
-            let previous = previous.to_string();
-            self.meta.recent.retain(|each| *each != previous);
-            self.meta.recent.push(previous);
-            let extra = self.meta.recent.len().saturating_sub(RECENT);
-            self.meta.recent.drain(..extra);
-        }
         self.now = Some(id);
-        self.repository.write_ref("refs/heads/main", id)?;
-        self.save_meta()
+        self.changes += 1;
+        Ok(self.repository.write_ref("refs/heads/main", id)?)
     }
 
-    fn save_meta(&self) -> Result<(), HistoryError> {
+    fn save_meta(&mut self) -> Result<(), HistoryError> {
+        self.changes += 1;
         let bytes = serde_json::to_vec_pretty(&self.meta).unwrap_or_default();
         Ok(self.repository.write_file(Path::new(META_FILE), &bytes)?)
+    }
+
+    fn read(&self, blob: Option<ObjectId>) -> Result<Option<Vec<u8>>, HistoryError> {
+        Ok(match blob {
+            Some(blob) => Some(self.repository.read_blob(blob)?),
+            None => None,
+        })
     }
 
     /// The files of a tree, by path, with their blobs.
@@ -445,19 +422,22 @@ impl History {
     fn difference(
         &self,
         from: Option<ObjectId>,
-        to: ObjectId,
-    ) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, HistoryError> {
-        let (old, new) = (self.files(from)?, self.files(Some(to))?);
-        let mut plan = Vec::new();
-        for (path, blob) in &new {
-            if old.get(path) != Some(blob) {
-                plan.push((path.clone(), Some(self.repository.read_blob(*blob)?)));
+        to: Option<ObjectId>,
+    ) -> Result<Vec<FileChange>, HistoryError> {
+        let (old, new) = (self.files(from)?, self.files(to)?);
+        let paths: BTreeSet<&PathBuf> = old.keys().chain(new.keys()).collect();
+        let mut changes = Vec::new();
+        for path in paths {
+            let (before, after) = (old.get(path).copied(), new.get(path).copied());
+            if before != after {
+                changes.push(FileChange {
+                    path: path.clone(),
+                    before: self.read(before)?,
+                    after: self.read(after)?,
+                });
             }
         }
-        for path in old.keys().filter(|path| !new.contains_key(*path)) {
-            plan.push((path.clone(), None));
-        }
-        Ok(plan)
+        Ok(changes)
     }
 
     /// Writes the files of the scope as objects and gives the tree of the whole. Files whose
@@ -473,19 +453,12 @@ impl History {
         folders.insert(PathBuf::new(), BTreeMap::new());
         for (path, blob) in &files {
             let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
-            let name = file_name(path);
             let mut ancestor = folder.clone();
-            loop {
+            while let Some(parent) = ancestor.parent() {
                 folders.entry(ancestor.clone()).or_default();
-                match ancestor.parent() {
-                    Some(parent) => ancestor = parent.to_path_buf(),
-                    None => break,
-                }
+                ancestor = parent.to_path_buf();
             }
-            folders
-                .entry(folder)
-                .or_default()
-                .insert(name, Entry::Blob(*blob));
+            (folders.entry(folder).or_default()).insert(file_name(path), Entry::Blob(*blob));
         }
         let mut deepest_first: Vec<PathBuf> = folders.keys().cloned().collect();
         deepest_first.sort_by_key(|folder| std::cmp::Reverse(folder.components().count()));
@@ -496,10 +469,7 @@ impl History {
             let entries = folders.remove(&folder).unwrap_or_default();
             let tree = self.repository.write_tree(&entries)?;
             let parent = folder.parent().map(Path::to_path_buf).unwrap_or_default();
-            folders
-                .entry(parent)
-                .or_default()
-                .insert(file_name(&folder), Entry::Tree(tree));
+            (folders.entry(parent).or_default()).insert(file_name(&folder), Entry::Tree(tree));
         }
         let top = folders.remove(&PathBuf::new()).unwrap_or_default();
         Ok(self.repository.write_tree(&top)?)
@@ -543,7 +513,7 @@ impl History {
             Some(seen) => seen.blob,
             None => {
                 let bytes = match fs::read(&path) {
-                    Ok(bytes) => same_layout(&file_name(relative), bytes),
+                    Ok(bytes) => bytes,
                     // Gone between the listing and the read.
                     Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                     Err(source) => return Err(io_error(source)),
@@ -577,26 +547,6 @@ fn point(id: ObjectId, commit: Commit) -> Point {
     }
 }
 
-/// JSON in one layout, so a file the runtime wrote again with the same content, as an undo
-/// does, is the same point as the one an agent wrote in its own layout. Numbers stay as they
-/// are written: a record that holds `0` may not take `0.0`. A file that is no JSON stays as it
-/// is.
-fn same_layout(name: &str, bytes: Vec<u8>) -> Vec<u8> {
-    if !name.ends_with(".json") {
-        return bytes;
-    }
-    match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(value) => match serde_json::to_vec_pretty(&value) {
-            Ok(mut pretty) => {
-                pretty.push(b'\n');
-                pretty
-            }
-            Err(_) => bytes,
-        },
-        Err(_) => bytes,
-    }
-}
-
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -608,18 +558,14 @@ fn topological(points: &BTreeMap<ObjectId, Point>) -> Vec<ObjectId> {
     let mut waiting_for: BTreeMap<ObjectId, usize> = BTreeMap::new();
     let mut children: BTreeMap<ObjectId, Vec<ObjectId>> = BTreeMap::new();
     for (id, point) in points {
-        let known = point
-            .parents
-            .iter()
-            .filter(|parent| points.contains_key(*parent));
+        let known = (point.parents.iter()).filter(|parent| points.contains_key(*parent));
         waiting_for.insert(*id, known.clone().count());
         for parent in known {
             children.entry(*parent).or_default().push(*id);
         }
     }
     let time = |id: &ObjectId| points.get(id).map_or(0, |point| point.time);
-    let mut ready: BinaryHeap<std::cmp::Reverse<(u64, ObjectId)>> = waiting_for
-        .iter()
+    let mut ready: BinaryHeap<std::cmp::Reverse<(u64, ObjectId)>> = (waiting_for.iter())
         .filter(|(_, count)| **count == 0)
         .map(|(id, _)| std::cmp::Reverse((time(id), *id)))
         .collect();
@@ -663,10 +609,8 @@ mod tests {
             fs::remove_file(self.folder.path().join(path)).unwrap();
         }
 
-        /// A file's text, without the layout a point gives JSON.
         fn read(&self, path: &str) -> Option<String> {
-            let text = fs::read_to_string(self.folder.path().join(path)).ok()?;
-            Some(text.trim().trim_matches('"').to_string())
+            fs::read_to_string(self.folder.path().join(path)).ok()
         }
 
         fn history(&self) -> History {
@@ -678,8 +622,8 @@ mod tests {
         }
 
         /// What `go_to` or `merge` gives, written as the project would.
-        fn apply(&self, plan: Vec<(PathBuf, Option<Vec<u8>>)>) {
-            for (path, bytes) in plan {
+        fn apply(&self, files: Files) {
+            for (path, bytes) in files {
                 let path = self.folder.path().join(path);
                 match bytes {
                     Some(bytes) => {
@@ -692,90 +636,88 @@ mod tests {
         }
     }
 
-    fn new(recorded: Recorded) -> ObjectId {
-        match recorded {
-            Recorded::New(id) => id,
-            other => panic!("expected a new point, got {other:?}"),
-        }
-    }
-
     #[test]
     fn a_change_is_a_new_point_and_the_same_folder_is_none() {
         let folder = Folder::new();
         folder.write("project.json", "{}");
         let mut history = folder.history();
-        let first = new(history.record("Opened").unwrap());
-        assert_eq!(history.record("Nothing").unwrap(), Recorded::Unchanged);
+        let first = history.record("Opened").unwrap().unwrap();
+        assert_eq!(history.record("Nothing").unwrap(), None);
         folder.write("state/a.json", "1");
         // Neither what is skipped nor what is outside the scope is part of a point.
         folder.write("state/skipped.json", "x");
         folder.write("assets/take.wav", "x");
-        let second = new(history.record("Add a").unwrap());
+        let second = history.record("Add a").unwrap().unwrap();
         folder.write("state/skipped.json", "y");
-        assert_eq!(history.record("Nothing").unwrap(), Recorded::Unchanged);
+        assert_eq!(history.record("Nothing").unwrap(), None);
         assert_eq!(history.point(second).unwrap().parents, [first]);
         assert_eq!(history.point(second).unwrap().label, "Add a");
     }
 
     #[test]
-    fn the_same_json_in_another_layout_is_the_same_point() {
+    fn undo_goes_to_the_parent_and_redo_to_the_newest_child() {
         let folder = Folder::new();
-        folder.write(
-            "state/a.json",
-            "{\"tool\": \"x\",\n  \"state\": {\"bpm\": 92.5}}",
-        );
+        folder.write("state/a.json", "1");
         let mut history = folder.history();
-        new(history.record("Opened").unwrap());
-        folder.write("state/a.json", "{\"tool\":\"x\",\"state\":{\"bpm\":92.5}}");
-        assert_eq!(
-            history.record("Written again").unwrap(),
-            Recorded::Unchanged
-        );
+        let first = history.record("Opened").unwrap().unwrap();
+        folder.write("state/a.json", "2");
+        let second = history.record("Two").unwrap().unwrap();
+        assert_eq!(history.undo_target(), Some(first));
+        folder.apply(history.go_to(first).unwrap());
+        assert_eq!(folder.read("state/a.json").as_deref(), Some("1"));
+        assert_eq!(history.redo_target(), Some(second));
+        // A change after an undo starts a version, and redo now goes there.
+        folder.write("state/a.json", "3");
+        let third = history.record("Three").unwrap().unwrap();
+        assert_eq!(history.point(third).unwrap().parents, [first]);
+        folder.apply(history.go_to(first).unwrap());
+        assert_eq!(history.redo_target(), Some(third));
+        // The same state again is a new point: git compares, nothing guesses.
+        folder.write("state/a.json", "2");
+        let again = history.record("Two again").unwrap().unwrap();
+        assert_ne!(again, second);
     }
 
     #[test]
-    fn undo_and_redo_move_instead_of_adding_points() {
+    fn an_amend_takes_the_place_of_the_last_point_and_one_that_goes_back_leaves_none() {
         let folder = Folder::new();
         folder.write("state/a.json", "1");
         let mut history = folder.history();
-        let first = new(history.record("Opened").unwrap());
-        folder.write("state/a.json", "2");
-        let second = new(history.record("Two").unwrap());
-        // An undo brings the file back.
-        folder.write("state/a.json", "1");
-        assert_eq!(history.record("Undo").unwrap(), Recorded::Moved(first));
-        folder.write("state/a.json", "2");
-        assert_eq!(history.record("Redo").unwrap(), Recorded::Moved(second));
-        // A new change after an undo starts a version: a second child of the first point.
-        folder.write("state/a.json", "1");
-        history.record("Undo").unwrap();
-        folder.write("state/a.json", "3");
-        let third = new(history.record("Three").unwrap());
-        assert_eq!(history.point(third).unwrap().parents, [first]);
-        assert_eq!(history.children()[&first], [second, third]);
+        let first = history.record("Opened").unwrap().unwrap();
+        folder.write("state/b.json", "b");
+        history.record("Agent").unwrap();
+        folder.write("state/c.json", "c");
+        let joined = history.amend("Agent").unwrap().unwrap();
+        assert_eq!(history.order(), [first, joined]);
+        assert_eq!(history.point(joined).unwrap().parents, [first]);
+        folder.remove("state/b.json");
+        folder.remove("state/c.json");
+        assert_eq!(history.amend("Agent").unwrap(), None);
+        assert_eq!(history.now(), Some(first));
+        assert_eq!(folder.history().order(), [first]);
     }
 
     #[test]
     fn going_to_a_point_gives_the_files_that_differ_and_reopens_there() {
         let folder = Folder::new();
         folder.write("state/a.json", "1");
-        folder.write("state/song/instance.json", "\"song\"");
+        folder.write("state/song/instance.json", "song");
         let mut history = folder.history();
-        let first = new(history.record("Opened").unwrap());
+        let first = history.record("Opened").unwrap().unwrap();
         folder.write("state/a.json", "2");
         folder.remove("state/song/instance.json");
         folder.write("state/b.json", "b");
-        new(history.record("Changes").unwrap());
-        let plan = history.go_to(first).unwrap();
-        assert_eq!(plan.len(), 3);
-        folder.apply(plan);
+        history.record("Changes").unwrap();
+        let files = history.go_to(first).unwrap();
+        assert_eq!(files.len(), 3);
+        folder.apply(files);
         assert_eq!(folder.read("state/a.json").as_deref(), Some("1"));
         assert_eq!(
             folder.read("state/song/instance.json").as_deref(),
             Some("song")
         );
         assert_eq!(folder.read("state/b.json"), None);
-        assert_eq!(history.record("After").unwrap(), Recorded::Unchanged);
+        assert_eq!(history.record("After").unwrap(), None);
         let reopened = folder.history();
         assert_eq!(reopened.now(), Some(first));
         assert_eq!(reopened.order().len(), 2);
@@ -788,23 +730,22 @@ mod tests {
         folder.write("state/b.json", "b");
         folder.write("state/c.json", "c");
         let mut history = folder.history();
-        let base = new(history.record("Opened").unwrap());
+        let base = history.record("Opened").unwrap().unwrap();
         // The other version changes a and b.
-        folder.write("state/a.json", "\"a theirs\"");
-        folder.write("state/b.json", "\"b theirs\"");
-        let theirs = new(history.record("Theirs").unwrap());
+        folder.write("state/a.json", "a theirs");
+        folder.write("state/b.json", "b theirs");
+        let theirs = history.record("Theirs").unwrap().unwrap();
         folder.apply(history.go_to(base).unwrap());
         // This version changes b and c.
-        folder.write("state/b.json", "\"b mine\"");
-        folder.write("state/c.json", "\"c mine\"");
-        let mine = new(history.record("Mine").unwrap());
+        folder.write("state/b.json", "b mine");
+        folder.write("state/c.json", "c mine");
+        let mine = history.record("Mine").unwrap().unwrap();
 
-        let plan = history.merge(theirs, true).unwrap();
-        folder.apply(plan);
+        folder.apply(history.merge(theirs, true).unwrap());
         assert_eq!(folder.read("state/a.json").as_deref(), Some("a theirs"));
         assert_eq!(folder.read("state/b.json").as_deref(), Some("b mine"));
         assert_eq!(folder.read("state/c.json").as_deref(), Some("c mine"));
-        let merged = new(history.record("Merged").unwrap());
+        let merged = history.record("Merged").unwrap().unwrap();
         assert_eq!(history.point(merged).unwrap().parents, [mine, theirs]);
 
         folder.apply(history.go_to(mine).unwrap());
@@ -813,23 +754,24 @@ mod tests {
     }
 
     #[test]
-    fn moments_names_and_order_survive_a_reopen() {
+    fn names_and_order_survive_a_reopen() {
         let folder = Folder::new();
         folder.write("state/a.json", "1");
         let mut history = folder.history();
-        let first = new(history.record("Opened").unwrap());
-        assert!(history.mark_moment().unwrap());
-        assert!(!history.mark_moment().unwrap());
-        history.set_name(first, "Sketch").unwrap();
+        let first = history.record("Opened").unwrap().unwrap();
         // Several points in one second keep their order.
         let mut points = vec![first];
         for step in 2..6 {
             folder.write("state/a.json", &step.to_string());
-            points.push(new(history.record("Step").unwrap()));
+            points.push(history.record("Step").unwrap().unwrap());
         }
+        history.set_name(first, " Sketch ", points[4]).unwrap();
         let reopened = folder.history();
-        assert_eq!(reopened.moment(first), Some("Opened"));
-        assert_eq!(reopened.name(first), Some("Sketch"));
+        let named = reopened.name(first).unwrap();
+        assert_eq!(
+            (named.name.as_str(), named.tip.as_str()),
+            ("Sketch", &*points[4].to_string())
+        );
         assert_eq!(reopened.order(), points.as_slice());
     }
 }

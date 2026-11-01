@@ -1,11 +1,10 @@
-//! The history panel: the points the folder was in, going back to one with a click, and the
-//! version a change there starts.
+//! The history tab: undo, redo and a click on a point move through one history of the folder,
+//! and a change after going back starts a version beside the first.
 
 use std::time::Duration;
 
 use gpui::TestAppContext;
 use reverb::ReverbState;
-use runtime::window::KeepHistory;
 use sound_core::{Changes, InstanceId, Project, ProjectError};
 
 use crate::support::{self, Opened};
@@ -26,8 +25,20 @@ fn add_room(mix: f32) -> impl FnOnce(&mut Project) -> Result<(), ProjectError> {
     }
 }
 
-/// The history saves once the folder has been quiet a moment.
-fn quiet(opened: &mut Opened) {
+fn set_mix(mix: f32) -> impl FnOnce(&mut Project) -> Result<(), ProjectError> {
+    move |project| {
+        let mut changes = Changes::new();
+        let state = ReverbState {
+            mix,
+            ..ReverbState::default()
+        };
+        changes.set(&project.resolve::<ReverbState>(&room()).unwrap(), state);
+        project.commit("Mix", changes)
+    }
+}
+
+/// The tab looks at the history twice a second.
+fn look(opened: &mut Opened) {
     opened.cx.executor().advance_clock(Duration::from_secs(1));
     opened.cx.run_until_parked();
 }
@@ -38,52 +49,51 @@ fn rows(opened: &mut Opened) -> usize {
         .count()
 }
 
-/// The record of the reverb on disk, as JSON: a point brings back what it held, in a layout of
-/// its own.
-fn room_file(opened: &mut Opened) -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(opened.path("state/room.json")).ok()?;
-    Some(serde_json::from_str(&text).unwrap())
+fn room_file(opened: &mut Opened) -> Option<Vec<u8>> {
+    std::fs::read(opened.path("state/room.json")).ok()
 }
 
 #[gpui::test]
-fn going_back_to_a_point_and_changing_it_starts_a_version(cx: &mut TestAppContext) {
-    cx.update(|cx| cx.set_global(KeepHistory));
+fn undo_redo_and_a_click_move_through_one_history(cx: &mut TestAppContext) {
     let mut opened = support::open_new(cx);
+    let icon = opened.control("left-panel-icon");
+    opened.click(icon);
+    look(&mut opened);
     assert_eq!(rows(&mut opened), 1);
 
     opened.edit(add_room(0.3));
-    quiet(&mut opened);
-    assert_eq!(rows(&mut opened), 2);
+    look(&mut opened);
     let added = room_file(&mut opened);
     assert!(added.is_some());
-
-    // Undo goes back to the first point instead of adding one.
-    opened.keys("cmd-z");
-    quiet(&mut opened);
     assert_eq!(rows(&mut opened), 2);
-    assert_eq!(room_file(&mut opened), None);
 
-    // A click on the newest row goes there: the reverb is back, as one undo step.
-    let newest = opened.control("history-row-0");
-    opened.click(newest);
-    quiet(&mut opened);
+    // Undo goes to the point before, and redo back: no point is added.
+    opened.keys("cmd-z");
+    look(&mut opened);
+    assert_eq!(room_file(&mut opened), None);
+    opened.keys("cmd-shift-z");
+    look(&mut opened);
     assert_eq!(room_file(&mut opened), added);
-    assert_eq!(opened.undo_label().as_deref(), Some("Go to Add reverb"));
-    assert!(opened.project(|project| project.tool_of(&room()).is_some()));
+    assert_eq!(rows(&mut opened), 2);
 
-    // Back at the start, a change is a new version beside the first.
-    let start = opened.control("history-row-1");
-    opened.click(start);
-    quiet(&mut opened);
-    assert_eq!(room_file(&mut opened), None);
+    // A change after an undo starts a version beside the first.
+    opened.keys("cmd-z");
     opened.edit(add_room(0.8));
-    quiet(&mut opened);
+    look(&mut opened);
     assert_eq!(rows(&mut opened), 3);
 
-    // Going back to the first version folds the new one away: it never got a moment.
-    let first_version = opened.control("history-row-1");
-    opened.click(first_version);
-    quiet(&mut opened);
+    // A click on the first version's latest point brings its file back byte for byte.
+    let first = opened.control("history-row-1");
+    opened.click(first);
+    look(&mut opened);
     assert_eq!(room_file(&mut opened), added);
-    assert_eq!(rows(&mut opened), 2);
+    assert_eq!(opened.undo_label().as_deref(), Some("Add reverb"));
+
+    // More changes there fold between its first and its latest point.
+    for mix in [0.4, 0.5, 0.6] {
+        opened.edit(set_mix(mix));
+    }
+    look(&mut opened);
+    assert_eq!(rows(&mut opened), 4);
+    assert!(opened.find("history-fold-2").is_some());
 }

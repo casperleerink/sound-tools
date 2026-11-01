@@ -1,10 +1,10 @@
-//! The history panel: every state the project was in, as a tree of versions. A click on a
-//! point goes there; a change made there starts a new version. By default the tree shows the
-//! points that matter, and the rest folds away behind a click.
+//! The history tab of the left panel: every state the project was in, as a tree of versions.
+//! A click on a point goes there; a change made there starts a new version. Each version shows
+//! its first and its latest point, with the rest folded between, and is named by the agent's
+//! small model after what it changed.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
@@ -12,188 +12,190 @@ use gpui::{
     MouseDownEvent, PathBuilder, Pixels, Point, SharedString, Task, UniformListScrollHandle,
     Window, canvas, div, point, prelude::*, px, uniform_list,
 };
-use sound_history::{Drawing, Graph, History, Layout, ObjectId, Recorded, Row, Scope, Shape};
+use sound_core::history::{FileChange, ObjectId};
+use sound_history::{Drawing, Graph, Layout, Row, Shape, Version};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::text_input::TextInput;
 use sound_ui::{ActiveTheme, Session};
 
-const ROW_HEIGHT: f32 = 44.;
+use super::QuickAnswer;
+
+const ROW_HEIGHT: f32 = 40.;
 const LANE_WIDTH: f32 = 16.;
 /// From the left of the graph to the middle of the first lane.
-const GRAPH_INSET: f32 = 16.;
-/// How often the panel looks for finished undo steps.
-const LOOK_EVERY: Duration = Duration::from_millis(250);
+const GRAPH_INSET: f32 = 24.;
+/// How often the tab looks for a change of the history.
+const LOOK_EVERY: Duration = Duration::from_millis(500);
+/// A version is named once it has not grown for this long, so a run of edits is named once.
+const NAME_AFTER: Duration = Duration::from_secs(5);
+/// The most of the changed files a name is asked for with, so the question stays cheap.
+const PROMPT_FILE: usize = 1_500;
+const PROMPT_ALL: usize = 12_000;
+
+/// The tabs of the left panel.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum PanelTab {
+    Agent,
+    History,
+}
+
+/// The tabs of the left panel, which the header of each tab shows. Without the agent there is
+/// only the history, and no tabs.
+pub(super) struct PanelTabs {
+    selected: PanelTab,
+    has_agent: bool,
+}
+
+impl PanelTabs {
+    pub(super) fn new(has_agent: bool) -> Self {
+        Self {
+            selected: PanelTab::Agent,
+            has_agent,
+        }
+    }
+
+    pub(super) fn selected(&self) -> PanelTab {
+        match self.has_agent {
+            true => self.selected,
+            false => PanelTab::History,
+        }
+    }
+
+    pub(super) fn select(&mut self, tab: PanelTab, cx: &mut Context<Self>) {
+        if self.selected != tab {
+            self.selected = tab;
+            cx.notify();
+        }
+    }
+}
+
+impl Render for PanelTabs {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let (text, muted, fill, hover) = (
+            theme.gray_950,
+            theme.gray_700,
+            theme.alpha_at(0.07),
+            theme.alpha_at(0.04),
+        );
+        let selected = self.selected();
+        let tab = |tab: PanelTab, label: &'static str, cx: &mut Context<Self>| {
+            let on = selected == tab;
+            div()
+                .id(label)
+                .debug_selector(move || format!("panel-tab-{}", label.to_lowercase()))
+                .flex()
+                .items_center()
+                .h(px(28.))
+                .px(px(10.))
+                .rounded(px(8.))
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .text_color(if on { text } else { muted })
+                .when(on, |this| this.bg(fill))
+                .when(!on, |this| {
+                    this.hover(|style| style.bg(hover).text_color(text))
+                })
+                .on_click(cx.listener(move |tabs, _, _, cx| tabs.select(tab, cx)))
+                .child(label)
+        };
+        if !self.has_agent {
+            return div()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .child("History");
+        }
+        div()
+            .ml(px(-10.))
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .child(tab(PanelTab::Agent, "Agent", cx))
+            .child(tab(PanelTab::History, "History", cx))
+    }
+}
 
 pub(super) struct HistoryPanel {
     session: Entity<Session>,
-    history: Option<History>,
+    tabs: Entity<PanelTabs>,
+    quick_answer: Option<QuickAnswer>,
     layout: Layout,
     /// The folds that are open.
     open: BTreeSet<ObjectId>,
+    /// [`sound_history::History::changes`] when the layout was made.
+    laid_out: Option<u64>,
     scroll: UniformListScrollHandle,
     focus_handle: FocusHandle,
     _watching: Task<()>,
-    /// The project's [`steps_changed`](sound_core::Project::steps_changed) at the last save.
-    saved_steps: u64,
-    was_playing: bool,
     /// The context menu, and the version it is for.
     menu: Entity<DropdownMenu>,
     menu_version: Option<usize>,
-    /// The version being named, and the field for it.
-    renaming: Option<(ObjectId, Entity<TextInput>)>,
+    /// The question for a name that runs.
+    naming: Option<Task<()>>,
+    /// Versions asked for a name, with the latest point they were asked for: one that failed
+    /// is asked again only once it grew.
+    asked: BTreeSet<(ObjectId, ObjectId)>,
 }
 
 impl HistoryPanel {
     pub(super) fn new(
         session: Entity<Session>,
+        tabs: Entity<PanelTabs>,
+        quick_answer: Option<QuickAnswer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let root = session.read(cx).project().root().to_path_buf();
-        let history = match History::open(&root, scope()) {
-            Ok(history) => Some(history),
-            Err(error) => {
-                session.update(cx, |session, cx| {
-                    session.report(format!("The history is not kept: {error}"), cx)
-                });
-                None
-            }
-        };
-        let playhead = session.read(cx).playhead().clone();
-        cx.observe(&playhead, |panel, playhead, cx| {
-            let playing = playhead.read(cx).playing;
-            // Stopping is a pause: what is there now is a moment.
-            if panel.was_playing && !playing {
-                panel.save_moment(cx);
-            }
-            panel.was_playing = playing;
-        })
-        .detach();
+        cx.observe(&tabs, |_, _, cx| cx.notify()).detach();
         let menu = cx.new(|cx| {
             DropdownMenu::new("", Vec::new(), cx)
                 .trigger(Trigger::Pointer)
                 .width(260.)
         });
         cx.subscribe_in(&menu, window, Self::picked).detach();
-        let mut panel = Self {
-            session,
-            history,
-            layout: Layout::default(),
-            open: BTreeSet::new(),
-            scroll: UniformListScrollHandle::new(),
-            focus_handle: cx.focus_handle(),
-            _watching: Task::ready(()),
-            saved_steps: 0,
-            was_playing: false,
-            menu,
-            menu_version: None,
-            renaming: None,
-        };
-        // What the folder holds as it opens. The first point, and one that changed while the
-        // app was closed, are moments.
-        let first = panel
-            .history
-            .as_ref()
-            .is_some_and(|history| history.now().is_none());
-        let label = if first {
-            "Start of the history"
-        } else {
-            "Changed while the app was closed"
-        };
-        if panel.save(label, cx) || first {
-            panel.mark_moment(cx);
-        }
-        panel.relayout();
-        panel._watching = cx.spawn(async move |panel, cx| {
+        let watching = cx.spawn(async move |panel, cx| {
             loop {
-                cx.background_executor().timer(LOOK_EVERY).await;
                 // Ends with the panel.
-                if panel.update(cx, Self::save_finished_steps).is_err() {
+                if panel.update(cx, Self::look).is_err() {
                     return;
                 }
+                cx.background_executor().timer(LOOK_EVERY).await;
             }
         });
-        panel
-    }
-
-    /// The agent finished a turn: what it made is a moment.
-    pub(super) fn turn_ended(&mut self, cx: &mut Context<Self>) {
-        self.save_moment(cx);
-    }
-
-    fn save_moment(&mut self, cx: &mut Context<Self>) {
-        self.save_now(cx);
-        self.mark_moment(cx);
-    }
-
-    fn mark_moment(&mut self, cx: &mut Context<Self>) {
-        let Some(history) = &mut self.history else {
-            return;
-        };
-        match history.mark_moment() {
-            Ok(true) => {
-                self.relayout();
-                cx.notify();
-            }
-            Ok(false) => {}
-            Err(error) => self.report(error, cx),
+        Self {
+            session,
+            tabs,
+            quick_answer,
+            layout: Layout::default(),
+            open: BTreeSet::new(),
+            laid_out: None,
+            scroll: UniformListScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
+            _watching: watching,
+            menu,
+            menu_version: None,
+            naming: None,
+            asked: BTreeSet::new(),
         }
     }
 
-    /// Every finished undo step is a point: a drag that ended, edits of a tool that were
-    /// written, an agent's files, an undo. Their files are written by then.
-    fn save_finished_steps(&mut self, cx: &mut Context<Self>) {
-        let steps = self.session.read(cx).project().steps_changed();
-        if steps != self.saved_steps {
-            self.save_now(cx);
+    /// Lays the tree out again when the history changed, and names what waits for a name.
+    fn look(&mut self, cx: &mut Context<Self>) {
+        let changes = (self.session.read(cx).project().history()).map(|history| history.changes());
+        if changes != self.laid_out {
+            self.relayout(cx);
         }
+        self.name_a_version(cx);
     }
 
-    fn save_now(&mut self, cx: &mut Context<Self>) {
-        self.saved_steps = self.session.read(cx).project().steps_changed();
-        let label = self
-            .session
-            .read(cx)
-            .project()
-            .undo_label()
-            .unwrap_or("Change")
-            .to_string();
-        if self.save(&label, cx) {
-            cx.notify();
-        }
-    }
-
-    /// Saves the folder as a point named `label`, or moves to the point it matches. Says
-    /// whether the tree changed.
-    fn save(&mut self, label: &str, cx: &mut Context<Self>) -> bool {
-        let Some(history) = &mut self.history else {
-            return false;
-        };
-        match history.record(label) {
-            Ok(Recorded::Unchanged) => false,
-            Ok(Recorded::Moved(_) | Recorded::New(_)) => {
-                self.relayout();
-                true
-            }
-            Err(error) => {
-                self.report(error, cx);
-                false
-            }
-        }
-    }
-
-    fn relayout(&mut self) {
-        if let Some(history) = &self.history {
+    fn relayout(&mut self, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        if let Some(history) = project.history() {
+            self.laid_out = Some(history.changes());
             self.layout = Graph::of(history).layout(&self.open);
         }
-    }
-
-    fn report(&self, error: impl std::fmt::Display, cx: &mut Context<Self>) {
-        let message = format!("History: {error}");
-        self.session
-            .update(cx, |session, cx| session.report(message, cx));
+        cx.notify();
     }
 
     /// Whether the project may go elsewhere now. Not during a drag or a recording.
@@ -202,75 +204,110 @@ impl HistoryPanel {
         let recording = session.playhead().read(cx).playing
             && session.recording().read(cx).armed().next().is_some();
         if session.gesture_open() || recording {
-            self.report("stop recording first", cx);
+            let message = "Stop recording before going to another point";
+            self.session
+                .update(cx, |session, cx| session.report(message, cx));
             return false;
         }
         true
     }
 
-    fn go_to(&mut self, target: ObjectId, label: &str, cx: &mut Context<Self>) {
-        if !self.may_move(cx) {
+    fn go_to(&mut self, target: ObjectId, cx: &mut Context<Self>) {
+        let now = (self.session.read(cx).project().history()).and_then(|history| history.now());
+        if now == Some(target) || !self.may_move(cx) {
             return;
         }
-        self.save_now(cx);
-        let Some(history) = &mut self.history else {
-            return;
-        };
-        if history.now() == Some(target) {
-            return;
-        }
-        let plan = match history.go_to(target) {
-            Ok(plan) => plan,
-            Err(error) => return self.report(error, cx),
-        };
-        self.restore(&format!("Go to {label}"), plan, cx);
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| project.go_to(target))
+        });
+        self.relayout(cx);
     }
 
     fn merge(&mut self, version: usize, keep_mine: bool, cx: &mut Context<Self>) {
         if !self.may_move(cx) {
             return;
         }
-        self.save_now(cx);
-        let Some(merged) = self.layout.versions.get(version).cloned() else {
+        let Some(merged) = self.layout.versions.get(version) else {
             return;
         };
-        let Some(history) = &mut self.history else {
-            return;
-        };
-        // A version with no name is called after where it got to.
-        let name = (merged.name.clone())
-            .or_else(|| history.point(merged.tip).map(|tip| tip.label.clone()))
-            .unwrap_or_default();
-        let plan = match history.merge(merged.tip, keep_mine) {
-            Ok(plan) => plan,
-            Err(error) => return self.report(error, cx),
-        };
-        let label = format!("Merge “{name}”");
-        self.restore(&label, plan, cx);
-        self.mark_moment(cx);
+        let label = format!("Merge “{}”", name_of(merged, version));
+        let tip = merged.tip;
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| project.merge(tip, keep_mine, &label))
+        });
+        self.relayout(cx);
     }
 
-    /// Writes the files of a plan into the project as one undo step, and saves what it made.
-    fn restore(
-        &mut self,
-        label: &str,
-        plan: Vec<(PathBuf, Option<Vec<u8>>)>,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_aside(&mut self, version: usize, cx: &mut Context<Self>) {
+        let Some(info) = self.layout.versions.get(version) else {
+            return;
+        };
+        let (start, aside) = (info.start, !info.aside);
         self.session.update(cx, |session, cx| {
-            session.edit(cx, |project| project.restore(label, plan));
+            session.edit(cx, |project| project.set_aside(start, aside))
         });
-        self.save(label, cx);
-        self.relayout();
-        cx.notify();
+        self.relayout(cx);
     }
 
     fn toggle_fold(&mut self, key: ObjectId, cx: &mut Context<Self>) {
         if !self.open.remove(&key) {
             self.open.insert(key);
         }
-        self.relayout();
-        cx.notify();
+        self.relayout(cx);
+    }
+
+    /// Asks the agent's small model to name one shown version whose name is missing or older
+    /// than its latest point, the one the project is on first. One question at a time.
+    fn name_a_version(&mut self, cx: &mut Context<Self>) {
+        let Some(quick_answer) = self.quick_answer.clone() else {
+            return;
+        };
+        if self.naming.is_some() {
+            return;
+        }
+        let project = self.session.read(cx).project();
+        let Some(history) = project.history() else {
+            return;
+        };
+        let shown: BTreeSet<usize> = self.layout.rows.iter().map(|row| row.version).collect();
+        let settled = now_millis().saturating_sub(NAME_AFTER.as_millis() as u64);
+        let mut waiting: Vec<&Version> = (shown.iter())
+            .filter_map(|version| self.layout.versions.get(*version))
+            .filter(|version| {
+                let named = (version.name.as_ref())
+                    .is_some_and(|named| named.tip == version.tip.to_string());
+                let grown = history.point(version.tip).map_or(u64::MAX, |tip| tip.time);
+                !named && grown <= settled && !self.asked.contains(&(version.start, version.tip))
+            })
+            .collect();
+        waiting.sort_by_key(|version| !version.now);
+        let Some(version) = waiting.first() else {
+            return;
+        };
+        let (start, tip) = (version.start, version.tip);
+        let Ok(changes) = history.difference_between(version.split, tip) else {
+            return;
+        };
+        let Some(answer) = quick_answer(naming_prompt(&changes), cx) else {
+            return;
+        };
+        self.asked.insert((start, tip));
+        self.naming = Some(cx.spawn(async move |panel, cx| {
+            let answer = cx.background_spawn(answer).await;
+            // Fails only when the panel is gone.
+            panel
+                .update(cx, |panel, cx| {
+                    panel.naming = None;
+                    let Some(name) = answer.ok().as_deref().and_then(clean_name) else {
+                        return;
+                    };
+                    panel.session.update(cx, |session, cx| {
+                        session.edit(cx, |project| project.name_version(start, &name, tip))
+                    });
+                    panel.relayout(cx);
+                })
+                .ok();
+        }));
     }
 
     fn open_menu(
@@ -283,27 +320,27 @@ impl HistoryPanel {
         let Some(info) = self.layout.versions.get(version) else {
             return;
         };
-        let now = self.layout.versions.iter().find(|version| version.now);
-        let mut items = vec![MenuItem::new("rename", "Rename").selectable(false)];
-        if !info.now {
-            let into = (now.and_then(|now| now.name.as_ref()))
-                .map_or("what you are on".to_string(), |name| format!("“{name}”"));
-            items.push(
-                MenuItem::new("merge", format!("Merge into {into}"))
-                    .description("Where both changed something, this one wins")
-                    .selectable(false),
-            );
-            items.push(
-                MenuItem::new("merge-mine", format!("Merge into {into}, keep mine"))
-                    .description("Where both changed something, yours stays")
-                    .selectable(false),
-            );
-            let (value, label) = match info.aside {
-                true => ("aside", "Bring back"),
-                false => ("aside", "Fold away"),
-            };
-            items.push(MenuItem::new(value, label).selectable(false));
+        if info.now {
+            return;
         }
+        let into = (self.layout.versions.iter().enumerate())
+            .find(|(_, version)| version.now)
+            .map_or("this version".to_string(), |(index, now)| {
+                format!("“{}”", name_of(now, index))
+            });
+        let aside = match info.aside {
+            true => "Bring back",
+            false => "Fold away",
+        };
+        let items = vec![
+            MenuItem::new("merge", format!("Merge into {into}"))
+                .description("Where both changed something, this one wins")
+                .selectable(false),
+            MenuItem::new("merge-mine", format!("Merge into {into}, keep mine"))
+                .description("Where both changed something, yours stays")
+                .selectable(false),
+            MenuItem::new("aside", aside).selectable(false),
+        ];
         self.menu_version = Some(version);
         self.menu.update(cx, |menu, cx| {
             menu.set_entries(vec![MenuEntry::Group(MenuGroup::new().items(items))], cx);
@@ -315,7 +352,7 @@ impl HistoryPanel {
         &mut self,
         _: &Entity<DropdownMenu>,
         picked: &MenuPicked,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(version) = self.menu_version.take() else {
@@ -325,68 +362,15 @@ impl HistoryPanel {
             "merge" => self.merge(version, false, cx),
             "merge-mine" => self.merge(version, true, cx),
             "aside" => self.toggle_aside(version, cx),
-            "rename" => self.start_renaming(version, window, cx),
             _ => {}
         }
     }
 
-    fn toggle_aside(&mut self, version: usize, cx: &mut Context<Self>) {
-        let (Some(info), Some(history)) = (self.layout.versions.get(version), &mut self.history)
-        else {
-            return;
-        };
-        if let Err(error) = history.set_aside(info.start, !info.aside) {
-            self.report(error, cx);
-        }
-        self.relayout();
-        cx.notify();
-    }
-
-    fn start_renaming(&mut self, version: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(info) = self.layout.versions.get(version).cloned() else {
-            return;
-        };
-        let input = cx.new(|cx| {
-            let mut input = TextInput::new(cx);
-            input.set_text(info.name.clone().unwrap_or_default(), cx);
-            input.select_all_text(cx);
-            input
-        });
-        let panel = cx.entity().downgrade();
-        input.update(cx, |input, _| {
-            input.set_on_submit(move |name, _, cx| {
-                let name = name.to_string();
-                // Fails only when the panel is gone.
-                panel
-                    .update(cx, |panel, cx| panel.finish_renaming(&name, cx))
-                    .ok();
-            })
-        });
-        window.focus(&input.read(cx).focus_handle(cx), cx);
-        self.renaming = Some((info.start, input));
-        cx.notify();
-    }
-
-    fn finish_renaming(&mut self, name: &str, cx: &mut Context<Self>) {
-        let Some((start, _)) = self.renaming.take() else {
-            return;
-        };
-        if let Some(history) = &mut self.history
-            && let Err(error) = history.set_name(start, name)
-        {
-            self.report(error, cx);
-        }
-        self.relayout();
-        cx.notify();
-    }
-
     fn rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let lanes = self.layout.lanes(range.clone());
-        let graph_width = GRAPH_INSET * 2. + LANE_WIDTH * lanes.len().saturating_sub(1) as f32;
+        let graph_width = GRAPH_INSET + LANE_WIDTH * lanes.len().max(1) as f32;
         let colors = Colors::of(cx);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_millis() as u64);
+        let now = now_millis();
         range
             .filter_map(|index| {
                 let row = self.layout.rows.get(index)?.clone();
@@ -408,53 +392,40 @@ impl HistoryPanel {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = cx.theme();
-        let (text, muted, hover, selected, link, now_text) = (
+        let (text, muted, hover, selected, link, fill) = (
             theme.gray_950,
             theme.gray_700,
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.08),
+            theme.alpha_at(0.04),
+            theme.alpha_at(0.07),
             theme.blue,
-            theme.gray_100,
+            theme.alpha_at(0.07),
         );
-        let version = self.layout.versions.get(row.version);
-        let color = colors.version(row.version);
+        let is_fold = row.is_fold();
         let graph = {
             let colors = colors.clone();
-            let moment = row.moment;
-            let is_now = row.now;
+            let dot = Dot::of(&row);
             canvas(
                 |_, _, _| {},
-                move |bounds, (), window, _| {
-                    paint(bounds, &drawing, moment, is_now, &colors, window)
-                },
+                move |bounds, (), window, _| paint(bounds, &drawing, dot, &colors, window),
             )
             .flex_none()
             .w(px(graph_width))
             .h_full()
         };
-        // A version is named on its latest row, unless the row already says that name.
-        let renaming = (self.renaming.as_ref())
-            .filter(|(start, _)| version.is_some_and(|version| version.start == *start))
-            .map(|(_, input)| div().w(px(140.)).child(input.clone()).into_any_element());
-        let given = version
-            .filter(|_| row.tip)
-            .and_then(|version| version.name.clone());
-        let name = renaming.or_else(|| {
-            given.filter(|name| *name != row.label).map(|name| {
-                div()
-                    .px(px(6.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(color.opacity(0.6))
-                    .text_color(color)
-                    .child(SharedString::from(name))
-                    .into_any_element()
-            })
+        let now_tag = row.now.then(|| {
+            div()
+                .px(px(5.))
+                .rounded(px(4.))
+                .bg(text)
+                .text_color(theme.gray_100)
+                .text_size(px(10.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("Now")
         });
-        let fold = |id: &str, fold: &sound_history::Fold, words: String, cx: &mut Context<Self>| {
-            let key = fold.key;
+        let link_to = |id: &str, key: ObjectId, words: String, cx: &mut Context<Self>| {
             div()
                 .id(SharedString::from(format!("{id}-{key}")))
+                .debug_selector(move || format!("history-{id}-{index}"))
                 .text_color(link)
                 .cursor_pointer()
                 .child(words)
@@ -464,23 +435,74 @@ impl HistoryPanel {
                     panel.toggle_fold(key, cx)
                 }))
         };
-        let changes = row.changes.as_ref().map(|changes| {
-            let words = match changes.open {
-                true => "hide changes".to_string(),
-                false => plural(changes.count, "change"),
-            };
-            fold("changes", changes, words, cx)
-        });
+        let hide = (row.changes.as_ref())
+            .filter(|fold| fold.open)
+            .map(|fold| link_to("hide", fold.key, "Hide".to_string(), cx));
         let more = row.more.as_ref().map(|more| {
             let words = match more.open {
-                true => "hide versions".to_string(),
-                false => format!("+ {}", plural(more.count, "more version")),
+                true => "Hide versions".to_string(),
+                false => format!("+{}", plural(more.count, "version")),
             };
-            fold("more", more, words, cx)
+            link_to("more", more.key, words, cx)
         });
-        let point = row.point;
-        let label = row.label.clone();
-        let version_index = row.version;
+        let ago = div().text_color(muted).child(ago(now, row.time));
+        let meta = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .whitespace_nowrap()
+            .overflow_hidden();
+        let content = if is_fold {
+            let count = row.changes.as_ref().map_or(0, |fold| fold.count);
+            meta.child(
+                div()
+                    .debug_selector(move || format!("history-fold-{index}"))
+                    .px(px(8.))
+                    .rounded(px(10.))
+                    .bg(fill)
+                    .text_color(muted)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(format!("+{count}")),
+            )
+            .children(more)
+            .into_any_element()
+        } else if row.tip {
+            let name = (self.layout.versions.get(row.version))
+                .map(|version| name_of(version, row.version))
+                .unwrap_or_default();
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(1.))
+                .min_w_0()
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(text)
+                        .child(name),
+                )
+                .child(
+                    meta.child(ago)
+                        .children(now_tag)
+                        .children(hide)
+                        .children(more),
+                )
+                .into_any_element()
+        } else {
+            meta.child(ago)
+                .children(now_tag)
+                .children(hide)
+                .children(more)
+                .into_any_element()
+        };
+        let (point, key, version) = (
+            row.point,
+            row.changes.as_ref().map(|fold| fold.key),
+            row.version,
+        );
         div()
             .id(("history-row", index))
             .debug_selector(move || format!("history-row-{index}"))
@@ -488,59 +510,22 @@ impl HistoryPanel {
             .h(px(ROW_HEIGHT))
             .flex()
             .items_center()
-            .pr(px(12.))
+            .pr(px(16.))
             .cursor_pointer()
             .when(row.now, |this| this.bg(selected))
             .hover(|style| style.bg(hover))
-            .on_click(cx.listener(move |panel, _, _, cx| panel.go_to(point, &label, cx)))
+            .on_click(cx.listener(move |panel, _, _, cx| match (is_fold, key) {
+                (true, Some(key)) => panel.toggle_fold(key, cx),
+                _ => panel.go_to(point, cx),
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |panel, event: &MouseDownEvent, window, cx| {
-                    panel.open_menu(version_index, event.position, window, cx)
+                    panel.open_menu(version, event.position, window, cx)
                 }),
             )
             .child(graph)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(13.))
-                            .text_color(if row.inside_fold { muted } else { text })
-                            .when(row.moment, |label| label.font_weight(FontWeight::MEDIUM))
-                            .child(SharedString::from(row.label.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_size(px(11.))
-                            .text_color(muted)
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .child(ago(now, row.time))
-                            .children(name)
-                            .when(row.now, |meta| {
-                                meta.child(
-                                    div()
-                                        .px(px(4.))
-                                        .rounded(px(4.))
-                                        .bg(text)
-                                        .text_color(now_text)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child("Now"),
-                                )
-                            })
-                            .children(changes)
-                            .children(more),
-                    ),
-            )
+            .child(div().flex_1().min_w_0().child(content))
             .into_any_element()
     }
 }
@@ -553,6 +538,7 @@ impl Focusable for HistoryPanel {
 
 impl Render for HistoryPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let hairline = cx.theme().alpha_at(0.05);
         let count = self.layout.rows.len();
         let list = uniform_list(
             "history-rows",
@@ -569,6 +555,10 @@ impl Render for HistoryPanel {
             .size_full()
             .flex()
             .flex_col()
+            // As the agent's sidebar: the top edge parts it from the title row.
+            .border_t_1()
+            .border_r_1()
+            .border_color(hairline)
             .child(
                 div()
                     .flex_none()
@@ -576,12 +566,34 @@ impl Render for HistoryPanel {
                     .flex()
                     .items_center()
                     .pl(px(24.))
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("History"),
+                    .child(self.tabs.clone()),
             )
             .child(list)
             .child(self.menu.clone())
+    }
+}
+
+/// What the dot of a row is.
+#[derive(Copy, Clone)]
+enum Dot {
+    /// The latest point of a version.
+    Tip {
+        now: bool,
+    },
+    Point {
+        now: bool,
+    },
+    /// Points folded into the row: the line runs through.
+    Fold,
+}
+
+impl Dot {
+    fn of(row: &Row) -> Self {
+        match (row.is_fold(), row.tip) {
+            (true, _) => Self::Fold,
+            (false, true) => Self::Tip { now: row.now },
+            (false, false) => Self::Point { now: row.now },
+        }
     }
 }
 
@@ -601,11 +613,11 @@ impl Colors {
                 theme.blue,
                 theme.mauve,
                 theme.teal,
+                theme.peach,
                 theme.pink,
+                theme.green,
                 theme.sapphire,
                 theme.flamingo,
-                theme.sky,
-                theme.rosewater,
             ],
             background: theme.gray_100,
             now: theme.gray_950,
@@ -623,8 +635,7 @@ impl Colors {
 fn paint(
     bounds: Bounds<Pixels>,
     drawing: &Drawing,
-    moment: bool,
-    is_now: bool,
+    dot: Dot,
     colors: &Colors,
     window: &mut Window,
 ) {
@@ -668,19 +679,30 @@ fn paint(
             }
         }
         if let Ok(path) = path.build() {
-            window.paint_path(path, colors.version(line.version).opacity(0.7));
+            window.paint_path(path, colors.version(line.version).opacity(0.55));
         }
     }
     let centre = point(x(drawing.dot), middle);
     let color = colors.version(drawing.version);
-    if is_now {
-        ring(window, centre, 9., 1.5, colors.now);
-    }
-    if moment {
-        circle(window, centre, 5.5, color);
-    } else {
-        circle(window, centre, 4., color);
-        circle(window, centre, 2., colors.background);
+    match dot {
+        Dot::Fold => {
+            for offset in [-5., 0., 5.] {
+                circle(window, centre + point(px(0.), px(offset)), 1.5, color);
+            }
+        }
+        Dot::Tip { now } => {
+            if now {
+                ring(window, centre, 9., 1.5, colors.now);
+            }
+            circle(window, centre, 5.5, color);
+        }
+        Dot::Point { now } => {
+            if now {
+                ring(window, centre, 8., 1.5, colors.now);
+            }
+            circle(window, centre, 4., color);
+            circle(window, centre, 2., colors.background);
+        }
     }
 }
 
@@ -697,6 +719,67 @@ fn ring(window: &mut Window, centre: Point<Pixels>, radius: f32, width: f32, col
     window.paint_quad(quad.corner_radii(px(radius)).border_widths(px(width)));
 }
 
+/// The name of a version, or its number until it has one.
+fn name_of(version: &Version, index: usize) -> String {
+    match &version.name {
+        Some(named) => named.name.clone(),
+        None => format!("Version {}", index + 1),
+    }
+}
+
+/// The question that names a version: what it changed, file by file.
+fn naming_prompt(changes: &[FileChange]) -> String {
+    let mut prompt = String::from(
+        "You name versions in Sound Tools, a music app. A version is one idea a musician \
+         tried. The project is a folder of JSON files: instruments, effects, tracks, clips, \
+         notes, tempo and connections, and TypeScript for tools of its own. Below is what this \
+         version changed. Reply with only a short name for the musical idea, 2 to 4 words, no \
+         quotes and no full stop. Name the music, not the files.\n",
+    );
+    for change in changes {
+        let text = |bytes: &Option<Vec<u8>>| match bytes {
+            Some(bytes) => String::from_utf8_lossy(bytes)
+                .chars()
+                .take(PROMPT_FILE)
+                .collect(),
+            None => "(none)".to_string(),
+        };
+        let part = format!(
+            "\n{}\nbefore: {}\nafter: {}\n",
+            change.path.display(),
+            text(&change.before),
+            text(&change.after),
+        );
+        if prompt.len() + part.len() > PROMPT_ALL {
+            prompt.push_str("\n(and more files)\n");
+            break;
+        }
+        prompt.push_str(&part);
+    }
+    prompt
+}
+
+/// The name in an answer: its last line, without quotes or a full stop.
+fn clean_name(answer: &str) -> Option<String> {
+    let line = answer
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())?;
+    let name: String = line
+        .trim_matches(|c: char| c == '"' || c == '“' || c == '”' || c == '.' || c == '*')
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(40)
+        .collect();
+    (!name.trim().is_empty()).then(|| name.trim().to_string())
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+}
+
 fn plural(count: usize, word: &str) -> String {
     match count {
         1 => format!("1 {word}"),
@@ -707,21 +790,10 @@ fn plural(count: usize, word: &str) -> String {
 fn ago(now: u64, then: u64) -> SharedString {
     let minutes = now.saturating_sub(then) / 60_000;
     let text = match minutes {
-        0 => "just now".to_string(),
+        0 => "Just now".to_string(),
         1..60 => format!("{minutes} min ago"),
         60..1440 => format!("{} h ago", minutes / 60),
         _ => plural((minutes / 1440) as usize, "day") + " ago",
     };
     text.into()
-}
-
-/// What of the project folder is the piece: its records, its settings and the code of its own
-/// tools, without what the runtime writes there itself.
-fn scope() -> Scope {
-    Scope {
-        roots: ["project.json", "state", sound_typescript::FOLDER]
-            .map(PathBuf::from)
-            .to_vec(),
-        skip: crate::templates::written::written_by_the_runtime,
-    }
 }

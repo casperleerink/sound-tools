@@ -23,8 +23,9 @@ use plugin_host::{
 };
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
-    AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Project,
-    ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks, ToolSchema,
+    AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Problem,
+    Project, ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks,
+    ToolSchema,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
@@ -307,7 +308,13 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
         let (composer, asks) = (sidebar.clone(), sidebar.clone());
+        let (answers, titled) = (sidebar.clone(), sidebar.clone());
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+            .with_quick_answer(move |prompt, cx| {
+                let answer = answers.read(cx).quick_answer(prompt)?;
+                Some(Box::pin(answer) as _)
+            })
+            .with_tabs(move |tabs, cx| titled.update(cx, |sidebar, cx| sidebar.set_title(tabs, cx)))
             .with_composer(move |cx| composer.read(cx).composer().clone())
             .with_ask(move |message, window, cx| {
                 asks.update(cx, |sidebar, cx| {
@@ -448,6 +455,14 @@ pub(crate) fn open_with_loaded(
 ) -> Result<(Project, Option<Extensions>)> {
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open(folder, registry, control)?;
+    // A history that cannot be kept, such as on a full disk, leaves the project open.
+    if let Err(error) = project.keep_history(templates::written::written_by_the_runtime) {
+        let problem = Problem {
+            path: sound_core::history::HISTORY_FOLDER.to_string(),
+            message: error.to_string(),
+        };
+        project.set_problems_in(sound_core::history::HISTORY_FOLDER, vec![problem]);
+    }
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
     }

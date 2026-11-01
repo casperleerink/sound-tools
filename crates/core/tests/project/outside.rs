@@ -80,7 +80,8 @@ fn a_rewrite_with_other_spacing_is_no_change() {
     let mut harness = one_dc();
     let compact = r#"{"tool":"test.dc","state":{"value":0.25}}"#;
     assert_eq!(harness.write_and_apply("state/dc.json", compact), 0);
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    // Other bytes are another point, as git sees them, though nothing applies.
+    assert_eq!(harness.project.undo_label(), Some("File change"));
     // The file is the agent's. The runtime does not write it back in its own layout.
     assert_eq!(harness.read("state/dc.json"), compact);
 }
@@ -254,7 +255,6 @@ fn invalid_files_leave_the_live_state_and_name_the_field() {
         // The file stays for correction.
         assert_eq!(harness.read("state/dc.json"), contents);
     }
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
 
     harness.write_and_apply("state/dc.json", &dc_record(0.5));
     assert_eq!(harness.project.problems(), []);
@@ -346,7 +346,7 @@ fn deleting_an_instance_after_its_outside_edit_was_rejected_removes_its_file() {
     let hello = Reporter {
         message: "hello".to_string(),
     };
-    let reporter = changes.create(id("reporter"), hello.clone());
+    let reporter = changes.create(id("reporter"), hello);
     harness.project.commit("Add reporter", changes).unwrap();
     harness.write("state/reporter.json", &reporter_record("fail"));
     let paths = [harness.path("state/reporter.json")];
@@ -357,8 +357,9 @@ fn deleting_an_instance_after_its_outside_edit_was_rejected_removes_its_file() {
     harness.project.commit("Delete reporter", changes).unwrap();
     assert!(!harness.path("state/reporter.json").exists());
 
-    harness.project.undo().unwrap();
-    assert_eq!(harness.project.state(&reporter), Some(&hello));
+    // Undo brings back the file as it was, which is still refused.
+    harness.project.undo().unwrap_err();
+    assert_eq!(harness.read("state/reporter.json"), reporter_record("fail"));
     harness.project.redo().unwrap();
     let harness = harness.reopen();
     assert!(
@@ -469,9 +470,11 @@ fn undo_of_a_fix_brings_back_the_record_that_did_not_load() {
         1
     );
 
+    // The file goes back to what it was. As for any file that does not load, what plays
+    // stays as it is.
     harness.project.undo().unwrap();
     assert_eq!(harness.read("state/bank/a.json"), INVALID);
-    assert_eq!(harness.level(), 0.0);
+    assert!(harness.problem_at("state/bank/a.json").is_some());
     harness.project.redo().unwrap();
     assert_eq!(harness.level(), 0.5);
     assert!(harness.read("state/bank/a.json").contains("0.5"));
@@ -823,8 +826,8 @@ fn reopening_restores_instances_children_connections_and_tempo() {
         harness.project.engine().clock().tempo_map(),
         &project_file.tempo_map
     );
-    // History is for the session only, and loading is not a step.
-    assert_eq!(harness.project.undo_label(), None);
+    // The history is in the folder, and loading is no point of it.
+    assert_eq!(harness.project.undo_label(), Some("Tempo"));
     assert_eq!(harness.project.drain_events(), []);
 }
 

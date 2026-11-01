@@ -42,16 +42,18 @@ fn an_outside_edit_of_the_limiter_while_it_plays_is_heard_and_undone_in_one_step
 
     // An agent lowers the ceiling while it plays. From the next block on, nothing is over it.
     let low = record(r#"{"ceiling_db": -24.0}"#);
+    let file_before = std::fs::read(harness.path(LIMITER_FILE)).unwrap();
     assert_eq!(harness.write_and_apply(LIMITER_FILE, &low), 1);
     assert_eq!(harness.project.problems(), []);
     let after = harness.play(BAR / 2);
     assert!(peak(&after) <= amplitude(-24.0), "{}", peak(&after));
 
-    // One undo takes the agent's edit back, file and sound.
+    // One undo takes the agent's edit back, file and sound: the file byte for byte.
     assert!(harness.project.undo().unwrap().is_some());
-    let file = std::fs::read_to_string(harness.path(LIMITER_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["ceiling_db"], -1.0);
+    assert_eq!(
+        std::fs::read(harness.path(LIMITER_FILE)).unwrap(),
+        file_before
+    );
     let undone = harness.play(BAR / 2);
     assert!(peak(&undone[BAR / 4..]) > amplitude(-20.0));
 }

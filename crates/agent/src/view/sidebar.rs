@@ -14,13 +14,14 @@ mod threads;
 mod turn;
 
 use std::collections::{HashMap, HashSet};
+use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Entity, ExternalPaths, FocusHandle, Focusable, FollowMode,
-    FontWeight, Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions,
-    div, hsla, list, point, prelude::*, px,
+    AnyElement, AnyView, App, BoxShadow, Context, Entity, ExternalPaths, FocusHandle, Focusable,
+    FollowMode, FontWeight, Global, KeyBinding, ListAlignment, ListState, Subscription, Task,
+    Window, actions, div, hsla, list, point, prelude::*, px,
 };
 use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
@@ -145,6 +146,8 @@ pub struct Sidebar {
     instructions: Option<(Entity<InstructionsEditor>, Subscription)>,
     /// Hands the instructions to their writer, in the order they were typed.
     saves: smol::channel::Sender<Save>,
+    /// Shown in place of the word "Agent", see [`Self::set_title`].
+    title: Option<AnyView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -329,6 +332,7 @@ impl Sidebar {
             opening: None,
             instructions: None,
             saves: save_instructions(cx),
+            title: None,
             _subscriptions: subscriptions,
         };
         sidebar.update_menu(cx);
@@ -462,6 +466,27 @@ impl Sidebar {
     /// one.
     pub fn resume(&self) -> Option<String> {
         self.saved.as_ref()?.session_id.clone()
+    }
+
+    /// A question for the agent's small model, once the agent is set up, see
+    /// [`Provider::answer`]. It runs on its own, apart from the thread.
+    pub fn quick_answer(
+        &self,
+        prompt: String,
+    ) -> Option<impl Future<Output = io::Result<String>> + Send + 'static> {
+        let installed = self
+            .installed
+            .clone()
+            .filter(|_| matches!(self.setup, Setup::Ready { .. }))?;
+        let provider = self.provider;
+        Some(async move { provider.answer(&installed, &prompt).await })
+    }
+
+    /// Shows `title` in the header in place of the word "Agent", such as tabs of the panel the
+    /// sidebar is in.
+    pub fn set_title(&mut self, title: AnyView, cx: &mut Context<Self>) {
+        self.title = Some(title);
+        cx.notify();
     }
 
     /// Whether the agent works or waits on the composer, so a closed sidebar can say so.
@@ -746,11 +771,14 @@ impl Sidebar {
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let editing = self.instructions.is_some();
         // On the left edge of the thread under it.
-        let title = div()
-            .flex_1()
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
-            .child(if editing { "Instructions" } else { "Agent" });
+        let title = match (&self.title, editing) {
+            (Some(title), false) => div().flex_1().child(title.clone()),
+            _ => div()
+                .flex_1()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(if editing { "Instructions" } else { "Agent" }),
+        };
         let header = div()
             .flex()
             .flex_none()

@@ -50,7 +50,7 @@ use history::History;
 use instance::{JsonState, Record};
 use live::LiveSources;
 use outside::NotApplied;
-use storage::{Form, Locked, PathTarget, RecordOnDisk, Storage};
+use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
 use crate::automation::PlayedLanes;
@@ -115,6 +115,10 @@ pub enum ProjectError {
     WatcherStopped,
     #[error(transparent)]
     Registry(#[from] RegistryError),
+    #[error("the history is not kept: {0}")]
+    History(#[from] crate::history::HistoryError),
+    #[error("this project keeps no history")]
+    NoHistory,
 }
 
 impl From<BindError> for ProjectError {
@@ -153,15 +157,15 @@ pub struct Problem {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Source {
     /// Opening the project: applying everything from empty. Also a change only in memory, see
-    /// [`Project::apply_in_memory`]: like loading, it writes nothing, derives nothing and is no
-    /// undo step.
+    /// [`Project::apply_in_memory`]: like loading, it writes nothing and derives nothing.
     Load,
     Interface,
-    /// The files already hold this state.
+    /// The files already hold this state: a change from outside, undo, redo and cancel.
     Outside,
-    /// Undo, redo and cancel.
-    History,
 }
+
+/// The label of the first point of a history.
+const START_LABEL: &str = "Start";
 
 pub struct Project {
     registry: Registry,
@@ -267,15 +271,25 @@ impl Project {
         // The project file first: it says which extensions are enabled.
         project.apply(changes, Source::Load)?;
         let state_folder = project.storage.state_folder();
-        project.apply_paths(
-            &[state_folder],
-            Source::Load,
-            std::time::Instant::now(),
-            None,
-        )?;
+        project.apply_paths(&[state_folder], Source::Load)?;
         project.events.clear();
         project.write_generated_files()?;
         Ok(project)
+    }
+
+    /// Keeps the history of the folder in it, see `sound-history`, and saves the folder as a
+    /// point when it changed since the last time. `skip` names paths under `extensions/`
+    /// that are not the project's, such as what the runtime writes there.
+    pub fn keep_history(&mut self, skip: fn(&str) -> bool) -> Result<(), ProjectError> {
+        if self.read_only {
+            return Err(ProjectError::ReadOnly);
+        }
+        self.history = History::open(self.storage.root(), skip)?;
+        let label = match self.history().is_some_and(|store| store.now().is_some()) {
+            true => "Changes made while the app was closed",
+            false => START_LABEL,
+        };
+        Ok(self.history.record(label)?)
     }
 
     /// The project folder, canonical.
@@ -556,7 +570,7 @@ impl Project {
             .filter(|path| path.starts_with(&state_folder))
             .filter(|path| storage::tool_named_in(path).is_some_and(|tool| names.contains(&tool)));
         paths.extend(not_loaded);
-        self.apply_paths(&paths, Source::Load, std::time::Instant::now(), None)?;
+        self.apply_paths(&paths, Source::Load)?;
         for id in live {
             let path = record_path(self, &id);
             let path = self.storage.display_path(&path);
@@ -654,26 +668,6 @@ impl Project {
         if project_file && self.project_file_is_ours() {
             results.push(self.storage.write_project_file(&self.project_file));
             self.clear_problem(storage::PROJECT_FILE);
-        }
-        self.report_write_errors(results)
-    }
-
-    /// Writes record files that do not load with these bytes, or removes them for `None`. A
-    /// file where a live record is now stays.
-    pub(crate) fn write_unloaded<'a>(
-        &mut self,
-        files: impl IntoIterator<Item = (&'a PathBuf, Option<&'a [u8]>)>,
-    ) -> Result<(), ProjectError> {
-        let mut results = Vec::new();
-        for (path, bytes) in files {
-            let live = match self.storage.target_of(path) {
-                PathTarget::Record(id) => (self.instances.get(&id))
-                    .is_some_and(|record| self.storage.record_path(&id, Form::of(record)) == *path),
-                _ => false,
-            };
-            if !live {
-                results.push(self.storage.write_unloaded(path, bytes));
-            }
         }
         self.report_write_errors(results)
     }

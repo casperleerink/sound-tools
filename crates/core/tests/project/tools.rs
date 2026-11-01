@@ -392,7 +392,8 @@ impl Harness {
     pub(crate) fn stereo() -> Self {
         let folder = tempfile::tempdir().unwrap();
         let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
-        let project = Project::open(folder.path(), registry(), control).unwrap();
+        let mut project = Project::open(folder.path(), registry(), control).unwrap();
+        project.keep_history(|_| false).unwrap();
         Self {
             project,
             engine,
@@ -486,7 +487,8 @@ impl Harness {
 
 pub(crate) fn open(folder: &Path) -> (Project, Engine) {
     let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
-    let project = Project::open(folder, registry(), control).unwrap();
+    let mut project = Project::open(folder, registry(), control).unwrap();
+    project.keep_history(|_| false).unwrap();
     (project, engine)
 }
 

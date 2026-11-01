@@ -45,7 +45,8 @@ fn open(cx: &mut TestAppContext) -> Opened {
     let mut registry = Registry::new();
     registry.tool::<Marker>("markers").unwrap();
     let (control, engine) = Engine::new(EngineConfig::new(48_000, 2));
-    let project = Project::open(folder.path(), registry, control).unwrap();
+    let mut project = Project::open(folder.path(), registry, control).unwrap();
+    project.keep_history(|_| false).unwrap();
     let session = cx.new(|cx| Session::new(project, cx));
     Opened {
         folder,

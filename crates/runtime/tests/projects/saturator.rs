@@ -44,6 +44,7 @@ fn an_outside_edit_of_the_saturator_while_it_plays_is_heard_and_undone_in_one_st
     let mut harness = piano_through(Some(&hot));
     let mut played = harness.play_from_the_start(BAR / 2);
     assert!(difference(&played, frames(&dry_all, 0, BAR / 2)).is_some());
+    let file_before = std::fs::read(harness.path(SATURATOR_FILE)).unwrap();
     assert_eq!(harness.write_and_apply(SATURATOR_FILE, &dry), 1);
     assert_eq!(harness.project.problems(), []);
     played.extend(harness.play(BAR));
@@ -56,11 +57,12 @@ fn an_outside_edit_of_the_saturator_while_it_plays_is_heard_and_undone_in_one_st
     );
     assert_eq!(heard, expected);
 
-    // One undo takes the agent's edit back, file and sound.
+    // One undo takes the agent's edit back, file and sound: the file byte for byte.
     assert!(harness.project.undo().unwrap().is_some());
-    let file = std::fs::read_to_string(harness.path(SATURATOR_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["mix"], 1.0);
+    assert_eq!(
+        std::fs::read(harness.path(SATURATOR_FILE)).unwrap(),
+        file_before
+    );
     let after_undo = harness.play(BAR / 4);
     assert!(
         difference(

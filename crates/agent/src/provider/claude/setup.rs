@@ -159,6 +159,24 @@ pub(crate) async fn sign_out(installed: &Installed) -> io::Result<()> {
     run_to_success(installed, &["auth", "logout"]).await
 }
 
+/// One answer of `model` to `prompt`, with no tools and no session kept.
+pub(crate) async fn answer(installed: &Installed, model: &str, prompt: &str) -> io::Result<String> {
+    let arguments = [
+        "-p",
+        prompt,
+        "--model",
+        model,
+        "--tools",
+        "",
+        "--no-session-persistence",
+    ];
+    let output = run(installed, &arguments).await?;
+    if !output.status.success() {
+        return Err(failed(&output, &format!("it ended with {}", output.status)));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Runs the CLI until it ends, and fails when it ends with an error.
 async fn run_to_success(installed: &Installed, arguments: &[&str]) -> io::Result<()> {
     let output = run(installed, arguments).await?;

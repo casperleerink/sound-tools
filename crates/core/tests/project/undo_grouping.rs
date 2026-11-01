@@ -65,10 +65,7 @@ fn the_window_runs_from_the_last_group_and_keeps_the_oldest_before_side() {
     harness.project.undo().unwrap();
     let dc = harness.project.resolve::<Dc>(&id("dc")).unwrap();
     assert_eq!(harness.project.state(&dc).unwrap().value, 0.1);
-    assert_eq!(
-        harness.read("state/dc.json"),
-        "{\n  \"tool\": \"test.dc\",\n  \"state\": {\"value\": 0.1}\n}\n"
-    );
+    assert_eq!(harness.read("state/dc.json"), dc_record(0.1));
 }
 
 #[test]
@@ -342,10 +339,7 @@ fn undo_of_a_request_brings_back_every_file_it_touched() {
         .end_request_at(begin + Duration::from_secs(60));
 
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some(REQUEST));
-    assert_eq!(
-        harness.read("state/dc.json"),
-        "{\n  \"tool\": \"test.dc\",\n  \"state\": {\"value\": 0.1}\n}\n"
-    );
+    assert_eq!(harness.read("state/dc.json"), dc_record(0.1));
     assert!(!harness.path("state/bank").exists());
     assert_eq!(harness.project.instances().count(), 1);
     assert_eq!(harness.project.undo_label(), Some("File change"));

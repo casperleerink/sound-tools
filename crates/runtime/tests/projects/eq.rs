@@ -45,6 +45,7 @@ fn an_outside_edit_of_the_eq_while_it_plays_is_heard_and_undone_in_one_step() {
     let mut harness = piano_through(&flat);
     let mut played = harness.play_from_the_start(BAR / 2);
     assert_eq!(played, frames(&flat_all, 0, BAR / 2));
+    let file_before = std::fs::read(harness.path(EQ_FILE)).unwrap();
     assert_eq!(harness.write_and_apply(EQ_FILE, &shaped), 1);
     assert_eq!(harness.project.problems(), []);
     played.extend(harness.play(BAR));
@@ -73,9 +74,7 @@ fn an_outside_edit_of_the_eq_while_it_plays_is_heard_and_undone_in_one_step() {
     assert_eq!(state.bands[1].gain_db, -12.0);
     assert_eq!(state.bands[2], Band::default_at(2));
 
-    // One undo takes the agent's edit back, file and sound.
+    // One undo takes the agent's edit back, file and sound: the file byte for byte.
     assert!(harness.project.undo().unwrap().is_some());
-    let file = std::fs::read_to_string(harness.path(EQ_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["bands"][0]["shape"], "low_shelf");
+    assert_eq!(std::fs::read(harness.path(EQ_FILE)).unwrap(), file_before);
 }

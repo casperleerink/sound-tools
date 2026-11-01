@@ -75,7 +75,8 @@ fn open(registry: Registry) -> (Project, tempfile::TempDir) {
     );
     write(folder.path(), "state/a.json", RECORD);
     let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
-    let project = Project::open(folder.path(), registry, control).unwrap();
+    let mut project = Project::open(folder.path(), registry, control).unwrap();
+    project.keep_history(|_| false).unwrap();
     (project, folder)
 }
 

@@ -101,6 +101,7 @@ fn an_outside_edit_of_a_pad_while_it_plays_is_heard_and_undone_in_one_step() {
     let mut harness = beat(&loud);
     let mut played = harness.play_from_the_start(BAR / 2);
     assert_eq!(played, frames(&loud_all, 0, BAR / 2));
+    let file_before = std::fs::read(harness.path(DRUMS_FILE)).unwrap();
     assert_eq!(harness.write_and_apply(DRUMS_FILE, &quiet), 1);
     assert_eq!(harness.project.problems(), []);
     played.extend(harness.play(BAR));
@@ -136,12 +137,11 @@ fn an_outside_edit_of_a_pad_while_it_plays_is_heard_and_undone_in_one_step() {
         "{largest_step} {largest_before}"
     );
 
-    // One undo takes the agent's edit back, file and sound.
+    // One undo takes the agent's edit back, file and sound: the file byte for byte.
     assert!(harness.project.undo().unwrap().is_some());
-    let file = std::fs::read_to_string(harness.path(DRUMS_FILE)).unwrap();
     assert_eq!(
-        file,
-        "{\n  \"tool\": \"drum-pad\",\n  \"state\": {\"pads\": {}}\n}\n"
+        std::fs::read(harness.path(DRUMS_FILE)).unwrap(),
+        file_before
     );
 }
 

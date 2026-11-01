@@ -2,22 +2,23 @@
 //! folds away, and the lanes of the lines for the rows in view.
 //!
 //! A version is a line of points: a point continues the version of its first parent when it is
-//! that parent's first child, else it starts a version of its own.
+//! that parent's first child, else it starts a version of its own. A version shows its first
+//! and its latest point; what lies between folds into one row, unless it is where the project
+//! is now or a merge.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use crate::git::ObjectId;
-use crate::store::History;
+use sound_core::history::{History, Named, ObjectId};
 
-/// A version that has not been touched while this many newer moments were made folds away.
-pub const FOLD_AFTER_MOMENTS: usize = 20;
+/// A version that has not been touched while this many newer points were made folds away.
+pub const FOLD_AFTER: usize = 30;
 
 /// The points of a history, as the layout reads them.
 pub struct Graph {
     nodes: Vec<Node>,
     now: Option<usize>,
-    names: BTreeMap<ObjectId, String>,
+    names: BTreeMap<ObjectId, Named>,
     aside: BTreeSet<ObjectId>,
 }
 
@@ -25,8 +26,6 @@ struct Node {
     id: ObjectId,
     /// Indices into the nodes, first parent first.
     parents: Vec<usize>,
-    label: String,
-    moment: Option<String>,
     time: u64,
 }
 
@@ -38,13 +37,11 @@ impl Graph {
             .collect();
         let mut names = BTreeMap::new();
         let mut aside = BTreeSet::new();
-        let nodes = history
-            .order()
-            .iter()
+        let nodes = (history.order().iter())
             .filter_map(|id| history.point(*id))
             .map(|point| {
-                if let Some(name) = history.name(point.id) {
-                    names.insert(point.id, name.to_string());
+                if let Some(named) = history.name(point.id) {
+                    names.insert(point.id, named.clone());
                 }
                 if history.is_aside(point.id) {
                     aside.insert(point.id);
@@ -54,8 +51,6 @@ impl Graph {
                     parents: (point.parents.iter())
                         .filter_map(|parent| index.get(parent).copied())
                         .collect(),
-                    label: point.label.clone(),
-                    moment: history.moment(point.id).map(str::to_string),
                     time: point.time,
                 }
             })
@@ -69,25 +64,28 @@ impl Graph {
     }
 }
 
-/// A row of the tree: one point.
+/// A row of the tree: one point, or the points of a version folded into one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
+    /// The point, or the first of the folded ones.
     pub point: ObjectId,
     pub version: usize,
-    /// The moment's name, or the change that led here.
-    pub label: String,
-    pub moment: bool,
     /// Milliseconds since 1970.
     pub time: u64,
     pub now: bool,
     /// The latest point of its version, which carries the version's name.
     pub tip: bool,
-    /// Points of the version before this one that fold into it.
+    /// The points this row stands for, when it is a fold; open, the newest of them carries it.
     pub changes: Option<Fold>,
-    /// Versions that start here and fold away.
+    /// Versions that start from a point of this row and fold away.
     pub more: Option<Fold>,
-    /// A point that sits inside an open fold of changes.
-    pub inside_fold: bool,
+}
+
+impl Row {
+    /// It stands for points folded into it, rather than for one.
+    pub fn is_fold(&self) -> bool {
+        self.changes.as_ref().is_some_and(|fold| !fold.open)
+    }
 }
 
 /// Something folded, and the key that opens it.
@@ -102,9 +100,9 @@ pub struct Fold {
 pub struct Version {
     pub start: ObjectId,
     pub tip: ObjectId,
-    /// The name it was given, else its first moment's. The first version has none until it
-    /// is given one: it is where everything starts.
-    pub name: Option<String>,
+    /// The point it split from. `None` for the first version.
+    pub split: Option<ObjectId>,
+    pub name: Option<Named>,
     pub aside: bool,
     /// Whether it is now, which never folds away.
     pub now: bool,
@@ -175,10 +173,7 @@ impl Graph {
         let mut version_of = vec![0; count];
         let mut starts: Vec<usize> = Vec::new();
         for (index, node) in self.nodes.iter().enumerate() {
-            let continues = node
-                .parents
-                .first()
-                .copied()
+            let continues = (node.parents.first().copied())
                 .filter(|parent| first_child.get(*parent).copied().flatten().is_none());
             match continues {
                 Some(parent) => {
@@ -198,8 +193,7 @@ impl Graph {
         for (index, version) in version_of.iter().enumerate() {
             members[*version].push(index);
         }
-        let tips: Vec<usize> = members
-            .iter()
+        let tips: Vec<usize> = (members.iter())
             .map(|points| points.last().copied().unwrap_or(0))
             .collect();
         let merged: BTreeSet<usize> = (self.nodes.iter())
@@ -207,22 +201,13 @@ impl Graph {
             .map(|parent| version_of[*parent])
             .collect();
         let now_version = self.now.map(|now| version_of[now]);
-        let moments_after = |index: usize| {
-            (self.nodes.iter().skip(index + 1))
-                .filter(|node| node.moment.is_some())
-                .count()
-        };
-        // The point a version splits from, and the version that has it.
         let split = |version: usize| self.nodes[starts[version]].parents.first().copied();
         let folds = |version: usize| {
             let start = self.nodes[starts[version]].id;
             Some(version) != now_version
-                && (!members[version]
-                    .iter()
-                    .any(|index| self.nodes[*index].moment.is_some())
-                    || merged.contains(&version)
+                && (merged.contains(&version)
                     || self.aside.contains(&start)
-                    || moments_after(tips[version]) >= FOLD_AFTER_MOMENTS)
+                    || count - 1 - tips[version] >= FOLD_AFTER)
         };
         let mut shown: BTreeSet<usize> = (0..starts.len())
             .filter(|version| {
@@ -240,90 +225,97 @@ impl Graph {
             }
         }
 
-        let splits_here =
-            |index: usize| (0..starts.len()).filter(move |version| split(*version) == Some(index));
         let is_shown_point = |index: usize| {
-            let node = &self.nodes[index];
-            node.moment.is_some()
-                || tips[version_of[index]] == index
-                || splits_here(index).next().is_some()
+            let version = version_of[index];
+            starts[version] == index
+                || tips[version] == index
                 || Some(index) == self.now
-                || index == 0
-                || node.parents.len() > 1
+                || self.nodes[index].parents.len() > 1
         };
-        // Each point's row, newest first; hidden points get the row they fold into.
+        // Rows with the index they sort by, newest first. A fold sorts by its oldest point, so
+        // every line from a point in it runs up to a newer row.
         let mut rows: Vec<(usize, Row)> = Vec::new();
+        let mut row_of: BTreeMap<usize, usize> = BTreeMap::new();
         for version in &shown {
             let mut run: Vec<usize> = Vec::new();
-            for index in &members[*version] {
-                let index = *index;
+            for index in members[*version].iter().copied() {
                 if !is_shown_point(index) {
                     run.push(index);
                     continue;
                 }
-                let changes = run.first().map(|first| {
-                    let key = self.nodes[*first].id;
-                    Fold {
-                        key,
-                        count: run.len(),
-                        open: open.contains(&key),
+                let key = run.first().map(|first| self.nodes[*first].id);
+                match key {
+                    Some(key) if run.len() > 1 && !open.contains(&key) => {
+                        let mut row = self.row(run[0], *version, &tips);
+                        row.changes = Some(Fold {
+                            key,
+                            count: run.len(),
+                            open: false,
+                        });
+                        for hidden in &run {
+                            row_of.insert(*hidden, run[0]);
+                        }
+                        rows.push((run[0], row));
                     }
-                });
-                let id = self.nodes[index].id;
-                let open_here = open.contains(&id);
-                let folded_here: Vec<usize> = splits_here(index)
-                    .filter(|each| folds(*each) && (open_here || !shown.contains(each)))
-                    .collect();
-                let more = (!folded_here.is_empty()).then(|| Fold {
-                    key: id,
-                    count: folded_here.len(),
-                    open: open_here,
-                });
-                rows.push((
-                    index,
-                    self.row(index, *version, &tips, changes.clone(), more, false),
-                ));
-                if changes.is_some_and(|fold| fold.open) {
-                    for hidden in run.drain(..) {
-                        rows.push((hidden, self.row(hidden, *version, &tips, None, None, true)));
+                    _ => {
+                        let newest = run.last().copied();
+                        for hidden in run.iter().copied() {
+                            let mut row = self.row(hidden, *version, &tips);
+                            if Some(hidden) == newest && run.len() > 1 {
+                                row.changes = key.map(|key| Fold {
+                                    key,
+                                    count: run.len(),
+                                    open: true,
+                                });
+                            }
+                            row_of.insert(hidden, hidden);
+                            rows.push((hidden, row));
+                        }
                     }
                 }
                 run.clear();
+                row_of.insert(index, index);
+                rows.push((index, self.row(index, *version, &tips)));
             }
         }
         rows.sort_by_key(|(index, _)| std::cmp::Reverse(*index));
-        let mut row_of: BTreeMap<usize, usize> = BTreeMap::new();
-        for (row, (index, _)) in rows.iter().enumerate() {
-            row_of.insert(*index, row);
-        }
-        // Hidden points of a shown version: the row of the next shown point of their version.
-        for version in &shown {
-            let mut pending = Vec::new();
-            for index in &members[*version] {
-                match row_of.get(index) {
-                    Some(row) => {
-                        let row = *row;
-                        for hidden in pending.drain(..) {
-                            row_of.insert(hidden, row);
-                        }
-                    }
-                    None => pending.push(*index),
-                }
-            }
-        }
-        let mut edges = BTreeSet::new();
-        for (index, node) in self.nodes.iter().enumerate() {
-            let Some(child) = row_of.get(&index).copied() else {
+        let position: BTreeMap<usize, usize> = (rows.iter().enumerate())
+            .map(|(position, (index, _))| (*index, position))
+            .collect();
+        let row_at = |index: usize| {
+            row_of
+                .get(&index)
+                .and_then(|row| position.get(row))
+                .copied()
+        };
+
+        // Versions folded away, at the row of the point they split from.
+        for version in 0..starts.len() {
+            let Some(point) = split(version) else {
                 continue;
             };
-            for (position, parent) in node.parents.iter().enumerate() {
-                let Some(parent_row) = row_of.get(parent).copied() else {
+            let key = self.nodes[point].id;
+            let folded = folds(version) && (open.contains(&key) || !shown.contains(&version));
+            if let (true, Some(row)) = (folded, row_at(point)) {
+                let more = rows[row].1.more.get_or_insert(Fold {
+                    key,
+                    count: 0,
+                    open: open.contains(&key),
+                });
+                more.count += 1;
+            }
+        }
+
+        let mut edges = BTreeSet::new();
+        for (index, node) in self.nodes.iter().enumerate() {
+            let Some(child) = row_at(index) else {
+                continue;
+            };
+            for (place, parent) in node.parents.iter().enumerate() {
+                let Some(parent_row) = row_at(*parent).filter(|row| *row != child) else {
                     continue;
                 };
-                if parent_row == child {
-                    continue;
-                }
-                let (kind, version) = match position {
+                let (kind, version) = match place {
                     0 => (EdgeKind::Main, version_of[index]),
                     _ => (EdgeKind::Merge, version_of[*parent]),
                 };
@@ -338,14 +330,11 @@ impl Graph {
         let versions = (0..starts.len())
             .map(|version| {
                 let start = self.nodes[starts[version]].id;
-                let first_moment =
-                    (members[version].iter()).find_map(|index| self.nodes[*index].moment.clone());
-                let first = self.nodes[starts[version]].parents.is_empty();
-                let name = (self.names.get(&start).cloned()).or(first_moment.filter(|_| !first));
                 Version {
                     start,
                     tip: self.nodes[tips[version]].id,
-                    name,
+                    split: split(version).map(|point| self.nodes[point].id),
+                    name: self.names.get(&start).cloned(),
                     aside: self.aside.contains(&start),
                     now: Some(version) == now_version,
                 }
@@ -358,27 +347,16 @@ impl Graph {
         }
     }
 
-    fn row(
-        &self,
-        index: usize,
-        version: usize,
-        tips: &[usize],
-        changes: Option<Fold>,
-        more: Option<Fold>,
-        inside_fold: bool,
-    ) -> Row {
+    fn row(&self, index: usize, version: usize, tips: &[usize]) -> Row {
         let node = &self.nodes[index];
         Row {
             point: node.id,
             version,
-            label: node.moment.clone().unwrap_or_else(|| node.label.clone()),
-            moment: node.moment.is_some(),
             time: node.time,
             now: Some(index) == self.now,
             tip: tips[version] == index,
-            changes,
-            more,
-            inside_fold,
+            changes: None,
+            more: None,
         }
     }
 }
@@ -440,19 +418,15 @@ impl Layout {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
-    /// A graph from `(parent indices, moment)` per point, oldest first; ids are the index.
-    pub(crate) fn graph(points: &[(&[usize], bool)], now: usize) -> Graph {
-        let nodes = points
-            .iter()
-            .enumerate()
-            .map(|(index, (parents, moment))| Node {
+    /// A graph from the parent indices of each point, oldest first; ids are the index.
+    fn graph(points: &[&[usize]], now: usize) -> Graph {
+        let nodes = (points.iter().enumerate())
+            .map(|(index, parents)| Node {
                 id: id(index),
                 parents: parents.to_vec(),
-                label: format!("change {index}"),
-                moment: moment.then(|| format!("moment {index}")),
                 time: index as u64,
             })
             .collect();
@@ -464,7 +438,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn id(index: usize) -> ObjectId {
+    fn id(index: usize) -> ObjectId {
         ObjectId::parse(&format!("{index:040x}")).unwrap()
     }
 
@@ -472,93 +446,77 @@ pub(crate) mod tests {
         layout.rows.iter().map(|row| row.point).collect()
     }
 
+    /// A line of `length` points, each from the one before.
+    fn line(length: usize) -> Vec<Vec<usize>> {
+        (0..length)
+            .map(|index| index.checked_sub(1).into_iter().collect())
+            .collect()
+    }
+
     #[test]
-    fn changes_between_moments_fold_into_the_next_shown_point() {
-        // 0 moment, 1 2 changes, 3 moment, 4 change (now, the tip).
-        let graph = graph(
-            &[
-                (&[], true),
-                (&[0], false),
-                (&[1], false),
-                (&[2], true),
-                (&[3], false),
-            ],
-            4,
-        );
-        let layout = graph.layout(&BTreeSet::new());
-        assert_eq!(points(&layout), [id(4), id(3), id(0)]);
+    fn a_version_shows_its_first_and_latest_point_with_the_rest_folded_between() {
+        let chain = line(6);
+        let chain: Vec<&[usize]> = chain.iter().map(Vec::as_slice).collect();
+        let layout = graph(&chain, 5).layout(&BTreeSet::new());
+        assert_eq!(points(&layout), [id(5), id(1), id(0)]);
         let fold = layout.rows[1].changes.clone().unwrap();
-        assert_eq!((fold.key, fold.count, fold.open), (id(1), 2, false));
-        // The line runs from the moment down to the first point, through the folded ones.
+        assert_eq!((fold.key, fold.count, fold.open), (id(1), 4, false));
         let lanes = layout.lanes(0..3);
-        assert_eq!(layout.drawing(1, &lanes).lines[0].shape, Shape::Up(0));
+        assert_eq!(layout.drawing(1, &lanes).lines.len(), 2);
 
-        let open = layout.rows[1].changes.clone().unwrap().key;
-        let layout = graph.layout(&BTreeSet::from([open]));
-        assert_eq!(points(&layout), [id(4), id(3), id(2), id(1), id(0)]);
-        assert!(layout.rows[2].inside_fold);
+        let layout = graph(&chain, 5).layout(&BTreeSet::from([id(1)]));
+        assert_eq!(layout.rows.len(), 6);
+        assert!(
+            layout.rows[1]
+                .changes
+                .as_ref()
+                .is_some_and(|fold| fold.open)
+        );
+        // Where the project is shows by itself, and a fold of one is no fold.
+        let layout = graph(&chain, 3).layout(&BTreeSet::new());
+        assert_eq!(points(&layout), [id(5), id(4), id(3), id(1), id(0)]);
     }
 
     #[test]
-    fn a_try_that_never_got_a_moment_folds_under_its_split() {
-        // 0 1 4 the first version, now at 4; 2 3 a try from 0 that never got a moment.
-        let graph = graph(
-            &[
-                (&[], true),
-                (&[0], true),
-                (&[0], false),
-                (&[2], false),
-                (&[1], true),
-            ],
-            4,
-        );
+    fn a_version_from_a_folded_point_hangs_from_the_fold() {
+        // 0 1 2 3 4 the first version; 5 a version from 2, now.
+        let graph = graph(&[&[], &[0], &[1], &[2], &[3], &[2]], 5);
         let layout = graph.layout(&BTreeSet::new());
-        assert_eq!(points(&layout), [id(4), id(1), id(0)]);
-        let more = layout.rows[2].more.clone().unwrap();
-        assert_eq!((more.key, more.count, more.open), (id(0), 1, false));
-        let layout = graph.layout(&BTreeSet::from([id(0)]));
-        assert_eq!(points(&layout), [id(4), id(3), id(1), id(0)]);
-        assert_eq!(
-            layout.rows[1].changes.as_ref().map(|fold| fold.count),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn a_version_folds_after_enough_newer_moments() {
-        // 0 1 and on: the first version, with a moment at every point. 2: a version from 0.
-        let mut chain: Vec<[usize; 1]> = vec![[1]];
-        chain.extend((1..FOLD_AFTER_MOMENTS).map(|step| [2 + step]));
-        let mut points: Vec<(&[usize], bool)> = vec![(&[], true), (&[0], true), (&[0], true)];
-        points.extend(chain.iter().map(|parent| (parent.as_slice(), true)));
-        let shown = |count: usize| {
-            let graph = graph(&points[..count], count - 1);
-            graph
-                .layout(&BTreeSet::new())
-                .rows
+        assert_eq!(points(&layout), [id(5), id(4), id(1), id(0)]);
+        let lanes = layout.lanes(0..4);
+        assert_eq!(lanes.len(), 2);
+        // The new version's line curves into the fold.
+        let lines = layout.drawing(2, &lanes).lines;
+        assert!(
+            lines
                 .iter()
-                .any(|row| row.point == id(2))
-        };
-        assert!(shown(points.len() - 1));
-        assert!(!shown(points.len()));
+                .any(|line| line.shape == Shape::FromTop { from: 1, to: 0 })
+        );
     }
 
     #[test]
-    fn the_version_now_and_those_it_comes_from_never_fold() {
-        // 0 1 2: changes with no moment, and the project is at the last.
-        let graph = graph(&[(&[], false), (&[0], false), (&[1], false)], 2);
-        let layout = graph.layout(&BTreeSet::new());
-        assert_eq!(points(&layout), [id(2), id(0)]);
-        assert!(layout.versions[0].now);
+    fn a_version_folds_after_enough_newer_points() {
+        // 0 1 and on: the first version. 2: a version from 0, then the first goes on.
+        let mut points: Vec<Vec<usize>> = vec![vec![], vec![0], vec![0]];
+        points
+            .extend((3..3 + FOLD_AFTER).map(|index| vec![if index == 3 { 1 } else { index - 1 }]));
+        let shown = |count: usize| {
+            let points: Vec<&[usize]> = points[..count].iter().map(Vec::as_slice).collect();
+            let graph = graph(&points, count - 1);
+            let layout = graph.layout(&BTreeSet::new());
+            let shown = layout.rows.iter().any(|row| row.point == id(2));
+            (shown, layout.rows.iter().find_map(|row| row.more.clone()))
+        };
+        assert!(shown(points.len() - 1).0);
+        let (shown, more) = shown(points.len());
+        assert!(!shown);
+        assert_eq!(more.map(|fold| (fold.key, fold.count)), Some((id(0), 1)));
     }
 
     #[test]
     fn a_merged_version_folds_and_its_line_is_dashed_when_shown() {
         // 0 1 the first version; 2 a version from 0; 3 merges 2 into 1, and is now.
-        let graph = graph(
-            &[(&[], true), (&[0], true), (&[0], true), (&[1, 2], true)],
-            3,
-        );
+        let graph = graph(&[&[], &[0], &[0], &[1, 2]], 3);
         let layout = graph.layout(&BTreeSet::new());
         assert_eq!(points(&layout), [id(3), id(1), id(0)]);
         let layout = graph.layout(&BTreeSet::from([id(0)]));
@@ -575,16 +533,7 @@ pub(crate) mod tests {
     #[test]
     fn lanes_follow_the_rows_in_view() {
         // 0 1 the first version; 2 3 a version from 0; 4 a version from 2, now.
-        let graph = graph(
-            &[
-                (&[], true),
-                (&[0], true),
-                (&[0], true),
-                (&[2], true),
-                (&[2], true),
-            ],
-            4,
-        );
+        let graph = graph(&[&[], &[0], &[0], &[2], &[2]], 4);
         let layout = graph.layout(&BTreeSet::new());
         assert_eq!(points(&layout), [id(4), id(3), id(2), id(1), id(0)]);
         // At the top, the old version is out of view: only two lanes.

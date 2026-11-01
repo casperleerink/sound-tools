@@ -74,6 +74,14 @@ impl Provider {
         }
     }
 
+    /// One short answer of the provider's small model to `prompt`, with no tools and nothing
+    /// kept: for a text the app asks for itself, such as the name of a version of the project.
+    pub async fn answer(self, installed: &Installed, prompt: &str) -> io::Result<String> {
+        match self {
+            Provider::Claude => claude::answer(installed, "haiku", prompt).await,
+        }
+    }
+
     /// The account the program is signed in to, or `None` when it is signed out. Fails when
     /// the program does not run; the error is the first line it wrote.
     pub async fn account(self, installed: &Installed) -> io::Result<Option<Account>> {

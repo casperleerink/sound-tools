@@ -39,8 +39,8 @@ their owner. The folder tree is the ownership tree.
 ## How edits work
 
 Every change is an edit on the `Project`: `begin`, any number of `publish`, then `finish` or
-`cancel`. Or `commit` for one step. A finished edit is one undo step, and the core writes the
-reverse for you. The file is written once, when the edit finishes. Last write wins: a file edit
+`cancel`. Or `commit` for one step. The file is written once, when the edit finishes, and the
+folder then is one point of the history, which undo goes back from. Cancel reads the file back. Last write wins: a file edit
 by an agent during a drag applies at once, and the next move of the drag writes over it.
 
 ## Rules that are easy to miss

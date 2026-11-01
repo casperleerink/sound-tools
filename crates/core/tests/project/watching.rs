@@ -42,10 +42,9 @@ fn the_watcher_applies_a_burst_of_files_and_skips_own_writes() {
     println!("the watcher delivered the burst in {groups} group(s)");
     assert_eq!(harness.level(), 0.5);
 
-    // Undo deletes the nine files. The watcher sees that and must find nothing to apply.
-    for _ in 0..groups {
-        harness.project.undo().unwrap();
-    }
+    // The groups are one point, and undo deletes the nine files. The watcher sees that and
+    // must find nothing to apply.
+    harness.project.undo().unwrap();
     assert!(!harness.path("state/bank").exists());
     let quiet_until = Instant::now() + Duration::from_secs(1);
     while Instant::now() < quiet_until {
@@ -57,9 +56,7 @@ fn the_watcher_applies_a_burst_of_files_and_skips_own_writes() {
     assert_eq!(harness.project.redo_label(), Some("File change"));
 
     // A deleted record is seen too.
-    for _ in 0..groups {
-        harness.project.redo().unwrap();
-    }
+    harness.project.redo().unwrap();
     std::fs::remove_file(harness.path("state/bank/level-0.json")).unwrap();
     poll_until_applied(&mut harness, 1);
     assert_eq!(harness.level(), 0.4375);

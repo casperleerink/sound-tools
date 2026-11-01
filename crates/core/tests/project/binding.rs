@@ -122,7 +122,8 @@ fn open_at(folder: &Path) -> (Project, Engine) {
         .unwrap()
         .behaviour(apply_sharer);
     let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
-    let project = Project::open(folder, registry, control).unwrap();
+    let mut project = Project::open(folder, registry, control).unwrap();
+    project.keep_history(|_| false).unwrap();
     (project, engine)
 }
 

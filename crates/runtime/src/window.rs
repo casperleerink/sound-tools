@@ -5,7 +5,7 @@
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the main instance of the project. Nor does it name the
 //! agent: the left panel is whatever
-//! the installed [`LeftPanelSlot`] makes. Its own keys are the app's: undo, the panel, opening
+//! the installed [`LeftPanelSlot`] makes, beside the history of the project in a tab of its own. Its own keys are the app's: undo, the panel, opening
 //! and quitting. Musical keys, such as space to play, are the project's, through
 //! [`GlobalKeys`].
 
@@ -47,7 +47,7 @@ use sound_ui::{
 };
 
 use audio_input::OpenInput;
-use history::HistoryPanel;
+use history::{HistoryPanel, PanelTab, PanelTabs};
 use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
@@ -67,7 +67,6 @@ actions!(
         FocusPrevious,
         ToggleLeftPanel,
         OpenCloseLeftPanel,
-        ToggleHistory,
         NewProject,
         OpenProject,
         Quit
@@ -90,13 +89,6 @@ const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.
 const LEFT_PANEL_WIDTH: f32 = 400.;
-const HISTORY_WIDTH: f32 = 320.;
-
-/// Installed by the app: its windows keep the history of their project. A test window keeps
-/// none, so its project folder holds only what the test wrote.
-pub struct KeepHistory;
-
-impl Global for KeepHistory {}
 
 /// What the window shows in its left panel, given by the composition root, which knows the
 /// agent: this module names no type of it. With none installed the window has no panel and
@@ -141,12 +133,45 @@ pub struct LeftPanel {
     composer: Option<Box<dyn Fn(&App) -> Entity<TextInput>>>,
     /// Sends the agent a message as if typed, and says whether it went.
     ask: Option<Asks>,
+    /// Asks the agent's small model a question of the window's own, such as a name.
+    quick_answer: Option<QuickAnswer>,
+    /// Shows the tabs of the panel in the view's header.
+    show_tabs: Option<Box<dyn Fn(AnyView, &mut App)>>,
     _observing: Subscription,
 }
 
 type Asks = Box<dyn Fn(&str, &mut Window, &mut App) -> bool>;
 
+/// A question for the agent's small model, and its answer to come. `None` while the agent is
+/// not set up.
+pub type QuickAnswer = Rc<
+    dyn Fn(
+        String,
+        &App,
+    ) -> Option<
+        std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<String>> + Send>>,
+    >,
+>;
+
 impl LeftPanel {
+    pub fn with_quick_answer(
+        mut self,
+        quick_answer: impl Fn(
+            String,
+            &App,
+        ) -> Option<
+            std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<String>> + Send>>,
+        > + 'static,
+    ) -> Self {
+        self.quick_answer = Some(Rc::new(quick_answer));
+        self
+    }
+
+    pub fn with_tabs(mut self, show_tabs: impl Fn(AnyView, &mut App) + 'static) -> Self {
+        self.show_tabs = Some(Box::new(show_tabs));
+        self
+    }
+
     pub fn with_composer(mut self, composer: impl Fn(&App) -> Entity<TextInput> + 'static) -> Self {
         self.composer = Some(Box::new(composer));
         self
@@ -168,10 +193,6 @@ impl LeftPanel {
                 && panel.busy != now
             {
                 panel.busy = now;
-                // A turn that ended made a moment of the history.
-                if !now && let Some(history) = &shell.history {
-                    history.update(cx, HistoryPanel::turn_ended);
-                }
                 cx.notify();
             }
         });
@@ -184,6 +205,8 @@ impl LeftPanel {
             view: view.into(),
             composer: None,
             ask: None,
+            quick_answer: None,
+            show_tabs: None,
             _observing: observing,
         }
     }
@@ -229,9 +252,9 @@ pub struct Shell {
     /// A newer template's code for files the project changed, until the composer merges or
     /// dismisses it.
     template_update: Option<crate::templates::Update>,
-    /// The history of the project, in a window of the app, and whether it shows.
-    history: Option<Entity<HistoryPanel>>,
-    history_open: bool,
+    /// The history of the project, in a tab of the left panel beside the agent.
+    history: Entity<HistoryPanel>,
+    tabs: Entity<PanelTabs>,
 }
 
 impl Shell {
@@ -310,12 +333,15 @@ impl Shell {
         let left_panel = slot
             .as_ref()
             .map(|slot| (slot.make)(session.clone(), window, cx));
+        let has_agent = slot.is_some();
         let left_panel_file = slot.and_then(|slot| slot.remembered);
         // One word read once before the first frame, as the last project is read before the
-        // window: drawing it closed and then opening it would flash.
-        let left_panel_open = left_panel_file
-            .as_deref()
-            .is_none_or(crate::app::left_panel_was_open);
+        // window: drawing it closed and then opening it would flash. Without the agent there
+        // is only the history, which waits to be opened.
+        let left_panel_open = has_agent
+            && left_panel_file
+                .as_deref()
+                .is_none_or(crate::app::left_panel_was_open);
         let project_menu =
             cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
         // For the notice of an update.
@@ -327,8 +353,19 @@ impl Shell {
         });
         let live = cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, cx));
         let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
-        let history = (cx.has_global::<KeepHistory>())
-            .then(|| cx.new(|cx| HistoryPanel::new(session.clone(), window, cx)));
+        let tabs = cx.new(|_| PanelTabs::new(has_agent));
+        cx.observe(&tabs, |_, _, cx| cx.notify()).detach();
+        if let Some(show_tabs) = left_panel
+            .as_ref()
+            .and_then(|panel| panel.show_tabs.as_ref())
+        {
+            show_tabs(tabs.clone().into(), cx);
+        }
+        let quick_answer = left_panel
+            .as_ref()
+            .and_then(|panel| panel.quick_answer.clone());
+        let history =
+            cx.new(|cx| HistoryPanel::new(session.clone(), tabs.clone(), quick_answer, window, cx));
         let mut shell = Self {
             project_menu,
             live,
@@ -347,7 +384,7 @@ impl Shell {
             recorders,
             template_update: None,
             history,
-            history_open: true,
+            tabs,
         };
         // Asked again after the open brought the rest up to date, which changes nothing more.
         let root = shell.session.read(cx).project().root().to_path_buf();
@@ -406,7 +443,7 @@ impl Shell {
     }
 
     pub fn left_panel_open(&self) -> bool {
-        self.left_panel.is_some() && self.left_panel_open
+        self.left_panel_open
     }
 
     /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
@@ -422,10 +459,12 @@ impl Shell {
 
     /// Opens the panel when it is closed, and focuses it.
     fn focus_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(panel) = &self.left_panel else {
-            return;
+        let focus = match &self.left_panel {
+            Some(panel) => (panel.focus)(cx),
+            None => self.history.focus_handle(cx),
         };
-        let focus = (panel.focus)(cx);
+        self.tabs
+            .update(cx, |tabs, cx| tabs.select(PanelTab::Agent, cx));
         self.remember_focus(window, cx);
         if !self.left_panel_open {
             self.set_left_panel_open(true, window, cx);
@@ -488,7 +527,13 @@ impl Shell {
 
     /// The panel left of the main area, when it is open.
     fn left_panel_element(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let panel = self.left_panel.as_ref().filter(|_| self.left_panel_open)?;
+        if !self.left_panel_open {
+            return None;
+        }
+        let view: AnyView = match (&self.left_panel, self.tabs.read(cx).selected()) {
+            (Some(panel), PanelTab::Agent) => panel.view.clone(),
+            _ => self.history.clone().into(),
+        };
         Some(
             div()
                 .id("left-panel")
@@ -504,83 +549,45 @@ impl Shell {
                 .w(px(LEFT_PANEL_WIDTH))
                 .h_full()
                 // Not drawn again with every frame of the window, such as of the playhead.
-                .child(
-                    panel
-                        .view
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                ),
+                .child(view.cached(StyleRefinement::default().size_full())),
         )
     }
 
     /// The icon right of the traffic lights that opens and closes the panel. While the panel
     /// is closed and busy, it carries the lavender indicator.
-    fn left_panel_icon(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let panel = self.left_panel.as_ref()?;
+    fn left_panel_icon(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let lavender = cx.theme().lavender;
-        let busy = panel.busy && !self.left_panel_open;
-        Some(
-            div()
-                .relative()
-                .flex_none()
-                .child(
-                    Button::icon_only("left-panel", "panel-left")
-                        .debug_selector(|| "left-panel-icon".to_string())
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Sm)
-                        .focus_handle(&self.left_panel_icon_focus)
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.open_or_close_left_panel(window, cx)
-                        })),
-                )
-                .when(busy, |icon| {
-                    icon.child(
-                        div()
-                            .debug_selector(|| "left-panel-busy".to_string())
-                            .absolute()
-                            .top(px(2.))
-                            .right(px(2.))
-                            .child(
-                                Indicator::new("left-panel-busy")
-                                    .size(IndicatorSize::Xs)
-                                    .color(lavender)
-                                    .pulse(true),
-                            ),
-                    )
-                }),
-        )
-    }
+        let busy =
+            (self.left_panel.as_ref()).is_some_and(|panel| panel.busy) && !self.left_panel_open;
 
-    /// The history right of the main area, when it is open.
-    fn history_element(&self) -> Option<impl IntoElement> {
-        let history = self.history.as_ref().filter(|_| self.history_open)?;
-        Some(
-            div()
-                .id("history")
-                .flex_none()
-                .w(px(HISTORY_WIDTH))
-                .h_full()
-                .child(history.clone()),
-        )
-    }
-
-    /// The icon at the right of the title row that shows and hides the history.
-    fn history_icon(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        self.history.as_ref()?;
-        Some(
-            div().flex_none().pr(px(12.)).child(
-                Button::icon_only("history-icon", "history")
-                    .debug_selector(|| "history-icon".to_string())
+        div()
+            .relative()
+            .flex_none()
+            .child(
+                Button::icon_only("left-panel", "panel-left")
+                    .debug_selector(|| "left-panel-icon".to_string())
                     .variant(ButtonVariant::Ghost)
                     .size(ButtonSize::Sm)
-                    .on_click(cx.listener(|shell, _, _, cx| shell.toggle_history(cx))),
-            ),
-        )
-    }
-
-    fn toggle_history(&mut self, cx: &mut Context<Self>) {
-        self.history_open = !self.history_open;
-        cx.notify();
+                    .focus_handle(&self.left_panel_icon_focus)
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.open_or_close_left_panel(window, cx)
+                    })),
+            )
+            .when(busy, |icon| {
+                icon.child(
+                    div()
+                        .debug_selector(|| "left-panel-busy".to_string())
+                        .absolute()
+                        .top(px(2.))
+                        .right(px(2.))
+                        .child(
+                            Indicator::new("left-panel-busy")
+                                .size(IndicatorSize::Xs)
+                                .color(lavender)
+                                .pulse(true),
+                        ),
+                )
+            })
     }
 
     /// What the main area shows with no view: in an empty project, the ways to start one.
@@ -945,7 +952,6 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &OpenCloseLeftPanel, window, cx| {
                 shell.open_or_close_left_panel(window, cx)
             }))
-            .on_action(cx.listener(|shell, _: &ToggleHistory, _, cx| shell.toggle_history(cx)))
             .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
                 choose_new_project(shell.session.clone(), cx)
             }))
@@ -972,12 +978,11 @@ impl Render for Shell {
                     .items_center()
                     .h(px(TOP_ROW_HEIGHT))
                     .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
-                    .children(self.left_panel_icon(cx))
+                    .child(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
                     .children(self.title_bar.clone())
                     .child(Self::drag_region().flex_1())
-                    .children(self.history_icon(cx))
                     .children(Self::window_controls(window)),
             )
             // The panel comes first, so tab reaches it before the main area, as it reads.
@@ -987,8 +992,7 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .children(self.left_panel_element(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(main))
-                    .children(self.history_element()),
+                    .child(div().flex_1().min_w_0().h_full().child(main)),
             )
             .child(self.notices(cx))
     }
@@ -1030,7 +1034,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-y", ToggleHistory, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-o", OpenProject, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
@@ -1146,7 +1149,6 @@ fn init(cx: &mut App) {
         crate::update::check_in_background(support, cx);
     }
     crate::agent_panel(support, cx).install(cx);
-    cx.set_global(KeepHistory);
 }
 
 /// A project that is open and plays on the chosen output, ready for its window.

@@ -18,6 +18,7 @@ mod envelope;
 mod event_tap;
 mod gain;
 mod graph;
+pub mod history;
 mod input;
 mod lfo;
 mod limiter;

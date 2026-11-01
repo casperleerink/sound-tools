@@ -9,13 +9,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use super::editing::{Applied, Change, Unloaded};
+use super::editing::{Applied, Change};
 use super::instance::{FOLDER_RECORD, InstanceId};
 use super::storage::{self, Form, OnDisk, PROJECT_FILE, PathTarget, RecordOnDisk, STATE_FOLDER};
 use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
 
-/// The undo label of a group of outside changes.
-const OUTSIDE_LABEL: &str = "File change";
+/// The label of a point of outside changes.
+pub(super) const OUTSIDE_LABEL: &str = "File change";
 
 /// What a rejected group would have changed. The next group that touches any of it takes all
 /// of it along, so fixing the file that failed applies the rest.
@@ -32,7 +32,7 @@ impl NotApplied {
 }
 
 impl Project {
-    /// Applies what changed at `paths` as one group and one undo step. This is what the
+    /// Applies what changed at `paths` as one group, and saves the folder as a point. This is what the
     /// watcher calls. Paths may be files or folders, inside the project folder, and may no
     /// longer exist. Returns how many records and project files changed.
     ///
@@ -44,8 +44,9 @@ impl Project {
     /// records as not applied. It applies again with the next group that touches one of them.
     ///
     /// Groups of one request (see [`Project::begin_request`]), or groups that follow each
-    /// other within [`OUTSIDE_UNDO_WINDOW`] when no request is open, are one undo step, as
-    /// long as no interface edit, undo or redo comes in between.
+    /// other within [`OUTSIDE_UNDO_WINDOW`] when no request is open, are one point, as long
+    /// as no interface edit, undo or redo comes in between. A rejected group is a point too:
+    /// the folder holds it.
     ///
     /// [`OUTSIDE_UNDO_WINDOW`]: super::OUTSIDE_UNDO_WINDOW
     pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
@@ -60,56 +61,15 @@ impl Project {
         paths: &[PathBuf],
         at: Instant,
     ) -> Result<usize, ProjectError> {
-        self.apply_paths(paths, Source::Outside, at, None)
+        let applied = self.apply_paths(paths, Source::Outside);
+        self.history.record_outside(OUTSIDE_LABEL, at)?;
+        applied
     }
 
-    /// Makes the files at `files`, relative to the project folder, hold these bytes, or
-    /// removes them for `None`, and applies them as one undo step named `label`: the road of a
-    /// change from outside, as if an agent wrote them. For going back to a point of the
-    /// history. Files outside `state/` and `project.json`, such as the code of the project's
-    /// tools, are only written; whoever watches them follows.
-    pub fn restore(
-        &mut self,
-        label: &str,
-        files: Vec<(PathBuf, Option<Vec<u8>>)>,
-    ) -> Result<usize, ProjectError> {
-        if self.read_only {
-            return Err(ProjectError::ReadOnly);
-        }
-        self.finish_all_runs()?;
-        let root = self.storage.root().to_path_buf();
-        let mut paths = Vec::new();
-        for (relative, bytes) in files {
-            let inside = relative
-                .components()
-                .all(|part| matches!(part, std::path::Component::Normal(_)));
-            if !inside {
-                continue;
-            }
-            let path = root.join(&relative);
-            let written = match bytes {
-                Some(bytes) => storage::write_atomically(&path, &bytes),
-                None => remove_with_empty_folders(&path, &root),
-            };
-            written.map_err(|source| {
-                ProjectError::Storage(storage::StorageError::Io {
-                    path: relative.display().to_string(),
-                    source,
-                })
-            })?;
-            paths.push(path);
-        }
-        self.apply_paths(&paths, Source::Outside, Instant::now(), Some(label))
-    }
-
-    /// `label` gives the changes an undo step of their own with that name. Without it they
-    /// join the outside step they follow, see [`Self::apply_outside_changes`].
     pub(crate) fn apply_paths(
         &mut self,
         paths: &[PathBuf],
         source: Source,
-        at: Instant,
-        label: Option<&str>,
     ) -> Result<usize, ProjectError> {
         // Ids to look at, with the one form a folder scan saw for it, if any.
         let mut queue = BTreeMap::new();
@@ -286,7 +246,7 @@ impl Project {
             observed.push((id, on_disk, path));
         }
 
-        let mut applied = match self.apply_leniently(changes, source) {
+        let applied = match self.apply_leniently(changes, source) {
             Ok(applied) => applied,
             Err(error) => {
                 // What the runtime last saw of these files stays known, so a delete in the
@@ -309,7 +269,7 @@ impl Project {
                 return Err(error);
             }
         };
-        applied.unloaded = self.note_unloaded(found, source);
+        self.note_unloaded(found, source);
         let observed = observed
             .into_iter()
             .filter(|(id, ..)| self.instances.contains_key(id));
@@ -339,10 +299,6 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
-            match label {
-                Some(label) => self.history.push_own(label, applied),
-                None => self.history.push_outside(OUTSIDE_LABEL, applied, at),
-            }
             self.write([].iter(), write_project_file)?;
         }
         self.rebind_waiting_for(&asset_folders)?;
@@ -350,13 +306,8 @@ impl Project {
     }
 
     /// Notes the bytes of each record file in `found` that does not load, and that the others
-    /// are gone or loaded. Returns what changed.
-    fn note_unloaded(
-        &mut self,
-        found: Vec<(InstanceId, Form, Option<Vec<u8>>)>,
-        source: Source,
-    ) -> Unloaded {
-        let mut changed = Unloaded::new();
+    /// are gone or loaded.
+    fn note_unloaded(&mut self, found: Vec<(InstanceId, Form, Option<Vec<u8>>)>, source: Source) {
         for (id, form, bytes) in found {
             let path = self.storage.record_path(&id, form);
             let loaded = (self.instances.get(&id)).is_some_and(|record| Form::of(record) == form);
@@ -366,14 +317,12 @@ impl Project {
                 continue;
             }
             // A reload of tools may read a change the watcher has not delivered yet. Its
-            // delivery makes the undo step.
+            // delivery makes the point.
             if source == Source::Load && !loaded && known.is_some() {
                 continue;
             }
-            let before = self.storage.set_unloaded(path.clone(), now.clone());
-            changed.insert(path, (before, now));
+            self.storage.set_unloaded(path, now);
         }
-        changed
     }
 
     /// Reads both record paths of `id` into `found`.
@@ -544,25 +493,4 @@ impl Project {
             error;
         self.report_problem(path.clone(), error.to_string());
     }
-}
-
-/// Removes the file, then each folder above it that it leaves empty, up to `root`.
-fn remove_with_empty_folders(
-    path: &std::path::Path,
-    root: &std::path::Path,
-) -> std::io::Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    }
-    let mut folder = path.parent();
-    while let Some(current) = folder.filter(|folder| *folder != root) {
-        // A folder that still holds something stays, and so does every one above it.
-        if std::fs::remove_dir(current).is_err() {
-            break;
-        }
-        folder = current.parent();
-    }
-    Ok(())
 }

@@ -270,11 +270,19 @@ fn a_failed_write_leaves_the_previous_file_complete() {
     assert_eq!(std::fs::read_dir(&state_folder).unwrap().count(), 1);
     let problem = harness.problem_at("state/dc.json").unwrap();
     assert!(problem.starts_with("not written"), "{problem}");
-    // The edit is live and undoable. The next write brings the file up to date.
+    // The edit is live, but no point: the folder never held it. The next write brings the
+    // file up to date.
     assert_eq!(harness.level(), 0.5);
-    harness.project.undo().unwrap();
-    harness.project.redo().unwrap();
-    assert!(harness.read("state/dc.json").contains("0.5"));
+    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    harness
+        .project
+        .commit("Again", {
+            let mut changes = Changes::new();
+            changes.set(&dc, Dc { value: 0.75 });
+            changes
+        })
+        .unwrap();
+    assert!(harness.read("state/dc.json").contains("0.75"));
     assert_eq!(harness.project.problems(), []);
 }
 
@@ -384,7 +392,7 @@ fn a_tool_change_to_one_that_owns_nothing_drops_the_connections_to_its_children(
 }
 
 #[test]
-fn undo_does_not_write_over_a_file_that_took_the_id() {
+fn undo_keeps_a_file_the_watcher_did_not_deliver_yet_as_a_point() {
     let mut harness = Harness::new();
     connected_dc(&mut harness, "dc", 0.25);
     let path = harness.path("state/dc.json");
@@ -397,13 +405,12 @@ fn undo_does_not_write_over_a_file_that_took_the_id() {
     // watcher has not delivered it yet.
     let unknown = r#"{"tool": "other.thing", "state": {}}"#;
     harness.write("state/dc.json", unknown);
-    assert_eq!(harness.project.undo_label(), Some("File change"));
-    let error = harness.project.undo().unwrap_err();
-    assert!(matches!(error, ProjectError::IdTaken(_)), "{error}");
-    assert_eq!(harness.read("state/dc.json"), unknown);
-    assert_eq!(harness.project.instances().count(), 0);
-    // The step is dropped, so undo is not stuck on it.
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    let points = harness.project.history().unwrap().order().len();
+    harness.project.undo().unwrap();
+    assert_eq!(harness.project.instances().count(), 1);
+    // The agent's file is not lost: it is a point of its own before the undo.
+    let history = harness.project.history().unwrap();
+    assert_eq!(history.order().len(), points + 1);
 }
 
 #[test]
@@ -499,8 +506,9 @@ fn a_project_file_that_did_not_load_is_not_written_over() {
             .bpm(),
         120.0
     );
+    // The tempo edit was never in the folder: undo brings back the broken file.
     harness.project.undo().unwrap();
-    assert!(harness.read("project.json").contains("90.0"));
+    assert_eq!(harness.read("project.json"), broken);
 }
 
 #[test]
