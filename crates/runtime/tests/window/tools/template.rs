@@ -69,7 +69,7 @@ fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn an_empty_project_starts_from_the_daw_template_in_place(cx: &mut TestAppContext) {
-    let folder = tempfile::tempdir().unwrap();
+    let folder = crate::support::new_project();
     // The window makes it for every project it opens.
     std::fs::create_dir_all(folder.path().join("extensions")).unwrap();
     let mut window = open_folder(cx, folder);

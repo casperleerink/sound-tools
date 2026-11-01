@@ -1108,8 +1108,7 @@ impl Opened {
     fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
         // An experiment: every project the window opens can have tools of its own, written
         // while it runs, so the folder for them is always there.
-        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
-        crate::load_tools(folder)
+        crate::load_tools(folder, true)
     }
 
     fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {

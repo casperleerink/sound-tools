@@ -29,11 +29,14 @@ pub fn named(name: &str) -> Option<&'static Template> {
     TEMPLATES.iter().find(|template| template.name == name)
 }
 
-/// Writes the files of `template` into `folder`, which must be new or an empty project: one
-/// that holds nothing but its `project.json` and what the runtime writes. Makes the folder when
-/// it is missing.
+/// Writes the files of `template` into `folder`, which must be missing, empty (see [`is_empty`])
+/// or an empty project: one that holds nothing but its `project.json` and what the runtime
+/// writes. Makes the folder when it is missing.
 pub fn write(folder: &Path, template: &Template) -> Result<()> {
-    if folder.exists() && !is_empty_project(folder, folder)? {
+    let empty_project = || -> Result<bool> {
+        Ok(folder.join(PROJECT_FILE).exists() && is_empty_project(folder, folder)?)
+    };
+    if folder.exists() && !is_empty(folder)? && !empty_project()? {
         let name = folder.file_name().unwrap_or(folder.as_os_str());
         bail!(
             "“{}” has files in it. Pick a new folder for a new project.",
@@ -298,6 +301,16 @@ mod tests {
         std::fs::write(theirs.join("state/a.json"), "{}").unwrap();
         write(&theirs, daw).unwrap_err();
         assert!(!theirs.join(crate::PROJECT_FILE).exists());
+        // Their own agent docs are theirs too, not what the runtime wrote, while there is no
+        // project; hidden files alone are an empty folder.
+        let docs = folder.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("CLAUDE.md"), "# my rules").unwrap();
+        write(&docs, daw).unwrap_err();
+        let hidden = folder.path().join("hidden");
+        std::fs::create_dir_all(&hidden).unwrap();
+        std::fs::write(hidden.join(".DS_Store"), "").unwrap();
+        write(&hidden, daw).unwrap();
 
         // An empty project the window opened takes it in place.
         let opened = folder.path().join("opened");
