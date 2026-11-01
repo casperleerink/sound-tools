@@ -1557,19 +1557,28 @@ impl Live {
                         None
                     }
                 };
+                let mut refused = None;
                 match (base, ops) {
-                    (Some(mut table), ops) => {
-                        let applied = ops.and_then(|ops| {
-                            Rc::make_mut(&mut table).apply(ops)?;
-                            Ok(table)
-                        });
+                    (Some(mut table), Ok(ops)) => {
+                        let applied = Rc::make_mut(&mut table).apply(ops).map(|()| table);
+                        refused = applied.as_ref().err().cloned();
                         entry.stale &= !(mount && applied.is_ok());
                         entry.tree = Some(applied);
                     }
-                    (None, Err(error)) => entry.tree = Some(Err(error)),
+                    // Bun told the tool's failure already.
+                    (_, Err(error)) => entry.tree = Some(Err(error)),
                     (None, Ok(_)) => {}
                 }
                 crate::bun::count_batch(started.elapsed());
+                let tool = entry.tool.clone();
+                let problem = refused.and_then(|error| {
+                    let tools = self.tools.borrow();
+                    Some(find(&tools, &tool)?.problem(format!("its card failed: {error}")))
+                });
+                if let Some(problem) = problem {
+                    self.problems.push(problem);
+                    self.report(cx);
+                }
             }
             Event::Reads { instance, reads } => {
                 self.reads.insert(instance, reads);

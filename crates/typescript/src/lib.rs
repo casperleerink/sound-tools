@@ -46,7 +46,7 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
-pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
+pub use card::{TitleBar, drawn_nodes, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
 pub use card::{node_counts, page_has_text, page_ready};
 #[cfg(feature = "test-support")]

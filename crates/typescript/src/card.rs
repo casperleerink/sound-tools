@@ -40,6 +40,7 @@ use crate::tree::{NodeTable, Props, Uses};
 use crate::window::{CardsChanged, Live, Surface, state_of};
 
 use self::drawing::Drawing;
+pub use self::drawing::drawn_nodes;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
@@ -99,8 +100,8 @@ pub(crate) struct TypeScriptCard {
     focus_before_overlays: Option<WeakFocusHandle>,
     /// The cards of other instances it shows, by node.
     embedded: HashMap<u64, Embedded>,
-    /// The div it shows in the window's title bar, by its slot and index, as last drawn.
-    title_bar: Option<(usize, Vec<usize>)>,
+    /// The slot of the div it shows in the window's title bar, as last drawn.
+    title_bar: Option<usize>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
     parts: RefCell<Option<((u64, Option<usize>), Rc<Parts>)>>,
@@ -116,8 +117,8 @@ pub(crate) struct TypeScriptCard {
     /// Where the next menu opens: under the div, button or title last pressed with the left
     /// button. `None` opens it at the pointer, as after a press of a space or a right press.
     anchor: Rc<Cell<Option<Point<Pixels>>>>,
-    /// The scroll of each div that scrolls, by its place in the tree.
-    scrolls: RefCell<HashMap<Vec<usize>, ScrollHandle>>,
+    /// The scroll of each div that scrolls, by its name.
+    scrolls: RefCell<HashMap<String, ScrollHandle>>,
     /// Where each embedded card in a div that scrolls was last laid out, by node, as if it
     /// were not scrolled.
     scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
@@ -278,12 +279,11 @@ pub(crate) struct Parts {
     lifted: HashSet<u64>,
 }
 
-/// A space the layer over a page draws: its slot and place in the tree, and where the page laid
-/// it out and cut it off, in the window.
+/// A space the layer over a page draws: its slot, and where the page laid it out and cut it
+/// off, in the window.
 #[derive(Clone)]
 pub(crate) struct Lifted {
     slot: usize,
-    index: Vec<usize>,
     bounds: Bounds<Pixels>,
     mask: Bounds<Pixels>,
 }
@@ -557,7 +557,7 @@ impl TypeScriptCard {
                 ..Parts::default()
             });
         };
-        let title = self.title_bar.as_ref().map(|(slot, _)| *slot);
+        let title = self.title_bar;
         let key = (table.version(), title);
         if let Some((at, parts)) = &*self.parts.borrow()
             && *at == key
@@ -719,7 +719,7 @@ impl TypeScriptCard {
                 let Props::Space(space) = &entry.props else {
                     return None;
                 };
-                let view = drawing.space_view(space, &place.index);
+                let view = drawing.space_view(id, space);
                 let element = drawing.space_element(id, space, &entry.children, view);
                 let Lifted { bounds, mask, .. } = place;
                 // Cut off where the page cuts it off, as by a div that scrolls.
@@ -794,13 +794,14 @@ impl TypeScriptCard {
             title_focus,
             lifting: None,
             card: self.handle.clone(),
+            generation: live.generation(),
             cx,
         }
     }
 
     /// The div its view shows in the window's title bar, from the feeds as last read.
     fn draw_title_bar(&self, window: &Window, cx: &App) -> Option<AnyElement> {
-        let (slot, index) = self.title_bar.clone()?;
+        let slot = self.title_bar?;
         let state = self.read_state()?;
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return None;
@@ -808,7 +809,7 @@ impl TypeScriptCard {
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.in_title_bar = true;
         drawing.out_of_page = true;
-        let bar = drawing.draw(slot, &index);
+        let bar = drawing.draw(slot);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
         self.feeds.drawn(Drawn::TitleBar);
@@ -897,7 +898,7 @@ impl Render for TypeScriptCard {
                 let mut drawing = self.drawing(state, &table, window, cx);
                 drawing.lifting = Some((&parts.lifted, &self.lifted));
                 let body = match table.root() {
-                    Some(root) => drawing.draw(root, &[]),
+                    Some(root) => drawing.draw(root),
                     None => div().into_any_element(),
                 };
                 let spaces = drawing.spaces;

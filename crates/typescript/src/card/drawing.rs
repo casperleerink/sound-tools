@@ -2,7 +2,9 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{
     AnyElement, App, Bounds, Context, ElementId, Empty, Entity, FocusHandle, MouseButton, Pixels,
@@ -52,7 +54,7 @@ pub(super) struct Drawing<'a> {
     pub(super) embedded: &'a HashMap<u64, Embedded>,
     pub(super) placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) hovers: Rc<RefCell<Hovers>>,
-    pub(super) scrolls: &'a RefCell<HashMap<Vec<usize>, ScrollHandle>>,
+    pub(super) scrolls: &'a RefCell<HashMap<String, ScrollHandle>>,
     pub(super) scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) button_down: bool,
     /// The scroll of the div that scrolls what it draws now, the innermost.
@@ -70,6 +72,8 @@ pub(super) struct Drawing<'a> {
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
     pub(super) lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
     pub(super) card: WeakEntity<TypeScriptCard>,
+    /// Which Bun made the nodes, whose ids start again with each.
+    pub(super) generation: u64,
     pub(super) cx: &'a App,
 }
 
@@ -80,6 +84,16 @@ impl Drawing<'_> {
         hear: impl Fn(&mut TypeScriptCard, &E, &mut Window, &mut Context<TypeScriptCard>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         listener(&self.card, hear)
+    }
+
+    /// An id for an element, from its key, else from its node: a row put in before it leaves it
+    /// its hover, press, tooltip and scroll. Keys never start with `#`, so neither meets the
+    /// other.
+    pub(super) fn element_name(&self, kind: &str, key: Option<&str>, node: u64) -> String {
+        match key {
+            Some(key) => key.to_string(),
+            None => format!("#{kind}-{}-{node}", self.generation),
+        }
     }
 
     pub(super) fn sources(&self) -> Sources<'_> {
@@ -96,9 +110,9 @@ impl Drawing<'_> {
         }
     }
 
-    /// Draws the node in `slot`. `index` tells siblings apart, so every element that needs an
-    /// id gets its own.
-    pub(super) fn draw(&mut self, slot: usize, index: &[usize]) -> AnyElement {
+    /// Draws the node in `slot`.
+    pub(super) fn draw(&mut self, slot: usize) -> AnyElement {
+        DRAWN_NODES.fetch_add(1, Ordering::Relaxed);
         let table = self.table;
         let Some(entry) = table.get(slot) else {
             return div().into_any_element();
@@ -108,7 +122,7 @@ impl Drawing<'_> {
             Props::Text(TextProps { text }) => {
                 SharedString::from(text.clone().unwrap_or_default()).into_any_element()
             }
-            Props::Space(space) => self.space(slot, id, space, &entry.children, index),
+            Props::Space(space) => self.space(slot, id, space, &entry.children),
             // A shape outside a space, or a marker, draws nothing.
             Props::Shape(_) | Props::Marker => div().into_any_element(),
             Props::Input(_) => match self.inputs.get(&id) {
@@ -123,12 +137,12 @@ impl Drawing<'_> {
                 }
                 None => div().into_any_element(),
             },
-            Props::Button(props) => self.button(id, props, index),
-            Props::Toggle(props) => self.toggle(id, props, index),
-            Props::Slider(props) => self.slider(props, index),
-            Props::Segmented(props) => self.segmented(id, props, index),
-            Props::Notice(props) => self.notice(id, props, index),
-            Props::Overlay(props) => self.overlay(id, props, &entry.children, index),
+            Props::Button(props) => self.button(id, props),
+            Props::Toggle(props) => self.toggle(id, props),
+            Props::Slider(props) => self.slider(id, props),
+            Props::Segmented(props) => self.segmented(id, props),
+            Props::Notice(props) => self.notice(id, props),
+            Props::Overlay(props) => self.overlay(id, props, &entry.children),
             Props::Icon(IconProps { name, size, color }) => {
                 let color = color.map_or(self.cx.theme().gray_950, |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())
@@ -189,27 +203,47 @@ impl Drawing<'_> {
                     })
                     .copied()
                     .collect();
-                // Rows of fixed heights that follow a space down are drawn only where they show:
-                // the heads of a hundred tracks cost what the dozen on screen cost.
-                let rows = (follow.as_ref().and_then(|follow| follow.y.as_ref()))
-                    .and_then(|key| self.spaces.get(key))
-                    .zip(style.stacks_down())
-                    .and_then(|(view, gap)| {
-                        let heights: Option<Vec<f32>> = (shown.iter())
-                            .map(|child| match table.get(*child).map(|child| &child.props) {
-                                Some(Props::Div(child)) => {
-                                    child.style.as_ref().and_then(|style| style.fixed_height())
-                                }
-                                _ => None,
-                            })
-                            .collect();
-                        let top = (view.top * view.scale().1) as f32;
-                        Some((heights?, gap, top..top + view.height as f32))
-                    });
                 let scroller = (style.scroll()).map(|_| {
-                    (self.scrolls.borrow_mut().entry(index.to_vec()))
-                        .or_default()
-                        .clone()
+                    (self.scrolls.borrow_mut().entry(self.element_name(
+                        "scroll",
+                        key.as_deref(),
+                        id,
+                    )))
+                    .or_default()
+                    .clone()
+                });
+                // Rows of fixed heights in a div that scrolls down, or that follows a space down,
+                // are drawn only where they show: a list of a thousand costs what the dozen on
+                // screen cost.
+                let showing = match (
+                    follow.as_ref().and_then(|follow| follow.y.as_ref()),
+                    &scroller,
+                ) {
+                    (Some(key), _) => (self.spaces.get(key)).map(|view| {
+                        let top = (view.top * view.scale().1) as f32;
+                        top..top + view.height as f32
+                    }),
+                    // Rows that hold what tab goes to all draw: tab finds only what is drawn.
+                    (None, Some(scroller))
+                        if style.scroll() == Some(tree::ScrollAxis::Y)
+                            && !shown.iter().any(|child| table.holds_focus(*child)) =>
+                    {
+                        let shown = shown_of(scroller, self.viewport);
+                        let top = style.padding_top();
+                        Some(shown.start - top..shown.end - top)
+                    }
+                    _ => None,
+                };
+                let rows = showing.zip(style.stacks_down()).and_then(|(showing, gap)| {
+                    let heights: Option<Vec<f32>> = (shown.iter())
+                        .map(|child| match table.get(*child).map(|child| &child.props) {
+                            Some(Props::Div(child)) => {
+                                child.style.as_ref().and_then(|style| style.fixed_height())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    Some((heights?, gap, showing))
                 });
                 let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
                 // A text it cuts off with "…" shows whole on hover, and only then. Under a div
@@ -246,12 +280,17 @@ impl Drawing<'_> {
                     }
                     children.push(match cut_text.take() {
                         Some(styled) => styled.into_any_element(),
-                        None => self.draw(*child, &[index, &[position]].concat()),
+                        None => self.draw(*child),
                     });
                 }
                 self.under_tooltip = under_tooltip;
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
+                }
+                let scrolled_rows =
+                    (scroller.clone()).filter(|_| rows.is_some() && follow.is_none());
+                if let Some(scroller) = scrolled_rows {
+                    children.push(drawn_again_when_more_shows(scroller, self.viewport));
                 }
                 if *on_hover == Some(true) {
                     let card = self.card.clone();
@@ -309,7 +348,7 @@ impl Drawing<'_> {
                 let inner = match stateful || own.is_some() {
                     false => element.into_any_element(),
                     true => {
-                        let name = element_name("div", key.as_deref(), index);
+                        let name = self.element_name("div", key.as_deref(), id);
                         let element = (element.id(ElementId::Name(name.clone().into())))
                             .when_some(pressed, |element, look| {
                                 // The hitbox the pressed look needs, on a div that hears nothing.
@@ -352,12 +391,13 @@ impl Drawing<'_> {
                 };
                 if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
-                    let name = element_name("scroll", key.as_deref(), index);
+                    let name = self.element_name("scroll", key.as_deref(), id);
                     let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
                     let scrolling = style.fade(scrolling, disabled).track_scroll(&scroller);
                     let scrolling = match axis {
                         tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
-                        tree::ScrollAxis::Y => scrolling.overflow_y_scroll(),
+                        // A column, or it would stretch what it scrolls to its own height.
+                        tree::ScrollAxis::Y => scrolling.flex_col().overflow_y_scroll(),
                     };
                     return scrolling.child(inner).into_any_element();
                 }
@@ -370,10 +410,7 @@ impl Drawing<'_> {
     /// is an empty box of its size: a rack of many effects costs what the cards on screen cost.
     fn scrolled_card(&self, node: u64, card: AnyElement, scroller: ScrollHandle) -> AnyElement {
         let showing = scroller.bounds();
-        // The scroll of a wheel past the end, as its div clamps it when laid out.
-        let offset = (scroller.offset())
-            .max(&-scroller.max_offset())
-            .min(&Point::default());
+        let offset = clamped_offset(&scroller);
         let last = self.scrolled_cards.borrow().get(&node).copied();
         let hidden = last.filter(|last| {
             !self.button_down && !showing.is_empty() && !(*last + offset).intersects(&showing)
@@ -408,15 +445,54 @@ pub(super) fn typing(window: &Window) -> bool {
     (window.context_stack().iter()).any(|context| context.contains(text_input::KEY_CONTEXT))
 }
 
-/// An id for an element, from its key, else from where it is in the tree.
-pub(super) fn element_name(kind: &str, key: Option<&str>, index: &[usize]) -> String {
-    match key {
-        Some(key) => key.to_string(),
-        None => {
-            let path: Vec<String> = index.iter().map(usize::to_string).collect();
-            format!("{kind}-{}", path.join("-"))
-        }
-    }
+/// The Bun and the node an element with no key was named after, see
+/// [`Drawing::element_name`].
+pub(super) fn named_node(name: &str) -> Option<(u64, u64)> {
+    let (rest, node) = name.strip_prefix('#')?.rsplit_once('-')?;
+    let generation = rest.rsplit_once('-')?.1;
+    Some((generation.parse().ok()?, node.parse().ok()?))
+}
+
+static DRAWN_NODES: AtomicU64 = AtomicU64::new(0);
+
+/// How many nodes the cards of this process drew, for budgets of what a list costs.
+pub fn drawn_nodes() -> u64 {
+    DRAWN_NODES.load(Ordering::Relaxed)
+}
+
+/// The scroll of a div as its layout clamps it: a wheel may have taken it past the end.
+fn clamped_offset(scroller: &ScrollHandle) -> Point<Pixels> {
+    (scroller.offset())
+        .max(&-scroller.max_offset())
+        .min(&Point::default())
+}
+
+/// What a div that scrolls down shows of what it scrolls, from its top: before its first
+/// layout, as much as the window shows.
+fn shown_of(scroller: &ScrollHandle, viewport: Size<Pixels>) -> Range<f32> {
+    let height = match scroller.bounds().size.height {
+        height if height > px(0.) => height,
+        _ => viewport.height,
+    };
+    let top = -f32::from(clamped_offset(scroller).y);
+    top..top + f32::from(height)
+}
+
+/// Asks for another draw of the rows of `scroller` when its layout shows more of them than
+/// this draw did, as when it grew taller.
+fn drawn_again_when_more_shows(scroller: ScrollHandle, viewport: Size<Pixels>) -> AnyElement {
+    let drawn = shown_of(&scroller, viewport);
+    canvas(
+        move |_, window, _| {
+            let shows = shown_of(&scroller, viewport);
+            if shows.start < drawn.start || shows.end > drawn.end {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .into_any_element()
 }
 
 /// The tooltip of a text that fits: none.

@@ -132,7 +132,7 @@ export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?:
  * shows. Without `unit`, a unit is a point. It hears the pointer where no shape that hears it is.
  */
 export interface SpaceProps extends PointerEvents {
-  /** Names it for `now.space(key)`, and keeps its scroll and zoom. */
+  /** Names it for `now.space(key)`, and keeps its scroll and zoom when the code changes. One space of a view has it. */
   key?: string;
   /** Its size in points; `grow` takes the room left in its parent. */
   width?: Bind<number>;
@@ -372,6 +372,7 @@ type LookKey = "background" | "color" | "borderColor" | "opacity";
 export type Look = Pick<Style, LookKey> & { [Key in Exclude<keyof Style, LookKey>]?: never };
 
 interface DivProps extends PointerEvents {
+  /** Names it for tests, `div-<key>`, and keeps its scroll when the code changes. One div of a view has it: a row's comes from its item. */
   key?: string;
   style?: Bind<Style>;
   /** It hears no press, release, click, drag or drop and shows its `disabled` look; its children still hear theirs, and it still scrolls. */

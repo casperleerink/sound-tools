@@ -675,11 +675,35 @@ pub(crate) struct NodeTable {
     uses: Uses,
     /// Goes up with every batch, so what a frame keeps of the nodes knows when to look again.
     version: u64,
+    /// How many divs, and how many spaces, have each key: one, or the window would mix up
+    /// their hover, press and scroll.
+    keyed: HashMap<Keyed, usize>,
 }
 
 impl NodeTable {
     pub(crate) fn root(&self) -> Option<usize> {
         self.root
+    }
+
+    /// Whether the node `id` is still there.
+    pub(crate) fn has(&self, id: u64) -> bool {
+        self.ids.contains_key(&id)
+    }
+
+    /// Whether the node in `slot`, or one in it, may take the keys: the window finds what tab
+    /// goes to among what it drew.
+    pub(crate) fn holds_focus(&self, slot: usize) -> bool {
+        let Some(entry) = self.get(slot) else {
+            return false;
+        };
+        let takes = match &entry.props {
+            Props::Div(div) => div.tab_stop == Some(true),
+            Props::Space(space) => space.drag.is_some(),
+            Props::Shape(shape) => shape.drag.is_some(),
+            Props::Text(_) | Props::Icon(_) | Props::Marker => false,
+            _ => true,
+        };
+        takes || entry.children.iter().any(|child| self.holds_focus(*child))
     }
 
     pub(crate) fn get(&self, slot: usize) -> Option<&Entry> {
@@ -811,28 +835,16 @@ impl NodeTable {
         false
     }
 
-    /// The div that says `titleBar`: its slot, and its place in the tree as a draw names it,
-    /// the place of each node among what its parent shows.
-    pub(crate) fn title_bar(&self) -> Option<(usize, Vec<usize>)> {
-        let mut todo = vec![(self.root?, Vec::new())];
-        while let Some((slot, index)) = todo.pop() {
+    /// The slot of the div that says `titleBar`.
+    pub(crate) fn title_bar(&self) -> Option<usize> {
+        let mut todo = vec![self.root?];
+        while let Some(slot) = todo.pop() {
             let Some(entry) = self.get(slot) else {
                 continue;
             };
             match &entry.props {
-                Props::Div(div) if div.title_bar == Some(true) => return Some((slot, index)),
-                Props::Div(_) | Props::Overlay(_) => {
-                    let shown = (entry.children.iter()).filter(|child| {
-                        !matches!(
-                            self.get(**child).map(|child| &child.props),
-                            Some(Props::Marker)
-                        )
-                    });
-                    let places = shown.enumerate();
-                    todo.extend(
-                        places.map(|(place, child)| (*child, [&index[..], &[place]].concat())),
-                    );
-                }
+                Props::Div(div) if div.title_bar == Some(true) => return Some(slot),
+                Props::Div(_) | Props::Overlay(_) => todo.extend(&entry.children),
                 _ => {}
             }
         }
@@ -858,6 +870,7 @@ impl NodeTable {
     pub(crate) fn apply(&mut self, ops: Vec<Op>) -> Result<(), String> {
         self.version += 1;
         let mut emptied = HashSet::new();
+        let mut keyed = Vec::new();
         for op in ops {
             match op {
                 Op::Create(id, props) => {
@@ -871,6 +884,10 @@ impl NodeTable {
                     }
                     let uses = uses_of(&props);
                     self.counts.count(&uses, true);
+                    if let Some(key) = key_of(&props) {
+                        *self.keyed.entry(key.clone()).or_default() += 1;
+                        keyed.push(key);
+                    }
                     let entry = Entry {
                         id,
                         props,
@@ -886,6 +903,7 @@ impl NodeTable {
                     let Some(entry) = self.entry_mut(slot) else {
                         return Err(format!("no node {id}"));
                     };
+                    let key_before = key_of(&entry.props);
                     match (&mut entry.props, change) {
                         (Props::Div(props), Change::Div(change)) => props.apply(change),
                         (Props::Text(props), Change::Text(change)) => props.apply(change),
@@ -906,10 +924,20 @@ impl NodeTable {
                         _ => return Err(format!("a change of another kind of node for {id}")),
                     }
                     let after = uses_of(&entry.props);
+                    let key_after = key_of(&entry.props);
                     if after != entry.uses {
                         let before = std::mem::replace(&mut entry.uses, after.clone());
                         self.counts.count(&before, false);
                         self.counts.count(&after, true);
+                    }
+                    if key_before != key_after {
+                        if let Some(key) = key_before {
+                            self.unkey(&key);
+                        }
+                        if let Some(key) = key_after {
+                            *self.keyed.entry(key.clone()).or_default() += 1;
+                            keyed.push(key);
+                        }
                     }
                 }
                 Op::Insert {
@@ -974,7 +1002,28 @@ impl NodeTable {
             self.tidy(parent);
         }
         self.uses = self.counts.uses();
-        Ok(())
+        if let Some((kind, key)) = keyed.iter().find(|(_, key)| key.starts_with('#')) {
+            return Err(format!(
+                "the key \"{key}\" of a {kind} starts with \"#\", which the window keeps for \
+                 what has no key: start it with another character"
+            ));
+        }
+        match keyed.iter().find(|key| self.keyed.get(*key) > Some(&1)) {
+            Some((kind, key)) => Err(format!(
+                "two {kind}s of this view have the key \"{key}\": give each its own, such as \
+                 one made from the item a row of a list shows"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    fn unkey(&mut self, key: &Keyed) {
+        if let Some(count) = self.keyed.get_mut(key) {
+            *count -= 1;
+            if *count == 0 {
+                self.keyed.remove(key);
+            }
+        }
     }
 
     /// Takes the children that are gone out of the list of `parent`.
@@ -996,9 +1045,23 @@ impl NodeTable {
         };
         self.ids.remove(&entry.id);
         self.counts.count(&entry.uses, false);
+        if let Some(key) = key_of(&entry.props) {
+            self.unkey(&key);
+        }
         for child in entry.children {
             self.remove(child);
         }
+    }
+}
+
+/// The kind of a node with a key, and its key: a div and a space may share one.
+type Keyed = (&'static str, String);
+
+fn key_of(props: &Props) -> Option<Keyed> {
+    match props {
+        Props::Div(div) => Some(("div", div.key.clone()?)),
+        Props::Space(space) => Some(("space", space.key.clone()?)),
+        _ => None,
     }
 }
 
@@ -1896,7 +1959,7 @@ pub(crate) enum Weight {
     Semibold,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ScrollAxis {
     X,
@@ -2093,17 +2156,29 @@ impl Style {
         }
     }
 
-    /// The height its style fixes, if any.
+    /// The height it lays out at whatever it holds, if its style fixes one: no minimum,
+    /// maximum or growth changes it, and it takes its room in its parent.
     pub(crate) fn fixed_height(&self) -> Option<f32> {
-        self.height
+        match (self.min_height, self.max_height, self.grow, self.absolute) {
+            (None, None, false, None) => self.height,
+            _ => None,
+        }
     }
 
-    /// Whether it stacks its children down, and the room between them.
+    /// Whether it stacks its children down, one under the other, and the room between them.
     pub(crate) fn stacks_down(&self) -> Option<f32> {
+        if self.wrap {
+            return None;
+        }
         match self.direction {
             Some(Direction::Row) => None,
             Some(Direction::Column) | None => Some(self.gap.unwrap_or(0.0)),
         }
+    }
+
+    /// The room above its first child.
+    pub(crate) fn padding_top(&self) -> f32 {
+        (self.padding_top.or(self.padding_y).or(self.padding)).unwrap_or(0.0)
     }
 
     /// Its layout and look, `disabled` or not.
@@ -2350,5 +2425,44 @@ mod tests {
                 .contains("into itself")
         );
         assert_eq!(table.children_of(1), [2]);
+    }
+
+    #[test]
+    fn a_key_names_one_div_and_one_space_and_passes_on_when_its_node_goes() {
+        let mut table = NodeTable::default();
+        let made = ops(serde_json::json!([
+            ["create", 1, "div", {}],
+            ["create", 2, "div", { "key": "row" }],
+            ["create", 3, "space", { "key": "row" }],
+            ["insert", 1, 2, null], ["insert", 1, 3, null], ["root", 1],
+        ]));
+        table.apply(made.unwrap()).unwrap();
+        // A part shown again makes its new node before its old one goes.
+        let again = ops(serde_json::json!([
+            ["create", 4, "div", { "key": "row" }],
+            ["insert", 1, 4, null], ["remove", 2],
+        ]));
+        table.apply(again.unwrap()).unwrap();
+        let renamed = ops(serde_json::json!([
+            ["create", 5, "div", { "key": "other" }],
+            ["insert", 1, 5, null], ["set", 4, "div", { "key": "free" }],
+        ]));
+        table.apply(renamed.unwrap()).unwrap();
+        let twice = ops(serde_json::json!([["set", 5, "div", { "key": "free" }]]));
+        let error = table.apply(twice.unwrap()).unwrap_err();
+        assert!(
+            error.contains("two divs") && error.contains("\"free\""),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_key_that_starts_with_a_hash_is_an_error_and_one_with_a_hash_inside_is_not() {
+        let mut table = NodeTable::default();
+        let fine = ops(serde_json::json!([["create", 1, "div", { "key": "list#1000000" }]]));
+        table.apply(fine.unwrap()).unwrap();
+        let taken = ops(serde_json::json!([["create", 2, "space", { "key": "#space-0-5" }]]));
+        let error = table.apply(taken.unwrap()).unwrap_err();
+        assert!(error.contains("starts with"), "{error}");
     }
 }
