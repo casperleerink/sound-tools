@@ -2,7 +2,7 @@
 
 Read `agent-docs/extensions.md` first. The types of children and connections are in `extensions/sdk/tools.ts`, the records of the built-in tools in `extensions/sdk/records.ts`.
 
-A tool with a `behaviour` is a parent. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth`, `delay` or a `plugin` (enable its extension in `project.json`: `plugin-host` for a plugin), a tool of this project, or one with only `state`: data, such as a take a recorder saves. The behaviour is a pure function of the record and the children that says how they connect. A parent has one voice.
+A tool with a `behaviour` is a parent. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth`, `delay` or a `plugin` (enable its extension in `project.json`: `plugin-host` for a plugin), a tool of this project, or one with only `state`: data. The behaviour is a pure function of the record and the children that says how they connect. A parent has one voice.
 
 ```ts
 import { list, text, tool, type Connection, type Declaration } from "./sdk";
@@ -25,12 +25,12 @@ tool({
 });
 ```
 
-- It gets `state` and `children`, each `{ name, tool, state }`, every field at its default where a record leaves it out. Give it the return type `Declaration`: without it TypeScript lets a misspelled key through and blames the whole behaviour.
+- It gets `state` and `children`, each `{ name, tool, state }`. Give it the return type `Declaration`: without it TypeScript lets a misspelled key through and blames the whole behaviour.
 - A parent whose children are fixed names them and their tools in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `play`, `send` and child `state`. For a tool of this project, name what `tool` returns: `export const drone = tool({ ... })` in its file, then `import { drone } from "./drone"` and `{ lead: drone, fx: "utility" }`; what its `output` sends is not checked. `takes("notes")` in place of a tool is any tool that takes notes, as `offers("notes")` lists them; `addOffer` puts the one picked in its place. A child it does not name is a problem of the parent's record; `children: {}` allows none.
 - A child may be a parent too, at `state/<name>/<child>/instance.json`. Each child's `children` holds its own, at any depth, and `update` edits, adds (with their `children`) and takes out records at any depth; one taken out takes all it holds. A name in `children` that ends in `*` stands for every other name that starts as it does: `{ "ret-*": bus, "*": track }`.
 - A child's `name` is the id of its record and stays: keep a title in a field. Without typed `children`, cast a child's state: `children.find((child) => child.name === "bass")!.state as TimelineState`.
-- The behaviour runs in Bun when the record or a child changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
-- A missing child or port, or a behaviour that throws, is a problem of the parent's record. The rest plays.
+- The behaviour runs in Bun when what it reads changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
+- A missing child or port is a problem of the parent's record, and the rest plays. A behaviour that throws is one too, and the parent plays what it declared last.
 
 ## Connections
 
@@ -44,13 +44,7 @@ tool({
 
 ## Blocks
 
-The built-in children a parent plays with, each with its doc:
-
-- `timeline` (`agent-docs/timeline.md`) plays notes in time out of its output `notes`: once at their place in the song, or round after round with `"loop": true`. `send({ child: "bass", number: "launch" }, 1)` starts it at the next bar, `0` stops it there. A parent's view reads the outputs of each child as `<child>.<name>`: a looping timeline's `playing` is 1 while it plays.
-- `lane` (`agent-docs/lane.md`) moves a number of another child over the song, as automation.
-- `region` (`agent-docs/region.md`) plays an audio file at its place in the song.
-- `recorder` (`agent-docs/recorder.md`) records notes and the audio input, and hands each take to its parent's `onTake`.
-- `fader` (`agent-docs/fader.md`) and `meter` (`agent-docs/meter.md`) turn a sound up or down and show its level.
+The built-in children a parent plays with each have a doc, listed in `AGENTS.md`: `timeline` (notes in time, once or round after round), `lane` (automation), `region` (an audio file), `recorder` (takes), `fader` and `meter`. A parent's view reads the outputs of each child as `<child>.<name>`: a looping timeline's `playing` is 1 while it plays.
 
 A clip launcher, with two looping timelines `low` and `high`, an instrument `synth` and a utility `fx` as its children:
 

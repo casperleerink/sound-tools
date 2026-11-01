@@ -5,14 +5,9 @@ When no tool does what the composer asks, write one in TypeScript. It plays as s
 - **A device**: an effect or an instrument, a child of a parent, such as in the chain of a track of the DAW template. Its view is a card its parent shows.
 - **The project is the tool**: an experiment, a game, a thing to play live. One record at the top, and its view fills the window. See "A project that is one tool".
 
-To play from the computer keyboard, write nothing: with the computer keys on (cmd-K, or the keyboard button in the title row), the letter rows play what is selected.
+To play from the computer keyboard, write nothing: with the computer keys on (cmd-K), the letter rows play what is selected.
 
-This doc is enough for a first tool. Open a deeper one when the tool needs it:
-
-- `agent-docs/extensions-sound.md`: the sound does more than the examples here: feedback, buffers, files, stereo, voices, outputs a parent connects.
-- `agent-docs/extensions-view.md`: its own view: elements, values that change on screen, lists, popovers, a control loop, keys and MIDI.
-- `agent-docs/extensions-drawing.md`: shapes that move with the playhead, a level or a drag: a piano roll, a meter, a scope, a canvas.
-- `agent-docs/extensions-children.md`: it plays other tools: built-in devices, plugins, timelines, lanes, recorders, connections and cables.
+This doc is enough for a first tool. `AGENTS.md` lists the deeper `extensions-*` docs, for when the tool needs more.
 
 ## Where it goes
 
@@ -44,7 +39,7 @@ tool({
 - `name` is the `tool` of its records and the name of its doc, and not the name of a built-in tool.
 - `when` and `doc` are what the next agent reads in the map and in `agent-docs/<name>.md`. Say what the tool does to the sound and what each field does musically, also between its ends. The runtime adds where the record goes and a table of the fields, so do not repeat those.
 - `sound` returns a `Signal`. Left out, it passes `input` through. A sound that reads `input` is an effect; one that does not makes its own: a drone, a generative part, or an instrument that plays its notes.
-- `voices`: 1 when left out: one voice that runs all the time and follows the newest held note. Up to 8 for an instrument that plays chords: the sound then runs once per note.
+- `voices`: up to 8 for an instrument that plays chords: the sound then runs once per note. Left out, one voice follows the newest held note.
 
 ## The sound
 
@@ -53,8 +48,6 @@ tool({
 Combine signals with methods that take a signal or a number (`.plus`, `.times`, `.lt`...) and the functions of `sdk/sound.ts`: oscillators, filters, envelopes, `delay`, `note.freq` and `note.gate` for an instrument, `beat` for the piece. A built-in effect, such as the reverb or a plugin, is not part of a sound: it is a child (`agent-docs/extensions-children.md`).
 
 ## Fields
-
-Whatever reads a field follows it: a sound that reads a number glides to it at once, a behaviour or a view that reads it runs again.
 
 | Field | Record holds | In `sound` |
 | --- | --- | --- |
@@ -75,7 +68,7 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 Without `view`, it gets a knob per number field and number input, a row of steps per list of numbers, a chooser per file, options per choice, a switch per boolean and a button per bang. For your own, give `view` in a `.tsx` file. It runs once and makes what shows; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is 144 points tall: more is cut off. It is as wide as it needs, at least 200. So put things side by side: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
+A card gives its view 144 points of height: more is cut off. It is as wide as it needs, at least 168. So put things side by side: a `Knob` with a label is 56 by 72, so two rows of knobs with no gap fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
 ```tsx
 import { Button, Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
@@ -104,7 +97,7 @@ tool({
 
 ## Changing records
 
-`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest with every field at its default where the file leaves it out. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, so a `tick` may update every frame.
+`update(label, change)`, from a view, a handler or `tick`, also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest with every field at its default where the file leaves it out. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, a new one every 5 seconds at most, so a `tick` may update every frame.
 
 ```ts
 update("Add a note", ({ state }) => {
@@ -161,7 +154,7 @@ tool({
 
 ## The clock
 
-One clock plays the project, `clock` in all code. Nothing plays it but a tool: no key plays or stops unless a tool takes it. A page with `globalKeys: ["space"]` and `onKey: ({ clock }, { key, down }) => { if (key === "space" && down) (clock.playing ? clock.pause() : clock.play()); }` plays on space. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
+One clock plays the project, `clock` in a view, its handlers and `tick`. Nothing plays it but a tool: no key plays or stops unless a tool takes it. A page with `globalKeys: ["space"]` and `onKey: ({ clock }, { key, down }) => { if (key === "space" && down) (clock.playing ? clock.pause() : clock.play()); }` plays on space. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
 
 ## Check your work
 

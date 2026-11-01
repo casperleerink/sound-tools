@@ -406,8 +406,8 @@ export interface BinOut {
  * `x` through its spectrum: `each` runs once per bin of the last `size` samples, a power of
  * two from 256 to 8192, a quarter of `size` apart, and gives the bin as it goes out. Each bin
  * keeps its own memory from one spectrum to the next, so `feedback`, `hold` and `smooth` work
- * per bin; a signal from outside is read as it is at each spectrum. The sound comes out `size`
- * samples late. Inside `sound` only, in a tool of one voice.
+ * per bin; a signal from outside is read as it is at each spectrum. The sound comes out
+ * `size - 1` samples late. Inside `sound` only, in a tool of one voice.
  *
  * Given `[x, other]`, `each` also gets the bin of `other` at the same frequency, such as the
  * voice that shapes a synth in a vocoder; what goes out is still the spectrum of `x`.

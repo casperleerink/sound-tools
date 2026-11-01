@@ -142,7 +142,7 @@ export class Live {
   smooth(ms: number): Live { return this.ease({ kind: "smooth", ms }); }
   /** Rises with it at once and falls at most `perSecond` a second: a meter's bar. */
   fall(perSecond: number): Live { return this.ease({ kind: "fall", per_second: perSecond }); }
-  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.3)`. */
+  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.5)`. */
   hold(seconds: number): Live { return this.ease({ kind: "hold", seconds }); }
   private ease(ease: EaseNode): Live { return new Live({ op: "ease", x: this, ease, key: liveKey([this, ease]) }); }
 }

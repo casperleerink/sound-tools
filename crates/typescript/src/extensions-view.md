@@ -6,7 +6,7 @@ Read `agent-docs/extensions.md` first. Elements and their props are in `extensio
 - `<Input>` is a text field, or with `rows` a text area; keys typed there play nothing. A dialog's OK reads what `onChange` kept: its click leaves the field the keys, so nothing commits.
 - `<DeviceCard path>` shows the card of a child, or a deeper one: a built-in device's own card, a plugin's, or a tool's view.
 - A div's `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`.
-- A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up wherever the pointer went (a note off), and `onClick` after a left press and release on it with no drag, on the innermost node that hears it.
+- `onRelease` hears the button go up wherever the pointer went: a note off. A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.
 
 All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`): `state` and `children` with their defaults filled in, `outputs`, `time`, `clock`, `memory`, `now`, `update`, `send` and `play`, and what reaches the window: `openFile`, `render` (a child's sound into a file), `openMenu`, `confirm`, `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 
@@ -14,9 +14,9 @@ All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`): `state` 
 
 A view and a component run once. A value that changes (a field, a child, an output, `clock.playing`, `memory`, `size`) goes in a function, which the window runs again when what it read changes; only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the view fails with an error that says how: `x={note.start}` is `x={() => note.start}`. A handler reads values as it runs, so it needs no function around them.
 
-- `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. In a div that scrolls down, rows of one fixed `height` that hold nothing tab goes to draw only where they show: a long list costs what shows.
+- `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. In a column that scrolls down, rows that each have a fixed `height` and hold nothing tab goes to draw only where they show: a long list costs what shows.
 - `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows; `<Switch fallback>` of `<Match when>{() => ...}</Match>` shows the first that holds.
-- `<Popover open={open} onClose={() => setOpen(false)}>{() => ...}</Popover>` hangs under the div it is in, `<Dialog>` the same over the window, which hears no key while it is open. Escape or a press outside calls `onClose`; a press on that div is its own, so its button's `onClick` opens and closes it.
+- `<Popover open onClose>` hangs under the div it is in, `<Dialog>` over the window.
 - `timeout(run, ms)` and `interval(run, ms)` stop when what made them goes (the view, a `Show` part, a `For` row, the node whose handler made them) or when what they give is called, as a held button's `onRelease` ends its repeat. `onCleanup(run)` runs `run` then.
 - `memo(() => ...)` works a value out once for many functions. `selector(() => memory.selected)` gives `isPicked(key)`, which changes only for the keys that come or go, so a click selects one note at the cost of one.
 - Set a field of `memory` to change it, from any code. Replace a `Set` or a `Map`; its type refuses `.add`.
