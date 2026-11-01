@@ -77,11 +77,13 @@ pub enum HistoryError {
 }
 
 /// The name of a version, and the latest point it was made for: a version that grew since
-/// is named again.
+/// is named again, unless the name was given by hand.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Named {
     pub name: String,
     pub tip: String,
+    #[serde(default)]
+    pub by_hand: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -415,17 +417,33 @@ impl History {
             .copied()
     }
 
+    /// Names the version that starts at `start`, for its latest point `tip`. A name given by
+    /// hand stays: one that is not given by hand does not replace it. An empty name given by
+    /// hand takes it away.
     pub fn set_name(
         &mut self,
         start: ObjectId,
         name: &str,
         tip: ObjectId,
+        by_hand: bool,
     ) -> Result<(), HistoryError> {
-        let named = Named {
-            name: name.trim().to_string(),
-            tip: tip.to_string(),
-        };
-        self.meta.names.insert(start.to_string(), named);
+        let key = start.to_string();
+        let name = name.trim();
+        if !by_hand && self.meta.names.get(&key).is_some_and(|named| named.by_hand) {
+            return Ok(());
+        }
+        match (name.is_empty(), by_hand) {
+            (true, true) => _ = self.meta.names.remove(&key),
+            (true, false) => return Ok(()),
+            (false, _) => {
+                let named = Named {
+                    name: name.to_string(),
+                    tip: tip.to_string(),
+                    by_hand,
+                };
+                self.meta.names.insert(key, named);
+            }
+        }
         self.save_meta()
     }
 
@@ -931,7 +949,11 @@ mod tests {
             folder.write("state/a.json", &step.to_string());
             points.push(history.record("Step").unwrap().unwrap());
         }
-        history.set_name(first, " Sketch ", points[4]).unwrap();
+        history
+            .set_name(first, " Sketch ", points[4], true)
+            .unwrap();
+        // The agent's name does not replace one given by hand.
+        history.set_name(first, "Other", points[4], false).unwrap();
         let reopened = folder.history();
         let named = reopened.name(first).unwrap();
         assert_eq!(

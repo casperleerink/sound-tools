@@ -48,8 +48,15 @@ fn install_sidebar_with(
             let sidebar = cx
                 .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
             let (composer, asks) = (sidebar.clone(), sidebar.clone());
+            let (told, titled) = (sidebar.clone(), sidebar.clone());
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
                 .with_composer(move |cx| composer.read(cx).composer().clone())
+                .with_tell_agent(move |for_agent, shown, cx| {
+                    told.update(cx, |sidebar, cx| sidebar.set_note(for_agent, shown, cx))
+                })
+                .with_tabs(move |tabs, cx| {
+                    titled.update(cx, |sidebar, cx| sidebar.set_title(tabs, cx))
+                })
                 .with_ask(move |message, window, cx| {
                     asks.update(cx, |sidebar, cx| {
                         sidebar.ask_from_outside(message, window, cx)
@@ -1282,4 +1289,46 @@ fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
         .read(|cx| settings.read(cx).settings().approval_mode);
     assert_eq!(approval_mode, ApprovalMode::NeverAsk);
     drop(other);
+}
+
+/// Going back in the history puts a note before the next message, so the agent knows the
+/// files changed under it.
+#[gpui::test]
+fn going_back_in_the_history_tells_the_agent_with_the_next_message(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.edit(|project| {
+        let mut changes = sound_core::Changes::new();
+        let room = sound_core::InstanceId::new("room").unwrap();
+        changes.create(room, reverb::ReverbState::default());
+        project.commit("Add reverb", changes)
+    });
+    let tab = opened.control("panel-tab-history");
+    opened.click(tab);
+    opened.cx.executor().advance_clock(Duration::from_secs(1));
+    opened.cx.run_until_parked();
+    let start = opened.control("history-row-1");
+    opened.click(start);
+    assert!(!opened.path("state/room.json").exists());
+
+    opened.keys("secondary-l");
+    assert!(opened.find("agent-note").is_some());
+    opened.cx.simulate_input("Make it softer");
+    opened.keys("enter");
+    let Ok(Command::Send(message)) = commands.try_recv() else {
+        panic!("nothing was sent");
+    };
+    assert!(
+        message.text.starts_with("Note: the composer went back"),
+        "{}",
+        message.text
+    );
+    assert!(message.text.ends_with("Make it softer"));
+    assert!(opened.find("agent-note").is_none());
 }

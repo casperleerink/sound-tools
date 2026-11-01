@@ -148,7 +148,15 @@ pub struct Sidebar {
     saves: smol::channel::Sender<Save>,
     /// Shown in place of the word "Agent", see [`Self::set_title`].
     title: Option<AnyView>,
+    /// What goes before the next message, see [`Self::set_note`].
+    note: Option<Note>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// See [`Sidebar::set_note`].
+struct Note {
+    for_agent: String,
+    shown: String,
 }
 
 impl Sidebar {
@@ -333,6 +341,7 @@ impl Sidebar {
             instructions: None,
             saves: save_instructions(cx),
             title: None,
+            note: None,
             _subscriptions: subscriptions,
         };
         sidebar.update_menu(cx);
@@ -480,6 +489,14 @@ impl Sidebar {
             .filter(|_| matches!(self.setup, Setup::Ready { .. }))?;
         let provider = self.provider;
         Some(async move { provider.answer(&installed, &prompt).await })
+    }
+
+    /// Puts `for_agent` before the next message, for something the composer did outside the
+    /// thread that the agent should know, such as going back in the history. The composer sees
+    /// `shown` above the field until then, and can drop it. A newer note replaces it.
+    pub fn set_note(&mut self, for_agent: String, shown: String, cx: &mut Context<Self>) {
+        self.note = Some(Note { for_agent, shown });
+        cx.notify();
     }
 
     /// Shows `title` in the header in place of the word "Agent", such as tabs of the panel the
@@ -802,6 +819,39 @@ impl Sidebar {
         header.pl(px(16.)).child(back).child(title)
     }
 
+    /// The note the next message takes along, with a way to drop it.
+    fn note_line(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let note = self.note.as_ref()?;
+        let muted = cx.theme().gray_700;
+        Some(
+            div()
+                .debug_selector(|| "agent-note".to_string())
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .mx(px(16.))
+                .mb(px(4.))
+                .text_size(px(12.))
+                .text_color(muted)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(note.shown.clone()),
+                )
+                .child(
+                    Button::icon_only("drop-note", "x")
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Xs)
+                        .on_click(cx.listener(|sidebar, _, _, cx| {
+                            sidebar.note = None;
+                            cx.notify();
+                        })),
+                ),
+        )
+    }
+
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
@@ -983,7 +1033,8 @@ impl Render for Sidebar {
                 )
                 .map(|body| {
                     if self.conversation.can_continue() {
-                        body.child(self.composer_box(cx))
+                        body.children(self.note_line(cx))
+                            .child(self.composer_box(cx))
                     } else {
                         body.child(self.cannot_continue(cx))
                     }

@@ -308,11 +308,14 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
         let (composer, asks) = (sidebar.clone(), sidebar.clone());
-        let (answers, titled) = (sidebar.clone(), sidebar.clone());
+        let (answers, titled, told) = (sidebar.clone(), sidebar.clone(), sidebar.clone());
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
             .with_quick_answer(move |prompt, cx| {
                 let answer = answers.read(cx).quick_answer(prompt)?;
                 Some(Box::pin(answer) as _)
+            })
+            .with_tell_agent(move |for_agent, shown, cx| {
+                told.update(cx, |sidebar, cx| sidebar.set_note(for_agent, shown, cx))
             })
             .with_tabs(move |tabs, cx| titled.update(cx, |sidebar, cx| sidebar.set_title(tabs, cx)))
             .with_composer(move |cx| composer.read(cx).composer().clone())

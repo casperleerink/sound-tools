@@ -411,14 +411,15 @@ impl Project {
         applied
     }
 
-    /// Names the version that starts at `start`, for its latest point `tip`.
+    /// Names the version that starts at `start`, see [`crate::history::History::set_name`].
     pub fn name_version(
         &mut self,
         start: ObjectId,
         name: &str,
         tip: ObjectId,
+        by_hand: bool,
     ) -> Result<(), ProjectError> {
-        Ok(self.store()?.set_name(start, name, tip)?)
+        Ok(self.store()?.set_name(start, name, tip, by_hand)?)
     }
 
     /// Sets the version that starts at `start` aside, so it folds away, or brings it back.

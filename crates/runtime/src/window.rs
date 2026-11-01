@@ -136,6 +136,8 @@ pub struct LeftPanel {
     ask: Option<Asks>,
     /// Asks the agent's small model a question of the window's own, such as a name.
     quick_answer: Option<QuickAnswer>,
+    /// Puts a note before the agent's next message, see [`TellAgent`].
+    tell_agent: Option<TellAgent>,
     /// Shows the tabs of the panel in the view's header.
     show_tabs: Option<Box<dyn Fn(AnyView, &mut App)>>,
     _observing: Subscription,
@@ -154,7 +156,16 @@ pub type QuickAnswer = Rc<
     >,
 >;
 
+/// A note for the agent's next message, and what the composer sees of it until then, such as
+/// that they went back in the history.
+pub type TellAgent = Rc<dyn Fn(String, String, &mut App)>;
+
 impl LeftPanel {
+    pub fn with_tell_agent(mut self, tell: impl Fn(String, String, &mut App) + 'static) -> Self {
+        self.tell_agent = Some(Rc::new(tell));
+        self
+    }
+
     pub fn with_quick_answer(
         mut self,
         quick_answer: impl Fn(
@@ -207,6 +218,7 @@ impl LeftPanel {
             composer: None,
             ask: None,
             quick_answer: None,
+            tell_agent: None,
             show_tabs: None,
             _observing: observing,
         }
@@ -365,8 +377,19 @@ impl Shell {
         let quick_answer = left_panel
             .as_ref()
             .and_then(|panel| panel.quick_answer.clone());
-        let history =
-            cx.new(|cx| HistoryPanel::new(session.clone(), tabs.clone(), quick_answer, window, cx));
+        let tell_agent = left_panel
+            .as_ref()
+            .and_then(|panel| panel.tell_agent.clone());
+        let history = cx.new(|cx| {
+            HistoryPanel::new(
+                session.clone(),
+                tabs.clone(),
+                quick_answer,
+                tell_agent,
+                window,
+                cx,
+            )
+        });
         let mut shell = Self {
             project_menu,
             live,
@@ -447,10 +470,12 @@ impl Shell {
         self.left_panel_open
     }
 
-    /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
-    /// elsewhere, and closes it when the focus is in it.
+    /// cmd-L: opens the panel on the agent and focuses it, focuses it when it is open and the
+    /// focus is elsewhere, and closes it when the focus is in the agent.
     fn toggle_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.left_panel_open && self.left_panel_area.contains_focused(window, cx) {
+        let on_agent =
+            self.left_panel.is_none() || self.tabs.read(cx).selected() == PanelTab::Agent;
+        if self.left_panel_open && on_agent && self.left_panel_area.contains_focused(window, cx) {
             self.set_left_panel_open(false, window, cx);
             self.give_focus_back(window, cx);
         } else {

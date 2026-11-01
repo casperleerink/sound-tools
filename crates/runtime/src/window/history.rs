@@ -17,10 +17,11 @@ use sound_history::{Drawing, Graph, Layout, Row, Shape, Version};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
+use sound_ui::components::text_input::TextInput;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{ActiveTheme, Session};
 
-use super::QuickAnswer;
+use super::{QuickAnswer, TellAgent};
 
 const ROW_HEIGHT: f32 = 40.;
 const LANE_WIDTH: f32 = 16.;
@@ -122,6 +123,7 @@ pub(super) struct HistoryPanel {
     session: Entity<Session>,
     tabs: Entity<PanelTabs>,
     quick_answer: Option<QuickAnswer>,
+    tell_agent: Option<TellAgent>,
     layout: Layout,
     /// The folds that are open.
     open: BTreeSet<ObjectId>,
@@ -142,6 +144,8 @@ pub(super) struct HistoryPanel {
     /// Versions asked for a name, with the latest point they were asked for: one that failed
     /// is asked again only once it grew.
     asked: BTreeSet<(ObjectId, ObjectId)>,
+    /// The version being named by hand: its first and latest point, and the field.
+    renaming: Option<(ObjectId, ObjectId, Entity<TextInput>)>,
 }
 
 impl HistoryPanel {
@@ -149,6 +153,7 @@ impl HistoryPanel {
         session: Entity<Session>,
         tabs: Entity<PanelTabs>,
         quick_answer: Option<QuickAnswer>,
+        tell_agent: Option<TellAgent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -172,6 +177,7 @@ impl HistoryPanel {
             session,
             tabs,
             quick_answer,
+            tell_agent,
             layout: Layout::default(),
             open: BTreeSet::new(),
             laid_out: None,
@@ -184,6 +190,7 @@ impl HistoryPanel {
             naming: None,
             wants_older: false,
             asked: BTreeSet::new(),
+            renaming: None,
         }
     }
 
@@ -224,14 +231,27 @@ impl HistoryPanel {
         true
     }
 
-    fn go_to(&mut self, target: ObjectId, cx: &mut Context<Self>) {
-        let now = (self.session.read(cx).project().history()).and_then(|history| history.now());
-        if now == Some(target) || !self.may_move(cx) {
+    fn go_to(&mut self, target: ObjectId, version: usize, cx: &mut Context<Self>) {
+        let now = |cx: &App| {
+            (self.session.read(cx).project().history()).and_then(|history| history.now())
+        };
+        if now(cx) == Some(target) || !self.may_move(cx) {
             return;
         }
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| project.go_to(target))
         });
+        // The agent works on the files, which now hold another state: its next message says so.
+        if now(cx) == Some(target)
+            && let (Some(tell), Some(info)) = (&self.tell_agent, self.layout.versions.get(version))
+        {
+            let name = name_of(info, version);
+            let short: String = target.to_string().chars().take(8).collect();
+            let for_agent = format!(
+                "Note: the composer went back in the history of the project to point {short} of the version \"{name}\". The files hold that state now. The history is a git repository in .sound-tools/history."
+            );
+            tell(for_agent, format!("Went back to “{name}”"), cx);
+        }
         self.relayout(cx);
     }
 
@@ -258,6 +278,49 @@ impl HistoryPanel {
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| project.set_aside(start, aside))
         });
+        self.relayout(cx);
+    }
+
+    fn start_renaming(&mut self, version: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(info) = self.layout.versions.get(version) else {
+            return;
+        };
+        let (start, tip, name) = (info.start, info.tip, name_of(info, version));
+        let input = cx.new(|cx| {
+            let mut input =
+                TextInput::new(cx).placeholder("Name it, or leave empty for the agent's");
+            input.set_text(name, cx);
+            input.select_all_text(cx);
+            input
+        });
+        let panel = cx.entity().downgrade();
+        input.update(cx, |input, _| {
+            let submitted = panel.clone();
+            input.set_on_submit(move |name, _, cx| {
+                let name = name.to_string();
+                // Fails only when the panel is gone.
+                (submitted.update(cx, |panel, cx| panel.finish_renaming(Some(name), cx))).ok();
+            });
+            input.set_on_cancel(move |_, _, cx| {
+                (panel.update(cx, |panel, cx| panel.finish_renaming(None, cx))).ok();
+            });
+        });
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        self.renaming = Some((start, tip, input));
+        cx.notify();
+    }
+
+    /// Gives the version the name typed, by hand, so the agent's names leave it. An empty
+    /// name gives it back to the agent. `None` keeps what it had.
+    fn finish_renaming(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        let Some((start, tip, _)) = self.renaming.take() else {
+            return;
+        };
+        if let Some(name) = name {
+            self.session.update(cx, |session, cx| {
+                session.edit(cx, |project| project.name_version(start, &name, tip, true))
+            });
+        }
         self.relayout(cx);
     }
 
@@ -297,7 +360,7 @@ impl HistoryPanel {
             .filter_map(|version| self.layout.versions.get(*version))
             .filter(|version| {
                 let named = (version.name.as_ref())
-                    .is_some_and(|named| named.tip == version.tip.to_string());
+                    .is_some_and(|named| named.by_hand || named.tip == version.tip.to_string());
                 let grown = history.point(version.tip).map_or(u64::MAX, |tip| tip.time);
                 !named && grown <= settled && !self.asked.contains(&(version.start, version.tip))
             })
@@ -324,7 +387,7 @@ impl HistoryPanel {
                         return;
                     };
                     panel.session.update(cx, |session, cx| {
-                        session.edit(cx, |project| project.name_version(start, &name, tip))
+                        session.edit(cx, |project| project.name_version(start, &name, tip, false))
                     });
                     panel.relayout(cx);
                 })
@@ -353,7 +416,7 @@ impl HistoryPanel {
             })
             .map(|each| each.start)
             .collect();
-        let mut items = Vec::new();
+        let mut items = vec![MenuItem::new("rename", "Rename").selectable(false)];
         if !keep.is_empty() {
             items.push(
                 MenuItem::new("keep", "Keep as version")
@@ -409,7 +472,7 @@ impl HistoryPanel {
         &mut self,
         _: &Entity<DropdownMenu>,
         picked: &MenuPicked,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(version) = self.menu_version.take() else {
@@ -420,6 +483,7 @@ impl HistoryPanel {
             "merge-mine" => self.merge(version, true, cx),
             "aside" => self.toggle_aside(version, cx),
             "keep" => self.keep_as_version(cx),
+            "rename" => self.start_renaming(version, window, cx),
             _ => {}
         }
     }
@@ -550,26 +614,35 @@ impl HistoryPanel {
                 .unwrap_or_default();
             // In the colour of its line, so the name reads as that line's across others.
             let color = colors.version(row.version);
+            let renaming = (self.renaming.as_ref())
+                .filter(|(start, ..)| {
+                    (self.layout.versions.get(row.version))
+                        .is_some_and(|version| version.start == *start)
+                })
+                .map(|(.., input)| input.clone());
             div()
                 .flex()
                 .flex_col()
                 .gap(px(1.))
                 .min_w_0()
-                .child(
-                    div().flex().min_w_0().child(
-                        div()
-                            .ml(px(-6.))
-                            .px(px(6.))
-                            .rounded(px(6.))
-                            .bg(color.opacity(0.16))
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(color)
-                            .child(name),
-                    ),
-                )
+                .child(div().flex().min_w_0().map(|line| {
+                    match renaming {
+                        Some(input) => line.child(div().ml(px(-6.)).w_full().child(input)),
+                        None => line.child(
+                            div()
+                                .ml(px(-6.))
+                                .px(px(6.))
+                                .rounded(px(6.))
+                                .bg(color.opacity(0.16))
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(color)
+                                .child(name),
+                        ),
+                    }
+                }))
                 .child(
                     meta.child(ago)
                         .children(now_tag)
@@ -605,7 +678,7 @@ impl HistoryPanel {
             .hover(|style| style.bg(hover))
             .on_click(cx.listener(move |panel, _, _, cx| match (is_fold, key) {
                 (true, Some(key)) => panel.toggle_fold(key, cx),
-                _ => panel.go_to(point, cx),
+                _ => panel.go_to(point, version, cx),
             }))
             .on_mouse_down(
                 MouseButton::Right,

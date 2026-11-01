@@ -224,10 +224,11 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         self.begin_at(&message, names, SystemTime::now(), cx);
-        let message = Message {
-            text: message,
-            attachments,
+        let text = match self.note.take() {
+            Some(note) => format!("{}\n\n{message}", note.for_agent),
+            None => message,
         };
+        let message = Message { text, attachments };
         let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {
             let outcome = TurnOutcome::Failed {
