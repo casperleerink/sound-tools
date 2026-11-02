@@ -1,6 +1,7 @@
 //! Rendering and sample checks shared by the Tone tests.
 
 use sound_core::Engine;
+pub(crate) use sound_dsp::testing::peak;
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
@@ -27,12 +28,6 @@ pub(crate) fn rising_zero_crossings(samples: &[f32]) -> usize {
         .windows(2)
         .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
         .count()
-}
-
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
 /// The largest step a sine of this frequency and gain can take between two samples.

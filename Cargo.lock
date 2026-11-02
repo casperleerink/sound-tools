@@ -7004,6 +7004,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "tempfile",
 ]
 

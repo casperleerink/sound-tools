@@ -4,8 +4,9 @@
 //! sine itself.
 
 use sampler::SamplerState;
+use sound_dsp::testing::{largest_step, peak};
 
-use crate::support::{Harness, SAMPLE_RATE, largest_step, note, peak, sine};
+use crate::support::{Harness, SAMPLE_RATE, note, sine};
 
 /// A sine of 100 Hz steps by at most `2 pi 100 / 48000` of its amplitude per frame.
 fn sine_step(amplitude: f32) -> f32 {

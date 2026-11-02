@@ -1,60 +1,14 @@
 //! A rig of one source into one limiter into the device, and what the tests measure with.
 
-use std::f64::consts::TAU;
-
 use limiter::{Limiter, LimiterState, Meters};
-use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
-    ProcessContext, Processor,
-};
+use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node};
+pub(crate) use sound_dsp::testing::{Signal, Source, largest_step, peak, sine_at};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
-/// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
-
-/// A processor that plays a signal. The closure is made on the control thread; calling it
-/// allocates nothing.
-pub(crate) struct Source {
-    signal: Signal,
-}
-
-impl Source {
-    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
-
-    pub(crate) fn new(signal: Signal) -> Self {
-        Self { signal }
-    }
-}
-
-impl Processor for Source {
-    type Update = ();
-
-    fn ports(&self) -> Ports {
-        Ports::new().audio_output(Self::OUTPUT)
-    }
-
-    fn prepare(&mut self, _: &PrepareConfig) {}
-
-    fn update(&mut self, _: &mut ()) {}
-
-    fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
-        for (left, right) in left.iter_mut().zip(right.iter_mut()) {
-            [*left, *right] = (self.signal)();
-        }
-    }
-}
-
 /// A sine of this frequency and amplitude in both channels, from phase 0.
 pub(crate) fn sine(hz: f64, amplitude: f32) -> Signal {
-    let mut phase = 0.0_f64;
-    let step = hz / f64::from(SAMPLE_RATE);
-    Box::new(move || {
-        let sample = (TAU * phase).sin() as f32 * amplitude;
-        phase = (phase + step).fract();
-        [sample; 2]
-    })
+    sine_at(hz, amplitude, SAMPLE_RATE)
 }
 
 /// A steady value in both channels.
@@ -165,18 +119,4 @@ impl Rig {
         self.render(1);
         self.control.poll().unwrap().latency
     }
-}
-
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
-/// The largest step from one sample to the next.
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .map(|pair| (pair[1] - pair[0]).abs())
-        .fold(0.0, f32::max)
 }

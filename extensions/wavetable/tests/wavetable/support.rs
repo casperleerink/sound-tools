@@ -11,6 +11,7 @@ use sound_core::{
     OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry, State,
     Tempo, TempoMap, Ticks, TimeSignature,
 };
+pub(crate) use sound_dsp::testing::{largest_step, peak};
 use sound_notes::{
     AUDIO_OUTPUT, Amount, Bend, Length, NOTES_INPUT, Note, NoteEvent, Pedal, PedalChange, Pitch,
     Velocity,
@@ -276,25 +277,12 @@ pub(crate) fn ticks(seconds: f32) -> u64 {
     (seconds * TICKS_PER_SECOND as f32) as u64
 }
 
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
 pub(crate) fn rms(samples: &[f32]) -> f32 {
     let sum: f64 = samples
         .iter()
         .map(|sample| f64::from(*sample).powi(2))
         .sum();
     (sum / samples.len() as f64).sqrt() as f32
-}
-
-/// The largest step from one sample to the next.
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
 }
 
 /// The Blackman-Harris window at `index` of `length`: a partial leaks less than about 90 dB
