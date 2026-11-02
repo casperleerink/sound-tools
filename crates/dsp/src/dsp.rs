@@ -1,12 +1,12 @@
 //! Small building blocks of the built-in effects and instruments that more than one of them
 //! needs: a read of a [`DelayLine`] that fades from one length to another, a one-pole filter,
 //! the hold on what goes into a loop, the rounding of a step of a waveform, a noise
-//! generator and the Bessel function of a Kaiser window. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The
+//! generator and the Bessel function of a Kaiser window. Next to [`Smoothed`](sound_core::Smoothed) and [`DelayLine`]. The
 //! core itself uses only the Bessel function, for its [`Oversampler`](crate::Oversampler).
 
 use std::f32::consts::PI;
 
-use crate::DelayLine;
+use sound_core::DelayLine;
 
 /// A cutoff stays under this part of the sample rate, below the Nyquist frequency.
 pub(crate) const HIGHEST_PART: f32 = 0.45;

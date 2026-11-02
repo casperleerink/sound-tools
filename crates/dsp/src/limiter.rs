@@ -1,5 +1,5 @@
 //! The gain computer and lookahead of a peak limiter, one frame at a time, for the Limiter
-//! effect. Next to [`Smoothed`](crate::Smoothed) and [`Envelope`](crate::Envelope), a helper a
+//! effect. Next to [`Smoothed`](sound_core::Smoothed) and [`Envelope`](crate::Envelope), a helper a
 //! processor uses per frame. The core itself limits nothing.
 //!
 //! The gain goes down at once to what a peak needs, so nothing goes over the ceiling, and comes
@@ -13,7 +13,7 @@
 //! came down. With no lookahead, the rising edge of the first peak over the ceiling is flattened
 //! there: that is a hard clip of the edge, and the release then turns the next peaks down whole.
 
-use crate::CHANNELS;
+use sound_core::CHANNELS;
 
 /// Within this of its target the gain goes the rest of the way at once: 0.001 dB, far under
 /// what anyone hears, and it makes the gain exactly 1 again after a peak.

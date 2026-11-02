@@ -27,9 +27,11 @@ use std::f32::consts::PI;
 use std::f64::consts::TAU;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Lfo, LfoShape, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, all_zero, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{Lfo, LfoShape, all_zero, held};
 
 use crate::{DEPTH, FEEDBACK, MIX, Mode, ModulationState, PARAMETERS, RATE, SPREAD};
 

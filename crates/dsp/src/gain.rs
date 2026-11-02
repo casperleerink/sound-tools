@@ -4,7 +4,7 @@
 
 use std::f64::consts::{FRAC_PI_2, SQRT_2};
 
-use crate::processor::CHANNELS;
+use sound_core::CHANNELS;
 
 /// The factor a gain in decibels multiplies the samples by: 0 dB is exactly 1 and `-inf`
 /// exactly 0.

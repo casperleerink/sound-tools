@@ -1,7 +1,7 @@
 //! The wheels and the key pressure: where they stand, and what the bundled instruments do with
 //! them.
 
-use sound_core::{Lfo, LfoShape};
+use sound_dsp::{Lfo, LfoShape};
 
 use crate::{Amount, Bend, NoteEvent};
 

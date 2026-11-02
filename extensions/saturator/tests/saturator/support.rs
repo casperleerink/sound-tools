@@ -3,11 +3,11 @@
 use std::f64::consts::TAU;
 
 use saturator::{Saturator, SaturatorState};
-use sound_core::testing::amplitude_at;
 use sound_core::{
     AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
     ProcessContext, Processor,
 };
+use sound_dsp::testing::amplitude_at;
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
