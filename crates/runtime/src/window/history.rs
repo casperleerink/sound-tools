@@ -262,16 +262,19 @@ impl HistoryPanel {
             input.set_text(name, cx);
             input.select_all_text(cx);
             let submit = panel.clone();
-            input.set_on_submit(move |_, window, cx| {
-                (submit.update(cx, |panel, cx| panel.finish_renaming(true, window, cx))).ok();
+            input.set_on_submit(move |name, window, cx| {
+                let name = Some(name.to_string());
+                (submit.update(cx, |panel, cx| panel.finish_renaming(name, window, cx))).ok();
             });
             input.set_on_cancel(move |_, window, cx| {
-                (panel.update(cx, |panel, cx| panel.finish_renaming(false, window, cx))).ok();
+                (panel.update(cx, |panel, cx| panel.finish_renaming(None, window, cx))).ok();
             });
         });
         let focus = input.focus_handle(cx);
         cx.on_blur(&focus, window, |panel, window, cx| {
-            panel.finish_renaming(true, window, cx)
+            let name =
+                (panel.renaming.as_ref()).map(|(_, input)| input.read(cx).text().to_string());
+            panel.finish_renaming(name, window, cx)
         })
         .detach();
         window.focus(&focus, cx);
@@ -279,13 +282,17 @@ impl HistoryPanel {
         cx.notify();
     }
 
-    /// Keeps the name typed, or with `keep` false lets it go. An empty name gives naming back.
-    fn finish_renaming(&mut self, keep: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((start, input)) = self.renaming.take() else {
+    /// Keeps the name typed, or with `None` lets it go. An empty name gives naming back.
+    fn finish_renaming(
+        &mut self,
+        name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((start, _)) = self.renaming.take() else {
             return;
         };
-        if keep {
-            let name = input.read(cx).text().to_string();
+        if let Some(name) = name {
             self.edit(cx, |project| project.rename_version(start, Some(name)));
         }
         window.focus(&self.focus_handle, cx);

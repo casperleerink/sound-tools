@@ -103,3 +103,71 @@ fn without_the_agent_cmd_l_does_nothing(cx: &mut TestAppContext) {
     opened.keys("secondary-l");
     assert!(!opened.panel_open());
 }
+
+impl Opened<'_> {
+    fn right_click(&mut self, position: gpui::Point<gpui::Pixels>) {
+        let (button, modifiers) = (gpui::MouseButton::Right, gpui::Modifiers::default());
+        self.cx.simulate_mouse_move(position, None, modifiers);
+        self.cx.simulate_event(gpui::MouseDownEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        });
+        self.cx.simulate_event(gpui::MouseUpEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn pick_in_menu(&mut self, row: PointId, item: &str) {
+        let row = self.row(row);
+        self.right_click(row);
+        let item = self.control(&format!("menu-{item}"));
+        self.click(item);
+    }
+
+    fn line(&mut self, point: PointId) -> sound_core::Line {
+        self.project(|project| {
+            let history = project.history().unwrap();
+            history.line_of(point).unwrap().unwrap().clone()
+        })
+    }
+}
+
+#[gpui::test]
+fn the_menu_of_a_row_renames_and_folds_away_and_plus_one_brings_it_back(cx: &mut TestAppContext) {
+    let mut opened = support::open_new(cx);
+    let start = opened.current();
+    opened.edit(add_room).unwrap();
+    let first = opened.current();
+    opened.edit(|project| project.go_to(start)).unwrap();
+    opened.edit(add_room).unwrap();
+    let second = opened.current();
+    opened.edit(|project| project.go_to(first)).unwrap();
+    opened.keys("secondary-b");
+
+    opened.pick_in_menu(first, "rename");
+    opened.cx.simulate_input("Longer tail");
+    opened.keys("enter");
+    assert_eq!(opened.line(first).name.as_deref(), Some("Longer tail"));
+    assert!(opened.line(first).named_by_hand);
+
+    opened.pick_in_menu(second, "aside");
+    assert!(opened.line(second).set_aside);
+    let plus_one = format!("history-versions-{}", start.short());
+    let row = format!("history-row-{}", second.short());
+    assert!(opened.find(&row).is_none());
+    let plus_one = opened.control(&plus_one);
+    opened.click(plus_one);
+    assert!(opened.find(&row).is_some());
+    assert!(
+        opened
+            .find(&format!("history-hide-{}", start.short()))
+            .is_some()
+    );
+}
