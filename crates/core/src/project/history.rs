@@ -3,6 +3,8 @@
 //! back. A point continues the line of the point it came from, or starts a line of its own: a
 //! version, or work taken back with undo.
 
+#[cfg(test)]
+mod example;
 mod folder;
 mod git;
 
@@ -790,7 +792,17 @@ pub struct FileChange {
     pub after: Option<Vec<u8>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The time of new points, for a history made up in a test.
+    static CLOCK: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
 fn now_millis() -> u64 {
+    #[cfg(test)]
+    if let Some(clock) = CLOCK.get() {
+        return clock;
+    }
     let since_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
