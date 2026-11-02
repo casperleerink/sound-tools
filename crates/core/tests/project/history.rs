@@ -423,3 +423,26 @@ fn a_write_leaves_a_kept_file_named_like_its_temporary() {
     harness.project.undo().unwrap();
     assert_eq!(harness.read("state/dc.json.tmp"), "kept");
 }
+
+#[test]
+fn a_file_and_a_folder_of_the_same_name_merge_to_what_the_winning_side_holds() {
+    for keep_mine in [false, true] {
+        let mut harness = Harness::new();
+        let split = current(&harness);
+        harness.write_and_apply("extensions/lib/index.ts", "theirs");
+        let other = harness.project.history().unwrap().lines()[0].start;
+        harness.project.go_to(split).unwrap();
+        harness.write_and_apply("extensions/lib", "mine");
+
+        harness.project.merge(other, keep_mine).unwrap();
+        git(&harness, &["fsck", "--strict", "--no-dangling"]);
+        let files = git(&harness, &["ls-tree", "-r", "--name-only", "HEAD"]);
+        let kept = if keep_mine {
+            "extensions/lib"
+        } else {
+            "extensions/lib/index.ts"
+        };
+        assert_eq!(files.lines().collect::<Vec<_>>(), [kept, "project.json"]);
+        assert!(harness.path(kept).is_file());
+    }
+}

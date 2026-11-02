@@ -660,6 +660,7 @@ impl History {
                 None => _ = merged.remove(path),
             }
         }
+        settle_clashes(&mut merged, if keep_mine { &ours } else { &theirs });
         let tree = self.repository.write_tree(&merged)?;
         let now = self.kept.read(&self.root, &self.repository)?;
         self.last_outside = None;
@@ -777,6 +778,27 @@ impl History {
     pub(crate) fn end_request_at(&mut self, at: Instant) {
         if let Some(request) = &mut self.request {
             request.ended.get_or_insert(at);
+        }
+    }
+}
+
+/// One side may have added a file at `a` and the other files in a folder `a`, which cannot
+/// both be. What the side that wins the merge holds stays.
+fn settle_clashes(merged: &mut Files, winner: &Files) {
+    let clashing: Vec<String> = (merged.keys())
+        .filter(|path| {
+            let inside = format!("{path}/");
+            (merged.range(inside.clone()..).next())
+                .is_some_and(|(next, _)| next.starts_with(&inside))
+        })
+        .cloned()
+        .collect();
+    for file in clashing {
+        if winner.contains_key(&file) {
+            let inside = format!("{file}/");
+            merged.retain(|path, _| !path.starts_with(&inside));
+        } else {
+            merged.remove(&file);
         }
     }
 }
