@@ -1,11 +1,11 @@
-//! The sidebar: **New** for the window's header over it, the onboarding until the agent is set up, then the
-//! thread in a gpui `list` and the composer.
+//! The sidebar: the onboarding until the agent is set up, then the thread in a gpui `list` and
+//! the composer. Its **New** button goes in the window's header above it.
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **New**, or
 //! when a recent thread opens from its menu. Every message is one request of the session, so
-//! the agent's file writes for it are one undo step. The thread is saved on the machine as it
-//! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
-//! also opens the composer's instructions to the agent in place of the thread
+//! the agent's file writes for it are one point of history. The thread is saved on the machine
+//! as it goes (`crate::store`), and the sidebar opens on the project's last one. The menu of
+//! **New** also opens the composer's instructions to the agent in place of the thread
 //! (`super::instructions`).
 
 mod attachments;

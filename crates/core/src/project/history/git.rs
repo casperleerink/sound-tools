@@ -1,6 +1,5 @@
 //! A git repository written by hand, with what history needs: loose blobs, trees and commits,
-//! refs and a detached `HEAD`. Plain git reads it. Packs are not read: nothing here makes one,
-//! and git only packs when told to.
+//! refs and a detached `HEAD`. Plain git reads it.
 
 use std::collections::BTreeMap;
 use std::fmt;

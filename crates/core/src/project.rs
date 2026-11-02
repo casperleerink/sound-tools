@@ -310,7 +310,7 @@ impl Project {
 
     /// Sends one update to the processor that the behaviour of `instance` declared under
     /// `name`: something from an interface that should happen now, such as a preview note. It
-    /// is not an edit: nothing is saved and there is no undo step. It applies at the start of
+    /// is not an edit: nothing is saved and there is no point. It applies at the start of
     /// the next block.
     pub fn send<P: Processor>(
         &mut self,
@@ -528,7 +528,7 @@ impl Project {
     /// not load, so one that waited for its tool loads and one the new check refuses is a
     /// problem, and every instance of them runs the new behaviour. Where that fails, what
     /// plays stays as it is and the record says why, as for a failed file. Nothing is written
-    /// and nothing is an undo step: no record changed. Every other file is left to the
+    /// and nothing is a point: no record changed. Every other file is left to the
     /// watcher, so an outside edit of it is applied as one. All the tools of one save come in
     /// one call, which reads their records once. A tool the registry refuses, such as one
     /// named as a tool of the runtime, is left out and returned with why.
@@ -561,7 +561,7 @@ impl Project {
         let mut paths: Vec<PathBuf> = (live.iter()).map(|id| record_path(self, id)).collect();
         // Records of these tools that did not load: one waited for its tool, or the old check
         // or behaviour refused it. Not the whole folder: an outside edit the watcher has not
-        // delivered yet would apply here with no undo step and no derive, and then look like
+        // delivered yet would apply here with no point and no derive, and then look like
         // no change when it is delivered. A file that does not read keeps its problem.
         let state_folder = self.storage.state_folder();
         let not_loaded = (self.file_problems.keys())

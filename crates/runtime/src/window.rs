@@ -272,7 +272,7 @@ impl Shell {
         views.install(cx);
         devices.install(cx);
         // The click is a processor in the engine, not project state: attaching it writes
-        // nothing and adds no undo step. It starts off and silent.
+        // nothing and adds no point of history. It starts off and silent.
         session.update(cx, |session, cx| {
             match metronome::Click::attach(session.engine()) {
                 Ok(mut click) => {
@@ -1257,7 +1257,7 @@ impl Opened {
         let timing = stream.timing().clone();
         let session = cx.new(|cx| Session::new(project, cx));
         // A turn of a pinned knob in a plugin's window that is still open when the project
-        // closes is written as one undo step, as the headless loop does with `Plugins::close`.
+        // closes is written as one point of history, as the headless loop does with `Plugins::close`.
         // The release of the session is the last moment the project is at hand.
         cx.observe_release(&session, {
             let plugins = weak_plugins.clone();
