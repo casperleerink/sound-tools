@@ -15,20 +15,20 @@ use sound_core::{Line, Point, PointId};
 /// What the history holds, read once per change of it.
 pub(super) struct Page {
     /// Newest first.
-    pub points: Vec<Point>,
-    pub lines: Vec<Line>,
-    pub current: PointId,
+    pub(super) points: Vec<Point>,
+    pub(super) lines: Vec<Line>,
+    pub(super) current: PointId,
     /// The starts of the versions that are folded away.
-    pub folded_away: HashSet<PointId>,
+    pub(super) folded_away: HashSet<PointId>,
 }
 
 /// What the composer opened in the history.
 #[derive(Default)]
 pub(super) struct Opened {
     /// Folds, by their newest point.
-    pub folds: HashSet<PointId>,
+    pub(super) folds: HashSet<PointId>,
     /// Lines that would be hidden, by their start.
-    pub lines: HashSet<PointId>,
+    pub(super) lines: HashSet<PointId>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -41,25 +41,25 @@ pub(super) enum Name {
 
 #[derive(Debug)]
 pub(super) struct Row {
-    pub point: PointId,
+    pub(super) point: PointId,
     /// The start of its line.
-    pub line: PointId,
-    pub lane: usize,
+    pub(super) line: PointId,
+    pub(super) lane: usize,
     /// Which of the lane colours, the same for a line wherever it is.
-    pub color: usize,
+    pub(super) color: usize,
     /// The latest point of its line.
-    pub tip: bool,
-    pub current: bool,
-    pub name: Name,
-    pub time: SystemTime,
-    pub label: String,
+    pub(super) tip: bool,
+    pub(super) current: bool,
+    pub(super) name: Name,
+    pub(super) time: SystemTime,
+    pub(super) label: String,
     /// Versions folded away that split off here, by their start.
-    pub hidden_versions: Vec<PointId>,
+    pub(super) hidden_versions: Vec<PointId>,
     /// Undone work that leaves here, by its start, and how many points it has.
-    pub undone: Vec<PointId>,
-    pub undone_points: usize,
+    pub(super) undone: Vec<PointId>,
+    pub(super) undone_points: usize,
     /// Lines opened by hand that split off here.
-    pub opened: Vec<PointId>,
+    pub(super) opened: Vec<PointId>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -72,37 +72,37 @@ pub(super) enum Stroke {
 }
 
 /// A stroke from one row down to another.
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct Edge {
-    pub from: (usize, usize),
     /// Row and lane.
-    pub to: (usize, usize),
-    pub color: usize,
-    pub stroke: Stroke,
+    pub(super) from: (usize, usize),
+    pub(super) to: (usize, usize),
+    pub(super) color: usize,
+    pub(super) stroke: Stroke,
 }
 
 /// Points of a line between two of its rows.
 #[derive(Debug, PartialEq)]
 pub(super) struct Fold {
     /// Its newest point, which names it in [`Opened::folds`].
-    pub first: PointId,
-    pub lane: usize,
+    pub(super) first: PointId,
+    pub(super) lane: usize,
     /// The rows above and below it.
-    pub rows: (usize, usize),
-    pub count: usize,
-    pub open: bool,
+    pub(super) rows: (usize, usize),
+    pub(super) count: usize,
+    pub(super) open: bool,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct Layout {
-    pub rows: Vec<Row>,
-    pub lanes: usize,
-    pub edges: Vec<Edge>,
-    pub folds: Vec<Fold>,
+    pub(super) rows: Vec<Row>,
+    pub(super) lanes: usize,
+    pub(super) edges: Vec<Edge>,
+    pub(super) folds: Vec<Fold>,
 }
 
 impl Layout {
-    pub fn new(page: &Page, opened: &Opened) -> Self {
+    pub(super) fn new(page: &Page, opened: &Opened) -> Self {
         let points = &page.points;
         let index: HashMap<PointId, usize> = points
             .iter()

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
-use runtime::window::{LeftPanel, LeftPanelSlot};
+use runtime::window::LeftPanelSlot;
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Attachment, Command, Entry,
     ExitReason, Image, ImageFormat, Installed, Message, Model, Sidebar, StepId, StepKind,
@@ -47,14 +47,7 @@ fn install_sidebar_with(
             let settings = shared.clone();
             let sidebar = cx
                 .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
-            let (composer, asks) = (sidebar.clone(), sidebar.clone());
-            LeftPanel::new(sidebar, Sidebar::is_busy, cx)
-                .with_composer(move |cx| composer.read(cx).composer().clone())
-                .with_ask(move |message, window, cx| {
-                    asks.update(cx, |sidebar, cx| {
-                        sidebar.ask_from_outside(message, window, cx)
-                    })
-                })
+            runtime::sidebar_panel(sidebar, cx)
         })
         .install(cx);
         settings
