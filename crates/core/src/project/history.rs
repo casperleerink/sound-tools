@@ -84,6 +84,8 @@ impl Line {
 struct SavedLines {
     lines: Vec<Line>,
     next_number: u32,
+    #[serde(default)]
+    since: Since,
 }
 
 /// One point, as [`History::points`] reads it.
@@ -100,13 +102,12 @@ pub struct Point {
 }
 
 /// What came since the last point, which decides what the next one starts.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 enum Since {
+    #[default]
     Nothing,
     /// Undo, from this point on.
-    Undid {
-        from: PointId,
-    },
+    Undid { from: PointId },
     /// A point chosen in the history, or undo that keeps a version.
     WentBack,
 }
@@ -169,11 +170,9 @@ impl History {
                     Err(error) => return Err(error),
                 };
                 Self {
-                    root: root.to_path_buf(),
-                    head,
-                    head_tree: commit.tree,
                     lines: saved.lines,
                     next_number: saved.next_number.max(1),
+                    since: saved.since,
                     ..Self::empty(repository, root, kept, head, commit.tree)
                 }
             }
@@ -607,6 +606,7 @@ impl History {
         let saved = SavedLines {
             lines: self.lines.clone(),
             next_number: self.next_number,
+            since: self.since,
         };
         let bytes = serde_json::to_vec_pretty(&saved).map_err(io::Error::other)?;
         super::storage::write_atomically(&self.repository.folder().join(LINES_FILE), &bytes)?;
@@ -635,6 +635,7 @@ impl History {
         };
         self.last_outside = None;
         self.move_head(to)?;
+        self.store()?;
         Ok(changed)
     }
 

@@ -446,3 +446,14 @@ fn a_file_and_a_folder_of_the_same_name_merge_to_what_the_winning_side_holds() {
         assert!(harness.path(kept).is_file());
     }
 }
+
+#[test]
+fn an_undo_before_closing_still_marks_the_work_undone_after_reopening() {
+    let mut harness = Harness::new();
+    let dc = add_dc(&mut harness);
+    set(&mut harness, &dc, 0.5);
+    harness.project.undo().unwrap();
+    let mut harness = harness.reopen();
+    set(&mut harness, &dc, 0.25);
+    assert_eq!(versions(&harness), [true, false]);
+}
