@@ -240,7 +240,7 @@ mod tests {
         assert!(
             !folder
                 .path()
-                .join("assets/plugin-state/piano.clap.tmp")
+                .join("assets/plugin-state/.piano.clap.tmp")
                 .exists()
         );
     }

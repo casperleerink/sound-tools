@@ -830,11 +830,12 @@ mod tests {
 pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     fs::create_dir_all(folder)?;
-    // The name does not end in `.json` and is not a valid instance name, so neither the scan
-    // nor the watcher takes it for a record.
-    let mut temporary = path.as_os_str().to_owned();
+    // Hidden, so it is never a record, a tool's code or a file history keeps.
+    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    let mut temporary = std::ffi::OsString::from(".");
+    temporary.push(name);
     temporary.push(".tmp");
-    let temporary = PathBuf::from(temporary);
+    let temporary = folder.join(temporary);
     let result = fs::File::create(&temporary).and_then(|mut file| {
         file.write_all(bytes)?;
         drop(file);

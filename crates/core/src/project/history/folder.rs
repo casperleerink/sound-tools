@@ -85,6 +85,9 @@ impl Kept {
 
 /// Makes the kept files of the folder, which are `now`, the files `wanted`, byte for byte, and
 /// removes folders that end up empty. Returns every path it wrote or removed.
+///
+/// What goes is removed first: on a file system that ignores case `Foo.ts` and `foo.ts` are one
+/// file, and a file can become a folder of the same name.
 pub(crate) fn write(
     root: &Path,
     repository: &Repository,
@@ -92,16 +95,6 @@ pub(crate) fn write(
     wanted: &Files,
 ) -> io::Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
-    for (path, blob) in wanted {
-        if now.get(path) != Some(blob) {
-            let full = root.join(path);
-            if let Some(folder) = full.parent() {
-                fs::create_dir_all(folder)?;
-            }
-            super::super::storage::write_atomically(&full, &repository.read_blob(*blob)?)?;
-            changed.push(full);
-        }
-    }
     for path in now.keys().filter(|path| !wanted.contains_key(*path)) {
         let full = root.join(path);
         match fs::remove_file(&full) {
@@ -119,5 +112,36 @@ pub(crate) fn write(
         }
         changed.push(full);
     }
+    for (path, blob) in wanted {
+        if now.get(path) != Some(blob) {
+            make_folders(root, path)?;
+            let full = root.join(path);
+            super::super::storage::write_atomically(&full, &repository.read_blob(*blob)?)?;
+            changed.push(full);
+        }
+    }
     Ok(changed)
+}
+
+/// Makes the folders of `path` inside `root`. A link in their place is replaced by a real
+/// folder, so history never writes outside the project.
+fn make_folders(root: &Path, path: &str) -> io::Result<()> {
+    let mut folder = root.to_path_buf();
+    let mut names: Vec<&str> = path.split('/').collect();
+    names.pop();
+    for name in names {
+        folder.push(name);
+        match fs::symlink_metadata(&folder) {
+            Ok(metadata) if metadata.is_dir() => continue,
+            // A link to a folder is a folder to Windows, which `remove_file` refuses.
+            Ok(metadata) if metadata.is_symlink() => {
+                fs::remove_file(&folder).or_else(|_| fs::remove_dir(&folder))?;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        fs::create_dir(&folder)?;
+    }
+    Ok(())
 }

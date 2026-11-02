@@ -349,3 +349,77 @@ fn an_outside_write_not_heard_yet_is_a_point_before_an_open_run_finishes() {
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Follow"));
     assert_eq!(harness.read("state/dc.json"), dc_record(0.75));
 }
+
+/// The names in `extensions/`, as the file system spells them.
+fn extensions(harness: &Harness) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(harness.path("extensions"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn undo_takes_back_a_rename_that_changes_only_case() {
+    let mut harness = Harness::new();
+    let upper = harness.write("extensions/Song.ts", "export const a = 1;");
+    harness
+        .apply_outside_changes(std::slice::from_ref(&upper))
+        .unwrap();
+    let lower = harness.path("extensions/song.ts");
+    std::fs::rename(&upper, &lower).unwrap();
+    harness.apply_outside_changes(&[upper, lower]).unwrap();
+
+    harness.project.undo().unwrap();
+    assert_eq!(extensions(&harness), ["Song.ts"]);
+    harness.project.redo().unwrap();
+    assert_eq!(extensions(&harness), ["song.ts"]);
+}
+
+#[test]
+fn undo_and_redo_turn_a_file_into_a_folder_of_its_name_and_back() {
+    let mut harness = Harness::new();
+    let file = harness.write("extensions/lib", "a file");
+    harness
+        .apply_outside_changes(std::slice::from_ref(&file))
+        .unwrap();
+    std::fs::remove_file(&file).unwrap();
+    let inside = harness.write("extensions/lib/index.ts", "export const a = 1;");
+    harness.apply_outside_changes(&[file, inside]).unwrap();
+
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("extensions/lib"), "a file");
+    harness.project.redo().unwrap();
+    assert_eq!(
+        harness.read("extensions/lib/index.ts"),
+        "export const a = 1;"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn going_to_a_point_never_writes_through_a_link() {
+    let mut harness = Harness::new();
+    add_dc(&mut harness);
+    harness.project.undo().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::remove_dir(harness.path("state")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), harness.path("state")).unwrap();
+
+    harness.project.redo().unwrap();
+    assert!(harness.path("state/dc.json").exists());
+    assert!(!harness.path("state").is_symlink());
+    assert_eq!(std::fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_write_leaves_a_kept_file_named_like_its_temporary() {
+    let mut harness = Harness::new();
+    let dc = add_dc(&mut harness);
+    harness.write_and_apply("state/dc.json.tmp", "kept");
+    set(&mut harness, &dc, 0.5);
+    assert_eq!(harness.read("state/dc.json.tmp"), "kept");
+    harness.project.undo().unwrap();
+    assert_eq!(harness.read("state/dc.json.tmp"), "kept");
+}
