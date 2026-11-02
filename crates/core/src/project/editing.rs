@@ -457,11 +457,12 @@ impl Project {
         }
     }
 
-    /// Before going anywhere: open runs finish, and what the folder holds that history has not
-    /// seen yet, such as an agent's write the watcher has not delivered, is saved as a point.
+    /// Before going anywhere: what the folder holds that history has not seen yet, such as an
+    /// agent's write the watcher has not delivered, is saved as a point, and then open runs
+    /// finish. In that order, so a run's write cannot replace those bytes unseen.
     fn before_going(&mut self) -> Result<(), ProjectError> {
-        self.finish_all_runs()?;
-        self.save_point(Origin::Outside(Instant::now()), OUTSIDE_LABEL)
+        self.save_point(Origin::Outside(Instant::now()), OUTSIDE_LABEL)?;
+        self.finish_all_runs()
     }
 
     fn go(&mut self, to: PointId, going: Going) -> Result<(), ProjectError> {

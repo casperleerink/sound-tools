@@ -333,3 +333,19 @@ fn a_version_folds_away_once_merged_or_thirty_points_old() {
         assert_eq!(folded(&harness), [true, false], "merge: {merge}");
     }
 }
+
+#[test]
+fn an_outside_write_not_heard_yet_is_a_point_before_an_open_run_finishes() {
+    let mut harness = Harness::new();
+    let dc = add_dc(&mut harness);
+    let mut changes = Changes::new();
+    changes.set(&dc, Dc { value: 0.5 });
+    harness
+        .project
+        .publish_run(&id("tool"), "Follow", changes)
+        .unwrap();
+    harness.write("state/dc.json", &dc_record(0.75));
+
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Follow"));
+    assert_eq!(harness.read("state/dc.json"), dc_record(0.75));
+}
