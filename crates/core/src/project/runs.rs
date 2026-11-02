@@ -96,10 +96,10 @@ impl Project {
     fn finish_runs_where(&mut self, done: impl Fn(&Run) -> bool) -> Result<(), ProjectError> {
         let runs = std::mem::take(&mut self.runs);
         let held_by_others = |run: &Run| {
-            run.edit.records().any(|id| {
+            run.edit.records.keys().any(|id| {
                 let by_runs = runs
                     .iter()
-                    .filter(|run| run.edit.records().any(|held| held == id));
+                    .filter(|run| run.edit.records.keys().any(|held| held == id));
                 self.open_edits.holders(id) > by_runs.count()
             })
         };

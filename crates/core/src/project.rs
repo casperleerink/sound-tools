@@ -164,10 +164,8 @@ pub(crate) enum Source {
     /// point.
     Load,
     Interface,
-    /// The files already hold this state: an outside change, undo, redo.
+    /// The files already hold this state: an outside change, undo, redo, cancel.
     Outside,
-    /// Cancelling an edit.
-    Cancel,
 }
 
 pub struct Project {

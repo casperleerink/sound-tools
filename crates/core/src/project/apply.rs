@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use super::binding::EngineChange;
 use super::editing::{Applied, Change, RecordChange};
 use super::instance::InstanceId;
-use super::storage::{Form, RecordOnDisk};
+use super::storage::RecordOnDisk;
 use super::{Project, ProjectError, ProjectEvent, Source};
 
 impl Project {
@@ -105,23 +105,14 @@ impl Project {
                             }
                         }
                         // A file the runtime did not load may sit at this id: a record of an
-                        // unknown tool, or one with an error. Cancel must not write over it
-                        // either, unless the file holds the bytes it knows: then it brings the
-                        // file back. A file the runtime knows is its own, from before a
-                        // delete that is not written yet.
-                        let writes = matches!(source, Source::Interface | Source::Cancel);
-                        let taken = writes
+                        // unknown tool, or one with an error. A file the runtime knows is its
+                        // own, from before a delete that is not written yet.
+                        let taken = source == Source::Interface
                             && self.storage.observed(&id).is_none()
-                            && match self.storage.read_record(&id, None)? {
-                                RecordOnDisk::Missing => false,
-                                RecordOnDisk::One(form, bytes) => {
-                                    let path = self.storage.record_path(&id, form);
-                                    source != Source::Cancel
-                                        || form != Form::of(&record)
-                                        || self.storage.unloaded(&path) != Some(bytes.as_slice())
-                                }
-                                RecordOnDisk::Both => true,
-                            };
+                            && !matches!(
+                                self.storage.read_record(&id, None)?,
+                                RecordOnDisk::Missing
+                            );
                         if taken {
                             return Err(ProjectError::IdTaken(id));
                         }

@@ -423,6 +423,24 @@ fn cancel_brings_back_an_instance_whose_file_was_never_removed() {
 }
 
 #[test]
+fn cancel_over_a_record_file_that_does_not_load_brings_back_the_state_and_keeps_the_file() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Delete");
+    let mut changes = Changes::new();
+    changes.delete(dc.id());
+    harness.project.publish(&mut edit, changes).unwrap();
+    harness.write_and_apply("state/dc.json", r#"{"tool": "other.thing", "state": {}}"#);
+    // Changed again, and not heard yet.
+    let unknown = r#"{"tool": "other.thing", "state": {"a": 1}}"#;
+    harness.write("state/dc.json", unknown);
+
+    harness.project.cancel(edit).unwrap();
+    assert_eq!(harness.level(), 0.25);
+    assert_eq!(harness.read("state/dc.json"), unknown);
+}
+
+#[test]
 fn an_interface_edit_lands_on_top_of_an_outside_project_file_not_yet_delivered() {
     let mut harness = Harness::new();
     connected_dc(&mut harness, "first", 0.25);

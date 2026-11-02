@@ -4,13 +4,13 @@
 //! Interface edits, file changes, undo and redo all end in `Project::apply`. This module
 //! holds what they need around it.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use super::file::{ProjectFile, SavedConnection};
 use super::history::{Going, History, Origin, PointId};
 use super::instance::{Instance, InstanceId, Record, State};
-use super::open_edits::Step;
 use super::outside::OUTSIDE_LABEL;
 use super::{Project, ProjectError, ProjectEvent, Source};
 use crate::clock::TempoMap;
@@ -98,18 +98,36 @@ pub(crate) struct Applied {
 /// reverse operation from the tool. Several edits can be open at once; last write wins.
 #[must_use = "finish or cancel the edit"]
 pub struct Edit {
-    step: Step,
+    label: String,
+    /// Each record it published over, as it was before. `None`: there was none.
+    pub(super) records: BTreeMap<InstanceId, Option<Record>>,
+    /// `project.json` before, once it changed it.
+    pub(super) project_file: Option<ProjectFile>,
 }
 
 impl Edit {
     /// It published nothing yet.
     pub(super) fn is_empty(&self) -> bool {
-        self.step.is_empty()
+        self.records.is_empty() && self.project_file.is_none()
     }
 
-    /// The records it published over.
-    pub(super) fn records(&self) -> impl Iterator<Item = &InstanceId> {
-        self.step.records.keys()
+    fn absorb(&mut self, applied: Applied) {
+        for change in applied.records {
+            self.records.entry(change.id).or_insert(change.before);
+        }
+        if let Some((before, _)) = applied.project_file {
+            self.project_file.get_or_insert(before);
+        }
+    }
+
+    /// The changes that bring back the state before the edit.
+    fn changes_back(&self) -> Vec<Change> {
+        let project_file = self.project_file.clone().map(Change::ProjectFile);
+        let records = self.records.iter().map(|(id, before)| match before {
+            Some(record) => Change::Set(id.clone(), record.clone()),
+            None => Change::Delete(id.clone()),
+        });
+        project_file.into_iter().chain(records).collect()
     }
 }
 
@@ -163,7 +181,9 @@ impl Project {
     /// Begins an edit. `label` names its point, for example "Change frequency".
     pub fn begin(&self, label: &str) -> Edit {
         Edit {
-            step: Step::new(label),
+            label: label.to_string(),
+            records: BTreeMap::new(),
+            project_file: None,
         }
     }
 
@@ -193,8 +213,8 @@ impl Project {
             self.sync_project_file();
         }
         let applied = self.apply(changes.changes, Source::Interface)?;
-        self.open_edits.hold(&edit.step, &applied);
-        edit.step.absorb(applied);
+        self.open_edits.hold(edit, &applied);
+        edit.absorb(applied);
         Ok(())
     }
 
@@ -286,20 +306,21 @@ impl Project {
     /// during it.
     ///
     /// On a write error the edit stays applied, and the problem is reported.
-    pub fn finish(&mut self, edit: Edit) -> Result<(), ProjectError> {
-        let mut step = edit.step;
+    pub fn finish(&mut self, mut edit: Edit) -> Result<(), ProjectError> {
         let instances = &self.instances;
         self.open_edits
-            .close(&mut step, |id| instances.get(id).cloned());
-        for (id, (_, after)) in &mut step.records {
-            *after = self.instances.get(id).cloned();
-        }
-        if let Some((_, after)) = &mut step.project_file {
-            *after = self.project_file.clone();
-        }
-        step.drop_unchanged();
-        let written = self.write(step.records.keys(), step.project_file.is_some());
-        let saved = self.save_point(Origin::Edit, &step.label);
+            .close(&mut edit, |id| instances.get(id).cloned());
+        // What ended where it began, such as a record made and deleted, is not written.
+        edit.records
+            .retain(|id, before| match (before, self.instances.get(id)) {
+                (Some(before), Some(now)) => !before.equals(now),
+                (None, None) => false,
+                _ => true,
+            });
+        let project_file =
+            (edit.project_file.as_ref()).is_some_and(|before| *before != self.project_file);
+        let written = self.write(edit.records.keys(), project_file);
+        let saved = self.save_point(Origin::Edit, &edit.label);
         written.and(saved)
     }
 
@@ -308,20 +329,19 @@ impl Project {
     /// back to that state: it is what was committed, and what its file holds. So nothing is
     /// written, but the files of instances the edit's delete takes along, made by a finished
     /// edit after it began.
-    pub fn cancel(&mut self, edit: Edit) -> Result<(), ProjectError> {
-        let mut step = edit.step;
+    pub fn cancel(&mut self, mut edit: Edit) -> Result<(), ProjectError> {
         let instances = &self.instances;
         self.open_edits
-            .close(&mut step, |id| instances.get(id).cloned());
+            .close(&mut edit, |id| instances.get(id).cloned());
         self.sync_project_file();
-        let applied = self.apply(step.changes_back(), Source::Cancel)?;
+        let applied = self.apply(edit.changes_back(), Source::Outside)?;
         let touched = applied.records.iter().map(|change| &change.id);
-        let gone: Vec<InstanceId> = (step.records.keys().chain(touched))
+        let gone: Vec<InstanceId> = (edit.records.keys().chain(touched))
             .filter(|id| !self.instances.contains_key(*id))
             .cloned()
             .collect();
         let written = self.write(gone.iter(), false);
-        let saved = self.save_point(Origin::Edit, &step.label);
+        let saved = self.save_point(Origin::Edit, &edit.label);
         written.and(saved)
     }
 
@@ -329,11 +349,10 @@ impl Project {
     /// edit whose records another edit has since deleted or replaced, as its last write: that
     /// edit's point already starts from the state before this one, so finishing this one too
     /// would be a second point for the same change, and cancelling would undo the newer write.
-    pub fn abandon(&mut self, edit: Edit) {
-        let mut step = edit.step;
+    pub fn abandon(&mut self, mut edit: Edit) {
         let instances = &self.instances;
         self.open_edits
-            .close(&mut step, |id| instances.get(id).cloned());
+            .close(&mut edit, |id| instances.get(id).cloned());
     }
 
     /// One finished edit: begin, publish, finish.
