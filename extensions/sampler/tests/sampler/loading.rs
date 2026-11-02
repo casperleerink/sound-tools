@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use sampler::SamplerState;
 use sound_core::Assets;
+use sound_dsp::testing::{largest_step, peak};
 use sound_media::AudioAsset;
 
-use crate::support::{Harness, SAMPLE_RATE, largest_step, note, peak, playing, write_sample};
+use crate::support::{Harness, SAMPLE_RATE, note, playing, write_sample};
 
 fn steady(level: f32) -> Vec<f32> {
     vec![level; SAMPLE_RATE as usize]

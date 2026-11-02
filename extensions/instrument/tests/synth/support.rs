@@ -10,6 +10,7 @@ use sound_core::{
     OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry, State,
     Ticks,
 };
+pub(crate) use sound_dsp::testing::{largest_step, peak};
 use sound_notes::{
     AUDIO_OUTPUT, Amount, Bend, Length, NOTES_INPUT, Note, NoteEvent, Pedal, PedalChange, Pitch,
     Velocity,
@@ -233,18 +234,6 @@ pub(crate) fn pedal(start: u64, value: u8) -> PedalChange {
         start: Ticks(start),
         value: Pedal::new(value).unwrap(),
     }
-}
-
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
 }
 
 /// The frames at which the signal crosses zero upward.

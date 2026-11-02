@@ -3,47 +3,10 @@
 use std::f64::consts::TAU;
 
 use gate::{Gate, GateState, Meters};
-use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
-    ProcessContext, Processor,
-};
+use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node};
+pub(crate) use sound_dsp::testing::{Signal, Source, noise, peak};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
-
-/// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
-
-/// A processor that plays a signal.
-pub(crate) struct Source {
-    signal: Signal,
-}
-
-impl Source {
-    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
-
-    pub(crate) fn new(signal: Signal) -> Self {
-        Self { signal }
-    }
-}
-
-impl Processor for Source {
-    type Update = ();
-
-    fn ports(&self) -> Ports {
-        Ports::new().audio_output(Self::OUTPUT)
-    }
-
-    fn prepare(&mut self, _: &PrepareConfig) {}
-
-    fn update(&mut self, _: &mut ()) {}
-
-    fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
-        for (left, right) in left.iter_mut().zip(right.iter_mut()) {
-            [*left, *right] = (self.signal)();
-        }
-    }
-}
 
 pub(crate) fn decibels(db: f32) -> f32 {
     10_f32.powf(db / 20.0)
@@ -74,18 +37,6 @@ pub(crate) fn hits(period: usize) -> Signal {
         let seconds = (frame % period) as f32 / SAMPLE_RATE as f32;
         0.5 * decibels(-200.0 * seconds)
     })
-}
-
-/// White noise from -amplitude to amplitude, the same every run, other in each channel.
-pub(crate) fn noise(amplitude: f32) -> Signal {
-    let mut state = 0x2545_f491_4f6c_dd1d_u64;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        (state >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0
-    };
-    Box::new(move || [next() * amplitude, next() * amplitude])
 }
 
 /// A source, a gate and the device, rendering offline.
@@ -145,10 +96,4 @@ impl Rig {
 /// What a signal plays with no gate, on the left.
 pub(crate) fn dry(mut signal: Signal, frames: usize) -> Vec<f32> {
     (0..frames).map(|_| signal()[0]).collect()
-}
-
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
