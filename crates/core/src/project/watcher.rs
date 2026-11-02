@@ -10,39 +10,40 @@ use notify::RecursiveMode;
 use super::storage::PROJECT_FILE;
 use super::{Project, ProjectError};
 
-/// File changes with less than this between them apply together, as one undo step. The group
-/// applies once the folder has been quiet for this long, so it is also the delay before an
-/// outside change is heard.
+/// File changes with less than this between them apply together. The group applies once the
+/// folder has been quiet for this long, so it is also the delay before an outside change is
+/// heard.
 pub const GROUPING_WINDOW: Duration = Duration::from_millis(100);
 
 pub(crate) struct Watcher {
     /// Dropping it stops the watcher thread.
     watcher: Box<dyn notify::Watcher + Send>,
-    /// What it watches: `project.json` in the project folder, `state/` and `assets/`.
+    /// What it watches: `project.json` in the project folder, `state/`, and `assets/` and
+    /// `extensions/`.
     project_file: PathBuf,
     state: PathBuf,
-    assets: PathBuf,
-    /// Whether `assets/` is watched. It is watched from when it exists, which may be after the
-    /// project opened: a tool may wait for a file there, see
+    /// `assets/` and `extensions/`, and whether each is watched. They are watched from when
+    /// they exist, which may be after the project opened: a tool may wait for a file in
+    /// `assets/`, see
     /// [`ToolRegistration::rebinds_on_assets`](super::ToolRegistration::rebinds_on_assets).
-    assets_watched: bool,
+    later: [(PathBuf, bool); 2],
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeSet<PathBuf>,
-    /// When the last path of `pending` was heard. The group counts from then for undo, not
+    /// When the last path of `pending` was heard. The group counts from then for history, not
     /// from when it applies a grouping window later, so a write heard just after a request
     /// ended joins it.
     last_event: Instant,
 }
 
 impl Watcher {
-    /// Starts `watcher` on `project.json` in `root`, `state` and, once it exists, `assets`.
-    /// Its events wait in `events` until [`Self::take_group`].
+    /// Starts `watcher` on `project.json` in `root`, `state` and, once they exist, the folders
+    /// of `later`. Its events wait in `events` until [`Self::take_group`].
     fn new(
         mut watcher: Box<dyn notify::Watcher + Send>,
         events: Receiver<notify::Result<notify::Event>>,
         root: &Path,
         state: PathBuf,
-        assets: PathBuf,
+        later: [PathBuf; 2],
     ) -> notify::Result<Self> {
         watcher.watch(root, RecursiveMode::NonRecursive)?;
         watcher.watch(&state, RecursiveMode::Recursive)?;
@@ -50,8 +51,7 @@ impl Watcher {
             watcher,
             project_file: root.join(PROJECT_FILE),
             state,
-            assets,
-            assets_watched: false,
+            later: later.map(|folder| (folder, false)),
             events,
             pending: BTreeSet::new(),
             last_event: Instant::now(),
@@ -62,13 +62,16 @@ impl Watcher {
     /// [`GROUPING_WINDOW`], returns those paths as one group, with the time its last path was
     /// heard.
     fn take_group(&mut self) -> Result<Option<(Vec<PathBuf>, Instant)>, ProjectError> {
-        // `assets/` from the moment it exists. What is in it by then counts as changed, since
-        // no event said so.
-        if !self.assets_watched && self.assets.is_dir() {
-            // Tried once: a watch that fails is reported and not tried on every poll.
-            self.assets_watched = true;
-            self.watcher.watch(&self.assets, RecursiveMode::Recursive)?;
-            self.hear([self.assets.clone()]);
+        // From the moment it exists. What is in it by then counts as changed, since no event
+        // said so.
+        for (folder, watched) in &mut self.later {
+            if !*watched && folder.is_dir() {
+                // Tried once: a watch that fails is reported and not tried on every poll.
+                *watched = true;
+                self.watcher.watch(folder, RecursiveMode::Recursive)?;
+                self.pending.insert(folder.clone());
+                self.last_event = Instant::now();
+            }
         }
         let mut rescan = false;
         loop {
@@ -89,11 +92,14 @@ impl Watcher {
         // The system dropped events, such as in the burst of a branch switch, so any file may
         // have changed. Reading them all again finds the ones that did.
         if rescan {
-            let paths = [&self.project_file, &self.state, &self.assets];
+            let [(assets, _), (extensions, _)] = &self.later;
+            let paths = [&self.project_file, &self.state, assets, extensions];
             self.hear(paths.map(PathBuf::clone));
             watch_again(self.watcher.as_mut(), &self.state)?;
-            if self.assets_watched {
-                watch_again(self.watcher.as_mut(), &self.assets)?;
+            for (folder, watched) in &self.later {
+                if *watched {
+                    watch_again(self.watcher.as_mut(), folder)?;
+                }
             }
         }
         if self.pending.is_empty() || self.last_event.elapsed() < GROUPING_WINDOW {
@@ -117,8 +123,8 @@ fn watch_again(watcher: &mut dyn notify::Watcher, folder: &Path) -> notify::Resu
 }
 
 impl Project {
-    /// Starts watching `project.json`, `state/` and `assets/`. Events wait in a channel until
-    /// `poll`.
+    /// Starts watching `project.json`, `state/`, `assets/` and `extensions/`. Events wait in a
+    /// channel until `poll`.
     pub fn watch(&mut self) -> Result<(), ProjectError> {
         let (sender, events) = channel();
         self.watch_with(Box::new(notify::recommended_watcher(sender)?), events)
@@ -133,7 +139,8 @@ impl Project {
         let state = self.storage.state_folder();
         let assets = self.assets.path_of_folder();
         let root = self.storage.root();
-        self.watcher = Some(Watcher::new(watcher, events, root, state, assets)?);
+        let later = [assets, root.join(super::history::EXTENSIONS_FOLDER)];
+        self.watcher = Some(Watcher::new(watcher, events, root, state, later)?);
         Ok(())
     }
 

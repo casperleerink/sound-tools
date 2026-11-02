@@ -89,6 +89,11 @@ impl Recording {
         }
     }
 
+    /// Whether a take is recording.
+    pub fn is_recording(&self) -> bool {
+        !self.takes.is_empty() || !self.notes.is_empty()
+    }
+
     /// The newest take of `recorder`: at a loop the one before may still wait for its end.
     pub fn take_of(&self, recorder: &InstanceId) -> Option<&LiveTake> {
         self.takes

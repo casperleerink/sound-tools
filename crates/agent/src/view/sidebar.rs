@@ -1,17 +1,19 @@
-//! The sidebar: the header with **New**, the onboarding until the agent is set up, then the
-//! thread in a gpui `list` and the composer.
+//! The sidebar: the onboarding until the agent is set up, then the thread in a gpui `list` and
+//! the composer. Its **New** button goes in the window's header above it.
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **New**, or
 //! when a recent thread opens from its menu. Every message is one request of the session, so
-//! the agent's file writes for it are one undo step. The thread is saved on the machine as it
-//! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
-//! also opens the composer's instructions to the agent in place of the thread
+//! the agent's file writes for it are one point of history. The thread is saved on the machine
+//! as it goes (`crate::store`), and the sidebar opens on the project's last one. The menu of
+//! **New** also opens the composer's instructions to the agent in place of the thread
 //! (`super::instructions`).
 
 mod attachments;
+mod naming;
 mod setup;
 mod threads;
 mod turn;
+mod went_back;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -31,6 +33,8 @@ use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
 
 use self::attachments::Attached;
+use self::naming::Namer;
+use self::went_back::WentBack;
 use super::entry;
 use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
@@ -120,6 +124,10 @@ pub struct Sidebar {
     attachments_reading: usize,
     /// Where up and down in the composer are among the earlier messages.
     history: History,
+    /// Where the composer went back to in the project history, until the next message.
+    went_back: Option<WentBack>,
+    went_back_dismiss: FocusHandle,
+    namer: Namer,
     /// The sidebar itself, for when it has no composer.
     focus_handle: FocusHandle,
     send_focus: FocusHandle,
@@ -175,7 +183,7 @@ impl Sidebar {
     }
 
     /// For a test or a snapshot: set up and signed in with `installed` as the program, or not
-    /// installed with `None`. Nothing runs in the background.
+    /// installed with `None`. Only the naming of versions runs in the background.
     pub fn with_program(
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
@@ -280,11 +288,15 @@ impl Sidebar {
                 cx.notify();
             }),
             cx.subscribe(&settings, Self::settings_event),
-            cx.subscribe(&session, |sidebar, _, event: &ProjectEvent, cx| {
-                if matches!(event, ProjectEvent::ProblemsChanged) {
-                    sidebar.problems_changed(cx);
-                }
-            }),
+            cx.subscribe(
+                &session,
+                |sidebar, _, event: &ProjectEvent, cx| match event {
+                    ProjectEvent::ProblemsChanged => sidebar.problems_changed(cx),
+                    ProjectEvent::WentBack(point) => sidebar.went_back(*point, cx),
+                    _ => {}
+                },
+            ),
+            cx.observe(&session, |sidebar, _, cx| sidebar.naming_heard(cx)),
             cx.observe(&input, |_, _, cx| cx.notify()),
         ];
         let mut conversation = Conversation::default();
@@ -316,6 +328,9 @@ impl Sidebar {
             attachments: Vec::new(),
             attachments_reading: 0,
             history: History::default(),
+            went_back: None,
+            went_back_dismiss: cx.focus_handle().tab_stop(true),
+            namer: Namer::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
@@ -333,6 +348,7 @@ impl Sidebar {
         };
         sidebar.update_menu(cx);
         sidebar.update_new_menu(cx);
+        sidebar.wait_for_quiet(cx);
         sidebar
     }
 
@@ -450,6 +466,12 @@ impl Sidebar {
     /// The composer's menu of approval modes, for a snapshot that shows it open or picks in it.
     pub fn access_menu(&self) -> &Entity<DropdownMenu> {
         &self.access_menu
+    }
+
+    /// **New**, with the recent threads and the instructions in its menu, for the header the
+    /// window draws over the sidebar.
+    pub fn new_button(&self) -> &Entity<SplitButton> {
+        &self.new_button
     }
 
     /// The menu of **New**, for a snapshot that shows it open.
@@ -741,29 +763,10 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// The title, and **New** at the right. Over the instructions: their title, and the way
-    /// back at the left.
-    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let editing = self.instructions.is_some();
-        // On the left edge of the thread under it.
-        let title = div()
-            .flex_1()
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
-            .child(if editing { "Instructions" } else { "Agent" });
-        let header = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(4.))
-            .h(px(56.))
-            .pr(px(16.));
-        if !editing {
-            return header
-                .pl(px(24.))
-                .child(title)
-                .child(self.new_button.clone());
-        }
+    /// Over the instructions: their title, and the way back at the left. The window draws
+    /// the title of the panel, with [`Self::new_button`].
+    fn instructions_header(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        self.instructions.as_ref()?;
         let back = Button::icon_only("instructions-back", "arrow-left")
             .debug_selector(|| "agent-instructions-back".to_string())
             .variant(ButtonVariant::Ghost)
@@ -771,7 +774,23 @@ impl Sidebar {
             .on_click(cx.listener(|sidebar, _, window, cx| {
                 sidebar.close_instructions(window, cx);
             }));
-        header.pl(px(16.)).child(back).child(title)
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(4.))
+                .h(px(40.))
+                .pl(px(16.))
+                .pr(px(16.))
+                .child(back)
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Instructions"),
+                ),
+        )
     }
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -797,58 +816,68 @@ impl Sidebar {
                 .disabled(true)
         };
         // The access pill always says the mode, so it is never a surprise.
-        div().flex_none().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
-            div()
-                .id("agent-composer")
-                .debug_selector(|| "agent-composer".to_string())
-                // Before the field's own paste, which takes only text.
-                .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
-                    if sidebar.paste_attachments(cx) {
-                        cx.stop_propagation();
-                    }
-                }))
-                .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
-                .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
-                    sidebar.attach_files(paths.paths().to_vec(), cx);
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .pt(px(14.))
-                .px(px(14.))
-                .pb(px(10.))
-                .rounded(px(20.))
-                .border_1()
-                .border_color(border)
-                .bg(fill)
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.4),
-                    offset: point(px(0.), px(8.)),
-                    blur_radius: px(24.),
-                    spread_radius: px(-8.),
-                    inset: false,
-                }])
-                .children(self.attachment_chips(cx))
-                .child(div().min_h(px(44.)).child(self.input.clone()))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        // The pills sit their wash, not their words, on the box's edge.
-                        .ml(px(-6.))
-                        .child(self.model_menu.clone())
-                        .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
-                        .child(self.access_menu.clone())
-                        .child(div().flex_1())
-                        .child(
-                            button
-                                .size(ButtonSize::Md)
-                                .rounded(true)
-                                .focus_handle(&self.send_focus),
-                        ),
-                ),
-        )
+        let went_back = self.went_back_line(cx);
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(12.))
+            .pb(px(12.))
+            .pt(px(8.))
+            .children(went_back)
+            .child(
+                div()
+                    .id("agent-composer")
+                    .debug_selector(|| "agent-composer".to_string())
+                    // Before the field's own paste, which takes only text.
+                    .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
+                        if sidebar.paste_attachments(cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
+                    .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
+                        sidebar.attach_files(paths.paths().to_vec(), cx);
+                    }))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(14.))
+                    .px(px(14.))
+                    .pb(px(10.))
+                    .rounded(px(20.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(fill)
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.4),
+                        offset: point(px(0.), px(8.)),
+                        blur_radius: px(24.),
+                        spread_radius: px(-8.),
+                        inset: false,
+                    }])
+                    .children(self.attachment_chips(cx))
+                    .child(div().min_h(px(44.)).child(self.input.clone()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            // The pills sit their wash, not their words, on the box's edge.
+                            .ml(px(-6.))
+                            .child(self.model_menu.clone())
+                            .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
+                            .child(self.access_menu.clone())
+                            .child(div().flex_1())
+                            .child(
+                                button
+                                    .size(ButtonSize::Md)
+                                    .rounded(true)
+                                    .focus_handle(&self.send_focus),
+                            ),
+                    ),
+            )
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
@@ -924,9 +953,7 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
-        let theme = cx.theme();
-        // The hairline of the window's other lines, so the edges weigh the same.
-        let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);
+        let text = cx.theme().gray_950;
         let body = match (&self.instructions, &self.setup) {
             (Some((editor, _)), _) => editor.clone().into_any_element(),
             (
@@ -970,12 +997,8 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
-            // On the background of the window; the top edge parts it from the title row.
-            .border_t_1()
-            .border_r_1()
-            .border_color(hairline)
             .text_color(text)
-            .child(self.header(cx))
+            .children(self.instructions_header(cx))
             .child(body)
     }
 }

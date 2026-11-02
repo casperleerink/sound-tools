@@ -6337,6 +6337,7 @@ version = "0.0.0"
 dependencies = [
  "cpal",
  "dunce",
+ "flate2",
  "libc",
  "no_denormals",
  "notify",
@@ -6352,6 +6353,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "sha1_smol",
  "tempfile",
  "thiserror 2.0.20",
  "triple_buffer",

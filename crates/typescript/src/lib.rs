@@ -186,6 +186,9 @@ pub const HOST_TYPES: &str = include_str!("node.d.ts");
 const BUN_TYPES: &str = include_str!("bun.d.ts");
 /// What the runtime writes in `extensions/` and owns there: files, and the folder `sdk`.
 const OWNED: [&str; 4] = ["sdk.ts", "sdk", "tsconfig.json", "bun.d.ts"];
+/// What the runtime writes in `extensions/`, which the project history leaves out.
+pub const WRITTEN_BY_THE_RUNTIME: [&str; 5] =
+    [OWNED[0], OWNED[1], OWNED[2], OWNED[3], bun::LOG_FILE];
 /// The sounds of a tool that do not build that its problem names; it counts the others.
 const SHOWN_FAILURES: usize = 3;
 /// JSX makes the nodes of `sdk.ts`. Also what `bun check -p extensions` checks with.

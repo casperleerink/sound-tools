@@ -100,7 +100,7 @@ fn the_agent_adds_a_clip_as_one_undo_step() {
     println!("clips: {added:?}, problems: {:?}", project.problems());
     assert_eq!(added.len(), 1, "{added:?}");
     assert!(project.problems().is_empty(), "{:?}", project.problems());
-    assert_eq!(project.undo_label(), Some(message));
+    assert_eq!(project.undo_label().as_deref(), Some(message));
     project.undo().unwrap();
     assert_eq!(clips(&project), Vec::<String>::new());
     assert_eq!(project.undo_label(), None);

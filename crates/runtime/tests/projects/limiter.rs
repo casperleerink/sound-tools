@@ -50,8 +50,7 @@ fn an_outside_edit_of_the_limiter_while_it_plays_is_heard_and_undone_in_one_step
     // One undo takes the agent's edit back, file and sound.
     assert!(harness.project.undo().unwrap().is_some());
     let file = std::fs::read_to_string(harness.path(LIMITER_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["ceiling_db"], -1.0);
+    assert_eq!(file, record("{}"));
     let undone = harness.play(BAR / 2);
     assert!(peak(&undone[BAR / 4..]) > amplitude(-20.0));
 }

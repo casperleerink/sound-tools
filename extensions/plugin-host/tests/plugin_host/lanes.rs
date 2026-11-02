@@ -76,7 +76,11 @@ fn a_lane_is_never_written_into_the_record_and_the_window_follows_it() {
         poll(&mut harness, later);
         assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(written_value(&harness, level(format)), 1.0, "{format:?}");
-        assert_eq!(harness.project.undo_label(), Some("Automate"), "{format:?}");
+        assert_eq!(
+            harness.project.undo_label().as_deref(),
+            Some("Automate"),
+            "{format:?}"
+        );
         assert_eq!(plugin_value(&harness, level(format)), 0.25, "{format:?}");
 
         set_lanes(&mut harness, "Remove the lane", Vec::new());
@@ -85,7 +89,7 @@ fn a_lane_is_never_written_into_the_record_and_the_window_follows_it() {
         poll(&mut harness, later + Duration::from_secs(10));
         assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Remove the lane"),
             "{format:?}"
         );
@@ -115,7 +119,7 @@ fn a_lane_that_comes_and_goes_between_two_polls_is_not_written() {
         }
         assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Remove the lane"),
             "{format:?}"
         );
@@ -177,7 +181,10 @@ fn a_record_value_the_plugin_rounds_after_a_lane_is_not_written() {
     }
     assert_eq!(plugin_value(&harness, level(format)), 0.12);
     assert_eq!(pinned_value(&harness, level(format)), 0.123);
-    assert_eq!(harness.project.undo_label(), Some("Remove the lane"));
+    assert_eq!(
+        harness.project.undo_label().as_deref(),
+        Some("Remove the lane")
+    );
 }
 
 /// Blocks with a lane playing, and the block in which it goes, allocate nothing on the audio

@@ -16,7 +16,7 @@ pub mod window;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use gpui::{App, AppContext as _};
+use gpui::{App, AppContext as _, Context, Entity};
 use plugin_host::{
     Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK,
     WeakPlugins, default_search_paths,
@@ -28,7 +28,7 @@ use sound_core::{
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
-use window::{LeftPanel, LeftPanelSlot};
+use window::{LeftPanel, LeftPanelSlot, Shell};
 
 pub use templates::{TEMPLATES, Template};
 
@@ -160,6 +160,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
+    registry.keep_out_of_history(&sound_typescript::WRITTEN_BY_THE_RUNTIME);
     // First, as the map lists its groups in the order of their first doc.
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
@@ -306,15 +307,22 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let bun_folder = bun_folder.clone();
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
-        let (composer, asks) = (sidebar.clone(), sidebar.clone());
-        LeftPanel::new(sidebar, Sidebar::is_busy, cx)
-            .with_composer(move |cx| composer.read(cx).composer().clone())
-            .with_ask(move |message, window, cx| {
-                asks.update(cx, |sidebar, cx| {
-                    sidebar.ask_from_outside(message, window, cx)
-                })
-            })
+        sidebar_panel(sidebar, cx)
     })
+}
+
+/// The Agent tab of the left panel: the sidebar, with **New** beside the tabs.
+pub fn sidebar_panel(sidebar: Entity<Sidebar>, cx: &mut Context<Shell>) -> LeftPanel {
+    let (composer, asks) = (sidebar.clone(), sidebar.clone());
+    let new_button = sidebar.read(cx).new_button().clone();
+    LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+        .with_header(new_button)
+        .with_composer(move |cx| composer.read(cx).composer().clone())
+        .with_ask(move |message, window, cx| {
+            asks.update(cx, |sidebar, cx| {
+                sidebar.ask_from_outside(message, window, cx)
+            })
+        })
 }
 
 /// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin

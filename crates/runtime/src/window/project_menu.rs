@@ -94,8 +94,8 @@ impl Shown {
         Self {
             has_selection: session.selected_span().is_some(),
             rendering: session.rendering().is_some(),
-            undo: project.undo_label().map(str::to_string),
-            redo: project.redo_label().map(str::to_string),
+            undo: project.undo_label(),
+            redo: project.redo_label(),
         }
     }
 }

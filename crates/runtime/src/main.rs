@@ -88,6 +88,7 @@ fn print_events(project: &mut Project) {
                 );
             }
             ProjectEvent::ProblemsChanged => problems_changed = true,
+            ProjectEvent::WentBack(point) => println!("went back to {point}"),
         }
     }
     if problems_changed {
@@ -108,8 +109,8 @@ fn print_status(project: &mut Project, status: &EngineStatus) {
         status.playhead_tick.0,
         status.batches_applied,
         status.event_overflows,
-        project.undo_label().unwrap_or("nothing"),
-        project.redo_label().unwrap_or("nothing"),
+        project.undo_label().unwrap_or_else(|| "nothing".into()),
+        project.redo_label().unwrap_or_else(|| "nothing".into()),
     );
 }
 

@@ -41,7 +41,7 @@ fn a_gesture_publishes_live_and_writes_once_at_the_end() {
         assert_eq!(harness.level(), value);
         assert_eq!(harness.read("state/dc.json"), saved);
     }
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
     harness.project.finish(edit).unwrap();
     assert!(harness.read("state/dc.json").contains("0.5"));
     assert_eq!(
@@ -56,7 +56,7 @@ fn a_gesture_publishes_live_and_writes_once_at_the_end() {
     );
     assert_eq!(harness.level(), 0.25);
     assert_eq!(harness.read("state/dc.json"), saved);
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn cancel_restores_the_state_from_before_the_gesture() {
     harness.project.cancel(edit).unwrap();
     assert_eq!(harness.level(), 0.25);
     assert_eq!(harness.project.state(&dc), Some(&Dc { value: 0.25 }));
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
     assert_eq!(harness.project.redo_label(), None);
 }
 
@@ -92,10 +92,10 @@ fn an_abandoned_gesture_under_a_delete_leaves_the_delete_as_the_one_step() {
     harness.project.commit("Delete dc", changes).unwrap();
     harness.project.abandon(edit);
     assert_eq!(harness.project.state(&dc), None);
-    assert_eq!(harness.project.undo_label(), Some("Delete dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Delete dc"));
     harness.project.undo().unwrap();
     assert_eq!(harness.project.state(&dc), Some(&Dc { value: 0.25 }));
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn a_file_edit_during_a_gesture_follows_last_write_wins() {
     );
     assert_eq!(harness.level(), 0.25);
     assert!(harness.read("state/dc.json").contains("0.25"));
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 
     // Redo goes the same way back.
     harness.project.redo().unwrap();
@@ -191,7 +191,7 @@ fn cancel_after_a_file_edit_goes_back_to_what_the_file_holds() {
         Some("File change")
     );
     assert_eq!(harness.level(), 0.25);
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn a_file_delete_during_a_gesture_is_the_one_step_and_undo_gives_the_committed_s
     );
     assert_eq!(harness.project.state(&dc), Some(&Dc { value: 0.25 }));
     assert!(harness.read("state/dc.json").contains("0.25"));
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn an_invalid_interface_edit_is_rejected() {
     );
     harness.project.finish(edit).unwrap();
     assert_eq!(harness.level(), 0.25);
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 
     let mut changes = Changes::new();
     changes.create(id("nobody/child"), Dc { value: 0.0 });
@@ -270,11 +270,14 @@ fn a_failed_write_leaves_the_previous_file_complete() {
     assert_eq!(std::fs::read_dir(&state_folder).unwrap().count(), 1);
     let problem = harness.problem_at("state/dc.json").unwrap();
     assert!(problem.starts_with("not written"), "{problem}");
-    // The edit is live and undoable. The next write brings the file up to date.
+    // The edit is live, but no point: the files never held it. The next write brings the
+    // file up to date.
     assert_eq!(harness.level(), 0.5);
-    harness.project.undo().unwrap();
-    harness.project.redo().unwrap();
-    assert!(harness.read("state/dc.json").contains("0.5"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
+    let mut changes = Changes::new();
+    changes.set(&dc, Dc { value: 0.75 });
+    harness.project.commit("Set value", changes).unwrap();
+    assert!(harness.read("state/dc.json").contains("0.75"));
     assert_eq!(harness.project.problems(), []);
 }
 
@@ -384,7 +387,7 @@ fn a_tool_change_to_one_that_owns_nothing_drops_the_connections_to_its_children(
 }
 
 #[test]
-fn undo_does_not_write_over_a_file_that_took_the_id() {
+fn undo_keeps_a_file_that_took_the_id_in_the_history() {
     let mut harness = Harness::new();
     connected_dc(&mut harness, "dc", 0.25);
     let path = harness.path("state/dc.json");
@@ -397,13 +400,12 @@ fn undo_does_not_write_over_a_file_that_took_the_id() {
     // watcher has not delivered it yet.
     let unknown = r#"{"tool": "other.thing", "state": {}}"#;
     harness.write("state/dc.json", unknown);
-    assert_eq!(harness.project.undo_label(), Some("File change"));
-    let error = harness.project.undo().unwrap_err();
-    assert!(matches!(error, ProjectError::IdTaken(_)), "{error}");
+    // Undo saves what the folder holds before it goes, so redo brings the file back.
+    harness.project.undo().unwrap();
+    assert_ne!(harness.read("state/dc.json"), unknown);
+    harness.project.redo().unwrap();
     assert_eq!(harness.read("state/dc.json"), unknown);
-    assert_eq!(harness.project.instances().count(), 0);
-    // The step is dropped, so undo is not stuck on it.
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert!(harness.problem_at("state/dc.json").is_some());
 }
 
 #[test]
@@ -418,6 +420,24 @@ fn cancel_brings_back_an_instance_whose_file_was_never_removed() {
     // The file is still there, and it is the runtime's own: no `IdTaken`.
     harness.project.cancel(edit).unwrap();
     assert_eq!(harness.level(), 0.25);
+}
+
+#[test]
+fn cancel_over_a_record_file_that_does_not_load_brings_back_the_state_and_keeps_the_file() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Delete");
+    let mut changes = Changes::new();
+    changes.delete(dc.id());
+    harness.project.publish(&mut edit, changes).unwrap();
+    harness.write_and_apply("state/dc.json", r#"{"tool": "other.thing", "state": {}}"#);
+    // Changed again, and not heard yet.
+    let unknown = r#"{"tool": "other.thing", "state": {"a": 1}}"#;
+    harness.write("state/dc.json", unknown);
+
+    harness.project.cancel(edit).unwrap();
+    assert_eq!(harness.level(), 0.25);
+    assert_eq!(harness.read("state/dc.json"), unknown);
 }
 
 #[test]
@@ -499,8 +519,10 @@ fn a_project_file_that_did_not_load_is_not_written_over() {
             .bpm(),
         120.0
     );
+    // Undo brings back the file as it was, which does not load: tempo plays on.
     harness.project.undo().unwrap();
-    assert!(harness.read("project.json").contains("90.0"));
+    assert_eq!(harness.read("project.json"), broken);
+    assert_eq!(bpm(&harness), 120.0);
 }
 
 #[test]
@@ -602,7 +624,7 @@ fn cancelling_a_tempo_gesture_leaves_what_the_file_holds() {
         90.0,
         "a cancel goes back to what the file holds"
     );
-    assert_eq!(harness.project.undo_label(), Some("File change"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("File change"));
 }
 
 /// A project from before time signatures could change has one `time_signature` for the whole

@@ -212,7 +212,7 @@ fn a_failing_behaviour_rejects_the_whole_group() {
     assert_eq!(project.state(&switch), Some(&working));
     assert_eq!(project.instances().count(), 1);
     assert_eq!(project.drain_events(), []);
-    assert_eq!(project.undo_label(), Some("Add switch"));
+    assert_eq!(project.undo_label().as_deref(), Some("Add switch"));
     assert_eq!(level(&mut engine), 0.5);
 
     // The binding is as it was: the next edit works on the same processor.
@@ -378,7 +378,7 @@ fn an_interface_sends_an_update_to_a_processor_of_an_instance() {
         .send::<Constant>(&id("routed"), "constant", 0.75)
         .unwrap();
     assert_eq!(level(&mut engine), 0.75);
-    assert_eq!(project.undo_label(), Some("Add"));
+    assert_eq!(project.undo_label().as_deref(), Some("Add"));
     let routed = project.resolve::<SelfRouted>(&id("routed")).unwrap();
     assert_eq!(project.state(&routed).unwrap().value, 0.25);
 

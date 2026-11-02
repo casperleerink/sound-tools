@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use super::binding::EngineChange;
 use super::editing::{Applied, Change, RecordChange};
 use super::instance::InstanceId;
-use super::storage::{Form, RecordOnDisk};
+use super::storage::RecordOnDisk;
 use super::{Project, ProjectError, ProjectEvent, Source};
 
 impl Project {
@@ -52,11 +52,11 @@ impl Project {
             });
         }
         for change in &mut records {
-            self.history.note_committed(change, source);
+            self.open_edits.note_committed(change, source);
         }
         let mut project_file = (project_file_before != self.project_file)
             .then(|| (project_file_before, self.project_file.clone()));
-        self.history
+        self.open_edits
             .note_committed_project_file(&mut project_file, source);
         if project_file.is_some() {
             self.push_event(ProjectEvent::ProjectFileChanged);
@@ -70,7 +70,6 @@ impl Project {
         Ok(Applied {
             records,
             project_file,
-            unloaded: Default::default(),
         })
     }
 
@@ -106,23 +105,14 @@ impl Project {
                             }
                         }
                         // A file the runtime did not load may sit at this id: a record of an
-                        // unknown tool, or one with an error. Undo must not write over it
-                        // either, unless the file holds the bytes it knows: then the same step
-                        // brings the file back. A file the runtime knows is its own, from before a
-                        // delete that is not written yet.
-                        let writes = matches!(source, Source::Interface | Source::History);
-                        let taken = writes
+                        // unknown tool, or one with an error. A file the runtime knows is its
+                        // own, from before a delete that is not written yet.
+                        let taken = source == Source::Interface
                             && self.storage.observed(&id).is_none()
-                            && match self.storage.read_record(&id, None)? {
-                                RecordOnDisk::Missing => false,
-                                RecordOnDisk::One(form, bytes) => {
-                                    let path = self.storage.record_path(&id, form);
-                                    source != Source::History
-                                        || form != Form::of(&record)
-                                        || self.storage.unloaded(&path) != Some(bytes.as_slice())
-                                }
-                                RecordOnDisk::Both => true,
-                            };
+                            && !matches!(
+                                self.storage.read_record(&id, None)?,
+                                RecordOnDisk::Missing
+                            );
                         if taken {
                             return Err(ProjectError::IdTaken(id));
                         }

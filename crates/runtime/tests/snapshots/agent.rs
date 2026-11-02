@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use gpui::{AppContext, Entity, Focusable, HeadlessAppContext};
-use runtime::window::{LeftPanel, LeftPanelSlot};
+use runtime::window::LeftPanelSlot;
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ExitReason, Installed, Model, Sidebar, StepId,
     StepKind, StepOutcome, Thread, TurnOutcome,
@@ -423,14 +423,7 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
             let sidebar = cx.new(|cx| {
                 Sidebar::with_program(session, Some(installed), None, settings, window, cx)
             });
-            let (composer, asks) = (sidebar.clone(), sidebar.clone());
-            LeftPanel::new(sidebar, Sidebar::is_busy, cx)
-                .with_composer(move |cx| composer.read(cx).composer().clone())
-                .with_ask(move |message, window, cx| {
-                    asks.update(cx, |sidebar, cx| {
-                        sidebar.ask_from_outside(message, window, cx)
-                    })
-                })
+            runtime::sidebar_panel(sidebar, cx)
         })
         .install(cx)
     });
