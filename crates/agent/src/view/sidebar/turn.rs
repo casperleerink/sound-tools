@@ -227,6 +227,7 @@ impl Sidebar {
         let message = Message {
             text: message,
             attachments,
+            note: self.take_went_back_note(cx),
         };
         let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {

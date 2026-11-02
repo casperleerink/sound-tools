@@ -359,6 +359,9 @@ fn new_session_id() -> String {
 pub struct Message {
     pub text: String,
     pub attachments: Vec<Attachment>,
+    /// What the agent reads before the text that the composer did not write, such as that
+    /// they went back in the history. The thread shows only the text.
+    pub note: Option<String>,
 }
 
 impl From<String> for Message {
@@ -366,6 +369,7 @@ impl From<String> for Message {
         Message {
             text,
             attachments: Vec::new(),
+            note: None,
         }
     }
 }

@@ -181,6 +181,7 @@ fn writes_attachments_as_the_cli_accepted() {
             }),
             Attachment::File(PathBuf::from("/tmp/project/take.wav")),
         ],
+        note: None,
     };
     let ours = serde_json::to_value(Outgoing::user(message)).unwrap();
     assert_eq!(ours, recorded);
