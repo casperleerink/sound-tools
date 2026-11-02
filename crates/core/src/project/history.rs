@@ -35,6 +35,9 @@ const LINES_FILE: &str = "lines.json";
 /// begins and ends, such as one in a terminal.
 pub const OUTSIDE_POINT_WINDOW: Duration = Duration::from_secs(15);
 
+/// A version folds away once this many points are newer than its last point.
+const FOLD_AFTER: usize = 30;
+
 /// Work taken back with undo and then left by a change is a version from this many points on.
 const VERSION_POINTS: usize = 10;
 /// ... or from this much time between its first and last point.
@@ -252,6 +255,12 @@ impl History {
     /// The first `count` points, newest first, each with its line. Older ones are read only
     /// when asked for.
     pub fn points(&self, count: usize) -> io::Result<Vec<Point>> {
+        self.walk()?.take(count).collect()
+    }
+
+    /// Every point, newest first, read as the walk goes. A child is always newer than its
+    /// parents, so a point's line is known from its child in that line by the time it comes.
+    fn walk(&self) -> io::Result<impl Iterator<Item = io::Result<Point>> + '_> {
         let tips: HashMap<PointId, PointId> =
             (self.lines.iter()).map(|line| (line.tip, line.start)).collect();
         let mut heap = BinaryHeap::new();
@@ -261,32 +270,60 @@ impl History {
                 heap.push((self.commit(tip)?.time, tip));
             }
         }
-        // The line a point is in, from its child in the same line.
         let mut inherited: HashMap<PointId, PointId> = HashMap::new();
-        let mut points = Vec::new();
-        while points.len() < count {
-            let Some((_, id)) = heap.pop() else { break };
-            let commit = self.commit(id)?;
-            let line = (tips.get(&id).or(inherited.get(&id)).copied()).unwrap_or(id);
-            if let Some(parent) = commit.parents.first()
-                && line != id
-            {
-                inherited.insert(*parent, line);
-            }
-            for parent in &commit.parents {
-                if queued.insert(*parent) {
-                    heap.push((self.commit(*parent)?.time, *parent));
+        Ok(std::iter::from_fn(move || {
+            let (_, id) = heap.pop()?;
+            let point = self.commit(id).and_then(|commit| {
+                let line = (tips.get(&id).or(inherited.get(&id)).copied()).unwrap_or(id);
+                // Only the start of a line is its own line's name.
+                if let Some(parent) = commit.parents.first()
+                    && line != id
+                {
+                    inherited.insert(*parent, line);
                 }
-            }
-            points.push(Point {
-                id,
-                parents: commit.parents.clone(),
-                time: UNIX_EPOCH + Duration::from_millis(commit.time),
-                label: commit.label.clone(),
-                line,
+                for parent in &commit.parents {
+                    if queued.insert(*parent) {
+                        heap.push((self.commit(*parent)?.time, *parent));
+                    }
+                }
+                Ok(Point {
+                    id,
+                    parents: commit.parents.clone(),
+                    time: UNIX_EPOCH + Duration::from_millis(commit.time),
+                    label: commit.label.clone(),
+                    line,
+                })
             });
+            Some(point)
+        }))
+    }
+
+    /// The line `point` is in, read as far back as it takes.
+    pub fn line_of(&self, point: PointId) -> io::Result<Option<&Line>> {
+        for found in self.walk()? {
+            let found = found?;
+            if found.id == point {
+                return Ok(self.line(found.line));
+            }
         }
-        Ok(points)
+        Ok(None)
+    }
+
+    /// Whether the version is folded away: it is not the current one and was merged, set
+    /// aside by hand, or has [`FOLD_AFTER`] newer points since its last point.
+    pub fn folded_away(&self, line: &Line) -> io::Result<bool> {
+        if self.line_of(self.head)?.is_some_and(|current| current.start == line.start) {
+            return Ok(false);
+        }
+        if line.set_aside {
+            return Ok(true);
+        }
+        let newer = self.points(FOLD_AFTER + 1)?;
+        let Some(index) = newer.iter().position(|point| point.id == line.tip) else {
+            return Ok(true);
+        };
+        let merged = (newer[..index].iter()).any(|point| point.parents[1..].contains(&line.tip));
+        Ok(merged || index >= FOLD_AFTER)
     }
 
     /// The label of the current point, which undo takes back. `None` at the start.

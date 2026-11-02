@@ -249,3 +249,32 @@ fn a_version_undone_whole_before_a_change_is_undone_work() {
     set(&mut harness, &dc, 0.75);
     assert_eq!(versions(&harness), [true, false, true]);
 }
+
+#[test]
+fn a_version_folds_away_once_merged_or_thirty_points_old() {
+    for merge in [true, false] {
+        let mut harness = Harness::new();
+        let dc = add_dc(&mut harness);
+        let split = current(&harness);
+        set(&mut harness, &dc, 0.5);
+        harness.project.go_to(split).unwrap();
+        set(&mut harness, &dc, 0.25);
+        let folded = |harness: &Harness| {
+            let history = harness.project.history().unwrap();
+            let lines = history.lines();
+            lines.iter().map(|line| history.folded_away(line).unwrap()).collect::<Vec<_>>()
+        };
+        assert_eq!(folded(&harness), [false, false]);
+        if merge {
+            let other = harness.project.history().unwrap().lines()[0].start;
+            harness.project.merge(other, false).unwrap();
+        } else {
+            for step in 0..28 {
+                set(&mut harness, &dc, step as f32 / 100.);
+            }
+            assert_eq!(folded(&harness), [false, false]);
+            set(&mut harness, &dc, 1.0);
+        }
+        assert_eq!(folded(&harness), [true, false], "merge: {merge}");
+    }
+}
