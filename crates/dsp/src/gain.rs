@@ -13,6 +13,11 @@ pub fn amplitude(db: f32) -> f32 {
     10_f64.powf(f64::from(db) / 20.0) as f32
 }
 
+/// An amplitude in dBFS, the reverse of [`amplitude`]: 1 is 0 dB and 0 is `-inf`.
+pub fn decibels(amplitude: f32) -> f32 {
+    20.0 * amplitude.log10()
+}
+
 /// The gain of each channel, left first, for a `level` (a factor) and a `pan` from -1 (left) to
 /// 1 (right).
 ///
@@ -37,6 +42,8 @@ mod tests {
         assert_eq!(amplitude(0.0), 1.0);
         assert_eq!(amplitude(f32::NEG_INFINITY), 0.0);
         assert!((amplitude(-6.0) - 0.501_187).abs() < 1e-6);
+        assert_eq!(decibels(1.0), 0.0);
+        assert_eq!(decibels(0.0), f32::NEG_INFINITY);
     }
 
     #[test]
