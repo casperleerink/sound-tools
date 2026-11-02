@@ -539,12 +539,9 @@ impl HistoryPanel {
             .w(px(graph_width))
             .h_full()
         };
-        let now_tag = row.now.then(|| {
-            badge(text, text)
-                .text_color(theme.gray_100)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("Current")
-        });
+        let now_tag = row
+            .now
+            .then(|| badge(theme.gray_100, text).child("Current"));
         let badge_to = |id: &str, key: ObjectId, words: String, cx: &mut Context<Self>| {
             badge(link, link.opacity(0.1))
                 .id(SharedString::from(format!("{id}-{key}")))
