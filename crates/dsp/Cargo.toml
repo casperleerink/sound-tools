@@ -15,4 +15,3 @@ sound-core.workspace = true
 
 [dev-dependencies]
 no_denormals.workspace = true
-proptest.workspace = true

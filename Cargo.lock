@@ -6378,7 +6378,6 @@ name = "sound-dsp"
 version = "0.0.0"
 dependencies = [
  "no_denormals",
- "proptest",
  "realfft",
  "schemars",
  "serde",
