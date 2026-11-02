@@ -2,9 +2,11 @@
 //! folds away, and the lanes of the lines for the rows in view.
 //!
 //! A version is a line of points: a point continues the version of its first parent when it is
-//! that parent's first child that was not undone, else it starts a version of its own. A version shows its first
-//! and its latest point; what lies between folds into one row, unless it is where the project
-//! is now or a merge. A version that was undone shows as "undone" on the point it left.
+//! that parent's first child that was not undone, else it starts a version of its own.
+//!
+//! Rows are the points that matter: where each version starts, where another one splits from
+//! it, where it got to, where the project is and merges. The points between fold into the line,
+//! which opens on a click. Work that was undone shows on the point it left.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -70,10 +72,9 @@ impl Graph {
     }
 }
 
-/// A row of the tree: one point, or the points of a version folded into one.
+/// A row of the tree: one point.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
-    /// The point, or the first of the folded ones.
     pub point: ObjectId,
     pub version: usize,
     /// Milliseconds since 1970.
@@ -81,8 +82,6 @@ pub struct Row {
     pub now: bool,
     /// The latest point of its version, which carries the version's name.
     pub tip: bool,
-    /// The points this row stands for, when it is a fold; open, the newest of them carries it.
-    pub changes: Option<Fold>,
     /// Versions that start from a point of this row and fold away.
     pub more: Option<Fold>,
     /// Points that were undone from a point of this row, see
@@ -90,15 +89,8 @@ pub struct Row {
     pub undone: Option<Fold>,
 }
 
-impl Row {
-    /// It stands for points folded into it, rather than for one.
-    pub fn is_fold(&self) -> bool {
-        self.changes.as_ref().is_some_and(|fold| !fold.open)
-    }
-}
-
 /// Something folded, and the key that opens it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fold {
     pub key: ObjectId,
     pub count: usize,
@@ -128,13 +120,15 @@ enum EdgeKind {
     Merge,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Edge {
     child: usize,
     parent: usize,
     kind: EdgeKind,
     /// The version whose lane the line runs in.
     version: usize,
+    /// The points folded into this line, or opened from it.
+    fold: Option<Fold>,
 }
 
 /// The tree, newest row first.
@@ -154,12 +148,14 @@ pub struct Drawing {
     pub lines: Vec<Line>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     pub shape: Shape,
     /// The version whose colour it has.
     pub version: usize,
     pub merge: bool,
+    /// The points folded into this line, or opened from it: a click on it toggles them.
+    pub fold: Option<Fold>,
 }
 
 /// Parts of a line within one row. A lane is a column; the dot is in the middle of the row.
@@ -240,65 +236,61 @@ impl Graph {
             }
         }
 
+        // Where a shown version starts is a row: a fold never runs past it. Work undone and
+        // versions folded away do not count, or small undos would chop folds up.
+        let splits: BTreeSet<usize> = (shown.iter())
+            .filter_map(|version| split(*version))
+            .collect();
         let is_shown_point = |index: usize| {
             let version = version_of[index];
             starts[version] == index
                 || tips[version] == index
                 || Some(index) == self.now
                 || self.nodes[index].parents.len() > 1
+                || splits.contains(&index)
         };
-        // Rows with the index they sort by, newest first. A fold sorts by its oldest point, so
-        // every line from a point in it runs up to a newer row.
+        // Rows are points only, in time order. The points between two rows of a version fold
+        // into the line between them, which opens on a click.
         let mut rows: Vec<(usize, Row)> = Vec::new();
+        // The row each point shows on: its own, or the one before its fold.
         let mut row_of: BTreeMap<usize, usize> = BTreeMap::new();
-        // The points of an open fold stay together where the fold was, newest first, instead
-        // of spreading between the rows of other versions: each sorts by the fold's oldest.
-        let mut block_of: BTreeMap<usize, usize> = BTreeMap::new();
+        // The fold each folded point is in, open or not.
+        let mut fold_of: BTreeMap<usize, Fold> = BTreeMap::new();
         for version in &shown {
+            let mut before: Option<usize> = None;
             let mut run: Vec<usize> = Vec::new();
             for index in members[*version].iter().copied() {
                 if !is_shown_point(index) {
                     run.push(index);
                     continue;
                 }
-                let key = run.first().map(|first| self.nodes[*first].id);
-                match key {
-                    Some(key) if run.len() > 1 && !open.contains(&key) => {
-                        let mut row = self.row(run[0], *version, &tips);
-                        row.changes = Some(Fold {
-                            key,
-                            count: run.len(),
-                            open: false,
-                        });
-                        for hidden in &run {
-                            row_of.insert(*hidden, run[0]);
+                if let Some(first) = run.first() {
+                    let key = self.nodes[*first].id;
+                    let open = run.len() == 1 || open.contains(&key);
+                    let fold = Fold {
+                        key,
+                        count: run.len(),
+                        open,
+                    };
+                    for hidden in run.drain(..) {
+                        // A fold of one point is that point.
+                        if fold.count > 1 {
+                            fold_of.insert(hidden, fold.clone());
                         }
-                        rows.push((run[0], row));
-                    }
-                    _ => {
-                        let newest = run.last().copied();
-                        for hidden in run.iter().copied() {
-                            block_of.insert(hidden, run[0]);
-                            let mut row = self.row(hidden, *version, &tips);
-                            if Some(hidden) == newest && run.len() > 1 {
-                                row.changes = key.map(|key| Fold {
-                                    key,
-                                    count: run.len(),
-                                    open: true,
-                                });
-                            }
+                        if open {
                             row_of.insert(hidden, hidden);
-                            rows.push((hidden, row));
+                            rows.push((hidden, self.row(hidden, *version, &tips)));
+                        } else if let Some(before) = before {
+                            row_of.insert(hidden, before);
                         }
                     }
                 }
-                run.clear();
                 row_of.insert(index, index);
                 rows.push((index, self.row(index, *version, &tips)));
+                before = Some(index);
             }
         }
-        let place = |index: usize| (block_of.get(&index).copied().unwrap_or(index), index);
-        rows.sort_by_key(|(index, _)| std::cmp::Reverse(place(*index)));
+        rows.sort_by_key(|(index, _)| std::cmp::Reverse(*index));
         let position: BTreeMap<usize, usize> = (rows.iter().enumerate())
             .map(|(position, (index, _))| (*index, position))
             .collect();
@@ -349,11 +341,17 @@ impl Graph {
                     0 => (EdgeKind::Main, version_of[index]),
                     _ => (EdgeKind::Merge, version_of[*parent]),
                 };
+                // The line of a fold: into it, through it, or out of it.
+                let fold = (kind == EdgeKind::Main)
+                    .then(|| fold_of.get(parent).or_else(|| fold_of.get(&index)))
+                    .flatten()
+                    .cloned();
                 edges.insert(Edge {
                     child,
                     parent: parent_row,
                     kind,
                     version,
+                    fold,
                 });
             }
         }
@@ -386,7 +384,6 @@ impl Graph {
             time: node.time,
             now: Some(index) == self.now,
             tip: tips[version] == index,
-            changes: None,
             more: None,
             undone: None,
         }
@@ -439,6 +436,7 @@ impl Layout {
                 shape,
                 version: edge.version,
                 merge: edge.kind == EdgeKind::Merge,
+                fold: edge.fold.clone(),
             });
         }
         Drawing {
@@ -487,62 +485,44 @@ mod tests {
     }
 
     #[test]
-    fn a_version_shows_its_first_and_latest_point_with_the_rest_folded_between() {
+    fn a_version_shows_its_first_and_latest_point_with_the_rest_folded_into_the_line() {
         let chain = line(6);
         let chain: Vec<&[usize]> = chain.iter().map(Vec::as_slice).collect();
         let layout = graph(&chain, 5).layout(&BTreeSet::new());
-        assert_eq!(points(&layout), [id(5), id(1), id(0)]);
-        let fold = layout.rows[1].changes.clone().unwrap();
+        assert_eq!(points(&layout), [id(5), id(0)]);
+        let lanes = layout.lanes(0..2);
+        let fold = layout.drawing(0, &lanes).lines[0].fold.clone().unwrap();
         assert_eq!((fold.key, fold.count, fold.open), (id(1), 4, false));
-        let lanes = layout.lanes(0..3);
-        assert_eq!(layout.drawing(1, &lanes).lines.len(), 2);
 
         let layout = graph(&chain, 5).layout(&BTreeSet::from([id(1)]));
         assert_eq!(layout.rows.len(), 6);
+        let lanes = layout.lanes(0..6);
         assert!(
-            layout.rows[1]
-                .changes
-                .as_ref()
-                .is_some_and(|fold| fold.open)
+            layout
+                .drawing(2, &lanes)
+                .lines
+                .iter()
+                .all(|line| line.fold.as_ref().is_some_and(|fold| fold.open))
         );
         // Where the project is shows by itself, and a fold of one is no fold.
         let layout = graph(&chain, 3).layout(&BTreeSet::new());
-        assert_eq!(points(&layout), [id(5), id(4), id(3), id(1), id(0)]);
+        assert_eq!(points(&layout), [id(5), id(4), id(3), id(0)]);
     }
 
     #[test]
-    fn an_open_fold_stays_together_below_versions_that_split_from_it() {
-        // 0 1 2 3 5 6 the first version; 4 a version from 2, made before 5.
-        let chain: [&[usize]; 7] = [&[], &[0], &[1], &[2], &[2], &[3], &[5]];
-        let layout = graph(&chain, 6).layout(&BTreeSet::from([id(1)]));
-        // The other version comes first; the open fold 5 3 2 1 stays one block under it.
-        assert_eq!(
-            points(&layout),
-            [id(6), id(4), id(5), id(3), id(2), id(1), id(0)]
-        );
-        assert!(
-            layout.rows[2]
-                .changes
-                .as_ref()
-                .is_some_and(|fold| fold.open)
-        );
-    }
-
-    #[test]
-    fn a_version_from_a_folded_point_hangs_from_the_fold() {
-        // 0 1 2 3 4 the first version; 5 a version from 2, now.
-        let graph = graph(&[&[], &[0], &[1], &[2], &[3], &[2]], 5);
-        let layout = graph.layout(&BTreeSet::new());
-        assert_eq!(points(&layout), [id(5), id(4), id(1), id(0)]);
+    fn where_a_version_splits_off_is_a_row_and_no_fold_runs_past_it() {
+        // 0 to 8 the first version; 9 a version from 4, now.
+        let mut chain = line(9);
+        chain.push(vec![4]);
+        let chain: Vec<&[usize]> = chain.iter().map(Vec::as_slice).collect();
+        let layout = graph(&chain, 9).layout(&BTreeSet::new());
+        assert_eq!(points(&layout), [id(9), id(8), id(4), id(0)]);
         let lanes = layout.lanes(0..4);
-        assert_eq!(lanes.len(), 2);
-        // The new version's line curves into the fold.
-        let lines = layout.drawing(2, &lanes).lines;
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.shape == Shape::FromTop { from: 1, to: 0 })
-        );
+        let folds: Vec<usize> = (0..4)
+            .flat_map(|row| layout.drawing(row, &lanes).lines)
+            .filter_map(|line| line.fold.map(|fold| fold.count))
+            .collect();
+        assert!(folds.iter().all(|count| *count == 3), "{folds:?}");
     }
 
     #[test]

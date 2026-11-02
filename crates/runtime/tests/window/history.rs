@@ -93,11 +93,15 @@ fn undo_redo_and_a_click_move_through_one_history(cx: &mut TestAppContext) {
     assert_eq!(room_file(&mut opened), added);
     assert_eq!(opened.undo_label().as_deref(), Some("Add reverb"));
 
-    // Changes from there make it a version, whose middle folds.
+    // Changes from there make it a version, whose middle folds into its line, which opens on
+    // a click.
     for mix in [0.4, 0.5, 0.6] {
         opened.edit(set_mix(mix));
     }
     look(&mut opened);
-    assert_eq!(rows(&mut opened), 4);
-    assert!(opened.find("history-fold-2").is_some());
+    assert_eq!(rows(&mut opened), 3);
+    let fold = opened.control("history-fold-0");
+    opened.click(fold);
+    look(&mut opened);
+    assert_eq!(rows(&mut opened), 6);
 }

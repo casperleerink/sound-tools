@@ -518,36 +518,79 @@ impl HistoryPanel {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = cx.theme();
-        let (text, muted, hover, selected, link, fill) = (
+        let (text, muted, hover, selected, link, quiet) = (
             theme.gray_950,
             theme.gray_700,
             theme.alpha_at(0.04),
             theme.alpha_at(0.07),
             theme.blue,
-            theme.alpha_at(0.07),
+            theme.gray_600,
         );
-        let is_fold = row.is_fold();
+        // A fold is a line: a click on it opens or closes the points in it.
+        let mut fold_lanes = BTreeSet::new();
+        let folds: Vec<gpui::AnyElement> = (drawing.lines.iter())
+            .filter_map(|line| Some((lane_of(line.shape), line.fold.clone()?)))
+            .filter(|(lane, _)| fold_lanes.insert(*lane))
+            .map(|(lane, fold)| {
+                let key = fold.key;
+                let words = match fold.open {
+                    true => format!("Fold these {} changes away", fold.count),
+                    false => format!("{} changes. Click to show them", fold.count),
+                };
+                div()
+                    .id(SharedString::from(format!("fold-{index}-{lane}")))
+                    .debug_selector(move || format!("history-fold-{index}"))
+                    .absolute()
+                    .top_0()
+                    .h_full()
+                    .left(px(GRAPH_INSET + LANE_WIDTH * lane as f32 - LANE_WIDTH / 2.))
+                    .w(px(LANE_WIDTH))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(hover))
+                    .tooltip(move |_, cx| Tooltip::new(words.clone()).view(cx))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |panel, _, _, cx| {
+                        cx.stop_propagation();
+                        panel.toggle_fold(key, cx)
+                    }))
+                    .into_any_element()
+            })
+            .collect();
         let graph = {
             let colors = colors.clone();
-            let dot = Dot::of(&row);
-            let stub = row.undone.as_ref().is_some_and(|fold| !fold.open);
-            canvas(
-                |_, _, _| {},
-                move |bounds, (), window, _| paint(bounds, &drawing, dot, stub, &colors, window),
-            )
-            .flex_none()
-            .w(px(graph_width))
-            .h_full()
+            let mark = Mark {
+                tip: row.tip,
+                now: row.now,
+                stub: row.undone.as_ref().is_some_and(|fold| !fold.open),
+            };
+            div()
+                .relative()
+                .flex_none()
+                .w(px(graph_width))
+                .h_full()
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, (), window, _| paint(bounds, &drawing, mark, &colors, window),
+                    )
+                    .size_full(),
+                )
+                .children(folds)
         };
         let now_tag = row
             .now
             .then(|| badge(theme.gray_100, text).child("Current"));
+        // Quiet words: they open and close, and are no names.
         let badge_to = |id: &str, key: ObjectId, words: String, cx: &mut Context<Self>| {
-            badge(link, link.opacity(0.1))
+            div()
                 .id(SharedString::from(format!("{id}-{key}")))
                 .debug_selector(move || format!("history-{id}-{index}"))
+                .flex_none()
+                .whitespace_nowrap()
+                .text_size(px(12.))
+                .text_color(quiet)
                 .cursor_pointer()
-                .hover(|style| style.bg(link.opacity(0.18)))
+                .hover(|style| style.text_color(text))
                 .child(words)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |panel, _, _, cx| {
@@ -555,9 +598,6 @@ impl HistoryPanel {
                     panel.toggle_fold(key, cx)
                 }))
         };
-        let hide = (row.changes.as_ref())
-            .filter(|fold| fold.open)
-            .map(|fold| badge_to("hide", fold.key, "Hide".to_string(), cx));
         let more = row.more.as_ref().map(|more| {
             let words = match more.open {
                 true => "Hide versions".to_string(),
@@ -582,8 +622,12 @@ impl HistoryPanel {
         let start = version_info
             .filter(|version| version.split.is_none() && version.start == row.point)
             .map(|_| {
-                badge(link, link.opacity(0.18))
+                div()
                     .debug_selector(move || format!("history-start-{index}"))
+                    .flex_none()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(link)
                     .child("Project start")
             });
         let name = row.tip.then(|| {
@@ -598,9 +642,6 @@ impl HistoryPanel {
             match renaming {
                 Some(input) => div().flex_1().child(input).into_any_element(),
                 None => div()
-                    .px(px(7.))
-                    .rounded(px(6.))
-                    .bg(color.opacity(0.16))
                     .min_w_0()
                     .truncate()
                     .text_size(px(13.))
@@ -610,10 +651,19 @@ impl HistoryPanel {
                     .into_any_element(),
             }
         });
-        let fold = (row.changes.as_ref()).filter(|_| is_fold).map(|fold| {
-            badge(muted, fill)
-                .debug_selector(move || format!("history-fold-{index}"))
-                .child(format!("+{}", fold.count))
+        let actions: Vec<gpui::AnyElement> = (more.into_iter().map(IntoElement::into_any_element))
+            .chain(undone.map(IntoElement::into_any_element))
+            .collect();
+        // Separated by a dot, as words in a line.
+        let actions = actions.into_iter().enumerate().flat_map(|(place, action)| {
+            let dot = (place > 0).then(|| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(quiet)
+                    .child("·")
+                    .into_any_element()
+            });
+            dot.into_iter().chain([action])
         });
         // One line: what the row is on the left, when and whether it is current on the right.
         let content = div()
@@ -631,10 +681,7 @@ impl HistoryPanel {
                     .overflow_hidden()
                     .children(name)
                     .children(start)
-                    .children(fold)
-                    .children(hide)
-                    .children(more)
-                    .children(undone),
+                    .children(actions),
             )
             .child(
                 div()
@@ -654,11 +701,7 @@ impl HistoryPanel {
         let undone_from = (row.undone.as_ref())
             .filter(|fold| !fold.open)
             .map(|fold| fold.key);
-        let (point, key, version) = (
-            row.point,
-            row.changes.as_ref().map(|fold| fold.key),
-            row.version,
-        );
+        let (point, version) = (row.point, row.version);
         div()
             .id(("history-row", index))
             .debug_selector(move || format!("history-row-{index}"))
@@ -670,10 +713,7 @@ impl HistoryPanel {
             .cursor_pointer()
             .when(row.now, |this| this.bg(selected))
             .hover(|style| style.bg(hover))
-            .on_click(cx.listener(move |panel, _, _, cx| match (is_fold, key) {
-                (true, Some(key)) => panel.toggle_fold(key, cx),
-                _ => panel.go_to(point, version, cx),
-            }))
+            .on_click(cx.listener(move |panel, _, _, cx| panel.go_to(point, version, cx)))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |panel, event: &MouseDownEvent, window, cx| {
@@ -729,27 +769,21 @@ impl Render for HistoryPanel {
     }
 }
 
-/// What the dot of a row is.
+/// What a row draws besides its lines.
 #[derive(Copy, Clone)]
-enum Dot {
-    /// The latest point of a version.
-    Tip {
-        now: bool,
-    },
-    Point {
-        now: bool,
-    },
-    /// Points folded into the row: the line runs through.
-    Fold,
+struct Mark {
+    /// The latest point of its version: a full dot, and a stem out to the version's name.
+    tip: bool,
+    now: bool,
+    /// Work was undone from this point: a faint branch that ends at once.
+    stub: bool,
 }
 
-impl Dot {
-    fn of(row: &Row) -> Self {
-        match (row.is_fold(), row.tip) {
-            (true, _) => Self::Fold,
-            (false, true) => Self::Tip { now: row.now },
-            (false, false) => Self::Point { now: row.now },
-        }
+/// The lane a line runs in, where a click on it lands.
+fn lane_of(shape: Shape) -> usize {
+    match shape {
+        Shape::Through(lane) | Shape::Down(lane) | Shape::Up(lane) => lane,
+        Shape::FromTop { from, .. } | Shape::FromBottom { from, .. } => from,
     }
 }
 
@@ -788,12 +822,10 @@ impl Colors {
     }
 }
 
-/// `stub` draws the work undone from this point: a faint branch that ends at once.
 fn paint(
     bounds: Bounds<Pixels>,
     drawing: &Drawing,
-    dot: Dot,
-    stub: bool,
+    mark: Mark,
     colors: &Colors,
     window: &mut Window,
 ) {
@@ -803,7 +835,10 @@ fn paint(
     let bend = px(ROW_HEIGHT * 0.35);
     for line in &drawing.lines {
         let mut path = PathBuilder::stroke(px(2.));
-        if line.merge {
+        let folded = line.fold.as_ref().is_some_and(|fold| !fold.open);
+        if folded {
+            path = path.dash_array(&[px(1.5), px(3.5)]);
+        } else if line.merge {
             path = path.dash_array(&[px(3.), px(3.)]);
         }
         match line.shape {
@@ -842,7 +877,15 @@ fn paint(
     }
     let centre = point(x(drawing.dot), middle);
     let color = colors.version(drawing.version);
-    if stub {
+    if mark.tip {
+        let mut path = PathBuilder::stroke(px(1.));
+        path.move_to(centre + point(px(7.), px(0.)));
+        path.line_to(point(bounds.right(), middle));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color.opacity(0.5));
+        }
+    }
+    if mark.stub {
         let mut path = PathBuilder::stroke(px(1.5)).dash_array(&[px(2.), px(2.5)]);
         let end = centre + point(px(LANE_WIDTH * 0.7), px(-ROW_HEIGHT * 0.4));
         path.move_to(centre);
@@ -851,22 +894,18 @@ fn paint(
             window.paint_path(path, color.opacity(0.45));
         }
     }
-    match dot {
-        Dot::Fold => {
-            for offset in [-5., 0., 5.] {
-                circle(window, centre + point(px(0.), px(offset)), 1.5, color);
-            }
-        }
-        Dot::Tip { now } => {
-            if now {
-                ring(window, centre, 9., 1.5, colors.now);
-            }
-            circle(window, centre, 5.5, color);
-        }
-        Dot::Point { now } => {
-            if now {
-                ring(window, centre, 8., 1.5, colors.now);
-            }
+    if mark.now {
+        ring(
+            window,
+            centre,
+            if mark.tip { 9. } else { 8. },
+            1.5,
+            colors.now,
+        );
+    }
+    match mark.tip {
+        true => circle(window, centre, 5.5, color),
+        false => {
             circle(window, centre, 4., color);
             circle(window, centre, 2., colors.background);
         }
