@@ -92,7 +92,7 @@ impl Line {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct SavedLines {
     lines: Vec<Line>,
     next_number: u32,
@@ -176,17 +176,21 @@ impl History {
         let mut history = match repository.head()? {
             Some(head) => {
                 let commit = repository.read_commit(head)?;
-                let saved: SavedLines = match std::fs::read(folder.join(LINES_FILE)) {
-                    Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => SavedLines::default(),
+                let saved = match std::fs::read(folder.join(LINES_FILE)) {
+                    Ok(bytes) => serde_json::from_slice::<SavedLines>(&bytes).ok(),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error),
                 };
-                Self {
-                    lines: saved.lines,
-                    next_number: saved.next_number.max(1),
-                    since: saved.since,
-                    ..Self::empty(repository, root, kept, head, commit.tree)
+                let mut history = Self::empty(repository, root, kept, head, commit.tree);
+                match saved {
+                    Some(saved) => {
+                        history.lines = saved.lines;
+                        history.next_number = saved.next_number.max(1);
+                        history.since = saved.since;
+                    }
+                    None => history.lines_from_refs()?,
                 }
+                history
             }
             None => {
                 let files = kept.read(root, &repository)?;
@@ -204,7 +208,7 @@ impl History {
             }
         };
         if history.lines.is_empty() {
-            // Lines lost: the head is all that is shown.
+            // Lines and refs lost: the head is all that is shown.
             history.new_version(history.head);
         }
         history.save(Origin::Edit, "Changed while the app was closed")?;
@@ -538,6 +542,38 @@ impl History {
         let number = self.next_number;
         self.next_number += 1;
         number
+    }
+
+    /// The lines again from the refs, when the lines file is lost or broken. Names, what was set
+    /// aside and what came since the last point are lost with it. A line owns the points down
+    /// to one an older line holds: versions by number, then undone work by age.
+    fn lines_from_refs(&mut self) -> io::Result<()> {
+        let mut tips: Vec<(Option<u32>, PointId)> = (self.repository.refs("versions")?)
+            .into_iter()
+            .filter_map(|(name, tip)| Some((Some(name.parse().ok()?), tip)))
+            .collect();
+        tips.sort();
+        let mut undone = Vec::new();
+        for tip in self.repository.refs("undone")?.into_values() {
+            undone.push((self.commit(tip)?.time, tip));
+        }
+        undone.sort();
+        tips.extend(undone.into_iter().map(|(_, tip)| (None, tip)));
+        let mut owned = HashSet::new();
+        for (number, tip) in tips {
+            let mut start = None;
+            let mut at = Some(tip);
+            while let Some(point) = at.filter(|point| owned.insert(*point)) {
+                start = Some(point);
+                at = self.commit(point)?.parents.first().copied();
+            }
+            if let Some(start) = start {
+                self.lines.push(Line::new(start, tip, number));
+            }
+        }
+        let last = self.lines.iter().filter_map(|line| line.number).max();
+        self.next_number = last.unwrap_or(0) + 1;
+        Ok(())
     }
 
     fn new_version(&mut self, start: PointId) {

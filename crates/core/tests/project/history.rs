@@ -453,3 +453,22 @@ fn an_undo_before_closing_still_marks_the_work_undone_after_reopening() {
     set(&mut harness, &dc, 0.25);
     assert_eq!(versions(&harness), [true, false]);
 }
+
+#[test]
+fn a_broken_lines_file_is_made_again_from_the_refs() {
+    let mut harness = Harness::new();
+    let dc = add_dc(&mut harness);
+    set(&mut harness, &dc, 0.5);
+    harness.project.undo().unwrap();
+    set(&mut harness, &dc, 0.25);
+    harness.project.undo_keeping_version().unwrap();
+    set(&mut harness, &dc, 0.75);
+    assert_eq!(versions(&harness), [true, false, true]);
+    let before = harness.project.history().unwrap().lines().to_vec();
+
+    std::fs::write(harness.path(HISTORY_FOLDER).join("lines.json"), "{").unwrap();
+    let harness = harness.reopen();
+    let after = harness.project.history().unwrap().lines();
+    assert_eq!(after.len(), before.len());
+    assert!(before.iter().all(|line| after.contains(line)), "{after:?}");
+}

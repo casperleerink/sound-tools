@@ -308,6 +308,25 @@ impl Repository {
         }
         Ok(())
     }
+
+    /// The refs under `refs/<folder>/`, by name. A ref that does not read is left out.
+    pub(crate) fn refs(&self, folder: &str) -> io::Result<BTreeMap<String, PointId>> {
+        let folder = self.folder.join("refs").join(folder);
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(error) => return Err(error),
+        };
+        let mut refs = BTreeMap::new();
+        for entry in entries {
+            let entry = entry?;
+            let Ok(id) = fs::read_to_string(entry.path())?.trim().parse() else {
+                continue;
+            };
+            refs.insert(entry.file_name().to_string_lossy().to_string(), id);
+        }
+        Ok(refs)
+    }
 }
 
 fn invalid_data(message: String) -> io::Error {
