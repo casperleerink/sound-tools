@@ -1,8 +1,7 @@
 //! Small building blocks of the built-in effects and instruments that more than one of them
 //! needs: a read of a [`DelayLine`] that fades from one length to another, a one-pole filter,
 //! the hold on what goes into a loop, the rounding of a step of a waveform, a noise
-//! generator and the Bessel function of a Kaiser window. Next to [`Smoothed`](sound_core::Smoothed) and [`DelayLine`]. The
-//! core itself uses only the Bessel function, for its [`Oversampler`](crate::Oversampler).
+//! generator and the Bessel function of a Kaiser window.
 
 use std::f32::consts::PI;
 

@@ -1,6 +1,5 @@
 //! A delay line, for a processor that hears what came in a while ago: the lines of a reverb, the
-//! swept delay of a chorus. Next to [`Smoothed`](crate::Smoothed) and
-//! [`Envelope`](crate::Envelope), a helper a processor uses per frame.
+//! swept delay of a chorus, and the latency compensation of the engine.
 
 /// A delay line whose length is a power of two, so a position wraps with a mask and a read can
 /// never be out of it. The caller keeps the position where the next frame is written, so lines
