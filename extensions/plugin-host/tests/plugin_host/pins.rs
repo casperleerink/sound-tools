@@ -347,7 +347,10 @@ fn a_turn_of_a_knob_in_a_vst3_window_is_one_undo_step_that_ends_where_the_hand_l
     }
     // Four edits on the way down to a quarter, between a `beginEdit` and an `endEdit`.
     assert_eq!(written_value(&harness, level(format)), 0.25);
-    assert_eq!(harness.project.undo_label().as_deref(), Some("Change Level"));
+    assert_eq!(
+        harness.project.undo_label().as_deref(),
+        Some("Change Level")
+    );
     harness.project.undo().unwrap();
     assert_eq!(harness.project.undo_label().as_deref(), Some("Add track"));
 }
@@ -569,7 +572,11 @@ fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
             .resolve::<PluginRecord>(&id("track/instrument"));
         assert!(record.is_none(), "{format:?}");
         assert!(!harness.path("state/track/instrument.json").exists());
-        assert_eq!(harness.project.undo_label().as_deref(), Some("Delete"), "{format:?}");
+        assert_eq!(
+            harness.project.undo_label().as_deref(),
+            Some("Delete"),
+            "{format:?}"
+        );
         harness.project.undo().unwrap();
         assert_eq!(written_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(

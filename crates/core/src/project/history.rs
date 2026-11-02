@@ -16,10 +16,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use super::GROUPING_WINDOW;
-use folder::Kept;
 pub(crate) use folder::EXTENSIONS_FOLDER;
-use git::{Commit, Files, Repository};
+use folder::Kept;
 pub use git::PointId;
+use git::{Commit, Files, Repository};
 
 /// Where the history repository is, inside the project folder. Hidden, so neither the agent's
 /// tools nor the runtime's watchers read it.
@@ -102,7 +102,9 @@ pub struct Point {
 enum Since {
     Nothing,
     /// Undo, from this point on.
-    Undid { from: PointId },
+    Undid {
+        from: PointId,
+    },
     /// A point chosen in the history, or undo that keeps a version.
     WentBack,
 }
@@ -197,7 +199,13 @@ impl History {
         Ok(history)
     }
 
-    fn empty(repository: Repository, root: &Path, kept: Kept, head: PointId, tree: PointId) -> Self {
+    fn empty(
+        repository: Repository,
+        root: &Path,
+        kept: Kept,
+        head: PointId,
+        tree: PointId,
+    ) -> Self {
         Self {
             repository,
             root: root.to_path_buf(),
@@ -261,8 +269,9 @@ impl History {
     /// Every point, newest first, read as the walk goes. A child is always newer than its
     /// parents, so a point's line is known from its child in that line by the time it comes.
     fn walk(&self) -> io::Result<impl Iterator<Item = io::Result<Point>> + '_> {
-        let tips: HashMap<PointId, PointId> =
-            (self.lines.iter()).map(|line| (line.tip, line.start)).collect();
+        let tips: HashMap<PointId, PointId> = (self.lines.iter())
+            .map(|line| (line.tip, line.start))
+            .collect();
         let mut heap = BinaryHeap::new();
         let mut queued = HashSet::new();
         for tip in tips.keys().copied().chain([self.head]) {
@@ -312,7 +321,10 @@ impl History {
     /// Whether the version is folded away: it is not the current one and was merged, set
     /// aside by hand, or has [`FOLD_AFTER`] newer points since its last point.
     pub fn folded_away(&self, line: &Line) -> io::Result<bool> {
-        if self.line_of(self.head)?.is_some_and(|current| current.start == line.start) {
+        if self
+            .line_of(self.head)?
+            .is_some_and(|current| current.start == line.start)
+        {
             return Ok(false);
         }
         if line.set_aside {
@@ -359,8 +371,7 @@ impl History {
                 break;
             }
             let commit = self.commit(id)?;
-            if commit.parents.first() == Some(&of) && newest.is_none_or(|(at, _)| point_time > at)
-            {
+            if commit.parents.first() == Some(&of) && newest.is_none_or(|(at, _)| point_time > at) {
                 newest = Some((point_time, id));
             }
             for parent in &commit.parents {
@@ -727,7 +738,10 @@ impl History {
         let mut paths: Vec<&String> = before.keys().chain(after.keys()).collect();
         paths.sort();
         paths.dedup();
-        let read = |blob: Option<&PointId>| blob.map(|blob| self.repository.read_blob(*blob)).transpose();
+        let read = |blob: Option<&PointId>| {
+            blob.map(|blob| self.repository.read_blob(*blob))
+                .transpose()
+        };
         let mut changes = Vec::new();
         for path in paths {
             let (old, new) = (before.get(path), after.get(path));
@@ -777,6 +791,8 @@ pub struct FileChange {
 }
 
 fn now_millis() -> u64 {
-    let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let since_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     since_epoch.as_millis() as u64
 }

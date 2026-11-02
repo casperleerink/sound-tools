@@ -220,7 +220,10 @@ fn undo_and_redo_wait_for_the_open_gesture(cx: &mut TestAppContext) {
             30,
             "undo in the middle of a drag is ignored"
         );
-        assert_eq!(session.project().undo_label().as_deref(), Some("Add marker"));
+        assert_eq!(
+            session.project().undo_label().as_deref(),
+            Some("Add marker")
+        );
 
         session.finish_gesture(cx);
         assert!(!session.gesture_open());

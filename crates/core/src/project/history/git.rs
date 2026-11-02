@@ -172,7 +172,10 @@ impl Repository {
             match path.split_once('/') {
                 None => entries.push((path.clone(), FILE_MODE, *blob)),
                 Some((folder, rest)) => {
-                    folders.entry(folder).or_default().insert(rest.to_string(), *blob);
+                    folders
+                        .entry(folder)
+                        .or_default()
+                        .insert(rest.to_string(), *blob);
                 }
             }
         }
@@ -202,7 +205,10 @@ impl Repository {
         let mut rest = &body[..];
         while !rest.is_empty() {
             let broken = || invalid_data(format!("tree {id} is broken"));
-            let space = rest.iter().position(|byte| *byte == b' ').ok_or_else(broken)?;
+            let space = rest
+                .iter()
+                .position(|byte| *byte == b' ')
+                .ok_or_else(broken)?;
             let nul = rest.iter().position(|byte| *byte == 0).ok_or_else(broken)?;
             let mode = std::str::from_utf8(&rest[..space]).map_err(|_| broken())?;
             let name = std::str::from_utf8(&rest[space + 1..nul]).map_err(|_| broken())?;
@@ -280,7 +286,11 @@ impl Repository {
     }
 
     /// Makes the refs under `refs/<folder>/` exactly `refs`, by name.
-    pub(crate) fn set_refs(&self, folder: &str, refs: &BTreeMap<String, PointId>) -> io::Result<()> {
+    pub(crate) fn set_refs(
+        &self,
+        folder: &str,
+        refs: &BTreeMap<String, PointId>,
+    ) -> io::Result<()> {
         let folder = self.folder.join("refs").join(folder);
         fs::create_dir_all(&folder)?;
         for entry in fs::read_dir(&folder)? {

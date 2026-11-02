@@ -391,7 +391,11 @@ impl Project {
     /// Goes to any point, as undo does. The next change after it starts a version.
     pub fn go_to(&mut self, point: PointId) -> Result<(), ProjectError> {
         self.before_going()?;
-        if self.history.as_ref().is_none_or(|history| history.current() == point) {
+        if self
+            .history
+            .as_ref()
+            .is_none_or(|history| history.current() == point)
+        {
             return Ok(());
         }
         self.go(point, Going::Back)?;

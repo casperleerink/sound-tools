@@ -33,7 +33,9 @@ impl Kept {
         let names: Vec<&str> = names.collect();
         let hidden = (names.iter()).any(|name| name.starts_with('.') || *name == "node_modules");
         let generated = top == Some(EXTENSIONS_FOLDER)
-            && names.first().is_some_and(|first| self.skipped.contains(first));
+            && names
+                .first()
+                .is_some_and(|first| self.skipped.contains(first));
         hidden || generated
     }
 

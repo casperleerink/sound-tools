@@ -35,7 +35,9 @@ pub use file::{
 pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
-pub use history::{FileChange, HISTORY_FOLDER, History, Line, OUTSIDE_POINT_WINDOW, Point, PointId};
+pub use history::{
+    FileChange, HISTORY_FOLDER, History, Line, OUTSIDE_POINT_WINDOW, Point, PointId,
+};
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
@@ -48,8 +50,8 @@ pub use watcher::GROUPING_WINDOW;
 use binding::{BindError, Bindings};
 use editing::{Change, RecordChange};
 use instance::{JsonState, Record};
-use open_edits::OpenEdits;
 use live::LiveSources;
+use open_edits::OpenEdits;
 use outside::NotApplied;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;

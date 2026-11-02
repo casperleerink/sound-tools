@@ -26,7 +26,11 @@ fn current(harness: &Harness) -> PointId {
 /// Whether each line is a version, rather than undone work.
 fn versions(harness: &Harness) -> Vec<bool> {
     let history = harness.project.history().unwrap();
-    history.lines().iter().map(|line| line.is_version()).collect()
+    history
+        .lines()
+        .iter()
+        .map(|line| line.is_version())
+        .collect()
 }
 
 fn git(harness: &Harness, arguments: &[&str]) -> String {
@@ -51,7 +55,10 @@ fn plain_git_reads_every_point() {
     git(&harness, &["fsck", "--strict", "--no-dangling"]);
     let log = git(&harness, &["log", "--all", "--format=%s"]);
     // The undone point stays findable.
-    assert_eq!(log.lines().collect::<Vec<_>>(), ["Set", "Set", "Add dc", "Project start"]);
+    assert_eq!(
+        log.lines().collect::<Vec<_>>(),
+        ["Set", "Set", "Add dc", "Project start"]
+    );
     let file = git(&harness, &["show", "HEAD:state/dc.json"]);
     assert_eq!(file, harness.read("state/dc.json"));
 }
@@ -61,14 +68,29 @@ fn undo_and_redo_make_no_point_and_bring_back_the_files_byte_for_byte() {
     let mut harness = Harness::new();
     let dc = add_dc(&mut harness);
     let written = harness.read("state/dc.json");
-    let points = harness.project.history().unwrap().points(100).unwrap().len();
+    let points = harness
+        .project
+        .history()
+        .unwrap()
+        .points(100)
+        .unwrap()
+        .len();
 
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Add dc"));
     assert!(!harness.path("state/dc.json").exists());
     assert!(harness.project.state(&dc).is_none());
     assert_eq!(harness.project.redo().unwrap().as_deref(), Some("Add dc"));
     assert_eq!(harness.read("state/dc.json"), written);
-    assert_eq!(harness.project.history().unwrap().points(100).unwrap().len(), points);
+    assert_eq!(
+        harness
+            .project
+            .history()
+            .unwrap()
+            .points(100)
+            .unwrap()
+            .len(),
+        points
+    );
 }
 
 #[test]
@@ -116,7 +138,10 @@ fn undo_that_keeps_a_version_and_going_back_start_a_version() {
             harness.project.go_to(start).unwrap();
             harness.project.go_to(points[1].id).unwrap();
             // Going around is free.
-            assert_eq!(harness.project.history().unwrap().points(10).unwrap().len(), points.len());
+            assert_eq!(
+                harness.project.history().unwrap().points(10).unwrap().len(),
+                points.len()
+            );
         }
         set(&mut harness, &dc, 0.25);
         assert_eq!(versions(&harness), [true, true], "keep: {keep}");
@@ -146,17 +171,26 @@ fn outside_changes_close_together_are_one_point_and_one_taken_back_is_none() {
     let added = harness.read("state/dc.json");
     let path = harness.write("state/dc.json", &dc_record(0.5));
     let at = harness.now;
-    harness.project.apply_outside_changes_at(&[path.clone()], at).unwrap();
+    harness
+        .project
+        .apply_outside_changes_at(&[path.clone()], at)
+        .unwrap();
     std::fs::write(&path, dc_record(0.75)).unwrap();
     let later = at + std::time::Duration::from_secs(5);
-    harness.project.apply_outside_changes_at(&[path.clone()], later).unwrap();
+    harness
+        .project
+        .apply_outside_changes_at(&[path.clone()], later)
+        .unwrap();
     let points = harness.project.history().unwrap().points(100).unwrap();
     assert_eq!(points[1].id, before);
 
     // The agent writes back what was there: no point is left.
     std::fs::write(&path, added).unwrap();
     let last = later + std::time::Duration::from_secs(5);
-    harness.project.apply_outside_changes_at(&[path], last).unwrap();
+    harness
+        .project
+        .apply_outside_changes_at(&[path], last)
+        .unwrap();
     assert_eq!(current(&harness), before);
 }
 
@@ -189,20 +223,32 @@ fn a_name_given_by_hand_stays_until_cleared() {
     let mut harness = Harness::new();
     add_dc(&mut harness);
     let line = harness.project.history().unwrap().lines()[0].clone();
-    harness.project.rename_version(line.start, Some("Mine".into())).unwrap();
+    harness
+        .project
+        .rename_version(line.start, Some("Mine".into()))
+        .unwrap();
     harness
         .project
         .name_version(line.start, "Found".into(), line.tip)
         .unwrap();
-    assert_eq!(harness.project.history().unwrap().lines()[0].title(), "Mine");
+    assert_eq!(
+        harness.project.history().unwrap().lines()[0].title(),
+        "Mine"
+    );
 
     harness.project.rename_version(line.start, None).unwrap();
-    assert_eq!(harness.project.history().unwrap().lines()[0].title(), "Version 1");
+    assert_eq!(
+        harness.project.history().unwrap().lines()[0].title(),
+        "Version 1"
+    );
     harness
         .project
         .name_version(line.start, "Found".into(), line.tip)
         .unwrap();
-    assert_eq!(harness.project.history().unwrap().lines()[0].title(), "Found");
+    assert_eq!(
+        harness.project.history().unwrap().lines()[0].title(),
+        "Found"
+    );
 }
 
 #[test]
@@ -213,10 +259,16 @@ fn the_tools_code_is_kept_and_what_the_runtime_writes_is_not() {
     harness.write("extensions/.editor-swap", "x");
     harness.write("assets/takes/one.wav", "x");
     let extensions = harness.path("extensions");
-    harness.project.apply_outside_changes_at(&[extensions], harness.now).unwrap();
+    harness
+        .project
+        .apply_outside_changes_at(&[extensions], harness.now)
+        .unwrap();
 
     let files = git(&harness, &["ls-tree", "-r", "--name-only", "HEAD"]);
-    assert_eq!(files.lines().collect::<Vec<_>>(), ["extensions/song.ts", "project.json"]);
+    assert_eq!(
+        files.lines().collect::<Vec<_>>(),
+        ["extensions/song.ts", "project.json"]
+    );
 }
 
 #[test]
@@ -262,7 +314,10 @@ fn a_version_folds_away_once_merged_or_thirty_points_old() {
         let folded = |harness: &Harness| {
             let history = harness.project.history().unwrap();
             let lines = history.lines();
-            lines.iter().map(|line| history.folded_away(line).unwrap()).collect::<Vec<_>>()
+            lines
+                .iter()
+                .map(|line| history.folded_away(line).unwrap())
+                .collect::<Vec<_>>()
         };
         assert_eq!(folded(&harness), [false, false]);
         if merge {
