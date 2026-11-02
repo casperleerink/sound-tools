@@ -1,5 +1,5 @@
-//! The editing service: staged changes, edits with gestures, and undo and redo. The steps
-//! themselves are kept in `history.rs`.
+//! The editing service: staged changes, edits with gestures, and the moves through history:
+//! undo, redo, going to a point and merging. The points themselves are kept in `history.rs`.
 //!
 //! Interface edits, file changes, undo and redo all end in `Project::apply`. This module
 //! holds what they need around it.
@@ -9,9 +9,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use super::file::{ProjectFile, SavedConnection};
-use super::history::{Side, Step};
+use super::history::{Going, History, Origin, PointId};
 use super::instance::{Instance, InstanceId, Record, State};
-use super::{Project, ProjectError, Source};
+use super::outside::OUTSIDE_LABEL;
+use super::{Project, ProjectError, ProjectEvent, Source};
 use crate::clock::TempoMap;
 use crate::sections::Sections;
 
@@ -90,30 +91,43 @@ pub(crate) struct Applied {
     pub records: Vec<RecordChange>,
     /// Before and after.
     pub project_file: Option<(ProjectFile, ProjectFile)>,
-    pub unloaded: Unloaded,
 }
 
-/// Record files that do not load, by path: their bytes before and after. `None` is no such
-/// file, or one that loads.
-pub(crate) type Unloaded = BTreeMap<PathBuf, (Option<Vec<u8>>, Option<Vec<u8>>)>;
-
-/// An edit in progress: a drag, or any other group of changes that becomes one undo step.
+/// An edit in progress: a drag, or any other group of changes that becomes one point.
 /// It remembers the state before its first change, so finishing and cancelling need no
 /// reverse operation from the tool. Several edits can be open at once; last write wins.
 #[must_use = "finish or cancel the edit"]
 pub struct Edit {
-    step: Step,
+    label: String,
+    /// Each record it published over, as it was before. `None`: there was none.
+    pub(super) records: BTreeMap<InstanceId, Option<Record>>,
+    /// `project.json` before, once it changed it.
+    pub(super) project_file: Option<ProjectFile>,
 }
 
 impl Edit {
     /// It published nothing yet.
     pub(super) fn is_empty(&self) -> bool {
-        self.step.is_empty()
+        self.records.is_empty() && self.project_file.is_none()
     }
 
-    /// The records it published over.
-    pub(super) fn records(&self) -> impl Iterator<Item = &InstanceId> {
-        self.step.records.keys()
+    fn absorb(&mut self, applied: Applied) {
+        for change in applied.records {
+            self.records.entry(change.id).or_insert(change.before);
+        }
+        if let Some((before, _)) = applied.project_file {
+            self.project_file.get_or_insert(before);
+        }
+    }
+
+    /// The changes that bring back the state before the edit.
+    fn changes_back(&self) -> Vec<Change> {
+        let project_file = self.project_file.clone().map(Change::ProjectFile);
+        let records = self.records.iter().map(|(id, before)| match before {
+            Some(record) => Change::Set(id.clone(), record.clone()),
+            None => Change::Delete(id.clone()),
+        });
+        project_file.into_iter().chain(records).collect()
     }
 }
 
@@ -134,35 +148,42 @@ pub(super) fn validate(changes: &[Change]) -> Result<(), ProjectError> {
 }
 
 impl Project {
-    /// Begins a request: until it ends, every outside change joins one undo step named
-    /// `label`, however far apart the changes are. For an agent that knows where a request
-    /// begins and ends. An interface edit, an undo or a redo still ends the step, and the
-    /// changes of the request after it make a new step with the same label. A request that is
-    /// still open is replaced.
+    /// Begins a request: until it ends, every outside change joins one point named `label`,
+    /// however far apart the changes are. For an agent that knows where a request begins and
+    /// ends. An interface edit, an undo or a redo still ends the point, and the changes of the
+    /// request after it make a new point with the same label. A request that is still open is
+    /// replaced.
     pub fn begin_request(&mut self, label: &str) {
-        self.history.begin_request(label);
+        if let Some(history) = &mut self.history {
+            history.begin_request(label);
+        }
     }
 
     /// Ends the request. Outside changes heard less than
-    /// [`GROUPING_WINDOW`](super::GROUPING_WINDOW) later still join its step, because the
+    /// [`GROUPING_WINDOW`](super::GROUPING_WINDOW) later still join its point, because the
     /// watcher may hear the last write of a request only after the request has ended. Later
-    /// changes follow [`OUTSIDE_UNDO_WINDOW`](super::OUTSIDE_UNDO_WINDOW) again, in a new step.
+    /// changes follow [`OUTSIDE_POINT_WINDOW`](super::OUTSIDE_POINT_WINDOW) again, in a new
+    /// point.
     pub fn end_request(&mut self) {
         self.end_request_at(Instant::now());
     }
 
-    /// [`Self::end_request`] with the time of the end given, for tests of the undo grouping.
+    /// [`Self::end_request`] with the time of the end given, for tests of the grouping into points.
     ///
     /// The first end counts: an end said again later, such as when the agent's process exits
-    /// long after its turn, must not let the outside changes of that moment join the step.
+    /// long after its turn, must not let the outside changes of that moment join the point.
     pub fn end_request_at(&mut self, at: Instant) {
-        self.history.end_request_at(at);
+        if let Some(history) = &mut self.history {
+            history.end_request_at(at);
+        }
     }
 
-    /// Begins an edit. `label` names the undo step, for example "Change frequency".
+    /// Begins an edit. `label` names its point, for example "Change frequency".
     pub fn begin(&self, label: &str) -> Edit {
         Edit {
-            step: Step::new(label),
+            label: label.to_string(),
+            records: BTreeMap::new(),
+            project_file: None,
         }
     }
 
@@ -170,7 +191,7 @@ impl Project {
     /// as often as the gesture moves. On an error nothing of the group is applied.
     ///
     /// The first publish of an edit first finishes the runs it may finish (see
-    /// [`Self::publish_run`]), so a run's step holds none of this edit.
+    /// [`Self::publish_run`]), so a run's point holds none of this edit.
     pub fn publish(&mut self, edit: &mut Edit, changes: Changes) -> Result<(), ProjectError> {
         let finished = match edit.is_empty() {
             true => self.finish_free_runs(),
@@ -192,13 +213,13 @@ impl Project {
             self.sync_project_file();
         }
         let applied = self.apply(changes.changes, Source::Interface)?;
-        self.history.hold(&edit.step, &applied);
-        edit.step.absorb(applied);
+        self.open_edits.hold(edit, &applied);
+        edit.absorb(applied);
         Ok(())
     }
 
     /// Applies changes to the sound and the state, and to nothing else: no file is written and
-    /// there is no undo step. The one change a read-only project takes, for a
+    /// there is no point. The one change a read-only project takes, for a
     /// render that plays it other than its files say, such as with one track soloed. A project
     /// that writes refuses with [`ProjectError::WritesFiles`]: its next edit of these records
     /// would save them, and the folder would no longer be the truth.
@@ -279,50 +300,59 @@ impl Project {
         Ok(())
     }
 
-    /// Ends the edit as one undo step and writes every record it touched, once. The step runs
-    /// from the committed state before it to the state now, whoever wrote last. That is the
-    /// state before the edit, or what a file change, an undo or a redo wrote during it.
+    /// Ends the edit and writes every record it touched, once, and saves the folder as a
+    /// point. The edit runs from the committed state before it to the state now, whoever wrote
+    /// last. That is the state before the edit, or what a file change, an undo or a redo wrote
+    /// during it.
     ///
-    /// On a write error the edit stays applied and undoable, and the problem is reported.
-    pub fn finish(&mut self, edit: Edit) -> Result<(), ProjectError> {
-        let mut step = edit.step;
+    /// On a write error the edit stays applied, and the problem is reported.
+    pub fn finish(&mut self, mut edit: Edit) -> Result<(), ProjectError> {
         let instances = &self.instances;
-        self.history
-            .close(&mut step, |id| instances.get(id).cloned());
-        for (id, (_, after)) in &mut step.records {
-            *after = self.instances.get(id).cloned();
-        }
-        if let Some((_, after)) = &mut step.project_file {
-            *after = self.project_file.clone();
-        }
-        step.drop_unchanged();
-        let written = self.write(step.records.keys(), step.project_file.is_some());
-        self.history.push(step);
-        written
+        self.open_edits
+            .close(&mut edit, |id| instances.get(id).cloned());
+        // What ended where it began, such as a record made and deleted, is not written.
+        edit.records
+            .retain(|id, before| match (before, self.instances.get(id)) {
+                (Some(before), Some(now)) => !before.equals(now),
+                (None, None) => false,
+                _ => true,
+            });
+        let project_file =
+            (edit.project_file.as_ref()).is_some_and(|before| *before != self.project_file);
+        let written = self.write(edit.records.keys(), project_file);
+        let saved = self.save_point(Origin::Edit, &edit.label);
+        written.and(saved)
     }
 
     /// Ends the edit by applying the state from before it, through the same path as every
-    /// other change. No undo step. A record that a file change, an undo or a redo wrote during
-    /// the edit goes back to that state: it is what was committed, and what its file holds.
-    pub fn cancel(&mut self, edit: Edit) -> Result<(), ProjectError> {
-        let mut step = edit.step;
+    /// other change. A record that a file change, an undo or a redo wrote during the edit goes
+    /// back to that state: it is what was committed, and what its file holds. So nothing is
+    /// written, but the files of instances the edit's delete takes along, made by a finished
+    /// edit after it began.
+    pub fn cancel(&mut self, mut edit: Edit) -> Result<(), ProjectError> {
         let instances = &self.instances;
-        self.history
-            .close(&mut step, |id| instances.get(id).cloned());
+        self.open_edits
+            .close(&mut edit, |id| instances.get(id).cloned());
         self.sync_project_file();
-        let applied = self.apply(step.changes(Side::Before), Source::History)?;
-        self.write_step(&step, Side::Before, &applied)
+        let applied = self.apply(edit.changes_back(), Source::Outside)?;
+        let touched = applied.records.iter().map(|change| &change.id);
+        let gone: Vec<InstanceId> = (edit.records.keys().chain(touched))
+            .filter(|id| !self.instances.contains_key(*id))
+            .cloned()
+            .collect();
+        let written = self.write(gone.iter(), false);
+        let saved = self.save_point(Origin::Edit, &edit.label);
+        written.and(saved)
     }
 
-    /// Ends the edit with no undo step and without going back: what it published stays. For an
+    /// Ends the edit with no point and without going back: what it published stays. For an
     /// edit whose records another edit has since deleted or replaced, as its last write: that
-    /// edit's step already starts from the state before this one, so finishing this one too
-    /// would be a second step for the same change, and cancelling would undo the newer write.
-    pub fn abandon(&mut self, edit: Edit) {
-        let mut step = edit.step;
+    /// edit's point already starts from the state before this one, so finishing this one too
+    /// would be a second point for the same change, and cancelling would undo the newer write.
+    pub fn abandon(&mut self, mut edit: Edit) {
         let instances = &self.instances;
-        self.history
-            .close(&mut step, |id| instances.get(id).cloned());
+        self.open_edits
+            .close(&mut edit, |id| instances.get(id).cloned());
     }
 
     /// One finished edit: begin, publish, finish.
@@ -332,62 +362,160 @@ impl Project {
         self.finish(edit)
     }
 
-    /// Undoes the last step and writes the records. Returns its label, or `None` when there
-    /// is nothing to undo. A step that can no longer apply is dropped with the error.
+    /// The history of the folder. `None` for a project open read-only, or one whose history
+    /// could not be opened, which its problem says.
+    pub fn history(&self) -> Option<&History> {
+        self.history.as_ref()
+    }
+
+    /// Undo: the files go back to the point the current one came from, and the project follows
+    /// them as it follows an outside change. No new point. Returns the label of the point it
+    /// took back, or `None` at the start.
     pub fn undo(&mut self) -> Result<Option<String>, ProjectError> {
-        self.bring_back(Side::Before)
+        self.undo_going(Going::Undo)
     }
 
+    /// Undo that keeps what it takes back as a version, as going back in the history does.
+    pub fn undo_keeping_version(&mut self) -> Result<Option<String>, ProjectError> {
+        self.undo_going(Going::Back)
+    }
+
+    fn undo_going(&mut self, going: Going) -> Result<Option<String>, ProjectError> {
+        self.before_going()?;
+        self.go_to_target(History::undo_target, going)
+    }
+
+    /// Redo: the files go to the newest point that came from the current one. Returns its
+    /// label, or `None` when there is none.
     pub fn redo(&mut self) -> Result<Option<String>, ProjectError> {
-        self.bring_back(Side::After)
+        self.before_going()?;
+        self.go_to_target(History::redo_target, Going::Redo)
     }
 
-    /// Applies one side of the next step of undo (before) or redo (after) and writes it.
-    fn bring_back(&mut self, side: Side) -> Result<Option<String>, ProjectError> {
-        self.finish_all_runs()?;
-        let Some(step) = self.history.take(side) else {
-            return Ok(None);
-        };
-        self.sync_project_file();
-        self.history.end_outside_step();
-        let applied = self.apply(step.changes(side), Source::History)?;
-        let written = self.write_step(&step, side, &applied);
-        let label = step.label.clone();
-        self.history.put_back(side, step);
-        written.map(|()| Some(label))
-    }
-
-    /// Writes what the step names and what applying it touched. The two differ when a delete
-    /// took along instances that were created after the step.
-    fn write_step(
+    fn go_to_target(
         &mut self,
-        step: &Step,
-        side: Side,
-        applied: &Applied,
+        target: impl FnOnce(&History) -> std::io::Result<Option<(PointId, String)>>,
+        going: Going,
+    ) -> Result<Option<String>, ProjectError> {
+        let target = self.history.as_ref().map(target).transpose();
+        match target.map_err(ProjectError::History)?.flatten() {
+            Some((point, label)) => self.go(point, going).map(|()| Some(label)),
+            None => Ok(None),
+        }
+    }
+
+    /// Goes to any point, as undo does. The next change after it starts a version.
+    pub fn go_to(&mut self, point: PointId) -> Result<(), ProjectError> {
+        self.before_going()?;
+        if self
+            .history
+            .as_ref()
+            .is_none_or(|history| history.current() == point)
+        {
+            return Ok(());
+        }
+        self.go(point, Going::Back)?;
+        self.push_event(ProjectEvent::WentBack(point));
+        Ok(())
+    }
+
+    /// Merges the version that begins at `start` into the current point: a new point with two
+    /// parents. Per file, what only that version changed comes over; where both changed a
+    /// file, that version wins, or with `keep_mine` the current one does.
+    pub fn merge(&mut self, start: PointId, keep_mine: bool) -> Result<(), ProjectError> {
+        self.before_going()?;
+        let Some(history) = &mut self.history else {
+            return Ok(());
+        };
+        let paths = history
+            .merge(start, keep_mine)
+            .map_err(ProjectError::History)?;
+        self.follow_files(&paths)
+    }
+
+    /// Makes undone work a version.
+    pub fn keep_as_version(&mut self, start: PointId) -> Result<(), ProjectError> {
+        self.change_history(|history| history.keep_as_version(start))
+    }
+
+    /// Folds a version away by hand, or brings it back.
+    pub fn set_aside(&mut self, start: PointId, aside: bool) -> Result<(), ProjectError> {
+        self.change_history(|history| history.set_aside(start, aside))
+    }
+
+    /// Names a version by hand. An empty name gives naming back.
+    pub fn rename_version(&mut self, start: PointId, name: &str) -> Result<(), ProjectError> {
+        self.change_history(|history| history.rename(start, name))
+    }
+
+    /// A name found for a version from what it changed up to its tip `at`. Never over a name
+    /// given by hand.
+    pub fn name_version(
+        &mut self,
+        start: PointId,
+        name: String,
+        at: PointId,
     ) -> Result<(), ProjectError> {
-        let touched = applied.records.iter().map(|change| &change.id);
-        let project_file = step.project_file.is_some() || applied.project_file.is_some();
-        let (gone, back): (Vec<_>, Vec<_>) =
-            (step.unloaded(side)).partition(|(_, bytes)| bytes.is_none());
-        // First, so that the folders of deleted records are empty and go too.
-        let removed = self.write_unloaded(gone);
-        let written = self.write(step.records.keys().chain(touched), project_file);
-        let restored = self.write_unloaded(back);
-        removed.and(written).and(restored)
+        self.change_history(|history| history.name(start, name, at))
     }
 
-    /// Forgets every undo and redo step. A new project starts like this: making its default
-    /// content is not something to undo.
-    pub fn clear_history(&mut self) {
-        self.history.clear();
+    fn change_history(
+        &mut self,
+        change: impl FnOnce(&mut History) -> std::io::Result<()>,
+    ) -> Result<(), ProjectError> {
+        match &mut self.history {
+            Some(history) => change(history).map_err(ProjectError::History),
+            None => Ok(()),
+        }
     }
 
-    /// The label of the step that `undo` would undo.
-    pub fn undo_label(&self) -> Option<&str> {
-        self.history.label(Side::Before)
+    /// Before going anywhere: what the folder holds that history has not seen yet, such as an
+    /// agent's write the watcher has not delivered, is saved as a point, and then open runs
+    /// finish. In that order, so a run's write cannot replace those bytes unseen.
+    fn before_going(&mut self) -> Result<(), ProjectError> {
+        self.save_point(Origin::Outside(Instant::now()), OUTSIDE_LABEL)?;
+        self.finish_all_runs()
     }
 
-    pub fn redo_label(&self) -> Option<&str> {
-        self.history.label(Side::After)
+    fn go(&mut self, to: PointId, going: Going) -> Result<(), ProjectError> {
+        let Some(history) = &mut self.history else {
+            return Ok(());
+        };
+        let paths = history.go(to, going).map_err(ProjectError::History)?;
+        self.follow_files(&paths)
+    }
+
+    /// The live project follows files history wrote, as it follows an outside change.
+    fn follow_files(&mut self, paths: &[PathBuf]) -> Result<(), ProjectError> {
+        self.apply_paths(paths, Source::Outside).map(drop)
+    }
+
+    pub(crate) fn save_point(&mut self, origin: Origin, label: &str) -> Result<(), ProjectError> {
+        match &mut self.history {
+            Some(history) => (history.save(origin, label).map(drop)).map_err(ProjectError::History),
+            None => Ok(()),
+        }
+    }
+
+    /// Starts the history again from the folder as it is. A new project starts like this:
+    /// making its default content is not something to undo.
+    pub fn clear_history(&mut self) -> Result<(), ProjectError> {
+        if self.history.take().is_none() {
+            return Ok(());
+        }
+        let folder = self.storage.root().join(super::history::HISTORY_FOLDER);
+        let reopened = std::fs::remove_dir_all(&folder)
+            .and_then(|()| History::open(self.storage.root(), self.registry.kept_out_of_history()));
+        self.history = Some(reopened.map_err(ProjectError::History)?);
+        Ok(())
+    }
+
+    /// The label of the point that `undo` would take back.
+    pub fn undo_label(&self) -> Option<String> {
+        Some(self.history.as_ref()?.undo_target().ok()??.1)
+    }
+
+    pub fn redo_label(&self) -> Option<String> {
+        Some(self.history.as_ref()?.redo_target().ok()??.1)
     }
 }

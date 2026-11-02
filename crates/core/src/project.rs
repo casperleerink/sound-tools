@@ -15,6 +15,7 @@ mod generated;
 mod history;
 mod instance;
 mod live;
+mod open_edits;
 mod outside;
 mod registry;
 mod runs;
@@ -34,7 +35,9 @@ pub use file::{
 pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
-pub use history::OUTSIDE_UNDO_WINDOW;
+pub use history::{
+    FileChange, HISTORY_FOLDER, History, Line, OUTSIDE_POINT_WINDOW, Point, PointId,
+};
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
@@ -46,11 +49,11 @@ pub use watcher::GROUPING_WINDOW;
 
 use binding::{BindError, Bindings};
 use editing::{Change, RecordChange};
-use history::History;
 use instance::{JsonState, Record};
 use live::LiveSources;
+use open_edits::OpenEdits;
 use outside::NotApplied;
-use storage::{Form, Locked, PathTarget, RecordOnDisk, Storage};
+use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
 use crate::automation::PlayedLanes;
@@ -107,6 +110,8 @@ pub enum ProjectError {
     Graph(#[from] GraphError),
     #[error(transparent)]
     Storage(#[from] StorageError),
+    #[error("the history of the project: {0}")]
+    History(#[source] std::io::Error),
     #[error("the file watcher failed: {0}")]
     Watcher(#[from] notify::Error),
     #[error(
@@ -138,6 +143,8 @@ pub enum ProjectEvent {
     /// Tempo map, connections or extensions.
     ProjectFileChanged,
     ProblemsChanged,
+    /// The composer went back to this point in the history.
+    WentBack(PointId),
 }
 
 /// Something in the project folder that is not live, and why. It stays listed until the file
@@ -154,13 +161,11 @@ pub struct Problem {
 pub(crate) enum Source {
     /// Opening the project: applying everything from empty. Also a change only in memory, see
     /// [`Project::apply_in_memory`]: like loading, it writes nothing, derives nothing and is no
-    /// undo step.
+    /// point.
     Load,
     Interface,
-    /// The files already hold this state.
+    /// The files already hold this state: an outside change, undo, redo, cancel.
     Outside,
-    /// Undo, redo and cancel.
-    History,
 }
 
 pub struct Project {
@@ -172,7 +177,9 @@ pub struct Project {
     instances: BTreeMap<InstanceId, Record>,
     project_file: ProjectFile,
     bindings: Bindings,
-    history: History,
+    open_edits: OpenEdits,
+    /// `None` when read-only, or when it could not be opened, which a problem says.
+    history: Option<History>,
     events: Vec<ProjectEvent>,
     /// By path relative to the project folder.
     file_problems: BTreeMap<String, String>,
@@ -234,7 +241,8 @@ impl Project {
             engine,
             instances: BTreeMap::new(),
             bindings: Bindings::default(),
-            history: History::default(),
+            open_edits: OpenEdits::default(),
+            history: None,
             events: Vec::new(),
             file_problems: BTreeMap::new(),
             not_applied: Vec::new(),
@@ -267,9 +275,19 @@ impl Project {
         // The project file first: it says which extensions are enabled.
         project.apply(changes, Source::Load)?;
         let state_folder = project.storage.state_folder();
-        project.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
+        project.apply_paths(&[state_folder], Source::Load)?;
         project.events.clear();
         project.write_generated_files()?;
+        if !read_only {
+            let kept_out = project.registry.kept_out_of_history();
+            match History::open(project.storage.root(), kept_out) {
+                Ok(history) => project.history = Some(history),
+                Err(error) => {
+                    let message = format!("the history is off: {error}");
+                    project.report_problem(history::HISTORY_FOLDER.to_string(), message);
+                }
+            }
+        }
         Ok(project)
     }
 
@@ -292,7 +310,7 @@ impl Project {
 
     /// Sends one update to the processor that the behaviour of `instance` declared under
     /// `name`: something from an interface that should happen now, such as a preview note. It
-    /// is not an edit: nothing is saved and there is no undo step. It applies at the start of
+    /// is not an edit: nothing is saved and there is no point. It applies at the start of
     /// the next block.
     pub fn send<P: Processor>(
         &mut self,
@@ -510,7 +528,7 @@ impl Project {
     /// not load, so one that waited for its tool loads and one the new check refuses is a
     /// problem, and every instance of them runs the new behaviour. Where that fails, what
     /// plays stays as it is and the record says why, as for a failed file. Nothing is written
-    /// and nothing is an undo step: no record changed. Every other file is left to the
+    /// and nothing is a point: no record changed. Every other file is left to the
     /// watcher, so an outside edit of it is applied as one. All the tools of one save come in
     /// one call, which reads their records once. A tool the registry refuses, such as one
     /// named as a tool of the runtime, is left out and returned with why.
@@ -543,7 +561,7 @@ impl Project {
         let mut paths: Vec<PathBuf> = (live.iter()).map(|id| record_path(self, id)).collect();
         // Records of these tools that did not load: one waited for its tool, or the old check
         // or behaviour refused it. Not the whole folder: an outside edit the watcher has not
-        // delivered yet would apply here with no undo step and no derive, and then look like
+        // delivered yet would apply here with no point and no derive, and then look like
         // no change when it is delivered. A file that does not read keeps its problem.
         let state_folder = self.storage.state_folder();
         let not_loaded = (self.file_problems.keys())
@@ -551,7 +569,7 @@ impl Project {
             .filter(|path| path.starts_with(&state_folder))
             .filter(|path| storage::tool_named_in(path).is_some_and(|tool| names.contains(&tool)));
         paths.extend(not_loaded);
-        self.apply_paths(&paths, Source::Load, std::time::Instant::now())?;
+        self.apply_paths(&paths, Source::Load)?;
         for id in live {
             let path = record_path(self, &id);
             let path = self.storage.display_path(&path);
@@ -649,26 +667,6 @@ impl Project {
         if project_file && self.project_file_is_ours() {
             results.push(self.storage.write_project_file(&self.project_file));
             self.clear_problem(storage::PROJECT_FILE);
-        }
-        self.report_write_errors(results)
-    }
-
-    /// Writes record files that do not load with these bytes, or removes them for `None`. A
-    /// file where a live record is now stays.
-    pub(crate) fn write_unloaded<'a>(
-        &mut self,
-        files: impl IntoIterator<Item = (&'a PathBuf, Option<&'a [u8]>)>,
-    ) -> Result<(), ProjectError> {
-        let mut results = Vec::new();
-        for (path, bytes) in files {
-            let live = match self.storage.target_of(path) {
-                PathTarget::Record(id) => (self.instances.get(&id))
-                    .is_some_and(|record| self.storage.record_path(&id, Form::of(record)) == *path),
-                _ => false,
-            };
-            if !live {
-                results.push(self.storage.write_unloaded(path, bytes));
-            }
         }
         self.report_write_errors(results)
     }

@@ -62,7 +62,8 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 
 ### Gestures
 
-- Every drag and every key that changes the piece is one undo step. Undo waits while a drag is going on.
+- Every drag and every key that changes the piece is one point of history. Undo and going back wait while a drag or a take is going on, and say so.
+- History is exploring, never commits or branches: every state is kept, small steps fold away on their line, and an idea tried is a version. Going back is one click and makes nothing new; the next change does.
 - There is no save. Every finished edit is already in the folder.
 - Everything snaps to the grid of the timeline. Cmd during a drag ignores it. Arrow keys move things in time by one snap step.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
@@ -84,6 +85,6 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 
 ### The agent
 
-- One message at a time. Everything the agent changes for one message is one undo step, named after the message.
+- One message at a time. Everything the agent changes for one message is one point of history.
 - The sidebar keeps its last thread per project, and the agent goes on where it left off.
 - While the sidebar is closed and the agent works or asks, its icon carries a lavender dot.

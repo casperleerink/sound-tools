@@ -11,11 +11,12 @@
 //! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
 //! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
+//! - `history.png`: the History tab, see `snapshots/history.rs`.
 //! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
 //! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
 //!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
 //!
-//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=typescript`, `=look` or `=timeline` renders the default
+//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=history`, `=typescript`, `=look` or `=timeline` renders the default
 //! project and those alone.
 
 // The shared helpers of the tests unwrap, as the other test crates allow.
@@ -45,6 +46,8 @@ use plugin_hosts::test_plugin_host;
 mod agent;
 #[path = "snapshots/cards.rs"]
 mod cards;
+#[path = "snapshots/history.rs"]
+mod history;
 #[path = "snapshots/look.rs"]
 mod look;
 #[allow(dead_code)]
@@ -108,9 +111,10 @@ impl Opened {
         prepare(&root)?;
         cx.allow_parking();
         let (control, engine) = Engine::new(OFFLINE);
-        // A plugin host that looks only in a folder of this project, with the repository's own
-        // test plugin in it, so that the pickers hold the same plugins everywhere.
-        let plugins = test_plugin_host(&root);
+        // A plugin host that looks only in a folder next to this project, with the repository's
+        // own test plugin in it, so that the pickers hold the same plugins everywhere. Not in
+        // the project: a folder with files in it is no new project.
+        let plugins = test_plugin_host(folder.path());
         let (project, extensions) = runtime::open_with_extensions(&root, control, plugins.clone())?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
@@ -276,6 +280,9 @@ fn main() -> Result<()> {
     }
     if runs("agent") {
         agent::snapshots(&mut cx, &save)?;
+    }
+    if runs("history") {
+        history::snapshots(&mut cx, &save)?;
     }
     if runs("typescript") {
         typescript::snapshots(&mut cx, &save)?;

@@ -420,7 +420,7 @@ impl Harness {
     }
 
     /// Applies outside changes a minute after the last ones. Tests run in milliseconds, and
-    /// outside groups that close together are one undo step (`OUTSIDE_UNDO_WINDOW`). With
+    /// outside groups that close together are one undo step (`OUTSIDE_POINT_WINDOW`). With
     /// the minute, each call is a step of its own, as for changes a person makes by hand.
     pub(crate) fn apply_outside_changes(
         &mut self,

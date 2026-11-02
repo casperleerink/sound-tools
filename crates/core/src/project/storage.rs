@@ -321,15 +321,10 @@ impl Storage {
     }
 
     /// Notes the bytes at `path` of a record file that did not load, or that there is none.
-    /// Returns what was noted before.
-    pub(super) fn set_unloaded(
-        &mut self,
-        path: PathBuf,
-        bytes: Option<Vec<u8>>,
-    ) -> Option<Vec<u8>> {
+    pub(super) fn set_unloaded(&mut self, path: PathBuf, bytes: Option<Vec<u8>>) {
         match bytes {
-            Some(bytes) => self.unloaded.insert(path, bytes),
-            None => self.unloaded.remove(&path),
+            Some(bytes) => _ = self.unloaded.insert(path, bytes),
+            None => _ = self.unloaded.remove(&path),
         }
     }
 
@@ -350,20 +345,6 @@ impl Storage {
         // The folder of `parent` also holds its own record.
         ids.filter(|id| parent.is_none_or(|parent| id.is_inside(parent)))
             .collect()
-    }
-
-    /// Writes a record file that does not load back with these bytes, or removes it.
-    pub(super) fn write_unloaded(
-        &mut self,
-        path: &Path,
-        bytes: Option<&[u8]>,
-    ) -> Result<(), StorageError> {
-        match bytes {
-            Some(bytes) => self.write_atomically(path, bytes)?,
-            None => self.remove_file(path)?,
-        }
-        self.set_unloaded(path.to_path_buf(), bytes.map(<[u8]>::to_vec));
-        Ok(())
     }
 
     pub(super) fn project_file_fingerprint(&self) -> Option<u64> {
@@ -849,11 +830,12 @@ mod tests {
 pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     fs::create_dir_all(folder)?;
-    // The name does not end in `.json` and is not a valid instance name, so neither the scan
-    // nor the watcher takes it for a record.
-    let mut temporary = path.as_os_str().to_owned();
+    // Hidden, so it is never a record, a tool's code or a file history keeps.
+    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    let mut temporary = std::ffi::OsString::from(".");
+    temporary.push(name);
     temporary.push(".tmp");
-    let temporary = PathBuf::from(temporary);
+    let temporary = folder.join(temporary);
     let result = fs::File::create(&temporary).and_then(|mut file| {
         file.write_all(bytes)?;
         drop(file);

@@ -322,7 +322,7 @@ impl ErasedState for JsonState {
 }
 
 /// The live form of one record: the tool name and the typed state. Cloning shares the state,
-/// so undo history costs no copies.
+/// so keeping the state from before an edit costs no copy.
 #[derive(Clone)]
 pub(crate) struct Record {
     pub tool: &'static str,

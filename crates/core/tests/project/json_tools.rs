@@ -177,7 +177,7 @@ fn defining_a_tool_leaves_an_outside_edit_of_another_record_to_the_watcher() {
     project
         .apply_outside_changes(std::slice::from_ref(&b))
         .unwrap();
-    project.clear_history();
+    project.clear_history().unwrap();
 
     // The code of `wobble` and the record `b` are saved at once, and the watcher has not
     // delivered `b` yet when the tool is defined.
@@ -188,7 +188,7 @@ fn defining_a_tool_leaves_an_outside_edit_of_another_record_to_the_watcher() {
     // It arrives as an outside edit: applied, and undoable.
     assert_eq!(project.apply_outside_changes(&[b]).unwrap(), 1);
     assert_eq!(project.state_json(&id("b")).unwrap(), r#"{"rate":5}"#);
-    assert_eq!(project.undo_label(), Some("File change"));
+    assert_eq!(project.undo_label().as_deref(), Some("File change"));
 }
 
 #[test]

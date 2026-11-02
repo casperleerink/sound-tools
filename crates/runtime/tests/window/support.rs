@@ -451,7 +451,7 @@ impl Opened<'_> {
             let mut changes = sound_core::Changes::new();
             changes.create(instance.clone(), state);
             project.commit("Add", changes)?;
-            project.clear_history();
+            project.clear_history()?;
             Ok(())
         });
         self.settle();
@@ -495,6 +495,11 @@ impl Opened<'_> {
         self.cx.read(|cx| read(session.read(cx).project()))
     }
 
+    /// The point of history the files are at.
+    pub(crate) fn current_point(&mut self) -> sound_core::PointId {
+        self.project(|project| project.history().unwrap().current())
+    }
+
     /// Runs a project operation through the session, as the watcher or another view would.
     pub(crate) fn edit<R>(
         &mut self,
@@ -509,7 +514,7 @@ impl Opened<'_> {
     }
 
     pub(crate) fn undo_label(&mut self) -> Option<String> {
-        self.project(|project| project.undo_label().map(str::to_string))
+        self.project(|project| project.undo_label())
     }
 
     pub(crate) fn gesture_open(&mut self) -> bool {

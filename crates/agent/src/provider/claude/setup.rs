@@ -8,6 +8,7 @@ use std::io;
 use std::process::{Output, Stdio};
 
 use serde::Deserialize;
+use smol::io::AsyncWriteExt;
 
 use super::command;
 use crate::install::Download;
@@ -166,6 +167,43 @@ async fn run_to_success(installed: &Installed, arguments: &[&str]) -> io::Result
         return Ok(());
     }
     Err(failed(&output, &format!("it ended with {}", output.status)))
+}
+
+/// `claude -p` on Haiku. The question goes on stdin, which has no length limit as arguments
+/// do. It runs in the temporary folder, so no project's instructions load.
+pub(crate) async fn ask_small_model(
+    installed: &Installed,
+    instructions: &str,
+    question: &str,
+) -> io::Result<String> {
+    let mut command = command(&installed.program, &installed.environment);
+    command
+        .args(["-p", "--model", "haiku", "--output-format", "text"])
+        .args([
+            "--tools",
+            "",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+        ])
+        .args(["--setting-sources", "", "--disable-slash-commands"])
+        .arg("--system-prompt")
+        .arg(instructions)
+        .current_dir(std::env::temp_dir())
+        .env("CLAUDE_CODE_AUTO_CONNECT_IDE", "0");
+    let mut child = smol::process::Command::from(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(question.as_bytes()).await?;
+    }
+    let output = child.output().await?;
+    if !output.status.success() {
+        return Err(failed(&output, &format!("it ended with {}", output.status)));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 async fn run(installed: &Installed, arguments: &[&str]) -> io::Result<Output> {

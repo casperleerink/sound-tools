@@ -114,6 +114,19 @@ impl Provider {
             Provider::Claude => claude::sign_out(installed).await,
         }
     }
+
+    /// One question to the provider's small model, with no tools, no project and nothing kept.
+    /// The answer is its text. Dropping the future ends the program.
+    pub async fn ask_small_model(
+        self,
+        installed: &Installed,
+        instructions: &str,
+        question: &str,
+    ) -> io::Result<String> {
+        match self {
+            Provider::Claude => claude::ask_small_model(installed, instructions, question).await,
+        }
+    }
 }
 
 /// Where the provider's program is, and the environment it runs in.
@@ -359,6 +372,9 @@ fn new_session_id() -> String {
 pub struct Message {
     pub text: String,
     pub attachments: Vec<Attachment>,
+    /// What the agent reads before the text that the composer did not write, such as that
+    /// they went back in the history. The thread shows only the text.
+    pub note: Option<String>,
 }
 
 impl From<String> for Message {
@@ -366,6 +382,7 @@ impl From<String> for Message {
         Message {
             text,
             attachments: Vec::new(),
+            note: None,
         }
     }
 }

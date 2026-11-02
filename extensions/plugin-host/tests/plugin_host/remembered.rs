@@ -130,6 +130,7 @@ fn windows_are_remembered(format: PluginFormat, cx: &mut TestAppContext) {
     // writes on its own. From here on nothing of a window may change the folder.
     let harness = close_and_open_again(harness, machine, cx);
     let before = every_file(harness.folder.path());
+    let point = harness.project.history().unwrap().current();
 
     // Where the composer left the window, open, on the display of the test platform.
     remember(
@@ -145,7 +146,7 @@ fn windows_are_remembered(format: PluginFormat, cx: &mut TestAppContext) {
     assert_eq!(windows(cx), 1);
     assert_eq!(window_origin(cx), (100, 60), "{format:?}");
     // None of it is an edit.
-    assert_eq!(harness.project.undo_label(), None);
+    assert_eq!(harness.project.history().unwrap().current(), point);
 
     // Quitting with the window open: it is taken down, and it is remembered as open.
     let harness = close_and_open_again(harness, machine, cx);

@@ -50,7 +50,7 @@ pub(crate) struct Harness {
     pub plugins: Plugins,
     /// The time of the last outside change. Each one comes a minute after the one before, so
     /// it is an undo step of its own, as for changes made by hand. Without this, outside
-    /// changes that a test makes within milliseconds would join (`OUTSIDE_UNDO_WINDOW`).
+    /// changes that a test makes within milliseconds would join (`OUTSIDE_POINT_WINDOW`).
     now: Instant,
     pub folder: tempfile::TempDir,
 }
