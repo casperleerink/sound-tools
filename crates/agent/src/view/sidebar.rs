@@ -9,9 +9,11 @@
 //! (`super::instructions`).
 
 mod attachments;
+mod naming;
 mod setup;
 mod threads;
 mod turn;
+mod went_back;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -31,6 +33,8 @@ use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
 
 use self::attachments::Attached;
+use self::naming::Namer;
+use self::went_back::WentBack;
 use super::entry;
 use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
@@ -120,6 +124,10 @@ pub struct Sidebar {
     attachments_reading: usize,
     /// Where up and down in the composer are among the earlier messages.
     history: History,
+    /// Where the composer went back to in the project history, until the next message.
+    went_back: Option<WentBack>,
+    went_back_dismiss: FocusHandle,
+    namer: Namer,
     /// The sidebar itself, for when it has no composer.
     focus_handle: FocusHandle,
     send_focus: FocusHandle,
@@ -175,7 +183,7 @@ impl Sidebar {
     }
 
     /// For a test or a snapshot: set up and signed in with `installed` as the program, or not
-    /// installed with `None`. Nothing runs in the background.
+    /// installed with `None`. Only the naming of versions runs in the background.
     pub fn with_program(
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
@@ -280,11 +288,15 @@ impl Sidebar {
                 cx.notify();
             }),
             cx.subscribe(&settings, Self::settings_event),
-            cx.subscribe(&session, |sidebar, _, event: &ProjectEvent, cx| {
-                if matches!(event, ProjectEvent::ProblemsChanged) {
-                    sidebar.problems_changed(cx);
-                }
-            }),
+            cx.subscribe(
+                &session,
+                |sidebar, _, event: &ProjectEvent, cx| match event {
+                    ProjectEvent::ProblemsChanged => sidebar.problems_changed(cx),
+                    ProjectEvent::WentBack(point) => sidebar.went_back(*point, cx),
+                    _ => {}
+                },
+            ),
+            cx.observe(&session, |sidebar, _, cx| sidebar.naming_heard(cx)),
             cx.observe(&input, |_, _, cx| cx.notify()),
         ];
         let mut conversation = Conversation::default();
@@ -316,6 +328,9 @@ impl Sidebar {
             attachments: Vec::new(),
             attachments_reading: 0,
             history: History::default(),
+            went_back: None,
+            went_back_dismiss: cx.focus_handle().tab_stop(true),
+            namer: Namer::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
@@ -333,6 +348,7 @@ impl Sidebar {
         };
         sidebar.update_menu(cx);
         sidebar.update_new_menu(cx);
+        sidebar.wait_for_quiet(cx);
         sidebar
     }
 
@@ -797,58 +813,68 @@ impl Sidebar {
                 .disabled(true)
         };
         // The access pill always says the mode, so it is never a surprise.
-        div().flex_none().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
-            div()
-                .id("agent-composer")
-                .debug_selector(|| "agent-composer".to_string())
-                // Before the field's own paste, which takes only text.
-                .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
-                    if sidebar.paste_attachments(cx) {
-                        cx.stop_propagation();
-                    }
-                }))
-                .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
-                .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
-                    sidebar.attach_files(paths.paths().to_vec(), cx);
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .pt(px(14.))
-                .px(px(14.))
-                .pb(px(10.))
-                .rounded(px(20.))
-                .border_1()
-                .border_color(border)
-                .bg(fill)
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.4),
-                    offset: point(px(0.), px(8.)),
-                    blur_radius: px(24.),
-                    spread_radius: px(-8.),
-                    inset: false,
-                }])
-                .children(self.attachment_chips(cx))
-                .child(div().min_h(px(44.)).child(self.input.clone()))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        // The pills sit their wash, not their words, on the box's edge.
-                        .ml(px(-6.))
-                        .child(self.model_menu.clone())
-                        .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
-                        .child(self.access_menu.clone())
-                        .child(div().flex_1())
-                        .child(
-                            button
-                                .size(ButtonSize::Md)
-                                .rounded(true)
-                                .focus_handle(&self.send_focus),
-                        ),
-                ),
-        )
+        let went_back = self.went_back_line(cx);
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(12.))
+            .pb(px(12.))
+            .pt(px(8.))
+            .children(went_back)
+            .child(
+                div()
+                    .id("agent-composer")
+                    .debug_selector(|| "agent-composer".to_string())
+                    // Before the field's own paste, which takes only text.
+                    .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
+                        if sidebar.paste_attachments(cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
+                    .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
+                        sidebar.attach_files(paths.paths().to_vec(), cx);
+                    }))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(14.))
+                    .px(px(14.))
+                    .pb(px(10.))
+                    .rounded(px(20.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(fill)
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.4),
+                        offset: point(px(0.), px(8.)),
+                        blur_radius: px(24.),
+                        spread_radius: px(-8.),
+                        inset: false,
+                    }])
+                    .children(self.attachment_chips(cx))
+                    .child(div().min_h(px(44.)).child(self.input.clone()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            // The pills sit their wash, not their words, on the box's edge.
+                            .ml(px(-6.))
+                            .child(self.model_menu.clone())
+                            .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
+                            .child(self.access_menu.clone())
+                            .child(div().flex_1())
+                            .child(
+                                button
+                                    .size(ButtonSize::Md)
+                                    .rounded(true)
+                                    .focus_handle(&self.send_focus),
+                            ),
+                    ),
+            )
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,

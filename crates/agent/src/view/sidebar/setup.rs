@@ -115,6 +115,7 @@ impl Sidebar {
         // The menu keeps the last account it showed until the next one is in.
         if ready {
             self.update_menu(cx);
+            self.wait_for_quiet(cx);
         }
         cx.notify();
     }

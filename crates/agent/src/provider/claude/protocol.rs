@@ -220,8 +220,11 @@ impl Outgoing {
         let provider::Message {
             mut text,
             attachments,
+            note,
         } = message;
-        let mut content = Vec::new();
+        let mut content: Vec<UserBlock> = (note.into_iter())
+            .map(|text| UserBlock::Text { text })
+            .collect();
         let mut files = Vec::new();
         for attachment in attachments {
             match attachment {

@@ -242,6 +242,11 @@ impl History {
         self.lines.iter().find(|line| line.start == start)
     }
 
+    /// The point `point` came from, then a merged version's tip.
+    pub fn parents(&self, point: PointId) -> io::Result<Vec<PointId>> {
+        Ok(self.commit(point)?.parents.clone())
+    }
+
     /// Goes up with every change.
     pub fn generation(&self) -> u64 {
         self.generation

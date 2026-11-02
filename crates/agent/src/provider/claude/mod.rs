@@ -30,7 +30,9 @@ use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
-pub(super) use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
+pub(super) use self::setup::{
+    SIGN_IN_CHOICES, account, ask_small_model, download, sign_in, sign_out,
+};
 use super::{AgentEvent, ApprovalMode, Command, ThreadOptions};
 use crate::process::ProcessTree;
 

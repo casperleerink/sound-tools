@@ -12,6 +12,8 @@
 //! - [`install`] downloads the provider's pinned program, which the sidebar runs, and
 //!   [`Provider::account`] and [`SignInChoice`] run its own sign-in. [`Onboarding`] shows
 //!   each [`Setup`] state until the agent is ready.
+//! - Once it is ready, the sidebar also names the versions of the project history with the
+//!   provider's small model ([`Provider::ask_small_model`], `naming`).
 //!
 //! No async runtime of its own: the futures run on smol, so gpui's executors or
 //! `smol::block_on` drive them.
@@ -19,6 +21,7 @@
 mod conversation;
 mod environment;
 mod install;
+mod naming;
 mod process;
 mod provider;
 mod settings;
