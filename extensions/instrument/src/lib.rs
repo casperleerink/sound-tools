@@ -32,7 +32,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
-pub use sound_core::FilterCharacter;
+pub use sound_dsp::FilterCharacter;
 pub use synth::{Synth, VOICES};
 
 /// The name to enable in `project.json`.

@@ -13,7 +13,8 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sound_core::{FilterCharacter, FilterSlope, FilterType, LfoShape, Scale, lanes, ranges};
+use sound_core::{Scale, lanes, ranges};
+use sound_dsp::{FilterCharacter, FilterSlope, FilterType, LfoShape};
 use sound_notes::{Division, Feel};
 
 use crate::matrix::{Destination, MAX_ROUTES, Route, Source};

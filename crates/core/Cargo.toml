@@ -12,7 +12,6 @@ cpal.workspace = true
 dunce.workspace = true
 no_denormals.workspace = true
 notify.workspace = true
-realfft.workspace = true
 rtrb.workspace = true
 rtsan-standalone.workspace = true
 schemars.workspace = true

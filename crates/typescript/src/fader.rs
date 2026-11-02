@@ -17,8 +17,8 @@ use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, BehaviourContext, BehaviourError,
     CHANNELS, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, Parameter, Peaks, Ports,
     PrepareConfig, ProcessContext, Processor, Scale, Smoothed, State, Targets, ToolSchema,
-    all_positive_zero, amplitude, pan_gains,
 };
+use sound_dsp::{all_positive_zero, amplitude, pan_gains};
 
 use crate::meter::LEVEL;
 

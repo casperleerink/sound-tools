@@ -12,7 +12,7 @@
 //! 95 % of the lower Nyquist frequency of the two rates when that is lower, and it stops from
 //! that Nyquist frequency on, so nothing above it folds back.
 
-use sound_core::bessel_i0;
+use sound_dsp::bessel_i0;
 
 use crate::file::Audio;
 

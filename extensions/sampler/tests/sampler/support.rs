@@ -246,18 +246,6 @@ impl Harness {
     }
 }
 
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
-}
-
 /// The frequency of a steady sine, from its first and last rising zero crossing, each placed
 /// between two frames on a straight line.
 pub(crate) fn frequency(samples: &[f32]) -> f64 {

@@ -2,7 +2,9 @@
 //! after the track's fader unless its return says before, the master's limiter holds the output
 //! under its ceiling, and an audio region counts toward the end of the song.
 
-use sound_core::{Ticks, amplitude};
+use sound_core::Ticks;
+
+use sound_dsp::amplitude;
 
 use crate::shared_song::song_files;
 use crate::support::{BAR, Harness, difference, write, write_samples};

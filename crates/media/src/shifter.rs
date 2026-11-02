@@ -40,7 +40,7 @@ use std::sync::LazyLock;
 #[cfg(doc)]
 use crate::Varispeed;
 use crate::resample::{SincTable, kaiser, sinc};
-use sound_core::bessel_i0;
+use sound_dsp::bessel_i0;
 
 /// Taps each side of a place of the head, at a ratio up to 1.
 const HALF: usize = 8;

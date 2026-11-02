@@ -13,6 +13,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sound-core.workspace = true
+sound-dsp.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true

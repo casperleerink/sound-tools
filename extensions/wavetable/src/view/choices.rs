@@ -5,7 +5,7 @@
 use std::fmt::Debug;
 
 use gpui::SharedString;
-use sound_core::{FilterCharacter, FilterSlope, FilterType, LfoShape};
+use sound_dsp::{FilterCharacter, FilterSlope, FilterType, LfoShape};
 use sound_notes::{Division, Feel};
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 

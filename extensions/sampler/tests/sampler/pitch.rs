@@ -2,11 +2,10 @@
 //! from files at the engine's rate and at others.
 
 use sampler::SamplerState;
+use sound_dsp::testing::peak;
 use sound_notes::Pitch;
 
-use crate::support::{
-    Harness, INSTRUMENT, SAMPLE_RATE, Track, frequency, id, note, peak, playing, sine,
-};
+use crate::support::{Harness, INSTRUMENT, SAMPLE_RATE, Track, frequency, id, note, playing, sine};
 
 /// The sine of the sample: A4, so the root is 69.
 const HZ: f64 = 440.0;

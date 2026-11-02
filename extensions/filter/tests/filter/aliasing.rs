@@ -2,7 +2,7 @@
 //! low pass. Each tone is a prime number of cycles in a window of 0.1 s, see [`Spectrum`].
 
 use filter::{FilterState, FilterType};
-use sound_core::testing::Spectrum;
+use sound_dsp::testing::Spectrum;
 
 use crate::support::{Rig, SAMPLE_RATE, sine};
 

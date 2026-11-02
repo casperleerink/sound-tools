@@ -17,9 +17,11 @@
 //! [`LONGEST_SECONDS`], and never in `process`.
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, OnePole, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, all_zero, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{OnePole, Taps, all_zero, held};
 
 use crate::{
     DelayState, FEEDBACK, HIGH_CUT, LONGEST_SECONDS, LOW_CUT, MIX, PARAMETERS, delay_seconds,

@@ -1,77 +1,16 @@
 //! A rig of one source into one filter into the device, and what the tests measure with.
 
-use std::f64::consts::TAU;
-
 use filter::{Filter, FilterState};
-use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
-    ProcessContext, Processor,
+use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node};
+pub(crate) use sound_dsp::testing::{
+    Signal, Source, amplitude_at, largest_step, noise, peak, sine_at,
 };
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
-/// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
-
-/// A processor that plays a signal. The closure is made on the control thread; calling it
-/// allocates nothing.
-pub(crate) struct Source {
-    signal: Signal,
-}
-
-impl Source {
-    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
-
-    pub(crate) fn new(signal: Signal) -> Self {
-        Self { signal }
-    }
-}
-
-impl Processor for Source {
-    type Update = ();
-
-    fn ports(&self) -> Ports {
-        Ports::new().audio_output(Self::OUTPUT)
-    }
-
-    fn prepare(&mut self, _: &PrepareConfig) {}
-
-    fn update(&mut self, _: &mut ()) {}
-
-    fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
-        for (left, right) in left.iter_mut().zip(right.iter_mut()) {
-            [*left, *right] = (self.signal)();
-        }
-    }
-}
-
 /// A sine of this frequency and amplitude in both channels, from phase 0.
 pub(crate) fn sine(hz: f64, amplitude: f32) -> Signal {
     sine_at(hz, amplitude, SAMPLE_RATE)
-}
-
-/// The same at another sample rate.
-pub(crate) fn sine_at(hz: f64, amplitude: f32, sample_rate: u32) -> Signal {
-    let mut phase = 0.0_f64;
-    let step = hz / f64::from(sample_rate);
-    Box::new(move || {
-        let sample = (TAU * phase).sin() as f32 * amplitude;
-        phase = (phase + step).fract();
-        [sample; 2]
-    })
-}
-
-/// White noise from -amplitude to amplitude, the same every run, other in each channel.
-pub(crate) fn noise(amplitude: f32) -> Signal {
-    let mut state = 0x2545_f491_4f6c_dd1d_u64;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        (state >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0
-    };
-    Box::new(move || [next() * amplitude, next() * amplitude])
 }
 
 /// A source, a filter and the device, rendering offline.
@@ -125,18 +64,6 @@ impl Rig {
     }
 }
 
-/// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
-/// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.
-pub(crate) fn amplitude_at(samples: &[f32], start: usize, hz: f64, sample_rate: u32) -> f64 {
-    let (mut sine, mut cosine) = (0.0, 0.0);
-    for (offset, sample) in samples.iter().enumerate() {
-        let angle = TAU * hz * (start + offset) as f64 / f64::from(sample_rate);
-        sine += f64::from(*sample) * angle.sin();
-        cosine += f64::from(*sample) * angle.cos();
-    }
-    2.0 * sine.hypot(cosine) / samples.len() as f64
-}
-
 /// The gain of a filter with this record at `hz`, measured: a quiet sine through it, once the
 /// filter has settled, in dB.
 pub(crate) fn measured_db(state: FilterState, hz: f64) -> f64 {
@@ -157,18 +84,4 @@ pub(crate) fn measured_db_at(state: FilterState, hz: f64, sample_rate: u32) -> f
     assert_eq!(left, right);
     let amplitude = amplitude_at(&left, settle, hz, sample_rate);
     20.0 * (amplitude / f64::from(AMPLITUDE)).log10()
-}
-
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
-/// The largest step from one sample to the next.
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .map(|pair| (pair[1] - pair[0]).abs())
-        .fold(0.0, f32::max)
 }

@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use gpui::{App, Context, Global, Task};
 use sound_core::Peaks;
+use sound_dsp::decibels;
 
 use crate::components::meter::{Ballistics, Level};
 use crate::session::POLL_INTERVAL;
@@ -52,11 +53,6 @@ impl Metering {
     pub fn reset(&mut self) {
         *self = Self::default();
     }
-}
-
-/// An amplitude in dBFS: 1 is 0 dB and 0 is `-inf`.
-pub fn decibels(amplitude: f32) -> f32 {
-    20.0 * amplitude.log10()
 }
 
 /// Runs `tick` on the view once per poll of the session, for as long as the view lives: the
@@ -217,12 +213,10 @@ impl Drop for PeaksReader {
 mod tests {
     use sound_core::Peaks;
 
-    use super::{Metering, SharedPeaks, decibels};
+    use super::{Metering, SharedPeaks};
 
     #[test]
     fn a_reading_takes_the_peaks_and_shows_them_in_decibels() {
-        assert_eq!(decibels(1.0), 0.0);
-        assert_eq!(decibels(0.0), f32::NEG_INFINITY);
         let peaks = Peaks::new();
         peaks.record_block([&[0.5], &[1.0]]);
         let mut metering = Metering::default();

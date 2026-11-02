@@ -18,9 +18,12 @@ use std::f32::consts::PI;
 
 use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Oversampler,
-    OversamplerDelay, OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed, Targets, all_held_silent, amplitude, held, soft_clip,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
+};
+use sound_dsp::{
+    OnePole, Oversampler, OversamplerDelay, OversamplingFilters, all_held_silent, amplitude, held,
+    soft_clip,
 };
 
 /// Every number of the saturator can be automated.

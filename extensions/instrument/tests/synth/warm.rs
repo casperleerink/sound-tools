@@ -2,7 +2,7 @@
 //! moderate resonance, and its sound comes as late as the oversampling.
 
 use instrument::{FilterCharacter, SynthState, Waveform};
-use sound_core::Oversampler;
+use sound_dsp::Oversampler;
 
 use crate::support::{Harness, SAMPLE_RATE, level_at, note};
 

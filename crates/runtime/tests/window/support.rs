@@ -23,6 +23,7 @@ use tempfile::TempDir;
 
 use crate::plugin_hosts::{scanner, test_plugin_host};
 use crate::rack::rack_files;
+pub(crate) use sound_dsp::testing::peak;
 
 pub(crate) const BAR: u64 = 3840;
 /// How long a test waits for Bun, which answers in real time: a Windows runner with tests side
@@ -682,13 +683,6 @@ pub(crate) fn test_plugin_record(format: plugin_host::PluginFormat, state_asset:
         r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{id}", "state_asset": "{state_asset}"}}}}"#,
         format.as_str()
     )
-}
-
-/// The loudest sample.
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
 /// Every record file under `state/` and `project.json`, by relative path, with what it holds. A

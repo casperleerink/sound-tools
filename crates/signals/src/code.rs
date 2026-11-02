@@ -5,7 +5,7 @@
 //! so one pass in order computes a frame. A `History` reads what a feedback was set to in the
 //! frame before.
 
-use sound_core::SvfShape;
+use sound_dsp::SvfShape;
 
 /// The most params, and so the most knobs and toggles: the update carries their values in a
 /// fixed array.
