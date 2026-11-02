@@ -139,10 +139,7 @@ fn an_outside_edit_of_a_pad_while_it_plays_is_heard_and_undone_in_one_step() {
     // One undo takes the agent's edit back, file and sound.
     assert!(harness.project.undo().unwrap().is_some());
     let file = std::fs::read_to_string(harness.path(DRUMS_FILE)).unwrap();
-    assert_eq!(
-        file,
-        "{\n  \"tool\": \"drum-pad\",\n  \"state\": {\"pads\": {}}\n}\n"
-    );
+    assert_eq!(file, loud);
 }
 
 /// Everything of the record survives close and reopen, and the render after it is the render

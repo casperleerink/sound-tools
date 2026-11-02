@@ -76,6 +76,5 @@ fn an_outside_edit_of_the_eq_while_it_plays_is_heard_and_undone_in_one_step() {
     // One undo takes the agent's edit back, file and sound.
     assert!(harness.project.undo().unwrap().is_some());
     let file = std::fs::read_to_string(harness.path(EQ_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["bands"][0]["shape"], "low_shelf");
+    assert_eq!(file, flat);
 }
