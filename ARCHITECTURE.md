@@ -46,7 +46,7 @@ This is the main rule of the codebase.
 - A parent's behaviour reads the state of its children and runs again when anything below it changes.
 - Refusing is for invalid state. State that is valid but cannot be live now (a missing plugin or file) is a problem, and the rest plays.
 - References are saved ids that keep nothing alive. A reference may arrive before its target; data of a missing extension stays intact.
-- A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no undo step (`runtime::tick`).
+- A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no point (`runtime::tick`).
 
 ## Project storage
 
@@ -73,7 +73,7 @@ my-piece/
 - No schema versions and no migration framework. Old records must load unchanged: a new field is optional with a default that sounds as before, and the runtime does not rewrite a file that did not change.
 - Only an invalid `project.json` stops a project from opening. A change of `extensions` applies on reopen.
 - What belongs to one machine stays out of the folder (plugin scan cache, window positions, audio devices, agent threads and settings), so a project in git does not change because it was opened on another laptop.
-- Recordings and imported files are never written over, never deleted by the runtime and never part of undo, so an edit cannot lose one.
+- Recordings and imported files are never written over, never deleted by the runtime and never part of history, so an edit cannot lose one.
 - Files are written to a temporary file and renamed into place. No `fsync`: it made undo of a large delete block for most of a second. Power loss is left to git.
 - One runtime per project holds `.sound-tools.lock`. Inspect and render open read-only without the lock, so they work next to a running window.
 
@@ -84,8 +84,21 @@ my-piece/
 - There is one state application. Window edits, file changes, loading, undo, redo and cancel all apply a group of changes, whole or not at all. Loading is applying from empty.
 - The watcher only says which paths changed; the runtime reads them again and applies the difference, so edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
-- An agent request is one undo step (`Project::begin_request`). Rejected: adding writes that come after a composer's edit to the older step: undo would go out of order.
-- Undo history lives only in the session. The folder is the truth; versions come from git.
+- An agent request is one point of history (`Project::begin_request`). Rejected: adding writes that come after a composer's edit to the older point: undo would go out of order.
+
+## Project history
+
+`crates/core/src/project/history.rs`.
+
+- **One system.** Undo, redo and the History tab are moves through the same points; there is no undo stack. Only files are history: playback, arming and selection are not.
+- **A git repository of its own** in `.sound-tools/history`, written by hand (loose objects, refs, a detached `HEAD`), so plain `git --git-dir … log --all --graph` reads it. Rejected: the folder's own `.git`, which an agent's git commands rewrite; jj; a git library, heavier than the three object types we write. Packs are not read: nothing here makes one.
+- **Kept:** `project.json`, `state/` and the project's tool code in `extensions/`, without what the runtime writes there. Assets are never written over, so they need no history.
+- **Same state is the same bytes.** A rewrite in another layout is a change. Undo writes a point's files back byte for byte and the project follows them as it follows an agent's write: a file that does not load comes back as it was, and the sound plays the last good version. Rejected: applying in-memory records, which rewrote an agent's file in our layout.
+- **A point** is a finished edit, a run of a tool once quiet, or outside changes. Outside groups within 15 s or of one request replace the point before, and one that takes back what it wrote leaves none. A drag in memory never reached disk, so it is no point. Before any move, what the folder holds that history has not seen is saved first, so nothing is lost.
+- **Going somewhere is never a point.** The next change after it starts a version. After undo, it does only when the undone work was big (10 points or 2 minutes); small undone work is marked undone, kept in git and findable. alt-cmd-Z undoes as going back does.
+- **Lines are explicit** in `lines.json` next to the repository: each version or undone run with its start and tip, number and name. A point's line follows from its children while reading newest first, so pages of 300 need no older point. Rejected: working out lines from "first child" order, which needs the whole history and moves lanes when undone work is kept.
+- **Commit times are milliseconds** in the message and always after the parents', so newest first never shows a parent before its child.
+- **Merge is per file**, a point with two parents. Rejected: merging inside a JSON record, a sync problem (see above).
 
 ## Agent context
 
