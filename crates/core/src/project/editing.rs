@@ -168,10 +168,10 @@ impl Project {
         self.end_request_at(Instant::now());
     }
 
-    /// [`Self::end_request`] with the time of the end given, for tests of the undo grouping.
+    /// [`Self::end_request`] with the time of the end given, for tests of the grouping into points.
     ///
     /// The first end counts: an end said again later, such as when the agent's process exits
-    /// long after its turn, must not let the outside changes of that moment join the step.
+    /// long after its turn, must not let the outside changes of that moment join the point.
     pub fn end_request_at(&mut self, at: Instant) {
         if let Some(history) = &mut self.history {
             history.end_request_at(at);
@@ -191,7 +191,7 @@ impl Project {
     /// as often as the gesture moves. On an error nothing of the group is applied.
     ///
     /// The first publish of an edit first finishes the runs it may finish (see
-    /// [`Self::publish_run`]), so a run's step holds none of this edit.
+    /// [`Self::publish_run`]), so a run's point holds none of this edit.
     pub fn publish(&mut self, edit: &mut Edit, changes: Changes) -> Result<(), ProjectError> {
         let finished = match edit.is_empty() {
             true => self.finish_free_runs(),
@@ -382,27 +382,24 @@ impl Project {
 
     fn undo_going(&mut self, going: Going) -> Result<Option<String>, ProjectError> {
         self.before_going()?;
-        let label = self.undo_label();
-        let target = self.history.as_ref().map(History::undo_target).transpose();
-        match target.map_err(ProjectError::History)?.flatten() {
-            Some(target) => self.go(target, going).map(|()| label),
-            None => Ok(None),
-        }
+        self.go_to_target(History::undo_target, going)
     }
 
     /// Redo: the files go to the newest point that came from the current one. Returns its
     /// label, or `None` when there is none.
     pub fn redo(&mut self) -> Result<Option<String>, ProjectError> {
         self.before_going()?;
-        let Some(history) = &self.history else {
-            return Ok(None);
-        };
-        let target = history.newest_child(history.current());
-        match target.map_err(ProjectError::History)? {
-            Some(target) => {
-                let label = self.redo_label();
-                self.go(target, Going::Redo).map(|()| label)
-            }
+        self.go_to_target(History::redo_target, Going::Redo)
+    }
+
+    fn go_to_target(
+        &mut self,
+        target: impl FnOnce(&History) -> std::io::Result<Option<(PointId, String)>>,
+        going: Going,
+    ) -> Result<Option<String>, ProjectError> {
+        let target = self.history.as_ref().map(target).transpose();
+        match target.map_err(ProjectError::History)?.flatten() {
+            Some((point, label)) => self.go(point, going).map(|()| Some(label)),
             None => Ok(None),
         }
     }
@@ -446,12 +443,8 @@ impl Project {
         self.change_history(|history| history.set_aside(start, aside))
     }
 
-    /// Names a version by hand. `None` gives naming back.
-    pub fn rename_version(
-        &mut self,
-        start: PointId,
-        name: Option<String>,
-    ) -> Result<(), ProjectError> {
+    /// Names a version by hand. An empty name gives naming back.
+    pub fn rename_version(&mut self, start: PointId, name: &str) -> Result<(), ProjectError> {
         self.change_history(|history| history.rename(start, name))
     }
 
@@ -519,10 +512,10 @@ impl Project {
 
     /// The label of the point that `undo` would take back.
     pub fn undo_label(&self) -> Option<String> {
-        self.history.as_ref()?.undo_label()
+        Some(self.history.as_ref()?.undo_target().ok()??.1)
     }
 
     pub fn redo_label(&self) -> Option<String> {
-        self.history.as_ref()?.redo_label()
+        Some(self.history.as_ref()?.redo_target().ok()??.1)
     }
 }

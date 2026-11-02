@@ -44,6 +44,13 @@ fn current(session: &Session) -> Result<PointId> {
     Ok(history.current())
 }
 
+/// The start of the line the current point is in.
+fn current_line(session: &Session) -> Result<PointId> {
+    let history = session.project().history().context("no history")?;
+    let line = history.line_of(history.current())?.context("no line")?;
+    Ok(line.start)
+}
+
 fn shape(session: &mut Session, cx: &mut gpui::Context<Session>) -> Result<()> {
     let start = current(session)?;
     for step in 1..=8 {
@@ -64,21 +71,12 @@ fn shape(session: &mut Session, cx: &mut gpui::Context<Session>) -> Result<()> {
     for step in 30..=32 {
         session.edit(cx, decay(step as f32)).context("an edit")?;
     }
-    let brighter = current(session)?;
-    let line = (session.project().history())
-        .and_then(|history| history.line_of(brighter).ok().flatten())
-        .map(|line| line.start)
-        .context("no line")?;
-    let name = Some("Longer tail".to_string());
-    session.edit(cx, |project| project.rename_version(line, name));
+    let line = current_line(session)?;
+    session.edit(cx, |project| project.rename_version(line, "Longer tail"));
     // A version from the start, folded away by hand.
     session.go_to(start, cx);
     session.edit(cx, decay(40.)).context("an edit")?;
-    let aside = current(session)?;
-    let aside = (session.project().history())
-        .and_then(|history| history.line_of(aside).ok().flatten())
-        .map(|line| line.start)
-        .context("no line")?;
+    let aside = current_line(session)?;
     session.edit(cx, |project| project.set_aside(aside, true));
     session.go_to(tip, cx);
     session.edit(cx, decay(13.)).context("an edit")?;

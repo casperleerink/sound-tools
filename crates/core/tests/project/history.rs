@@ -223,10 +223,7 @@ fn a_name_given_by_hand_stays_until_cleared() {
     let mut harness = Harness::new();
     add_dc(&mut harness);
     let line = harness.project.history().unwrap().lines()[0].clone();
-    harness
-        .project
-        .rename_version(line.start, Some("Mine".into()))
-        .unwrap();
+    harness.project.rename_version(line.start, "Mine").unwrap();
     harness
         .project
         .name_version(line.start, "Found".into(), line.tip)
@@ -236,7 +233,7 @@ fn a_name_given_by_hand_stays_until_cleared() {
         "Mine"
     );
 
-    harness.project.rename_version(line.start, None).unwrap();
+    harness.project.rename_version(line.start, " ").unwrap();
     assert_eq!(
         harness.project.history().unwrap().lines()[0].title(),
         "Version 1"
@@ -313,10 +310,9 @@ fn a_version_folds_away_once_merged_or_thirty_points_old() {
         set(&mut harness, &dc, 0.25);
         let folded = |harness: &Harness| {
             let history = harness.project.history().unwrap();
-            let lines = history.lines();
-            lines
-                .iter()
-                .map(|line| history.folded_away(line).unwrap())
+            let folded_away = history.folded_away().unwrap();
+            (history.lines().iter())
+                .map(|line| folded_away.contains(&line.start))
                 .collect::<Vec<_>>()
         };
         assert_eq!(folded(&harness), [false, false]);

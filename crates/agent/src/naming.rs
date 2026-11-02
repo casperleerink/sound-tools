@@ -47,35 +47,33 @@ pub(crate) fn next(
         let tip = points.iter().position(|point| point.id == line.tip);
         tip.unwrap_or(points.len())
     };
-    let mut waiting: Vec<&Line> = (history.lines().iter())
+    let folded_away = history.folded_away()?;
+    let next = (history.lines().iter())
         .filter(|line| {
             line.is_version()
                 && !line.named_by_hand
                 && line.named_at != Some(line.tip)
                 && !failed.contains(&(line.start, line.tip))
+                && !folded_away.contains(&line.start)
         })
+        .min_by_key(|line| (Some(line.start) != current, age(line)));
+    let Some(line) = next else {
+        return Ok(None);
+    };
+    let base = history.parents(line.start)?.first().copied();
+    let changes = history.changes(base, line.tip)?;
+    let mut steps: Vec<&str> = (points.iter())
+        .filter(|point| point.line == line.start)
+        .map(|point| point.label.as_str())
+        .take(STEPS_SHOWN)
         .collect();
-    waiting.sort_by_key(|line| (Some(line.start) != current, age(line)));
-    for line in waiting {
-        if history.folded_away(line)? {
-            continue;
-        }
-        let base = history.parents(line.start)?.first().copied();
-        let changes = history.changes(base, line.tip)?;
-        let mut steps: Vec<&str> = (points.iter())
-            .filter(|point| point.line == line.start)
-            .map(|point| point.label.as_str())
-            .take(STEPS_SHOWN)
-            .collect();
-        steps.reverse();
-        steps.dedup();
-        return Ok(Some(Naming {
-            start: line.start,
-            tip: line.tip,
-            description: describe(&steps, &changes),
-        }));
-    }
-    Ok(None)
+    steps.reverse();
+    steps.dedup();
+    Ok(Some(Naming {
+        start: line.start,
+        tip: line.tip,
+        description: describe(&steps, &changes),
+    }))
 }
 
 fn describe(steps: &[&str], changes: &[FileChange]) -> String {

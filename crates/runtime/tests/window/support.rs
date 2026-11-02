@@ -495,6 +495,11 @@ impl Opened<'_> {
         self.cx.read(|cx| read(session.read(cx).project()))
     }
 
+    /// The point of history the files are at.
+    pub(crate) fn current_point(&mut self) -> sound_core::PointId {
+        self.project(|project| project.history().unwrap().current())
+    }
+
     /// Runs a project operation through the session, as the watcher or another view would.
     pub(crate) fn edit<R>(
         &mut self,

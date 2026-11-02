@@ -66,6 +66,18 @@ pub struct Line {
 }
 
 impl Line {
+    pub fn new(start: PointId, tip: PointId, number: Option<u32>) -> Self {
+        Self {
+            start,
+            tip,
+            number,
+            name: None,
+            named_by_hand: false,
+            named_at: None,
+            set_aside: false,
+        }
+    }
+
     pub fn is_version(&self) -> bool {
         self.number.is_some()
     }
@@ -324,69 +336,51 @@ impl History {
         Ok(None)
     }
 
-    /// Whether the version is folded away: it is not the current one and was merged, set
-    /// aside by hand, or has [`FOLD_AFTER`] newer points since its last point.
-    pub fn folded_away(&self, line: &Line) -> io::Result<bool> {
-        if self
-            .line_of(self.head)?
-            .is_some_and(|current| current.start == line.start)
-        {
-            return Ok(false);
-        }
-        if line.set_aside {
-            return Ok(true);
-        }
+    /// The starts of the versions folded away: not the current one, and merged, set aside by
+    /// hand, or with [`FOLD_AFTER`] newer points since its last point.
+    pub fn folded_away(&self) -> io::Result<HashSet<PointId>> {
+        let current = self.line_of(self.head)?.map(|line| line.start);
         let newer = self.points(FOLD_AFTER + 1)?;
-        let Some(index) = newer.iter().position(|point| point.id == line.tip) else {
-            return Ok(true);
+        let folded = |line: &Line| {
+            let Some(index) = newer.iter().position(|point| point.id == line.tip) else {
+                return true;
+            };
+            let merged = (newer.iter().take(index)).any(|point| {
+                point
+                    .parents
+                    .iter()
+                    .skip(1)
+                    .any(|parent| *parent == line.tip)
+            });
+            line.set_aside || merged || index >= FOLD_AFTER
         };
-        let merged = (newer[..index].iter()).any(|point| point.parents[1..].contains(&line.tip));
-        Ok(merged || index >= FOLD_AFTER)
+        Ok((self.lines.iter())
+            .filter(|line| line.is_version() && Some(line.start) != current && folded(line))
+            .map(|line| line.start)
+            .collect())
     }
 
-    /// The label of the current point, which undo takes back. `None` at the start.
-    pub(crate) fn undo_label(&self) -> Option<String> {
-        let commit = self.commit(self.head).ok()?;
-        (!commit.parents.is_empty()).then(|| commit.label.clone())
+    /// Where undo goes, the point the current one came from, and the label of the current
+    /// point, which it takes back. `None` at the start.
+    pub(crate) fn undo_target(&self) -> io::Result<Option<(PointId, String)>> {
+        let commit = self.commit(self.head)?;
+        Ok((commit.parents.first()).map(|parent| (*parent, commit.label.clone())))
     }
 
-    pub(crate) fn redo_label(&self) -> Option<String> {
-        let child = self.newest_child(self.head).ok()??;
-        Some(self.commit(child).ok()?.label.clone())
-    }
-
-    /// Where undo goes: the point the current one came from.
-    pub(crate) fn undo_target(&self) -> io::Result<Option<PointId>> {
-        Ok(self.commit(self.head)?.parents.first().copied())
-    }
-
-    /// Where redo goes: the newest point that came from the current one.
-    pub(crate) fn newest_child(&self, of: PointId) -> io::Result<Option<PointId>> {
-        let time = self.commit(of)?.time;
-        let mut newest: Option<(u64, PointId)> = None;
-        // Children are newer than their parent, so the walk stops at its time.
-        let mut heap: BinaryHeap<(u64, PointId)> = BinaryHeap::new();
-        let mut queued = HashSet::new();
-        for line in &self.lines {
-            if queued.insert(line.tip) {
-                heap.push((self.commit(line.tip)?.time, line.tip));
-            }
-        }
-        while let Some((point_time, id)) = heap.pop() {
-            if point_time <= time {
+    /// Where redo goes, the newest point that came from the current one, and its label.
+    pub(crate) fn redo_target(&self) -> io::Result<Option<(PointId, String)>> {
+        let time = UNIX_EPOCH + Duration::from_millis(self.commit(self.head)?.time);
+        for point in self.walk()? {
+            let point = point?;
+            // Children are newer than their parent.
+            if point.time <= time {
                 break;
             }
-            let commit = self.commit(id)?;
-            if commit.parents.first() == Some(&of) && newest.is_none_or(|(at, _)| point_time > at) {
-                newest = Some((point_time, id));
-            }
-            for parent in &commit.parents {
-                if queued.insert(*parent) {
-                    heap.push((self.commit(*parent)?.time, *parent));
-                }
+            if point.parents.first() == Some(&self.head) {
+                return Ok(Some((point.id, point.label)));
             }
         }
-        Ok(newest.map(|(_, id)| id))
+        Ok(None)
     }
 
     /// Reads the folder and saves it as a point when it differs from the current one. Returns
@@ -487,10 +481,8 @@ impl History {
         };
         let id = self.repository.write_commit(&commit)?;
         // Undone work that is changed from becomes a version.
-        let undone = self.undone_line_holding(parent)?;
-        if let Some(index) = undone {
-            let number = self.take_number();
-            self.lines[index].number = Some(number);
+        if let Some(undone) = self.line_of(parent)?.map(|line| line.start) {
+            self.number_undone(undone);
         }
         match self.lines.iter_mut().find(|line| line.tip == parent) {
             Some(line) => line.tip = id,
@@ -499,29 +491,6 @@ impl History {
         self.since = Since::Nothing;
         self.move_head(id)?;
         self.store()
-    }
-
-    /// The undone line `point` is in. Undone runs are short, so each is walked whole.
-    fn undone_line_holding(&self, point: PointId) -> io::Result<Option<usize>> {
-        for (index, line) in self.lines.iter().enumerate() {
-            if line.is_version() {
-                continue;
-            }
-            let mut at = line.tip;
-            loop {
-                if at == point {
-                    return Ok(Some(index));
-                }
-                if at == line.start {
-                    break;
-                }
-                match self.commit(at)?.parents.first() {
-                    Some(parent) => at = *parent,
-                    None => break,
-                }
-            }
-        }
-        Ok(None)
     }
 
     /// After undo, small work that was taken back becomes an undone line of its own, so the
@@ -560,15 +529,7 @@ impl History {
             self.lines[line].number = None;
         } else {
             self.lines[line].tip = self.head;
-            self.lines.push(Line {
-                start: first,
-                tip: from,
-                number: None,
-                name: None,
-                named_by_hand: false,
-                named_at: None,
-                set_aside: false,
-            });
+            self.lines.push(Line::new(first, from, None));
         }
         Ok(())
     }
@@ -581,15 +542,20 @@ impl History {
 
     fn new_version(&mut self, start: PointId) {
         let number = self.take_number();
-        self.lines.push(Line {
-            start,
-            tip: start,
-            number: Some(number),
-            name: None,
-            named_by_hand: false,
-            named_at: None,
-            set_aside: false,
-        });
+        self.lines.push(Line::new(start, start, Some(number)));
+    }
+
+    /// Makes the undone line that begins at `start` a version. Nothing for a version.
+    fn number_undone(&mut self, start: PointId) {
+        let Some(index) =
+            (self.lines.iter()).position(|line| line.start == start && !line.is_version())
+        else {
+            return;
+        };
+        let number = self.take_number();
+        if let Some(line) = self.lines.get_mut(index) {
+            line.number = Some(number);
+        }
     }
 
     fn move_head(&mut self, to: PointId) -> io::Result<()> {
@@ -698,12 +664,7 @@ impl History {
 
     /// Makes undone work a version.
     pub(crate) fn keep_as_version(&mut self, start: PointId) -> io::Result<()> {
-        let number = self.next_number;
-        let Some(line) = self.line_mut(start).filter(|line| !line.is_version()) else {
-            return Ok(());
-        };
-        line.number = Some(number);
-        self.next_number += 1;
+        self.number_undone(start);
         self.store()
     }
 
@@ -715,12 +676,12 @@ impl History {
         self.store()
     }
 
-    /// Names a version by hand. `None` gives naming back.
-    pub(crate) fn rename(&mut self, start: PointId, name: Option<String>) -> io::Result<()> {
-        let name = name.map(|name| name.trim().to_string());
+    /// Names a version by hand. An empty name gives naming back.
+    pub(crate) fn rename(&mut self, start: PointId, name: &str) -> io::Result<()> {
+        let name = name.trim();
         if let Some(line) = self.line_mut(start) {
-            line.named_by_hand = name.as_ref().is_some_and(|name| !name.is_empty());
-            line.name = name.filter(|_| line.named_by_hand);
+            line.named_by_hand = !name.is_empty();
+            line.name = line.named_by_hand.then(|| name.to_string());
             line.named_at = None;
         }
         self.store()

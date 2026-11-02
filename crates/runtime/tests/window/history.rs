@@ -19,10 +19,6 @@ fn add_room(project: &mut Project) -> Result<(), ProjectError> {
 }
 
 impl Opened<'_> {
-    fn current(&mut self) -> PointId {
-        self.project(|project| project.history().unwrap().current())
-    }
-
     fn point_count(&mut self) -> usize {
         self.project(|project| project.history().unwrap().points(100).unwrap().len())
     }
@@ -44,9 +40,9 @@ impl Opened<'_> {
 #[gpui::test]
 fn a_click_on_a_row_writes_its_files_back_and_makes_no_point(cx: &mut TestAppContext) {
     let mut opened = support::open_new(cx);
-    let start = opened.current();
+    let start = opened.current_point();
     opened.edit(add_room).unwrap();
-    let with_room = opened.current();
+    let with_room = opened.current_point();
     let file = opened.folder.path().join("state/room.json");
     assert!(file.exists());
     // Without the agent the panel starts closed, and opens on History.
@@ -57,13 +53,13 @@ fn a_click_on_a_row_writes_its_files_back_and_makes_no_point(cx: &mut TestAppCon
 
     let row = opened.row(start);
     opened.click(row);
-    assert_eq!(opened.current(), start);
+    assert_eq!(opened.current_point(), start);
     assert!(!file.exists());
     assert!(opened.project(|project| project.resolve::<ReverbState>(&room()).is_none()));
 
     let row = opened.row(with_room);
     opened.click(row);
-    assert_eq!(opened.current(), with_room);
+    assert_eq!(opened.current_point(), with_room);
     assert!(file.exists());
     assert_eq!(opened.point_count(), points);
 }
@@ -71,7 +67,7 @@ fn a_click_on_a_row_writes_its_files_back_and_makes_no_point(cx: &mut TestAppCon
 #[gpui::test]
 fn the_keys_move_down_the_rows_and_enter_goes_to_a_point(cx: &mut TestAppContext) {
     let mut opened = support::open_new(cx);
-    let start = opened.current();
+    let start = opened.current_point();
     opened.edit(add_room).unwrap();
     let file = opened.folder.path().join("state/room.json");
     opened.keys("secondary-b");
@@ -80,7 +76,7 @@ fn the_keys_move_down_the_rows_and_enter_goes_to_a_point(cx: &mut TestAppContext
 
     // The highlight starts on the current point, the newest; the one below is the start.
     opened.keys("tab down enter");
-    assert_eq!(opened.current(), start);
+    assert_eq!(opened.current_point(), start);
     assert!(!file.exists());
 }
 
@@ -158,12 +154,12 @@ impl Opened<'_> {
 #[gpui::test]
 fn the_menu_of_a_row_renames_and_folds_away_and_plus_one_brings_it_back(cx: &mut TestAppContext) {
     let mut opened = support::open_new(cx);
-    let start = opened.current();
+    let start = opened.current_point();
     opened.edit(add_room).unwrap();
-    let first = opened.current();
+    let first = opened.current_point();
     opened.edit(|project| project.go_to(start)).unwrap();
     opened.edit(add_room).unwrap();
-    let second = opened.current();
+    let second = opened.current_point();
     opened.edit(|project| project.go_to(first)).unwrap();
     opened.keys("secondary-b");
 

@@ -42,7 +42,7 @@ impl Maker {
 
     fn undo(&mut self, count: usize) {
         for _ in 0..count {
-            let target = self.history.undo_target().unwrap().unwrap();
+            let (target, _) = self.history.undo_target().unwrap().unwrap();
             self.history.go(target, Going::Undo).unwrap();
         }
     }

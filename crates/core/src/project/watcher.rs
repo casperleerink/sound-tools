@@ -10,9 +10,9 @@ use notify::RecursiveMode;
 use super::storage::PROJECT_FILE;
 use super::{Project, ProjectError};
 
-/// File changes with less than this between them apply together, as one undo step. The group
-/// applies once the folder has been quiet for this long, so it is also the delay before an
-/// outside change is heard.
+/// File changes with less than this between them apply together. The group applies once the
+/// folder has been quiet for this long, so it is also the delay before an outside change is
+/// heard.
 pub const GROUPING_WINDOW: Duration = Duration::from_millis(100);
 
 pub(crate) struct Watcher {
@@ -29,7 +29,7 @@ pub(crate) struct Watcher {
     later: [(PathBuf, bool); 2],
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeSet<PathBuf>,
-    /// When the last path of `pending` was heard. The group counts from then for undo, not
+    /// When the last path of `pending` was heard. The group counts from then for history, not
     /// from when it applies a grouping window later, so a write heard just after a request
     /// ended joins it.
     last_event: Instant,
@@ -64,14 +64,13 @@ impl Watcher {
     fn take_group(&mut self) -> Result<Option<(Vec<PathBuf>, Instant)>, ProjectError> {
         // From the moment it exists. What is in it by then counts as changed, since no event
         // said so.
-        for index in 0..self.later.len() {
-            let (folder, watched) = &mut self.later[index];
+        for (folder, watched) in &mut self.later {
             if !*watched && folder.is_dir() {
                 // Tried once: a watch that fails is reported and not tried on every poll.
                 *watched = true;
-                let folder = folder.clone();
-                self.watcher.watch(&folder, RecursiveMode::Recursive)?;
-                self.hear([folder]);
+                self.watcher.watch(folder, RecursiveMode::Recursive)?;
+                self.pending.insert(folder.clone());
+                self.last_event = Instant::now();
             }
         }
         let mut rescan = false;
@@ -93,11 +92,11 @@ impl Watcher {
         // The system dropped events, such as in the burst of a branch switch, so any file may
         // have changed. Reading them all again finds the ones that did.
         if rescan {
-            let later = self.later.clone();
-            let paths = [&self.project_file, &self.state, &later[0].0, &later[1].0];
+            let [(assets, _), (extensions, _)] = &self.later;
+            let paths = [&self.project_file, &self.state, assets, extensions];
             self.hear(paths.map(PathBuf::clone));
             watch_again(self.watcher.as_mut(), &self.state)?;
-            for (folder, watched) in &later {
+            for (folder, watched) in &self.later {
                 if *watched {
                     watch_again(self.watcher.as_mut(), folder)?;
                 }

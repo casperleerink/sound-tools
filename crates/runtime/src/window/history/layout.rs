@@ -92,6 +92,16 @@ pub(super) struct Fold {
     pub(super) open: bool,
 }
 
+/// A [`Fold`] while rows are found: indices in [`Page::points`].
+struct Run {
+    first: usize,
+    count: usize,
+    open: bool,
+    line: PointId,
+    above: usize,
+    below: usize,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct Layout {
     pub(super) rows: Vec<Row>,
@@ -113,6 +123,8 @@ impl Layout {
         for (at, point) in points.iter().enumerate() {
             of_line.entry(point.line).or_default().push(at);
         }
+        // The oldest point read of a line.
+        let oldest = |of: &[usize]| of.last().map(|at| &points[*at]);
         let known: HashMap<PointId, (usize, &Line)> = (page.lines.iter().enumerate())
             .map(|(at, line)| (line.start, (at, line)))
             .collect();
@@ -154,8 +166,6 @@ impl Layout {
                 || point.parents.len() != 1
                 || splits.contains(&point.id)
         };
-        // Rows, and the folds between them: (first point, count, open, line, row point above,
-        // row point below).
         let mut is_row = vec![false; points.len()];
         let mut runs = Vec::new();
         for start in &drawn {
@@ -175,15 +185,22 @@ impl Layout {
                     if open {
                         run.iter().for_each(|at| is_row[*at] = true);
                     }
-                    runs.push((first, run.len(), open, *start, above, at));
+                    runs.push(Run {
+                        first,
+                        count: run.len(),
+                        open,
+                        line: *start,
+                        above,
+                        below: at,
+                    });
                 }
                 above = Some(at);
                 run.clear();
             }
         }
         let closed_below: HashSet<usize> = (runs.iter())
-            .filter(|run| !run.2)
-            .map(|run| run.4)
+            .filter(|run| !run.open)
+            .map(|run| run.above)
             .collect();
 
         let row_points: Vec<usize> = (0..points.len()).filter(|at| is_row[*at]).collect();
@@ -203,9 +220,10 @@ impl Layout {
                 continue;
             }
             let of = &of_line[&start];
-            let oldest = &points[of[of.len() - 1]];
             let last = (of.iter().rev()).find_map(|at| row_of_point(&points[*at].id));
-            let split = oldest.parents.first().and_then(row_of_point);
+            let split = (oldest(of))
+                .and_then(|oldest| oldest.parents.first())
+                .and_then(row_of_point);
             let bottom = last.max(split).unwrap_or(row);
             let lane = match busy_until.iter().position(|until| *until < row) {
                 Some(free) => free,
@@ -244,10 +262,9 @@ impl Layout {
             })
             .collect();
         for (start, of) in &of_line {
-            let oldest = &points[of[of.len() - 1]];
-            if oldest.id != *start {
+            let Some(oldest) = oldest(of).filter(|oldest| oldest.id == *start) else {
                 continue;
-            }
+            };
             let Some(row) = oldest.parents.first().and_then(row_of_point) else {
                 continue;
             };
@@ -285,8 +302,8 @@ impl Layout {
                     },
                 });
             }
-            let oldest = &points[of[of.len() - 1]];
-            if let Some(parent) = oldest.parents.first()
+            if let Some(oldest) = oldest(of)
+                && let Some(parent) = oldest.parents.first()
                 && let (Some(to), Some(parent_line)) = (row_of_point(parent), line_of(parent))
             {
                 edges.push(Edge {
@@ -311,12 +328,12 @@ impl Layout {
         }
 
         let mut folds: Vec<Fold> = (runs.into_iter())
-            .map(|(first, count, open, start, above, below)| Fold {
-                first: points[first].id,
-                lane: lane_of[&start],
-                rows: (row_of[&points[above].id], row_of[&points[below].id]),
-                count,
-                open,
+            .map(|run| Fold {
+                first: points[run.first].id,
+                lane: lane_of[&run.line],
+                rows: (row_of[&points[run.above].id], row_of[&points[run.below].id]),
+                count: run.count,
+                open: run.open,
             })
             .collect();
         folds.sort_by_key(|fold| fold.rows);
@@ -415,15 +432,7 @@ mod tests {
     }
 
     fn line(start: usize, number: Option<u32>) -> Line {
-        Line {
-            start: id(start),
-            tip: id(start),
-            number,
-            name: None,
-            named_by_hand: false,
-            named_at: None,
-            set_aside: false,
-        }
+        Line::new(id(start), id(start), number)
     }
 
     fn rows(layout: &Layout) -> Vec<PointId> {

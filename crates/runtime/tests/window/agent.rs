@@ -1291,10 +1291,6 @@ impl Opened<'_> {
             .update(|_, cx| session.update(cx, |session, cx| session.go_to(point, cx)));
         self.cx.run_until_parked();
     }
-
-    fn current_point(&mut self) -> sound_core::PointId {
-        self.project(|project| project.history().unwrap().current())
-    }
 }
 
 /// Going back in the history shows where to above the composer, and the agent reads it with
@@ -1475,7 +1471,7 @@ fn the_small_model_names_versions_once_they_are_still(cx: &mut TestAppContext) {
         let history = project.history().unwrap();
         history.line_of(history.current()).unwrap().unwrap().start
     });
-    opened.edit(|project| project.rename_version(current, Some("My take".to_string())));
+    opened.edit(|project| project.rename_version(current, "My take"));
     opened.write_later("state/lead.json", LATER_CLIP, 80);
     opened.quiet(5);
     opened.quiet(5);

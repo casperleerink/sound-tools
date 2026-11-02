@@ -6,7 +6,6 @@
 
 mod layout;
 
-use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
@@ -239,19 +238,20 @@ impl HistoryPanel {
         let Some(start) = self.menu_line.take() else {
             return;
         };
-        let set_aside = (self.session.read(cx).project().history())
-            .and_then(|history| history.line(start))
-            .is_some_and(|line| line.set_aside);
         match picked.0.as_ref() {
             "rename" => self.start_renaming(start, window, cx),
             "keep" => self.edit(cx, |project| project.keep_as_version(start)),
-            "aside" => self.edit(cx, |project| project.set_aside(start, !set_aside)),
-            "merge" => self
-                .session
-                .update(cx, |session, cx| session.merge(start, false, cx)),
-            "merge-mine" => self
-                .session
-                .update(cx, |session, cx| session.merge(start, true, cx)),
+            "aside" => {
+                let set_aside = (self.session.read(cx).project().history())
+                    .and_then(|history| history.line(start))
+                    .is_some_and(|line| line.set_aside);
+                self.edit(cx, |project| project.set_aside(start, !set_aside));
+            }
+            merge @ ("merge" | "merge-mine") => {
+                let keep_mine = merge == "merge-mine";
+                self.session
+                    .update(cx, |session, cx| session.merge(start, keep_mine, cx));
+            }
             _ => {}
         }
     }
@@ -307,7 +307,7 @@ impl HistoryPanel {
             return;
         };
         if let Some(name) = name {
-            self.edit(cx, |project| project.rename_version(start, Some(name)));
+            self.edit(cx, |project| project.rename_version(start, &name));
         }
         window.focus(&self.focus_handle, cx);
         cx.notify();
@@ -355,10 +355,9 @@ impl HistoryPanel {
             }
             _ if opens_menu => {
                 let line = self.layout.rows[index].line;
-                let text_left = lane_x(self.layout.lanes.max(1)) + 4.;
                 let at = self.scroll.bounds().origin
                     + self.scroll.offset()
-                    + point(px(text_left), px(row_y(index)));
+                    + point(px(text_left(self.layout.lanes)), px(row_y(index)));
                 self.open_menu(line, at, window, cx);
             }
             _ => return,
@@ -472,41 +471,10 @@ impl HistoryPanel {
     /// that leave a row.
     fn quiet_actions(&self, row: &Row, colors: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let point = row.point.short();
-        let mut actions = Vec::new();
-        if let count @ 1.. = row.hidden_versions.len() {
-            let label = match count {
-                1 => "+1 version".to_string(),
-                _ => format!("+{count} versions"),
-            };
-            let lines = row.hidden_versions.clone();
-            actions.push((label, format!("versions-{point}"), None, lines, true));
-        }
-        if !row.undone.is_empty() {
-            let tooltip = Tooltip::new(
-                "Taken back with undo. Click to show it. This undo keeps work as a version:",
-            )
-            .shortcut("alt+mod+z");
-            let label = format!("{} undone", row.undone_points);
-            let lines = row.undone.clone();
-            actions.push((label, format!("undone-{point}"), Some(tooltip), lines, true));
-        }
-        if !row.opened.is_empty() {
-            let lines = row.opened.clone();
-            actions.push((
-                "Hide versions".into(),
-                format!("hide-{point}"),
-                None,
-                lines,
-                false,
-            ));
-        }
         let (muted, bright) = (colors.muted, colors.text);
-        let mut elements = Vec::new();
-        for (index, (label, selector, tooltip, lines, show)) in actions.into_iter().enumerate() {
-            if index > 0 {
-                elements.push(div().px(px(6.)).child("·").into_any_element());
-            }
-            let action = div()
+        let action = |selector: String, lines: &[PointId], show: bool| {
+            let lines = lines.to_vec();
+            div()
                 .id(SharedString::from(selector.clone()))
                 .debug_selector(move || format!("history-{selector}"))
                 .text_color(muted)
@@ -516,10 +484,36 @@ impl HistoryPanel {
                     cx.stop_propagation();
                     panel.show_lines(&lines, show, cx);
                 }))
-                .when_some(tooltip, |action, tooltip| {
-                    action.tooltip(move |_, cx| tooltip.clone().view(cx))
-                })
-                .child(label);
+        };
+        let mut actions = Vec::new();
+        if let count @ 1.. = row.hidden_versions.len() {
+            let label = match count {
+                1 => "+1 version".to_string(),
+                _ => format!("+{count} versions"),
+            };
+            actions
+                .push(action(format!("versions-{point}"), &row.hidden_versions, true).child(label));
+        }
+        if !row.undone.is_empty() {
+            let tooltip = Tooltip::new(
+                "Taken back with undo. Click to show it. This undo keeps work as a version:",
+            )
+            .shortcut("alt+mod+z");
+            actions.push(
+                action(format!("undone-{point}"), &row.undone, true)
+                    .tooltip(move |_, cx| tooltip.clone().view(cx))
+                    .child(format!("{} undone", row.undone_points)),
+            );
+        }
+        if !row.opened.is_empty() {
+            actions
+                .push(action(format!("hide-{point}"), &row.opened, false).child("Hide versions"));
+        }
+        let mut elements = Vec::new();
+        for (index, action) in actions.into_iter().enumerate() {
+            if index > 0 {
+                elements.push(div().px(px(6.)).child("·").into_any_element());
+            }
             elements.push(action.into_any_element());
         }
         elements
@@ -554,18 +548,11 @@ fn current_badge(colors: &Colors) -> impl IntoElement {
 
 fn read_page(history: &History, wanted: usize) -> std::io::Result<Page> {
     let points = history.points(wanted)?;
-    let lines = history.lines().to_vec();
-    let mut folded_away = HashSet::new();
-    for line in &lines {
-        if line.is_version() && history.folded_away(line)? {
-            folded_away.insert(line.start);
-        }
-    }
     Ok(Page {
         points,
-        lines,
+        lines: history.lines().to_vec(),
         current: history.current(),
-        folded_away,
+        folded_away: history.folded_away()?,
     })
 }
 
@@ -582,6 +569,7 @@ fn ago(time: SystemTime, now: SystemTime) -> SharedString {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Colors {
     lanes: [Hsla; 10],
     blue: Hsla,
@@ -630,19 +618,34 @@ fn lane_x(lane: usize) -> f32 {
     FIRST_LANE + lane as f32 * LANE_WIDTH
 }
 
+/// Where the text of the rows begins, right of every lane.
+fn text_left(lanes: usize) -> f32 {
+    lane_x(lanes.max(1)) + 4.
+}
+
 fn row_y(row: usize) -> f32 {
     row as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.
 }
 
 /// The edges, the dots and the threads from a dot to its name, for the rows in view.
 struct Drawing {
-    edges: Vec<(Edge, Hsla)>,
-    dots: Vec<(usize, usize, Hsla, bool, bool)>,
-    names: Vec<(usize, usize, Hsla)>,
-    stubs: Vec<(usize, usize, Hsla)>,
+    edges: Vec<Edge>,
+    rows: Vec<DrawnRow>,
     text_left: f32,
-    ring: Hsla,
-    background: Hsla,
+    colors: Colors,
+}
+
+/// What the canvas draws of a row.
+struct DrawnRow {
+    lane: usize,
+    color: Hsla,
+    /// A full dot, at the latest point of its line.
+    tip: bool,
+    current: bool,
+    /// A thread from the dot to the line's name.
+    named: bool,
+    /// A stub for the lines hidden that leave it.
+    stub: bool,
 }
 
 fn paint(bounds: Bounds<Pixels>, drawing: Drawing, window: &mut Window) {
@@ -662,7 +665,7 @@ fn paint(bounds: Bounds<Pixels>, drawing: Drawing, window: &mut Window) {
             Stroke::Dashed => builder.dash_array(&[px(4.), px(3.)]),
         }
     };
-    for (edge, color) in &drawing.edges {
+    for edge in &drawing.edges {
         let (x1, y1, x2, y2) = (
             lane_x(edge.from.1),
             row_y(edge.from.0),
@@ -696,46 +699,39 @@ fn paint(bounds: Bounds<Pixels>, drawing: Drawing, window: &mut Window) {
             );
         }
         if let Ok(path) = path.build() {
-            window.paint_path(path, *color);
+            window.paint_path(path, drawing.colors.lane(edge.color));
         }
     }
-    for &(row, lane, color) in &drawing.stubs {
-        let (x, y) = (lane_x(lane), row_y(row));
-        if !in_view(y, y) {
-            continue;
-        }
+    let rows = || drawing.rows.iter().enumerate();
+    let row_in_view = |row: usize| in_view(row_y(row), row_y(row));
+    for (row, drawn) in rows().filter(|(row, drawn)| drawn.stub && row_in_view(*row)) {
+        let (x, y) = (lane_x(drawn.lane), row_y(row));
         let mut path = PathBuilder::stroke(px(1.5)).dash_array(&[px(2.), px(2.)]);
         path.move_to(at(x + 4., y - 4.));
         path.curve_to(at(x + 12., y - 16.), at(x + 10., y - 6.));
         if let Ok(path) = path.build() {
-            window.paint_path(path, color.opacity(0.4));
+            window.paint_path(path, drawn.color.opacity(0.4));
         }
     }
-    for &(row, lane, color) in &drawing.names {
-        let (x, y) = (lane_x(lane), row_y(row));
-        if !in_view(y, y) {
-            continue;
-        }
+    for (row, drawn) in rows().filter(|(row, drawn)| drawn.named && row_in_view(*row)) {
+        let (x, y) = (lane_x(drawn.lane), row_y(row));
         let mut path = PathBuilder::stroke(px(1.));
         path.move_to(at(x, y));
         path.line_to(at(drawing.text_left - 2., y));
         if let Ok(path) = path.build() {
-            window.paint_path(path, color.opacity(0.6));
+            window.paint_path(path, drawn.color.opacity(0.6));
         }
     }
-    for &(row, lane, color, full, current) in &drawing.dots {
-        let centre = at(lane_x(lane), row_y(row));
-        if !in_view(row_y(row), row_y(row)) {
-            continue;
+    for (row, drawn) in rows().filter(|(row, _)| row_in_view(*row)) {
+        let centre = at(lane_x(drawn.lane), row_y(row));
+        if drawn.current {
+            ring(window, centre, 8., 1.5, drawing.colors.text);
         }
-        if current {
-            ring(window, centre, 8., 1.5, drawing.ring);
-        }
-        if full {
-            circle(window, centre, 5., color);
+        if drawn.tip {
+            circle(window, centre, 5., drawn.color);
         } else {
-            circle(window, centre, 4., color);
-            circle(window, centre, 2.5, drawing.background);
+            circle(window, centre, 4., drawn.color);
+            circle(window, centre, 2.5, drawing.colors.background);
         }
     }
 }
@@ -794,42 +790,29 @@ impl Render for HistoryPanel {
             );
         }
         let layout = &self.layout;
-        let text_left = lane_x(layout.lanes.max(1)) + 4.;
+        let text_left = text_left(layout.lanes);
         let drawing = Drawing {
-            edges: (layout.edges.iter())
-                .map(|edge| (*edge, colors.lane(edge.color)))
-                .collect(),
-            dots: (layout.rows.iter().enumerate())
-                .map(|(index, row)| {
-                    (
-                        index,
-                        row.lane,
-                        colors.lane(row.color),
-                        row.tip,
-                        row.current,
-                    )
+            edges: layout.edges.clone(),
+            rows: (layout.rows.iter())
+                .map(|row| DrawnRow {
+                    lane: row.lane,
+                    color: colors.lane(row.color),
+                    tip: row.tip,
+                    current: row.current,
+                    named: matches!(row.name, Name::Line(_)),
+                    stub: !row.undone.is_empty() || !row.hidden_versions.is_empty(),
                 })
                 .collect(),
-            names: (layout.rows.iter().enumerate())
-                .filter(|(_, row)| matches!(row.name, Name::Line(_)))
-                .map(|(index, row)| (index, row.lane, colors.lane(row.color)))
-                .collect(),
-            stubs: (layout.rows.iter().enumerate())
-                .filter(|(_, row)| !row.undone.is_empty() || !row.hidden_versions.is_empty())
-                .map(|(index, row)| (index, row.lane, colors.lane(row.color)))
-                .collect(),
             text_left,
-            ring: colors.text,
-            background: colors.background,
+            colors,
         };
         // Once the keys moved it, the highlight shows after a click too.
         let keys_moved = self.highlight.is_some() && self.focus_handle.is_focused(window);
         let highlighted = (ring_shows || keys_moved)
             .then(|| self.highlighted_row())
             .flatten();
-        let rows: Vec<_> = (0..layout.rows.len())
-            .map(|index| {
-                let row = &self.layout.rows[index];
+        let rows: Vec<_> = (layout.rows.iter().enumerate())
+            .map(|(index, row)| {
                 self.row(
                     index,
                     row,
@@ -845,12 +828,9 @@ impl Render for HistoryPanel {
         let folds = (self.layout.folds.iter().enumerate()).map(|(index, fold)| {
             let first = fold.first;
             let (top, bottom) = (row_y(fold.rows.0) + 8., row_y(fold.rows.1) - 8.);
-            let text: SharedString = if fold.open {
-                format!("{} changes. Click to fold them", fold.count)
-            } else {
-                format!("{} changes. Click to show them", fold.count)
-            }
-            .into();
+            let action = if fold.open { "fold" } else { "show" };
+            let text =
+                SharedString::from(format!("{} changes. Click to {action} them", fold.count));
             div()
                 .id(("history-fold", index))
                 .debug_selector(move || format!("history-fold-{}", first.short()))
