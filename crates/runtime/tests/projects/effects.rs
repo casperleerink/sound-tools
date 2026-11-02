@@ -154,7 +154,7 @@ fn the_state_of_an_effect_survives_close_and_reopen_and_is_not_an_undo_step() {
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let (mut harness, plugins) = rack(format, 127, &[("trim", 0)]);
         assert_eq!(harness.project.problems(), [], "{format:?}");
-        let steps = harness.project.undo_label().map(str::to_string);
+        let steps = harness.project.undo_label();
 
         let before = harness.play_from_the_start(16_000);
         assert_eq!(
@@ -168,7 +168,7 @@ fn the_state_of_an_effect_survives_close_and_reopen_and_is_not_an_undo_step() {
         let saved = std::fs::read(&asset).unwrap();
         assert_eq!(saved_offset(format, &saved), 100, "{format:?}");
         assert_eq!(
-            harness.project.undo_label().map(str::to_string),
+            harness.project.undo_label(),
             steps,
             "{format:?}: saving plugin state was an undo step"
         );

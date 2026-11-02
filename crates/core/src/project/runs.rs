@@ -100,7 +100,7 @@ impl Project {
                 let by_runs = runs
                     .iter()
                     .filter(|run| run.edit.records().any(|held| held == id));
-                self.history.holders(id) > by_runs.count()
+                self.open_edits.holders(id) > by_runs.count()
             })
         };
         let ends: Vec<bool> = (runs.iter())

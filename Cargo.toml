@@ -75,6 +75,10 @@ embed-resource = "3.0.11"
 # `canonicalize` without the `\\?\` prefix Windows adds, which cmd, Explorer and people do not
 # read. The same as std elsewhere.
 dunce = "1.0.5"
+# The objects of the project history, a git repository written by hand: zlib streams named by
+# their SHA-1. The versions gpui uses. MIT OR Apache-2.0, BSD-3-Clause.
+flate2 = "1.1"
+sha1_smol = "1.0.1"
 hound = "3.5"
 memmap2 = "0.9.11"
 image = { version = "0.25", default-features = false, features = ["png"] }

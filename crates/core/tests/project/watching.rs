@@ -54,7 +54,7 @@ fn the_watcher_applies_a_burst_of_files_and_skips_own_writes() {
     }
     assert_eq!(harness.level(), 0.0);
     assert_eq!(harness.project.undo_label(), None);
-    assert_eq!(harness.project.redo_label(), Some("File change"));
+    assert_eq!(harness.project.redo_label().as_deref(), Some("File change"));
 
     // A deleted record is seen too.
     for _ in 0..groups {

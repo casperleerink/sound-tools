@@ -144,7 +144,7 @@ fn a_pinned_value_reaches_the_plugin_before_its_first_block_and_is_heard() {
         // Playing a pin the plugin took as it is writes nothing and makes no undo step.
         harness.play(4096);
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Add track"),
             "{format:?}"
         );
@@ -264,7 +264,7 @@ fn an_edit_of_a_pin_moves_the_plugin_without_loading_it_again_and_is_not_written
         assert_eq!(pinned_value(&harness, level(format)), 0.333, "{format:?}");
         assert_eq!(written_value(&harness, level(format)), 0.333, "{format:?}");
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Set level"),
             "{format:?}"
         );
@@ -309,13 +309,13 @@ fn a_value_the_plugin_changes_itself_lands_in_the_record_as_one_undo_step() {
         step(&mut harness, 512, start + Duration::from_secs(2));
         assert_eq!(written_value(&harness, level(format)), own, "{format:?}");
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Change Level"),
             "{format:?}"
         );
         harness.project.undo().unwrap();
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Add track"),
             "{format:?}"
         );
@@ -347,9 +347,9 @@ fn a_turn_of_a_knob_in_a_vst3_window_is_one_undo_step_that_ends_where_the_hand_l
     }
     // Four edits on the way down to a quarter, between a `beginEdit` and an `endEdit`.
     assert_eq!(written_value(&harness, level(format)), 0.25);
-    assert_eq!(harness.project.undo_label(), Some("Change Level"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Change Level"));
     harness.project.undo().unwrap();
-    assert_eq!(harness.project.undo_label(), Some("Add track"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add track"));
 }
 
 /// A pin of a parameter the plugin does not have, and a value outside the range of one it
@@ -569,11 +569,11 @@ fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
             .resolve::<PluginRecord>(&id("track/instrument"));
         assert!(record.is_none(), "{format:?}");
         assert!(!harness.path("state/track/instrument.json").exists());
-        assert_eq!(harness.project.undo_label(), Some("Delete"), "{format:?}");
+        assert_eq!(harness.project.undo_label().as_deref(), Some("Delete"), "{format:?}");
         harness.project.undo().unwrap();
         assert_eq!(written_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Add track"),
             "{format:?}"
         );
@@ -632,7 +632,7 @@ fn a_write_of_the_record_during_a_turn_is_one_step_and_the_moves_after_it_anothe
             "{format:?}"
         );
         assert_eq!(
-            harness.project.undo_label(),
+            harness.project.undo_label().as_deref(),
             Some("Add track"),
             "{format:?}"
         );

@@ -38,7 +38,7 @@ fn an_outside_record_edit_applies_live_as_one_undo_step() {
         harness.project.drain_events(),
         [ProjectEvent::Changed(id("dc"))]
     );
-    assert_eq!(harness.project.undo_label(), Some("File change"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("File change"));
 
     // Undo restores the state and rewrites the file.
     assert_eq!(
@@ -71,16 +71,16 @@ fn the_runtimes_own_writes_do_not_apply_again() {
     assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 0);
     assert_eq!(harness.project.drain_events(), []);
     assert_eq!(harness.batches(), batches);
-    assert_eq!(harness.project.redo_label(), Some("Louder"));
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.redo_label().as_deref(), Some("Louder"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 }
 
 #[test]
-fn a_rewrite_with_other_spacing_is_no_change() {
+fn a_rewrite_with_other_spacing_changes_no_record_but_is_a_point() {
     let mut harness = one_dc();
     let compact = r#"{"tool":"test.dc","state":{"value":0.25}}"#;
     assert_eq!(harness.write_and_apply("state/dc.json", compact), 0);
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("File change"));
     // The file is the agent's. The runtime does not write it back in its own layout.
     assert_eq!(harness.read("state/dc.json"), compact);
 }
@@ -198,7 +198,7 @@ fn several_files_that_arrive_together_are_one_undo_step() {
     harness.project.undo().unwrap();
     assert_eq!(harness.level(), 0.0);
     assert_eq!(harness.project.instances().count(), 1);
-    assert_eq!(harness.project.undo_label(), Some("File change"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("File change"));
 }
 
 #[test]
@@ -254,7 +254,8 @@ fn invalid_files_leave_the_live_state_and_name_the_field() {
         // The file stays for correction.
         assert_eq!(harness.read("state/dc.json"), contents);
     }
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    // The folder holds them, so each is a point.
+    assert_eq!(harness.project.undo_label().as_deref(), Some("File change"));
 
     harness.write_and_apply("state/dc.json", &dc_record(0.5));
     assert_eq!(harness.project.problems(), []);
@@ -357,8 +358,10 @@ fn deleting_an_instance_after_its_outside_edit_was_rejected_removes_its_file() {
     harness.project.commit("Delete reporter", changes).unwrap();
     assert!(!harness.path("state/reporter.json").exists());
 
-    harness.project.undo().unwrap();
-    assert_eq!(harness.project.state(&reporter), Some(&hello));
+    // Undo brings back the file that fails, which the project refuses again.
+    harness.project.undo().unwrap_err();
+    assert_eq!(harness.project.state(&reporter), None);
+    assert_eq!(harness.read("state/reporter.json"), reporter_record("fail"));
     harness.project.redo().unwrap();
     let harness = harness.reopen();
     assert!(
@@ -469,9 +472,12 @@ fn undo_of_a_fix_brings_back_the_record_that_did_not_load() {
         1
     );
 
+    // The file comes back as it was, and as with any file that does not load, the sound plays
+    // on as it was.
     harness.project.undo().unwrap();
     assert_eq!(harness.read("state/bank/a.json"), INVALID);
-    assert_eq!(harness.level(), 0.0);
+    assert!(harness.problem_at("state/bank/a.json").is_some());
+    assert_eq!(harness.level(), 0.5);
     harness.project.redo().unwrap();
     assert_eq!(harness.level(), 0.5);
     assert!(harness.read("state/bank/a.json").contains("0.5"));
@@ -808,6 +814,7 @@ fn reopening_restores_instances_children_connections_and_tempo() {
         .map(|(id, tool)| (id.clone(), tool))
         .collect();
     let project_file = harness.project.project_file().clone();
+    let current = harness.project.history().unwrap().current();
 
     let mut harness = harness.reopen();
     let after: Vec<_> = harness
@@ -823,9 +830,9 @@ fn reopening_restores_instances_children_connections_and_tempo() {
         harness.project.engine().clock().tempo_map(),
         &project_file.tempo_map
     );
-    // History is for the session only, and loading is not a step.
-    assert_eq!(harness.project.undo_label(), None);
-    assert_eq!(harness.project.drain_events(), []);
+    // History survives the reopen, and loading an unchanged folder is no point.
+    assert_eq!(harness.project.history().unwrap().current(), current);
+    assert!(harness.project.undo().unwrap().is_some());
 }
 
 /// A render with a track soloed: the sound changes, the files do not. A project that writes

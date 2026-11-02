@@ -116,7 +116,7 @@ fn a_focused_text_field_gets_cmd_z_before_the_window(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let field = field.borrow().clone().unwrap();
     let undo_label = |cx: &mut VisualTestContext| {
-        cx.read(|cx| session.read(cx).project().undo_label().map(str::to_string))
+        cx.read(|cx| session.read(cx).project().undo_label())
     };
 
     field.update_in(cx, |field, window, cx| {

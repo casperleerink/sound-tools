@@ -9,13 +9,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use super::editing::{Applied, Change, Unloaded};
+use super::editing::{Applied, Change};
+use super::history::Origin;
 use super::instance::{FOLDER_RECORD, InstanceId};
 use super::storage::{self, Form, OnDisk, PROJECT_FILE, PathTarget, RecordOnDisk, STATE_FOLDER};
 use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
 
-/// The undo label of a group of outside changes.
-const OUTSIDE_LABEL: &str = "File change";
+/// The label of a point of outside changes.
+pub(crate) const OUTSIDE_LABEL: &str = "File change";
 
 /// What a rejected group would have changed. The next group that touches any of it takes all
 /// of it along, so fixing the file that failed applies the rest.
@@ -32,8 +33,8 @@ impl NotApplied {
 }
 
 impl Project {
-    /// Applies what changed at `paths` as one group and one undo step. This is what the
-    /// watcher calls. Paths may be files or folders, inside the project folder, and may no
+    /// Applies what changed at `paths` as one group, and saves the folder as a point. This is
+    /// what the watcher calls. Paths may be files or folders, inside the project folder, and may no
     /// longer exist. Returns how many records and project files changed.
     ///
     /// A file that does not load leaves the live state as it is, stays on disk, and is listed
@@ -44,30 +45,37 @@ impl Project {
     /// records as not applied. It applies again with the next group that touches one of them.
     ///
     /// Groups of one request (see [`Project::begin_request`]), or groups that follow each
-    /// other within [`OUTSIDE_UNDO_WINDOW`] when no request is open, are one undo step, as
-    /// long as no interface edit, undo or redo comes in between.
+    /// other within [`OUTSIDE_POINT_WINDOW`] when no request is open, are one point, as long
+    /// as no interface edit, undo or redo comes in between. A group the project refuses is a
+    /// point all the same: the folder holds it.
     ///
-    /// [`OUTSIDE_UNDO_WINDOW`]: super::OUTSIDE_UNDO_WINDOW
+    /// [`OUTSIDE_POINT_WINDOW`]: super::OUTSIDE_POINT_WINDOW
     pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
         self.apply_outside_changes_at(paths, Instant::now())
     }
 
     /// [`Self::apply_outside_changes`] with the time the change was heard given. The watcher
-    /// gives the time it heard the last path of the group. Tests of the undo grouping give
-    /// their own.
+    /// gives the time it heard the last path of the group. Tests of the grouping into points
+    /// give their own.
     pub fn apply_outside_changes_at(
         &mut self,
         paths: &[PathBuf],
         at: Instant,
     ) -> Result<usize, ProjectError> {
-        self.apply_paths(paths, Source::Outside, at)
+        let applied = self.apply_paths(paths, Source::Outside);
+        let kept = (self.history.as_ref())
+            .is_some_and(|history| paths.iter().any(|path| history.keeps(path)));
+        let saved = match kept {
+            true => self.save_point(Origin::Outside(at), OUTSIDE_LABEL),
+            false => Ok(()),
+        };
+        applied.and_then(|count| saved.map(|()| count))
     }
 
     pub(crate) fn apply_paths(
         &mut self,
         paths: &[PathBuf],
         source: Source,
-        at: Instant,
     ) -> Result<usize, ProjectError> {
         // Ids to look at, with the one form a folder scan saw for it, if any.
         let mut queue = BTreeMap::new();
@@ -244,7 +252,7 @@ impl Project {
             observed.push((id, on_disk, path));
         }
 
-        let mut applied = match self.apply_leniently(changes, source) {
+        let applied = match self.apply_leniently(changes, source) {
             Ok(applied) => applied,
             Err(error) => {
                 // What the runtime last saw of these files stays known, so a delete in the
@@ -267,7 +275,7 @@ impl Project {
                 return Err(error);
             }
         };
-        applied.unloaded = self.note_unloaded(found, source);
+        self.note_unloaded(found, source);
         let observed = observed
             .into_iter()
             .filter(|(id, ..)| self.instances.contains_key(id));
@@ -297,7 +305,6 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
-            self.history.push_outside(OUTSIDE_LABEL, applied, at);
             self.write([].iter(), write_project_file)?;
         }
         self.rebind_waiting_for(&asset_folders)?;
@@ -305,13 +312,8 @@ impl Project {
     }
 
     /// Notes the bytes of each record file in `found` that does not load, and that the others
-    /// are gone or loaded. Returns what changed.
-    fn note_unloaded(
-        &mut self,
-        found: Vec<(InstanceId, Form, Option<Vec<u8>>)>,
-        source: Source,
-    ) -> Unloaded {
-        let mut changed = Unloaded::new();
+    /// are gone or loaded.
+    fn note_unloaded(&mut self, found: Vec<(InstanceId, Form, Option<Vec<u8>>)>, source: Source) {
         for (id, form, bytes) in found {
             let path = self.storage.record_path(&id, form);
             let loaded = (self.instances.get(&id)).is_some_and(|record| Form::of(record) == form);
@@ -321,14 +323,12 @@ impl Project {
                 continue;
             }
             // A reload of tools may read a change the watcher has not delivered yet. Its
-            // delivery makes the undo step.
+            // delivery tells the rest of the project.
             if source == Source::Load && !loaded && known.is_some() {
                 continue;
             }
-            let before = self.storage.set_unloaded(path.clone(), now.clone());
-            changed.insert(path, (before, now));
+            self.storage.set_unloaded(path, now);
         }
-        changed
     }
 
     /// Reads both record paths of `id` into `found`.

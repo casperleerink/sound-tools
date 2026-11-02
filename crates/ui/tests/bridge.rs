@@ -166,7 +166,7 @@ fn a_project_error_reaches_the_notice_and_the_next_good_edit_clears_it(cx: &mut 
     });
     opened.session.read_with(cx, |session, _| {
         assert_eq!(session.notice(), None);
-        assert_eq!(session.project().undo_label(), Some("Fine"));
+        assert_eq!(session.project().undo_label().as_deref(), Some("Fine"));
     });
 }
 
@@ -220,11 +220,11 @@ fn undo_and_redo_wait_for_the_open_gesture(cx: &mut TestAppContext) {
             30,
             "undo in the middle of a drag is ignored"
         );
-        assert_eq!(session.project().undo_label(), Some("Add marker"));
+        assert_eq!(session.project().undo_label().as_deref(), Some("Add marker"));
 
         session.finish_gesture(cx);
         assert!(!session.gesture_open());
-        assert_eq!(session.project().undo_label(), Some("Drag"));
+        assert_eq!(session.project().undo_label().as_deref(), Some("Drag"));
         session.undo(cx);
         assert_eq!(value(session), 1, "the whole drag is one step");
         session.redo(cx);
@@ -242,7 +242,7 @@ fn undo_and_redo_wait_for_the_open_gesture(cx: &mut TestAppContext) {
             project.update(edit, &marker, |state| state.value = 50)
         });
         session.begin_gesture("Second", cx);
-        assert_eq!(session.project().undo_label(), Some("First"));
+        assert_eq!(session.project().undo_label().as_deref(), Some("First"));
         session.cancel_gesture(cx);
     });
 }

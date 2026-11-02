@@ -321,15 +321,10 @@ impl Storage {
     }
 
     /// Notes the bytes at `path` of a record file that did not load, or that there is none.
-    /// Returns what was noted before.
-    pub(super) fn set_unloaded(
-        &mut self,
-        path: PathBuf,
-        bytes: Option<Vec<u8>>,
-    ) -> Option<Vec<u8>> {
+    pub(super) fn set_unloaded(&mut self, path: PathBuf, bytes: Option<Vec<u8>>) {
         match bytes {
-            Some(bytes) => self.unloaded.insert(path, bytes),
-            None => self.unloaded.remove(&path),
+            Some(bytes) => _ = self.unloaded.insert(path, bytes),
+            None => _ = self.unloaded.remove(&path),
         }
     }
 
@@ -350,20 +345,6 @@ impl Storage {
         // The folder of `parent` also holds its own record.
         ids.filter(|id| parent.is_none_or(|parent| id.is_inside(parent)))
             .collect()
-    }
-
-    /// Writes a record file that does not load back with these bytes, or removes it.
-    pub(super) fn write_unloaded(
-        &mut self,
-        path: &Path,
-        bytes: Option<&[u8]>,
-    ) -> Result<(), StorageError> {
-        match bytes {
-            Some(bytes) => self.write_atomically(path, bytes)?,
-            None => self.remove_file(path)?,
-        }
-        self.set_unloaded(path.to_path_buf(), bytes.map(<[u8]>::to_vec));
-        Ok(())
     }
 
     pub(super) fn project_file_fingerprint(&self) -> Option<u64> {

@@ -451,7 +451,7 @@ impl Opened<'_> {
             let mut changes = sound_core::Changes::new();
             changes.create(instance.clone(), state);
             project.commit("Add", changes)?;
-            project.clear_history();
+            project.clear_history()?;
             Ok(())
         });
         self.settle();
@@ -509,7 +509,7 @@ impl Opened<'_> {
     }
 
     pub(crate) fn undo_label(&mut self) -> Option<String> {
-        self.project(|project| project.undo_label().map(str::to_string))
+        self.project(|project| project.undo_label())
     }
 
     pub(crate) fn gesture_open(&mut self) -> bool {

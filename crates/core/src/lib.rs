@@ -81,10 +81,10 @@ pub use processor::{
 pub use project::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, ASSETS_FOLDER, AgentDoc, AgentDocText, AssetError,
     AssetName, Assets, BehaviourContext, BehaviourError, Changes, Edit as ProjectEdit, FORMAT,
-    FieldDoc, FieldRange, GROUPING_WINDOW, INSTRUCTIONS_FILE, InputEndpoint, Instance, InstanceId,
-    InvalidAssetName, InvalidInstanceId, JsonTool, JsonToolDoc, NO_PROBLEMS, OUTSIDE_UNDO_WINDOW,
-    OutputEndpoint, PROBLEMS_FILE, Place, PortReference, Problem, Project, ProjectError,
-    ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp, Registry,
+    FieldDoc, FieldRange, FileChange, GROUPING_WINDOW, HISTORY_FOLDER, History, INSTRUCTIONS_FILE,
+    InputEndpoint, Instance, InstanceId, InvalidAssetName, InvalidInstanceId, JsonTool, JsonToolDoc,
+    Line, NO_PROBLEMS, OUTSIDE_POINT_WINDOW, OutputEndpoint, PROBLEMS_FILE, Place, Point, PointId,
+    PortReference, Problem, Project, ProjectError, ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp, Registry,
     RegistryError, SavedConnection, SavedDestination, SavedSource, State, StorageError,
     ToolRegistration, ToolSchema, parse_state, ranges, type_doc, unit_of,
 };

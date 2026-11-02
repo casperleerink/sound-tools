@@ -110,13 +110,13 @@ fn an_asset_that_arrives_wakes_the_instances_that_wait_for_it_and_nothing_else()
     assert_eq!(runs(&opened), [1, 1]);
     let project = &mut opened.project;
     let asset = write(project, "assets/things/a.bin", "x");
-    let undo = project.undo_label().map(str::to_string);
+    let undo = project.undo_label();
     assert_eq!(project.apply_outside_changes(&[asset]).unwrap(), 0);
     let problems = project.problems();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert_eq!(problems[0].path, "state/sleeper.json");
     // It is no edit: nothing to undo.
-    assert_eq!(project.undo_label().map(str::to_string), undo);
+    assert_eq!(project.undo_label(), undo);
     assert_eq!(runs(&opened), [2, 1]);
 
     // An instance that has no problem is not run again.

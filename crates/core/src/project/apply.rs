@@ -52,11 +52,11 @@ impl Project {
             });
         }
         for change in &mut records {
-            self.history.note_committed(change, source);
+            self.open_edits.note_committed(change, source);
         }
         let mut project_file = (project_file_before != self.project_file)
             .then(|| (project_file_before, self.project_file.clone()));
-        self.history
+        self.open_edits
             .note_committed_project_file(&mut project_file, source);
         if project_file.is_some() {
             self.push_event(ProjectEvent::ProjectFileChanged);
@@ -70,7 +70,6 @@ impl Project {
         Ok(Applied {
             records,
             project_file,
-            unloaded: Default::default(),
         })
     }
 
@@ -106,18 +105,18 @@ impl Project {
                             }
                         }
                         // A file the runtime did not load may sit at this id: a record of an
-                        // unknown tool, or one with an error. Undo must not write over it
-                        // either, unless the file holds the bytes it knows: then the same step
-                        // brings the file back. A file the runtime knows is its own, from before a
+                        // unknown tool, or one with an error. Cancel must not write over it
+                        // either, unless the file holds the bytes it knows: then it brings the
+                        // file back. A file the runtime knows is its own, from before a
                         // delete that is not written yet.
-                        let writes = matches!(source, Source::Interface | Source::History);
+                        let writes = matches!(source, Source::Interface | Source::Cancel);
                         let taken = writes
                             && self.storage.observed(&id).is_none()
                             && match self.storage.read_record(&id, None)? {
                                 RecordOnDisk::Missing => false,
                                 RecordOnDisk::One(form, bytes) => {
                                     let path = self.storage.record_path(&id, form);
-                                    source != Source::History
+                                    source != Source::Cancel
                                         || form != Form::of(&record)
                                         || self.storage.unloaded(&path) != Some(bytes.as_slice())
                                 }
