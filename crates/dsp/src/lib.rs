@@ -20,7 +20,7 @@ pub use dsp::{
     held, pole, poly_blep, xorshift32,
 };
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
-pub use gain::{amplitude, pan_gains};
+pub use gain::{amplitude, decibels, pan_gains};
 pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
 pub use oversampling::{Oversampler, OversamplerDelay, OversamplingFilters};
