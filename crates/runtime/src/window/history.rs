@@ -1,6 +1,8 @@
 //! The History tab of the left panel: the points of the project as a tree, newest at the top,
 //! one lane per version. Clicking a row goes to its point; its menu renames, keeps, merges and
-//! folds away. Which points are rows is [`layout`].
+//! folds away. The list is one tab stop: up and down move a highlight, enter goes to its point,
+//! the menu key or shift-F10 opens its menu, right and left open and close the fold under it.
+//! Which points are rows is [`layout`].
 
 mod layout;
 
@@ -8,16 +10,17 @@ use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
-    MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent, ScrollHandle,
-    SharedString, Subscription, Task, Window, canvas, div, point, prelude::*, px,
+    AnyElement, App, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent,
+    ScrollHandle, SharedString, Subscription, Task, Window, canvas, div, point, prelude::*, px,
 };
 use sound_core::{History, PointId};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::text_input::TextInput;
+use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::focus::KeyboardFocus;
 use sound_ui::{ActiveTheme, Session, Theme};
 
 use layout::{Edge, Layout, Name, Opened, Page, Row, Stroke};
@@ -35,6 +38,9 @@ const MENU_WIDTH: f32 = 280.;
 pub(super) struct HistoryPanel {
     session: Entity<Session>,
     focus_handle: FocusHandle,
+    keyboard_focus: KeyboardFocus,
+    /// The row the keys moved to. Until they move, the current point's.
+    highlight: Option<PointId>,
     /// How many points to read.
     wanted: usize,
     /// What was read, at which generation of the history and how many points were wanted.
@@ -79,6 +85,12 @@ impl HistoryPanel {
             }),
             cx.subscribe_in(&menu, window, Self::picked),
         ];
+        let focus_handle = cx.focus_handle().tab_stop(true);
+        cx.on_focus_out(&focus_handle, window, |panel, _, _, cx| {
+            panel.highlight = None;
+            cx.notify();
+        })
+        .detach();
         let clock = cx.spawn(async move |panel, cx| {
             loop {
                 cx.background_executor()
@@ -91,7 +103,9 @@ impl HistoryPanel {
         });
         Self {
             session,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
+            keyboard_focus: KeyboardFocus::default(),
+            highlight: None,
             wanted: PAGE,
             read: None,
             page: Ok(None),
@@ -299,10 +313,85 @@ impl HistoryPanel {
         cx.notify();
     }
 
+    fn highlighted_row(&self) -> Option<usize> {
+        let rows = &self.layout.rows;
+        (self
+            .highlight
+            .and_then(|point| rows.iter().position(|row| row.point == point)))
+        .or_else(|| rows.iter().position(|row| row.current))
+    }
+
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Keys of the rename field and the menu, which are inside, are theirs.
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let keys = &event.keystroke;
+        let opens_menu = keys.key == "menu" || (keys.key == "f10" && keys.modifiers.shift);
+        if keys.modifiers.modified() && !opens_menu {
+            return;
+        }
+        if keys.key == "escape" {
+            window.dispatch_action(Box::new(text_input::Cancel), cx);
+            cx.stop_propagation();
+            return;
+        }
+        let Some(index) = self.highlighted_row() else {
+            return;
+        };
+        let fold = (self.layout.folds.iter()).find(|fold| fold.rows.0 == index);
+        match keys.key.as_str() {
+            "up" => self.highlight_row(index.saturating_sub(1), cx),
+            "down" => self.highlight_row(index + 1, cx),
+            "enter" => {
+                let point = self.layout.rows[index].point;
+                self.session
+                    .update(cx, |session, cx| session.go_to(point, cx));
+            }
+            "right" | "left" => {
+                if let Some(fold) = fold.filter(|fold| fold.open == (keys.key == "left")) {
+                    self.toggle_fold(fold.first, cx);
+                }
+            }
+            _ if opens_menu => {
+                let line = self.layout.rows[index].line;
+                let text_left = lane_x(self.layout.lanes.max(1)) + 4.;
+                let at = self.scroll.bounds().origin
+                    + self.scroll.offset()
+                    + point(px(text_left), px(row_y(index)));
+                self.open_menu(line, at, window, cx);
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// Moves the highlight to a row and scrolls it into view.
+    fn highlight_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.layout.rows.get(index) else {
+            return;
+        };
+        self.highlight = Some(row.point);
+        let (offset, height) = (self.scroll.offset(), self.scroll.bounds().size.height);
+        let (top, bottom) = (
+            px(index as f32 * ROW_HEIGHT),
+            px((index + 1) as f32 * ROW_HEIGHT),
+        );
+        let shown_top = -offset.y;
+        if top < shown_top {
+            self.scroll.set_offset(point(offset.x, -top));
+        } else if bottom > shown_top + height {
+            self.scroll.set_offset(point(offset.x, height - bottom));
+        }
+        self.read_more_near_the_end(cx);
+        cx.notify();
+    }
+
     fn row(
         &self,
         index: usize,
         row: &Row,
+        highlighted: bool,
         text_left: f32,
         colors: &Colors,
         cx: &mut Context<Self>,
@@ -337,6 +426,15 @@ impl HistoryPanel {
             .cursor_pointer()
             .when(row.current, |row| row.bg(colors.current_row))
             .hover(|style| style.bg(colors.hover_row))
+            .when(highlighted, |row| {
+                row.shadow(vec![BoxShadow {
+                    color: colors.ring,
+                    offset: Point::default(),
+                    blur_radius: px(0.),
+                    spread_radius: px(1.5),
+                    inset: true,
+                }])
+            })
             .on_click(cx.listener(move |panel, _, _, cx| {
                 panel
                     .session
@@ -349,10 +447,6 @@ impl HistoryPanel {
                     panel.open_menu(line, event.position, window, cx);
                 }),
             )
-            .tooltip({
-                let label: SharedString = row.label.clone().into();
-                move |_, cx| Tooltip::new(label.clone()).view(cx)
-            })
             .children(name)
             .child(
                 div()
@@ -497,6 +591,7 @@ struct Colors {
     current_row: Hsla,
     hover_row: Hsla,
     background: Hsla,
+    ring: Hsla,
 }
 
 impl Colors {
@@ -522,6 +617,7 @@ impl Colors {
             current_row: theme.alpha_at(0.05),
             hover_row: theme.alpha_at(0.03),
             background: theme.gray_100,
+            ring: theme.lavender,
         }
     }
 
@@ -662,13 +758,22 @@ impl Focusable for HistoryPanel {
 }
 
 impl Render for HistoryPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "history");
         self.read_if_changed(cx);
         let colors = Colors::new(cx.theme());
+        let ring_shows = self.keyboard_focus.shows_ring(&self.focus_handle, window);
         let root = div()
             .id("history")
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::key_down))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|panel, _, _, cx| {
+                    panel.highlight = None;
+                    panel.keyboard_focus.pressed(cx);
+                }),
+            )
             .size_full()
             .flex()
             .flex_col()
@@ -717,11 +822,23 @@ impl Render for HistoryPanel {
             ring: colors.text,
             background: colors.background,
         };
+        // Once the keys moved it, the highlight shows after a click too.
+        let keys_moved = self.highlight.is_some() && self.focus_handle.is_focused(window);
+        let highlighted = (ring_shows || keys_moved)
+            .then(|| self.highlighted_row())
+            .flatten();
         let rows: Vec<_> = (0..layout.rows.len())
             .map(|index| {
                 let row = &self.layout.rows[index];
-                self.row(index, row, text_left, &colors, cx)
-                    .into_any_element()
+                self.row(
+                    index,
+                    row,
+                    highlighted == Some(index),
+                    text_left,
+                    &colors,
+                    cx,
+                )
+                .into_any_element()
             })
             .collect();
         let hover = colors.hover_row;

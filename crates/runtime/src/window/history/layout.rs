@@ -52,7 +52,6 @@ pub(super) struct Row {
     pub(super) current: bool,
     pub(super) name: Name,
     pub(super) time: SystemTime,
-    pub(super) label: String,
     /// Versions folded away that split off here, by their start.
     pub(super) hidden_versions: Vec<PointId>,
     /// Undone work that leaves here, by its start, and how many points it has.
@@ -237,7 +236,6 @@ impl Layout {
                     current: point.id == page.current,
                     name,
                     time: point.time,
-                    label: point.label.clone(),
                     hidden_versions: Vec::new(),
                     undone: Vec::new(),
                     undone_points: 0,

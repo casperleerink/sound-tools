@@ -1,5 +1,5 @@
-//! The History tab of the left panel: a click on a row writes that point's files back, and the
-//! tabs with cmd-L and cmd-B, with the agent and without.
+//! The History tab of the left panel: a click or the keys on a row write that point's files
+//! back, and the tabs with cmd-L and cmd-B, with the agent and without.
 
 use gpui::TestAppContext;
 use reverb::ReverbState;
@@ -66,6 +66,22 @@ fn a_click_on_a_row_writes_its_files_back_and_makes_no_point(cx: &mut TestAppCon
     assert_eq!(opened.current(), with_room);
     assert!(file.exists());
     assert_eq!(opened.point_count(), points);
+}
+
+#[gpui::test]
+fn the_keys_move_down_the_rows_and_enter_goes_to_a_point(cx: &mut TestAppContext) {
+    let mut opened = support::open_new(cx);
+    let start = opened.current();
+    opened.edit(add_room).unwrap();
+    let file = opened.folder.path().join("state/room.json");
+    opened.keys("secondary-b");
+    let history = opened.control("left-panel-history-tab");
+    opened.click(history);
+
+    // The highlight starts on the current point, the newest; the one below is the start.
+    opened.keys("tab down enter");
+    assert_eq!(opened.current(), start);
+    assert!(!file.exists());
 }
 
 #[gpui::test]
