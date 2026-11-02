@@ -10,9 +10,12 @@
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeCurves, EventInput, FilterCharacter,
-    Lfo, LfoShape, OversamplingFilters, Parameter, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed, Targets, Transport, amplitude,
+    AudioOutput, Automated, AutomationInput, EventInput, Parameter, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets, Transport,
+};
+
+use sound_dsp::{
+    Envelope, EnvelopeCurves, FilterCharacter, Lfo, LfoShape, OversamplingFilters, amplitude,
 };
 use sound_notes::{NoteEvent, Voice as _, Voices, Wheels};
 

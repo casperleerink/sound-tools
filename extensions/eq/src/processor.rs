@@ -12,9 +12,10 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, ShapedSvf, Smoothed, SvfFactors, SvfSection, SvfShape, Targets,
-    all_zero, amplitude, held,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{ShapedSvf, SvfFactors, SvfSection, SvfShape, all_zero, amplitude, held};
 
 use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
 
@@ -31,7 +32,7 @@ const FACTOR_FRAMES: usize = 16;
 /// memory, added up.
 const THROUGH: [f32; 3] = [1.0, 0.0, 0.0];
 
-/// One band at one setting. A shelf uses Q up to [`sound_core::SHELF_MAX_Q`]; a cut keeps the
+/// One band at one setting. A shelf uses Q up to [`sound_dsp::SHELF_MAX_Q`]; a cut keeps the
 /// whole range, because a resonant cut is a normal tool. The saved `q` is not changed.
 fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> ShapedSvf {
     let shape = match shape {

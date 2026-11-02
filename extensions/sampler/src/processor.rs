@@ -16,10 +16,11 @@ use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeStage, EnvelopeState, EventInput,
-    MAX_BLOCK, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
-    amplitude, pan_gains, xorshift32,
+    AudioOutput, Automated, AutomationInput, EventInput, MAX_BLOCK, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{Envelope, EnvelopeStage, EnvelopeState, amplitude, pan_gains, xorshift32};
 use sound_media::{ReadAhead, SCRATCH_FRAMES, Varispeed, varispeed};
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice as _, Voices, Wheels};
 

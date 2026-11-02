@@ -10,6 +10,7 @@ use sound_core::{
     OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry, State,
     Ticks,
 };
+pub(crate) use sound_dsp::testing::{largest_step, peak};
 use sound_notes::{AUDIO_OUTPUT, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
@@ -240,20 +241,8 @@ pub(crate) fn one_hit(pad: usize, velocity: u8, drums: DrumPadState, seconds: f6
     harness.play((seconds * f64::from(SAMPLE_RATE)) as usize)
 }
 
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
 pub(crate) fn decibels(amplitude: f32) -> f32 {
     20.0 * amplitude.log10()
-}
-
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
 }
 
 /// The last frame whose sample is at least `db` (below 0) relative to the loudest.

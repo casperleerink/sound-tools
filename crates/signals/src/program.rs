@@ -15,7 +15,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use sound_core::Stft;
+use sound_dsp::Stft;
 
 use crate::code::{Code, Operation, Output, Register, Side, Table};
 

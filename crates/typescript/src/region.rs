@@ -11,6 +11,7 @@ use sound_core::{
     Assets, BehaviourContext, BehaviourError, InstanceId, JsonTool, JsonToolDoc, Project, State,
     Ticks, ToolSchema,
 };
+use sound_dsp::amplitude;
 use sound_media::{
     AUDIO_FOLDER, Audio, AudioAsset, Keep, Loader, Periods, Region, Stamp, WarpPoint,
 };
@@ -164,7 +165,7 @@ fn end(project: &Project, state: &Value) -> Option<Ticks> {
 pub(crate) fn region(record: &Record) -> Region {
     let gain = match record.gain_db <= SILENT_DB {
         true => 0.0,
-        false => 10_f32.powf(record.gain_db / 20.0),
+        false => amplitude(record.gain_db),
     };
     Region {
         asset: record.asset.clone(),
