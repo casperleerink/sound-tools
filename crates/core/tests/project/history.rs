@@ -173,13 +173,13 @@ fn outside_changes_close_together_are_one_point_and_one_taken_back_is_none() {
     let at = harness.now;
     harness
         .project
-        .apply_outside_changes_at(&[path.clone()], at)
+        .apply_outside_changes_at(std::slice::from_ref(&path), at)
         .unwrap();
     std::fs::write(&path, dc_record(0.75)).unwrap();
     let later = at + std::time::Duration::from_secs(5);
     harness
         .project
-        .apply_outside_changes_at(&[path.clone()], later)
+        .apply_outside_changes_at(std::slice::from_ref(&path), later)
         .unwrap();
     let points = harness.project.history().unwrap().points(100).unwrap();
     assert_eq!(points[1].id, before);

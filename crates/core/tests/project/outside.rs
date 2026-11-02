@@ -347,7 +347,7 @@ fn deleting_an_instance_after_its_outside_edit_was_rejected_removes_its_file() {
     let hello = Reporter {
         message: "hello".to_string(),
     };
-    let reporter = changes.create(id("reporter"), hello.clone());
+    let reporter = changes.create(id("reporter"), hello);
     harness.project.commit("Add reporter", changes).unwrap();
     harness.write("state/reporter.json", &reporter_record("fail"));
     let paths = [harness.path("state/reporter.json")];

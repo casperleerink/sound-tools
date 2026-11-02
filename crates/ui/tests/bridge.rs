@@ -285,10 +285,7 @@ fn a_control_edit_begins_again_when_its_gesture_was_closed_under_it(cx: &mut Tes
     });
     assert!(!session.read_with(cx, |session, _| session.gesture_open()));
     assert_eq!(
-        session.read_with(cx, |session, _| session
-            .project()
-            .undo_label()
-            .map(String::from)),
+        session.read_with(cx, |session, _| session.project().undo_label()),
         Some("Again".to_string())
     );
 }
