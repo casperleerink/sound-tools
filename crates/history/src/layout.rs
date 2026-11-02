@@ -251,6 +251,9 @@ impl Graph {
         // every line from a point in it runs up to a newer row.
         let mut rows: Vec<(usize, Row)> = Vec::new();
         let mut row_of: BTreeMap<usize, usize> = BTreeMap::new();
+        // The points of an open fold stay together where the fold was, newest first, instead
+        // of spreading between the rows of other versions: each sorts by the fold's oldest.
+        let mut block_of: BTreeMap<usize, usize> = BTreeMap::new();
         for version in &shown {
             let mut run: Vec<usize> = Vec::new();
             for index in members[*version].iter().copied() {
@@ -275,6 +278,7 @@ impl Graph {
                     _ => {
                         let newest = run.last().copied();
                         for hidden in run.iter().copied() {
+                            block_of.insert(hidden, run[0]);
                             let mut row = self.row(hidden, *version, &tips);
                             if Some(hidden) == newest && run.len() > 1 {
                                 row.changes = key.map(|key| Fold {
@@ -293,7 +297,8 @@ impl Graph {
                 rows.push((index, self.row(index, *version, &tips)));
             }
         }
-        rows.sort_by_key(|(index, _)| std::cmp::Reverse(*index));
+        let place = |index: usize| (block_of.get(&index).copied().unwrap_or(index), index);
+        rows.sort_by_key(|(index, _)| std::cmp::Reverse(place(*index)));
         let position: BTreeMap<usize, usize> = (rows.iter().enumerate())
             .map(|(position, (index, _))| (*index, position))
             .collect();
@@ -503,6 +508,24 @@ mod tests {
         // Where the project is shows by itself, and a fold of one is no fold.
         let layout = graph(&chain, 3).layout(&BTreeSet::new());
         assert_eq!(points(&layout), [id(5), id(4), id(3), id(1), id(0)]);
+    }
+
+    #[test]
+    fn an_open_fold_stays_together_below_versions_that_split_from_it() {
+        // 0 1 2 3 5 6 the first version; 4 a version from 2, made before 5.
+        let chain: [&[usize]; 7] = [&[], &[0], &[1], &[2], &[2], &[3], &[5]];
+        let layout = graph(&chain, 6).layout(&BTreeSet::from([id(1)]));
+        // The other version comes first; the open fold 5 3 2 1 stays one block under it.
+        assert_eq!(
+            points(&layout),
+            [id(6), id(4), id(5), id(3), id(2), id(1), id(0)]
+        );
+        assert!(
+            layout.rows[2]
+                .changes
+                .as_ref()
+                .is_some_and(|fold| fold.open)
+        );
     }
 
     #[test]

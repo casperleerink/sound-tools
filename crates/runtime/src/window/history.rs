@@ -540,21 +540,17 @@ impl HistoryPanel {
             .h_full()
         };
         let now_tag = row.now.then(|| {
-            div()
-                .px(px(5.))
-                .rounded(px(4.))
-                .bg(text)
+            badge(text, text)
                 .text_color(theme.gray_100)
-                .text_size(px(10.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("Current")
         });
-        let link_to = |id: &str, key: ObjectId, words: String, cx: &mut Context<Self>| {
-            div()
+        let badge_to = |id: &str, key: ObjectId, words: String, cx: &mut Context<Self>| {
+            badge(link, link.opacity(0.1))
                 .id(SharedString::from(format!("{id}-{key}")))
                 .debug_selector(move || format!("history-{id}-{index}"))
-                .text_color(link)
                 .cursor_pointer()
+                .hover(|style| style.bg(link.opacity(0.18)))
                 .child(words)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |panel, _, _, cx| {
@@ -564,20 +560,20 @@ impl HistoryPanel {
         };
         let hide = (row.changes.as_ref())
             .filter(|fold| fold.open)
-            .map(|fold| link_to("hide", fold.key, "Hide".to_string(), cx));
+            .map(|fold| badge_to("hide", fold.key, "Hide".to_string(), cx));
         let more = row.more.as_ref().map(|more| {
             let words = match more.open {
                 true => "Hide versions".to_string(),
                 false => format!("+{}", plural(more.count, "version")),
             };
-            link_to("more", more.key, words, cx)
+            badge_to("more", more.key, words, cx)
         });
         let undone = row.undone.as_ref().map(|undone| {
             let words = match undone.open {
                 true => "Hide undone".to_string(),
                 false => format!("{} undone", undone.count),
             };
-            link_to("undone", undone.key, words, cx).tooltip(|_, cx| {
+            badge_to("undone", undone.key, words, cx).tooltip(|_, cx| {
                 Tooltip::new(
                     "Taken back with undo. Click to show it. To keep work as a version, undo with",
                 )
@@ -585,78 +581,79 @@ impl HistoryPanel {
                 .view(cx)
             })
         });
-        let more = more.into_iter().chain(undone);
-        let ago = div().text_color(muted).child(ago(now, row.time));
-        let meta = div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .text_size(px(12.))
-            .whitespace_nowrap()
-            .overflow_hidden();
-        let content = if is_fold {
-            let count = row.changes.as_ref().map_or(0, |fold| fold.count);
-            meta.child(
-                div()
-                    .debug_selector(move || format!("history-fold-{index}"))
-                    .px(px(8.))
-                    .rounded(px(10.))
-                    .bg(fill)
-                    .text_color(muted)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(format!("+{count}")),
-            )
-            .children(more)
-            .into_any_element()
-        } else if row.tip {
-            let name = (self.layout.versions.get(row.version))
+        let version_info = self.layout.versions.get(row.version);
+        let start = version_info
+            .filter(|version| version.split.is_none() && version.start == row.point)
+            .map(|_| {
+                badge(link, link.opacity(0.18))
+                    .debug_selector(move || format!("history-start-{index}"))
+                    .child("Project start")
+            });
+        let name = row.tip.then(|| {
+            let name = version_info
                 .map(|version| name_of(version, row.version))
                 .unwrap_or_default();
             // In the colour of its line, so the name reads as that line's across others.
             let color = colors.version(row.version);
             let renaming = (self.renaming.as_ref())
-                .filter(|(start, ..)| {
-                    (self.layout.versions.get(row.version))
-                        .is_some_and(|version| version.start == *start)
-                })
+                .filter(|(start, ..)| version_info.is_some_and(|version| version.start == *start))
                 .map(|(.., input)| input.clone());
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .min_w_0()
-                .child(div().flex().min_w_0().map(|line| {
-                    match renaming {
-                        Some(input) => line.child(div().ml(px(-6.)).w_full().child(input)),
-                        None => line.child(
-                            div()
-                                .ml(px(-6.))
-                                .px(px(6.))
-                                .rounded(px(6.))
-                                .bg(color.opacity(0.16))
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(13.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(color)
-                                .child(name),
-                        ),
-                    }
-                }))
-                .child(
-                    meta.child(ago)
-                        .children(now_tag)
-                        .children(hide)
-                        .children(more),
-                )
-                .into_any_element()
-        } else {
-            meta.child(ago)
-                .children(now_tag)
-                .children(hide)
-                .children(more)
-                .into_any_element()
-        };
+            match renaming {
+                Some(input) => div().flex_1().child(input).into_any_element(),
+                None => div()
+                    .px(px(7.))
+                    .rounded(px(6.))
+                    .bg(color.opacity(0.16))
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(color)
+                    .child(name)
+                    .into_any_element(),
+            }
+        });
+        let fold = (row.changes.as_ref()).filter(|_| is_fold).map(|fold| {
+            badge(muted, fill)
+                .debug_selector(move || format!("history-fold-{index}"))
+                .child(format!("+{}", fold.count))
+        });
+        // One line: what the row is on the left, when and whether it is current on the right.
+        let content = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .min_w_0()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .overflow_hidden()
+                    .children(name)
+                    .children(start)
+                    .children(fold)
+                    .children(hide)
+                    .children(more)
+                    .children(undone),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .children(now_tag)
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(muted)
+                            .whitespace_nowrap()
+                            .child(ago(now, row.time)),
+                    ),
+            );
         let undone_from = (row.undone.as_ref())
             .filter(|fold| !fold.open)
             .map(|fold| fold.key);
@@ -877,6 +874,22 @@ fn paint(
             circle(window, centre, 2., colors.background);
         }
     }
+}
+
+/// A small pill of the tree, such as "+12" or "Current".
+fn badge(color: Hsla, fill: Hsla) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .h(px(20.))
+        .px(px(7.))
+        .rounded(px(10.))
+        .bg(fill)
+        .text_color(color)
+        .text_size(px(12.))
+        .font_weight(FontWeight::MEDIUM)
+        .whitespace_nowrap()
 }
 
 fn circle(window: &mut Window, centre: Point<Pixels>, radius: f32, color: Hsla) {
