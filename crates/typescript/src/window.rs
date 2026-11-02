@@ -448,7 +448,9 @@ impl Live {
                         live.tell_soon(cx);
                     }
                 }
-                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => {}
+                ProjectEvent::ProjectFileChanged
+                | ProjectEvent::ProblemsChanged
+                | ProjectEvent::WentBack(_) => {}
             })
             .detach();
             let live = Live {

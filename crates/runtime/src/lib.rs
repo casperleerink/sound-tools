@@ -160,6 +160,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
+    registry.keep_out_of_history(&sound_typescript::WRITTEN_BY_THE_RUNTIME);
     // First, as the map lists its groups in the order of their first doc.
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
