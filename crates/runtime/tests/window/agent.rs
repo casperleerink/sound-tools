@@ -69,12 +69,12 @@ impl Opened<'_> {
         view.unwrap().downcast::<Sidebar>().ok().unwrap()
     }
 
-    fn panel_open(&mut self) -> bool {
+    pub(crate) fn panel_open(&mut self) -> bool {
         let shell = self.shell.clone();
         self.cx.read(|cx| shell.read(cx).left_panel_open())
     }
 
-    fn composer_focused(&mut self) -> bool {
+    pub(crate) fn composer_focused(&mut self) -> bool {
         let sidebar = self.sidebar();
         self.cx
             .update(|window, cx| sidebar.focus_handle(cx).is_focused(window))
