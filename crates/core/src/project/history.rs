@@ -482,22 +482,22 @@ impl History {
         let mut run = Vec::new();
         let mut at = from;
         while at != self.head {
+            run.push(at);
             if run.len() >= VERSION_POINTS {
                 return Ok(());
             }
-            // A line that begins inside the run: not one run of work.
-            if at == self.lines[line].start && !run.is_empty() {
-                return Ok(());
-            }
-            run.push(at);
             match self.commit(at)?.parents.first() {
                 Some(parent) => at = *parent,
                 None => return Ok(()),
             }
         }
-        let Some(first) = run.last().copied() else {
+        let Some((&first, later)) = run.split_last() else {
             return Ok(());
         };
+        // A line that begins inside the run: not one run of work.
+        if later.contains(&self.lines[line].start) {
+            return Ok(());
+        }
         let span = self.commit(from)?.time - self.commit(first)?.time;
         if span > VERSION_TIME.as_millis() as u64 {
             return Ok(());
