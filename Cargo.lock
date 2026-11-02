@@ -2393,7 +2393,6 @@ dependencies = [
  "gpui_platform",
  "image",
  "sound-agent",
- "sound-core",
  "sound-dsp",
  "sound-media",
  "sound-ui",
