@@ -4,12 +4,13 @@
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the main instance of the project. Nor does it name the
-//! agent: the left panel is whatever
-//! the installed [`LeftPanelSlot`] makes. Its own keys are the app's: undo, the panel, opening
+//! agent: the Agent tab of the left panel is whatever the installed [`LeftPanelSlot`] makes,
+//! beside the window's own History tab. Its own keys are the app's: undo, the panel, opening
 //! and quitting. Musical keys, such as space to play, are the project's, through
 //! [`GlobalKeys`].
 
 pub mod audio_input;
+mod history;
 pub mod live_input;
 pub mod new_project;
 pub mod other_apps;
@@ -46,6 +47,7 @@ use sound_ui::{
 };
 
 use audio_input::OpenInput;
+use history::HistoryPanel;
 use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
@@ -89,9 +91,9 @@ const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.
 const LEFT_PANEL_WIDTH: f32 = 400.;
 
-/// What the window shows in its left panel, given by the composition root, which knows the
-/// agent: this module names no type of it. With none installed the window has no panel and
-/// no icon for it.
+/// What the window shows in the Agent tab of its left panel, given by the composition root,
+/// which knows the agent: this module names no type of it. With none installed the panel has
+/// only History, and starts closed.
 #[derive(Clone)]
 pub struct LeftPanelSlot {
     make: Rc<dyn Fn(Entity<Session>, &mut Window, &mut Context<Shell>) -> LeftPanel>,
@@ -119,9 +121,11 @@ impl LeftPanelSlot {
     }
 }
 
-/// The view in the left panel, and what the window needs to know of it.
+/// The view in the Agent tab, and what the window needs to know of it.
 pub struct LeftPanel {
     view: AnyView,
+    /// What the view puts at the right of the tabs, such as **New**.
+    header: Option<AnyView>,
     /// What cmd-L focuses, such as the composer of the agent. Asked each time: what the view
     /// can focus changes, as when the composer appears.
     focus: Box<dyn Fn(&App) -> FocusHandle>,
@@ -138,6 +142,11 @@ pub struct LeftPanel {
 type Asks = Box<dyn Fn(&str, &mut Window, &mut App) -> bool>;
 
 impl LeftPanel {
+    pub fn with_header(mut self, header: impl Into<AnyView>) -> Self {
+        self.header = Some(header.into());
+        self
+    }
+
     pub fn with_composer(mut self, composer: impl Fn(&App) -> Entity<TextInput> + 'static) -> Self {
         self.composer = Some(Box::new(composer));
         self
@@ -169,11 +178,19 @@ impl LeftPanel {
                 Box::new(move |cx| view.read(cx).focus_handle(cx))
             },
             view: view.into(),
+            header: None,
             composer: None,
             ask: None,
             _observing: observing,
         }
     }
+}
+
+/// What the left panel shows.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Tab {
+    Agent,
+    History,
 }
 
 /// What the window of the real runtime has of the device: its timing, for the latency and for
@@ -200,6 +217,8 @@ pub struct Shell {
     focus_handle: FocusHandle,
     left_panel: Option<LeftPanel>,
     left_panel_open: bool,
+    tab: Tab,
+    history: Entity<HistoryPanel>,
     /// See [`LeftPanelSlot::remembered`].
     left_panel_file: Option<PathBuf>,
     /// The whole panel, to know whether the focus is in it.
@@ -294,12 +313,17 @@ impl Shell {
         let left_panel = slot
             .as_ref()
             .map(|slot| (slot.make)(session.clone(), window, cx));
-        let left_panel_file = slot.and_then(|slot| slot.remembered);
+        let left_panel_file = slot.as_ref().and_then(|slot| slot.remembered.clone());
         // One word read once before the first frame, as the last project is read before the
         // window: drawing it closed and then opening it would flash.
-        let left_panel_open = left_panel_file
-            .as_deref()
-            .is_none_or(crate::app::left_panel_was_open);
+        let left_panel_open = slot.is_some()
+            && (left_panel_file.as_deref()).is_none_or(crate::app::left_panel_was_open);
+        let tab = if left_panel.is_some() {
+            Tab::Agent
+        } else {
+            Tab::History
+        };
+        let history = cx.new(|cx| HistoryPanel::new(session.clone(), window, cx));
         let project_menu =
             cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
         // For the notice of an update.
@@ -320,6 +344,8 @@ impl Shell {
             focus_handle,
             left_panel,
             left_panel_open,
+            tab,
+            history,
             left_panel_file,
             left_panel_area: cx.focus_handle(),
             left_panel_icon_focus: cx.focus_handle().tab_stop(true),
@@ -380,19 +406,26 @@ impl Shell {
         &self.recorders
     }
 
-    /// The view in the left panel, open or not.
+    /// The view in the Agent tab, open or not.
     pub fn left_panel(&self) -> Option<&AnyView> {
         self.left_panel.as_ref().map(|panel| &panel.view)
     }
 
     pub fn left_panel_open(&self) -> bool {
-        self.left_panel.is_some() && self.left_panel_open
+        self.left_panel_open
     }
 
-    /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
-    /// elsewhere, and closes it when the focus is in it.
+    pub fn history_shown(&self) -> bool {
+        self.left_panel_open && self.tab == Tab::History
+    }
+
+    /// cmd-L: opens the Agent tab and focuses it, and closes the panel when the focus is in
+    /// that tab already.
     fn toggle_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.left_panel_open && self.left_panel_area.contains_focused(window, cx) {
+        if self.left_panel_open
+            && self.tab == Tab::Agent
+            && self.left_panel_area.contains_focused(window, cx)
+        {
             self.set_left_panel_open(false, window, cx);
             self.give_focus_back(window, cx);
         } else {
@@ -400,12 +433,13 @@ impl Shell {
         }
     }
 
-    /// Opens the panel when it is closed, and focuses it.
+    /// Opens the panel on the Agent tab when it is closed, and focuses it.
     fn focus_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = &self.left_panel else {
             return;
         };
         let focus = (panel.focus)(cx);
+        self.tab = Tab::Agent;
         self.remember_focus(window, cx);
         if !self.left_panel_open {
             self.set_left_panel_open(true, window, cx);
@@ -466,9 +500,55 @@ impl Shell {
         window.focus(&back, cx);
     }
 
+    fn show_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.tab = tab;
+        cx.notify();
+    }
+
+    /// The tabs, and at their right what the Agent tab puts there.
+    fn left_panel_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().gray_700;
+        let tab = |id: &'static str, label: &'static str, tab: Tab, cx: &mut Context<Self>| {
+            let variant = if self.tab == tab {
+                ButtonVariant::Subtle
+            } else {
+                ButtonVariant::GhostColor(muted)
+            };
+            Button::new(id, label)
+                .debug_selector(move || format!("left-panel-{id}"))
+                .variant(variant)
+                .size(ButtonSize::Sm)
+                .on_click(cx.listener(move |shell, _, _, cx| shell.show_tab(tab, cx)))
+        };
+        let agent = self.left_panel.as_ref();
+        let header = agent
+            .and_then(|panel| panel.header.clone())
+            .filter(|_| self.tab == Tab::Agent);
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .h(px(56.))
+            .pl(px(16.))
+            .pr(px(16.))
+            .children(agent.map(|_| tab("agent-tab", "Agent", Tab::Agent, cx)))
+            .child(tab("history-tab", "History", Tab::History, cx))
+            .child(div().flex_1())
+            .children(header)
+    }
+
     /// The panel left of the main area, when it is open.
     fn left_panel_element(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let panel = self.left_panel.as_ref().filter(|_| self.left_panel_open)?;
+        if !self.left_panel_open {
+            return None;
+        }
+        let body = match (self.tab, &self.left_panel) {
+            (Tab::Agent, Some(panel)) => panel.view.clone(),
+            _ => self.history.clone().into(),
+        };
+        // The hairline of the window's other lines, so the edges weigh the same.
+        let hairline = cx.theme().alpha_at(0.05);
         Some(
             div()
                 .id("left-panel")
@@ -481,54 +561,59 @@ impl Shell {
                     shell.give_focus_back(window, cx)
                 }))
                 .flex_none()
+                .flex()
+                .flex_col()
                 .w(px(LEFT_PANEL_WIDTH))
                 .h_full()
+                // The top edge parts it from the title row.
+                .border_t_1()
+                .border_r_1()
+                .border_color(hairline)
+                .child(self.left_panel_header(cx))
                 // Not drawn again with every frame of the window, such as of the playhead.
                 .child(
-                    panel
-                        .view
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(body.cached(StyleRefinement::default().size_full())),
                 ),
         )
     }
 
     /// The icon right of the traffic lights that opens and closes the panel. While the panel
-    /// is closed and busy, it carries the lavender indicator.
-    fn left_panel_icon(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let panel = self.left_panel.as_ref()?;
+    /// is closed and the agent busy, it carries the lavender indicator.
+    fn left_panel_icon(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let lavender = cx.theme().lavender;
-        let busy = panel.busy && !self.left_panel_open;
-        Some(
-            div()
-                .relative()
-                .flex_none()
-                .child(
-                    Button::icon_only("left-panel", "panel-left")
-                        .debug_selector(|| "left-panel-icon".to_string())
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Sm)
-                        .focus_handle(&self.left_panel_icon_focus)
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.open_or_close_left_panel(window, cx)
-                        })),
+        let busy =
+            self.left_panel.as_ref().is_some_and(|panel| panel.busy) && !self.left_panel_open;
+        div()
+            .relative()
+            .flex_none()
+            .child(
+                Button::icon_only("left-panel", "panel-left")
+                    .debug_selector(|| "left-panel-icon".to_string())
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Sm)
+                    .focus_handle(&self.left_panel_icon_focus)
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.open_or_close_left_panel(window, cx)
+                    })),
+            )
+            .when(busy, |icon| {
+                icon.child(
+                    div()
+                        .debug_selector(|| "left-panel-busy".to_string())
+                        .absolute()
+                        .top(px(2.))
+                        .right(px(2.))
+                        .child(
+                            Indicator::new("left-panel-busy")
+                                .size(IndicatorSize::Xs)
+                                .color(lavender)
+                                .pulse(true),
+                        ),
                 )
-                .when(busy, |icon| {
-                    icon.child(
-                        div()
-                            .debug_selector(|| "left-panel-busy".to_string())
-                            .absolute()
-                            .top(px(2.))
-                            .right(px(2.))
-                            .child(
-                                Indicator::new("left-panel-busy")
-                                    .size(IndicatorSize::Xs)
-                                    .color(lavender)
-                                    .pulse(true),
-                            ),
-                    )
-                }),
-        )
+            })
     }
 
     /// What the main area shows with no view: in an empty project, the ways to start one.
@@ -729,6 +814,7 @@ impl Shell {
     /// now, the panel opens on what it is doing.
     fn ask_to_fix(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.remember_focus(window, cx);
+        self.tab = Tab::Agent;
         if !self.left_panel_open {
             self.set_left_panel_open(true, window, cx);
         }
@@ -922,7 +1008,7 @@ impl Render for Shell {
                     .items_center()
                     .h(px(TOP_ROW_HEIGHT))
                     .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
-                    .children(self.left_panel_icon(cx))
+                    .child(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
                     .children(self.title_bar.clone())

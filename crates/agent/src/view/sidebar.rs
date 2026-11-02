@@ -1,4 +1,4 @@
-//! The sidebar: the header with **New**, the onboarding until the agent is set up, then the
+//! The sidebar: **New** for the window's header over it, the onboarding until the agent is set up, then the
 //! thread in a gpui `list` and the composer.
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **New**, or
@@ -468,6 +468,12 @@ impl Sidebar {
         &self.access_menu
     }
 
+    /// **New**, with the recent threads and the instructions in its menu, for the header the
+    /// window draws over the sidebar.
+    pub fn new_button(&self) -> &Entity<SplitButton> {
+        &self.new_button
+    }
+
     /// The menu of **New**, for a snapshot that shows it open.
     pub fn new_menu(&self, cx: &App) -> Entity<DropdownMenu> {
         self.new_button.read(cx).menu().clone()
@@ -757,29 +763,10 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// The title, and **New** at the right. Over the instructions: their title, and the way
-    /// back at the left.
-    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let editing = self.instructions.is_some();
-        // On the left edge of the thread under it.
-        let title = div()
-            .flex_1()
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
-            .child(if editing { "Instructions" } else { "Agent" });
-        let header = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(4.))
-            .h(px(56.))
-            .pr(px(16.));
-        if !editing {
-            return header
-                .pl(px(24.))
-                .child(title)
-                .child(self.new_button.clone());
-        }
+    /// Over the instructions: their title, and the way back at the left. The window draws
+    /// the title of the panel, with [`Self::new_button`].
+    fn instructions_header(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        self.instructions.as_ref()?;
         let back = Button::icon_only("instructions-back", "arrow-left")
             .debug_selector(|| "agent-instructions-back".to_string())
             .variant(ButtonVariant::Ghost)
@@ -787,7 +774,23 @@ impl Sidebar {
             .on_click(cx.listener(|sidebar, _, window, cx| {
                 sidebar.close_instructions(window, cx);
             }));
-        header.pl(px(16.)).child(back).child(title)
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(4.))
+                .h(px(40.))
+                .pl(px(16.))
+                .pr(px(16.))
+                .child(back)
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Instructions"),
+                ),
+        )
     }
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -950,9 +953,7 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
-        let theme = cx.theme();
-        // The hairline of the window's other lines, so the edges weigh the same.
-        let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);
+        let text = cx.theme().gray_950;
         let body = match (&self.instructions, &self.setup) {
             (Some((editor, _)), _) => editor.clone().into_any_element(),
             (
@@ -996,12 +997,8 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
-            // On the background of the window; the top edge parts it from the title row.
-            .border_t_1()
-            .border_r_1()
-            .border_color(hairline)
             .text_color(text)
-            .child(self.header(cx))
+            .children(self.instructions_header(cx))
             .child(body)
     }
 }
