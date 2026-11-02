@@ -114,6 +114,19 @@ impl Provider {
             Provider::Claude => claude::sign_out(installed).await,
         }
     }
+
+    /// One question to the provider's small model, with no tools, no project and nothing kept.
+    /// The answer is its text. Dropping the future ends the program.
+    pub async fn ask_small_model(
+        self,
+        installed: &Installed,
+        instructions: &str,
+        question: &str,
+    ) -> io::Result<String> {
+        match self {
+            Provider::Claude => claude::ask_small_model(installed, instructions, question).await,
+        }
+    }
 }
 
 /// Where the provider's program is, and the environment it runs in.

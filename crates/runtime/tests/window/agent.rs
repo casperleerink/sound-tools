@@ -1377,3 +1377,121 @@ fn a_dismissed_going_back_tells_the_agent_nothing(cx: &mut TestAppContext) {
         Some(Command::Send("Hello".into()))
     );
 }
+
+/// A stand-in for `claude` that answers every question with "Name N", N counting up from 1, and
+/// keeps question N in `<program>.asked-N`.
+#[cfg(unix)]
+fn naming_claude(machine: &Path) -> Installed {
+    use std::os::unix::fs::PermissionsExt;
+    let program = machine.join("claude");
+    let script = r#"#!/bin/sh
+count=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1))
+echo $count >"$0.count"
+cat >"$0.asked-$count"
+echo "\"Name $count.\""
+"#;
+    std::fs::write(&program, script).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Installed {
+        program,
+        environment: HashMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+    }
+}
+
+#[cfg(unix)]
+impl Opened<'_> {
+    /// A write from outside long after the last one, so it is a point of its own.
+    fn write_later(&mut self, relative: &str, contents: &str, seconds: u64) {
+        let path = self.path(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, contents).unwrap();
+        let at = std::time::Instant::now() + Duration::from_secs(seconds);
+        self.edit(|project| project.apply_outside_changes_at(std::slice::from_ref(&path), at));
+        self.settle();
+    }
+
+    /// The name of every version, in the order of the history's lines.
+    fn version_names(&mut self) -> Vec<Option<String>> {
+        self.project(|project| {
+            let lines = project.history().unwrap().lines();
+            (lines.iter().filter(|line| line.is_version()))
+                .map(|line| line.name.clone())
+                .collect()
+        })
+    }
+
+    /// Waits for the program to answer and the name to land.
+    fn wait_for_names(&mut self, names: &[Option<&str>]) {
+        let names: Vec<Option<String>> = names.iter().map(|name| name.map(String::from)).collect();
+        let started = std::time::Instant::now();
+        while self.version_names() != names {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "{:?} is not {names:?}",
+                self.version_names()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+            self.cx.run_until_parked();
+        }
+    }
+
+    fn quiet(&mut self, seconds: u64) {
+        self.cx
+            .executor()
+            .advance_clock(Duration::from_secs(seconds));
+        self.cx.run_until_parked();
+    }
+}
+
+/// The agent's small model names the versions one at a time once the history is still: the
+/// current one first, then the newest. A version is named again when it grows, but never over
+/// a name given by hand.
+#[cfg(unix)]
+#[gpui::test]
+fn the_small_model_names_versions_once_they_are_still(cx: &mut TestAppContext) {
+    // The program wakes the sidebar's tasks from smol's own thread.
+    cx.executor().allow_parking();
+    let machine = tempfile::tempdir().unwrap();
+    let installed = naming_claude(machine.path());
+    let asked = |count: usize| {
+        let file = format!("{}.asked-{count}", installed.program.display());
+        std::fs::read_to_string(file).ok()
+    };
+    install_sidebar_with(cx, machine.path(), Some(installed.clone()));
+    let mut opened = support::open_new(cx);
+    let start = opened.current_point();
+    opened.write_later("state/bass.json", BASS_CLIP, 20);
+    opened.go_to(start);
+    opened.write_later("state/lead.json", LATER_CLIP, 40);
+
+    opened.quiet(4);
+    assert_eq!(opened.version_names(), [None, None]);
+    assert!(asked(1).is_none(), "asked before the history was still");
+    opened.quiet(1);
+    opened.wait_for_names(&[None, Some("Name 1")]);
+    assert!(asked(1).unwrap().contains("state/lead.json (new)"));
+    opened.quiet(5);
+    opened.wait_for_names(&[Some("Name 2"), Some("Name 1")]);
+
+    opened.write_later("state/lead.json", BASS_CLIP, 60);
+    opened.quiet(5);
+    opened.wait_for_names(&[Some("Name 2"), Some("Name 3")]);
+    assert!(asked(3).unwrap().contains("state/lead.json (new)"));
+
+    let current = opened.project(|project| {
+        let history = project.history().unwrap();
+        history.line_of(history.current()).unwrap().unwrap().start
+    });
+    opened.edit(|project| project.rename_version(current, Some("My take".to_string())));
+    opened.write_later("state/lead.json", LATER_CLIP, 80);
+    opened.quiet(5);
+    opened.quiet(5);
+    // Time for a question that should not come.
+    std::thread::sleep(Duration::from_millis(300));
+    opened.cx.run_until_parked();
+    assert!(asked(4).is_none(), "asked about a version named by hand");
+    assert_eq!(
+        opened.version_names(),
+        [Some("Name 2".to_string()), Some("My take".to_string())]
+    );
+}

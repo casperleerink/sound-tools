@@ -9,6 +9,7 @@
 //! (`super::instructions`).
 
 mod attachments;
+mod naming;
 mod setup;
 mod threads;
 mod turn;
@@ -32,6 +33,7 @@ use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
 
 use self::attachments::Attached;
+use self::naming::Namer;
 use self::went_back::WentBack;
 use super::entry;
 use super::history::History;
@@ -125,6 +127,7 @@ pub struct Sidebar {
     /// Where the composer went back to in the project history, until the next message.
     went_back: Option<WentBack>,
     went_back_dismiss: FocusHandle,
+    namer: Namer,
     /// The sidebar itself, for when it has no composer.
     focus_handle: FocusHandle,
     send_focus: FocusHandle,
@@ -180,7 +183,7 @@ impl Sidebar {
     }
 
     /// For a test or a snapshot: set up and signed in with `installed` as the program, or not
-    /// installed with `None`. Nothing runs in the background.
+    /// installed with `None`. Only the naming of versions runs in the background.
     pub fn with_program(
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
@@ -293,6 +296,7 @@ impl Sidebar {
                     _ => {}
                 },
             ),
+            cx.observe(&session, |sidebar, _, cx| sidebar.naming_heard(cx)),
             cx.observe(&input, |_, _, cx| cx.notify()),
         ];
         let mut conversation = Conversation::default();
@@ -326,6 +330,7 @@ impl Sidebar {
             history: History::default(),
             went_back: None,
             went_back_dismiss: cx.focus_handle().tab_stop(true),
+            namer: Namer::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
@@ -343,6 +348,7 @@ impl Sidebar {
         };
         sidebar.update_menu(cx);
         sidebar.update_new_menu(cx);
+        sidebar.wait_for_quiet(cx);
         sidebar
     }
 
