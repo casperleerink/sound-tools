@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use sound_core::FilterCharacter;
+use sound_dsp::FilterCharacter;
 use wavetable::WavetableState;
 use wavetable::state::{Filter, Unison};
 

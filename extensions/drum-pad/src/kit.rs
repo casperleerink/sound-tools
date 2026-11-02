@@ -13,7 +13,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use sound_core::{poly_blep, xorshift32};
+use sound_dsp::{poly_blep, xorshift32};
 
 use crate::Sound;
 

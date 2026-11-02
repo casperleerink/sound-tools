@@ -4,8 +4,9 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Scope,
-    all_positive_zero,
 };
+
+use sound_dsp::all_positive_zero;
 
 pub struct Analyzer {
     scope: Scope,

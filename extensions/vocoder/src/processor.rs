@@ -15,8 +15,10 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, Ports, PrepareConfig, ProcessContext,
-    Processor, SpectralBin, Stft, all_held_silent, held,
+    Processor,
 };
+
+use sound_dsp::{SpectralBin, Stft, all_held_silent, held};
 
 use crate::{BANDS, PARAMETERS, VocoderState};
 

@@ -3,7 +3,7 @@
 //! track takes on the shape of the voice's spectrum, band by band, so the synth speaks. With
 //! nothing on the sidechain it follows its own sound.
 //!
-//! It works on the spectrum through [`sound_core::Stft`], the transform that `spectral` in a
+//! It works on the spectrum through [`sound_dsp::Stft`], the transform that `spectral` in a
 //! tool of the project uses too.
 //!
 //! [`view`] is the card of the vocoder, and the only module here that uses GPUI.

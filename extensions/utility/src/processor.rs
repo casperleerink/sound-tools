@@ -22,9 +22,10 @@ use std::f32::consts::SQRT_2;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, all_zero, amplitude,
-    held, pan_gains,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{SvfFactors, SvfSection, all_zero, amplitude, held, pan_gains};
 
 use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, PARAMETERS, UtilityState, WIDTH};
 

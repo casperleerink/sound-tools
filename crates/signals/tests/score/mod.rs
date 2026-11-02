@@ -5,8 +5,10 @@
 
 use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EventOutput, Ports, PrepareConfig,
-    ProcessContext, Processor, Watch, xorshift32,
+    ProcessContext, Processor, Watch,
 };
+
+use sound_dsp::xorshift32;
 use sound_notes::{Bend, NoteEvent, Performed, Pitch, Velocity};
 use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
 

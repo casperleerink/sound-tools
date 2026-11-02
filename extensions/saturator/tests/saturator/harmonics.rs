@@ -7,7 +7,7 @@
 //! `transfer` sample by sample, shows what the oversampling takes away.
 
 use saturator::{Curve, SaturatorState, transfer};
-use sound_core::testing::Spectrum;
+use sound_dsp::testing::Spectrum;
 
 use crate::support::{Rig, SAMPLE_RATE, sine};
 

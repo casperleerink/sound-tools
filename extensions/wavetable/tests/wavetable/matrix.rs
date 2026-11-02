@@ -2,7 +2,7 @@
 //! destination can be moved, the random value of a note is the same on every render, and a
 //! synced LFO follows the tempo.
 
-use sound_core::LfoShape;
+use sound_dsp::LfoShape;
 use sound_notes::{Division, Feel};
 use wavetable::state::{Adsr, Effect, Filter, LfoSettings, Oscillator, Unison};
 use wavetable::{Destination, Route, Source, WavetableState};

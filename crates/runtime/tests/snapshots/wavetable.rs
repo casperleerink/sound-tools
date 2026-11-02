@@ -12,7 +12,8 @@
 
 use anyhow::Result;
 use gpui::HeadlessAppContext;
-use sound_core::{FilterCharacter, FilterType, LfoShape, Ticks};
+use sound_core::Ticks;
+use sound_dsp::{FilterCharacter, FilterType, LfoShape};
 use sound_notes::{Division, Feel};
 use wavetable::state::{Effect, Oscillator};
 use wavetable::view::{EnvelopeShown, Page, WavetableView};

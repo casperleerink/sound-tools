@@ -3,7 +3,7 @@
 //! 0 to 1 on the display, `y` up, as [`Display`] takes them.
 
 use gpui::{App, ElementId, Point, Window, point};
-use sound_core::{EnvelopeCurves, FilterSlope, FilterType, Lfo, LfoShape, svf_response};
+use sound_dsp::{EnvelopeCurves, FilterSlope, FilterType, Lfo, LfoShape, svf_response};
 
 use crate::components::display::{Axis, Display, Handle};
 use crate::components::gesture::ValueChange;
@@ -79,7 +79,7 @@ const STAGE_POINTS: usize = 24;
 
 /// The line of an envelope whose times travel on `time`, each stage bent by its curve of
 /// `[attack, decay, release]`, from 0, straight, to 1, as
-/// [`EnvelopeCurves`](sound_core::EnvelopeCurves) bends it. The release is drawn from the
+/// [`EnvelopeCurves`](sound_dsp::EnvelopeCurves) bends it. The release is drawn from the
 /// sustain level over its whole zone.
 fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Point<f32>> {
     use envelope::{BOTTOM, LEFT, TOP};

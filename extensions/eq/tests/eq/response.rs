@@ -303,7 +303,7 @@ fn cookbook_db(band: &Band, hz: f64, sample_rate: f64) -> f64 {
     let s = Complex(0.0, bend(hz) / bend(f64::from(band.frequency_hz)));
     let a = 10_f64.powf(f64::from(band.gain_db) / 40.0);
     let q = f64::from(band.q);
-    let shelf_q = q.min(f64::from(sound_core::SHELF_MAX_Q));
+    let shelf_q = q.min(f64::from(sound_dsp::SHELF_MAX_Q));
     let root = a.sqrt();
     let (numerator, denominator) = match band.shape {
         Shape::LowCut => ([1.0, 0.0, 0.0], [1.0, 1.0 / q, 1.0]),

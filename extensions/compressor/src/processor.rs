@@ -17,10 +17,11 @@
 use std::f32::consts::LN_10;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, PeakDetector, Peaks,
-    Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, all_held_silent,
-    held, pole,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Peaks, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{PeakDetector, Taps, all_held_silent, held, pole};
 
 use crate::{CompressorState, KNEE, Lookahead, MAKEUP, MIX, PARAMETERS, RATIO, THRESHOLD};
 

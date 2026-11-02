@@ -10,29 +10,19 @@ mod clock;
 mod compensation;
 mod control;
 mod delay_line;
-mod detector;
 mod device;
-mod dsp;
 mod engine;
-mod envelope;
 mod event_tap;
-mod gain;
 mod graph;
 mod input;
-mod lfo;
-mod limiter;
-mod oversampling;
 mod parameter;
 mod peaks;
 pub mod process;
 mod processor;
 mod project;
 mod ring;
-mod saturation;
 mod scope;
 mod sections;
-mod stft;
-mod svf;
 pub mod testing;
 mod thru;
 mod transport;
@@ -48,27 +38,17 @@ pub use clock::{
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use delay_line::DelayLine;
-pub use detector::PeakDetector;
 pub use device::{
     DeviceChoice, DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming,
     input_devices, monotonic_nanos, output_devices,
 };
-pub use dsp::{
-    HIGHEST_PHASE_STEP, OnePole, Taps, all_held_silent, all_positive_zero, all_zero, bessel_i0,
-    held, pole, poly_blep, xorshift32,
-};
 pub use engine::{Engine, EngineStatus};
-pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
 pub use event_tap::{EventTap, TapRead, Tappable};
-pub use gain::{amplitude, pan_gains};
 pub use graph::{Connection, Destination, GraphError, NodeId, Source};
 pub use input::{
     CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputId,
     InputStream, LiveInput, LiveWriter, capture, live_input,
 };
-pub use lfo::{Lfo, LfoShape};
-pub use limiter::PeakLimiter;
-pub use oversampling::{Oversampler, OversamplerDelay, OversamplingFilters};
 pub use parameter::{
     AutomatedNumber, FADER_TOP_DB, FADER_UNITY, Parameter, ParameterInfo, Scale, ValueRange,
 };
@@ -88,14 +68,8 @@ pub use project::{
     RegistryError, SavedConnection, SavedDestination, SavedSource, State, StorageError,
     ToolRegistration, ToolSchema, parse_state, ranges, type_doc, unit_of,
 };
-pub use saturation::soft_clip;
 pub use scope::Scope;
 pub use sections::{Section, SectionError, SectionName, Sections};
-pub use stft::{SpectralBin, Stft};
-pub use svf::{
-    FilterCharacter, FilterSlope, FilterType, SHELF_MAX_Q, SVF_MAX_Q, ShapedSvf, SvfFactors,
-    SvfSection, SvfShape, svf_response,
-};
 pub use thru::{AudioThru, EventThru};
 pub use transport::Transport;
 pub use watch::Watch;

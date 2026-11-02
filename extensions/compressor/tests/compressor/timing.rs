@@ -8,7 +8,7 @@
 //! reaches 63 % within one frame of `release_ms`.
 
 use compressor::CompressorState;
-use sound_core::PeakDetector;
+use sound_dsp::PeakDetector;
 
 use crate::support::{Rig, SAMPLE_RATE, step};
 

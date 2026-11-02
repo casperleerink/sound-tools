@@ -177,7 +177,7 @@ fn no_effect_aliases_up_to_c6() {
 /// that could differ from one render to the next, and none of it does.
 #[test]
 fn the_same_project_renders_the_same_bytes_twice() {
-    use sound_core::LfoShape;
+    use sound_dsp::LfoShape;
     use wavetable::state::{LfoSettings, Unison};
 
     let state = WavetableState {

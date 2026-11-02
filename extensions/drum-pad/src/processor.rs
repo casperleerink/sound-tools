@@ -20,8 +20,10 @@ use std::sync::Arc;
 
 use sound_core::{
     AudioOutput, Automated, AutomationInput, EventInput, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, amplitude,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::amplitude;
 use sound_notes::{NoteEvent, Velocity};
 
 use crate::sounds::Rendered;
@@ -46,7 +48,7 @@ pub fn pad_gains(pad: &Pad) -> [f32; 2] {
 }
 
 fn gains_at(level: f32, pan: f32) -> [f32; 2] {
-    sound_core::pan_gains(f64::from(level), pan.clamp(-1.0, 1.0))
+    sound_dsp::pan_gains(f64::from(level), pan.clamp(-1.0, 1.0))
 }
 
 /// One pad as the audio thread plays it. Its volume and pan are in the record of the kit.

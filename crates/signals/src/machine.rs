@@ -10,9 +10,11 @@
 use std::iter::repeat;
 use std::ops::Range;
 
-use sound_core::{
-    CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SpectralBin, Stft, SvfFactors, SvfSection, SvfShape,
-    amplitude, soft_clip, xorshift32,
+use sound_core::{CHANNELS, DelayLine, MAX_BLOCK};
+
+use sound_dsp::{
+    SVF_MAX_Q, SpectralBin, Stft, SvfFactors, SvfSection, SvfShape, amplitude, soft_clip,
+    xorshift32,
 };
 
 use crate::code::{

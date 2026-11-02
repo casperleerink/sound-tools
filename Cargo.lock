@@ -194,6 +194,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -1230,6 +1231,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -1687,6 +1689,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -1844,6 +1847,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -1962,6 +1966,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -2099,6 +2104,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -2388,6 +2394,7 @@ dependencies = [
  "image",
  "sound-agent",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-ui",
 ]
@@ -2400,6 +2407,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -3288,6 +3296,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
  "tempfile",
@@ -3634,6 +3643,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -3953,6 +3963,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -4966,6 +4977,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -5669,6 +5681,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -5771,6 +5784,7 @@ dependencies = [
  "smol",
  "sound-agent",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-typescript",
@@ -5902,6 +5916,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -5919,6 +5934,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -6345,7 +6361,6 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "proptest",
- "realfft",
  "rtrb",
  "rtsan-standalone",
  "schemars",
@@ -6356,6 +6371,18 @@ dependencies = [
  "thiserror 2.0.20",
  "triple_buffer",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sound-dsp"
+version = "0.0.0"
+dependencies = [
+ "no_denormals",
+ "proptest",
+ "realfft",
+ "schemars",
+ "serde",
+ "sound-core",
 ]
 
 [[package]]
@@ -6371,6 +6398,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -6384,6 +6412,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "thiserror 2.0.20",
 ]
 
@@ -6394,6 +6423,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "thiserror 2.0.20",
 ]
@@ -6412,6 +6442,7 @@ dependencies = [
  "serde_path_to_error",
  "smol",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-signals",
@@ -6429,6 +6460,7 @@ dependencies = [
  "serde_json",
  "smol",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "tempfile",
  "unicode-segmentation",
@@ -7178,6 +7210,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -7234,6 +7267,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -7383,6 +7417,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
  "tempfile",

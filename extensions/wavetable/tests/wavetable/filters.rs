@@ -1,8 +1,8 @@
 //! The filters of a voice: each type and slope holds to the exact response of the filter of
 //! the SDK, the routings send each oscillator where they say, the drive bends and warm rings.
 
-use sound_core::testing::Spectrum;
-use sound_core::{FilterCharacter, FilterSlope, FilterType, svf_response};
+use sound_dsp::testing::Spectrum;
+use sound_dsp::{FilterCharacter, FilterSlope, FilterType, svf_response};
 use wavetable::WavetableState;
 use wavetable::state::{Filter, Oscillator, Routing};
 

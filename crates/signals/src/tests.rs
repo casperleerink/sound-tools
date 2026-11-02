@@ -7,7 +7,9 @@ use serde_json::json;
 #[path = "../tests/sound/mod.rs"]
 pub(crate) mod sound;
 
-use sound_core::{MAX_BLOCK, SvfShape};
+use sound_core::MAX_BLOCK;
+
+use sound_dsp::SvfShape;
 
 use crate::machine::{Block, Inputs, List, Machine, Note};
 use crate::{ArraySpec, Code, Declarations, Graph};

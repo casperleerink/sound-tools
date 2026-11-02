@@ -27,9 +27,11 @@
 use std::f32::consts::{LOG2_10, TAU};
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Taps, Targets, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{OnePole, Taps, held};
 
 use crate::{
     DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PARAMETERS, PRE_DELAY, ReverbState, WIDTH,
