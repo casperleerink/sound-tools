@@ -460,6 +460,11 @@ impl HistoryPanel {
                 }])
             })
             .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                // Clicks in the rename field are the field's.
+                let renaming = panel.renaming.as_ref().map(|(start, _)| Item::Card(*start));
+                if renaming == Some(item) {
+                    return;
+                }
                 match (item, event.click_count()) {
                     (Item::Card(start), 2) => panel.start_renaming(start, window, cx),
                     _ => panel.go(item, cx),
@@ -823,14 +828,14 @@ fn read(history: &History, wanted: Option<(PointId, usize)>) -> io::Result<Shown
             };
             let mut changes = Vec::new();
             let mut points = history.line_points(line.start);
-            let mut more = false;
+            let (mut more, mut seen_current) = (false, false);
             for point in points.by_ref() {
                 let point = point?;
-                let seen_current = changes.iter().any(|change: &Point| change.id == current);
                 if changes.len() >= wanted && seen_current {
                     more = true;
                     break;
                 }
+                seen_current |= point.id == current;
                 changes.push(point);
             }
             // Lines that start from a change shown here, by that change.
