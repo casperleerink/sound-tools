@@ -1,6 +1,5 @@
 //! Runs compiled [`Code`] over a span of frames of a block, for both channels, with the memory
-//! of every feedback, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of
-//! one voice. Made on the control thread, where it allocates all of it; running it allocates
+//! of one voice. Made on the control thread, where it allocates all of it; running it allocates
 //! nothing.
 //!
 //! What every voice shares, the values of the record and of the interface and the transport,
@@ -103,7 +102,6 @@ impl Block {
         }
     }
 
-    /// Fires the trigger of `index` in `frame`.
     pub(crate) fn fire(&mut self, index: usize, frame: usize) {
         if let Some(triggers) = self.triggers.get_mut(frame)
             && index < MAX_LIVES
@@ -1544,7 +1542,6 @@ fn truth(condition: bool) -> f32 {
     if condition { 1.0 } else { 0.0 }
 }
 
-/// The formula of `op`.
 #[inline(always)]
 fn unary(op: Unary, x: f32) -> f32 {
     match op {
@@ -1564,7 +1561,6 @@ fn unary(op: Unary, x: f32) -> f32 {
     }
 }
 
-/// The formula of `op`.
 #[inline(always)]
 fn binary(op: Binary, a: f32, b: f32) -> f32 {
     match op {

@@ -12,7 +12,6 @@ use sound_dsp::SvfShape;
 pub(crate) const MAX_PARAMETERS: usize = 32;
 /// The most `live` controls and the most triggers: a trigger is one bit of a `u32`.
 pub(crate) const MAX_LIVES: usize = 32;
-/// The most watches.
 pub(crate) const MAX_WATCHES: usize = 16;
 /// The most bangs and notes a sound sends out, of each: each is an event port of every
 /// processor.
@@ -26,8 +25,7 @@ pub(crate) const MAX_SOUNDS: usize = 4;
 /// What a `delay` holds when it gives no `longest`.
 pub(crate) const DEFAULT_DELAY_MS: f32 = 4000.0;
 /// The seconds the delays and buffers of a tool hold together, per channel. An instrument keeps
-/// [`MAX_VOICES`](crate::MAX_VOICES) voices whatever it plays, so each holds an eighth, 2
-/// minutes: more than any sound could hold before.
+/// [`MAX_VOICES`](crate::MAX_VOICES) voices whatever it plays, so each holds an eighth.
 pub(crate) const MAX_MEMORY_SECONDS: f32 = 960.0;
 /// The longest a pattern can be.
 pub const MAX_ARRAY_LENGTH: usize = 1024;
@@ -61,7 +59,6 @@ pub struct ArraySpec {
     pub max: f32,
 }
 
-/// Compiled code.
 #[derive(Clone, Debug)]
 pub struct Code {
     /// Numbers the record sets, in the order of the fields.
@@ -113,8 +110,7 @@ impl Code {
     }
 
     /// This code for samples of one channel: a read on the side of its channel is then the same
-    /// on both channels, so it runs once for both, as cheap as before samples were in stereo. A
-    /// sample in stereo is heard mixed.
+    /// on both channels, so it runs once for both. A sample in stereo is heard mixed.
     pub fn with_samples_of_one_channel(mut self) -> Self {
         for operation in &mut self.operations {
             if let Operation::Read { table, .. } | Operation::Lookup { table, .. } = operation

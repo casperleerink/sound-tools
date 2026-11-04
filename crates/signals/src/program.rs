@@ -38,8 +38,6 @@ fn runs(operations: &[(Register, Operation)]) -> Box<[Run]> {
         .collect()
 }
 
-/// Whether `a` and `b` work out their values by the same formula: the same kind of operation,
-/// and for a unary or a binary one, the same of those.
 fn same_formula(a: Operation, b: Operation) -> bool {
     match (a, b) {
         (Operation::Unary(a, _), Operation::Unary(b, _)) => a == b,
@@ -360,9 +358,8 @@ fn latencies(code: &Code, before: &[usize]) -> Vec<usize> {
     latencies
 }
 
-/// Whether `operation` gives each channel of mono code its own result whatever it reads: the
-/// input of its channel, the index of its channel, a noise, whose seed is of its channel, or
-/// the side of a sample of its channel.
+/// Whether `operation` gives each channel of mono code its own result whatever it reads. A noise
+/// does: its seed is of its channel.
 fn varies_by_channel(operation: Operation) -> bool {
     match operation {
         Operation::Input(_) | Operation::Channel | Operation::Noise { .. } | Operation::Bin(_) => {
@@ -412,7 +409,8 @@ fn varies_by_channel(operation: Operation) -> bool {
     }
 }
 
-/// The buffer `operation` reads or writes in each frame. Its length is the same in every one.
+/// The buffer `operation` reads or writes in each frame. Not `length`: a buffer's length never
+/// changes.
 fn buffer_of(operation: Operation) -> Option<u16> {
     match operation {
         Operation::Read {

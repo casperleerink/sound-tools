@@ -1,11 +1,8 @@
 //! Signals: what plays the sound of a tool of the project, sample by sample, on the audio thread.
 //!
-//! The SDK of the tools a project writes in TypeScript sends a sound as a [`Graph`] of typed
-//! JSON nodes, which [`Graph::compile`] checks and lowers to [`Code`], a flat list of
-//! operations. A [`Machine`] runs it over a span of frames, an operation at a time, with all
-//! the memory of one voice, made on the control thread; only operations around a feedback or a
-//! buffer run frame by frame. A [`Signals`] processor plays one machine per voice as an effect,
-//! an instrument or a source, and fades to new ones when the code changes.
+//! The TypeScript SDK sends a sound as a [`Graph`] of JSON nodes, which [`Graph::compile`]
+//! checks and lowers to [`Code`]. A [`Machine`] runs that code with the memory of one voice, and
+//! a [`Signals`] processor plays one machine per voice.
 
 mod cable;
 mod code;

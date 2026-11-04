@@ -450,7 +450,6 @@ impl Signals {
         }
     }
 
-    /// Follows `event`, which the interface played or not.
     fn follow(&mut self, event: NoteEvent, performed: bool) {
         self.holds.follow(event, performed);
         play(&mut self.players, &mut self.bend, event);
@@ -500,7 +499,6 @@ impl Keys {
     }
 }
 
-/// How many params and live controls `code` has, so a frame moves only those.
 fn counts_of(code: &Code) -> (usize, usize) {
     (code.parameters.len(), code.lives.len())
 }
@@ -965,7 +963,6 @@ impl Processor for Signals {
 }
 
 impl Signals {
-    /// Glides the `live` control `index` to `value`.
     fn move_live(&mut self, index: usize, value: f32) {
         let ramp = RAMP_SECONDS * self.sample_rate;
         if let Some(live) = self.lives.get_mut(index) {

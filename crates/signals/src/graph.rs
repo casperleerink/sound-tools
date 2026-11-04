@@ -83,7 +83,7 @@ pub(crate) enum TableNode {
     Buffer(usize),
 }
 
-/// A node of the graph. Each `usize` is the index of a node before it.
+/// A node of the graph. A signal it reads is a node before it, by index.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Node {
@@ -303,7 +303,7 @@ fn error<T>(message: impl Into<String>) -> Result<T, GraphError> {
 }
 
 impl Graph {
-    /// The names of the fields and inputs it reads.
+    /// The names of the fields and controls it reads.
     pub fn params(&self) -> std::collections::BTreeSet<&str> {
         (self.nodes.iter())
             .filter_map(|node| match node {
@@ -670,7 +670,6 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// The longest a delay holds, in ms: what it says, or [`DEFAULT_DELAY_MS`].
     fn longest(&self, longest: Option<usize>) -> Result<f32, GraphError> {
         let Some(longest) = longest else {
             return Ok(DEFAULT_DELAY_MS);
@@ -908,7 +907,6 @@ impl<'a> Lowering<'a> {
     }
 }
 
-/// `default` in `[min, max]`, and the range not empty.
 fn check_range(name: &str, default: f32, min: f32, max: f32) -> Result<(), GraphError> {
     if min >= max {
         return error(format!("`{name}`: the range [{min}, {max}] is empty"));
