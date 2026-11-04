@@ -63,7 +63,7 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 ### Gestures
 
 - Every drag and every key that changes the piece is one point of history. Undo and going back wait while a drag or a take is going on, and say so.
-- History is exploring, never commits or branches: every state is kept and an idea tried is a version. The History tab lists versions, not a graph: the current one open on its latest changes, each saying in words and a colour dot what it started from. Rejected: lanes and edges, which read as code. Going back is one click and makes nothing new; the next change does.
+- History is exploring, never commits or branches: every state is kept and an idea tried is a version. The History tab lists versions, not a graph: the current one open on its latest changes, each with the version it started from. Rejected: lanes and edges, which read as code. Going back is one click and makes nothing new; the next change does.
 - There is no save. Every finished edit is already in the folder.
 - Everything snaps to the grid of the timeline. Cmd during a drag ignores it. Arrow keys move things in time by one snap step.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.

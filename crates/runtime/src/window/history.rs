@@ -1,8 +1,8 @@
 //! The History tab of the left panel: the versions of the project as cards. The card of the
 //! current point is open on its latest changes, with where other versions start between them;
 //! the other versions follow, newest first, each saying what it started from. A click on a
-//! change goes to it, on a card to its latest point; its menu renames, keeps, merges and folds
-//! away. The panel is one tab stop: up and down move a highlight, enter goes, the menu key or
+//! change goes to it, on a card to its latest point, and a double click renames; its menu
+//! renames, keeps, merges and folds away. The panel is one tab stop: up and down move a highlight, enter goes, the menu key or
 //! shift-F10 opens its menu.
 
 use std::collections::{HashMap, HashSet};
@@ -11,8 +11,8 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point as Position, ScrollHandle,
+    AnyElement, App, BoxShadow, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight,
+    Hsla, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point as Position, ScrollHandle,
     SharedString, Stateful, Subscription, Task, Window, div, point, prelude::*, px,
 };
 use sound_core::{History, Line, Point, PointId};
@@ -45,10 +45,9 @@ struct Card {
     from: Option<From>,
 }
 
-/// The point a line started from.
+/// The line a line started from.
 struct From {
-    point: PointId,
-    label: String,
+    start: PointId,
     title: String,
     color: usize,
 }
@@ -331,10 +330,12 @@ impl HistoryPanel {
     }
 
     fn start_renaming(&mut self, start: PointId, window: &mut Window, cx: &mut Context<Self>) {
-        let name = (self.session.read(cx).project().history())
-            .and_then(|history| history.line(start))
-            .and_then(|line| line.name.clone())
-            .unwrap_or_default();
+        let line =
+            (self.session.read(cx).project().history()).and_then(|history| history.line(start));
+        let Some(line) = line.filter(|line| line.is_version()) else {
+            return;
+        };
+        let name = line.name.clone().unwrap_or_default();
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Name"));
         let panel = cx.weak_entity();
         input.update(cx, |input, cx| {
@@ -458,7 +459,12 @@ impl HistoryPanel {
                     inset: true,
                 }])
             })
-            .on_click(cx.listener(move |panel, _, _, cx| panel.go(item, cx)))
+            .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                match (item, event.click_count()) {
+                    (Item::Card(start), 2) => panel.start_renaming(start, window, cx),
+                    _ => panel.go(item, cx),
+                }
+            }))
             .when_some(line, |row, line| {
                 row.on_mouse_down(
                     MouseButton::Right,
@@ -501,8 +507,10 @@ impl HistoryPanel {
             )
     }
 
-    /// "from ● Longer tail, after Change the decay": a click on the name goes to that point.
-    fn from(&self, card: &Card, colors: &Colors, cx: &mut Context<Self>) -> impl IntoElement {
+    /// "from ● Longer tail": a click on the name goes to that version.
+    fn from(&self, card: &Card, colors: &Colors, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let from = card.from.as_ref()?;
+        let (start, bright) = (from.start, colors.text);
         let line = div()
             .pl(px(16.))
             .pt(px(2.))
@@ -510,12 +518,8 @@ impl HistoryPanel {
             .items_center()
             .gap(px(4.))
             .text_size(px(12.))
-            .text_color(colors.muted);
-        let Some(from) = &card.from else {
-            return line.child("Where the project started");
-        };
-        let (point, bright) = (from.point, colors.text);
-        line.child("from")
+            .text_color(colors.muted)
+            .child("from")
             .child(dot(colors.lane(from.color), 6.))
             .child(
                 div()
@@ -524,24 +528,17 @@ impl HistoryPanel {
                         let start = card.line.start.short();
                         move || format!("history-from-{start}")
                     })
-                    .flex_none()
+                    .min_w_0()
+                    .truncate()
                     .text_color(colors.body)
-                    .font_weight(FontWeight::MEDIUM)
                     .hover(move |style| style.text_color(bright))
                     .on_click(cx.listener(move |panel, _, _, cx| {
                         cx.stop_propagation();
-                        panel
-                            .session
-                            .update(cx, |session, cx| session.go_to(point, cx));
+                        panel.go(Item::Card(start), cx);
                     }))
                     .child(from.title.clone()),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .child(format!("after {}", from.label)),
-            )
+            );
+        Some(line.into_any_element())
     }
 
     /// The cards, each child of the list a row, so the keys can scroll one into view.
@@ -573,7 +570,7 @@ impl HistoryPanel {
                 .pt(px(12.))
                 .pb(px(8.))
                 .child(self.title(&open.card, colors))
-                .child(self.from(&open.card, colors, cx));
+                .children(self.from(&open.card, colors, cx));
             keyed(
                 Item::Card(open.card.line.start),
                 card(header).mt(px(8.)),
@@ -741,7 +738,7 @@ impl HistoryPanel {
                 .rounded(px(8.))
                 .hover(|style| style.bg(colors.hover_row))
                 .child(self.title(card, colors))
-                .child(self.from(card, colors, cx));
+                .children(self.from(card, colors, cx));
             keyed(item, row, &mut rows);
         }
         if let count @ 1.. = shown.folded_away.len() {
@@ -802,8 +799,7 @@ fn read(history: &History, wanted: Option<(PointId, usize)>) -> io::Result<Shown
     let card = |line: &Line| -> io::Result<Card> {
         let tip = history.line_points(line.start).next().transpose()?;
         let from = splits.get(&line.start).map(|point| From {
-            point: point.id,
-            label: point.label.clone(),
+            start: point.line,
             title: history
                 .line(point.line)
                 .map_or_else(String::new, Line::title),

@@ -185,14 +185,25 @@ fn the_menu_renames_and_folds_away_and_folded_away_versions_show_again(cx: &mut 
 }
 
 #[gpui::test]
-fn a_card_goes_to_its_latest_point_and_what_it_started_from_to_that_point(cx: &mut TestAppContext) {
+fn a_card_goes_to_its_latest_point_a_double_click_renames_and_its_from_goes_back(
+    cx: &mut TestAppContext,
+) {
     let mut opened = support::open_new(cx);
-    let (start, _, second) = two_versions(&mut opened);
+    let (_, first, second) = two_versions(&mut opened);
 
-    let card = opened.control(&format!("history-card-{}", second.short()));
-    opened.click(card);
+    let card = format!("history-card-{}", second.short());
+    let other = opened.control(&card);
+    opened.click(other);
     assert_eq!(opened.current_point(), second);
+
+    // Now open, at the top.
+    let open = opened.control(&card);
+    opened.double_click(open);
+    opened.cx.simulate_input("Dry");
+    opened.keys("enter");
+    assert_eq!(opened.line(second).name.as_deref(), Some("Dry"));
+
     let from = opened.control(&format!("history-from-{}", second.short()));
     opened.click(from);
-    assert_eq!(opened.current_point(), start);
+    assert_eq!(opened.current_point(), first);
 }
