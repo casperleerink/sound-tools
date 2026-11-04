@@ -1,19 +1,21 @@
-//! The History tab of the left panel: the points of the project as a tree, newest at the top,
-//! one lane per version. Clicking a row goes to its point; its menu renames, keeps, merges and
-//! folds away. The list is one tab stop: up and down move a highlight, enter goes to its point,
-//! the menu key or shift-F10 opens its menu, right and left open and close the fold under it.
-//! Which points are rows is [`layout`].
+//! The History tab of the left panel: the versions of the project as cards. The card of the
+//! current point is open on its latest changes, with where other versions start between them;
+//! the other versions follow, newest first, each saying what it started from. A click on a
+//! change goes to it, on a card to its latest point; its menu renames, keeps, merges and folds
+//! away. The panel is one tab stop: up and down move a highlight, enter goes, the menu key or
+//! shift-F10 opens its menu.
 
-mod layout;
-
+use std::collections::{HashMap, HashSet};
+use std::io;
+use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent,
-    ScrollHandle, SharedString, Subscription, Task, Window, canvas, div, point, prelude::*, px,
+    AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point as Position, ScrollHandle,
+    SharedString, Stateful, Subscription, Task, Window, div, point, prelude::*, px,
 };
-use sound_core::{History, PointId};
+use sound_core::{History, Line, Point, PointId};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -22,36 +24,101 @@ use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::KeyboardFocus;
 use sound_ui::{ActiveTheme, Session, Theme};
 
-use layout::{Edge, Layout, Name, Opened, Page, Row, Stroke};
-
-/// How many points are read at a time, newest first.
-const PAGE: usize = 300;
-/// Closer than this to the end of what is read, the next page is read.
-const READ_AHEAD: f32 = 800.;
-const ROW_HEIGHT: f32 = 40.;
-const LANE_WIDTH: f32 = 16.;
-/// The middle of the first lane, from the left edge.
-const FIRST_LANE: f32 = 20.;
+/// How many changes the open card shows at first, and how many more each "Show more" adds.
+const SHOWN: usize = 6;
+const MORE: usize = 50;
 const MENU_WIDTH: f32 = 280.;
+
+/// What the panel shows, read once per change of the history.
+struct Shown {
+    open: Option<Open>,
+    /// The other versions, newest first.
+    others: Vec<Card>,
+    folded_away: Vec<Card>,
+}
+
+struct Card {
+    line: Line,
+    color: usize,
+    /// Of its latest point.
+    time: SystemTime,
+    from: Option<From>,
+}
+
+/// The point a line started from.
+struct From {
+    point: PointId,
+    label: String,
+    title: String,
+    color: usize,
+}
+
+/// The line of the current point.
+struct Open {
+    card: Card,
+    /// Newest first.
+    entries: Vec<Entry>,
+    /// Whether older changes are left to show.
+    more: bool,
+}
+
+enum Entry {
+    Change(Point),
+    /// A version that starts after the change below it.
+    Split {
+        start: PointId,
+        title: String,
+        color: usize,
+    },
+    /// Work taken back with undo after the change below it.
+    Undone {
+        start: PointId,
+        count: usize,
+    },
+}
+
+/// What the keys can highlight, in the order shown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Item {
+    Change(PointId),
+    /// A line, by its start.
+    Card(PointId),
+    Split(PointId),
+    Undone(PointId),
+    More,
+    FoldedAway,
+}
+
+impl Item {
+    /// The line whose menu the item opens.
+    fn line(self, open: Option<PointId>) -> Option<PointId> {
+        match self {
+            Item::Change(_) => open,
+            Item::Card(start) | Item::Split(start) | Item::Undone(start) => Some(start),
+            Item::More | Item::FoldedAway => None,
+        }
+    }
+}
 
 pub(super) struct HistoryPanel {
     session: Entity<Session>,
     focus_handle: FocusHandle,
     keyboard_focus: KeyboardFocus,
-    /// The row the keys moved to. Until they move, the current point's.
-    highlight: Option<PointId>,
-    /// How many points to read.
-    wanted: usize,
+    /// The item the keys moved to. Until they move, the current point.
+    highlight: Option<Item>,
+    /// More changes asked for, of the line that starts here.
+    wanted: Option<(PointId, usize)>,
     /// What was read, at which generation of the history and how many points were wanted.
-    read: Option<(u64, usize)>,
-    page: Result<Option<Page>, SharedString>,
-    opened: Opened,
-    layout: Layout,
+    read: Option<(u64, Option<(PointId, usize)>)>,
+    shown: Result<Option<Rc<Shown>>, SharedString>,
+    show_folded_away: bool,
+    /// What the keys move through, with the child of the list each one is.
+    items: Vec<(Item, usize)>,
     scroll: ScrollHandle,
     menu: Entity<DropdownMenu>,
-    /// The line of the row whose menu is open.
+    /// The line of the item whose menu is open.
     menu_line: Option<PointId>,
-    /// The line being renamed, in a field on its latest row.
+    /// The line being renamed, in a field in place of its title.
     renaming: Option<(PointId, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
     /// Draws the times again as they age.
@@ -105,11 +172,11 @@ impl HistoryPanel {
             focus_handle,
             keyboard_focus: KeyboardFocus::default(),
             highlight: None,
-            wanted: PAGE,
+            wanted: None,
             read: None,
-            page: Ok(None),
-            opened: Opened::default(),
-            layout: Layout::default(),
+            shown: Ok(None),
+            show_folded_away: false,
+            items: Vec::new(),
             scroll: ScrollHandle::new(),
             menu,
             menu_line: None,
@@ -122,8 +189,7 @@ impl HistoryPanel {
     /// Reads the history again when it changed or more of it is wanted.
     fn read_if_changed(&mut self, cx: &App) {
         let Some(history) = self.session.read(cx).project().history() else {
-            self.page = Ok(None);
-            self.layout = Layout::default();
+            self.shown = Ok(None);
             return;
         };
         let now = (history.generation(), self.wanted);
@@ -131,55 +197,54 @@ impl HistoryPanel {
             return;
         }
         self.read = Some(now);
-        self.page = read_page(history, self.wanted)
-            .map(Some)
+        self.shown = read(history, self.wanted)
+            .map(|shown| Some(Rc::new(shown)))
             .map_err(|error| format!("The history could not be read: {error}").into());
-        self.lay_out();
     }
 
-    fn lay_out(&mut self) {
-        self.layout = match &self.page {
-            Ok(Some(page)) => Layout::new(page, &self.opened),
-            _ => Layout::default(),
+    fn open_line(&self) -> Option<PointId> {
+        let shown = self.shown.as_ref().ok()?.as_ref()?;
+        Some(shown.open.as_ref()?.card.line.start)
+    }
+
+    fn show_more(&mut self, cx: &mut Context<Self>) {
+        let Some(open) = self.open_line() else {
+            return;
         };
-    }
-
-    fn toggle_fold(&mut self, first: PointId, cx: &mut Context<Self>) {
-        if !self.opened.folds.remove(&first) {
-            self.opened.folds.insert(first);
-        }
-        self.lay_out();
+        let count = match self.wanted {
+            Some((line, count)) if line == open => count,
+            _ => SHOWN,
+        };
+        self.wanted = Some((open, count + MORE));
         cx.notify();
     }
 
-    fn show_lines(&mut self, lines: &[PointId], show: bool, cx: &mut Context<Self>) {
-        for line in lines {
-            if show {
-                self.opened.lines.insert(*line);
-            } else {
-                self.opened.lines.remove(line);
+    fn toggle_folded_away(&mut self, cx: &mut Context<Self>) {
+        self.show_folded_away = !self.show_folded_away;
+        cx.notify();
+    }
+
+    fn go(&mut self, item: Item, cx: &mut Context<Self>) {
+        let point = match item {
+            Item::Change(point) => Some(point),
+            Item::Card(start) | Item::Split(start) | Item::Undone(start) => {
+                (self.session.read(cx).project().history())
+                    .and_then(|history| history.line(start))
+                    .map(|line| line.tip)
             }
-        }
-        self.lay_out();
-        cx.notify();
-    }
-
-    fn read_more_near_the_end(&mut self, cx: &mut Context<Self>) {
-        let all_read = match &self.page {
-            Ok(Some(page)) => page.points.len() < self.wanted,
-            _ => true,
+            Item::More => return self.show_more(cx),
+            Item::FoldedAway => return self.toggle_folded_away(cx),
         };
-        let left = self.scroll.max_offset().y + self.scroll.offset().y;
-        if !all_read && left < px(READ_AHEAD) {
-            self.wanted += PAGE;
-            cx.notify();
+        if let Some(point) = point {
+            self.session
+                .update(cx, |session, cx| session.go_to(point, cx));
         }
     }
 
     fn open_menu(
         &mut self,
         line: PointId,
-        at: Point<Pixels>,
+        at: Position<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -313,12 +378,11 @@ impl HistoryPanel {
         cx.notify();
     }
 
-    fn highlighted_row(&self) -> Option<usize> {
-        let rows = &self.layout.rows;
-        (self
-            .highlight
-            .and_then(|point| rows.iter().position(|row| row.point == point)))
-        .or_else(|| rows.iter().position(|row| row.current))
+    /// The index in [`Self::items`] of the highlight, or of the current point.
+    fn highlighted(&self, cx: &App) -> Option<usize> {
+        let current = self.session.read(cx).project().history()?.current();
+        let find = |item: Item| self.items.iter().position(|(each, _)| *each == item);
+        (self.highlight.and_then(find)).or_else(|| find(Item::Change(current)))
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -336,28 +400,22 @@ impl HistoryPanel {
             cx.stop_propagation();
             return;
         }
-        let Some(index) = self.highlighted_row() else {
+        let Some(index) = self.highlighted(cx) else {
             return;
         };
-        let fold = (self.layout.folds.iter()).find(|fold| fold.rows.0 == index);
+        let (item, child) = self.items[index];
         match keys.key.as_str() {
-            "up" => self.highlight_row(index.saturating_sub(1), cx),
-            "down" => self.highlight_row(index + 1, cx),
-            "enter" => {
-                let point = self.layout.rows[index].point;
-                self.session
-                    .update(cx, |session, cx| session.go_to(point, cx));
-            }
-            "right" | "left" => {
-                if let Some(fold) = fold.filter(|fold| fold.open == (keys.key == "left")) {
-                    self.toggle_fold(fold.first, cx);
-                }
-            }
+            "up" => self.highlight_item(index.saturating_sub(1), cx),
+            "down" => self.highlight_item(index + 1, cx),
+            "enter" => self.go(item, cx),
             _ if opens_menu => {
-                let line = self.layout.rows[index].line;
-                let at = self.scroll.bounds().origin
-                    + self.scroll.offset()
-                    + point(px(text_left(self.layout.lanes)), px(row_y(index)));
+                let Some(line) = item.line(self.open_line()) else {
+                    return;
+                };
+                let at = (self.scroll.bounds_for_item(child))
+                    .map_or(self.scroll.bounds().origin, |bounds| {
+                        bounds.bottom_left() + point(px(28.), px(0.))
+                    });
                 self.open_menu(line, at, window, cx);
             }
             _ => return,
@@ -365,194 +423,474 @@ impl HistoryPanel {
         cx.stop_propagation();
     }
 
-    /// Moves the highlight to a row and scrolls it into view.
-    fn highlight_row(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.layout.rows.get(index) else {
+    /// Moves the highlight to an item and scrolls it into view.
+    fn highlight_item(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some((item, child)) = self.items.get(index).copied() else {
             return;
         };
-        self.highlight = Some(row.point);
-        let (offset, height) = (self.scroll.offset(), self.scroll.bounds().size.height);
-        let (top, bottom) = (
-            px(index as f32 * ROW_HEIGHT),
-            px((index + 1) as f32 * ROW_HEIGHT),
-        );
-        let shown_top = -offset.y;
-        if top < shown_top {
-            self.scroll.set_offset(point(offset.x, -top));
-        } else if bottom > shown_top + height {
-            self.scroll.set_offset(point(offset.x, height - bottom));
-        }
-        self.read_more_near_the_end(cx);
+        self.highlight = Some(item);
+        self.scroll.scroll_to_item(child);
         cx.notify();
     }
 
-    fn row(
+    /// A row the keys reach: a click goes, a right click opens the menu of its line.
+    fn item(
         &self,
-        index: usize,
-        row: &Row,
-        highlighted: bool,
-        text_left: f32,
+        item: Item,
+        selector: String,
+        highlighted: Option<Item>,
         colors: &Colors,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let point = row.point;
-        let lane_color = colors.lane(row.color);
-        let name = match (&row.name, &self.renaming) {
-            (_, Some((line, input))) if *line == row.line && row.tip => {
-                Some(div().w(px(200.)).child(input.clone()).into_any_element())
-            }
-            (Name::ProjectStart, _) => {
-                Some(name_text("Project start", colors.blue).into_any_element())
-            }
-            (Name::Line(title), _) => Some(name_text(title.clone(), lane_color).into_any_element()),
-            (Name::None, _) => None,
-        };
-        let quiet = self.quiet_actions(row, colors, cx);
-        let line = row.line;
+    ) -> Stateful<gpui::Div> {
+        let line = item.line(self.open_line());
+        let ring = colors.ring;
         div()
-            .id(("history-row", index))
-            .debug_selector(move || format!("history-row-{}", point.short()))
-            .absolute()
-            .top(px(index as f32 * ROW_HEIGHT))
-            .left_0()
-            .right_0()
-            .h(px(ROW_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(text_left))
-            .pr(px(16.))
+            .id(SharedString::from(selector.clone()))
+            .debug_selector(move || selector)
+            .group(SharedString::from(format!("{item:?}")))
             .cursor_pointer()
-            .when(row.current, |row| row.bg(colors.current_row))
-            .hover(|style| style.bg(colors.hover_row))
-            .when(highlighted, |row| {
+            .when(highlighted == Some(item), |row| {
                 row.shadow(vec![BoxShadow {
-                    color: colors.ring,
-                    offset: Point::default(),
+                    color: ring,
+                    offset: Position::default(),
                     blur_radius: px(0.),
                     spread_radius: px(1.5),
                     inset: true,
                 }])
             })
-            .on_click(cx.listener(move |panel, _, _, cx| {
-                panel
-                    .session
-                    .update(cx, |session, cx| session.go_to(point, cx))
-            }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |panel, event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    panel.open_menu(line, event.position, window, cx);
-                }),
-            )
-            .children(name)
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .items_center()
-                    .text_size(px(13.))
-                    .text_color(colors.muted)
-                    .children(quiet),
-            )
-            .when(row.current, |row| row.child(current_badge(colors)))
+            .on_click(cx.listener(move |panel, _, _, cx| panel.go(item, cx)))
+            .when_some(line, |row, line| {
+                row.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |panel, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        panel.open_menu(line, event.position, window, cx);
+                    }),
+                )
+            })
+    }
+
+    /// The dot, the title or its rename field, and the time.
+    fn title(&self, card: &Card, colors: &Colors) -> impl IntoElement {
+        let title: AnyElement = match &self.renaming {
+            Some((line, input)) if *line == card.line.start => {
+                div().flex_1().child(input.clone()).into_any_element()
+            }
+            _ => div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(colors.text)
+                .child(card.line.title())
+                .into_any_element(),
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(dot(colors.lane(card.color), 8.))
+            .child(title)
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .text_color(colors.muted)
-                    .child(ago(row.time, SystemTime::now())),
+                    .child(ago(card.time, SystemTime::now())),
             )
     }
 
-    /// "+1 version", "5 undone" and "Hide versions": gray words that show or hide the lines
-    /// that leave a row.
-    fn quiet_actions(&self, row: &Row, colors: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let point = row.point.short();
-        let (muted, bright) = (colors.muted, colors.text);
-        let action = |selector: String, lines: &[PointId], show: bool| {
-            let lines = lines.to_vec();
-            div()
-                .id(SharedString::from(selector.clone()))
-                .debug_selector(move || format!("history-{selector}"))
-                .text_color(muted)
-                .hover(move |style| style.text_color(bright))
-                .cursor_pointer()
-                .on_click(cx.listener(move |panel, _, _, cx| {
-                    cx.stop_propagation();
-                    panel.show_lines(&lines, show, cx);
-                }))
+    /// "from ● Longer tail, after Change the decay": a click on the name goes to that point.
+    fn from(&self, card: &Card, colors: &Colors, cx: &mut Context<Self>) -> impl IntoElement {
+        let line = div()
+            .pl(px(16.))
+            .pt(px(2.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .text_size(px(12.))
+            .text_color(colors.muted);
+        let Some(from) = &card.from else {
+            return line.child("Where the project started");
         };
-        let mut actions = Vec::new();
-        if let count @ 1.. = row.hidden_versions.len() {
-            let label = match count {
-                1 => "+1 version".to_string(),
-                _ => format!("+{count} versions"),
-            };
-            actions
-                .push(action(format!("versions-{point}"), &row.hidden_versions, true).child(label));
-        }
-        if !row.undone.is_empty() {
-            let tooltip = Tooltip::new(
-                "Taken back with undo. Click to show it. This undo keeps work as a version:",
+        let (point, bright) = (from.point, colors.text);
+        line.child("from")
+            .child(dot(colors.lane(from.color), 6.))
+            .child(
+                div()
+                    .id(SharedString::from(format!("from-{}", card.line.start)))
+                    .debug_selector({
+                        let start = card.line.start.short();
+                        move || format!("history-from-{start}")
+                    })
+                    .flex_none()
+                    .text_color(colors.body)
+                    .font_weight(FontWeight::MEDIUM)
+                    .hover(move |style| style.text_color(bright))
+                    .on_click(cx.listener(move |panel, _, _, cx| {
+                        cx.stop_propagation();
+                        panel
+                            .session
+                            .update(cx, |session, cx| session.go_to(point, cx));
+                    }))
+                    .child(from.title.clone()),
             )
-            .shortcut("alt+mod+z");
-            actions.push(
-                action(format!("undone-{point}"), &row.undone, true)
-                    .tooltip(move |_, cx| tooltip.clone().view(cx))
-                    .child(format!("{} undone", row.undone_points)),
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(format!("after {}", from.label)),
+            )
+    }
+
+    /// The cards, each child of the list a row, so the keys can scroll one into view.
+    fn rows(
+        &mut self,
+        shown: &Shown,
+        highlighted: Option<Item>,
+        colors: &Colors,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut items = Vec::new();
+        let mut keyed = |item: Item, row: Stateful<gpui::Div>, rows: &mut Vec<AnyElement>| {
+            items.push((item, rows.len()));
+            rows.push(row.into_any_element());
+        };
+        if let Some(open) = &shown.open {
+            let color = colors.lane(open.card.color);
+            let card = |row: Stateful<gpui::Div>| row.mx(px(8.)).px(px(12.)).bg(colors.card);
+            let header = self
+                .item(
+                    Item::Card(open.card.line.start),
+                    format!("history-card-{}", open.card.line.start.short()),
+                    highlighted,
+                    colors,
+                    cx,
+                )
+                .rounded_t(px(8.))
+                .pt(px(12.))
+                .pb(px(8.))
+                .child(self.title(&open.card, colors))
+                .child(self.from(&open.card, colors, cx));
+            keyed(
+                Item::Card(open.card.line.start),
+                card(header).mt(px(8.)),
+                &mut rows,
             );
-        }
-        if !row.opened.is_empty() {
-            actions
-                .push(action(format!("hide-{point}"), &row.opened, false).child("Hide versions"));
-        }
-        let mut elements = Vec::new();
-        for (index, action) in actions.into_iter().enumerate() {
-            if index > 0 {
-                elements.push(div().px(px(6.)).child("·").into_any_element());
+            let current = self
+                .session
+                .read(cx)
+                .project()
+                .history()
+                .map(History::current);
+            for entry in &open.entries {
+                let (item, selector, content): (Item, String, AnyElement) = match entry {
+                    Entry::Change(change) => {
+                        let here = Some(change.id) == current;
+                        let group = SharedString::from(format!("{:?}", Item::Change(change.id)));
+                        let right: AnyElement = if here {
+                            div()
+                                .text_color(colors.body)
+                                .child("You are here")
+                                .into_any_element()
+                        } else {
+                            div()
+                                .opacity(0.)
+                                .group_hover(group, |style| style.opacity(1.))
+                                .child(ago(change.time, SystemTime::now()))
+                                .into_any_element()
+                        };
+                        (
+                            Item::Change(change.id),
+                            format!("history-row-{}", change.id.short()),
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .h(px(28.))
+                                .px(px(8.))
+                                .rounded(px(4.))
+                                .when(here, |row| row.bg(colors.current_row))
+                                .hover(|style| style.bg(colors.hover_row))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(13.))
+                                        .text_color(if here { colors.text } else { colors.body })
+                                        .child(change.label.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(12.))
+                                        .text_color(colors.muted)
+                                        .child(right),
+                                )
+                                .into_any_element(),
+                        )
+                    }
+                    Entry::Split {
+                        start,
+                        title,
+                        color,
+                    } => (
+                        Item::Split(*start),
+                        format!("history-split-{}", start.short()),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .h(px(28.))
+                            .px(px(8.))
+                            .rounded(px(4.))
+                            .hover(|style| style.bg(colors.hover_row))
+                            .text_size(px(12.))
+                            .text_color(colors.muted)
+                            .child(dot(colors.lane(*color), 6.))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_color(colors.body)
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(title.clone()),
+                            )
+                            .child("started here")
+                            .into_any_element(),
+                    ),
+                    Entry::Undone { start, count } => {
+                        let tooltip = Tooltip::new(
+                            "Taken back with undo. Click to go there. This undo keeps work as a version:",
+                        )
+                        .shortcut("alt+mod+z");
+                        let words = match count {
+                            1 => "1 change taken back".to_string(),
+                            _ => format!("{count} changes taken back"),
+                        };
+                        (
+                            Item::Undone(*start),
+                            format!("history-undone-{}", start.short()),
+                            div()
+                                .id(SharedString::from(format!("undone-tip-{start}")))
+                                .flex()
+                                .items_center()
+                                .h(px(28.))
+                                .px(px(8.))
+                                .rounded(px(4.))
+                                .hover(|style| style.bg(colors.hover_row))
+                                .tooltip(move |_, cx| tooltip.clone().view(cx))
+                                .text_size(px(12.))
+                                .text_color(colors.muted)
+                                .child(words)
+                                .into_any_element(),
+                        )
+                    }
+                };
+                let row = self.item(item, selector, highlighted, colors, cx).child(
+                    // The bar of the line's colour down the left of its changes.
+                    div()
+                        .ml(px(3.))
+                        .pl(px(6.))
+                        .border_l_2()
+                        .border_color(color.opacity(0.45))
+                        .child(content),
+                );
+                keyed(item, card(row), &mut rows);
             }
-            elements.push(action.into_any_element());
+            let footer = if open.more {
+                self.item(Item::More, "history-more".into(), highlighted, colors, cx)
+                    .pt(px(4.))
+                    .pb(px(10.))
+                    .pl(px(32.))
+                    .text_size(px(12.))
+                    .text_color(colors.muted)
+                    .hover(|style| style.text_color(colors.text))
+                    .child("Show more changes")
+            } else {
+                div().id("history-open-end").h(px(8.))
+            };
+            let footer = card(footer).rounded_b(px(8.));
+            if open.more {
+                keyed(Item::More, footer, &mut rows);
+            } else {
+                rows.push(footer.into_any_element());
+            }
         }
-        elements
+        if !shown.others.is_empty() {
+            rows.push(label("Other versions", colors).into_any_element());
+        }
+        let folded_away = (self.show_folded_away.then_some(&shown.folded_away))
+            .into_iter()
+            .flatten();
+        for card in shown.others.iter().chain(folded_away) {
+            let item = Item::Card(card.line.start);
+            let row = self
+                .item(
+                    item,
+                    format!("history-card-{}", card.line.start.short()),
+                    highlighted,
+                    colors,
+                    cx,
+                )
+                .mx(px(8.))
+                .px(px(12.))
+                .py(px(10.))
+                .rounded(px(8.))
+                .hover(|style| style.bg(colors.hover_row))
+                .child(self.title(card, colors))
+                .child(self.from(card, colors, cx));
+            keyed(item, row, &mut rows);
+        }
+        if let count @ 1.. = shown.folded_away.len() {
+            let words = match (self.show_folded_away, count) {
+                (true, _) => "Hide folded away versions".to_string(),
+                (false, 1) => "Show 1 folded away version".to_string(),
+                (false, _) => format!("Show {count} folded away versions"),
+            };
+            let row = self
+                .item(
+                    Item::FoldedAway,
+                    "history-folded-away".into(),
+                    highlighted,
+                    colors,
+                    cx,
+                )
+                .mx(px(8.))
+                .mt(px(8.))
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(px(8.))
+                .text_size(px(12.))
+                .text_color(colors.muted)
+                .hover(|style| style.text_color(colors.text))
+                .child(words);
+            keyed(Item::FoldedAway, row, &mut rows);
+        }
+        rows.push(div().h(px(16.)).into_any_element());
+        self.items = items;
+        rows
     }
 }
 
-fn name_text(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement {
+fn label(text: &'static str, colors: &Colors) -> impl IntoElement {
     div()
-        .flex_none()
-        .max_w(px(220.))
-        .truncate()
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(color)
-        .child(text.into())
-}
-
-fn current_badge(colors: &Colors) -> impl IntoElement {
-    div()
-        .flex_none()
-        .h(px(20.))
-        .px(px(8.))
-        .flex()
-        .items_center()
-        .rounded_full()
-        .bg(colors.text)
-        .text_color(colors.badge_text)
+        .px(px(20.))
+        .pt(px(20.))
+        .pb(px(6.))
         .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .child("Current")
+        .text_color(colors.muted)
+        .child(text)
 }
 
-fn read_page(history: &History, wanted: usize) -> std::io::Result<Page> {
-    let points = history.points(wanted)?;
-    Ok(Page {
-        points,
-        lines: history.lines().to_vec(),
-        current: history.current(),
-        folded_away: history.folded_away()?,
+fn dot(color: Hsla, size: f32) -> impl IntoElement {
+    div().flex_none().size(px(size)).rounded_full().bg(color)
+}
+
+fn read(history: &History, wanted: Option<(PointId, usize)>) -> io::Result<Shown> {
+    let lines = history.lines();
+    let color = |start: PointId| {
+        lines
+            .iter()
+            .position(|line| line.start == start)
+            .unwrap_or(0)
+    };
+    let splits = history.splits()?;
+    let folded_away = history.folded_away()?;
+    let card = |line: &Line| -> io::Result<Card> {
+        let tip = history.line_points(line.start).next().transpose()?;
+        let from = splits.get(&line.start).map(|point| From {
+            point: point.id,
+            label: point.label.clone(),
+            title: history
+                .line(point.line)
+                .map_or_else(String::new, Line::title),
+            color: color(point.line),
+        });
+        Ok(Card {
+            line: line.clone(),
+            color: color(line.start),
+            time: tip.map_or(SystemTime::UNIX_EPOCH, |tip| tip.time),
+            from,
+        })
+    };
+
+    let current = history.current();
+    let open_line = history.line_of(current)?.cloned();
+    let open = match &open_line {
+        Some(line) => {
+            let wanted = match wanted {
+                Some((start, count)) if start == line.start => count,
+                _ => SHOWN,
+            };
+            let mut changes = Vec::new();
+            let mut points = history.line_points(line.start);
+            let mut more = false;
+            for point in points.by_ref() {
+                let point = point?;
+                let seen_current = changes.iter().any(|change: &Point| change.id == current);
+                if changes.len() >= wanted && seen_current {
+                    more = true;
+                    break;
+                }
+                changes.push(point);
+            }
+            // Lines that start from a change shown here, by that change.
+            let mut started: HashMap<PointId, Vec<&Line>> = HashMap::new();
+            let shown: HashSet<PointId> = changes.iter().map(|change| change.id).collect();
+            for other in lines {
+                if let Some(from) = splits.get(&other.start)
+                    && shown.contains(&from.id)
+                {
+                    started.entry(from.id).or_default().push(other);
+                }
+            }
+            let mut entries = Vec::new();
+            for change in changes {
+                for other in started.remove(&change.id).unwrap_or_default() {
+                    entries.push(match other.is_version() {
+                        true => Entry::Split {
+                            start: other.start,
+                            title: other.title(),
+                            color: color(other.start),
+                        },
+                        false => Entry::Undone {
+                            start: other.start,
+                            count: history.line_points(other.start).count(),
+                        },
+                    });
+                }
+                entries.push(Entry::Change(change));
+            }
+            Some(Open {
+                card: card(line)?,
+                entries,
+                more,
+            })
+        }
+        None => None,
+    };
+    let open_start = open_line.map(|line| line.start);
+    let mut others = Vec::new();
+    let mut folded = Vec::new();
+    for line in lines
+        .iter()
+        .filter(|line| line.is_version() && Some(line.start) != open_start)
+    {
+        let card = card(line)?;
+        match folded_away.contains(&line.start) {
+            true => folded.push(card),
+            false => others.push(card),
+        }
+    }
+    others.sort_by_key(|card| std::cmp::Reverse(card.time));
+    folded.sort_by_key(|card| std::cmp::Reverse(card.time));
+    Ok(Shown {
+        open,
+        others,
+        folded_away: folded,
     })
 }
 
@@ -572,13 +910,12 @@ fn ago(time: SystemTime, now: SystemTime) -> SharedString {
 #[derive(Clone, Copy)]
 struct Colors {
     lanes: [Hsla; 10],
-    blue: Hsla,
     text: Hsla,
+    body: Hsla,
     muted: Hsla,
-    badge_text: Hsla,
+    card: Hsla,
     current_row: Hsla,
     hover_row: Hsla,
-    background: Hsla,
     ring: Hsla,
 }
 
@@ -598,13 +935,12 @@ impl Colors {
                 theme.flamingo,
                 theme.sapphire,
             ],
-            blue: theme.blue,
             text: theme.gray_950,
+            body: theme.gray_800,
             muted: theme.gray_700,
-            badge_text: theme.gray_50,
-            current_row: theme.alpha_at(0.05),
+            card: theme.alpha_at(0.04),
+            current_row: theme.alpha_at(0.06),
             hover_row: theme.alpha_at(0.03),
-            background: theme.gray_100,
             ring: theme.lavender,
         }
     }
@@ -612,139 +948,6 @@ impl Colors {
     fn lane(&self, color: usize) -> Hsla {
         self.lanes[color % self.lanes.len()]
     }
-}
-
-fn lane_x(lane: usize) -> f32 {
-    FIRST_LANE + lane as f32 * LANE_WIDTH
-}
-
-/// Where the text of the rows begins, right of every lane.
-fn text_left(lanes: usize) -> f32 {
-    lane_x(lanes.max(1)) + 4.
-}
-
-fn row_y(row: usize) -> f32 {
-    row as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.
-}
-
-/// The edges, the dots and the threads from a dot to its name, for the rows in view.
-struct Drawing {
-    edges: Vec<Edge>,
-    rows: Vec<DrawnRow>,
-    text_left: f32,
-    colors: Colors,
-}
-
-/// What the canvas draws of a row.
-struct DrawnRow {
-    lane: usize,
-    color: Hsla,
-    /// A full dot, at the latest point of its line.
-    tip: bool,
-    current: bool,
-    /// A thread from the dot to the line's name.
-    named: bool,
-    /// A stub for the lines hidden that leave it.
-    stub: bool,
-}
-
-fn paint(bounds: Bounds<Pixels>, drawing: Drawing, window: &mut Window) {
-    let origin = bounds.origin;
-    let at = |x: f32, y: f32| origin + point(px(x), px(y));
-    let visible = window.content_mask().bounds;
-    let (top, bottom) = (
-        f32::from(visible.top() - origin.y) - ROW_HEIGHT,
-        f32::from(visible.bottom() - origin.y) + ROW_HEIGHT,
-    );
-    let in_view = |from: f32, to: f32| to >= top && from <= bottom;
-    let stroke = |kind: Stroke| {
-        let builder = PathBuilder::stroke(px(1.5));
-        match kind {
-            Stroke::Solid => builder,
-            Stroke::Dotted => builder.dash_array(&[px(1.5), px(3.)]),
-            Stroke::Dashed => builder.dash_array(&[px(4.), px(3.)]),
-        }
-    };
-    for edge in &drawing.edges {
-        let (x1, y1, x2, y2) = (
-            lane_x(edge.from.1),
-            row_y(edge.from.0),
-            lane_x(edge.to.1),
-            row_y(edge.to.0),
-        );
-        if !in_view(y1, y2) {
-            continue;
-        }
-        let mut path = stroke(edge.stroke);
-        path.move_to(at(x1, y1));
-        if x1 == x2 {
-            path.line_to(at(x2, y2));
-        } else if edge.stroke == Stroke::Dashed {
-            // A merge leaves its row for the lane of what it merged, then runs down to it.
-            let bend = y1 + ROW_HEIGHT;
-            path.cubic_bezier_to(
-                at(x2, bend),
-                at(x1, bend - ROW_HEIGHT / 2.),
-                at(x2, y1 + ROW_HEIGHT / 2.),
-            );
-            path.line_to(at(x2, y2));
-        } else {
-            // A line runs down its own lane and bends into the one it splits off.
-            let bend = y2 - ROW_HEIGHT;
-            path.line_to(at(x1, bend));
-            path.cubic_bezier_to(
-                at(x2, y2),
-                at(x1, bend + ROW_HEIGHT / 2.),
-                at(x2, y2 - ROW_HEIGHT / 2.),
-            );
-        }
-        if let Ok(path) = path.build() {
-            window.paint_path(path, drawing.colors.lane(edge.color));
-        }
-    }
-    let rows = || drawing.rows.iter().enumerate();
-    let row_in_view = |row: usize| in_view(row_y(row), row_y(row));
-    for (row, drawn) in rows().filter(|(row, drawn)| drawn.stub && row_in_view(*row)) {
-        let (x, y) = (lane_x(drawn.lane), row_y(row));
-        let mut path = PathBuilder::stroke(px(1.5)).dash_array(&[px(2.), px(2.)]);
-        path.move_to(at(x + 4., y - 4.));
-        path.curve_to(at(x + 12., y - 16.), at(x + 10., y - 6.));
-        if let Ok(path) = path.build() {
-            window.paint_path(path, drawn.color.opacity(0.4));
-        }
-    }
-    for (row, drawn) in rows().filter(|(row, drawn)| drawn.named && row_in_view(*row)) {
-        let (x, y) = (lane_x(drawn.lane), row_y(row));
-        let mut path = PathBuilder::stroke(px(1.));
-        path.move_to(at(x, y));
-        path.line_to(at(drawing.text_left - 2., y));
-        if let Ok(path) = path.build() {
-            window.paint_path(path, drawn.color.opacity(0.6));
-        }
-    }
-    for (row, drawn) in rows().filter(|(row, _)| row_in_view(*row)) {
-        let centre = at(lane_x(drawn.lane), row_y(row));
-        if drawn.current {
-            ring(window, centre, 8., 1.5, drawing.colors.text);
-        }
-        if drawn.tip {
-            circle(window, centre, 5., drawn.color);
-        } else {
-            circle(window, centre, 4., drawn.color);
-            circle(window, centre, 2.5, drawing.colors.background);
-        }
-    }
-}
-
-fn circle(window: &mut Window, centre: Point<Pixels>, radius: f32, color: Hsla) {
-    let bounds = Bounds::centered_at(centre, gpui::size(px(radius * 2.), px(radius * 2.)));
-    window.paint_quad(gpui::fill(bounds, color).corner_radii(px(radius)));
-}
-
-fn ring(window: &mut Window, centre: Point<Pixels>, radius: f32, width: f32, color: Hsla) {
-    let bounds = Bounds::centered_at(centre, gpui::size(px(radius * 2.), px(radius * 2.)));
-    let quad = gpui::outline(bounds, color, gpui::BorderStyle::Solid);
-    window.paint_quad(quad.corner_radii(px(radius)).border_widths(px(width)));
 }
 
 impl Focusable for HistoryPanel {
@@ -774,81 +977,29 @@ impl Render for HistoryPanel {
             .flex()
             .flex_col()
             .child(self.menu.clone());
-        let message = match &self.page {
-            Err(message) => Some(message.clone()),
-            Ok(None) => Some("This project keeps no history.".into()),
-            Ok(Some(_)) => None,
-        };
-        if let Some(message) = message {
-            return root.child(
-                div()
-                    .px(px(24.))
-                    .py(px(16.))
-                    .text_size(px(13.))
-                    .text_color(colors.muted)
-                    .child(message),
-            );
-        }
-        let layout = &self.layout;
-        let text_left = text_left(layout.lanes);
-        let drawing = Drawing {
-            edges: layout.edges.clone(),
-            rows: (layout.rows.iter())
-                .map(|row| DrawnRow {
-                    lane: row.lane,
-                    color: colors.lane(row.color),
-                    tip: row.tip,
-                    current: row.current,
-                    named: matches!(row.name, Name::Line(_)),
-                    stub: !row.undone.is_empty() || !row.hidden_versions.is_empty(),
-                })
-                .collect(),
-            text_left,
-            colors,
+        let shown = match &self.shown {
+            Ok(Some(shown)) => shown.clone(),
+            other => {
+                let message = match other {
+                    Err(message) => message.clone(),
+                    _ => "This project keeps no history.".into(),
+                };
+                self.items.clear();
+                return root.child(
+                    div()
+                        .px(px(24.))
+                        .py(px(16.))
+                        .text_size(px(13.))
+                        .text_color(colors.muted)
+                        .child(message),
+                );
+            }
         };
         // Once the keys moved it, the highlight shows after a click too.
         let keys_moved = self.highlight.is_some() && self.focus_handle.is_focused(window);
-        let highlighted = (ring_shows || keys_moved)
-            .then(|| self.highlighted_row())
-            .flatten();
-        let rows: Vec<_> = (layout.rows.iter().enumerate())
-            .map(|(index, row)| {
-                self.row(
-                    index,
-                    row,
-                    highlighted == Some(index),
-                    text_left,
-                    &colors,
-                    cx,
-                )
-                .into_any_element()
-            })
-            .collect();
-        let hover = colors.hover_row;
-        let folds = (self.layout.folds.iter().enumerate()).map(|(index, fold)| {
-            let first = fold.first;
-            let (top, bottom) = (row_y(fold.rows.0) + 8., row_y(fold.rows.1) - 8.);
-            let action = if fold.open { "fold" } else { "show" };
-            let text =
-                SharedString::from(format!("{} changes. Click to {action} them", fold.count));
-            div()
-                .id(("history-fold", index))
-                .debug_selector(move || format!("history-fold-{}", first.short()))
-                .absolute()
-                .top(px(top))
-                .h(px(bottom - top))
-                .left(px(lane_x(fold.lane) - LANE_WIDTH / 2.))
-                .w(px(LANE_WIDTH))
-                .rounded(px(4.))
-                .cursor_pointer()
-                .hover(move |style| style.bg(hover))
-                .tooltip(move |_, cx| Tooltip::new(text.clone()).view(cx))
-                .on_click(cx.listener(move |panel, _, _, cx| {
-                    cx.stop_propagation();
-                    panel.toggle_fold(first, cx);
-                }))
-        });
-        let height = self.layout.rows.len() as f32 * ROW_HEIGHT;
+        let previous = self.highlighted(cx).map(|index| self.items[index].0);
+        let highlighted = (ring_shows || keys_moved).then_some(previous).flatten();
+        let rows = self.rows(&shown, highlighted, &colors, cx);
         root.child(
             div()
                 .id("history-rows")
@@ -856,25 +1007,9 @@ impl Render for HistoryPanel {
                 .min_h_0()
                 .overflow_y_scroll()
                 .track_scroll(&self.scroll)
-                .on_scroll(
-                    cx.listener(|panel, _: &ScrollEvent, _, cx| panel.read_more_near_the_end(cx)),
-                )
-                .child(
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(height + ROW_HEIGHT))
-                        .children(rows)
-                        .child(
-                            canvas(
-                                |_, _, _| {},
-                                move |bounds, (), window, _| paint(bounds, drawing, window),
-                            )
-                            .absolute()
-                            .inset_0(),
-                        )
-                        .children(folds),
-                ),
+                .flex()
+                .flex_col()
+                .children(rows),
         )
     }
 }

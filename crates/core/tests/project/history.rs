@@ -149,6 +149,31 @@ fn undo_that_keeps_a_version_and_going_back_start_a_version() {
 }
 
 #[test]
+fn a_version_reads_back_to_its_start_and_splits_off_the_point_it_came_from() {
+    let mut harness = Harness::new();
+    let dc = add_dc(&mut harness);
+    let from = current(&harness);
+    set(&mut harness, &dc, 0.5);
+    harness.project.go_to(from).unwrap();
+    set(&mut harness, &dc, 0.25);
+    set(&mut harness, &dc, 0.125);
+
+    let history = harness.project.history().unwrap();
+    let [first, second] = history.lines() else {
+        panic!("{:?}", history.lines());
+    };
+    let points: Vec<PointId> = (history.line_points(second.start))
+        .map(|point| point.unwrap().id)
+        .collect();
+    assert_eq!(points, [second.tip, second.start]);
+    let splits = history.splits().unwrap();
+    assert_eq!(splits[&second.start].id, from);
+    assert_eq!(splits[&second.start].line, first.start);
+    // The project start came from nothing.
+    assert!(!splits.contains_key(&first.start));
+}
+
+#[test]
 fn a_change_from_undone_work_makes_it_a_version() {
     let mut harness = Harness::new();
     let dc = add_dc(&mut harness);

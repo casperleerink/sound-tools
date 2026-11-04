@@ -1,5 +1,5 @@
-//! The History tab of the left panel: a click or the keys on a row write that point's files
-//! back, and the tabs with cmd-L and cmd-B, with the agent and without.
+//! The History tab of the left panel: a click or the keys on a change or a card write that
+//! point's files back, and the tabs with cmd-L and cmd-B, with the agent and without.
 
 use gpui::TestAppContext;
 use reverb::ReverbState;
@@ -136,8 +136,8 @@ impl Opened<'_> {
         self.cx.run_until_parked();
     }
 
-    fn pick_in_menu(&mut self, row: PointId, item: &str) {
-        let row = self.row(row);
+    fn pick_in_menu(&mut self, selector: &str, item: &str) {
+        let row = self.control(selector);
         self.right_click(row);
         let item = self.control(&format!("menu-{item}"));
         self.click(item);
@@ -151,9 +151,8 @@ impl Opened<'_> {
     }
 }
 
-#[gpui::test]
-fn the_menu_of_a_row_renames_and_folds_away_and_plus_one_brings_it_back(cx: &mut TestAppContext) {
-    let mut opened = support::open_new(cx);
+/// Version 1 to `first`, and version 2 from the start to `second`, back on `first`.
+fn two_versions(opened: &mut Opened) -> (PointId, PointId, PointId) {
     let start = opened.current_point();
     opened.edit(add_room).unwrap();
     let first = opened.current_point();
@@ -162,24 +161,38 @@ fn the_menu_of_a_row_renames_and_folds_away_and_plus_one_brings_it_back(cx: &mut
     let second = opened.current_point();
     opened.edit(|project| project.go_to(first)).unwrap();
     opened.keys("secondary-b");
+    (start, first, second)
+}
 
-    opened.pick_in_menu(first, "rename");
+#[gpui::test]
+fn the_menu_renames_and_folds_away_and_folded_away_versions_show_again(cx: &mut TestAppContext) {
+    let mut opened = support::open_new(cx);
+    let (_, first, second) = two_versions(&mut opened);
+
+    opened.pick_in_menu(&format!("history-row-{}", first.short()), "rename");
     opened.cx.simulate_input("Longer tail");
     opened.keys("enter");
     assert_eq!(opened.line(first).name.as_deref(), Some("Longer tail"));
     assert!(opened.line(first).named_by_hand);
 
-    opened.pick_in_menu(second, "aside");
+    let card = format!("history-card-{}", second.short());
+    opened.pick_in_menu(&card, "aside");
     assert!(opened.line(second).set_aside);
-    let plus_one = format!("history-versions-{}", start.short());
-    let row = format!("history-row-{}", second.short());
-    assert!(opened.find(&row).is_none());
-    let plus_one = opened.control(&plus_one);
-    opened.click(plus_one);
-    assert!(opened.find(&row).is_some());
-    assert!(
-        opened
-            .find(&format!("history-hide-{}", start.short()))
-            .is_some()
-    );
+    assert!(opened.find(&card).is_none());
+    let folded_away = opened.control("history-folded-away");
+    opened.click(folded_away);
+    assert!(opened.find(&card).is_some());
+}
+
+#[gpui::test]
+fn a_card_goes_to_its_latest_point_and_what_it_started_from_to_that_point(cx: &mut TestAppContext) {
+    let mut opened = support::open_new(cx);
+    let (start, _, second) = two_versions(&mut opened);
+
+    let card = opened.control(&format!("history-card-{}", second.short()));
+    opened.click(card);
+    assert_eq!(opened.current_point(), second);
+    let from = opened.control(&format!("history-from-{}", second.short()));
+    opened.click(from);
+    assert_eq!(opened.current_point(), start);
 }

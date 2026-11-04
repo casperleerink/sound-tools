@@ -113,6 +113,18 @@ pub struct Point {
     pub line: PointId,
 }
 
+impl Point {
+    fn new(id: PointId, commit: &Commit, line: PointId) -> Self {
+        Self {
+            id,
+            parents: commit.parents.clone(),
+            time: UNIX_EPOCH + Duration::from_millis(commit.time),
+            label: commit.label.clone(),
+            line,
+        }
+    }
+}
+
 /// What came since the last point, which decides what the next one starts.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 enum Since {
@@ -317,16 +329,47 @@ impl History {
                         heap.push((self.commit(*parent)?.time, *parent));
                     }
                 }
-                Ok(Point {
-                    id,
-                    parents: commit.parents.clone(),
-                    time: UNIX_EPOCH + Duration::from_millis(commit.time),
-                    label: commit.label.clone(),
-                    line,
-                })
+                Ok(Point::new(id, &commit, line))
             });
             Some(point)
         }))
+    }
+
+    /// The points of the line that starts at `start`, from its latest back to its start.
+    pub fn line_points(&self, start: PointId) -> impl Iterator<Item = io::Result<Point>> + '_ {
+        let mut next = self.line(start).map(|line| line.tip);
+        std::iter::from_fn(move || {
+            let id = next.take()?;
+            let point = self.commit(id).map(|commit| {
+                if id != start {
+                    next = commit.parents.first().copied();
+                }
+                Point::new(id, &commit, start)
+            });
+            Some(point)
+        })
+    }
+
+    /// Where each line split off, by its start: the point its start came from, with that
+    /// point's line. Reads back only as far as the oldest of them.
+    pub fn splits(&self) -> io::Result<HashMap<PointId, Point>> {
+        let mut wanted: HashMap<PointId, Vec<PointId>> = HashMap::new();
+        for line in &self.lines {
+            if let Some(parent) = self.commit(line.start)?.parents.first() {
+                wanted.entry(*parent).or_default().push(line.start);
+            }
+        }
+        let mut splits = HashMap::new();
+        for point in self.walk()? {
+            if wanted.is_empty() {
+                break;
+            }
+            let point = point?;
+            for start in wanted.remove(&point.id).unwrap_or_default() {
+                splits.insert(start, point.clone());
+            }
+        }
+        Ok(splits)
     }
 
     /// The line `point` is in, read as far back as it takes.

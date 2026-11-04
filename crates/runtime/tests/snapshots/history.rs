@@ -1,5 +1,6 @@
-//! `history.png`: the History tab on a project with two versions, work taken back with undo,
-//! a version folded away by hand and folds between the rows.
+//! `history.png`: the History tab on a project with four named versions, work taken back with
+//! undo and a version folded away by hand. `history-started-here.png`: on the version the
+//! current one started from.
 
 use anyhow::{Context as _, Result};
 use gpui::HeadlessAppContext;
@@ -12,10 +13,12 @@ use super::{Opened, Save};
 pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     let opened = Opened::open(cx, &[])?;
     let session = opened.session.clone();
-    cx.update(|cx| session.update(cx, |session, cx| shape(session, cx)))?;
+    let tail = cx.update(|cx| session.update(cx, |session, cx| shape(session, cx)))?;
     // Without the agent the panel has History alone.
     opened.key("cmd-b", cx)?;
     save(cx, opened.window.into(), "history")?;
+    cx.update(|cx| session.update(cx, |session, cx| session.go_to(tail, cx)));
+    save(cx, opened.window.into(), "history-started-here")?;
     Ok(())
 }
 
@@ -23,20 +26,32 @@ fn room() -> InstanceId {
     InstanceId::new("room").unwrap_or_else(|_| unreachable!())
 }
 
-/// One point: the reverb with this decay.
-fn decay(seconds: f32) -> impl FnOnce(&mut Project) -> Result<(), ProjectError> {
+/// One point: the reverb changed by `change`, named `label`.
+fn change(
+    label: &'static str,
+    change: impl FnOnce(&mut ReverbState),
+) -> impl FnOnce(&mut Project) -> Result<(), ProjectError> {
     move |project| {
         let mut changes = Changes::new();
-        let state = ReverbState {
-            decay_seconds: seconds,
-            ..ReverbState::default()
-        };
         match project.resolve::<ReverbState>(&room()) {
-            Some(instance) => changes.set(&instance, state),
-            None => _ = changes.create(room(), state),
+            Some(instance) => {
+                let mut state = project.state(&instance).cloned().unwrap_or_default();
+                change(&mut state);
+                changes.set(&instance, state);
+            }
+            None => _ = changes.create(room(), ReverbState::default()),
         }
-        project.commit("Change the decay", changes)
+        project.commit(label, changes)
     }
+}
+
+fn edit(
+    session: &mut Session,
+    cx: &mut gpui::Context<Session>,
+    label: &'static str,
+    step: fn(&mut ReverbState),
+) -> Result<()> {
+    session.edit(cx, change(label, step)).context("an edit")
 }
 
 fn current(session: &Session) -> Result<PointId> {
@@ -44,41 +59,65 @@ fn current(session: &Session) -> Result<PointId> {
     Ok(history.current())
 }
 
-/// The start of the line the current point is in.
-fn current_line(session: &Session) -> Result<PointId> {
+/// Names the line the current point is in.
+fn name(session: &mut Session, name: &str, cx: &mut gpui::Context<Session>) -> Result<PointId> {
     let history = session.project().history().context("no history")?;
     let line = history.line_of(history.current())?.context("no line")?;
-    Ok(line.start)
+    let start = line.start;
+    session.edit(cx, |project| project.rename_version(start, name));
+    Ok(start)
 }
 
-fn shape(session: &mut Session, cx: &mut gpui::Context<Session>) -> Result<()> {
+/// Returns the latest point of the version two others start from.
+fn shape(session: &mut Session, cx: &mut gpui::Context<Session>) -> Result<PointId> {
     let start = current(session)?;
-    for step in 1..=8 {
-        session.edit(cx, decay(step as f32)).context("an edit")?;
-    }
-    let split = current(session)?;
-    // Two changes taken back and left by a third: undone work.
-    session.edit(cx, decay(20.)).context("an edit")?;
-    session.edit(cx, decay(21.)).context("an edit")?;
-    session.undo(cx);
-    session.undo(cx);
-    for step in 9..=12 {
-        session.edit(cx, decay(step as f32)).context("an edit")?;
-    }
-    let tip = current(session)?;
-    // A version that starts at the split, named by hand.
-    session.go_to(split, cx);
-    for step in 30..=32 {
-        session.edit(cx, decay(step as f32)).context("an edit")?;
-    }
-    let line = current_line(session)?;
-    session.edit(cx, |project| project.rename_version(line, "Longer tail"));
-    // A version from the start, folded away by hand.
+    edit(session, cx, "Add a reverb", |_| {})?;
+    edit(session, cx, "Change the size", |state| state.size = 0.6)?;
+    edit(session, cx, "Change the damping", |state| {
+        state.damping = 0.4
+    })?;
+    let sketch_split = current(session)?;
+    edit(session, cx, "Change the pre-delay", |state| {
+        state.pre_delay_ms = 20.
+    })?;
+    edit(session, cx, "Change the diffusion", |state| {
+        state.diffusion = 0.8
+    })?;
+    name(session, "First sketch", cx)?;
+
+    session.go_to(sketch_split, cx);
+    edit(session, cx, "Change the decay", |state| {
+        state.decay_seconds = 4.
+    })?;
+    edit(session, cx, "Change the decay", |state| {
+        state.decay_seconds = 6.
+    })?;
+    let tail_split = current(session)?;
+    edit(session, cx, "Change the size", |state| state.size = 0.9)?;
+    let tail = current(session)?;
+    name(session, "Longer tail", cx)?;
+
     session.go_to(start, cx);
-    session.edit(cx, decay(40.)).context("an edit")?;
-    let aside = current_line(session)?;
+    edit(session, cx, "Add a reverb", |_| {})?;
+    edit(session, cx, "Change the size", |state| state.size = 0.1)?;
+    let aside = name(session, "Tiny box", cx)?;
     session.edit(cx, |project| project.set_aside(aside, true));
-    session.go_to(tip, cx);
-    session.edit(cx, decay(13.)).context("an edit")?;
-    Ok(())
+
+    session.go_to(tail_split, cx);
+    edit(session, cx, "Change the damping", |state| {
+        state.damping = 0.8
+    })?;
+    // Two changes taken back and left by a third: undone work.
+    edit(session, cx, "Change the size", |state| state.size = 0.3)?;
+    edit(session, cx, "Change the size", |state| state.size = 0.2)?;
+    session.undo(cx);
+    session.undo(cx);
+    edit(session, cx, "Change the decay", |state| {
+        state.decay_seconds = 8.
+    })?;
+    edit(session, cx, "Change the diffusion", |state| {
+        state.diffusion = 0.5
+    })?;
+    name(session, "Darker room", cx)?;
+    Ok(tail)
 }

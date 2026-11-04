@@ -11,7 +11,7 @@
 //! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
 //! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
-//! - `history.png`: the History tab, see `snapshots/history.rs`.
+//! - `history*.png`: the History tab, see `snapshots/history.rs`.
 //! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
 //! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
 //!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
