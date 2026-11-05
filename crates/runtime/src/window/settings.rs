@@ -106,6 +106,10 @@ impl SettingsPage {
         &self.back
     }
 
+    pub fn section(&self) -> Section {
+        self.section
+    }
+
     pub fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
         cx.notify();
@@ -156,6 +160,7 @@ impl SettingsPage {
                 .debug_selector(move || format!("settings-{}", name.to_lowercase()))
                 .variant(variant)
                 .size(ButtonSize::Sm)
+                .tab_stop(true)
                 .on_click(cx.listener(move |page, _, _, cx| page.show(section, cx)))
         });
         div()

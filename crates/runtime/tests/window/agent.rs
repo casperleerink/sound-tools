@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{App, AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
-use runtime::window::{LeftPanelSlot, SettingsSlot};
+use runtime::window::{LeftPanelSlot, Section, SettingsSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, Agents, AgentsPage, ApprovalId, ApprovalMode, Attachment,
     Command, Entry, ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, Sidebar,
@@ -460,6 +460,17 @@ fn with_no_agent_the_sidebar_opens_settings(cx: &mut TestAppContext) {
     assert_ne!(focused(&mut opened), before);
     opened.keys("escape");
     assert_eq!(focused(&mut opened), before);
+
+    // From the way back, tab reaches the sections, and enter shows one.
+    opened.keys("secondary-,");
+    opened.keys("tab tab");
+    press_enter(&mut opened);
+    let shell = opened.shell.clone();
+    let section = opened.cx.read(|cx| {
+        let page = shell.read(cx).settings().cloned();
+        page.map(|page| page.read(cx).section())
+    });
+    assert_eq!(section, Some(Section::Audio));
 }
 
 /// Sign out, in Settings, ends the agent. The turn it worked on ends as stopped, and its
