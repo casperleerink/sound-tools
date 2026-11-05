@@ -803,13 +803,13 @@ fn read(history: &History, wanted: Option<(PointId, usize)>) -> io::Result<Shown
     let folded_away = history.folded_away()?;
     let card = |line: &Line| -> io::Result<Card> {
         let tip = history.line_points(line.start).next().transpose()?;
-        let from = splits.get(&line.start).map(|point| From {
-            start: point.line,
-            title: history
-                .line(point.line)
-                .map_or_else(String::new, Line::title),
-            color: color(point.line),
-        });
+        let from = (splits.get(&line.start))
+            .and_then(|point| history.line(point.line))
+            .map(|from| From {
+                start: from.start,
+                title: from.title(),
+                color: color(from.start),
+            });
         Ok(Card {
             line: line.clone(),
             color: color(line.start),
