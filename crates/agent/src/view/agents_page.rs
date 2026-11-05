@@ -1,7 +1,7 @@
 //! The Agents section of the Settings page: every provider found, each with what it needs to
 //! be set up, its account and **Sign out**.
 
-use gpui::{Context, Entity, FontWeight, Subscription, Window, div, prelude::*, px};
+use gpui::{Context, Entity, Subscription, Window, div, prelude::*, px};
 use sound_ui::ActiveTheme;
 
 use super::agents::Agents;
@@ -25,7 +25,7 @@ impl AgentsPage {
 impl Render for AgentsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (strong, muted) = (theme.gray_950, theme.gray_700);
+        let muted = theme.gray_700;
         let agents = self.agents.read(cx);
         let looking = agents.programs().is_empty();
         let sections: Vec<_> = (agents.programs().iter())
@@ -44,22 +44,8 @@ impl Render for AgentsPage {
             .gap(px(24.))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(strong)
-                            .child("Agents"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .text_color(muted)
-                            .child("The agent in the sidebar runs one of these programs."),
-                    ),
+                    .text_color(muted)
+                    .child("The agent in the sidebar runs one of these programs."),
             )
             .when(looking, |page| {
                 page.child(div().text_color(muted).child("Looking for agents…"))

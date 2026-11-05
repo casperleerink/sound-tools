@@ -16,6 +16,7 @@ pub mod new_project;
 pub mod other_apps;
 mod project_menu;
 pub mod recorders;
+mod settings;
 mod start;
 
 use std::path::{Path, PathBuf};
@@ -50,9 +51,9 @@ use audio_input::OpenInput;
 use history::HistoryPanel;
 use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
-pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, choose_new_project, open_another_project, start_again};
 use recorders::Recorders;
+pub use settings::{DeviceList, ListDevices, Section, SettingsPage};
 
 use crate::app::ChosenDevices;
 use crate::{TEMPLATES, Template, open_with_loaded, update, views};
@@ -122,8 +123,8 @@ impl LeftPanelSlot {
     }
 }
 
-/// What the window's Settings page shows, given by the composition root, as
-/// [`LeftPanelSlot`] is. With none installed the window has no Settings page.
+/// The Agents section of the window's Settings page, given by the composition root, as
+/// [`LeftPanelSlot`] is. With none installed the page has no such section.
 #[derive(Clone)]
 pub struct SettingsSlot {
     make: Rc<dyn Fn(&mut Window, &mut Context<Shell>) -> AnyView>,
@@ -231,16 +232,16 @@ pub struct Shell {
     session: Entity<Session>,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
-    /// The Settings page, in place of the main view while it is open.
-    settings: Option<AnyView>,
-    settings_focus: FocusHandle,
-    /// The page's way back, which has the keys when it opens.
-    settings_back: FocusHandle,
+    /// The Settings page, over the whole window while it is open.
+    settings: Option<Entity<SettingsPage>>,
     /// Where the focus was before the page opened, where closing it gives it back.
     settings_return: Option<WeakFocusHandle>,
     /// What the main view shows in the title bar, such as the transport of a song.
     title_bar: Option<Entity<sound_typescript::TitleBar>>,
     project_menu: Entity<ProjectMenu>,
+    /// The output device in use, for the Settings page.
+    device_name: SharedString,
+    list_devices: Option<ListDevices>,
     /// The machine's live input and the meter of the device, see [`LiveInput`].
     live: Entity<LiveInput>,
     focus_handle: FocusHandle,
@@ -353,8 +354,7 @@ impl Shell {
             Tab::History
         };
         let history = cx.new(|cx| HistoryPanel::new(session.clone(), window, cx));
-        let project_menu =
-            cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
+        let project_menu = cx.new(|cx| ProjectMenu::new(session.clone(), window, cx));
         // For the notice of an update.
         cx.observe_global::<update::Ready>(|_, cx| cx.notify())
             .detach();
@@ -366,12 +366,12 @@ impl Shell {
         let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
         let mut shell = Self {
             project_menu,
+            device_name,
+            list_devices,
             live,
             session,
             main: None,
             settings: None,
-            settings_focus: cx.focus_handle(),
-            settings_back: cx.focus_handle().tab_stop(true),
             settings_return: None,
             title_bar: None,
             focus_handle,
@@ -649,17 +649,19 @@ impl Shell {
             })
     }
 
-    /// Opens the Settings page in place of the main view, when the app has one.
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.is_some() {
             return;
         }
-        let Some(slot) = cx.try_global::<SettingsSlot>().cloned() else {
-            return;
-        };
-        self.settings = Some((slot.make)(window, cx));
+        let slot = cx.try_global::<SettingsSlot>().cloned();
+        let agents = slot.map(|slot| (slot.make)(window, cx));
+        let (session, name) = (self.session.clone(), self.device_name.clone());
+        let list = self.list_devices.clone();
+        let page = cx.new(|cx| SettingsPage::new(session, agents, name, list, cx));
         self.settings_return = window.focused(cx).map(|focused| focused.downgrade());
-        window.focus(&self.settings_back, cx);
+        let back = page.read(cx).back().clone();
+        window.focus(&back, cx);
+        self.settings = Some(page);
         cx.notify();
     }
 
@@ -670,41 +672,51 @@ impl Shell {
         cx.notify();
     }
 
-    /// The page: its title with the way back, then what the app shows on it, in a column.
-    fn settings_page(&self, page: AnyView, cx: &mut Context<Self>) -> AnyElement {
-        let back = Button::icon_only("settings-back", "arrow-left")
-            .debug_selector(|| "settings-back".to_string())
-            .variant(ButtonVariant::Ghost)
-            .size(ButtonSize::Sm)
-            .focus_handle(&self.settings_back)
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
-        div()
-            .id("settings")
-            .key_context(SETTINGS_CONTEXT)
-            .track_focus(&self.settings_focus)
-            .size_full()
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .mx_auto()
-                    .max_w(px(640.))
-                    .px(px(40.))
-                    .py(px(32.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(32.))
-                    .child(
-                        div().flex().items_center().gap(px(8.)).child(back).child(
-                            div()
-                                .text_size(px(20.))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(cx.theme().gray_950)
-                                .child("Settings"),
-                        ),
-                    )
-                    .child(page),
-            )
-            .into_any_element()
+    /// The Settings page while it is open.
+    pub fn settings(&self) -> Option<&Entity<SettingsPage>> {
+        self.settings.as_ref()
+    }
+
+    /// The title row, then the left panel and the main view: the window when Settings is not
+    /// over it.
+    fn project_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let main = match &self.main {
+            Some((_, view)) => view.clone().into_any_element(),
+            None => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(self.empty_state(cx))
+                .into_any_element(),
+        };
+        vec![
+            // The title row: the project menu, then what the main view puts there, such as a
+            // song's transport, in the middle of the room right of it. The air on both sides of
+            // the pill moves the window. In a narrow window the air goes first, so the pill
+            // never covers the menu.
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(TOP_ROW_HEIGHT))
+                .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
+                .child(self.left_panel_icon(cx))
+                .child(div().flex_none().child(self.project_menu.clone()))
+                .child(Self::drag_region().flex_1())
+                .children(self.title_bar.clone())
+                .child(Self::drag_region().flex_1())
+                .children(Self::window_controls(window))
+                .into_any_element(),
+            // The panel comes first, so tab reaches it before the main area, as it reads.
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .children(self.left_panel_element(cx))
+                .child(div().flex_1().min_w_0().h_full().child(main))
+                .into_any_element(),
+        ]
     }
 
     /// What the main area shows with no view: in an empty project, the ways to start one.
@@ -1006,18 +1018,16 @@ impl Render for Shell {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Shell, "window");
         let theme = cx.theme();
         let (background, text) = (theme.gray_100, theme.gray_950);
-        let main = match (&self.settings, &self.main) {
-            (Some(settings), _) => self.settings_page(settings.clone(), cx),
-            (None, Some((_, view))) => view.clone().into_any_element(),
-            (None, None) => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(self.empty_state(cx))
-                .into_any_element(),
+        let screen = match &self.settings {
+            Some(settings) => vec![
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(settings.clone())
+                    .into_any_element(),
+            ],
+            None => self.project_screen(window, cx),
         };
-
         div()
             .id("shell")
             .key_context(KEY_CONTEXT)
@@ -1100,32 +1110,7 @@ impl Render for Shell {
             .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
-            // The title row: the project menu, then what the main view puts there, such as a
-            // song's transport, in the middle of the room right of it. The air on both sides of the pill moves the window. In a narrow
-            // window the air goes first, so the pill never covers the menu.
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(TOP_ROW_HEIGHT))
-                    .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
-                    .child(self.left_panel_icon(cx))
-                    .child(div().flex_none().child(self.project_menu.clone()))
-                    .child(Self::drag_region().flex_1())
-                    .children(self.title_bar.clone())
-                    .child(Self::drag_region().flex_1())
-                    .children(Self::window_controls(window)),
-            )
-            // The panel comes first, so tab reaches it before the main area, as it reads.
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .children(self.left_panel_element(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(main)),
-            )
+            .children(screen)
             .child(self.notices(cx))
     }
 }
@@ -1219,10 +1204,10 @@ fn drop_in_background(stream: impl Send + 'static, cx: &App) {
     cx.background_spawn(async move { drop(stream) }).detach();
 }
 
-/// The audio devices of this machine for the device menus of the app's window. A test window
+/// The audio devices of this machine for the Settings page of the app's window. A test window
 /// lists none, so a snapshot does not show this machine's devices.
 fn list_devices(chosen: ChosenDevices) -> ListDevices {
-    Arc::new(move || DeviceMenu {
+    Arc::new(move || DeviceList {
         // A failure leaves a list empty, and the menu offers the default.
         outputs: sound_core::output_devices().unwrap_or_default(),
         inputs: sound_core::input_devices().unwrap_or_default(),
