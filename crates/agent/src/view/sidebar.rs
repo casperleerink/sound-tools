@@ -248,10 +248,7 @@ impl Sidebar {
             cx.subscribe_in(&new_button, window, |sidebar, _, picked, window, cx| {
                 sidebar.picked(picked, window, cx);
             }),
-            cx.observe(&settings, |sidebar, _, cx| {
-                sidebar.update_menu(cx);
-                cx.notify();
-            }),
+            cx.observe(&settings, |sidebar, _, cx| sidebar.follow(cx)),
             cx.observe(&agents, Self::agents_changed),
             cx.subscribe(&agents, |sidebar, _, event: &AgentsEvent, cx| match event {
                 AgentsEvent::Notice(notice) => {
@@ -423,6 +420,13 @@ impl Sidebar {
     /// A change of the app's agents: one signed in, or out. Signed out, the thread's agent
     /// ends; the thread shows again once it is signed in.
     fn agents_changed(&mut self, _: Entity<Agents>, cx: &mut Context<Self>) {
+        self.follow(cx);
+    }
+
+    /// Follows the thread's provider, after a change of the agents, the settings or the
+    /// thread: its agent ends once it is signed out, naming starts once it is signed in, and
+    /// the picker shows it.
+    fn follow(&mut self, cx: &mut Context<Self>) {
         let ready = self.ready_program(cx).is_some();
         if self.ready && !ready {
             self.end_agent(cx);

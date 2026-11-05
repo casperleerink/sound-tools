@@ -306,7 +306,7 @@ impl Sidebar {
         saved.provider = agent.provider;
         self.agent = Some(agent);
         // A thread keeps its provider: the picker offers only its models from now on.
-        self.update_menu(cx);
+        self.follow(cx);
     }
 
     pub(super) fn stop(&mut self, cx: &mut Context<Self>) {

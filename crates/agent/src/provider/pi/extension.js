@@ -30,12 +30,14 @@ function landing(input, cwd) {
   }
 }
 
-// Whether the tool call stays in the project: its path, or the project when it names none.
-// Pi's tools take any path, so one outside the project always asks, as Claude Code does.
-function inProject(event, cwd) {
-  const project = realpathSync(cwd);
-  const relative = path.relative(project, landing(event.input.path ?? ".", cwd));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+// Where the tool call lands outside the project, or `undefined` inside it: its path, or the
+// project when it names none. Pi's tools take any path, so one outside always asks, as
+// Claude Code does.
+function outside(event, cwd) {
+  const landed = landing(event.input.path ?? ".", cwd);
+  const relative = path.relative(realpathSync(cwd), landed);
+  const inside = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return inside ? undefined : landed;
 }
 
 export default function (pi) {
@@ -43,7 +45,6 @@ export default function (pi) {
 
   pi.registerFlag("sound-tools-approval", { type: "string", default: "ask_before_commands" });
   let mode;
-  // What the composer allowed for the thread: a tool by name, or one command whole.
   const allowed = new Set();
 
   pi.registerCommand("sound-tools-approval", {
@@ -55,11 +56,13 @@ export default function (pi) {
   pi.on("tool_call", async (event, ctx) => {
     mode ??= pi.getFlag("sound-tools-approval");
     const tool = event.toolName;
-    const key = tool === "bash" ? `bash:${event.input.command}` : tool;
+    const landed = tool === "bash" ? undefined : outside(event, process.cwd());
+    // Allowed for the thread: one command, one place outside the project, or a tool inside it.
+    const key =
+      tool === "bash" ? `bash:${event.input.command}` : landed ? `${tool}:${landed}` : tool;
     if (mode === "never_ask" || allowed.has(key)) return undefined;
-    const inside = inProject(event, process.cwd());
-    if (READS.has(tool) && inside) return undefined;
-    if (mode === "ask_before_commands" && CHANGES.has(tool) && inside) return undefined;
+    if (READS.has(tool) && !landed) return undefined;
+    if (mode === "ask_before_commands" && CHANGES.has(tool) && !landed) return undefined;
     // The title is the tool call's id: Sound Tools words the question from its step.
     const answer = await ctx.ui.select(event.toolCallId, ["allow", "allow_for_thread", "deny"], {
       signal: ctx.signal,

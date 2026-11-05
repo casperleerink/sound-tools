@@ -335,7 +335,11 @@ impl ModelPicker {
                     }))
             })
             .collect();
-        let empty = rows.is_empty();
+        let empty = match rows.is_empty() {
+            false => None,
+            true if self.search.read(cx).text().trim().is_empty() => Some("No models yet."),
+            true => Some("No model matches."),
+        };
         div()
             .id("model-picker-list")
             .flex_1()
@@ -345,14 +349,7 @@ impl ModelPicker {
             .track_scroll(&self.scroll)
             .p(px(4.))
             .children(rows)
-            .when(empty, |list| {
-                list.child(
-                    div()
-                        .p(px(10.))
-                        .text_color(muted)
-                        .child("No model matches."),
-                )
-            })
+            .children(empty.map(|empty| div().p(px(10.)).text_color(muted).child(empty)))
     }
 
     fn panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -373,7 +370,10 @@ impl ModelPicker {
             .text_size(px(14.))
             .flex()
             .on_mouse_down_out(cx.listener(|picker, _, window, cx| picker.close(window, cx)))
-            .child(self.rail(cx))
+            // One provider needs no rail.
+            .when(self.shown.offered.len() > 1, |panel| {
+                panel.child(self.rail(cx))
+            })
             .child(
                 div()
                     .flex_1()

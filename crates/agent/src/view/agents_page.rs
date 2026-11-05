@@ -93,7 +93,11 @@ impl Render for AgentsPage {
         let theme = cx.theme();
         let muted = theme.gray_700;
         let agents = self.agents.read(cx);
-        let looking = agents.programs().is_empty();
+        let looking = match (agents.is_finding(), agents.programs().is_empty()) {
+            (true, _) => Some("Looking for agents…"),
+            (false, true) => Some("No agent runs on this computer. Install Claude Code or Pi."),
+            (false, false) => None,
+        };
         let sections: Vec<_> = (agents.programs().iter())
             .map(|program| {
                 let provider = program.provider;
@@ -114,9 +118,7 @@ impl Render for AgentsPage {
                     .text_color(muted)
                     .child("The agent in the sidebar runs one of these programs."),
             )
-            .when(looking, |page| {
-                page.child(div().text_color(muted).child("Looking for agents…"))
-            })
+            .children(looking.map(|looking| div().text_color(muted).child(looking)))
             .children(sections)
     }
 }

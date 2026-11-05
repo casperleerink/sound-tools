@@ -52,7 +52,11 @@ pub struct Program {
     pub provider: Provider,
     /// The program and its environment. A download may not be on disk yet.
     pub installed: Option<Installed>,
+    /// What the Settings page shows of it.
     pub setup: Setup,
+    /// Whether the last check found it signed in: a thread runs on it while it is. A sign-in
+    /// to another of Pi's providers, or a check, leaves it as it is.
+    signed_in: bool,
     /// The ways in, from the last check.
     pub choices: Vec<SignInChoice>,
     /// Whether the providers that take a key show.
@@ -70,6 +74,7 @@ impl Program {
         Program {
             provider,
             installed,
+            signed_in: matches!(setup, Setup::Ready { .. }),
             setup,
             choices: Vec::new(),
             keys: false,
@@ -80,7 +85,7 @@ impl Program {
     }
 
     pub fn is_ready(&self) -> bool {
-        matches!(self.setup, Setup::Ready { .. })
+        self.signed_in
     }
 }
 
@@ -157,8 +162,14 @@ impl Agents {
     /// Whether the login shell is still read, or every program still asked: nothing to show
     /// but the shape of a thread yet.
     pub fn is_checking(&self) -> bool {
+        self.is_finding()
+            || (!self.programs.is_empty()
+                && (self.programs.iter()).all(|program| program.setup == Setup::Checking))
+    }
+
+    /// Whether the login shell is still read, so no program is known yet.
+    pub fn is_finding(&self) -> bool {
         self.finding.is_some()
-            || (self.programs.iter()).all(|program| program.setup == Setup::Checking)
     }
 
     fn find(&mut self, first_on_path: Option<PathBuf>, cx: &mut Context<Self>) {
@@ -246,8 +257,16 @@ impl Agents {
 
     /// The account the running agent of `provider` reports, the newest word on it.
     pub fn signed_in_as(&mut self, provider: Provider, account: Account, cx: &mut Context<Self>) {
-        if self.program(provider).is_some_and(Program::is_ready) {
+        let shown = self.program(provider).map(|program| &program.setup);
+        if matches!(shown, Some(Setup::Ready { .. })) {
             self.set_setup(provider, Setup::Ready { account }, cx);
+        }
+    }
+
+    fn set_signed_in(&mut self, provider: Provider, signed_in: bool, cx: &mut Context<Self>) {
+        if let Some(program) = self.program_mut(provider) {
+            program.signed_in = signed_in;
+            cx.notify();
         }
     }
 
@@ -300,6 +319,7 @@ impl Agents {
             {
                 let reason = Some(format!("{} is signed out.", provider.name()));
                 (agents.update(cx, |agents, cx| {
+                    agents.set_signed_in(provider, false, cx);
                     agents.set_setup(provider, Setup::SignedOut { reason }, cx);
                 }))
                 .ok();
@@ -323,7 +343,10 @@ impl Agents {
             self.set_setup(provider, Setup::NotInstalled, cx);
             return;
         };
-        self.set_setup(provider, Setup::Checking, cx);
+        // A program signed in shows so until the answer, and its threads go on meanwhile.
+        if !self.program(provider).is_some_and(Program::is_ready) {
+            self.set_setup(provider, Setup::Checking, cx);
+        }
         let asking = cx.background_spawn({
             let installed = installed.clone();
             async move { provider.status(&installed).await }
@@ -354,6 +377,7 @@ impl Agents {
             let told = agents.update(cx, |agents, cx| {
                 if let Some(program) = agents.program_mut(provider) {
                     program.choices = choices;
+                    program.signed_in = ready;
                 }
                 if ready && picks {
                     let settings = agents.settings.clone();
@@ -593,6 +617,7 @@ impl Agents {
         let Some(installed) = self.ready(provider) else {
             return;
         };
+        self.set_signed_in(provider, false, cx);
         self.set_setup(provider, Setup::Checking, cx);
         let signing_out = cx.background_spawn(async move { provider.sign_out(&installed).await });
         let task = cx.spawn(async move |agents, cx| {
@@ -633,7 +658,31 @@ impl SignInEnded {
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestAppContext;
+
     use super::*;
+
+    /// A sign-in to another of Pi's providers leaves Pi signed in, so its threads go on.
+    #[gpui::test]
+    fn a_sign_in_leaves_a_signed_in_provider_signed_in(cx: &mut TestAppContext) {
+        let installed = Installed {
+            program: "/nonexistent/pi".into(),
+            environment: HashMap::new(),
+        };
+        let agents = cx.new(|cx| {
+            let settings = cx.new(|cx| AgentSettings::new(None, cx));
+            Agents::with_programs(vec![(Provider::Pi, installed)], settings)
+        });
+        let choice = SignInChoice::examples(Provider::Pi, &[], &["OpenRouter"]).remove(0);
+        agents.update(cx, |agents, cx| {
+            agents.act(Provider::Pi, SetupAction::SignIn(choice), cx);
+            assert!(matches!(
+                agents.program(Provider::Pi).map(|program| &program.setup),
+                Some(Setup::SigningIn(_))
+            ));
+            assert!(agents.ready(Provider::Pi).is_some());
+        });
+    }
 
     #[test]
     fn a_sign_in_out_of_time_failed_or_cancelled_says_why() {
