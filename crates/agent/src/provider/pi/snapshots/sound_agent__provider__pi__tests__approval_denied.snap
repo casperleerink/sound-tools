@@ -1,0 +1,58 @@
+---
+source: crates/agent/src/provider/pi/tests.rs
+expression: "replay(\"approval_denied\")"
+---
+[
+    TurnStarted,
+    Started {
+        account: None,
+        models: [
+            Model {
+                id: "openrouter/google/gemini-2.5-flash-lite",
+                name: "Google: Gemini 2.5 Flash Lite",
+                description: "",
+                short_name: "Google: Gemini 2.5 Flash Lite",
+                source: Some(
+                    "OpenRouter",
+                ),
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "tool_write_FlSqrzU9wLlAJWyur8Hi",
+        ),
+        title: "Wrote c.txt",
+        running_title: "Writing c.txt",
+        request_title: "Write c.txt",
+        command: None,
+        kind: Change {
+            path: "c.txt",
+        },
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "20cdc36c-5975-4f4e-a82f-611010a32681",
+        ),
+        title: "Write c.txt",
+        command: None,
+    },
+    StepDone {
+        id: StepId(
+            "tool_write_FlSqrzU9wLlAJWyur8Hi",
+        ),
+        outcome: Denied,
+    },
+    TextDelta {
+        text: "I encountered an issue while trying to write to `c.txt`. The system responded with \"The composer denied this.\" I am unable to create the file.",
+    },
+    TextDone {
+        text: "I encountered an issue while trying to write to `c.txt`. The system responded with \"The composer denied this.\" I am unable to create the file.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

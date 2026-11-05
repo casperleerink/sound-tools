@@ -9,8 +9,9 @@
 //!   keeps the composer's approval mode and model there too (`settings`).
 //! - [`login_shell_environment`] is the environment to run it in. An app opened from the
 //!   Finder has a bare `PATH`, and the agent needs `cargo` and `git`.
-//! - [`Agents`] finds each provider's program once for the app, downloads it ([`install`])
-//!   and runs its own sign-in ([`Provider::account`], [`SignInChoice`]). [`AgentsPage`] shows
+//! - [`Agents`] finds each provider's program once for the app, downloads Claude Code when
+//!   there is none ([`install`]) and runs the provider's own sign-in ([`Provider::status`],
+//!   [`SignInChoice`]). [`AgentsPage`] shows
 //!   each [`Setup`] state on the Settings page; the sidebar runs a thread once one is ready.
 //! - Once it is ready, the sidebar also names the versions of the project history with the
 //!   provider's small model ([`Provider::ask_small_model`], `naming`).
@@ -32,12 +33,13 @@ pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command, Events,
-    ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, SignInChoice, StepId,
-    StepKind, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
+    Account, AgentEvent, Answer, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command,
+    Events, ExitReason, Image, ImageFormat, Installed, Message, Model, Pick, Provider,
+    SignInChoice, SignInQuestion, SignInStep, Status, StepId, StepKind, StepOutcome, Thread,
+    ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
 pub use view::{
     Agents, AgentsEvent, AgentsPage, FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Program,
-    Setup, SetupAction, Sidebar,
+    Setup, SetupAction, Sidebar, SigningIn,
 };

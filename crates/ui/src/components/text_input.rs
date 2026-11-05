@@ -275,6 +275,8 @@ pub struct TextInput {
     last_edit: Option<(EditKind, usize)>,
     bare: bool,
     disabled: bool,
+    /// Shows stars for the text and copies nothing, for a key.
+    secret: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel: Option<SubmitHandler>,
     on_change: Option<SubmitHandler>,
@@ -316,6 +318,7 @@ impl TextInput {
             last_edit: None,
             bare: false,
             disabled: false,
+            secret: false,
             on_submit: None,
             on_cancel: None,
             on_change: None,
@@ -362,6 +365,14 @@ impl TextInput {
     pub fn bare(mut self, bare: bool) -> Self {
         self.bare = bare;
         self
+    }
+
+    /// Hides the text as it is typed, and keeps it off the clipboard.
+    pub fn set_secret(&mut self, secret: bool, cx: &mut Context<Self>) {
+        if self.secret != secret {
+            self.secret = secret;
+            cx.notify();
+        }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -791,6 +802,9 @@ impl TextInput {
     }
 
     fn selected_text(&self) -> Option<String> {
+        if self.secret {
+            return None;
+        }
         self.content
             .get(self.selected_range.clone())
             .filter(|selected| !selected.is_empty())
@@ -1053,6 +1067,9 @@ impl TextInput {
     fn display(&self, style: &TextStyle, placeholder_color: Hsla) -> (SharedString, Vec<TextRun>) {
         let (text, color) = if self.content.is_empty() {
             (self.placeholder.clone(), placeholder_color)
+        } else if self.secret {
+            // A star per byte, so every offset into the text is one into the stars.
+            ("*".repeat(self.content.len()).into(), style.color)
         } else {
             (self.content.clone(), style.color)
         };

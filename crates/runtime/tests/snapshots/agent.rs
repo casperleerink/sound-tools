@@ -58,6 +58,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                 name: name.to_string(),
                 description: description.to_string(),
                 short_name: name.to_string(),
+                source: None,
             };
             let account = Account {
                 email: Some("composer@example.com".to_string()),
@@ -79,7 +80,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
             sidebar.begin_at(message, Vec::new(), started, cx);
             sidebar.receive(
                 [
-                    AgentEvent::Started { account, models },
+                    AgentEvent::Started {
+                        account: Some(account),
+                        models,
+                    },
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("read"),
@@ -264,13 +268,18 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     opened.key("shift-tab", cx)?;
     save(cx, opened.window.into(), "agent-focus")?;
 
-    let (model_menu, access_menu, new_menu) = cx.update(|cx| {
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        sidebar.update(cx, |sidebar, cx| sidebar.open_model_picker(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(cx, opened.window.into(), "agent-menu")?;
+    opened.key("escape", cx)?;
+
+    let (access_menu, new_menu) = cx.update(|cx| {
         let sidebar = sidebar.read(cx);
-        let menus = (sidebar.model_menu(), sidebar.access_menu());
-        (menus.0.clone(), menus.1.clone(), sidebar.new_menu(cx))
+        (sidebar.access_menu().clone(), sidebar.new_menu(cx))
     });
     for (menu, name) in [
-        (model_menu, "agent-menu"),
         (access_menu, "agent-access-menu"),
         (new_menu, "agent-new-menu"),
     ] {
@@ -366,7 +375,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     std::fs::write(&take, "")?;
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
-            sidebar.connect(thread);
+            sidebar.connect(thread, cx);
             sidebar.attach_files(vec![picture.clone(), take], cx);
             sidebar.composer().update(cx, |composer, cx| {
                 composer.set_text(
@@ -412,7 +421,8 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     Ok(())
 }
 
-/// The piece in a window with the sidebar open in its left panel. Its `claude` cannot start:
+/// The piece in a window with the sidebar open in its left panel, signed in to Claude Code and
+/// to Pi, whose models are set here. Its `claude` cannot start:
 /// the snapshot hands the sidebar its events. Nothing is remembered, so the panel opens, as
 /// at the first start.
 fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Sidebar>)> {
@@ -422,7 +432,34 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
             program: "/nonexistent/claude".into(),
             environment: HashMap::new(),
         };
-        let programs = vec![(Provider::Claude, installed)];
+        let pi = Installed {
+            program: "/nonexistent/pi".into(),
+            environment: HashMap::new(),
+        };
+        let programs = vec![(Provider::Claude, installed), (Provider::Pi, pi)];
+        let model = |id: &str, name: &str, source: &str| Model {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: String::new(),
+            short_name: name.to_string(),
+            source: Some(source.to_string()),
+        };
+        let models = vec![
+            model("openai-codex/gpt-6.1", "GPT-6.1", "OpenAI Codex"),
+            model(
+                "openrouter/moonshotai/kimi-k3",
+                "MoonshotAI: Kimi K3",
+                "OpenRouter",
+            ),
+            model(
+                "openrouter/google/gemini-3-flash",
+                "Google: Gemini 3 Flash",
+                "OpenRouter",
+            ),
+        ];
+        settings.update(cx, |settings, cx| {
+            settings.set_models(Provider::Pi, models, cx)
+        });
         let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
         SettingsSlot::new({
             let agents = agents.clone();

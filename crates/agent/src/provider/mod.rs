@@ -5,7 +5,10 @@
 //! [`Provider`] variant and a new module; the compiler then points at every `match` that needs
 //! an arm.
 
+mod action;
 mod claude;
+mod jsonl;
+mod pi;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -16,22 +19,32 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use smol::channel::{self, Receiver, Sender};
 
+use self::pi::PiSignIn;
 use crate::install::Download;
 
 /// The coding agent CLI that runs a thread.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Serde gives its name in the settings and the saved threads: renaming a variant loses the
+/// composer's pick and the threads of that provider.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Provider {
+    #[default]
     Claude,
+    Pi,
 }
 
 impl Provider {
-    /// In the order the app offers them.
-    pub const ALL: [Provider; 1] = [Provider::Claude];
+    /// In the order the sidebar offers them.
+    pub const ALL: [Provider; 2] = [Provider::Claude, Provider::Pi];
 
     /// The program's name for the composer, as in "The agent runs Claude Code by Anthropic."
     pub fn name(self) -> &'static str {
         match self {
             Provider::Claude => "Claude Code",
+            Provider::Pi => "Pi",
         }
     }
 
@@ -39,6 +52,7 @@ impl Provider {
     pub fn maker(self) -> &'static str {
         match self {
             Provider::Claude => "Anthropic",
+            Provider::Pi => "Earendil",
         }
     }
 
@@ -46,13 +60,16 @@ impl Provider {
     pub fn command(self) -> &'static str {
         match self {
             Provider::Claude => "claude",
+            Provider::Pi => "pi",
         }
     }
 
-    /// The pinned program for this computer, or `None` when the provider has no build for it.
+    /// The pinned program for this computer, or `None` when the provider has no build for it
+    /// or is not downloaded: Pi runs only where the composer installed it.
     pub fn download(self) -> Option<Download> {
         match self {
             Provider::Claude => claude::download(),
+            Provider::Pi => None,
         }
     }
 
@@ -61,33 +78,28 @@ impl Provider {
     pub fn program_variable(self) -> &'static str {
         match self {
             Provider::Claude => "SOUND_TOOLS_CLAUDE",
+            Provider::Pi => "SOUND_TOOLS_PI",
         }
     }
 
-    /// The ways in the provider offers, in the order the composer reads them.
-    pub fn sign_in_choices(self) -> Vec<SignInChoice> {
+    /// Whether the program is signed in, and the ways in it offers. Fails when the program
+    /// does not run; the error is the first line it wrote.
+    pub async fn status(self, installed: &Installed) -> io::Result<Status> {
         match self {
-            Provider::Claude => claude::SIGN_IN_CHOICES
-                .map(|(label, arguments)| SignInChoice {
-                    provider: self,
-                    label,
-                    arguments,
-                })
-                .to_vec(),
+            Provider::Claude => Ok(Status {
+                account: claude::account(installed).await?,
+                choices: claude_choices(),
+            }),
+            Provider::Pi => pi::status(installed).await,
         }
     }
 
-    /// The account the program is signed in to, or `None` when it is signed out. Fails when
-    /// the program does not run; the error is the first line it wrote.
-    pub async fn account(self, installed: &Installed) -> io::Result<Option<Account>> {
-        match self {
-            Provider::Claude => claude::account(installed).await,
-        }
-    }
-
-    /// What the composer can pick, the default first, before any thread has started: starts
-    /// an agent in `folder` that is never sent a message, and ends it once it is ready.
+    /// What the composer can pick, the default first, before any thread has started. Claude
+    /// starts an agent in `folder` that is never sent a message, and ends it once it is ready.
     pub async fn models(self, installed: Installed, folder: PathBuf) -> io::Result<Vec<Model>> {
+        if self == Provider::Pi {
+            return pi::models(&installed).await;
+        }
         // Held to the end: dropping every handle closes the agent before it answers.
         let (_thread, mut events) = Thread::start(ThreadOptions {
             provider: self,
@@ -112,9 +124,12 @@ impl Provider {
         Err(io::Error::other("it ended before it was ready"))
     }
 
+    /// Signs the program out. Pi has a sign-in per provider, which the composer manages in
+    /// Pi.
     pub async fn sign_out(self, installed: &Installed) -> io::Result<()> {
         match self {
             Provider::Claude => claude::sign_out(installed).await,
+            Provider::Pi => Err(io::Error::other("Pi signs out in Pi itself.")),
         }
     }
 
@@ -128,6 +143,7 @@ impl Provider {
     ) -> io::Result<String> {
         match self {
             Provider::Claude => claude::ask_small_model(installed, instructions, question).await,
+            Provider::Pi => pi::ask_small_model(installed, instructions, question).await,
         }
     }
 }
@@ -141,33 +157,135 @@ pub struct Installed {
     pub environment: HashMap<OsString, OsString>,
 }
 
+/// Whether a provider's program is signed in, and how it signs in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+    /// `None` when it is signed out.
+    pub account: Option<Account>,
+    /// In the order the composer reads them.
+    pub choices: Vec<SignInChoice>,
+}
+
 /// One way to sign in that a provider offers, such as "Sign in with your Claude plan". Each
-/// runs the provider's own flow in the browser, so the app never handles a credential.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// runs the provider's own flow, so the credential stays in the provider's own store.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignInChoice {
     provider: Provider,
-    label: &'static str,
-    /// What the provider's program runs it with, for its driver.
-    arguments: &'static [&'static str],
+    label: String,
+    way: Way,
+}
+
+/// The ways in Claude Code offers, the same on every computer.
+fn claude_choices() -> Vec<SignInChoice> {
+    (claude::SIGN_IN_CHOICES.iter())
+        .map(|(label, arguments)| SignInChoice {
+            provider: Provider::Claude,
+            label: label.to_string(),
+            way: Way::Claude(arguments),
+        })
+        .collect()
+}
+
+/// What the provider's program runs a sign-in with, for its driver.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Way {
+    Claude(&'static [&'static str]),
+    Pi(PiSignIn),
 }
 
 impl SignInChoice {
-    pub fn provider(self) -> Provider {
+    /// Ways in to show with no program, for the gallery and the snapshots: Claude Code's
+    /// own, or for Pi these labels in the browser and with a key.
+    pub fn examples(provider: Provider, in_browser: &[&str], with_key: &[&str]) -> Vec<Self> {
+        if provider == Provider::Claude {
+            return claude_choices();
+        }
+        let choice = |label: &&str, with_key| SignInChoice {
+            provider,
+            label: label.to_string(),
+            way: Way::Pi(PiSignIn {
+                provider: label.to_lowercase(),
+                with_key,
+            }),
+        };
+        (in_browser.iter().map(|label| choice(label, false)))
+            .chain(with_key.iter().map(|label| choice(label, true)))
+            .collect()
+    }
+
+    pub fn provider(&self) -> Provider {
         self.provider
     }
 
-    /// What its button says.
-    pub fn label(self) -> &'static str {
-        self.label
+    /// What its button says: the way in, or the name of a provider that takes a key.
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
-    /// Runs the sign-in and waits for it to end. Ask [`Provider::account`] after: it may have
-    /// ended with nobody signed in. Dropping the future cancels it.
-    pub async fn run(self, installed: &Installed) -> io::Result<()> {
-        match self.provider {
-            Provider::Claude => claude::sign_in(installed, self.arguments).await,
+    /// Whether it asks for a key, not for an account in the browser.
+    pub fn takes_key(&self) -> bool {
+        matches!(&self.way, Way::Pi(way) if way.with_key)
+    }
+
+    /// Runs the sign-in and waits for it to end. What it shows the composer goes to `steps`,
+    /// and the answer to a [`SignInQuestion`] comes back on `answers` with the question's id.
+    /// Ask [`Provider::status`] after: it may have ended with nobody signed in. Dropping the
+    /// future cancels it.
+    pub async fn run(
+        &self,
+        installed: &Installed,
+        steps: Sender<SignInStep>,
+        answers: Receiver<(String, String)>,
+    ) -> io::Result<()> {
+        match &self.way {
+            // Claude Code opens the browser itself, and its page needs no answer here.
+            Way::Claude(arguments) => claude::sign_in(installed, arguments).await,
+            Way::Pi(way) => pi::sign_in(installed, way, steps, answers).await,
         }
     }
+}
+
+/// What a running sign-in shows the composer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SignInStep {
+    /// The provider's page to sign in on. The sidebar opens it in the browser.
+    Page {
+        url: String,
+    },
+    /// A code to enter on the provider's page.
+    Code {
+        url: String,
+        code: String,
+    },
+    /// What it does meanwhile, in the provider's words.
+    Note(String),
+    Question(SignInQuestion),
+}
+
+/// A question of the sign-in that waits for the composer, such as an API key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignInQuestion {
+    /// What the answer goes back with.
+    pub id: String,
+    pub message: String,
+    pub answer: Answer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// The answer is the id of one.
+    Pick(Vec<Pick>),
+    /// A field, hidden as it is typed when it is `secret`.
+    Text {
+        placeholder: Option<String>,
+        secret: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pick {
+    pub id: String,
+    pub label: String,
 }
 
 /// How much the agent may do without asking.
@@ -237,7 +355,8 @@ pub enum AgentEvent {
     /// nothing in the thread. The session is [`Thread::session_id`].
     #[serde(skip)]
     Started {
-        account: Account,
+        /// `None` when the provider says nothing of it.
+        account: Option<Account>,
         /// What the composer can pick, the provider's default first.
         models: Vec<Model>,
     },
@@ -366,6 +485,9 @@ pub struct Model {
     /// The model it runs, for the composer's menu button: "Opus 5.5" for a default named
     /// "Default (recommended)".
     pub short_name: String,
+    /// Who serves it, for a provider that runs the models of many, such as "OpenRouter".
+    /// The menu groups the models by it.
+    pub source: Option<String>,
 }
 
 /// The id of a new session. It is ours to pick, so it is known before the agent says
@@ -461,9 +583,8 @@ impl Thread {
         let (sender, receiver) = channel::unbounded();
         let session_id = options.resume.clone().unwrap_or_else(new_session_id);
         let driver = match options.provider {
-            Provider::Claude => {
-                Driver::Claude(claude::Events::start(options, &session_id, receiver)?)
-            }
+            Provider::Claude => Driver::Claude(claude::start(options, &session_id, receiver)?),
+            Provider::Pi => Driver::Pi(pi::start(options, &session_id, receiver)?),
         };
         let thread = Thread {
             commands: sender,
@@ -534,6 +655,7 @@ pub struct Events {
 #[derive(Debug)]
 enum Driver {
     Claude(claude::Events),
+    Pi(pi::Events),
 }
 
 impl Events {
@@ -544,6 +666,7 @@ impl Events {
     pub async fn next(&mut self) -> Option<AgentEvent> {
         match &mut self.driver {
             Driver::Claude(events) => events.next().await,
+            Driver::Pi(events) => events.next().await,
         }
     }
 }

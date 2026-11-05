@@ -37,8 +37,8 @@ fn installed(support: &Path) -> Installed {
 fn the_pinned_claude_downloads_checks_out_and_starts_signed_out() {
     let support = tempfile::tempdir().unwrap();
     let installed = installed(support.path());
-    let account = smol::block_on(Provider::Claude.account(&installed)).unwrap();
-    assert_eq!(account, None);
+    let status = smol::block_on(Provider::Claude.status(&installed)).unwrap();
+    assert_eq!(status.account, None);
 }
 
 #[test]
@@ -46,9 +46,11 @@ fn the_pinned_claude_downloads_checks_out_and_starts_signed_out() {
 fn the_sign_in_opens_the_browser_and_cancel_ends_it() {
     let support = tempfile::tempdir().unwrap();
     let installed = installed(support.path());
-    let choice = Provider::Claude.sign_in_choices()[0];
+    let status = smol::block_on(Provider::Claude.status(&installed)).unwrap();
+    let (steps, _) = smol::channel::unbounded();
+    let (_, answers) = smol::channel::unbounded();
     let signing_in = smol::block_on(future::or(
-        async { Some(choice.run(&installed).await) },
+        async { Some(status.choices[0].run(&installed, steps, answers).await) },
         async {
             #[allow(clippy::disallowed_methods)]
             smol::Timer::after(Duration::from_secs(10)).await;
@@ -57,6 +59,6 @@ fn the_sign_in_opens_the_browser_and_cancel_ends_it() {
     ));
     // Still waiting for the browser after 10 s; the race dropped it, which is Cancel.
     assert!(signing_in.is_none(), "{signing_in:?}");
-    let account = smol::block_on(Provider::Claude.account(&installed)).unwrap();
-    assert_eq!(account, None);
+    let status = smol::block_on(Provider::Claude.status(&installed)).unwrap();
+    assert_eq!(status.account, None);
 }

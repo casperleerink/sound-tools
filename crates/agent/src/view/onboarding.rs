@@ -1,18 +1,19 @@
-//! How far a provider is set up, as the Settings page shows it: the download, the sign-in, and
-//! the account with **Sign out**. Plain state in, buttons out, so the gallery shows every state
-//! with no process. The sidebar shows a skeleton of the thread while the app checks.
+//! How far a provider is set up, as the Settings page shows it: the download, the ways in and
+//! the steps of a sign-in, and the account. Plain state in, buttons out, so the gallery shows
+//! every state with no process. The sidebar shows a skeleton of the thread while the app checks.
 
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, FontWeight, SharedString, Window, div, prelude::*,
-    pulsating_between, px, relative,
+    Animation, AnimationExt, AnyElement, App, Entity, FontWeight, SharedString, Window, div,
+    prelude::*, pulsating_between, px, relative,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::text_input::TextInput;
 
-use crate::{Account, Provider, SignInChoice};
+use crate::{Account, Answer, Provider, SignInChoice, SignInQuestion, SignInStep};
 
 /// Where the app is in setting up the agent of one provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,8 +33,7 @@ pub enum Setup {
     SignedOut {
         reason: Option<String>,
     },
-    /// The provider's page is open in the browser.
-    SigningIn,
+    SigningIn(SigningIn),
     /// A thread can run on it.
     Ready {
         account: Account,
@@ -44,16 +44,48 @@ pub enum Setup {
     },
 }
 
+/// What a running sign-in has shown so far.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SigningIn {
+    /// The provider's page, once it said which.
+    pub page: Option<String>,
+    /// A code to enter on the page.
+    pub code: Option<String>,
+    /// The provider's last words on it.
+    pub note: Option<String>,
+    pub question: Option<SignInQuestion>,
+}
+
+impl SigningIn {
+    pub fn show(&mut self, step: SignInStep) {
+        match step {
+            SignInStep::Page { url } => self.page = Some(url),
+            SignInStep::Code { url, code } => {
+                self.page = Some(url);
+                self.code = Some(code);
+            }
+            SignInStep::Note(note) => self.note = Some(note),
+            SignInStep::Question(question) => self.question = Some(question),
+        }
+    }
+}
+
 /// What a button of the onboarding asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SetupAction {
     /// Set up, and Try again after a failed download.
     Download,
     /// Stops the download or the sign-in.
     Cancel,
     SignIn(SignInChoice),
-    /// Starts the sign-in again, which opens the page again.
+    /// Shows the providers that take a key.
+    ShowKeys,
+    /// Opens the provider's page again, or starts the sign-in again when it never said which.
     OpenPageAgain,
+    /// Answers the question with the id of a pick.
+    Pick(String),
+    /// Answers the question with what the field holds.
+    Continue,
     SignOut,
     /// Try again after the program did not run.
     Check,
@@ -66,6 +98,12 @@ type ActionHandler = Rc<dyn Fn(&SetupAction, &mut Window, &mut App)>;
 pub struct Onboarding {
     provider: Provider,
     setup: Setup,
+    /// The ways in, from the last check: in the browser first, then those that take a key.
+    choices: Vec<SignInChoice>,
+    /// Whether the providers that take a key show.
+    keys: bool,
+    /// The field a question of the sign-in is answered in.
+    answer: Option<Entity<TextInput>>,
     on_action: Option<ActionHandler>,
 }
 
@@ -74,8 +112,22 @@ impl Onboarding {
         Self {
             provider,
             setup,
+            choices: Vec::new(),
+            keys: false,
+            answer: None,
             on_action: None,
         }
+    }
+
+    pub fn choices(mut self, choices: Vec<SignInChoice>, keys: bool) -> Self {
+        self.choices = choices;
+        self.keys = keys;
+        self
+    }
+
+    pub fn answer(mut self, answer: Entity<TextInput>) -> Self {
+        self.answer = Some(answer);
+        self
     }
 
     pub fn on_action(
@@ -144,40 +196,113 @@ pub(super) fn skeleton(cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// What one state shows: its sentence, a quieter line, then its controls.
+#[derive(Default)]
+struct Shown {
+    sentence: Option<String>,
+    quiet: Option<String>,
+    /// Shown large, as a code to type.
+    code: Option<String>,
+    controls: Vec<AnyElement>,
+    /// Under the controls, such as the providers that take a key.
+    more: Vec<AnyElement>,
+}
+
+/// Makes the buttons of one provider. The keyboard reaches every one, and its focus stays
+/// across renders.
+struct Buttons {
+    key: String,
+    on_action: Option<ActionHandler>,
+}
+
+impl Buttons {
+    fn make(
+        &self,
+        id: String,
+        label: impl Into<SharedString>,
+        action: SetupAction,
+        variant: ButtonVariant,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let state = SharedString::from(format!("onboarding-{}-{id}", self.key));
+        let handle = window
+            .use_keyed_state(state, cx, |_, cx| cx.focus_handle().tab_stop(true))
+            .read(cx)
+            .clone();
+        let selector = format!("setup-{id}");
+        let button = Button::new(SharedString::from(format!("{}-{id}", self.key)), label)
+            .debug_selector(move || selector)
+            .variant(variant)
+            .size(ButtonSize::Md)
+            .w_full()
+            .focus_handle(&handle);
+        match self.on_action.clone() {
+            Some(on_action) => button
+                .on_click(move |_, window, cx| on_action(&action, window, cx))
+                .into_any_element(),
+            None => button.into_any_element(),
+        }
+    }
+
+    /// The ways in: those in the browser as buttons, and **Use an API key**, which shows the
+    /// providers that take one.
+    fn choices(
+        &self,
+        choices: Vec<SignInChoice>,
+        keys: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (Vec<AnyElement>, Vec<AnyElement>) {
+        let (with_key, in_browser): (Vec<_>, Vec<_>) =
+            choices.into_iter().partition(SignInChoice::takes_key);
+        let mut controls: Vec<AnyElement> = (in_browser.into_iter().enumerate())
+            .map(|(index, choice)| {
+                let label = choice.label().to_string();
+                let action = SetupAction::SignIn(choice);
+                let id = format!("sign-in-{index}");
+                self.make(id, label, action, ButtonVariant::Subtle, window, cx)
+            })
+            .collect();
+        if with_key.is_empty() {
+            return (controls, Vec::new());
+        }
+        if !keys {
+            let (action, variant) = (SetupAction::ShowKeys, ButtonVariant::Ghost);
+            let keys = self.make("keys".into(), "Use an API key", action, variant, window, cx);
+            controls.push(keys);
+            return (controls, Vec::new());
+        }
+        let more = (with_key.into_iter().enumerate())
+            .map(|(index, choice)| {
+                let label = choice.label().to_string();
+                let action = SetupAction::SignIn(choice);
+                let id = format!("key-{index}");
+                self.make(id, label, action, ButtonVariant::Ghost, window, cx)
+            })
+            .collect();
+        (controls, more)
+    }
+}
+
 impl RenderOnce for Onboarding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let (text, muted, strong) = (theme.gray_900, theme.gray_700, theme.gray_950);
         let name = self.provider.name();
-        let on_action = self.on_action;
-        // The keyboard reaches every button, and its focus stays across renders.
-        let mut focus = (0..2usize).map(|index| {
-            window
-                .use_keyed_state(("onboarding-focus", index), cx, |_, cx| {
-                    cx.focus_handle().tab_stop(true)
-                })
-                .read(cx)
-                .clone()
-        });
-        let mut button = |id: &'static str, label: SharedString, action, variant| {
-            let button = Button::new(id, label)
-                .debug_selector(move || format!("setup-{id}"))
-                .variant(variant)
-                .size(ButtonSize::Md)
-                .w_full();
-            let button = match focus.next() {
-                Some(handle) => button.focus_handle(&handle),
-                None => button,
-            };
-            match on_action.clone() {
-                Some(on_action) => button
-                    .on_click(move |_, window, cx| on_action(&action, window, cx))
-                    .into_any_element(),
-                None => button.into_any_element(),
-            }
+        let buttons = Buttons {
+            key: name.to_lowercase(),
+            on_action: self.on_action,
         };
-        let (sentence, quiet, buttons) = match self.setup {
-            Setup::Checking => (None, Some("Checking…".to_string()), Vec::new()),
+        let (subtle, primary) = (ButtonVariant::Subtle, ButtonVariant::Primary);
+        let mut button = |id: &str, label: SharedString, action, variant| {
+            buttons.make(id.to_string(), label, action, variant, window, cx)
+        };
+        let shown = match self.setup {
+            Setup::Checking => Shown {
+                quiet: Some("Checking…".to_string()),
+                ..Shown::default()
+            },
             Setup::Ready { account } => {
                 let who: Vec<String> = [account.email, account.plan]
                     .into_iter()
@@ -187,13 +312,21 @@ impl RenderOnce for Onboarding {
                     true => "Signed in.".to_string(),
                     false => format!("Signed in: {}", who.join(" · ")),
                 };
-                let sign_out = button(
-                    "sign-out",
-                    "Sign out".into(),
-                    SetupAction::SignOut,
-                    ButtonVariant::Subtle,
-                );
-                (None, Some(signed_in), vec![sign_out])
+                // Pi signs in to one provider at a time, and signs out in Pi itself.
+                let (controls, more) = match self.provider {
+                    Provider::Claude => {
+                        let sign_out =
+                            button("sign-out", "Sign out".into(), SetupAction::SignOut, subtle);
+                        (vec![sign_out], Vec::new())
+                    }
+                    Provider::Pi => buttons.choices(self.choices, self.keys, window, cx),
+                };
+                Shown {
+                    quiet: Some(signed_in),
+                    controls,
+                    more,
+                    ..Shown::default()
+                }
             }
             Setup::NotInstalled => {
                 let size = self.provider.download().map_or(String::new(), |download| {
@@ -203,13 +336,16 @@ impl RenderOnce for Onboarding {
                     "The agent runs {name} by {}. Setup downloads{size}, then opens your browser to sign in.",
                     self.provider.maker()
                 );
-                let set_up = button(
-                    "set-up",
-                    "Set up".into(),
-                    SetupAction::Download,
-                    ButtonVariant::Primary,
-                );
-                (Some(sentence), None, vec![set_up])
+                Shown {
+                    sentence: Some(sentence),
+                    controls: vec![button(
+                        "set-up",
+                        "Set up".into(),
+                        SetupAction::Download,
+                        primary,
+                    )],
+                    ..Shown::default()
+                }
             }
             Setup::Downloading { received, size } => {
                 let percent = (received * 100).checked_div(size).unwrap_or(0).min(100);
@@ -218,74 +354,126 @@ impl RenderOnce for Onboarding {
                     megabytes(received),
                     megabytes(size)
                 );
-                let cancel = button(
-                    "cancel",
-                    "Cancel".into(),
-                    SetupAction::Cancel,
-                    ButtonVariant::Subtle,
-                );
-                (Some(line), None, vec![cancel])
+                Shown {
+                    sentence: Some(line),
+                    controls: vec![button(
+                        "cancel",
+                        "Cancel".into(),
+                        SetupAction::Cancel,
+                        subtle,
+                    )],
+                    ..Shown::default()
+                }
             }
-            Setup::DownloadFailed { message } => {
-                let again = button(
+            Setup::DownloadFailed { message } => Shown {
+                sentence: Some(message),
+                controls: vec![button(
                     "try-again",
                     "Try again".into(),
                     SetupAction::Download,
-                    ButtonVariant::Subtle,
-                );
-                (Some(message), None, vec![again])
-            }
+                    subtle,
+                )],
+                ..Shown::default()
+            },
             Setup::SignedOut { reason } => {
-                let choices = self.provider.sign_in_choices();
-                let buttons = choices
-                    .into_iter()
-                    .zip(["sign-in-first", "sign-in-second"])
-                    .enumerate()
-                    .map(|(index, (choice, id))| {
-                        let variant = if index == 0 {
-                            ButtonVariant::Primary
-                        } else {
-                            ButtonVariant::Subtle
-                        };
-                        button(
-                            id,
-                            choice.label().into(),
-                            SetupAction::SignIn(choice),
-                            variant,
-                        )
-                    })
-                    .collect();
-                (Some("Sign in to start.".to_string()), reason, buttons)
+                let (controls, more) = buttons.choices(self.choices, self.keys, window, cx);
+                Shown {
+                    sentence: Some("Sign in to start.".to_string()),
+                    quiet: reason,
+                    controls,
+                    more,
+                    ..Shown::default()
+                }
             }
-            Setup::SigningIn => {
-                let again = button(
-                    "open-page-again",
-                    "Open the page again".into(),
-                    SetupAction::OpenPageAgain,
-                    ButtonVariant::Subtle,
-                );
-                let cancel = button(
+            Setup::SigningIn(signing_in) => {
+                let SigningIn {
+                    page,
+                    code,
+                    note,
+                    question,
+                } = signing_in;
+                // The browser's step leads while there is one; a question beside it, such as
+                // the address the browser ended on, is the quieter way.
+                let in_browser = page.is_some() || code.is_some();
+                let mut asked = Vec::new();
+                if let Some(question) = &question {
+                    if in_browser {
+                        let label = div().text_color(muted).child(question.message.clone());
+                        asked.push(label.into_any_element());
+                    }
+                    match &question.answer {
+                        Answer::Pick(picks) => {
+                            for (index, pick) in picks.iter().enumerate() {
+                                let action = SetupAction::Pick(pick.id.clone());
+                                let label = SharedString::from(pick.label.clone());
+                                asked.push(button(&format!("pick-{index}"), label, action, subtle));
+                            }
+                        }
+                        Answer::Text { .. } => {
+                            asked.extend(self.answer.clone().map(|field| {
+                                div().w_full().text_left().child(field).into_any_element()
+                            }));
+                            let variant = if in_browser { subtle } else { primary };
+                            let action = SetupAction::Continue;
+                            asked.push(button("continue", "Continue".into(), action, variant));
+                        }
+                    }
+                }
+                let sentence = match &question {
+                    _ if code.is_some() => {
+                        "Enter this code on the page in your browser:".to_string()
+                    }
+                    Some(question) if !in_browser => question.message.clone(),
+                    _ => "Finish signing in in your browser.".to_string(),
+                };
+                let (mut controls, more) = match in_browser {
+                    true => (Vec::new(), asked),
+                    false => (asked, Vec::new()),
+                };
+                // Claude Code never names its page: only starting again opens it again.
+                if in_browser || self.provider == Provider::Claude {
+                    let action = SetupAction::OpenPageAgain;
+                    controls.push(button(
+                        "open-page-again",
+                        "Open the page again".into(),
+                        action,
+                        subtle,
+                    ));
+                }
+                let cancel = SetupAction::Cancel;
+                controls.push(button(
                     "cancel",
                     "Cancel".into(),
-                    SetupAction::Cancel,
+                    cancel,
                     ButtonVariant::Ghost,
-                );
-                let sentence = "Finish signing in in your browser.".to_string();
-                (Some(sentence), None, vec![again, cancel])
+                ));
+                Shown {
+                    sentence: Some(sentence),
+                    quiet: note,
+                    code,
+                    controls,
+                    more,
+                }
             }
-            Setup::Stopped { message } => {
-                let again = button(
+            Setup::Stopped { message } => Shown {
+                sentence: Some(format!("{name} stopped: {message}")),
+                controls: vec![button(
                     "try-again",
                     "Try again".into(),
                     SetupAction::Check,
-                    ButtonVariant::Subtle,
-                );
-                (
-                    Some(format!("{name} stopped: {message}")),
-                    None,
-                    vec![again],
-                )
-            }
+                    subtle,
+                )],
+                ..Shown::default()
+            },
+        };
+        let column = |children: Vec<AnyElement>, gap: f32| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(gap))
+                .w_full()
+                .max_w(px(280.))
+                .children(children)
         };
         div()
             .flex()
@@ -300,20 +488,30 @@ impl RenderOnce for Onboarding {
                     .text_color(strong)
                     .child(name),
             )
-            .children(sentence.map(|sentence| div().text_color(text).child(sentence)))
-            .children(quiet.map(|quiet| div().text_color(muted).child(quiet)))
-            .when(!buttons.is_empty(), |body| {
-                body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .w_full()
-                        .max_w(px(280.))
-                        .children(buttons),
-                )
+            .children(
+                shown
+                    .sentence
+                    .map(|sentence| div().text_color(text).child(sentence)),
+            )
+            .children(shown.code.map(|code| {
+                div()
+                    .text_size(px(24.))
+                    .line_height(px(32.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(strong)
+                    .child(code)
+            }))
+            .children(
+                shown
+                    .quiet
+                    .map(|quiet| div().text_color(muted).child(quiet)),
+            )
+            .when(!shown.controls.is_empty(), |body| {
+                body.child(column(shown.controls, 8.))
             })
-            .into_any_element()
+            .when(!shown.more.is_empty(), |body| {
+                body.child(column(shown.more, 4.))
+            })
     }
 }
 

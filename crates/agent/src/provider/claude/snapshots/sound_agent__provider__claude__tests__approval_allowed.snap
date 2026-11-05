@@ -5,20 +5,23 @@ expression: "replay(\"approval_allowed\")"
 [
     TurnStarted,
     Started {
-        account: Account {
-            email: Some(
-                "composer@example.com",
-            ),
-            plan: Some(
-                "Claude Max",
-            ),
-        },
+        account: Some(
+            Account {
+                email: Some(
+                    "composer@example.com",
+                ),
+                plan: Some(
+                    "Claude Max",
+                ),
+            },
+        ),
         models: [
             Model {
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
                 short_name: "Opus 5.5",
+                source: None,
             },
         ],
     },

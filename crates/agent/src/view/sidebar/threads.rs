@@ -57,6 +57,8 @@ impl Sidebar {
         match current {
             Ok(Some((saved, conversation))) => {
                 self.saved = Some(saved);
+                // A thread keeps its provider: the picker offers only its models.
+                self.update_menu(cx);
                 // Only notices came meanwhile: no message goes while it loads.
                 let meanwhile = std::mem::replace(&mut self.conversation, conversation);
                 self.conversation.append(meanwhile);
@@ -134,6 +136,7 @@ impl Sidebar {
                 self.recent.retain(|thread| thread.id != saved.id);
                 self.keep([Write::Current(Some(saved.clone()))]);
                 self.saved = Some(saved);
+                self.update_menu(cx);
                 // Only notices came meanwhile: no message goes while it reads.
                 let meanwhile = std::mem::replace(&mut self.conversation, conversation);
                 self.conversation.append(meanwhile);
@@ -165,6 +168,7 @@ impl Sidebar {
         self.forget_entries();
         self.list.reset(0);
         self.update_new_menu(cx);
+        self.update_menu(cx);
     }
 }
 

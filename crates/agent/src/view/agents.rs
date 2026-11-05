@@ -9,13 +9,17 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Task};
+use smol::channel::Sender;
 use smol::future;
 
-use super::onboarding::{Setup, SetupAction};
+use super::onboarding::{Setup, SetupAction, SigningIn};
 use crate::environment::put_first_on_path;
 use crate::install::{self, InstallError};
 use crate::settings::AgentSettings;
-use crate::{Account, Installed, Provider, SignInChoice, login_shell_environment, program_on_path};
+use crate::{
+    Account, Installed, Provider, SignInChoice, SignInStep, login_shell_environment,
+    program_on_path,
+};
 
 /// How long the browser may take to sign in before the app gives up and asks again.
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -31,7 +35,7 @@ pub struct Agents {
     programs: Vec<Program>,
     /// Reads the login shell and looks for the programs.
     finding: Option<Task<()>>,
-    /// Where the models are listed with the provider's default first.
+    /// Where each provider's models are listed, its default first.
     settings: Entity<AgentSettings>,
 }
 
@@ -49,8 +53,14 @@ pub struct Program {
     /// The program and its environment. A download may not be on disk yet.
     pub installed: Option<Installed>,
     pub setup: Setup,
+    /// The ways in, from the last check.
+    pub choices: Vec<SignInChoice>,
+    /// Whether the providers that take a key show.
+    pub keys: bool,
     /// The way in of the running sign-in, which **Open the page again** starts again.
     signing_in: Option<SignInChoice>,
+    /// Hands the composer's answers to the running sign-in.
+    answers: Option<Sender<(String, String)>>,
     /// The download, the sign-in or a question to the program. Dropping it cancels it.
     task: Option<Task<()>>,
 }
@@ -61,7 +71,10 @@ impl Program {
             provider,
             installed,
             setup,
+            choices: Vec::new(),
+            keys: false,
             signing_in: None,
+            answers: None,
             task: None,
         }
     }
@@ -128,15 +141,11 @@ impl Agents {
     }
 
     pub fn program(&self, provider: Provider) -> Option<&Program> {
-        self.programs
-            .iter()
-            .find(|program| program.provider == provider)
+        (self.programs.iter()).find(|program| program.provider == provider)
     }
 
     fn program_mut(&mut self, provider: Provider) -> Option<&mut Program> {
-        self.programs
-            .iter_mut()
-            .find(|program| program.provider == provider)
+        (self.programs.iter_mut()).find(|program| program.provider == provider)
     }
 
     /// The program of `provider`, once it is signed in.
@@ -214,10 +223,8 @@ impl Agents {
             })
             .collect();
         for provider in Provider::ALL {
-            if self
-                .program(provider)
-                .is_some_and(|program| program.setup == Setup::Checking)
-            {
+            let checking = self.program(provider);
+            if checking.is_some_and(|program| program.setup == Setup::Checking) {
                 self.check(provider, None, cx);
             }
         }
@@ -244,19 +251,36 @@ impl Agents {
         }
     }
 
+    /// What a button of the Settings page asks for. **Continue** is the page's to answer, with
+    /// the text of its field ([`Self::answer`]).
     pub fn act(&mut self, provider: Provider, action: SetupAction, cx: &mut Context<Self>) {
         match action {
             SetupAction::Download => self.download(provider, cx),
             SetupAction::Cancel => self.cancel(provider, cx),
             SetupAction::SignIn(choice) => self.sign_in(choice, cx),
-            SetupAction::OpenPageAgain => {
-                let choice = self
-                    .program(provider)
-                    .and_then(|program| program.signing_in);
-                if let Some(choice) = choice {
-                    self.sign_in(choice, cx);
+            SetupAction::ShowKeys => {
+                if let Some(program) = self.program_mut(provider) {
+                    program.keys = true;
+                    cx.notify();
                 }
             }
+            SetupAction::OpenPageAgain => {
+                let Some(program) = self.program(provider) else {
+                    return;
+                };
+                match (&program.setup, program.signing_in.clone()) {
+                    (
+                        Setup::SigningIn(SigningIn {
+                            page: Some(page), ..
+                        }),
+                        _,
+                    ) => cx.open_url(page),
+                    (_, Some(choice)) => self.sign_in(choice, cx),
+                    _ => {}
+                }
+            }
+            SetupAction::Pick(id) => self.answer(provider, id, cx),
+            SetupAction::Continue => {}
             SetupAction::SignOut => self.sign_out(provider, cx),
             SetupAction::Check => self.check(provider, None, cx),
         }
@@ -268,10 +292,12 @@ impl Agents {
         let Some(installed) = self.ready(provider) else {
             return;
         };
-        let asking = cx.background_spawn(async move { provider.account(&installed).await });
+        let asking = cx.background_spawn(async move { provider.status(&installed).await });
         let task = cx.spawn(async move |agents, cx| {
             // Signed in, or no answer: the next message shows whether the agent runs.
-            if let Ok(None) = asking.await {
+            if let Ok(status) = asking.await
+                && status.account.is_none()
+            {
                 let reason = Some(format!("{} is signed out.", provider.name()));
                 (agents.update(cx, |agents, cx| {
                     agents.set_setup(provider, Setup::SignedOut { reason }, cx);
@@ -282,19 +308,20 @@ impl Agents {
         self.set_task(provider, task);
     }
 
-    /// Asks the program whether it is signed in. `reason` is what the composer reads when it
-    /// is not, after a sign-in.
+    /// Asks the program whether it is signed in, and how it signs in. `reason` is what the
+    /// composer reads when it is not, after a sign-in, and only a sign-in gives one: signed in
+    /// then, the provider becomes the composer's pick.
     fn check(&mut self, provider: Provider, reason: Option<String>, cx: &mut Context<Self>) {
-        let Some(installed) =
-            (self.program(provider)).and_then(|program| program.installed.clone())
-        else {
+        let installed = (self.program(provider)).and_then(|program| program.installed.clone());
+        let Some(installed) = installed else {
             self.set_setup(provider, Setup::NotInstalled, cx);
             return;
         };
+        let after_sign_in = reason.is_some();
         self.set_setup(provider, Setup::Checking, cx);
         let asking = cx.background_spawn({
             let installed = installed.clone();
-            async move { provider.account(&installed).await }
+            async move { provider.status(&installed).await }
         });
         let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
         let task = cx.spawn(async move |agents, cx| {
@@ -304,19 +331,27 @@ impl Agents {
                 None
             })
             .await;
-            let setup = match answer {
-                Some(Ok(Some(account))) => Setup::Ready { account },
-                Some(Ok(None)) => Setup::SignedOut { reason },
-                Some(Err(error)) => Setup::Stopped {
-                    message: error.to_string(),
+            let stopped = |message: String| (Setup::Stopped { message }, Vec::new());
+            let (setup, choices) = match answer {
+                Some(Ok(status)) => match status.account {
+                    Some(account) => (Setup::Ready { account }, status.choices),
+                    None => (Setup::SignedOut { reason }, status.choices),
                 },
-                None => Setup::Stopped {
-                    message: "it did not answer within 30 seconds.".to_string(),
-                },
+                Some(Err(error)) => stopped(error.to_string()),
+                None => stopped("it did not answer within 30 seconds.".to_string()),
             };
             let ready = matches!(setup, Setup::Ready { .. });
             // An app that quit in the meantime has nobody to tell.
-            let told = agents.update(cx, |agents, cx| agents.set_setup(provider, setup, cx));
+            let told = agents.update(cx, |agents, cx| {
+                if let Some(program) = agents.program_mut(provider) {
+                    program.choices = choices;
+                }
+                if ready && after_sign_in {
+                    let settings = agents.settings.clone();
+                    settings.update(cx, |settings, cx| settings.set_provider(provider, cx));
+                }
+                agents.set_setup(provider, setup, cx);
+            });
             if told.is_err() || !ready {
                 return;
             }
@@ -335,7 +370,7 @@ impl Agents {
             (agents.update(cx, |agents, cx| match listed {
                 Some(Ok(models)) => agents
                     .settings
-                    .update(cx, |settings, cx| settings.set_models(models, cx)),
+                    .update(cx, |settings, cx| settings.set_models(provider, models, cx)),
                 Some(Err(error)) => agents.models_not_listed(provider, &error.to_string(), cx),
                 None => {
                     agents.models_not_listed(provider, "it did not answer within 30 seconds", cx)
@@ -379,9 +414,9 @@ impl Agents {
             // Ends with the download, which drops the sender.
             while let Ok(received) = receiver.recv().await {
                 let downloading = Setup::Downloading { received, size };
-                if (agents.update(cx, |agents, cx| agents.set_setup(provider, downloading, cx)))
-                    .is_err()
-                {
+                let shown =
+                    agents.update(cx, |agents, cx| agents.set_setup(provider, downloading, cx));
+                if shown.is_err() {
                     return;
                 }
             }
@@ -419,44 +454,101 @@ impl Agents {
         }
     }
 
-    /// Runs the provider's sign-in in the browser and waits for it, at most ten minutes.
-    /// Started again, it ends the one before.
+    /// Runs the provider's sign-in and waits for it, at most ten minutes. Its steps show as
+    /// they come. Started again, it ends the one before.
     fn sign_in(&mut self, choice: SignInChoice, cx: &mut Context<Self>) {
         let provider = choice.provider();
-        let Some(installed) =
-            (self.program(provider)).and_then(|program| program.installed.clone())
-        else {
+        let installed = (self.program(provider)).and_then(|program| program.installed.clone());
+        let Some(installed) = installed else {
             return;
         };
-        let running = cx.background_spawn(async move { choice.run(&installed).await });
+        let (steps, shown) = smol::channel::unbounded();
+        let (answers, answered) = smol::channel::unbounded();
+        let running = cx.background_spawn({
+            let choice = choice.clone();
+            async move { choice.run(&installed, steps, answered).await }
+        });
         let timeout = cx.background_executor().timer(SIGN_IN_TIMEOUT);
         let task = cx.spawn(async move |agents, cx| {
+            let showing = {
+                let (agents, mut cx) = (agents.clone(), cx.clone());
+                async move {
+                    while let Ok(step) = shown.recv().await {
+                        let shown = agents.update(&mut cx, |agents, cx| {
+                            agents.sign_in_step(provider, step, cx);
+                        });
+                        if shown.is_err() {
+                            break;
+                        }
+                    }
+                    future::pending().await
+                }
+            };
             // The one that loses the race is dropped: a sign-in out of time ends its process.
             let ended = future::or(
-                async {
-                    match running.await {
-                        Ok(()) => SignInEnded::Finished,
-                        Err(error) => SignInEnded::Failed(error),
-                    }
-                },
-                async {
-                    timeout.await;
-                    SignInEnded::TimedOut
-                },
+                future::or(
+                    async {
+                        match running.await {
+                            Ok(()) => SignInEnded::Finished,
+                            Err(error) => SignInEnded::Failed(error),
+                        }
+                    },
+                    async {
+                        timeout.await;
+                        SignInEnded::TimedOut
+                    },
+                ),
+                showing,
             )
             .await;
             (agents.update(cx, |agents, cx| agents.signed_in(provider, ended, cx))).ok();
         });
         if let Some(program) = self.program_mut(provider) {
             program.signing_in = Some(choice);
+            program.answers = Some(answers);
             program.task = Some(task);
         }
-        self.set_setup(provider, Setup::SigningIn, cx);
+        self.set_setup(provider, Setup::SigningIn(SigningIn::default()), cx);
+    }
+
+    fn sign_in_step(&mut self, provider: Provider, step: SignInStep, cx: &mut Context<Self>) {
+        // The provider waits on its page, which the composer has not seen yet.
+        if let SignInStep::Page { url } | SignInStep::Code { url, .. } = &step {
+            cx.open_url(url);
+        }
+        if let Some(Program {
+            setup: Setup::SigningIn(signing_in),
+            ..
+        }) = self.program_mut(provider)
+        {
+            signing_in.show(step);
+            cx.notify();
+        }
+    }
+
+    /// Answers the question the sign-in of `provider` asked, with a pick or the text of a
+    /// field.
+    pub fn answer(&mut self, provider: Provider, answer: String, cx: &mut Context<Self>) {
+        let Some(Program {
+            setup: Setup::SigningIn(signing_in),
+            answers: Some(answers),
+            ..
+        }) = self.program_mut(provider)
+        else {
+            return;
+        };
+        let Some(question) = signing_in.question.take() else {
+            return;
+        };
+        // Closed only when the sign-in ended, and then it asks nothing more.
+        answers.try_send((question.id, answer)).ok();
+        cx.notify();
     }
 
     fn signed_in(&mut self, provider: Provider, ended: SignInEnded, cx: &mut Context<Self>) {
         if let Some(program) = self.program_mut(provider) {
             program.signing_in = None;
+            program.answers = None;
         }
         let reason = Some(ended.reason());
         match ended {
@@ -475,6 +567,7 @@ impl Agents {
         // Dropping the task ends the download or the sign-in, and its process.
         program.task = None;
         program.signing_in = None;
+        program.answers = None;
         let setup = match program.setup {
             Setup::Downloading { .. } => Setup::NotInstalled,
             _ => Setup::SignedOut {

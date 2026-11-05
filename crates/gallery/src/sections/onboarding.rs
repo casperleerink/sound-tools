@@ -1,16 +1,22 @@
 //! Onboarding section: every state of an agent on the Settings page, from **Set up** to signed
-//! in with **Sign out**, each in a frame as wide as the page's column.
+//! in with **Sign out**, each in a frame as wide as the page's column. Claude Code's first,
+//! then Pi's ways in and the steps of its sign-in.
 
-use gpui::{App, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px};
-use sound_agent::{Account, Onboarding, Provider, Setup};
+use gpui::{
+    App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px,
+};
+use sound_agent::{
+    Account, Answer, Onboarding, Pick, Provider, Setup, SignInChoice, SignInQuestion, SigningIn,
+};
 use sound_ui::ActiveTheme;
+use sound_ui::components::text_input::TextInput;
 
 /// The column of the Settings page, less its padding.
 const WIDTH: f32 = 560.;
 /// Enough for the tallest state.
-const HEIGHT: f32 = 200.;
+const HEIGHT: f32 = 300.;
 
-pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
+pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let size = Provider::Claude
         .download()
         .map_or(0, |download| download.size);
@@ -55,7 +61,7 @@ pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
             },
         ),
         ("Signed out", Setup::SignedOut { reason: None }),
-        ("Signing in", Setup::SigningIn),
+        ("Signing in", Setup::SigningIn(SigningIn::default())),
         (
             "Sign-in cancelled",
             Setup::SignedOut {
@@ -75,15 +81,124 @@ pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
             },
         ),
     ];
-    div().flex().flex_wrap().gap(px(40.)).children(
-        states
-            .into_iter()
-            .map(|(title, setup)| sample(title, setup, cx)),
-    )
+    let answer = window.use_keyed_state("gallery-sign-in-answer", cx, |_, cx| TextInput::new(cx));
+    let claude = states.into_iter().map(|(title, setup)| {
+        let choices = SignInChoice::examples(Provider::Claude, &[], &[]);
+        sample(
+            title,
+            Onboarding::new(Provider::Claude, setup).choices(choices, false),
+            cx,
+        )
+    });
+    let pi = pi_states(&answer)
+        .into_iter()
+        .map(|(title, onboarding)| sample(title, onboarding, cx));
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(px(40.))
+        .children(claude)
+        .children(pi)
+}
+
+/// Pi's ways in: three in the browser and four providers that take a key.
+fn pi_choices() -> Vec<SignInChoice> {
+    let in_browser = [
+        "Sign in with Anthropic (Claude Pro/Max)",
+        "Sign in with ChatGPT",
+        "Sign in with GitHub Copilot",
+    ];
+    let with_key = ["Anthropic", "Google", "Mistral", "OpenRouter"];
+    SignInChoice::examples(Provider::Pi, &in_browser, &with_key)
+}
+
+fn pi_states(answer: &Entity<TextInput>) -> Vec<(&'static str, Onboarding)> {
+    let pi = |setup, keys| {
+        Onboarding::new(Provider::Pi, setup)
+            .choices(pi_choices(), keys)
+            .answer(answer.clone())
+    };
+    let signing_in = |signing_in| pi(Setup::SigningIn(signing_in), false);
+    let text = |id: &str, message: &str, secret| SignInQuestion {
+        id: id.to_string(),
+        message: message.to_string(),
+        answer: Answer::Text {
+            placeholder: None,
+            secret,
+        },
+    };
+    let pick = |id: &str, label: &str| Pick {
+        id: id.to_string(),
+        label: label.to_string(),
+    };
+    vec![
+        (
+            "Pi signed out",
+            pi(Setup::SignedOut { reason: None }, false),
+        ),
+        (
+            "Pi providers that take a key",
+            pi(Setup::SignedOut { reason: None }, true),
+        ),
+        (
+            "Pi signing in, in the browser",
+            signing_in(SigningIn {
+                page: Some("https://auth.openai.com/authorize".to_string()),
+                question: Some(text(
+                    "manual",
+                    "If the browser does not come back here, paste the address it ended on.",
+                    false,
+                )),
+                ..SigningIn::default()
+            }),
+        ),
+        (
+            "Pi signing in with a code",
+            signing_in(SigningIn {
+                page: Some("https://github.com/login/device".to_string()),
+                code: Some("4F2A-91C3".to_string()),
+                note: Some("Waiting for authentication…".to_string()),
+                ..SigningIn::default()
+            }),
+        ),
+        (
+            "Pi asking how to sign in",
+            signing_in(SigningIn {
+                question: Some(SignInQuestion {
+                    id: "method".to_string(),
+                    message: "Select Anthropic login method:".to_string(),
+                    answer: Answer::Pick(vec![
+                        pick("browser", "Browser login (default)"),
+                        pick("copy_code", "Copy code login (headless)"),
+                    ]),
+                }),
+                ..SigningIn::default()
+            }),
+        ),
+        (
+            "Pi asking for a key",
+            signing_in(SigningIn {
+                question: Some(text("key", "Enter Mistral API key", true)),
+                ..SigningIn::default()
+            }),
+        ),
+        (
+            "Pi signed in, with more ways in",
+            pi(
+                Setup::Ready {
+                    account: Account {
+                        email: None,
+                        plan: Some("OpenRouter".to_string()),
+                    },
+                },
+                false,
+            ),
+        ),
+    ]
 }
 
 /// A heading, then the state on the background of the sidebar.
-fn sample(title: &'static str, setup: Setup, cx: &App) -> impl IntoElement {
+fn sample(title: &'static str, onboarding: Onboarding, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let (muted, background, border) = (theme.gray_700, theme.gray_50, theme.alpha_at(0.10));
     // Its own id, so the buttons of two states keep apart.
@@ -110,6 +225,6 @@ fn sample(title: &'static str, setup: Setup, cx: &App) -> impl IntoElement {
                 .border_1()
                 .border_color(border)
                 .bg(background)
-                .child(Onboarding::new(Provider::Claude, setup)),
+                .child(onboarding),
         )
 }

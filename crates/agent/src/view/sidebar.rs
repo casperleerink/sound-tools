@@ -41,6 +41,7 @@ use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
 use super::markdown::{self, Markdown, MarkdownText};
 use super::menu::{self, Choice};
+use super::model_picker::{ModelPicked, ModelPicker, Offered, Shown};
 use super::onboarding::{self, Setup};
 use crate::conversation::{Approval, Conversation, Entry, Turn, TurnEnd};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
@@ -74,6 +75,7 @@ fn install_bindings(cx: &mut App) {
 
 /// The process of the thread, from the first send until **New** or until it ends.
 struct Agent {
+    provider: Provider,
     thread: Thread,
     /// Reads the process on the background executor. Dropping it ends the process.
     _reading: Task<()>,
@@ -83,15 +85,14 @@ struct Agent {
 
 pub struct Sidebar {
     session: Entity<sound_ui::Session>,
-    provider: Provider,
     /// The app's agents, which the Settings page sets up.
     agents: Entity<Agents>,
     /// Whether the thread's provider was signed in at the last change of the agents.
     ready: bool,
     /// **New**, with the recent threads and the instructions in its menu.
     new_button: Entity<SplitButton>,
-    /// The model, in the composer.
-    model_menu: Entity<DropdownMenu>,
+    /// The model of each provider that is set up, in the composer.
+    model_picker: Entity<ModelPicker>,
     /// The approval mode, beside the model.
     access_menu: Entity<DropdownMenu>,
     /// What the menus' selects say, the same for every sidebar of the app.
@@ -220,7 +221,7 @@ impl Sidebar {
                     .max_height(menu::MAX_HEIGHT)
             })
         };
-        let model_menu = new_menu("model-menu", cx);
+        let model_picker = cx.new(ModelPicker::new);
         let access_menu = new_menu("access-menu", cx);
         let new_button = cx.new(|cx| {
             let choices = SplitChoices {
@@ -235,8 +236,11 @@ impl Sidebar {
                 .align_end(cx)
         });
         let subscriptions = vec![
-            cx.subscribe_in(&model_menu, window, |sidebar, _, picked, window, cx| {
-                sidebar.picked(picked, window, cx);
+            cx.subscribe(&model_picker, |sidebar, _, picked: &ModelPicked, cx| {
+                let ModelPicked(provider, model) = picked.clone();
+                (sidebar.settings).update(cx, |settings, cx| {
+                    settings.set_model(provider, Some(model), cx);
+                });
             }),
             cx.subscribe_in(&access_menu, window, |sidebar, _, picked, window, cx| {
                 sidebar.picked(picked, window, cx);
@@ -274,11 +278,10 @@ impl Sidebar {
         }
         let mut sidebar = Self {
             session,
-            provider: Provider::Claude,
-            ready: agents.read(cx).ready(Provider::Claude).is_some(),
+            ready: false,
             agents,
             new_button,
-            model_menu,
+            model_picker,
             access_menu,
             settings,
             conversation,
@@ -311,6 +314,7 @@ impl Sidebar {
             saves: save_instructions(cx),
             _subscriptions: subscriptions,
         };
+        sidebar.ready = sidebar.ready_program(cx).is_some();
         sidebar.update_menu(cx);
         sidebar.update_new_menu(cx);
         sidebar.wait_for_quiet(cx);
@@ -354,9 +358,8 @@ impl Sidebar {
                 .agent
                 .as_ref()
                 .map(|agent| agent.thread.set_approval_mode(*mode)),
-            AgentSettingsEvent::ModelChanged(model) => self
-                .agent
-                .as_ref()
+            AgentSettingsEvent::ModelChanged(provider, model) => (self.agent.as_ref())
+                .filter(|agent| agent.provider == *provider)
                 .map(|agent| agent.thread.set_model(model.clone())),
         };
         if let Some(Err(error)) = sent {
@@ -373,9 +376,6 @@ impl Sidebar {
             Choice::ApprovalMode(mode) => self
                 .settings
                 .update(cx, |settings, cx| settings.set_approval_mode(mode, cx)),
-            Choice::Model(model) => self
-                .settings
-                .update(cx, |settings, cx| settings.set_model(model, cx)),
             Choice::NewThread => self.new_thread(window, cx),
             Choice::OpenThread(id) => self.open_thread(id, window, cx),
             Choice::Instructions(scope) => self.open_instructions(scope, window, cx),
@@ -389,9 +389,35 @@ impl Sidebar {
         menu.update(cx, |menu, cx| menu.set_entries(entries, cx));
     }
 
-    /// The program of the thread's provider, once it is signed in.
-    fn ready_program(&self, cx: &App) -> Option<Installed> {
-        self.agents.read(cx).ready(self.provider)
+    /// The provider the thread runs on: the one its agent started on, else the composer's
+    /// pick while it is signed in, else the first that is.
+    fn provider(&self, cx: &App) -> Provider {
+        if let Some(provider) = self.thread_provider() {
+            return provider;
+        }
+        let picked = self.settings.read(cx).settings().provider;
+        let agents = self.agents.read(cx);
+        if agents.ready(picked).is_some() {
+            return picked;
+        }
+        (agents.programs().iter())
+            .find(|program| program.is_ready())
+            .map_or(picked, |program| program.provider)
+    }
+
+    /// The provider whose session the thread is, once its agent started: a thread keeps it.
+    fn thread_provider(&self) -> Option<Provider> {
+        if let Some(agent) = &self.agent {
+            return Some(agent.provider);
+        }
+        let saved = self.saved.as_ref()?;
+        saved.session_id.as_ref().map(|_| saved.provider)
+    }
+
+    /// The thread's provider and its program, once it is signed in.
+    fn ready_program(&self, cx: &App) -> Option<(Provider, Installed)> {
+        let provider = self.provider(cx);
+        Some((provider, self.agents.read(cx).ready(provider)?))
     }
 
     /// A change of the app's agents: one signed in, or out. Signed out, the thread's agent
@@ -411,18 +437,25 @@ impl Sidebar {
     }
 
     fn update_menu(&mut self, cx: &mut Context<Self>) {
+        let (current, locked) = (self.provider(cx), self.thread_provider());
         let shared = self.settings.read(cx);
-        let (settings, models) = (shared.settings(), shared.models());
-        let label = menu::label(settings, models);
-        let entries = menu::model_entries(self.provider, settings, models);
+        let settings = shared.settings();
+        let offered = (self.agents.read(cx).programs().iter())
+            .filter(|program| program.is_ready())
+            .map(|program| Offered {
+                provider: program.provider,
+                models: shared.models(program.provider).to_vec(),
+                picked: settings.model(program.provider).map(str::to_string),
+            })
+            .collect();
+        let shown = Shown {
+            offered,
+            current: Some(current),
+            locked,
+        };
         let (access_icon, access_label) = menu::access_label(settings);
         let access_entries = menu::access_entries(settings);
-        let (logo, brand) = menu::logo(self.provider);
-        self.model_menu.update(cx, |menu, cx| {
-            menu.set_icon(logo, Some(brand), cx);
-            menu.set_label(label, cx);
-            menu.set_entries(entries, cx);
-        });
+        (self.model_picker).update(cx, |picker, cx| picker.set_shown(shown, cx));
         self.access_menu.update(cx, |menu, cx| {
             menu.set_icon(access_icon, None, cx);
             menu.set_label(access_label, cx);
@@ -439,9 +472,9 @@ impl Sidebar {
         &self.input
     }
 
-    /// The composer's model menu, with the account, for a snapshot that shows it open.
-    pub fn model_menu(&self) -> &Entity<DropdownMenu> {
-        &self.model_menu
+    /// Opens the composer's model picker, for a snapshot that shows it open.
+    pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        (self.model_picker).update(cx, |picker, cx| picker.open(window, cx));
     }
 
     /// The composer's menu of approval modes, for a snapshot that shows it open or picks in it.
@@ -777,7 +810,7 @@ impl Sidebar {
     /// In place of the thread while no agent is signed in: the way to Settings, where the
     /// agents are set up.
     fn no_agent(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let stopped = (self.agents.read(cx).program(self.provider))
+        let stopped = (self.agents.read(cx).program(self.provider(cx)))
             .is_some_and(|program| matches!(program.setup, Setup::Stopped { .. }));
         let sentence = match stopped {
             true => "The agent did not start. Settings says why.",
@@ -875,7 +908,7 @@ impl Sidebar {
                             .gap(px(4.))
                             // The pills sit their wash, not their words, on the box's edge.
                             .ml(px(-6.))
-                            .child(self.model_menu.clone())
+                            .child(self.model_picker.clone())
                             .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
                             .child(self.access_menu.clone())
                             .child(div().flex_1())

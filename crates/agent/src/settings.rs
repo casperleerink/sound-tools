@@ -1,4 +1,5 @@
-//! What the composer chose for the agent: how much it may do without asking, and the model.
+//! What the composer chose for the agent: how much it may do without asking, the provider,
+//! and a model for each provider.
 //!
 //! One small file per machine, `agent/settings.json` in the support folder, for every project.
 //! Never in a project: the agent writes there, and must not raise its own access by editing a
@@ -8,6 +9,7 @@
 //! It also knows where the composer's instructions for every project are: `instructions.md`
 //! beside the settings, read when an agent starts (see `crate::view::instructions`).
 
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,7 +18,7 @@ use gpui::{AppContext as _, Context, EventEmitter, Task};
 use serde::{Deserialize, Serialize};
 
 use crate::store::write_whole;
-use crate::{ApprovalMode, Model};
+use crate::{ApprovalMode, Model, Provider};
 
 const INSTRUCTIONS_FILE: &str = "instructions.md";
 
@@ -32,8 +34,8 @@ pub struct AgentSettings {
     unreadable: Option<String>,
     /// Writes the last change. A later change waits for it, so the last one is on disk.
     saving: Option<Task<()>>,
-    /// What the provider offers, asked once signed in. Empty until it answers.
-    models: Vec<Model>,
+    /// What each provider offers, asked once signed in. None until it answers.
+    models: HashMap<Provider, Vec<Model>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,7 +44,7 @@ pub enum AgentSettingsEvent {
     Read,
     /// The composer picked another mode. It applies at once, also to a running agent.
     ApprovalModeChanged(ApprovalMode),
-    ModelChanged(String),
+    ModelChanged(Provider, String),
     /// A change was not written, and says why.
     NotSaved(String),
 }
@@ -68,7 +70,7 @@ impl AgentSettings {
             reading,
             unreadable: None,
             saving: None,
-            models: Vec::new(),
+            models: HashMap::new(),
         }
     }
 
@@ -104,13 +106,13 @@ impl AgentSettings {
         self.unreadable.as_deref()
     }
 
-    pub fn models(&self) -> &[Model] {
-        &self.models
+    pub fn models(&self, provider: Provider) -> &[Model] {
+        self.models.get(&provider).map_or(&[], Vec::as_slice)
     }
 
-    pub fn set_models(&mut self, models: Vec<Model>, cx: &mut Context<Self>) {
-        if self.models != models {
-            self.models = models;
+    pub fn set_models(&mut self, provider: Provider, models: Vec<Model>, cx: &mut Context<Self>) {
+        if self.models.get(&provider) != Some(&models) {
+            self.models.insert(provider, models);
             cx.notify();
         }
     }
@@ -123,16 +125,32 @@ impl AgentSettings {
         }
     }
 
-    /// `None` is the provider's default, which a running agent cannot be told: only the
-    /// provider's list names it, so it applies to the next agent.
-    pub fn set_model(&mut self, model: Option<String>, cx: &mut Context<Self>) {
-        if self.settings.model != model {
-            self.settings.model = model.clone();
-            if let Some(model) = model {
-                cx.emit(AgentSettingsEvent::ModelChanged(model));
-            }
+    /// Picks `provider` for new threads, with the model picked for it before.
+    pub fn set_provider(&mut self, provider: Provider, cx: &mut Context<Self>) {
+        if self.settings.provider != provider {
+            self.settings.provider = provider;
             self.save(cx);
         }
+    }
+
+    /// Picks `provider` for new threads, and its model. `None` is the provider's default,
+    /// which a running agent cannot be told: only the provider's list names it, so it applies
+    /// to the next agent.
+    pub fn set_model(&mut self, provider: Provider, model: Option<String>, cx: &mut Context<Self>) {
+        let unchanged =
+            self.settings.provider == provider && self.settings.model(provider) == model.as_deref();
+        if unchanged {
+            return;
+        }
+        self.settings.provider = provider;
+        match model.clone() {
+            Some(model) => self.settings.models.insert(provider, model),
+            None => self.settings.models.remove(&provider),
+        };
+        if let Some(model) = model {
+            cx.emit(AgentSettingsEvent::ModelChanged(provider, model));
+        }
+        self.save(cx);
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
@@ -162,12 +180,18 @@ impl AgentSettings {
 #[serde(default)]
 pub struct Settings {
     pub approval_mode: ApprovalMode,
-    /// One of the ids in [`crate::AgentEvent::Started`], or `None` for the provider's
+    /// The provider of a new thread, while its program is set up.
+    pub provider: Provider,
+    /// One of the ids in [`crate::AgentEvent::Started`] for each provider, or none for its
     /// default.
-    pub model: Option<String>,
+    pub models: BTreeMap<Provider, String>,
 }
 
 impl Settings {
+    pub fn model(&self, provider: Provider) -> Option<&str> {
+        self.models.get(&provider).map(String::as_str)
+    }
+
     /// The settings in `file`, or the defaults when there is none yet. A file that does not
     /// read is an error, which says so; it is written over at the next change.
     pub fn read(file: &Path) -> Result<Settings, String> {
@@ -206,7 +230,8 @@ mod tests {
         let file = machine.path().join("agent/settings.json");
         let settings = Settings {
             approval_mode: ApprovalMode::NeverAsk,
-            model: Some("sonnet".to_string()),
+            provider: Provider::Pi,
+            models: BTreeMap::from([(Provider::Claude, "sonnet".to_string())]),
         };
         settings.write(&file).unwrap();
         assert_eq!(Settings::read(&file), Ok(settings));
@@ -236,9 +261,13 @@ mod tests {
             assert!(error.contains("could not be read"), "{error}");
         }
         // What a later version adds is left out, and what is missing is the default.
-        fs::write(&file, r#"{"model": "haiku", "effort": "high"}"#).unwrap();
+        fs::write(
+            &file,
+            r#"{"models": {"claude": "haiku"}, "effort": "high"}"#,
+        )
+        .unwrap();
         let settings = Settings {
-            model: Some("haiku".to_string()),
+            models: BTreeMap::from([(Provider::Claude, "haiku".to_string())]),
             ..Settings::default()
         };
         assert_eq!(Settings::read(&file), Ok(settings));

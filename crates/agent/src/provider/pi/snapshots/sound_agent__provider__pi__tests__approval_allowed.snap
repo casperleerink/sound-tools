@@ -1,0 +1,60 @@
+---
+source: crates/agent/src/provider/pi/tests.rs
+expression: "replay(\"approval_allowed\")"
+---
+[
+    TurnStarted,
+    Started {
+        account: None,
+        models: [
+            Model {
+                id: "openrouter/google/gemini-2.5-flash-lite",
+                name: "Google: Gemini 2.5 Flash Lite",
+                description: "",
+                short_name: "Google: Gemini 2.5 Flash Lite",
+                source: Some(
+                    "OpenRouter",
+                ),
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "tool_bash_7StBM5HTF6SyLqHxhoW4",
+        ),
+        title: "Ran a command",
+        running_title: "Running a command",
+        request_title: "Run a command",
+        command: Some(
+            "echo hi > b.txt",
+        ),
+        kind: Run,
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "e84e69c0-b8bf-427e-b310-30e5ec1a6013",
+        ),
+        title: "Run",
+        command: Some(
+            "echo hi > b.txt",
+        ),
+    },
+    StepDone {
+        id: StepId(
+            "tool_bash_7StBM5HTF6SyLqHxhoW4",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "done.",
+    },
+    TextDone {
+        text: "done.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

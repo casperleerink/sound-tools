@@ -11,8 +11,8 @@ use super::{Agent, Sidebar};
 use crate::conversation::request_label;
 use crate::store::{Line, SavedThread, Write};
 use crate::{
-    AgentEvent, ApprovalAnswer, Attachment, Events, Installed, Message, Thread, ThreadOptions,
-    TurnOutcome,
+    AgentEvent, ApprovalAnswer, Attachment, Events, Installed, Message, Provider, Thread,
+    ThreadOptions, TurnOutcome,
 };
 
 /// Events that come within one frame are applied together, so a fast stream of text measures
@@ -73,18 +73,17 @@ impl Sidebar {
         for event in events {
             lines.extend(Line::of(&event, now));
             match &event {
-                AgentEvent::Started {
-                    account, models, ..
-                } => {
-                    let models = models.clone();
+                AgentEvent::Started { account, models } => {
+                    let (provider, models) = (self.provider(cx), models.clone());
                     // Every sidebar's menu follows, by observing the settings.
                     self.settings
-                        .update(cx, |settings, cx| settings.set_models(models, cx));
+                        .update(cx, |settings, cx| settings.set_models(provider, models, cx));
                     // The account the running agent reports is the newest word on it.
-                    let (provider, account) = (self.provider, account.clone());
-                    self.agents.update(cx, |agents, cx| {
-                        agents.signed_in_as(provider, account, cx);
-                    });
+                    if let Some(account) = account.clone() {
+                        self.agents.update(cx, |agents, cx| {
+                            agents.signed_in_as(provider, account, cx);
+                        });
+                    }
                 }
                 AgentEvent::TurnEnded {
                     outcome: TurnOutcome::Failed { .. },
@@ -121,7 +120,7 @@ impl Sidebar {
         }
         self.show(changed, cx);
         if failed {
-            let provider = self.provider;
+            let provider = self.provider(cx);
             (self.agents).update(cx, |agents, cx| agents.check_still_signed_in(provider, cx));
         }
     }
@@ -198,16 +197,16 @@ impl Sidebar {
         if self.agent.is_some() {
             return true;
         }
-        let Some(installed) = self.ready_program(cx) else {
+        let Some((provider, installed)) = self.ready_program(cx) else {
             return false;
         };
-        match self.start(installed, cx) {
+        match self.start(provider, installed, cx) {
             Ok(agent) => {
-                self.attach(agent);
+                self.attach(agent, cx);
                 true
             }
             Err(error) => {
-                let name = self.provider.name();
+                let name = provider.name();
                 self.conversation
                     .notice(format!("{name} did not start: {error}"));
                 self.show(None, cx);
@@ -238,17 +237,22 @@ impl Sidebar {
         }
     }
 
-    fn start(&self, installed: Installed, cx: &mut Context<Self>) -> io::Result<Agent> {
+    fn start(
+        &self,
+        provider: Provider,
+        installed: Installed,
+        cx: &mut Context<Self>,
+    ) -> io::Result<Agent> {
         let folder = self.session.read(cx).project().root().to_path_buf();
         let settings = self.settings.read(cx).settings().clone();
         // The flag needs a file that exists. One look, beside starting a process.
         let instructions = (self.settings.read(cx).instructions_file())
             .filter(|instructions| instructions.is_file());
         let (thread, events) = Thread::start(ThreadOptions {
-            provider: self.provider,
+            provider,
             installed,
             folder,
-            model: settings.model.clone(),
+            model: settings.model(provider).map(str::to_string),
             approval_mode: settings.approval_mode,
             resume: self.resume(),
             instructions,
@@ -272,6 +276,7 @@ impl Sidebar {
             }
         });
         Ok(Agent {
+            provider,
             thread,
             _reading: reading,
             _delivering: delivering,
@@ -280,20 +285,28 @@ impl Sidebar {
 
     /// Talks to `thread` from now on, in place of starting a process at the next send. For a
     /// test with [`Thread::without_agent`], which hands the events to [`Self::receive`].
-    pub fn connect(&mut self, thread: Thread) {
-        self.attach(Agent {
-            thread,
-            _reading: Task::ready(()),
-            _delivering: Task::ready(()),
-        });
+    pub fn connect(&mut self, thread: Thread, cx: &mut Context<Self>) {
+        let provider = self.provider(cx);
+        self.attach(
+            Agent {
+                provider,
+                thread,
+                _reading: Task::ready(()),
+                _delivering: Task::ready(()),
+            },
+            cx,
+        );
     }
 
     /// Talks to `agent` from now on. Its session is the thread's: the next message saves it,
     /// before the agent has said anything, so a thread quit early still resumes.
-    fn attach(&mut self, agent: Agent) {
+    fn attach(&mut self, agent: Agent, cx: &mut Context<Self>) {
         let saved = self.saved.get_or_insert_with(SavedThread::fresh);
         saved.session_id = Some(agent.thread.session_id().to_string());
+        saved.provider = agent.provider;
         self.agent = Some(agent);
+        // A thread keeps its provider: the picker offers only its models from now on.
+        self.update_menu(cx);
     }
 
     pub(super) fn stop(&mut self, cx: &mut Context<Self>) {

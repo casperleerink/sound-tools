@@ -53,7 +53,7 @@ impl Sidebar {
         if self.namer.asking.is_some() {
             return;
         }
-        let Some(installed) = self.ready_program(cx) else {
+        let Some((provider, installed)) = self.ready_program(cx) else {
             return;
         };
         let Some(history) = self.session.read(cx).project().history() else {
@@ -71,7 +71,6 @@ impl Sidebar {
                 return;
             }
         };
-        let provider = self.provider;
         let asking = cx.background_spawn(async move {
             (provider.ask_small_model(&installed, naming::INSTRUCTIONS, &description)).await
         });
