@@ -181,8 +181,8 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/agent`.
 
 - The sidebar runs a coding agent CLI: `claude`, or `pi --mode rpc` with an extension of ours, which asks the approvals and runs Pi's own sign-in. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol; ACP, which adds layers and removes none.
-- The composer's own program comes first. Only Claude Code downloads when there is none (not bundled: 215 MB); Pi shows once installed. A thread keeps the provider it started on.
-- Agents are set up on the Settings page, once for the app; the sidebar only links there while none is ready. Pi's sign-in questions (a code, an API key) are fields there; its credentials stay in Pi's store, and Pi signs out in Pi.
+- The composer's own program comes first. Only Claude Code downloads when there is none (not bundled: 215 MB); Pi links to its site. A thread keeps the provider it started on.
+- Agents are set up on the Settings page, once for the app; the sidebar only links there while none is ready. Pi lists each of its services with its own sign-in and sign-out; credentials stay in Pi's store.
 - New problems after a turn show to the composer, not the agent: its docs tell it to read `problems.txt`.
 - A picture goes as a picture, any other file as its path; nothing is copied in.
 - Versions are named by the agent's own program with its small model (Pi's default model), from a capped diff, one call at a time once the history is still for 5 s. Without a signed-in agent they stay "Version N". A name given by hand is never replaced.
