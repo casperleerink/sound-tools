@@ -12,7 +12,6 @@ use gpui::{
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::icon::Icon;
 use sound_ui::components::text_input::TextInput;
 
 use super::model_picker::logo;
@@ -882,7 +881,6 @@ impl RenderOnce for Onboarding {
                 shown_element(shown, cx)
             }
         };
-        let (icon, color) = logo(self.provider);
         div()
             .flex()
             .flex_col()
@@ -896,7 +894,7 @@ impl RenderOnce for Onboarding {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(Icon::new(icon).size(16.).color(color))
+                    .child(logo(self.provider, 16.))
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)

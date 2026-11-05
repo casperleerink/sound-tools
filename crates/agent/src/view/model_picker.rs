@@ -3,8 +3,8 @@
 //! are off: a thread keeps its provider.
 
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, KeyDownEvent,
-    ScrollHandle, SharedString, Window, div, prelude::*, px, rgb,
+    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent,
+    ScrollHandle, SharedString, Window, div, img, prelude::*, px, rgb,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
@@ -61,11 +61,23 @@ pub(super) struct ModelPicker {
 
 impl EventEmitter<ModelPicked> for ModelPicker {}
 
-/// The provider's logo and its brand color.
-pub(super) fn logo(provider: Provider) -> (&'static str, Hsla) {
+/// The name of the provider's logo in the icons.
+fn logo_name(provider: Provider) -> &'static str {
     match provider {
-        Provider::Claude => ("claude", rgb(0xd97757).into()),
-        Provider::Pi => ("pi", rgb(0xd4d4d8).into()),
+        Provider::Claude => "claude",
+        Provider::Pi => "pi",
+    }
+}
+
+/// The provider's logo, `size` points square: Claude's in its brand color, Pi's in its own
+/// colors, which an icon cannot draw.
+pub(super) fn logo(provider: Provider, size: f32) -> AnyElement {
+    match provider {
+        Provider::Claude => Icon::new("claude")
+            .size(size)
+            .color(rgb(0xd97757).into())
+            .into_any_element(),
+        Provider::Pi => img("icons/pi.svg").size(px(size)).into_any_element(),
     }
 }
 
@@ -212,7 +224,7 @@ impl ModelPicker {
             let provider = offered.provider;
             let index = (Provider::ALL.iter()).position(|each| *each == provider);
             let focus = index.and_then(|index| self.rail_focus.get(index)).cloned();
-            let (icon, color) = logo(provider);
+            let icon = logo_name(provider);
             let off = locked.is_some_and(|locked| locked != provider);
             let tip = match off {
                 true => format!("{}: start a new thread to switch", provider.name()),
@@ -237,7 +249,7 @@ impl ModelPicker {
                     rail.track_focus(&focus)
                         .focus_visible(move |s| s.border_color(ring))
                 })
-                .child(Icon::new(icon).size(16.).color(color))
+                .child(logo(provider, 16.))
                 .tooltip(move |_, cx| Tooltip::new(tip.clone()).view(cx))
                 .on_key_down(
                     cx.listener(move |picker, event: &KeyDownEvent, window, cx| {
@@ -289,7 +301,7 @@ impl ModelPicker {
                     .or_else(|| (!model.description.is_empty()).then(|| model.description.clone()));
                 let id = model.id.clone();
                 let key = match viewing {
-                    Some(provider) => logo(provider).0,
+                    Some(provider) => logo_name(provider),
                     None => "",
                 };
                 let selector = format!("model-picker-{key}-{id}");
@@ -414,7 +426,7 @@ impl Render for ModelPicker {
             theme.lavender,
             theme.alpha_at(0.05),
         );
-        let logo = self.shown.current.map(logo);
+        let logo = self.shown.current.map(|provider| logo(provider, 14.));
         let trigger = div()
             .id("model-picker-trigger")
             .debug_selector(|| "model-menu".to_string())
@@ -434,7 +446,7 @@ impl Render for ModelPicker {
             .text_color(text)
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
-            .children(logo.map(|(icon, color)| Icon::new(icon).size(14.).color(color)))
+            .children(logo)
             .child(div().min_w_0().truncate().child(self.label()))
             .child(
                 div()
