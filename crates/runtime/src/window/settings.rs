@@ -156,19 +156,31 @@ impl SettingsPage {
             .size(ButtonSize::Sm)
             .focus_handle(&self.back)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
+        let (strong, tint) = (cx.theme().gray_950, cx.theme().alpha_at(0.05));
         let shown = self.agents.is_some().then_some(Section::Agents);
         let items = (shown.into_iter().chain([Section::Audio])).map(|section| {
-            let variant = match section == self.section {
-                true => ButtonVariant::Subtle,
-                false => ButtonVariant::GhostColor(muted),
-            };
+            let selected = section == self.section;
             let name = section.name();
-            Button::new(name, name)
-                .icon(section.icon())
+            let row = div()
+                .id(name)
                 .debug_selector(move || format!("settings-{}", name.to_lowercase()))
-                .variant(variant)
-                .size(ButtonSize::Sm)
-                .tab_stop(true)
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .w_full()
+                .h(px(32.))
+                .px(px(10.))
+                .rounded(px(8.))
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .map(|row| match selected {
+                    true => row.bg(tint).text_color(strong),
+                    false => row.text_color(muted).hover(move |row| row.bg(tint)),
+                })
+                .child(Icon::new(section.icon()))
+                .child(name);
+            TabStop::new(format!("settings-tab-{name}"), row)
                 .on_click(cx.listener(move |page, _, _, cx| page.show(section, cx)))
         });
         div()
@@ -184,11 +196,9 @@ impl SettingsPage {
                 div()
                     .flex()
                     .flex_col()
-                    .items_start()
-                    .gap(px(4.))
-                    .px(px(16.))
-                    .child(back)
-                    .child(div().h(px(12.)))
+                    .gap(px(2.))
+                    .px(px(12.))
+                    .child(div().flex().pb(px(14.)).child(back))
                     .children(items),
             )
             .child(Shell::drag_region().flex_1())
