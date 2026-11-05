@@ -188,15 +188,19 @@ impl SettingsPage {
 
     fn audio(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let (strong, muted, border, hover) = (
+        let (strong, text, muted, faint, accent, hole, live) = (
             theme.gray_950,
+            theme.gray_900,
             theme.gray_700,
-            theme.alpha_at(0.08),
-            theme.alpha_at(0.05),
+            theme.gray_500,
+            theme.lavender,
+            theme.gray_50,
+            theme.green,
         );
+        let border = theme.alpha_at(0.08);
         let intro = div()
             .text_color(muted)
-            .child("The app starts again on the device you pick.");
+            .child("System default follows your computer. Picking a device starts the app again.");
         let Some(devices) = &self.devices else {
             return div()
                 .flex()
@@ -206,12 +210,6 @@ impl SettingsPage {
                 .child(div().text_color(muted).child("Looking for devices…"))
                 .into_any_element();
         };
-        // Said when it is not the one picked: the default, or a pick that is not there.
-        let chosen = (devices.outputs.iter())
-            .find(|output| Some(&output.id) == devices.chosen.output.as_ref());
-        let playing = chosen
-            .is_none_or(|chosen| *chosen.name != *self.output_name)
-            .then(|| format!("Playing through {}.", self.output_name));
         let page = cx.weak_entity();
         let list = |output: bool| {
             let (key, choices, chosen) = match output {
@@ -219,24 +217,61 @@ impl SettingsPage {
                 false => ("input", &devices.inputs, &devices.chosen.input),
             };
             let chosen = chosen.as_deref().unwrap_or(SYSTEM_DEFAULT);
-            let default = (SYSTEM_DEFAULT, "System default");
             let each = (choices.iter()).map(|choice| (choice.id.as_str(), choice.name.as_str()));
-            let rows = std::iter::once(default).chain(each).map(|(id, name)| {
+            let all: Vec<_> = std::iter::once((SYSTEM_DEFAULT, "System default"))
+                .chain(each)
+                .collect();
+            let last = all.len() - 1;
+            let rows = all.into_iter().enumerate().map(|(index, (id, name))| {
                 let page = page.clone();
                 let value = id.to_string();
+                let picked = id == chosen;
+                // Only the output in use is known: the engine reports no input.
+                let in_use = output && id != SYSTEM_DEFAULT && *name == *self.output_name;
+                let dot = div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(16.))
+                    .rounded_full()
+                    .border(px(1.5))
+                    .map(|dot| match picked {
+                        true => (dot.border_color(accent).bg(accent))
+                            .child(div().size(px(6.)).rounded_full().bg(hole)),
+                        false => (dot.border_color(faint))
+                            .group_hover("device", |dot| dot.border_color(muted)),
+                    });
                 let row = div()
                     .id(SharedString::from(format!("settings-{key}-{id}")))
+                    .group("device")
                     .flex()
                     .items_center()
-                    .gap(px(12.))
-                    .min_h(px(44.))
-                    .px(px(12.))
-                    .rounded(px(8.))
+                    .gap(px(10.))
+                    .h(px(48.))
                     .cursor_pointer()
-                    .hover(move |row| row.bg(hover))
-                    .child(div().flex_1().min_w_0().truncate().child(name.to_string()))
-                    .when(id == chosen, |row| {
-                        row.child(Icon::new("check").size(16.).color(strong))
+                    .when(index < last, |row| row.border_b_1().border_color(border))
+                    .child(dot)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if picked { strong } else { text })
+                            .child(name.to_string()),
+                    )
+                    .when(in_use, |row| {
+                        row.child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .gap(px(6.))
+                                .text_size(px(12.))
+                                .text_color(muted)
+                                .child(div().size(px(6.)).rounded_full().bg(live))
+                                .child("In use"),
+                        )
                     });
                 TabStop::new(format!("settings-{key}-row-{id}"), row).on_click(move |_, _, cx| {
                     page.update(cx, |page, cx| page.pick(output, &value, cx))
@@ -247,32 +282,33 @@ impl SettingsPage {
                 .id(key)
                 .flex()
                 .flex_col()
-                .mx(px(-12.))
-                .max_h(px(320.))
+                .max_h(px(352.))
                 .overflow_y_scroll()
                 .children(rows)
         };
-        let card = |title: &'static str, note: Option<String>, output: bool| {
+        let card = |icon: &'static str, title: &'static str, output: bool| {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
-                .p(px(20.))
+                .gap(px(2.))
+                .px(px(20.))
+                .pt(px(20.))
+                .pb(px(8.))
                 .rounded(px(12.))
                 .border_1()
                 .border_color(border)
                 .child(
                     div()
                         .flex()
-                        .flex_col()
-                        .gap(px(2.))
+                        .items_center()
+                        .gap(px(8.))
+                        .child(Icon::new(icon).size(16.).color(strong))
                         .child(
                             div()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(strong)
                                 .child(title),
-                        )
-                        .children(note.map(|note| div().text_color(muted).child(note))),
+                        ),
                 )
                 .child(list(output))
         };
@@ -281,8 +317,8 @@ impl SettingsPage {
             .flex_col()
             .gap(px(16.))
             .child(intro)
-            .child(card("Output", playing, true))
-            .child(card("Input", None, false))
+            .child(card("volume-2", "Output", true))
+            .child(card("mic", "Input", false))
             .into_any_element()
     }
 }
