@@ -1502,7 +1502,11 @@ impl Opened {
                                 }
                             }
                             Err(error) => {
+                                let stop = matches!(error, midi::PortError::Unavailable(_));
                                 session.update(cx, |session, cx| session.report(error, cx));
+                                if stop {
+                                    break;
+                                }
                             }
                         }
                         drop(session);
