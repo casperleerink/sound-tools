@@ -187,6 +187,15 @@ pub struct Settings {
     pub models: BTreeMap<Provider, String>,
 }
 
+/// The file as it reads, also as written before Pi came, when it kept one model: Claude Code's.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Stored {
+    #[serde(flatten)]
+    settings: Settings,
+    model: Option<String>,
+}
+
 impl Settings {
     pub fn model(&self, provider: Provider) -> Option<&str> {
         self.models.get(&provider).map(String::as_str)
@@ -202,8 +211,15 @@ impl Settings {
             }
             Err(error) => return Err(format!("{} could not be read: {error}", file.display())),
         };
-        serde_json::from_str(&text)
-            .map_err(|error| format!("{} could not be read: {error}", file.display()))
+        let Stored {
+            mut settings,
+            model,
+        } = serde_json::from_str(&text)
+            .map_err(|error| format!("{} could not be read: {error}", file.display()))?;
+        if let Some(model) = model {
+            settings.models.entry(Provider::Claude).or_insert(model);
+        }
+        Ok(settings)
     }
 
     pub fn write(&self, file: &Path) -> Result<(), String> {
@@ -261,11 +277,8 @@ mod tests {
             assert!(error.contains("could not be read"), "{error}");
         }
         // What a later version adds is left out, and what is missing is the default.
-        fs::write(
-            &file,
-            r#"{"models": {"claude": "haiku"}, "effort": "high"}"#,
-        )
-        .unwrap();
+        // A file of before Pi kept one model, Claude Code's.
+        fs::write(&file, r#"{"model": "haiku", "effort": "high"}"#).unwrap();
         let settings = Settings {
             models: BTreeMap::from([(Provider::Claude, "haiku".to_string())]),
             ..Settings::default()

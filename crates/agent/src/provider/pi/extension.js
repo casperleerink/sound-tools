@@ -1,17 +1,40 @@
 // Pi loads this file with `-e`. Its questions reach Sound Tools as the extension UI requests
 // of RPC mode: a `select` per approval, an `input` per sign-in question, and a `notify` of
 // JSON for everything Sound Tools reads.
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 const READS = new Set(["read", "grep", "find", "ls"]);
 const CHANGES = new Set(["edit", "write"]);
 
+// Where a tool's path lands, as Pi's own tools read it: `@` dropped, `~` the home folder, a
+// `file://` address its path. Symlinks are followed as far as the path exists.
+function landing(input, cwd) {
+  let given = input.startsWith("@") ? input.slice(1) : input;
+  if (given === "~" || given.startsWith("~/")) given = path.join(homedir(), given.slice(2));
+  if (given.startsWith("file://")) given = fileURLToPath(given);
+  let existing = path.resolve(cwd, given);
+  const rest = [];
+  for (;;) {
+    try {
+      return path.join(realpathSync(existing), ...rest);
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return path.resolve(cwd, given);
+      rest.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
+}
+
 // Whether the tool call stays in the project: its path, or the project when it names none.
 // Pi's tools take any path, so one outside the project always asks, as Claude Code does.
 function inProject(event, cwd) {
-  const target = path.resolve(cwd, event.input.path ?? ".");
-  const relative = path.relative(cwd, target);
+  const project = realpathSync(cwd);
+  const relative = path.relative(project, landing(event.input.path ?? ".", cwd));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 

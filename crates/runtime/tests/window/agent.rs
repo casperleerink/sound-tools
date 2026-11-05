@@ -23,6 +23,10 @@ pub(crate) fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity
     install_sidebar_with(cx, support, Some(nonexistent_claude()))
 }
 
+fn nonexistent_claude_program() -> (Provider, Installed) {
+    (Provider::Claude, nonexistent_claude())
+}
+
 fn nonexistent_claude() -> Installed {
     Installed {
         program: PathBuf::from("/nonexistent/claude"),
@@ -37,11 +41,23 @@ fn install_sidebar_with(
     support: &Path,
     installed: Option<Installed>,
 ) -> Entity<AgentSettings> {
+    let programs = (installed.into_iter())
+        .map(|installed| (Provider::Claude, installed))
+        .collect();
+    install_sidebar_with_programs(cx, support, programs)
+}
+
+/// The same with each provider signed in with its program.
+fn install_sidebar_with_programs(
+    cx: &mut TestAppContext,
+    support: &Path,
+    programs: Vec<(Provider, Installed)>,
+) -> Entity<AgentSettings> {
     let remembered = runtime::app::left_panel_file(support);
     let threads = runtime::app::threads_folder(support);
     cx.update(|cx| {
         let settings = cx.new(|cx| AgentSettings::new(None, cx));
-        let agents = agents(installed, &settings, cx);
+        let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
         SettingsSlot::new({
             let agents = agents.clone();
             move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
@@ -1291,6 +1307,33 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
         commands.try_recv().ok(),
         Some(Command::SetApprovalMode(ApprovalMode::AskForEverything))
     );
+}
+
+/// The keys reach every provider of the model picker: shift-tab from its search goes to the
+/// rail, and enter shows that provider's models.
+#[gpui::test]
+fn the_keys_switch_providers_in_the_model_picker(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    let pi = Installed {
+        program: PathBuf::from("/nonexistent/pi"),
+        environment: HashMap::new(),
+    };
+    let programs = vec![nonexistent_claude_program(), (Provider::Pi, pi)];
+    let settings = install_sidebar_with_programs(cx, machine.path(), programs);
+    cx.update(|cx| {
+        settings.update(cx, |settings, cx| {
+            settings.set_models(Provider::Claude, vec![model("haiku")], cx);
+            settings.set_models(Provider::Pi, vec![model("openrouter/kimi")], cx);
+        });
+    });
+    let mut opened = support::open_new(cx);
+    let menu = opened.control("model-menu");
+    opened.click(menu);
+    assert!(opened.find("model-picker-claude-haiku").is_some());
+    opened.keys("shift-tab");
+    opened.keys("enter");
+    assert!(opened.find("model-picker-pi-openrouter/kimi").is_some());
+    assert!(opened.find("model-picker-claude-haiku").is_none());
 }
 
 /// Claude Code signed in with `installed` as its program, or not installed.

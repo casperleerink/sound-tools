@@ -3,8 +3,8 @@
 //! are off: a thread keeps its provider.
 
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, SharedString, Window,
-    div, prelude::*, px, rgb,
+    App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, KeyDownEvent,
+    ScrollHandle, SharedString, Window, div, prelude::*, px, rgb,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
@@ -52,7 +52,11 @@ pub(super) struct ModelPicker {
     search: gpui::Entity<TextInput>,
     /// The row the keys are on, in the filtered list.
     highlighted: usize,
+    /// Keeps the highlighted row in sight as the keys move it.
+    scroll: ScrollHandle,
     trigger_focus: FocusHandle,
+    /// Each provider of the rail is a tab stop, so the keys switch providers too.
+    rail_focus: [FocusHandle; Provider::ALL.len()],
 }
 
 impl EventEmitter<ModelPicked> for ModelPicker {}
@@ -106,7 +110,9 @@ impl ModelPicker {
             viewing: None,
             search,
             highlighted: 0,
+            scroll: ScrollHandle::new(),
             trigger_focus: cx.focus_handle().tab_stop(true),
+            rail_focus: Provider::ALL.map(|_| cx.focus_handle().tab_stop(true)),
         }
     }
 
@@ -161,6 +167,7 @@ impl ModelPicker {
             Arrow::Up => self.highlighted.saturating_sub(1),
             Arrow::Down => (self.highlighted + 1).min(last),
         };
+        self.scroll.scroll_to_item(self.highlighted);
         cx.notify();
     }
 
@@ -200,9 +207,11 @@ impl ModelPicker {
     fn rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (selected, hover) = (theme.alpha_at(0.10), theme.alpha_at(0.05));
-        let locked = self.shown.locked;
+        let (locked, ring) = (self.shown.locked, theme.lavender);
         let icons = self.shown.offered.iter().map(|offered| {
             let provider = offered.provider;
+            let index = (Provider::ALL.iter()).position(|each| *each == provider);
+            let focus = index.and_then(|index| self.rail_focus.get(index)).cloned();
             let (icon, color) = logo(provider);
             let off = locked.is_some_and(|locked| locked != provider);
             let tip = match off {
@@ -222,13 +231,28 @@ impl ModelPicker {
                 .when(!off, |rail| {
                     rail.cursor_pointer().hover(move |s| s.bg(hover))
                 })
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .when_some(focus, |rail, focus| {
+                    rail.track_focus(&focus)
+                        .focus_visible(move |s| s.border_color(ring))
+                })
                 .child(Icon::new(icon).size(16.).color(color))
                 .tooltip(move |_, cx| Tooltip::new(tip.clone()).view(cx))
+                .on_key_down(
+                    cx.listener(move |picker, event: &KeyDownEvent, window, cx| {
+                        let key = event.keystroke.key.as_str();
+                        if !off && (key == "enter" || key == "space") {
+                            picker.view(provider, cx);
+                            // The keys go on in the search of its models.
+                            window.focus(&picker.search.focus_handle(cx), cx);
+                            cx.stop_propagation();
+                        }
+                    }),
+                )
                 .on_click(cx.listener(move |picker, _, _, cx| {
                     if !off {
-                        picker.viewing = Some(provider);
-                        picker.highlighted = 0;
-                        cx.notify();
+                        picker.view(provider, cx);
                     }
                 }))
         });
@@ -240,6 +264,13 @@ impl ModelPicker {
             .border_r_1()
             .border_color(theme.alpha_at(0.10))
             .children(icons)
+    }
+
+    fn view(&mut self, provider: Provider, cx: &mut Context<Self>) {
+        self.viewing = Some(provider);
+        self.highlighted = 0;
+        self.scroll.scroll_to_item(0);
+        cx.notify();
     }
 
     fn list(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -311,6 +342,7 @@ impl ModelPicker {
             .min_w_0()
             .max_h(px(LIST_HEIGHT))
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p(px(4.))
             .children(rows)
             .when(empty, |list| {
