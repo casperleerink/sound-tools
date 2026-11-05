@@ -131,7 +131,11 @@ impl Agents {
         let mut programs: Vec<Program> = (programs.into_iter())
             .map(|(provider, installed)| {
                 let account = Account::default();
-                Program::new(provider, Some(installed), Setup::Ready { account })
+                let ready = Setup::Ready {
+                    account,
+                    reason: None,
+                };
+                Program::new(provider, Some(installed), ready)
             })
             .collect();
         if programs.is_empty() {
@@ -261,10 +265,13 @@ impl Agents {
 
     /// The account the running agent of `provider` reports, the newest word on it.
     pub fn signed_in_as(&mut self, provider: Provider, account: Account, cx: &mut Context<Self>) {
-        let shown = self.program(provider).map(|program| &program.setup);
-        if matches!(shown, Some(Setup::Ready { .. })) {
-            self.set_setup(provider, Setup::Ready { account }, cx);
-        }
+        let Some(Setup::Ready { reason, .. }) =
+            self.program(provider).map(|program| &program.setup)
+        else {
+            return;
+        };
+        let reason = reason.clone();
+        self.set_setup(provider, Setup::Ready { account, reason }, cx);
     }
 
     fn set_signed_in(&mut self, provider: Provider, signed_in: bool, cx: &mut Context<Self>) {
@@ -375,7 +382,11 @@ impl Agents {
                 Some(Ok(status)) => {
                     listed = status.models;
                     match status.account {
-                        Some(account) => (Setup::Ready { account }, status.choices),
+                        // A sign-in that ended without its account still says why.
+                        Some(account) => {
+                            let reason = reason.filter(|_| !picks);
+                            (Setup::Ready { account, reason }, status.choices)
+                        }
                         None => (Setup::SignedOut { reason }, status.choices),
                     }
                 }

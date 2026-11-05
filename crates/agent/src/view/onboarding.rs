@@ -34,9 +34,11 @@ pub enum Setup {
         reason: Option<String>,
     },
     SigningIn(SigningIn),
-    /// A thread can run on it.
+    /// A thread can run on it. `reason` says why a sign-in to another of Pi's providers
+    /// ended without it.
     Ready {
         account: Account,
+        reason: Option<String>,
     },
     /// The agent's program did not run. `message` is the first line it wrote.
     Stopped {
@@ -303,7 +305,7 @@ impl RenderOnce for Onboarding {
                 quiet: Some("Checking…".to_string()),
                 ..Shown::default()
             },
-            Setup::Ready { account } => {
+            Setup::Ready { account, reason } => {
                 let who: Vec<String> = [account.email, account.plan]
                     .into_iter()
                     .flatten()
@@ -322,6 +324,7 @@ impl RenderOnce for Onboarding {
                     Provider::Pi => buttons.choices(self.choices, self.keys, window, cx),
                 };
                 Shown {
+                    sentence: reason,
                     quiet: Some(signed_in),
                     controls,
                     more,
