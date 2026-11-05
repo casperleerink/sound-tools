@@ -34,9 +34,9 @@ pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
     Account, AgentEvent, Answer, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command,
-    Events, ExitReason, Image, ImageFormat, Installed, Message, Model, Pick, Provider,
-    SignInChoice, SignInQuestion, SignInStep, Status, StepId, StepKind, StepOutcome, Thread,
-    ThreadClosed, ThreadOptions, TurnOutcome,
+    Events, ExitReason, Image, ImageFormat, Installed, Message, Model, Pick, Provider, Service,
+    SignInChoice, SignInQuestion, SignInStep, SignedIn, Status, StepId, StepKind, StepOutcome,
+    Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
 pub use view::{

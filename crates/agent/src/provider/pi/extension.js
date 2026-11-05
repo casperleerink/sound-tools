@@ -146,6 +146,8 @@ export default function (pi) {
             : null,
           api_key: Boolean(provider.auth.apiKey?.login),
           signed_in: runtime.getProviderAuthStatus(provider.id).configured === true,
+          // "stored" is what a sign-in here saved, which a sign-out removes.
+          stored: runtime.getProviderAuthStatus(provider.id).source === "stored",
         }));
       say(ctx, { providers });
     },
@@ -171,6 +173,18 @@ export default function (pi) {
           { getDeviceId: () => settings.getOrCreateDeviceId() },
         );
         say(ctx, { signed_in: true });
+      } catch (error) {
+        say(ctx, { failed: error instanceof Error ? error.message : String(error) });
+      }
+    },
+  });
+
+  pi.registerCommand("sound-tools-sign-out", {
+    handler: async (args, ctx) => {
+      try {
+        const runtime = await ModelRuntime.create();
+        await runtime.logout(args.trim());
+        say(ctx, { signed_out: true });
       } catch (error) {
         say(ctx, { failed: error instanceof Error ? error.message : String(error) });
       }

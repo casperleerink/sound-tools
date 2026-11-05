@@ -230,6 +230,16 @@ pub(crate) struct ListedProvider {
     /// Whether it takes an API key.
     pub api_key: bool,
     pub signed_in: bool,
+    /// Signed in by a sign-in, which a sign-out removes, not by a key set elsewhere.
+    pub stored: bool,
+}
+
+/// What `/sound-tools-sign-out` says.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SignOutRecord {
+    SignedOut(IgnoredAny),
+    Failed(String),
 }
 
 /// One record of `/sound-tools-sign-in`.

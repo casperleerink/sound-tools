@@ -21,7 +21,7 @@ use smol::channel::Receiver;
 
 use self::mapper::{APPROVAL_MODE, MESSAGE, MODEL, MODELS, Mapper, STOP};
 use self::protocol::Outgoing;
-pub(super) use self::setup::{PiSignIn, ask_small_model, models, sign_in, status};
+pub(super) use self::setup::{PiSignIn, ask_small_model, models, sign_in, sign_out, status};
 use super::{AgentEvent, ApprovalMode, Command, Installed, ThreadOptions, jsonl};
 
 const EXTENSION: &str = include_str!("extension.js");

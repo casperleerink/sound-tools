@@ -29,7 +29,8 @@ use gpui::{AppContext, Entity, Focusable, HeadlessAppContext};
 use runtime::window::{LeftPanelSlot, SettingsSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, Agents, AgentsPage, ApprovalId, ExitReason, Installed,
-    Model, Provider, Sidebar, StepId, StepKind, StepOutcome, Thread, TurnOutcome,
+    Model, Provider, Service, Sidebar, SignedIn, StepId, StepKind, StepOutcome, Thread,
+    TurnOutcome,
 };
 use sound_ui::components::dropdown_menu::MenuPicked;
 
@@ -415,7 +416,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     cx.run_until_parked();
     save(cx, opened.window.into(), "agent-attachments")?;
 
-    // Where the agents are set up, signed in to Claude Code.
+    // Where the agents are set up: signed in to Claude Code, and Pi to three services.
     opened.key("cmd-,", cx)?;
     save(cx, opened.window.into(), "agent-settings")?;
     Ok(())
@@ -460,7 +461,25 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
         settings.update(cx, |settings, cx| {
             settings.set_models(Provider::Pi, models, cx)
         });
-        let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
+        let service = |name: &str, in_browser: Option<&str>, signed_in| {
+            Service::example(name, in_browser, signed_in)
+        };
+        let services = vec![
+            service("Anthropic", Some("Anthropic (Claude Pro/Max)"), None),
+            service("GitHub Copilot", Some("GitHub Copilot"), None),
+            service("OpenAI", Some("Sign in with ChatGPT"), Some(SignedIn::Here)),
+            service(
+                "OpenRouter",
+                Some("Sign in with OpenRouter"),
+                Some(SignedIn::Here),
+            ),
+            service("DeepSeek", None, None),
+            service("Google", None, Some(SignedIn::Elsewhere)),
+            service("Groq", None, None),
+            service("Mistral", None, None),
+        ];
+        let agents =
+            cx.new(|_| Agents::with_programs(programs, settings.clone()).with_services(services));
         SettingsSlot::new({
             let agents = agents.clone();
             move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()

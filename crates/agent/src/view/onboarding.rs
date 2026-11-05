@@ -1,6 +1,7 @@
 //! How far a provider is set up, as the Settings page shows it: the download, the ways in and
-//! the steps of a sign-in, and the account. Plain state in, buttons out, so the gallery shows
-//! every state with no process. The sidebar shows a skeleton of the thread while the app checks.
+//! the steps of a sign-in, and the account; for Pi, each of its services. Plain state in,
+//! buttons out, so the gallery shows every state with no process. The sidebar shows a skeleton
+//! of the thread while the app checks.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -11,9 +12,13 @@ use gpui::{
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::icon::Icon;
 use sound_ui::components::text_input::TextInput;
 
-use crate::{Account, Answer, Provider, SignInChoice, SignInQuestion, SignInStep};
+use super::model_picker::logo;
+use crate::{
+    Account, Answer, Provider, Service, SignInChoice, SignInQuestion, SignInStep, SignedIn,
+};
 
 /// Where the app is in setting up the agent of one provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,17 +85,20 @@ pub enum SetupAction {
     /// Stops the download or the sign-in.
     Cancel,
     SignIn(SignInChoice),
-    /// Shows the providers that take a key.
-    ShowKeys,
     /// Opens the provider's page again, or starts the sign-in again when it never said which.
     OpenPageAgain,
     /// Answers the question with the id of a pick.
     Pick(String),
     /// Answers the question with what the field holds.
     Continue,
-    SignOut,
+    /// Signs out of the program, or of the service of Pi with this id.
+    SignOut(Option<String>),
     /// Try again after the program did not run.
     Check,
+    /// Opens the page that tells how to install the program.
+    GetProgram,
+    /// Looks for the program again, once the composer installed it.
+    LookAgain,
 }
 
 type ActionHandler = Rc<dyn Fn(&SetupAction, &mut Window, &mut App)>;
@@ -100,10 +108,15 @@ type ActionHandler = Rc<dyn Fn(&SetupAction, &mut Window, &mut App)>;
 pub struct Onboarding {
     provider: Provider,
     setup: Setup,
-    /// The ways in, from the last check: in the browser first, then those that take a key.
+    /// Claude Code's ways in.
     choices: Vec<SignInChoice>,
-    /// Whether the providers that take a key show.
-    keys: bool,
+    /// Pi's services.
+    services: Vec<Service>,
+    /// The service being signed in to, and the one being signed out of, by their ids.
+    signing_in: Option<String>,
+    signing_out: Option<String>,
+    /// The field that searches Pi's services, and what it holds.
+    search: Option<(Entity<TextInput>, String)>,
     /// The field a question of the sign-in is answered in.
     answer: Option<Entity<TextInput>>,
     on_action: Option<ActionHandler>,
@@ -115,15 +128,35 @@ impl Onboarding {
             provider,
             setup,
             choices: Vec::new(),
-            keys: false,
+            services: Vec::new(),
+            signing_in: None,
+            signing_out: None,
+            search: None,
             answer: None,
             on_action: None,
         }
     }
 
-    pub fn choices(mut self, choices: Vec<SignInChoice>, keys: bool) -> Self {
+    pub fn choices(mut self, choices: Vec<SignInChoice>) -> Self {
         self.choices = choices;
-        self.keys = keys;
+        self
+    }
+
+    /// Pi's services, with the one being signed in to and the one being signed out of.
+    pub fn services(
+        mut self,
+        services: Vec<Service>,
+        signing_in: Option<String>,
+        signing_out: Option<String>,
+    ) -> Self {
+        self.services = services;
+        self.signing_in = signing_in;
+        self.signing_out = signing_out;
+        self
+    }
+
+    pub fn search(mut self, field: Entity<TextInput>, query: String) -> Self {
+        self.search = Some((field, query));
         self
     }
 
@@ -206,7 +239,7 @@ struct Shown {
     /// Shown large, as a code to type.
     code: Option<String>,
     controls: Vec<AnyElement>,
-    /// Under the controls, such as the providers that take a key.
+    /// Under the controls, such as the question beside the browser's step.
     more: Vec<AnyElement>,
 }
 
@@ -218,12 +251,15 @@ struct Buttons {
 }
 
 impl Buttons {
+    /// A button as wide as the column of controls, or a small one in a row of a list.
+    #[allow(clippy::too_many_arguments)]
     fn make(
         &self,
-        id: String,
+        id: &str,
         label: impl Into<SharedString>,
         action: SetupAction,
         variant: ButtonVariant,
+        wide: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -236,9 +272,11 @@ impl Buttons {
         let button = Button::new(SharedString::from(format!("{}-{id}", self.key)), label)
             .debug_selector(move || selector)
             .variant(variant)
-            .size(ButtonSize::Md)
-            .w_full()
             .focus_handle(&handle);
+        let button = match wide {
+            true => button.size(ButtonSize::Md).w_full(),
+            false => button.size(ButtonSize::Sm),
+        };
         match self.on_action.clone() {
             Some(on_action) => button
                 .on_click(move |_, window, cx| on_action(&action, window, cx))
@@ -247,64 +285,454 @@ impl Buttons {
         }
     }
 
-    /// The ways in: those in the browser as buttons, and **Use an API key**, which shows the
-    /// providers that take one.
+    /// The steps of a running sign-in: the browser's, a code, a question, and the way out.
+    fn signing_in(
+        &self,
+        provider: Provider,
+        signing_in: SigningIn,
+        answer: Option<Entity<TextInput>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Shown {
+        let muted = cx.theme().gray_700;
+        let (subtle, primary) = (ButtonVariant::Subtle, ButtonVariant::Primary);
+        let SigningIn {
+            page,
+            code,
+            note,
+            question,
+        } = signing_in;
+        // The browser's step leads while there is one; a question beside it, such as the
+        // address the browser ended on, is the quieter way.
+        let in_browser = page.is_some() || code.is_some();
+        let mut asked = Vec::new();
+        if let Some(question) = &question {
+            if in_browser {
+                let label = div().text_color(muted).child(question.message.clone());
+                asked.push(label.into_any_element());
+            }
+            match &question.answer {
+                Answer::Pick(picks) => {
+                    for (index, pick) in picks.iter().enumerate() {
+                        let action = SetupAction::Pick(pick.id.clone());
+                        let label = SharedString::from(pick.label.clone());
+                        let id = format!("pick-{index}");
+                        asked.push(self.make(&id, label, action, subtle, true, window, cx));
+                    }
+                }
+                Answer::Text { .. } => {
+                    asked.extend(
+                        answer.map(|field| {
+                            div().w_full().text_left().child(field).into_any_element()
+                        }),
+                    );
+                    let variant = if in_browser { subtle } else { primary };
+                    let action = SetupAction::Continue;
+                    asked
+                        .push(self.make("continue", "Continue", action, variant, true, window, cx));
+                }
+            }
+        }
+        let sentence = match &question {
+            _ if code.is_some() => "Enter this code on the page in your browser:".to_string(),
+            Some(question) if !in_browser => question.message.clone(),
+            _ => "Finish signing in in your browser.".to_string(),
+        };
+        let (mut controls, more) = match in_browser {
+            true => (Vec::new(), asked),
+            false => (asked, Vec::new()),
+        };
+        // Claude Code never names its page: only starting again opens it again.
+        if in_browser || provider == Provider::Claude {
+            let action = SetupAction::OpenPageAgain;
+            let label = "Open the page again";
+            controls.push(self.make("open-page-again", label, action, subtle, true, window, cx));
+        }
+        let (cancel, ghost) = (SetupAction::Cancel, ButtonVariant::Ghost);
+        controls.push(self.make("cancel", "Cancel", cancel, ghost, true, window, cx));
+        Shown {
+            sentence: Some(sentence),
+            quiet: note,
+            code,
+            controls,
+            more,
+        }
+    }
+
+    /// Claude Code's ways in, one button each.
     fn choices(
         &self,
         choices: Vec<SignInChoice>,
-        keys: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> (Vec<AnyElement>, Vec<AnyElement>) {
-        let (with_key, in_browser): (Vec<_>, Vec<_>) =
-            choices.into_iter().partition(SignInChoice::takes_key);
-        let mut controls: Vec<AnyElement> = (in_browser.into_iter().enumerate())
+    ) -> Vec<AnyElement> {
+        (choices.into_iter().enumerate())
             .map(|(index, choice)| {
                 let label = choice.label().to_string();
                 let action = SetupAction::SignIn(choice);
                 let id = format!("sign-in-{index}");
-                self.make(id, label, action, ButtonVariant::Subtle, window, cx)
+                self.make(&id, label, action, ButtonVariant::Subtle, true, window, cx)
             })
+            .collect()
+    }
+}
+
+/// A sentence, a code, a quieter line, then the controls and what goes under them.
+fn shown_element(shown: Shown, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let (text, muted, strong) = (theme.gray_900, theme.gray_700, theme.gray_950);
+    let column = |children: Vec<AnyElement>, gap: f32| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(gap))
+            .w_full()
+            .max_w(px(280.))
+            .children(children)
+    };
+    div()
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(px(12.))
+        .w_full()
+        .children(
+            shown
+                .sentence
+                .map(|sentence| div().text_color(text).child(sentence)),
+        )
+        .children(shown.code.map(|code| {
+            div()
+                .text_size(px(24.))
+                .line_height(px(32.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(strong)
+                .child(code)
+        }))
+        .children(
+            shown
+                .quiet
+                .map(|quiet| div().text_color(muted).child(quiet)),
+        )
+        .when(!shown.controls.is_empty(), |body| {
+            body.child(column(shown.controls, 8.))
+        })
+        .when(!shown.more.is_empty(), |body| {
+            body.child(column(shown.more, 4.))
+        })
+        .into_any_element()
+}
+
+/// Whether `name` holds what the composer searched for, in any case.
+fn matches(name: &str, query: &str) -> bool {
+    name.to_lowercase().contains(&query.trim().to_lowercase())
+}
+
+/// Pi's services: those signed in first, then a search over the others, those with a sign-in
+/// in the browser first. The one being signed in to shows the steps under its row.
+struct Services {
+    services: Vec<Service>,
+    signing_in: Option<(String, SigningIn)>,
+    signing_out: Option<String>,
+    search: Option<(Entity<TextInput>, String)>,
+    answer: Option<Entity<TextInput>>,
+}
+
+impl Services {
+    fn element(self, buttons: &Buttons, window: &mut Window, cx: &mut App) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, hairline) = (theme.gray_700, theme.alpha_at(0.08));
+        let query = self.search.as_ref().map_or("", |(_, query)| query.as_str());
+        let (signed_in, mut others): (Vec<_>, Vec<_>) =
+            (self.services.iter()).partition(|service| service.signed_in.is_some());
+        // Stable, so Pi's order holds within each group.
+        others.sort_by_key(|service| service.in_browser.is_none());
+        let others: Vec<_> = others
+            .into_iter()
+            .filter(|service| matches(&service.name, query))
             .collect();
-        if with_key.is_empty() {
-            return (controls, Vec::new());
-        }
-        if !keys {
-            let (action, variant) = (SetupAction::ShowKeys, ButtonVariant::Ghost);
-            let keys = self.make("keys".into(), "Use an API key", action, variant, window, cx);
-            controls.push(keys);
-            return (controls, Vec::new());
-        }
-        let more = (with_key.into_iter().enumerate())
-            .map(|(index, choice)| {
-                let label = choice.label().to_string();
-                let action = SetupAction::SignIn(choice);
-                let id = format!("key-{index}");
-                self.make(id, label, action, ButtonVariant::Ghost, window, cx)
+        let row = |service: &Service, window: &mut Window, cx: &mut App| {
+            self.row(service, buttons, hairline, window, cx)
+        };
+        let signed_in: Vec<AnyElement> = signed_in
+            .into_iter()
+            .map(|service| row(service, window, cx))
+            .collect();
+        let listed: Vec<AnyElement> = others
+            .iter()
+            .map(|service| row(service, window, cx))
+            .collect();
+        let heading = |label: &'static str| {
+            div()
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(muted)
+                .child(label)
+        };
+        let empty = listed.is_empty().then(|| {
+            div()
+                .py(px(10.))
+                .text_color(muted)
+                .child("No service matches.")
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .w_full()
+            .when(!signed_in.is_empty(), |list| {
+                list.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(heading("Signed in"))
+                        .children(signed_in),
+                )
             })
-            .collect();
-        (controls, more)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(heading("Add a service"))
+                    .children(self.search.map(|(field, _)| field))
+                    .child(
+                        div()
+                            .id("pi-services")
+                            .flex()
+                            .flex_col()
+                            .max_h(px(360.))
+                            .overflow_y_scroll()
+                            .children(listed)
+                            .children(empty),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The service's name and how it is signed in, its buttons, and the steps of its sign-in
+    /// under it while one runs.
+    fn row(
+        &self,
+        service: &Service,
+        buttons: &Buttons,
+        hairline: gpui::Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, strong) = (theme.gray_700, theme.gray_950);
+        let id = &service.id;
+        let steps = (self.signing_in.as_ref())
+            .filter(|(signing_in, _)| signing_in == id)
+            .map(|(_, steps)| steps.clone());
+        let signing_out = self.signing_out.as_deref() == Some(id.as_str());
+        let about = match (service.signed_in, signing_out) {
+            (_, true) => Some("Signing out…"),
+            (Some(SignedIn::Here), false) => None,
+            (Some(SignedIn::Elsewhere), false) => Some("Signed in outside Sound Tools"),
+            (None, false) => service.plan(),
+        };
+        let (subtle, ghost) = (ButtonVariant::Subtle, ButtonVariant::Ghost);
+        let mut actions = Vec::new();
+        match (service.signed_in, &steps, signing_out) {
+            (_, Some(_), _) | (_, _, true) | (Some(SignedIn::Elsewhere), _, _) => {}
+            (Some(SignedIn::Here), None, false) => {
+                let action = SetupAction::SignOut(Some(id.clone()));
+                let button_id = format!("{id}-sign-out");
+                actions
+                    .push(buttons.make(&button_id, "Sign out", action, subtle, false, window, cx));
+            }
+            (None, None, false) => {
+                if let Some(choice) = &service.in_browser {
+                    let action = SetupAction::SignIn(choice.clone());
+                    let button_id = format!("{id}-sign-in");
+                    actions.push(
+                        buttons.make(&button_id, "Sign in", action, subtle, false, window, cx),
+                    );
+                }
+                if let Some(choice) = &service.with_key {
+                    let action = SetupAction::SignIn(choice.clone());
+                    let button_id = format!("{id}-add-key");
+                    actions.push(
+                        buttons.make(&button_id, "Add key", action, ghost, false, window, cx),
+                    );
+                }
+            }
+        }
+        let steps = steps.map(|steps| {
+            let shown = buttons.signing_in(Provider::Pi, steps, self.answer.clone(), window, cx);
+            div().pb(px(12.)).child(shown_element(shown, cx))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(hairline)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .min_h(px(48.))
+                    .py(px(6.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_color(strong).child(service.name.clone()))
+                            .children(about.map(|about| {
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(muted)
+                                    .child(about.to_string())
+                            })),
+                    )
+                    .child(div().flex().flex_none().gap(px(8.)).children(actions)),
+            )
+            .children(steps)
+            .into_any_element()
     }
 }
 
 impl RenderOnce for Onboarding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (text, muted, strong) = (theme.gray_900, theme.gray_700, theme.gray_950);
+        let strong = theme.gray_950;
         let name = self.provider.name();
         let buttons = Buttons {
             key: name.to_lowercase(),
             on_action: self.on_action,
         };
         let (subtle, primary) = (ButtonVariant::Subtle, ButtonVariant::Primary);
-        let mut button = |id: &str, label: SharedString, action, variant| {
-            buttons.make(id.to_string(), label, action, variant, window, cx)
+        let mut button = |id: &str, label: &'static str, action, variant| {
+            buttons.make(id, label, action, variant, true, window, cx)
         };
-        let shown = match self.setup {
-            Setup::Checking => Shown {
-                quiet: Some("Checking…".to_string()),
-                ..Shown::default()
-            },
+        let pi = self.provider == Provider::Pi;
+        let body = match self.setup {
+            Setup::Checking => shown_element(
+                Shown {
+                    quiet: Some("Checking…".to_string()),
+                    ..Shown::default()
+                },
+                cx,
+            ),
+            Setup::NotInstalled if pi => shown_element(
+                Shown {
+                    sentence: Some(
+                        "Pi runs the agent on the AI service you choose, such as ChatGPT, \
+                         Gemini or OpenRouter. It is not on this computer yet: get it from \
+                         its website, then come back here."
+                            .to_string(),
+                    ),
+                    controls: vec![
+                        button("get", "Get Pi", SetupAction::GetProgram, primary),
+                        button("look-again", "Check again", SetupAction::LookAgain, subtle),
+                    ],
+                    ..Shown::default()
+                },
+                cx,
+            ),
+            Setup::NotInstalled => {
+                let size = self.provider.download().map_or(String::new(), |download| {
+                    format!(" {} MB", megabytes(download.size))
+                });
+                let sentence = format!(
+                    "The agent runs {name} by {}. Setup downloads{size}, then opens your browser to sign in.",
+                    self.provider.maker()
+                );
+                let set_up = button("set-up", "Set up", SetupAction::Download, primary);
+                shown_element(
+                    Shown {
+                        sentence: Some(sentence),
+                        controls: vec![set_up],
+                        ..Shown::default()
+                    },
+                    cx,
+                )
+            }
+            Setup::Downloading { received, size } => {
+                let percent = (received * 100).checked_div(size).unwrap_or(0).min(100);
+                let line = format!(
+                    "Downloading {name}: {} of {} MB, {percent}%",
+                    megabytes(received),
+                    megabytes(size)
+                );
+                let cancel = button("cancel", "Cancel", SetupAction::Cancel, subtle);
+                shown_element(
+                    Shown {
+                        sentence: Some(line),
+                        controls: vec![cancel],
+                        ..Shown::default()
+                    },
+                    cx,
+                )
+            }
+            Setup::DownloadFailed { message } => {
+                let again = button("try-again", "Try again", SetupAction::Download, subtle);
+                shown_element(
+                    Shown {
+                        sentence: Some(message),
+                        controls: vec![again],
+                        ..Shown::default()
+                    },
+                    cx,
+                )
+            }
+            Setup::Stopped { message } => {
+                let again = button("try-again", "Try again", SetupAction::Check, subtle);
+                shown_element(
+                    Shown {
+                        sentence: Some(format!("{name} stopped: {message}")),
+                        controls: vec![again],
+                        ..Shown::default()
+                    },
+                    cx,
+                )
+            }
+            setup if pi => {
+                let (reason, signing_in) = match setup {
+                    Setup::Ready { reason, .. } | Setup::SignedOut { reason } => (reason, None),
+                    Setup::SigningIn(steps) => (None, Some(steps)),
+                    _ => (None, None),
+                };
+                let ready = self
+                    .services
+                    .iter()
+                    .any(|service| service.signed_in.is_some());
+                let sentence = match ready {
+                    true => {
+                        "Pi runs the agent on the AI services you sign in to. Their models show in the sidebar."
+                    }
+                    false => {
+                        "Pi runs the agent on the AI service you sign in to. Sign in to one to start."
+                    }
+                };
+                let services = Services {
+                    services: self.services,
+                    signing_in: self.signing_in.zip(signing_in),
+                    signing_out: self.signing_out,
+                    search: self.search,
+                    answer: self.answer,
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.))
+                    .w_full()
+                    .child(shown_element(
+                        Shown {
+                            sentence: Some(sentence.to_string()),
+                            quiet: reason,
+                            ..Shown::default()
+                        },
+                        cx,
+                    ))
+                    .child(services.element(&buttons, window, cx))
+                    .into_any_element()
+            }
             Setup::Ready { account, reason } => {
                 let who: Vec<String> = [account.email, account.plan]
                     .into_iter()
@@ -314,207 +742,72 @@ impl RenderOnce for Onboarding {
                     true => "Signed in.".to_string(),
                     false => format!("Signed in: {}", who.join(" · ")),
                 };
-                // Pi signs in to one provider at a time, and signs out in Pi itself.
-                let (controls, more) = match self.provider {
-                    Provider::Claude => {
-                        let sign_out =
-                            button("sign-out", "Sign out".into(), SetupAction::SignOut, subtle);
-                        (vec![sign_out], Vec::new())
-                    }
-                    Provider::Pi => buttons.choices(self.choices, self.keys, window, cx),
-                };
-                Shown {
-                    sentence: reason,
-                    quiet: Some(signed_in),
-                    controls,
-                    more,
-                    ..Shown::default()
-                }
-            }
-            Setup::NotInstalled => {
-                let size = self.provider.download().map_or(String::new(), |download| {
-                    format!(" {} MB", megabytes(download.size))
-                });
-                let sentence = format!(
-                    "The agent runs {name} by {}. Setup downloads{size}, then opens your browser to sign in.",
-                    self.provider.maker()
-                );
-                Shown {
-                    sentence: Some(sentence),
-                    controls: vec![button(
-                        "set-up",
-                        "Set up".into(),
-                        SetupAction::Download,
-                        primary,
-                    )],
-                    ..Shown::default()
-                }
-            }
-            Setup::Downloading { received, size } => {
-                let percent = (received * 100).checked_div(size).unwrap_or(0).min(100);
-                let line = format!(
-                    "Downloading {name}: {} of {} MB, {percent}%",
-                    megabytes(received),
-                    megabytes(size)
-                );
-                Shown {
-                    sentence: Some(line),
-                    controls: vec![button(
-                        "cancel",
-                        "Cancel".into(),
-                        SetupAction::Cancel,
-                        subtle,
-                    )],
-                    ..Shown::default()
-                }
-            }
-            Setup::DownloadFailed { message } => Shown {
-                sentence: Some(message),
-                controls: vec![button(
-                    "try-again",
-                    "Try again".into(),
-                    SetupAction::Download,
+                let sign_out = buttons.make(
+                    "sign-out",
+                    "Sign out",
+                    SetupAction::SignOut(None),
                     subtle,
-                )],
-                ..Shown::default()
-            },
+                    false,
+                    window,
+                    cx,
+                );
+                let muted = cx.theme().gray_700;
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .w_full()
+                    .children(reason.map(|reason| div().child(reason)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(12.))
+                            .child(div().flex_1().min_w_0().text_color(muted).child(signed_in))
+                            .child(sign_out),
+                    )
+                    .into_any_element()
+            }
             Setup::SignedOut { reason } => {
-                let (controls, more) = buttons.choices(self.choices, self.keys, window, cx);
-                Shown {
-                    sentence: Some("Sign in to start.".to_string()),
-                    quiet: reason,
-                    controls,
-                    more,
-                    ..Shown::default()
-                }
+                let controls = buttons.choices(self.choices, window, cx);
+                shown_element(
+                    Shown {
+                        sentence: Some("Sign in to start.".to_string()),
+                        quiet: reason,
+                        controls,
+                        ..Shown::default()
+                    },
+                    cx,
+                )
             }
             Setup::SigningIn(signing_in) => {
-                let SigningIn {
-                    page,
-                    code,
-                    note,
-                    question,
-                } = signing_in;
-                // The browser's step leads while there is one; a question beside it, such as
-                // the address the browser ended on, is the quieter way.
-                let in_browser = page.is_some() || code.is_some();
-                let mut asked = Vec::new();
-                if let Some(question) = &question {
-                    if in_browser {
-                        let label = div().text_color(muted).child(question.message.clone());
-                        asked.push(label.into_any_element());
-                    }
-                    match &question.answer {
-                        Answer::Pick(picks) => {
-                            for (index, pick) in picks.iter().enumerate() {
-                                let action = SetupAction::Pick(pick.id.clone());
-                                let label = SharedString::from(pick.label.clone());
-                                asked.push(button(&format!("pick-{index}"), label, action, subtle));
-                            }
-                        }
-                        Answer::Text { .. } => {
-                            asked.extend(self.answer.clone().map(|field| {
-                                div().w_full().text_left().child(field).into_any_element()
-                            }));
-                            let variant = if in_browser { subtle } else { primary };
-                            let action = SetupAction::Continue;
-                            asked.push(button("continue", "Continue".into(), action, variant));
-                        }
-                    }
-                }
-                let sentence = match &question {
-                    _ if code.is_some() => {
-                        "Enter this code on the page in your browser:".to_string()
-                    }
-                    Some(question) if !in_browser => question.message.clone(),
-                    _ => "Finish signing in in your browser.".to_string(),
-                };
-                let (mut controls, more) = match in_browser {
-                    true => (Vec::new(), asked),
-                    false => (asked, Vec::new()),
-                };
-                // Claude Code never names its page: only starting again opens it again.
-                if in_browser || self.provider == Provider::Claude {
-                    let action = SetupAction::OpenPageAgain;
-                    controls.push(button(
-                        "open-page-again",
-                        "Open the page again".into(),
-                        action,
-                        subtle,
-                    ));
-                }
-                let cancel = SetupAction::Cancel;
-                controls.push(button(
-                    "cancel",
-                    "Cancel".into(),
-                    cancel,
-                    ButtonVariant::Ghost,
-                ));
-                Shown {
-                    sentence: Some(sentence),
-                    quiet: note,
-                    code,
-                    controls,
-                    more,
-                }
+                let shown = buttons.signing_in(self.provider, signing_in, self.answer, window, cx);
+                shown_element(shown, cx)
             }
-            Setup::Stopped { message } => Shown {
-                sentence: Some(format!("{name} stopped: {message}")),
-                controls: vec![button(
-                    "try-again",
-                    "Try again".into(),
-                    SetupAction::Check,
-                    subtle,
-                )],
-                ..Shown::default()
-            },
         };
-        let column = |children: Vec<AnyElement>, gap: f32| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(gap))
-                .w_full()
-                .max_w(px(280.))
-                .children(children)
-        };
+        let (icon, color) = logo(self.provider);
         div()
             .flex()
             .flex_col()
             .items_start()
             .gap(px(12.))
+            .w_full()
             .text_size(px(14.))
             .line_height(px(20.))
             .child(
                 div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(strong)
-                    .child(name),
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(Icon::new(icon).size(16.).color(color))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(strong)
+                            .child(name),
+                    ),
             )
-            .children(
-                shown
-                    .sentence
-                    .map(|sentence| div().text_color(text).child(sentence)),
-            )
-            .children(shown.code.map(|code| {
-                div()
-                    .text_size(px(24.))
-                    .line_height(px(32.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(strong)
-                    .child(code)
-            }))
-            .children(
-                shown
-                    .quiet
-                    .map(|quiet| div().text_color(muted).child(quiet)),
-            )
-            .when(!shown.controls.is_empty(), |body| {
-                body.child(column(shown.controls, 8.))
-            })
-            .when(!shown.more.is_empty(), |body| {
-                body.child(column(shown.more, 4.))
-            })
+            .child(body)
     }
 }
 

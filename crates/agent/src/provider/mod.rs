@@ -57,6 +57,14 @@ impl Provider {
     }
 
     /// The program's name on the `PATH`, when the composer installed it themselves.
+    /// Where the composer gets the program.
+    pub fn website(self) -> &'static str {
+        match self {
+            Provider::Claude => "https://claude.com/product/claude-code",
+            Provider::Pi => "https://pi.dev",
+        }
+    }
+
     pub fn command(self) -> &'static str {
         match self {
             Provider::Claude => "claude",
@@ -89,6 +97,7 @@ impl Provider {
             Provider::Claude => Ok(Status {
                 account: claude::account(installed).await?,
                 choices: claude_choices(),
+                services: Vec::new(),
                 models: None,
             }),
             Provider::Pi => pi::status(installed).await,
@@ -125,12 +134,13 @@ impl Provider {
         Err(io::Error::other("it ended before it was ready"))
     }
 
-    /// Signs the program out. Pi has a sign-in per provider, which the composer manages in
-    /// Pi.
-    pub async fn sign_out(self, installed: &Installed) -> io::Result<()> {
-        match self {
-            Provider::Claude => claude::sign_out(installed).await,
-            Provider::Pi => Err(io::Error::other("Pi signs out in Pi itself.")),
+    /// Signs the program out, or for Pi the service with the id `service`: Pi has a sign-in
+    /// per service.
+    pub async fn sign_out(self, installed: &Installed, service: Option<&str>) -> io::Result<()> {
+        match (self, service) {
+            (Provider::Claude, _) => claude::sign_out(installed).await,
+            (Provider::Pi, Some(service)) => pi::sign_out(installed, service).await,
+            (Provider::Pi, None) => Err(io::Error::other("Pi signs out of one service at a time.")),
         }
     }
 
@@ -163,8 +173,10 @@ pub struct Installed {
 pub struct Status {
     /// `None` when it is signed out.
     pub account: Option<Account>,
-    /// In the order the composer reads them.
+    /// Claude Code's ways in, in the order the composer reads them.
     pub choices: Vec<SignInChoice>,
+    /// Pi's services, each with its own sign-in.
+    pub services: Vec<Service>,
     /// What it can run, the default first, when the answer says. Claude Code lists them from
     /// an agent of their own, see [`Provider::models`].
     pub models: Option<Vec<Model>>,
@@ -177,6 +189,58 @@ pub struct SignInChoice {
     provider: Provider,
     label: String,
     way: Way,
+}
+
+/// One of the AI services Pi runs on, such as OpenRouter, with its own sign-in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Service {
+    /// Pi's id of it, such as `openrouter`.
+    pub id: String,
+    pub name: String,
+    /// Its sign-in in the browser, when it has one.
+    pub in_browser: Option<SignInChoice>,
+    /// Its sign-in with an API key, when it takes one.
+    pub with_key: Option<SignInChoice>,
+    pub signed_in: Option<SignedIn>,
+}
+
+/// How a service of Pi is signed in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignedIn {
+    /// By a sign-in in the app or in Pi, which **Sign out** removes.
+    Here,
+    /// By a key set up outside Pi's sign-in, such as in the shell, which only goes there.
+    Elsewhere,
+}
+
+impl Service {
+    /// A service with no program, for the gallery and the snapshots: `in_browser` is the
+    /// label of its sign-in in the browser, and every one takes a key.
+    pub fn example(name: &str, in_browser: Option<&str>, signed_in: Option<SignedIn>) -> Self {
+        let id = name.to_lowercase().replace(' ', "-");
+        let choice = |label: &str, with_key| SignInChoice {
+            provider: Provider::Pi,
+            label: label.to_string(),
+            way: Way::Pi(PiSignIn {
+                provider: id.clone(),
+                with_key,
+            }),
+        };
+        Service {
+            in_browser: in_browser.map(|label| choice(label, false)),
+            with_key: Some(choice(name, true)),
+            id,
+            name: name.to_string(),
+            signed_in,
+        }
+    }
+
+    /// The label of its sign-in in the browser, such as "Sign in with ChatGPT", when it says
+    /// more than its name.
+    pub fn plan(&self) -> Option<&str> {
+        let label = self.in_browser.as_ref()?.label();
+        (label != self.name).then_some(label)
+    }
 }
 
 /// The ways in Claude Code offers, the same on every computer.
@@ -198,23 +262,17 @@ enum Way {
 }
 
 impl SignInChoice {
-    /// Ways in to show with no program, for the gallery and the snapshots: Claude Code's
-    /// own, or for Pi these labels in the browser and with a key.
-    pub fn examples(provider: Provider, in_browser: &[&str], with_key: &[&str]) -> Vec<Self> {
-        if provider == Provider::Claude {
-            return claude_choices();
+    /// Claude Code's ways in, for the gallery and the snapshots.
+    pub fn claude() -> Vec<Self> {
+        claude_choices()
+    }
+
+    /// The id of the service of Pi it signs in to.
+    pub fn service(&self) -> Option<&str> {
+        match &self.way {
+            Way::Pi(way) => Some(&way.provider),
+            Way::Claude(_) => None,
         }
-        let choice = |label: &&str, with_key| SignInChoice {
-            provider,
-            label: label.to_string(),
-            way: Way::Pi(PiSignIn {
-                provider: label.to_lowercase(),
-                with_key,
-            }),
-        };
-        (in_browser.iter().map(|label| choice(label, false)))
-            .chain(with_key.iter().map(|label| choice(label, true)))
-            .collect()
     }
 
     pub fn provider(&self) -> Provider {

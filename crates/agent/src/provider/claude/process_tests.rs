@@ -279,7 +279,7 @@ fn signs_in_with_the_choice_then_out() {
         })
     );
 
-    smol::block_on(provider.sign_out(&installed)).unwrap();
+    smol::block_on(provider.sign_out(&installed, None)).unwrap();
     assert_eq!(signed_in_as(provider, &installed), None);
 }
 

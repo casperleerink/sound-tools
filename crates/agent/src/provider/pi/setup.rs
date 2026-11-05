@@ -12,11 +12,14 @@ use smol::future;
 use smol::io::{AsyncWriteExt, BufReader};
 
 use super::mapper::listed;
-use super::protocol::{Incoming, Models, Providers, Question, SignInRecord, Step, UiRequest};
+use super::protocol::{
+    Incoming, Models, Providers, Question, SignInRecord, SignOutRecord, Step, UiRequest,
+};
 use super::{command, rpc};
 use crate::provider::jsonl::read_line;
 use crate::provider::{
-    Account, Answer, Installed, Model, Pick, SignInChoice, SignInQuestion, SignInStep, Status, Way,
+    Account, Answer, Installed, Model, Pick, Service, SignInChoice, SignInQuestion, SignInStep,
+    SignedIn, Status, Way,
 };
 
 /// How Pi signs in to one of its providers.
@@ -109,14 +112,23 @@ pub(crate) async fn status(installed: &Installed) -> io::Result<Status> {
             with_key,
         }),
     };
-    let in_browser = (providers.providers.iter())
-        .filter_map(|provider| Some(choice(provider.sign_in.as_deref()?, &provider.id, false)));
-    let with_key = (providers.providers.iter())
-        .filter(|provider| provider.api_key)
-        .map(|provider| choice(&provider.name, &provider.id, true));
+    let services = (providers.providers.iter())
+        .map(|provider| Service {
+            id: provider.id.clone(),
+            name: provider.name.clone(),
+            in_browser: (provider.sign_in.as_deref())
+                .map(|label| choice(label, &provider.id, false)),
+            with_key: (provider.api_key).then(|| choice(&provider.name, &provider.id, true)),
+            signed_in: (provider.signed_in).then_some(match provider.stored {
+                true => SignedIn::Here,
+                false => SignedIn::Elsewhere,
+            }),
+        })
+        .collect();
     Ok(Status {
         account,
-        choices: in_browser.chain(with_key).collect(),
+        choices: Vec::new(),
+        services,
         models: Some(listed(models)),
     })
 }
@@ -124,6 +136,15 @@ pub(crate) async fn status(installed: &Installed) -> io::Result<Status> {
 pub(crate) async fn models(installed: &Installed) -> io::Result<Vec<Model>> {
     let said = ask(installed, &["/sound-tools-models"]).await?;
     Ok(listed(record(&said)?))
+}
+
+/// Removes what a sign-in to the service `id` saved in Pi's store.
+pub(crate) async fn sign_out(installed: &Installed, id: &str) -> io::Result<()> {
+    let said = ask(installed, &[&format!("/sound-tools-sign-out {id}")]).await?;
+    match record(&said)? {
+        SignOutRecord::SignedOut(_) => Ok(()),
+        SignOutRecord::Failed(error) => Err(io::Error::other(error)),
+    }
 }
 
 /// Runs Pi's sign-in to one provider and waits for it to end. Each step goes to `steps`, and

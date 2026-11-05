@@ -16,6 +16,8 @@ pub struct AgentsPage {
     answer: Entity<TextInput>,
     /// The question the field answers now, by its id, so a new one starts empty.
     asked: Option<String>,
+    /// Searches Pi's services.
+    search: Entity<TextInput>,
     _observing: Subscription,
 }
 
@@ -32,11 +34,26 @@ impl AgentsPage {
                 });
             });
         });
+        let search = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("Search services")
+                .size(InputSize::Md)
+        });
+        let weak = cx.weak_entity();
+        search.update(cx, |input, _| {
+            input.set_on_change(move |_, _, cx| {
+                let weak = weak.clone();
+                cx.defer(move |cx| {
+                    weak.update(cx, |_, cx| cx.notify()).ok();
+                });
+            });
+        });
         let observing = cx.observe(&agents, |page, _, cx| page.agents_changed(cx));
         let mut page = Self {
             agents,
             answer,
             asked: None,
+            search,
             _observing: observing,
         };
         page.agents_changed(cx);
@@ -91,18 +108,21 @@ impl AgentsPage {
 impl Render for AgentsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let muted = theme.gray_700;
+        let (muted, border) = (theme.gray_700, theme.alpha_at(0.08));
+        let query = self.search.read(cx).text().to_string();
         let agents = self.agents.read(cx);
-        let looking = match (agents.is_finding(), agents.programs().is_empty()) {
-            (true, _) => Some("Looking for agents…"),
-            (false, true) => Some("No agent runs on this computer. Install Claude Code or Pi."),
-            (false, false) => None,
-        };
+        let looking = agents.is_finding().then_some("Looking for agents…");
         let sections: Vec<_> = (agents.programs().iter())
             .map(|program| {
                 let provider = program.provider;
+                let signing_in = (program.signing_in())
+                    .and_then(|choice| choice.service())
+                    .map(str::to_string);
+                let signing_out = program.signing_out().map(str::to_string);
                 Onboarding::new(provider, program.setup.clone())
-                    .choices(program.choices.clone(), program.keys)
+                    .choices(program.choices.clone())
+                    .services(program.services.clone(), signing_in, signing_out)
+                    .search(self.search.clone(), query.clone())
                     .answer(self.answer.clone())
                     .on_action(cx.listener(move |page, action: &SetupAction, _, cx| {
                         page.act(provider, action.clone(), cx);
@@ -112,13 +132,19 @@ impl Render for AgentsPage {
         div()
             .flex()
             .flex_col()
-            .gap(px(32.))
-            .child(
-                div()
-                    .text_color(muted)
-                    .child("The agent in the sidebar runs one of these programs."),
-            )
+            .gap(px(16.))
+            .child(div().text_color(muted).child(
+                "The agent in the sidebar runs on Claude Code or Pi. Set up one or both, \
+                         then pick a model in the sidebar.",
+            ))
             .children(looking.map(|looking| div().text_color(muted).child(looking)))
-            .children(sections)
+            .children(sections.into_iter().map(|section| {
+                div()
+                    .p(px(20.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(border)
+                    .child(section)
+            }))
     }
 }

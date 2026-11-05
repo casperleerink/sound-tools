@@ -17,7 +17,7 @@ use crate::environment::put_first_on_path;
 use crate::install::{self, InstallError};
 use crate::settings::AgentSettings;
 use crate::{
-    Account, Installed, Provider, SignInChoice, SignInStep, login_shell_environment,
+    Account, Installed, Provider, Service, SignInChoice, SignInStep, login_shell_environment,
     program_on_path,
 };
 
@@ -35,6 +35,8 @@ pub struct Agents {
     programs: Vec<Program>,
     /// Reads the login shell and looks for the programs.
     finding: Option<Task<()>>,
+    /// The login shell's, once it answered, to look for a program installed since.
+    environment: Option<HashMap<OsString, OsString>>,
     /// Where each provider's models are listed, its default first.
     settings: Entity<AgentSettings>,
 }
@@ -57,12 +59,14 @@ pub struct Program {
     /// Whether the last check found it signed in: a thread runs on it while it is. A sign-in
     /// to another of Pi's providers, or a check, leaves it as it is.
     signed_in: bool,
-    /// The ways in, from the last check.
+    /// Claude Code's ways in, from the last check.
     pub choices: Vec<SignInChoice>,
-    /// Whether the providers that take a key show.
-    pub keys: bool,
+    /// Pi's services, from the last check.
+    pub services: Vec<Service>,
     /// The way in of the running sign-in, which **Open the page again** starts again.
     signing_in: Option<SignInChoice>,
+    /// The service of Pi being signed out, by its id.
+    signing_out: Option<String>,
     /// Hands the composer's answers to the running sign-in.
     answers: Option<Sender<(String, String)>>,
     /// The download, the sign-in or a question to the program. Dropping it cancels it.
@@ -80,8 +84,9 @@ impl Program {
             signed_in: matches!(setup, Setup::Ready { .. }),
             setup,
             choices: Vec::new(),
-            keys: false,
+            services: Vec::new(),
             signing_in: None,
+            signing_out: None,
             answers: None,
             task: None,
             rechecking: None,
@@ -90,6 +95,16 @@ impl Program {
 
     pub fn is_ready(&self) -> bool {
         self.signed_in
+    }
+
+    /// The way in of the running sign-in.
+    pub fn signing_in(&self) -> Option<&SignInChoice> {
+        self.signing_in.as_ref()
+    }
+
+    /// The service of Pi being signed out, by its id.
+    pub fn signing_out(&self) -> Option<&str> {
+        self.signing_out.as_deref()
     }
 }
 
@@ -116,6 +131,7 @@ impl Agents {
             downloads,
             programs: Vec::new(),
             finding: None,
+            environment: None,
             settings,
         };
         agents.find(first_on_path, cx);
@@ -145,8 +161,17 @@ impl Agents {
             downloads: None,
             programs,
             finding: None,
+            environment: None,
             settings,
         }
+    }
+
+    /// For a snapshot: Pi's services, as a check would list them.
+    pub fn with_services(mut self, services: Vec<Service>) -> Self {
+        if let Some(program) = self.program_mut(Provider::Pi) {
+            program.services = services;
+        }
+        self
     }
 
     pub fn programs(&self) -> &[Program] {
@@ -225,9 +250,9 @@ impl Agents {
             let notice = format!("The agent runs without the settings of your shell: {error}.");
             cx.emit(AgentsEvent::Notice(notice));
         }
-        // A provider shows once its program is on the machine, or when it can download it.
+        self.environment = Some(found.environment.clone());
+        // Every provider shows: one not on the machine says how to get it.
         self.programs = (found.programs.into_iter())
-            .filter(|(provider, _, present)| *present || provider.download().is_some())
             .map(|(provider, program, present)| {
                 let installed = program.map(|program| Installed {
                     program,
@@ -291,12 +316,6 @@ impl Agents {
             SetupAction::Download => self.download(provider, cx),
             SetupAction::Cancel => self.cancel(provider, cx),
             SetupAction::SignIn(choice) => self.sign_in(choice, cx),
-            SetupAction::ShowKeys => {
-                if let Some(program) = self.program_mut(provider) {
-                    program.keys = true;
-                    cx.notify();
-                }
-            }
             SetupAction::OpenPageAgain => {
                 let Some(program) = self.program(provider) else {
                     return;
@@ -314,8 +333,10 @@ impl Agents {
             }
             SetupAction::Pick(id) => self.answer(provider, id, cx),
             SetupAction::Continue => {}
-            SetupAction::SignOut => self.sign_out(provider, cx),
+            SetupAction::SignOut(service) => self.sign_out(provider, service, cx),
             SetupAction::Check => self.check(provider, None, false, cx),
+            SetupAction::GetProgram => cx.open_url(provider.website()),
+            SetupAction::LookAgain => self.look_again(provider, cx),
         }
     }
 
@@ -379,18 +400,19 @@ impl Agents {
                 None
             })
             .await;
-            let stopped = |message: String| (Setup::Stopped { message }, Vec::new());
+            let stopped = |message: String| (Setup::Stopped { message }, None);
             let mut listed = None;
-            let (setup, choices) = match answer {
+            let (setup, ways) = match answer {
                 Some(Ok(status)) => {
                     listed = status.models;
+                    let ways = Some((status.choices, status.services));
                     match status.account {
                         // A sign-in that ended without its account still says why.
                         Some(account) => {
                             let reason = reason.filter(|_| !picks);
-                            (Setup::Ready { account, reason }, status.choices)
+                            (Setup::Ready { account, reason }, ways)
                         }
-                        None => (Setup::SignedOut { reason }, status.choices),
+                        None => (Setup::SignedOut { reason }, ways),
                     }
                 }
                 Some(Err(error)) => stopped(error.to_string()),
@@ -400,7 +422,12 @@ impl Agents {
             // An app that quit in the meantime has nobody to tell.
             let told = agents.update(cx, |agents, cx| {
                 if let Some(program) = agents.program_mut(provider) {
-                    program.choices = choices;
+                    // A program that did not answer keeps the services it listed last.
+                    if let Some((choices, services)) = ways {
+                        program.choices = choices;
+                        program.services = services;
+                    }
+                    program.signing_out = None;
                     program.signed_in = ready;
                 }
                 if ready && picks {
@@ -635,20 +662,66 @@ impl Agents {
         }
     }
 
-    /// Signs the program out, for every app that shares its login. A sidebar whose thread
-    /// runs on it ends its agent once it shows signed out.
-    fn sign_out(&mut self, provider: Provider, cx: &mut Context<Self>) {
+    /// Signs the program out, for every app that shares its login, or for Pi one service.
+    /// A sidebar whose thread runs on it ends its agent once it shows signed out.
+    fn sign_out(&mut self, provider: Provider, service: Option<String>, cx: &mut Context<Self>) {
         let Some(installed) = self.ready(provider) else {
             return;
         };
-        self.set_signed_in(provider, false, cx);
-        self.set_setup(provider, Setup::Checking, cx);
-        let signing_out = cx.background_spawn(async move { provider.sign_out(&installed).await });
+        match &service {
+            // Pi stays signed in to its other services meanwhile, and its threads go on.
+            Some(service) => {
+                if let Some(program) = self.program_mut(provider) {
+                    program.signing_out = Some(service.clone());
+                    cx.notify();
+                }
+            }
+            None => {
+                self.set_signed_in(provider, false, cx);
+                self.set_setup(provider, Setup::Checking, cx);
+            }
+        }
+        let signing_out =
+            cx.background_spawn(
+                async move { provider.sign_out(&installed, service.as_deref()).await },
+            );
         let task = cx.spawn(async move |agents, cx| {
             let signed_out = signing_out.await;
             (agents.update(cx, |agents, cx| {
                 if let Err(error) = signed_out {
                     cx.emit(AgentsEvent::Notice(format!("Could not sign out: {error}")));
+                }
+                agents.check(provider, None, false, cx);
+            }))
+            .ok();
+        });
+        self.set_task(provider, task);
+    }
+
+    /// Looks for a program the composer installed since the app started, on the login
+    /// shell's `PATH`, then asks it whether it is signed in.
+    fn look_again(&mut self, provider: Provider, cx: &mut Context<Self>) {
+        let Some(environment) = self.environment.clone() else {
+            return;
+        };
+        self.set_setup(provider, Setup::Checking, cx);
+        let looking = cx.background_spawn(async move {
+            let program = program_on_path(provider.command(), &environment)
+                .filter(|program| program.is_file());
+            program.map(|program| Installed {
+                program,
+                environment,
+            })
+        });
+        let task = cx.spawn(async move |agents, cx| {
+            let installed = looking.await;
+            (agents.update(cx, |agents, cx| {
+                let Some(installed) = installed else {
+                    let setup = Setup::NotInstalled;
+                    return agents.set_setup(provider, setup, cx);
+                };
+                if let Some(program) = agents.program_mut(provider) {
+                    program.installed = Some(installed);
                 }
                 agents.check(provider, None, false, cx);
             }))
@@ -697,7 +770,8 @@ mod tests {
             let settings = cx.new(|cx| AgentSettings::new(None, cx));
             Agents::with_programs(vec![(Provider::Pi, installed)], settings)
         });
-        let choice = SignInChoice::examples(Provider::Pi, &[], &["OpenRouter"]).remove(0);
+        let service = Service::example("OpenRouter", None, None);
+        let choice = service.with_key.expect("every example takes a key");
         agents.update(cx, |agents, cx| {
             agents.act(Provider::Pi, SetupAction::SignIn(choice), cx);
             assert!(matches!(
