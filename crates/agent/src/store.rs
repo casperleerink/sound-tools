@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::conversation::{Conversation, request_label};
-use crate::{AgentEvent, TurnOutcome};
+use crate::{AgentEvent, Provider, TurnOutcome};
 
 const INDEX: &str = "index.json";
 
@@ -39,6 +39,9 @@ pub(crate) struct SavedThread {
     /// The session the agent works in, from [`crate::Thread::session_id`]. `None` until an
     /// agent started for the thread.
     pub session_id: Option<String>,
+    /// Whose session it is. Claude in a thread saved before Pi came.
+    #[serde(default)]
+    pub provider: Provider,
 }
 
 impl SavedThread {
@@ -47,6 +50,7 @@ impl SavedThread {
         Self {
             id: Uuid::new_v4().to_string(),
             session_id: None,
+            provider: Provider::default(),
         }
     }
 }

@@ -17,7 +17,7 @@ use crate::provider::{self, Attachment, ImageFormat};
 /// A line the CLI writes.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum Incoming {
+pub(crate) enum Incoming {
     System(System),
     /// A piece of the answer while it streams (`--include-partial-messages`).
     StreamEvent {
@@ -48,7 +48,7 @@ pub(super) enum Incoming {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub(super) enum System {
+pub(crate) enum System {
     /// Sent at the start of each turn.
     Init { cwd: PathBuf },
     #[serde(other)]
@@ -57,7 +57,7 @@ pub(super) enum System {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum StreamEvent {
+pub(crate) enum StreamEvent {
     ContentBlockDelta {
         delta: Delta,
     },
@@ -67,7 +67,7 @@ pub(super) enum StreamEvent {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum Delta {
+pub(crate) enum Delta {
     TextDelta {
         text: String,
     },
@@ -76,13 +76,13 @@ pub(super) enum Delta {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct Message {
+pub(crate) struct Message {
     pub content: Content,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(super) enum Content {
+pub(crate) enum Content {
     Blocks(Vec<Block>),
     /// Plain text, which only the composer's own messages use.
     Text(IgnoredAny),
@@ -90,7 +90,7 @@ pub(super) enum Content {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum Block {
+pub(crate) enum Block {
     Text {
         text: String,
     },
@@ -109,7 +109,7 @@ pub(super) enum Block {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct TurnResult {
+pub(crate) struct TurnResult {
     pub subtype: ResultKind,
     #[serde(default)]
     pub is_error: bool,
@@ -123,7 +123,7 @@ pub(super) struct TurnResult {
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum ResultKind {
+pub(crate) enum ResultKind {
     Success,
     #[serde(other)]
     Error,
@@ -131,7 +131,7 @@ pub(super) enum ResultKind {
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum TerminalReason {
+pub(crate) enum TerminalReason {
     /// Interrupted while the answer streamed.
     AbortedStreaming,
     /// Interrupted while a tool ran.
@@ -142,7 +142,7 @@ pub(super) enum TerminalReason {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub(super) enum CliRequest {
+pub(crate) enum CliRequest {
     /// Under `--permission-prompt-tool stdio`, every tool the permission mode does not allow.
     CanUseTool {
         tool_name: String,
@@ -159,7 +159,7 @@ pub(super) enum CliRequest {
 /// Both directions: the CLI answers our requests, and we answer its requests.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub(super) enum ControlResponse<Payload> {
+pub(crate) enum ControlResponse<Payload> {
     Success {
         request_id: String,
         response: Option<Payload>,
@@ -172,7 +172,7 @@ pub(super) enum ControlResponse<Payload> {
 
 /// The part of the `initialize` response the driver reads.
 #[derive(Debug, Deserialize)]
-pub(super) struct Initialized {
+pub(crate) struct Initialized {
     pub account: Option<InitializedAccount>,
     #[serde(default)]
     pub models: Vec<InitializedModel>,
@@ -180,14 +180,14 @@ pub(super) struct Initialized {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct InitializedAccount {
+pub(crate) struct InitializedAccount {
     pub email: Option<String>,
     pub subscription_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct InitializedModel {
+pub(crate) struct InitializedModel {
     pub value: String,
     pub display_name: String,
     #[serde(default)]
@@ -199,7 +199,7 @@ pub(super) struct InitializedModel {
 /// A line we write. `Deserialize` too, so the tests replay recorded runs.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum Outgoing {
+pub(crate) enum Outgoing {
     User {
         message: UserMessage,
         parent_tool_use_id: Option<String>,
@@ -216,7 +216,7 @@ pub(super) enum Outgoing {
 }
 
 impl Outgoing {
-    pub(super) fn user(message: provider::Message) -> Self {
+    pub(crate) fn user(message: provider::Message) -> Self {
         let provider::Message {
             mut text,
             attachments,
@@ -267,34 +267,34 @@ fn media_type(format: ImageFormat) -> &'static str {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct UserMessage {
+pub(crate) struct UserMessage {
     pub role: Role,
     pub content: Vec<UserBlock>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum Role {
+pub(crate) enum Role {
     User,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum UserBlock {
+pub(crate) enum UserBlock {
     Text { text: String },
     Image { source: ImageSource },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum ImageSource {
+pub(crate) enum ImageSource {
     Base64 { media_type: String, data: String },
 }
 
 /// Our requests to the CLI.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub(super) enum Request {
+pub(crate) enum Request {
     /// Answers with the account and the models.
     Initialize,
     Interrupt,
@@ -309,7 +309,7 @@ pub(super) enum Request {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) enum PermissionMode {
+pub(crate) enum PermissionMode {
     Default,
     AcceptEdits,
     BypassPermissions,
@@ -317,7 +317,7 @@ pub(super) enum PermissionMode {
 
 impl PermissionMode {
     /// The value of `--permission-mode`, the same as the JSON.
-    pub(super) fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             PermissionMode::Default => "default",
             PermissionMode::AcceptEdits => "acceptEdits",
@@ -329,7 +329,7 @@ impl PermissionMode {
 /// Our answer to [`CliRequest::CanUseTool`].
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "behavior", rename_all = "snake_case")]
-pub(super) enum PermissionResult {
+pub(crate) enum PermissionResult {
     Allow {
         /// The tool's input as it was asked for; the CLI requires it.
         #[serde(rename = "updatedInput")]

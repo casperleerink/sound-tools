@@ -98,10 +98,10 @@ The DAW's own gestures and keys are its code, in `templates/daw/extensions`. The
 
 ## Work with an agent
 
-The agent sidebar runs Claude Code in the project folder, with no terminal.
+The agent sidebar runs Claude Code or Pi in the project folder, with no terminal: the one you installed, else it downloads Claude Code.
 
 1. Run the app on a project and press space.
-2. Open the agent sidebar: the icon right of the traffic lights, cmd-B, or cmd-L to also focus its composer. The first time, **Open Settings** in the sidebar: **Set up** there downloads Claude Code and signs you in, in your browser.
+2. Open the agent sidebar: the icon right of the traffic lights, cmd-B, or cmd-L to also focus its composer. The first time, **Open Settings** in the sidebar and sign in: Claude Code with your Claude plan, or Pi with any provider it offers. The model picker in the composer switches between them.
 3. Ask in plain language:
    - `Add a bass line in bars 5 to 8 that follows the chords on the piano track`
    - `Add a new track with a simple melody over bars 1 to 4`

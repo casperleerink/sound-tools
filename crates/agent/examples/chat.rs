@@ -94,6 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Input::Event(None) => break,
                 Input::Event(Some(event)) => match event {
                     AgentEvent::Started { account, models } => {
+                        let account = account.unwrap_or_default();
                         let email = account.email.unwrap_or_default();
                         let plan = account.plan.unwrap_or_default();
                         let models: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();

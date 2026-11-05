@@ -70,6 +70,7 @@ icons!(
     "paperclip",
     "pause",
     "pencil",
+    "pi",
     "piano",
     "play",
     "plus",

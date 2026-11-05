@@ -83,7 +83,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
         vec![
             AgentEvent::TurnStarted,
             AgentEvent::Started {
-                account: Account::default(),
+                account: Some(Account::default()),
                 models: Vec::new(),
             },
             AgentEvent::StepStarted {
