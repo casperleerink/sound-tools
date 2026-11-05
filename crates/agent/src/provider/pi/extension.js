@@ -1,7 +1,7 @@
 // Pi loads this file with `-e`. Its questions reach Sound Tools as the extension UI requests
 // of RPC mode: a `select` per approval, an `input` per sign-in question, and a `notify` of
 // JSON for everything Sound Tools reads.
-import { realpathSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,34 +10,66 @@ import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 const READS = new Set(["read", "grep", "find", "ls"]);
 const CHANGES = new Set(["edit", "write"]);
 
-// Where a tool's path lands, as Pi's own tools read it: `@` dropped, `~` the home folder, a
-// `file://` address its path. Symlinks are followed as far as the path exists.
-function landing(input, cwd) {
-  let given = input.startsWith("@") ? input.slice(1) : input;
+// Pi reads these as plain spaces in a path.
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+// The places a tool's path may name, as Pi's own tools read it: unicode spaces plain, `@`
+// dropped, `~` the home folder, a `file://` address its path. For `read` also the names Pi
+// tries when the given one is missing, those of macOS screenshots.
+function named(tool, input, cwd) {
+  let given = input.replace(UNICODE_SPACES, " ");
+  if (given.startsWith("@")) given = given.slice(1);
   if (given === "~" || given.startsWith("~/")) given = path.join(homedir(), given.slice(2));
   if (given.startsWith("file://")) given = fileURLToPath(given);
-  let existing = path.resolve(cwd, given);
-  const rest = [];
-  for (;;) {
-    try {
-      return path.join(realpathSync(existing), ...rest);
-    } catch {
+  const resolved = path.resolve(cwd, given);
+  if (tool !== "read") return [resolved];
+  const decomposed = resolved.normalize("NFD");
+  const curly = (name) => name.replace(/'/g, "\u2019");
+  const screenshot = resolved.replace(/ (AM|PM)\./gi, "\u202F$1.");
+  return [resolved, screenshot, decomposed, curly(resolved), curly(decomposed)];
+}
+
+function exists(file) {
+  try {
+    lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Where a place really is: symlinks followed as far as the path exists, also one to a file
+// that is not there yet, which a write would make.
+function landing(place) {
+  let target = place;
+  for (let links = 0; links < 40; links += 1) {
+    let existing = target;
+    const rest = [];
+    while (!exists(existing)) {
       const parent = path.dirname(existing);
-      if (parent === existing) return path.resolve(cwd, given);
+      if (parent === existing) return target;
       rest.unshift(path.basename(existing));
       existing = parent;
     }
+    try {
+      return path.join(realpathSync(existing), ...rest);
+    } catch {
+      target = path.resolve(path.dirname(existing), readlinkSync(existing), ...rest);
+    }
   }
+  return target;
 }
 
 // Where the tool call lands outside the project, or `undefined` inside it: its path, or the
 // project when it names none. Pi's tools take any path, so one outside always asks, as
 // Claude Code does.
 function outside(event, cwd) {
-  const landed = landing(event.input.path ?? ".", cwd);
-  const relative = path.relative(realpathSync(cwd), landed);
-  const inside = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  return inside ? undefined : landed;
+  const project = realpathSync(cwd);
+  const places = named(event.toolName, event.input.path ?? ".", cwd).map(landing);
+  return places.find((place) => {
+    const relative = path.relative(project, place);
+    return relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative));
+  });
 }
 
 export default function (pi) {

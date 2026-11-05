@@ -67,6 +67,9 @@ pub struct Program {
     answers: Option<Sender<(String, String)>>,
     /// The download, the sign-in or a question to the program. Dropping it cancels it.
     task: Option<Task<()>>,
+    /// Whether it is still signed in, after a failed turn. Apart from `task`, which may run a
+    /// sign-in meanwhile.
+    rechecking: Option<Task<()>>,
 }
 
 impl Program {
@@ -81,6 +84,7 @@ impl Program {
             signing_in: None,
             answers: None,
             task: None,
+            rechecking: None,
         }
     }
 
@@ -320,12 +324,18 @@ impl Agents {
                 let reason = Some(format!("{} is signed out.", provider.name()));
                 (agents.update(cx, |agents, cx| {
                     agents.set_signed_in(provider, false, cx);
-                    agents.set_setup(provider, Setup::SignedOut { reason }, cx);
+                    // A sign-in that runs meanwhile keeps its steps on the page.
+                    let shown = agents.program(provider).map(|program| &program.setup);
+                    if !matches!(shown, Some(Setup::SigningIn(_))) {
+                        agents.set_setup(provider, Setup::SignedOut { reason }, cx);
+                    }
                 }))
                 .ok();
             }
         });
-        self.set_task(provider, task);
+        if let Some(program) = self.program_mut(provider) {
+            program.rechecking = Some(task);
+        }
     }
 
     /// Asks the program whether it is signed in, and how it signs in. `reason` is what the
