@@ -670,8 +670,6 @@ impl Shell {
         cx.notify();
     }
 
-    /// What the main area shows with no view: in an empty project, the ways to start one.
-
     /// The page: its title with the way back, then what the app shows on it, in a column.
     fn settings_page(&self, page: AnyView, cx: &mut Context<Self>) -> AnyElement {
         let back = Button::icon_only("settings-back", "arrow-left")
@@ -709,6 +707,7 @@ impl Shell {
             .into_any_element()
     }
 
+    /// What the main area shows with no view: in an empty project, the ways to start one.
     fn empty_state(&self, cx: &mut Context<Self>) -> EmptyState {
         if self.session.read(cx).project().instances().next().is_some() {
             return EmptyState::new(
