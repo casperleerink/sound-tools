@@ -101,7 +101,7 @@ pub(crate) const SIGN_IN_CHOICES: [(&str, &[&str]); 2] = [
         &["auth", "login", "--claudeai"],
     ),
     (
-        "Use an Anthropic Console account (API)",
+        "Use an Anthropic Console account",
         &["auth", "login", "--console"],
     ),
 ];

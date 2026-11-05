@@ -239,7 +239,11 @@ impl Service {
     /// more than its name.
     pub fn plan(&self) -> Option<&str> {
         let label = self.in_browser.as_ref()?.label();
-        (label != self.name).then_some(label)
+        // "Anthropic (Claude Pro/Max)" says its plan in brackets.
+        let bracketed = (label.strip_prefix(self.name.as_str()))
+            .and_then(|rest| rest.trim().strip_prefix('('))
+            .and_then(|rest| rest.strip_suffix(')'));
+        bracketed.or((label != self.name).then_some(label))
     }
 }
 

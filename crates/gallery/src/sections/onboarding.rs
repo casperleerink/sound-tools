@@ -1,6 +1,6 @@
-//! Onboarding section: every state of an agent on the Settings page, from **Set up** to signed
-//! in with **Sign out**, each in a frame as wide as the page's column. Claude Code's first,
-//! then Pi's services and the steps of a sign-in to one.
+//! Onboarding sections: every state of an agent on the Settings page, from **Set up** to signed
+//! in with **Sign out**, each in a frame as wide as the page's column. Claude Code's in one,
+//! Pi's services and the steps of a sign-in to one in the other.
 
 use gpui::{
     App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px,
@@ -16,9 +16,9 @@ use sound_ui::components::text_input::TextInput;
 const WIDTH: f32 = 560.;
 /// Enough for the tallest state of Claude Code, and of Pi with its list of services.
 const HEIGHT: f32 = 300.;
-const PI_HEIGHT: f32 = 760.;
+const PI_HEIGHT: f32 = 700.;
 
-pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
+pub fn section(_: &mut Window, cx: &mut App) -> impl IntoElement {
     let size = Provider::Claude
         .download()
         .map_or(0, |download| download.size);
@@ -84,23 +84,22 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             },
         ),
     ];
-    let answer = window.use_keyed_state("gallery-sign-in-answer", cx, |_, cx| TextInput::new(cx));
-    let search = window.use_keyed_state("gallery-search", cx, |_, cx| {
-        TextInput::new(cx).placeholder("Search services")
-    });
     let claude = states.into_iter().map(|(title, setup)| {
         let onboarding = Onboarding::new(Provider::Claude, setup).choices(SignInChoice::claude());
         sample(title, onboarding, HEIGHT, cx)
     });
+    div().flex().flex_wrap().gap(px(40.)).children(claude)
+}
+
+pub fn pi_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
+    let answer = window.use_keyed_state("gallery-sign-in-answer", cx, |_, cx| TextInput::new(cx));
+    let search = window.use_keyed_state("gallery-search", cx, |_, cx| {
+        TextInput::new(cx).placeholder("Search services")
+    });
     let pi = pi_states(&answer, &search)
         .into_iter()
         .map(|(title, onboarding)| sample(title, onboarding, PI_HEIGHT, cx));
-    div()
-        .flex()
-        .flex_wrap()
-        .gap(px(40.))
-        .children(claude)
-        .children(pi)
+    div().flex().flex_wrap().gap(px(40.)).children(pi)
 }
 
 /// Some of Pi's services: four with a sign-in in the browser, and some that take a key only.
@@ -231,7 +230,7 @@ fn pi_states(
                     reason: Some("The sign-in failed: access denied".to_string()),
                 },
                 &[],
-                None,
+                Some("openai"),
                 None,
             ),
         ),
@@ -258,7 +257,7 @@ fn sample(title: &'static str, onboarding: Onboarding, height: f32, cx: &App) ->
         .child(
             div()
                 .w(px(WIDTH))
-                .h(px(height))
+                .min_h(px(height))
                 .flex()
                 .flex_col()
                 .p(px(24.))

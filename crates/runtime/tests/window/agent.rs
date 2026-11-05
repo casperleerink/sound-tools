@@ -60,7 +60,10 @@ fn install_sidebar_with_programs(
         let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
         SettingsSlot::new({
             let agents = agents.clone();
-            move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
+            move |window, cx| {
+                cx.new(|cx| AgentsPage::new(agents.clone(), window, cx))
+                    .into()
+            }
         })
         .install(cx);
         let shared = settings.clone();

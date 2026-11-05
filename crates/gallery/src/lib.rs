@@ -9,7 +9,7 @@ use sound_ui::{ActiveTheme, typography};
 
 /// `focus` shows one of each control that the keyboard reaches: tab gives each the focus in
 /// turn, and one window has one focus, so its snapshot is taken once per tab.
-pub const SECTIONS: [&str; 8] = [
+pub const SECTIONS: [&str; 9] = [
     "foundation",
     "rack",
     "focus",
@@ -18,6 +18,7 @@ pub const SECTIONS: [&str; 8] = [
     "overlays",
     "markdown",
     "onboarding",
+    "onboarding-pi",
 ];
 
 actions!(gallery, [FocusNext, FocusPrevious]);
@@ -97,6 +98,9 @@ impl Render for Gallery {
             })
             .when(show("onboarding"), |d| {
                 d.child(sections::onboarding::section(window, cx))
+            })
+            .when(show("onboarding-pi"), |d| {
+                d.child(sections::onboarding::pi_section(window, cx))
             })
     }
 }

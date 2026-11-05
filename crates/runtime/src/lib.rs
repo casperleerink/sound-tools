@@ -306,7 +306,10 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
     let agents = cx.new(|cx| Agents::new(downloads, bun_folder, settings.clone(), cx));
     SettingsSlot::new({
         let agents = agents.clone();
-        move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
+        move |window, cx| {
+            cx.new(|cx| AgentsPage::new(agents.clone(), window, cx))
+                .into()
+        }
     })
     .install(cx);
     LeftPanelSlot::new(remembered, move |session, window, cx| {

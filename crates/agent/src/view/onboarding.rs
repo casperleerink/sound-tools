@@ -112,7 +112,8 @@ pub struct Onboarding {
     choices: Vec<SignInChoice>,
     /// Pi's services.
     services: Vec<Service>,
-    /// The service being signed in to, and the one being signed out of, by their ids.
+    /// The service of the running or the last sign-in, and the one being signed out of, by
+    /// their ids.
     signing_in: Option<String>,
     signing_out: Option<String>,
     /// The field that searches Pi's services, and what it holds.
@@ -142,7 +143,8 @@ impl Onboarding {
         self
     }
 
-    /// Pi's services, with the one being signed in to and the one being signed out of.
+    /// Pi's services, with the one of the running or the last sign-in, and the one being
+    /// signed out of.
     pub fn services(
         mut self,
         services: Vec<Service>,
@@ -423,22 +425,89 @@ fn shown_element(shown: Shown, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// Whether `name` holds what the composer searched for, in any case.
-fn matches(name: &str, query: &str) -> bool {
-    name.to_lowercase().contains(&query.trim().to_lowercase())
+/// Whether the service's name or its plan, such as ChatGPT, holds what the composer searched
+/// for, in any case.
+fn matches(service: &Service, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    [Some(service.name.as_str()), service.plan()]
+        .into_iter()
+        .flatten()
+        .any(|said| said.to_lowercase().contains(&query))
 }
 
 /// Pi's services: those signed in first, then a search over the others, those with a sign-in
 /// in the browser first. The one being signed in to shows the steps under its row.
 struct Services {
     services: Vec<Service>,
-    signing_in: Option<(String, SigningIn)>,
+    /// The running sign-in, or how the last one ended, shown under **Add a service**.
+    panel: Option<Panel>,
     signing_out: Option<String>,
     search: Option<(Entity<TextInput>, String)>,
     answer: Option<Entity<TextInput>>,
 }
 
+/// What shows of a sign-in to one service, by its id: its steps while it runs, or why it ended
+/// without it.
+enum Panel {
+    Steps(String, SigningIn),
+    Ended(String, String),
+}
+
 impl Services {
+    /// The sign-in's steps, or its end, under the name of its service, above the search:
+    /// in a row of the list they could scroll out of view.
+    fn panel(&self, buttons: &Buttons, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let theme = cx.theme();
+        let (muted, strong, fill) = (theme.gray_700, theme.gray_950, theme.alpha_at(0.04));
+        let named = |id: &str| {
+            (self.services.iter())
+                .find(|service| service.id == id)
+                .map_or(id.to_string(), |service| service.name.clone())
+        };
+        let (title, body) = match self.panel.as_ref()? {
+            Panel::Steps(id, steps) => {
+                let name = named(id);
+                let mut steps = steps.clone();
+                // Pi's words for it name an API.
+                let asks_key = (steps.question.as_mut())
+                    .filter(|question| question.answer == Answer::Text { secret: true })
+                    .map(|question| question.message = format!("Paste your {name} key."))
+                    .is_some();
+                let mut shown =
+                    buttons.signing_in(Provider::Pi, steps, self.answer.clone(), window, cx);
+                if asks_key {
+                    shown.quiet = Some(
+                        "A key is a long code from the service's website, usually under API \
+                         keys or Developers."
+                            .to_string(),
+                    );
+                }
+                (format!("Signing in to {name}"), shown_element(shown, cx))
+            }
+            Panel::Ended(id, reason) => {
+                let body = div().text_color(muted).child(reason.clone());
+                (named(id), body.into_any_element())
+            }
+        };
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .p(px(16.))
+                .rounded(px(8.))
+                .bg(fill)
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(strong)
+                        .child(title),
+                )
+                .child(body)
+                .into_any_element(),
+        )
+    }
+
     fn element(self, buttons: &Buttons, window: &mut Window, cx: &mut App) -> AnyElement {
         let theme = cx.theme();
         let (muted, hairline) = (theme.gray_700, theme.alpha_at(0.08));
@@ -449,7 +518,7 @@ impl Services {
         others.sort_by_key(|service| service.in_browser.is_none());
         let others: Vec<_> = others
             .into_iter()
-            .filter(|service| matches(&service.name, query))
+            .filter(|service| matches(service, query))
             .collect();
         let row = |service: &Service, window: &mut Window, cx: &mut App| {
             self.row(service, buttons, hairline, window, cx)
@@ -469,6 +538,7 @@ impl Services {
                 .text_color(muted)
                 .child(label)
         };
+        let panel = self.panel(buttons, window, cx);
         let empty = listed.is_empty().then(|| {
             div()
                 .py(px(10.))
@@ -495,6 +565,7 @@ impl Services {
                     .flex_col()
                     .gap(px(8.))
                     .child(heading("Add a service"))
+                    .children(panel)
                     .children(self.search.map(|(field, _)| field))
                     .child(
                         div()
@@ -523,11 +594,10 @@ impl Services {
         let theme = cx.theme();
         let (muted, strong) = (theme.gray_700, theme.gray_950);
         let id = &service.id;
-        let steps = (self.signing_in.as_ref())
-            .filter(|(signing_in, _)| signing_in == id)
-            .map(|(_, steps)| steps.clone());
+        let steps = matches!(&self.panel, Some(Panel::Steps(signing_in, _)) if signing_in == id);
         let signing_out = self.signing_out.as_deref() == Some(id.as_str());
         let about = match (service.signed_in, signing_out) {
+            _ if steps => Some("Signing in…"),
             (_, true) => Some("Signing out…"),
             (Some(SignedIn::Here), false) => None,
             (Some(SignedIn::Elsewhere), false) => Some("Signed in outside Sound Tools"),
@@ -535,15 +605,15 @@ impl Services {
         };
         let (subtle, ghost) = (ButtonVariant::Subtle, ButtonVariant::Ghost);
         let mut actions = Vec::new();
-        match (service.signed_in, &steps, signing_out) {
-            (_, Some(_), _) | (_, _, true) | (Some(SignedIn::Elsewhere), _, _) => {}
-            (Some(SignedIn::Here), None, false) => {
+        match (service.signed_in, steps, signing_out) {
+            (_, true, _) | (_, _, true) | (Some(SignedIn::Elsewhere), _, _) => {}
+            (Some(SignedIn::Here), false, false) => {
                 let action = SetupAction::SignOut(Some(id.clone()));
                 let button_id = format!("{id}-sign-out");
                 actions
                     .push(buttons.make(&button_id, "Sign out", action, subtle, false, window, cx));
             }
-            (None, None, false) => {
+            (None, false, false) => {
                 if let Some(choice) = &service.in_browser {
                     let action = SetupAction::SignIn(choice.clone());
                     let button_id = format!("{id}-sign-in");
@@ -560,10 +630,6 @@ impl Services {
                 }
             }
         }
-        let steps = steps.map(|steps| {
-            let shown = buttons.signing_in(Provider::Pi, steps, self.answer.clone(), window, cx);
-            div().pb(px(12.)).child(shown_element(shown, cx))
-        });
         div()
             .flex()
             .flex_col()
@@ -592,7 +658,6 @@ impl Services {
                     )
                     .child(div().flex().flex_none().gap(px(8.)).children(actions)),
             )
-            .children(steps)
             .into_any_element()
     }
 }
@@ -685,7 +750,8 @@ impl RenderOnce for Onboarding {
                 let again = button("try-again", "Try again", SetupAction::Check, subtle);
                 shown_element(
                     Shown {
-                        sentence: Some(format!("{name} stopped: {message}")),
+                        sentence: Some(format!("{name} did not start.")),
+                        quiet: Some(message),
                         controls: vec![again],
                         ..Shown::default()
                     },
@@ -693,26 +759,24 @@ impl RenderOnce for Onboarding {
                 )
             }
             setup if pi => {
-                let (reason, signing_in) = match setup {
-                    Setup::Ready { reason, .. } | Setup::SignedOut { reason } => (reason, None),
-                    Setup::SigningIn(steps) => (None, Some(steps)),
-                    _ => (None, None),
+                let panel = match (setup, self.signing_in) {
+                    (Setup::SigningIn(steps), Some(id)) => Some(Panel::Steps(id, steps)),
+                    (
+                        Setup::Ready {
+                            reason: Some(reason),
+                            ..
+                        }
+                        | Setup::SignedOut {
+                            reason: Some(reason),
+                        },
+                        Some(id),
+                    ) => Some(Panel::Ended(id, reason)),
+                    _ => None,
                 };
-                let ready = self
-                    .services
-                    .iter()
-                    .any(|service| service.signed_in.is_some());
-                let sentence = match ready {
-                    true => {
-                        "Pi runs the agent on the AI services you sign in to. Their models show in the sidebar."
-                    }
-                    false => {
-                        "Pi runs the agent on the AI service you sign in to. Sign in to one to start."
-                    }
-                };
+                let ready = (self.services.iter()).any(|service| service.signed_in.is_some());
                 let services = Services {
                     services: self.services,
-                    signing_in: self.signing_in.zip(signing_in),
+                    panel,
                     signing_out: self.signing_out,
                     search: self.search,
                     answer: self.answer,
@@ -722,14 +786,9 @@ impl RenderOnce for Onboarding {
                     .flex_col()
                     .gap(px(16.))
                     .w_full()
-                    .child(shown_element(
-                        Shown {
-                            sentence: Some(sentence.to_string()),
-                            quiet: reason,
-                            ..Shown::default()
-                        },
-                        cx,
-                    ))
+                    .when(!ready, |body| {
+                        body.child(div().child("Sign in to one of Pi's services to start."))
+                    })
                     .child(services.element(&buttons, window, cx))
                     .into_any_element()
             }

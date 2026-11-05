@@ -37,6 +37,8 @@ pub struct Agents {
     finding: Option<Task<()>>,
     /// The login shell's, once it answered, to look for a program installed since.
     environment: Option<HashMap<OsString, OsString>>,
+    /// See [`Agents::new`].
+    first_on_path: Option<PathBuf>,
     /// Where each provider's models are listed, its default first.
     settings: Entity<AgentSettings>,
 }
@@ -63,7 +65,8 @@ pub struct Program {
     pub choices: Vec<SignInChoice>,
     /// Pi's services, from the last check.
     pub services: Vec<Service>,
-    /// The way in of the running sign-in, which **Open the page again** starts again.
+    /// The way in of the running sign-in, which **Open the page again** starts again, or of
+    /// the last one, whose end the Settings page shows by its service.
     signing_in: Option<SignInChoice>,
     /// The service of Pi being signed out, by its id.
     signing_out: Option<String>,
@@ -97,7 +100,7 @@ impl Program {
         self.signed_in
     }
 
-    /// The way in of the running sign-in.
+    /// The way in of the running or the last sign-in.
     pub fn signing_in(&self) -> Option<&SignInChoice> {
         self.signing_in.as_ref()
     }
@@ -132,9 +135,10 @@ impl Agents {
             programs: Vec::new(),
             finding: None,
             environment: None,
+            first_on_path,
             settings,
         };
-        agents.find(first_on_path, cx);
+        agents.find(cx);
         agents
     }
 
@@ -162,6 +166,7 @@ impl Agents {
             programs,
             finding: None,
             environment: None,
+            first_on_path: None,
             settings,
         }
     }
@@ -205,8 +210,9 @@ impl Agents {
         self.finding.is_some()
     }
 
-    fn find(&mut self, first_on_path: Option<PathBuf>, cx: &mut Context<Self>) {
+    fn find(&mut self, cx: &mut Context<Self>) {
         let downloads = self.downloads.clone();
+        let first_on_path = self.first_on_path.clone();
         self.finding = Some(cx.spawn(async move |agents, cx| {
             let found = cx
                 .background_spawn(async move {
@@ -639,7 +645,6 @@ impl Agents {
 
     fn signed_in(&mut self, provider: Provider, ended: SignInEnded, cx: &mut Context<Self>) {
         if let Some(program) = self.program_mut(provider) {
-            program.signing_in = None;
             program.answers = None;
         }
         // The program says whether it worked, also when it did not: a provider signed in
@@ -654,7 +659,6 @@ impl Agents {
         };
         // Dropping the task ends the download or the sign-in, and its process.
         program.task = None;
-        program.signing_in = None;
         program.answers = None;
         match program.setup {
             Setup::Downloading { .. } => self.set_setup(provider, Setup::NotInstalled, cx),
@@ -698,14 +702,26 @@ impl Agents {
         self.set_task(provider, task);
     }
 
-    /// Looks for a program the composer installed since the app started, on the login
-    /// shell's `PATH`, then asks it whether it is signed in.
+    /// Looks for a program the composer installed since the app started, on the `PATH` of
+    /// the login shell read again: an installer may have added to it. Then asks the program
+    /// whether it is signed in.
     fn look_again(&mut self, provider: Provider, cx: &mut Context<Self>) {
-        let Some(environment) = self.environment.clone() else {
+        let Some(read_before) = self.environment.clone() else {
             return;
         };
+        let first_on_path = self.first_on_path.clone();
         self.set_setup(provider, Setup::Checking, cx);
         let looking = cx.background_spawn(async move {
+            let environment = match login_shell_environment().await {
+                Ok(mut environment) => {
+                    // As at the start; without it the agent runs with the composer's programs.
+                    if let Some(folder) = &first_on_path {
+                        put_first_on_path(&mut environment, folder).ok();
+                    }
+                    environment
+                }
+                Err(_) => read_before,
+            };
             let program = program_on_path(provider.command(), &environment)
                 .filter(|program| program.is_file());
             program.map(|program| Installed {

@@ -266,7 +266,7 @@ fn signs_in_with_the_choice_then_out() {
         labels,
         [
             "Sign in with your Claude plan",
-            "Use an Anthropic Console account (API)"
+            "Use an Anthropic Console account"
         ]
     );
     smol::block_on(run(&choices[0], &installed)).unwrap();

@@ -1,7 +1,7 @@
 //! The Agents section of the Settings page: every provider found, each with what it needs to
 //! be set up, its ways in and its account.
 
-use gpui::{Context, Entity, Subscription, Window, div, prelude::*, px};
+use gpui::{Context, Entity, Focusable, Subscription, Window, div, prelude::*, px};
 use sound_ui::ActiveTheme;
 use sound_ui::components::text_input::{InputSize, TextInput};
 
@@ -22,7 +22,7 @@ pub struct AgentsPage {
 }
 
 impl AgentsPage {
-    pub fn new(agents: Entity<Agents>, cx: &mut Context<Self>) -> Self {
+    pub fn new(agents: Entity<Agents>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let answer = cx.new(|cx| TextInput::new(cx).size(InputSize::Md));
         let weak = cx.weak_entity();
         answer.update(cx, |input, _| {
@@ -48,7 +48,9 @@ impl AgentsPage {
                 });
             });
         });
-        let observing = cx.observe(&agents, |page, _, cx| page.agents_changed(cx));
+        let observing = cx.observe_in(&agents, window, |page, _, window, cx| {
+            page.agents_changed(window, cx)
+        });
         let mut page = Self {
             agents,
             answer,
@@ -56,7 +58,7 @@ impl AgentsPage {
             search,
             _observing: observing,
         };
-        page.agents_changed(cx);
+        page.agents_changed(window, cx);
         page
     }
 
@@ -74,7 +76,8 @@ impl AgentsPage {
         })
     }
 
-    fn agents_changed(&mut self, cx: &mut Context<Self>) {
+    /// A new question empties the field and gives it the keys, so the answer goes in at once.
+    fn agents_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let asking = self.asking(cx);
         let asked = asking.as_ref().map(|(_, id, _)| id.clone());
         if asked != self.asked {
@@ -83,6 +86,9 @@ impl AgentsPage {
                 input.set_text("", cx);
                 input.set_secret(secret, cx);
             });
+            if asked.is_some() {
+                window.focus(&self.answer.focus_handle(cx), cx);
+            }
             self.asked = asked;
         }
         cx.notify();

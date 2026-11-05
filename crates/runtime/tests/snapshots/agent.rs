@@ -482,7 +482,10 @@ fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Side
             cx.new(|_| Agents::with_programs(programs, settings.clone()).with_services(services));
         SettingsSlot::new({
             let agents = agents.clone();
-            move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
+            move |window, cx| {
+                cx.new(|cx| AgentsPage::new(agents.clone(), window, cx))
+                    .into()
+            }
         })
         .install(cx);
         LeftPanelSlot::new(None, move |session, window, cx| {
