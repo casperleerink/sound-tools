@@ -13,8 +13,8 @@ use gpui::{
 };
 use sound_core::DeviceChoice;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
-use sound_ui::components::select::Select;
+use sound_ui::components::icon::Icon;
+use sound_ui::focus::TabStop;
 use sound_ui::{ActiveTheme, Session};
 
 #[cfg(doc)]
@@ -188,11 +188,22 @@ impl SettingsPage {
 
     fn audio(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let (strong, muted) = (theme.gray_950, theme.gray_700);
+        let (strong, muted, border, hover) = (
+            theme.gray_950,
+            theme.gray_700,
+            theme.alpha_at(0.08),
+            theme.alpha_at(0.05),
+        );
+        let intro = div()
+            .text_color(muted)
+            .child("The app starts again on the device you pick.");
         let Some(devices) = &self.devices else {
             return div()
-                .text_color(muted)
-                .child("Looking for devices…")
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .child(intro)
+                .child(div().text_color(muted).child("Looking for devices…"))
                 .into_any_element();
         };
         // Said when it is not the one picked: the default, or a pick that is not there.
@@ -202,52 +213,76 @@ impl SettingsPage {
             .is_none_or(|chosen| *chosen.name != *self.output_name)
             .then(|| format!("Playing through {}.", self.output_name));
         let page = cx.weak_entity();
-        let select = |output: bool| {
-            let (id, choices, chosen) = match output {
-                true => ("settings-output", &devices.outputs, &devices.chosen.output),
-                false => ("settings-input", &devices.inputs, &devices.chosen.input),
+        let list = |output: bool| {
+            let (key, choices, chosen) = match output {
+                true => ("output", &devices.outputs, &devices.chosen.output),
+                false => ("input", &devices.inputs, &devices.chosen.input),
             };
-            let default = MenuItem::new(SYSTEM_DEFAULT, "System default");
-            let each = (choices.iter())
-                .map(|choice| MenuItem::new(choice.id.clone(), choice.name.clone()));
-            let items = MenuGroup::new().items(std::iter::once(default).chain(each));
-            let page = page.clone();
-            Select::new(id, chosen.clone().unwrap_or_default())
-                .entries(vec![MenuEntry::Group(items)])
-                .trigger_width(320.)
-                .menu_width(320.)
-                .on_change(move |value, _, cx| {
+            let chosen = chosen.as_deref().unwrap_or(SYSTEM_DEFAULT);
+            let default = (SYSTEM_DEFAULT, "System default");
+            let each = (choices.iter()).map(|choice| (choice.id.as_str(), choice.name.as_str()));
+            let rows = std::iter::once(default).chain(each).map(|(id, name)| {
+                let page = page.clone();
+                let value = id.to_string();
+                let row = div()
+                    .id(SharedString::from(format!("settings-{key}-{id}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .min_h(px(44.))
+                    .px(px(12.))
+                    .rounded(px(8.))
+                    .cursor_pointer()
+                    .hover(move |row| row.bg(hover))
+                    .child(div().flex_1().min_w_0().truncate().child(name.to_string()))
+                    .when(id == chosen, |row| {
+                        row.child(Icon::new("check").size(16.).color(strong))
+                    });
+                TabStop::new(format!("settings-{key}-row-{id}"), row).on_click(move |_, _, cx| {
                     page.update(cx, |page, cx| page.pick(output, &value, cx))
                         .ok();
                 })
+            });
+            div()
+                .id(key)
+                .flex()
+                .flex_col()
+                .mx(px(-12.))
+                .max_h(px(320.))
+                .overflow_y_scroll()
+                .children(rows)
         };
-        let field = |label: &'static str, select: Select| {
+        let card = |title: &'static str, note: Option<String>, output: bool| {
             div()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
+                .p(px(20.))
+                .rounded(px(12.))
+                .border_1()
+                .border_color(border)
                 .child(
                     div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(strong)
-                        .child(label),
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(strong)
+                                .child(title),
+                        )
+                        .children(note.map(|note| div().text_color(muted).child(note))),
                 )
-                .child(select)
+                .child(list(output))
         };
         div()
             .flex()
             .flex_col()
-            .gap(px(24.))
-            .child(
-                field("Output", select(true))
-                    .children(playing.map(|playing| div().text_color(muted).child(playing))),
-            )
-            .child(field("Input", select(false)))
-            .child(
-                div()
-                    .text_color(muted)
-                    .child("The app starts again on the device you pick."),
-            )
+            .gap(px(16.))
+            .child(intro)
+            .child(card("Output", playing, true))
+            .child(card("Input", None, false))
             .into_any_element()
     }
 }
