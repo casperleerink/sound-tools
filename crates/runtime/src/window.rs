@@ -234,6 +234,10 @@ pub struct Shell {
     /// The Settings page, in place of the main view while it is open.
     settings: Option<AnyView>,
     settings_focus: FocusHandle,
+    /// The page's way back, which has the keys when it opens.
+    settings_back: FocusHandle,
+    /// Where the focus was before the page opened, where closing it gives it back.
+    settings_return: Option<WeakFocusHandle>,
     /// What the main view shows in the title bar, such as the transport of a song.
     title_bar: Option<Entity<sound_typescript::TitleBar>>,
     project_menu: Entity<ProjectMenu>,
@@ -367,6 +371,8 @@ impl Shell {
             main: None,
             settings: None,
             settings_focus: cx.focus_handle(),
+            settings_back: cx.focus_handle().tab_stop(true),
+            settings_return: None,
             title_bar: None,
             focus_handle,
             left_panel,
@@ -643,7 +649,6 @@ impl Shell {
             })
     }
 
-    /// What the main area shows with no view: in an empty project, the ways to start one.
     /// Opens the Settings page in place of the main view, when the app has one.
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.is_some() {
@@ -653,9 +658,19 @@ impl Shell {
             return;
         };
         self.settings = Some((slot.make)(window, cx));
-        window.focus(&self.settings_focus, cx);
+        self.settings_return = window.focused(cx).map(|focused| focused.downgrade());
+        window.focus(&self.settings_back, cx);
         cx.notify();
     }
+
+    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings = None;
+        let back = self.settings_return.take().and_then(|back| back.upgrade());
+        window.focus(back.as_ref().unwrap_or(&self.focus_handle), cx);
+        cx.notify();
+    }
+
+    /// What the main area shows with no view: in an empty project, the ways to start one.
 
     /// The page: its title with the way back, then what the app shows on it, in a column.
     fn settings_page(&self, page: AnyView, cx: &mut Context<Self>) -> AnyElement {
@@ -663,6 +678,7 @@ impl Shell {
             .debug_selector(|| "settings-back".to_string())
             .variant(ButtonVariant::Ghost)
             .size(ButtonSize::Sm)
+            .focus_handle(&self.settings_back)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
         div()
             .id("settings")
@@ -1070,10 +1086,11 @@ impl Render for Shell {
                     shell.open_settings(window, cx)
                 }),
             )
-            .on_action(cx.listener(|shell, _: &CloseSettings, _, cx| {
-                shell.settings = None;
-                cx.notify();
-            }))
+            .on_action(
+                cx.listener(|shell, _: &CloseSettings, window, cx| {
+                    shell.close_settings(window, cx)
+                }),
+            )
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()

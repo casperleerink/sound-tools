@@ -438,7 +438,7 @@ fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext
 }
 
 /// With no agent set up, the sidebar's one way on is Settings, which shows in place of the
-/// piece and goes with escape.
+/// piece and goes with escape, giving the keys back.
 #[gpui::test]
 fn with_no_agent_the_sidebar_opens_settings(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
@@ -451,6 +451,15 @@ fn with_no_agent_the_sidebar_opens_settings(cx: &mut TestAppContext) {
     assert!(opened.find("setup-set-up").is_some());
     opened.keys("escape");
     assert!(opened.find("settings-back").is_none());
+
+    // cmd-, and back: the keys are where they were.
+    let focused = |opened: &mut Opened<'_>| opened.cx.update(|window, cx| window.focused(cx));
+    let before = focused(&mut opened);
+    assert!(before.is_some());
+    opened.keys("secondary-,");
+    assert_ne!(focused(&mut opened), before);
+    opened.keys("escape");
+    assert_eq!(focused(&mut opened), before);
 }
 
 /// Sign out, in Settings, ends the agent. The turn it worked on ends as stopped, and its
