@@ -1,16 +1,26 @@
 // Pi loads this file with `-e`. Its questions reach Sound Tools as the extension UI requests
 // of RPC mode: a `select` per approval, an `input` per sign-in question, and a `notify` of
 // JSON for everything Sound Tools reads.
+import path from "node:path";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 const READS = new Set(["read", "grep", "find", "ls"]);
 const CHANGES = new Set(["edit", "write"]);
+
+// Whether the tool call stays in the project: its path, or the project when it names none.
+// Pi's tools take any path, so one outside the project always asks, as Claude Code does.
+function inProject(event, cwd) {
+  const target = path.resolve(cwd, event.input.path ?? ".");
+  const relative = path.relative(cwd, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
 
 export default function (pi) {
   const say = (ctx, record) => ctx.ui.notify(JSON.stringify(record));
 
   pi.registerFlag("sound-tools-approval", { type: "string", default: "ask_before_commands" });
   let mode;
+  // What the composer allowed for the thread: a tool by name, or one command whole.
   const allowed = new Set();
 
   pi.registerCommand("sound-tools-approval", {
@@ -22,13 +32,16 @@ export default function (pi) {
   pi.on("tool_call", async (event, ctx) => {
     mode ??= pi.getFlag("sound-tools-approval");
     const tool = event.toolName;
-    if (READS.has(tool) || mode === "never_ask" || allowed.has(tool)) return undefined;
-    if (mode === "ask_before_commands" && CHANGES.has(tool)) return undefined;
+    const key = tool === "bash" ? `bash:${event.input.command}` : tool;
+    if (mode === "never_ask" || allowed.has(key)) return undefined;
+    const inside = inProject(event, process.cwd());
+    if (READS.has(tool) && inside) return undefined;
+    if (mode === "ask_before_commands" && CHANGES.has(tool) && inside) return undefined;
     // The title is the tool call's id: Sound Tools words the question from its step.
     const answer = await ctx.ui.select(event.toolCallId, ["allow", "allow_for_thread", "deny"], {
       signal: ctx.signal,
     });
-    if (answer === "allow_for_thread") allowed.add(tool);
+    if (answer === "allow_for_thread") allowed.add(key);
     if (answer === "allow" || answer === "allow_for_thread") return undefined;
     return { block: true, reason: "The composer denied this." };
   });

@@ -367,10 +367,13 @@ impl TextInput {
         self
     }
 
-    /// Hides the text as it is typed, and keeps it off the clipboard.
+    /// Hides the text as it is typed, and keeps it off the clipboard and out of undo, so a
+    /// key typed in it never comes back in plain text.
     pub fn set_secret(&mut self, secret: bool, cx: &mut Context<Self>) {
         if self.secret != secret {
             self.secret = secret;
+            self.undo_stack.clear();
+            self.redo_stack.clear();
             cx.notify();
         }
     }
@@ -665,7 +668,7 @@ impl TextInput {
     /// Keep the text before an edit of `range`, unless the edit joins the last one. While the
     /// IME composes, the text from before the composition is already kept.
     fn record_undo(&mut self, kind: Option<EditKind>, range: Range<usize>, inserted: usize) {
-        if self.marked_range.is_some() {
+        if self.marked_range.is_some() || self.secret {
             return;
         }
         let joins = matches!(

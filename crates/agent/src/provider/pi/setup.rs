@@ -117,6 +117,7 @@ pub(crate) async fn status(installed: &Installed) -> io::Result<Status> {
     Ok(Status {
         account,
         choices: in_browser.chain(with_key).collect(),
+        models: Some(listed(models)),
     })
 }
 
@@ -208,29 +209,19 @@ fn shown(step: Step) -> Option<SignInStep> {
 }
 
 fn asked(id: String, question: Question) -> SignInQuestion {
-    let text = |message, placeholder, secret| SignInQuestion {
+    let text = |message, secret| SignInQuestion {
         id: id.clone(),
         message,
-        answer: Answer::Text {
-            placeholder,
-            secret,
-        },
+        answer: Answer::Text { secret },
     };
     match question {
-        Question::Text {
-            message,
-            placeholder,
-        } => text(message, placeholder, false),
+        Question::Text { message } => text(message, false),
         // Pi's words for it are a programmer's: a redirect URL and a callback.
         Question::ManualCode {} => text(
             "If the browser does not come back here, paste the address it ended on.".to_string(),
-            None,
             false,
         ),
-        Question::Secret {
-            message,
-            placeholder,
-        } => text(message, placeholder, true),
+        Question::Secret { message } => text(message, true),
         Question::Select { message, options } => SignInQuestion {
             id: id.clone(),
             message,

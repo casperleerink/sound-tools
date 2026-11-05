@@ -20,6 +20,7 @@ pub(crate) enum Incoming {
         #[serde(default)]
         success: bool,
         error: Option<String>,
+        data: Option<Responded>,
     },
     MessageUpdate {
         #[serde(rename = "assistantMessageEvent")]
@@ -53,6 +54,13 @@ pub(crate) enum Incoming {
     },
     #[serde(other)]
     Unknown,
+}
+
+/// What a command's answer says of it.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Responded {
+    /// For a prompt: `handled` when a command of an extension took it and no run started.
+    pub disposition: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,11 +269,9 @@ pub(crate) enum Step {
 pub(crate) enum Question {
     Text {
         message: String,
-        placeholder: Option<String>,
     },
     Secret {
         message: String,
-        placeholder: Option<String>,
     },
     /// The address the browser ended on, in case its way back to Pi does not arrive.
     ManualCode {},

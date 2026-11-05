@@ -89,6 +89,7 @@ impl Provider {
             Provider::Claude => Ok(Status {
                 account: claude::account(installed).await?,
                 choices: claude_choices(),
+                models: None,
             }),
             Provider::Pi => pi::status(installed).await,
         }
@@ -164,6 +165,9 @@ pub struct Status {
     pub account: Option<Account>,
     /// In the order the composer reads them.
     pub choices: Vec<SignInChoice>,
+    /// What it can run, the default first, when the answer says. Claude Code lists them from
+    /// an agent of their own, see [`Provider::models`].
+    pub models: Option<Vec<Model>>,
 }
 
 /// One way to sign in that a provider offers, such as "Sign in with your Claude plan". Each
@@ -276,10 +280,7 @@ pub enum Answer {
     /// The answer is the id of one.
     Pick(Vec<Pick>),
     /// A field, hidden as it is typed when it is `secret`.
-    Text {
-        placeholder: Option<String>,
-        secret: bool,
-    },
+    Text { secret: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

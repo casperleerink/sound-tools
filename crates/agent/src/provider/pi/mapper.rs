@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::protocol::{Ended, Incoming, Models, Outgoing, Streamed, UiRequest};
+use super::protocol::{Ended, Incoming, Models, Outgoing, Responded, Streamed, UiRequest};
 use crate::provider::action::{Action, relative, shorten};
 use crate::provider::{
     AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepOutcome, TurnOutcome,
@@ -80,7 +80,25 @@ impl Mapper {
                 id,
                 success: false,
                 error,
+                ..
             } => (Vec::new(), self.refused(id.as_deref(), error)),
+            // A message Pi took for one of its commands: no run starts, so nothing else ends
+            // the turn.
+            Incoming::Response {
+                id: Some(id),
+                data:
+                    Some(Responded {
+                        disposition: Some(disposition),
+                    }),
+                ..
+            } if disposition == "handled" && id.starts_with(MESSAGE) && self.turn_open => {
+                self.turn_open = false;
+                let mut events = self.close_blocks();
+                events.push(AgentEvent::TurnEnded {
+                    outcome: TurnOutcome::Completed,
+                });
+                (Vec::new(), events)
+            }
             Incoming::MessageUpdate {
                 event: Streamed::TextDelta { delta },
             } => {
@@ -102,8 +120,9 @@ impl Mapper {
                         error_message,
                     },
             } => {
-                if role == "assistant" && stop_reason.as_deref() == Some("error") {
-                    self.error = error_message;
+                // The last answer says how the turn went: a retry that worked clears the error.
+                if role == "assistant" {
+                    self.error = error_message.filter(|_| stop_reason.as_deref() == Some("error"));
                 }
                 (Vec::new(), Vec::new())
             }
@@ -125,7 +144,7 @@ impl Mapper {
             Incoming::AgentSettled { aborted } => (Vec::new(), self.settled(aborted)),
             Incoming::ExtensionUiRequest(request) => self.asked(request),
             Incoming::ExtensionError { error } => {
-                let message = format!("Pi stopped an extension: {error}");
+                let message = format!("Pi failed: {error}");
                 (Vec::new(), vec![AgentEvent::Error { message }])
             }
             Incoming::Response { .. } | Incoming::MessageUpdate { .. } | Incoming::Unknown => {
@@ -302,7 +321,10 @@ fn action(tool: &str, input: &Value, folder: &Path) -> Action {
     let path = || text("path").map(|path| relative(path, folder));
     let action = match tool {
         "bash" => text("command").map(|command| Action::Run(command.trim().to_string(), None)),
-        "read" | "ls" => path().map(Action::Read),
+        "read" => path().map(Action::Read),
+        "ls" => Some(Action::Read(
+            path().unwrap_or_else(|| "the project".to_string()),
+        )),
         "edit" => path().map(Action::Edit),
         "write" => path().map(Action::Write),
         "grep" | "find" => text("pattern").map(|pattern| Action::Search(shorten(pattern))),

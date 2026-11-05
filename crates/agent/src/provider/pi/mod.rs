@@ -15,7 +15,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use smol::channel::Receiver;
 
@@ -32,23 +32,29 @@ const TOOLS: &str = "read,bash,edit,write,grep,find,ls";
 /// The extension on disk, written once per run of the app into a folder of its own. `-e`
 /// takes only a path.
 fn extension() -> io::Result<PathBuf> {
-    static WRITTEN: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-    let written = WRITTEN.get_or_init(|| {
-        let write = || -> io::Result<PathBuf> {
-            // Kept for as long as the app runs: every Pi it starts loads it.
-            let folder = tempfile::Builder::new()
-                .prefix("sound-tools-pi")
-                .tempdir()?
-                .keep();
-            let file = folder.join("sound-tools.js");
-            fs::write(&file, EXTENSION)?;
-            Ok(file)
-        };
-        write().map_err(|error| error.to_string())
-    });
-    written
-        .clone()
-        .map_err(|error| io::Error::other(format!("the extension of Pi was not written: {error}")))
+    // Kept for as long as the app runs: every Pi it starts loads it. Written again when the
+    // system clears old temporary files meanwhile.
+    static WRITTEN: Mutex<Option<PathBuf>> = Mutex::new(None);
+    let mut written = WRITTEN
+        .lock()
+        .map_err(|_| io::Error::other("a write of it panicked"))?;
+    if let Some(file) = written.as_ref().filter(|file| file.is_file()) {
+        return Ok(file.clone());
+    }
+    let write = || -> io::Result<PathBuf> {
+        let folder = tempfile::Builder::new()
+            .prefix("sound-tools-pi")
+            .tempdir()?
+            .keep();
+        let file = folder.join("sound-tools.js");
+        fs::write(&file, EXTENSION)?;
+        Ok(file)
+    };
+    let file = write().map_err(|error| {
+        io::Error::other(format!("the extension of Pi was not written: {error}"))
+    })?;
+    *written = Some(file.clone());
+    Ok(file)
 }
 
 /// The value of `--sound-tools-approval` and of the extension's command.
@@ -80,10 +86,12 @@ fn command(installed: &Installed) -> io::Result<std::process::Command> {
     Ok(command)
 }
 
-/// [`command`] in RPC mode.
+/// [`command`] in RPC mode, in the temporary folder: a Pi of no thread works in no project.
 fn rpc(installed: &Installed) -> io::Result<std::process::Command> {
     let mut command = command(installed)?;
-    command.args(["--mode", "rpc"]);
+    command
+        .args(["--mode", "rpc"])
+        .current_dir(std::env::temp_dir());
     Ok(command)
 }
 

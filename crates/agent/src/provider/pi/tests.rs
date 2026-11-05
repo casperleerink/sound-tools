@@ -141,6 +141,40 @@ fn a_refusal_ends_only_a_turn() {
     );
 }
 
+/// A retry that answers ends the turn completed, though the try before it failed.
+#[test]
+fn a_retry_that_works_ends_the_turn_completed() {
+    let mut mapper = Mapper::new(PathBuf::from("/tmp/project"));
+    mapper.sent(&Outgoing::message("message-1".to_string(), "Hi".into()));
+    for line in [
+        r#"{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"529 overloaded"}}"#,
+        r#"{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}"#,
+    ] {
+        mapper.received(line);
+    }
+    let (_, events) = mapper.received(r#"{"type":"agent_settled","aborted":false}"#);
+    let completed = AgentEvent::TurnEnded {
+        outcome: crate::TurnOutcome::Completed,
+    };
+    assert_eq!(events, [completed]);
+}
+
+/// A message Pi takes for a command of an extension starts no run: its answer ends the turn.
+#[test]
+fn a_message_pi_took_for_a_command_ends_its_turn() {
+    let mut mapper = Mapper::new(PathBuf::from("/tmp/project"));
+    mapper.sent(&Outgoing::message(
+        "message-1".to_string(),
+        "/sound-tools-models".into(),
+    ));
+    let handled = r#"{"id":"message-1","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}"#;
+    let (_, events) = mapper.received(handled);
+    let completed = AgentEvent::TurnEnded {
+        outcome: crate::TurnOutcome::Completed,
+    };
+    assert_eq!(events, [completed]);
+}
+
 /// A sign-in question in a thread, or a select about no step of ours, has nobody to answer
 /// it: it is cancelled, so Pi does not wait.
 #[test]

@@ -185,7 +185,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Agents are set up on the Settings page, once for the app; the sidebar only links there while none is ready. Pi's sign-in questions (a code, an API key) are fields there; its credentials stay in Pi's store, and Pi signs out in Pi.
 - New problems after a turn show to the composer, not the agent: its docs tell it to read `problems.txt`.
 - A picture goes as a picture, any other file as its path; nothing is copied in.
-- Versions are named by the agent's own program with its small model, from a capped diff, one call at a time once the history is still for 5 s. Without a signed-in agent they stay "Version N". A name given by hand is never replaced.
+- Versions are named by the agent's own program with its small model (Pi's default model), from a capped diff, one call at a time once the history is still for 5 s. Without a signed-in agent they stay "Version N". A name given by hand is never replaced.
 - Going back in History tells the agent once, before its next message, in a block the thread does not show: the point, the version, and where the history repository is. The agent cannot move through history itself yet.
 
 ## Tools of the project

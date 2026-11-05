@@ -225,7 +225,7 @@ impl Agents {
         for provider in Provider::ALL {
             let checking = self.program(provider);
             if checking.is_some_and(|program| program.setup == Setup::Checking) {
-                self.check(provider, None, cx);
+                self.check(provider, None, false, cx);
             }
         }
         cx.notify();
@@ -282,7 +282,7 @@ impl Agents {
             SetupAction::Pick(id) => self.answer(provider, id, cx),
             SetupAction::Continue => {}
             SetupAction::SignOut => self.sign_out(provider, cx),
-            SetupAction::Check => self.check(provider, None, cx),
+            SetupAction::Check => self.check(provider, None, false, cx),
         }
     }
 
@@ -309,15 +309,20 @@ impl Agents {
     }
 
     /// Asks the program whether it is signed in, and how it signs in. `reason` is what the
-    /// composer reads when it is not, after a sign-in, and only a sign-in gives one: signed in
-    /// then, the provider becomes the composer's pick.
-    fn check(&mut self, provider: Provider, reason: Option<String>, cx: &mut Context<Self>) {
+    /// composer reads when it is not, after a sign-in. Signed in after a sign-in that `picks`,
+    /// the provider becomes the composer's pick.
+    fn check(
+        &mut self,
+        provider: Provider,
+        reason: Option<String>,
+        picks: bool,
+        cx: &mut Context<Self>,
+    ) {
         let installed = (self.program(provider)).and_then(|program| program.installed.clone());
         let Some(installed) = installed else {
             self.set_setup(provider, Setup::NotInstalled, cx);
             return;
         };
-        let after_sign_in = reason.is_some();
         self.set_setup(provider, Setup::Checking, cx);
         let asking = cx.background_spawn({
             let installed = installed.clone();
@@ -332,11 +337,15 @@ impl Agents {
             })
             .await;
             let stopped = |message: String| (Setup::Stopped { message }, Vec::new());
+            let mut listed = None;
             let (setup, choices) = match answer {
-                Some(Ok(status)) => match status.account {
-                    Some(account) => (Setup::Ready { account }, status.choices),
-                    None => (Setup::SignedOut { reason }, status.choices),
-                },
+                Some(Ok(status)) => {
+                    listed = status.models;
+                    match status.account {
+                        Some(account) => (Setup::Ready { account }, status.choices),
+                        None => (Setup::SignedOut { reason }, status.choices),
+                    }
+                }
                 Some(Err(error)) => stopped(error.to_string()),
                 None => stopped("it did not answer within 30 seconds.".to_string()),
             };
@@ -346,13 +355,21 @@ impl Agents {
                 if let Some(program) = agents.program_mut(provider) {
                     program.choices = choices;
                 }
-                if ready && after_sign_in {
+                if ready && picks {
                     let settings = agents.settings.clone();
                     settings.update(cx, |settings, cx| settings.set_provider(provider, cx));
                 }
                 agents.set_setup(provider, setup, cx);
             });
             if told.is_err() || !ready {
+                return;
+            }
+            if let Some(models) = listed {
+                (agents.update(cx, |agents, cx| {
+                    let settings = agents.settings.clone();
+                    settings.update(cx, |settings, cx| settings.set_models(provider, models, cx));
+                }))
+                .ok();
                 return;
             }
             // The menu shows the models before the first message starts an agent. Asked after
@@ -445,7 +462,7 @@ impl Agents {
                         environment,
                     });
                 }
-                self.check(provider, None, cx);
+                self.check(provider, None, false, cx);
             }
             Err(error) => {
                 let message = error.sentence(provider.name());
@@ -550,14 +567,10 @@ impl Agents {
             program.signing_in = None;
             program.answers = None;
         }
-        let reason = Some(ended.reason());
-        match ended {
-            // The program says whether it worked.
-            SignInEnded::Finished => self.check(provider, reason, cx),
-            SignInEnded::Failed(_) | SignInEnded::TimedOut | SignInEnded::Cancelled => {
-                self.set_setup(provider, Setup::SignedOut { reason }, cx);
-            }
-        }
+        // The program says whether it worked, also when it did not: a provider signed in
+        // before stays signed in.
+        let finished = matches!(ended, SignInEnded::Finished);
+        self.check(provider, Some(ended.reason()), finished, cx);
     }
 
     fn cancel(&mut self, provider: Provider, cx: &mut Context<Self>) {
@@ -568,13 +581,10 @@ impl Agents {
         program.task = None;
         program.signing_in = None;
         program.answers = None;
-        let setup = match program.setup {
-            Setup::Downloading { .. } => Setup::NotInstalled,
-            _ => Setup::SignedOut {
-                reason: Some(SignInEnded::Cancelled.reason()),
-            },
-        };
-        self.set_setup(provider, setup, cx);
+        match program.setup {
+            Setup::Downloading { .. } => self.set_setup(provider, Setup::NotInstalled, cx),
+            _ => self.signed_in(provider, SignInEnded::Cancelled, cx),
+        }
     }
 
     /// Signs the program out, for every app that shares its login. A sidebar whose thread
@@ -591,7 +601,7 @@ impl Agents {
                 if let Err(error) = signed_out {
                     cx.emit(AgentsEvent::Notice(format!("Could not sign out: {error}")));
                 }
-                agents.check(provider, None, cx);
+                agents.check(provider, None, false, cx);
             }))
             .ok();
         });

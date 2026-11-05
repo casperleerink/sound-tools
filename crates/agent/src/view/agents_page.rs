@@ -51,9 +51,7 @@ impl AgentsPage {
             };
             let question = signing_in.question.as_ref()?;
             match question.answer {
-                Answer::Text { secret, .. } => {
-                    Some((program.provider, question.id.clone(), secret))
-                }
+                Answer::Text { secret } => Some((program.provider, question.id.clone(), secret)),
                 Answer::Pick(_) => None,
             }
         })

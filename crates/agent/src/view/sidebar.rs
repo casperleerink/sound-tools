@@ -810,11 +810,17 @@ impl Sidebar {
     /// In place of the thread while no agent is signed in: the way to Settings, where the
     /// agents are set up.
     fn no_agent(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let stopped = (self.agents.read(cx).program(self.provider(cx)))
+        let provider = self.provider(cx);
+        let stopped = (self.agents.read(cx).program(provider))
             .is_some_and(|program| matches!(program.setup, Setup::Stopped { .. }));
-        let sentence = match stopped {
-            true => "The agent did not start. Settings says why.",
-            false => "Set up an agent to start.",
+        let sentence = match (stopped, self.thread_provider()) {
+            (true, _) => "The agent did not start. Settings says why.".to_string(),
+            // A thread keeps its provider: **New** starts one on another.
+            (false, Some(provider)) => format!(
+                "This thread runs on {}, which is not signed in.",
+                provider.name()
+            ),
+            (false, None) => "Set up an agent to start.".to_string(),
         };
         let open = Button::new("open-settings", "Open Settings")
             .debug_selector(|| "agent-open-settings".to_string())

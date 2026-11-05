@@ -122,10 +122,7 @@ fn pi_states(answer: &Entity<TextInput>) -> Vec<(&'static str, Onboarding)> {
     let text = |id: &str, message: &str, secret| SignInQuestion {
         id: id.to_string(),
         message: message.to_string(),
-        answer: Answer::Text {
-            placeholder: None,
-            secret,
-        },
+        answer: Answer::Text { secret },
     };
     let pick = |id: &str, label: &str| Pick {
         id: id.to_string(),
