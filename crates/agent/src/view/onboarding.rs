@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Entity, FontWeight, SharedString, Window, div,
-    prelude::*, pulsating_between, px, relative,
+    Animation, AnimationExt, AnyElement, App, ClipboardItem, Entity, FontWeight, SharedString,
+    Window, div, prelude::*, pulsating_between, px, relative,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -50,40 +50,20 @@ pub enum Setup {
     },
 }
 
-/// Why a sign-in ended without an account: our sentence, then what the program said, which
-/// may be in its own words, quieter.
+/// Why a sign-in ended without an account: our sentence, and the program's own words, which
+/// are a programmer's, to copy for whoever helps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reason {
     pub sentence: String,
-    pub detail: Option<String>,
+    pub details: Option<String>,
 }
 
 impl Reason {
     pub fn new(sentence: impl Into<String>) -> Self {
         Reason {
             sentence: sentence.into(),
-            detail: None,
+            details: None,
         }
-    }
-
-    pub fn detail(mut self, detail: impl Into<String>) -> Self {
-        self.detail = Some(detail.into());
-        self
-    }
-
-    fn element(self, cx: &App) -> AnyElement {
-        let theme = cx.theme();
-        div()
-            .flex()
-            .flex_col()
-            .child(div().text_color(theme.gray_900).child(self.sentence))
-            .children(self.detail.map(|detail| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(theme.gray_700)
-                    .child(detail)
-            }))
-            .into_any_element()
     }
 }
 
@@ -274,7 +254,7 @@ pub(super) fn skeleton(cx: &App) -> AnyElement {
 struct Shown {
     sentence: Option<String>,
     quiet: Option<String>,
-    reason: Option<Reason>,
+    reason: Option<AnyElement>,
     /// Shown large, as a code to type.
     code: Option<String>,
     controls: Vec<AnyElement>,
@@ -322,6 +302,39 @@ impl Buttons {
                 .into_any_element(),
             None => button.into_any_element(),
         }
+    }
+
+    /// The sentence of `reason`, and a button that copies its details.
+    fn reason(&self, reason: Reason, window: &mut Window, cx: &mut App) -> AnyElement {
+        let id = SharedString::from(format!("{}-copy-details", self.key));
+        let copied = window.use_keyed_state(id.clone(), cx, |_, _| false);
+        let label = match *copied.read(cx) {
+            true => "Copied",
+            false => "Copy details",
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .w_full()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(cx.theme().gray_900)
+                    .child(reason.sentence),
+            )
+            .children(reason.details.map(|details| {
+                Button::new(id, label)
+                    .variant(ButtonVariant::Subtle)
+                    .size(ButtonSize::Sm)
+                    .on_click(move |_, window, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(details.clone()));
+                        copied.write(cx, true);
+                        window.refresh();
+                    })
+            }))
+            .into_any_element()
     }
 
     /// The steps of a running sign-in: the browser's, a code, a question, and the way out.
@@ -455,7 +468,7 @@ fn shown_element(shown: Shown, cx: &App) -> AnyElement {
                 .quiet
                 .map(|quiet| div().text_color(muted).child(quiet)),
         )
-        .children(shown.reason.map(|reason| reason.element(cx)))
+        .children(shown.reason)
         .when(!shown.controls.is_empty(), |body| {
             body.child(column(shown.controls, 8.))
         })
@@ -524,7 +537,7 @@ impl Services {
                 }
                 (format!("Signing in to {name}"), shown_element(shown, cx))
             }
-            Panel::Ended(id, reason) => (named(id), reason.clone().element(cx)),
+            Panel::Ended(id, reason) => (named(id), buttons.reason(reason.clone(), window, cx)),
         };
         Some(
             div()
@@ -853,7 +866,7 @@ impl RenderOnce for Onboarding {
                     .flex_col()
                     .gap(px(8.))
                     .w_full()
-                    .children(reason.map(|reason| reason.element(cx)))
+                    .children(reason.map(|reason| buttons.reason(reason, window, cx)))
                     .child(
                         div()
                             .flex()
@@ -869,7 +882,7 @@ impl RenderOnce for Onboarding {
                 shown_element(
                     Shown {
                         sentence: Some("Sign in to start.".to_string()),
-                        reason,
+                        reason: reason.map(|reason| buttons.reason(reason, window, cx)),
                         controls,
                         ..Shown::default()
                     },

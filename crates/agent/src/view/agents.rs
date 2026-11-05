@@ -758,14 +758,14 @@ enum SignInEnded {
 }
 
 impl SignInEnded {
-    /// The line the composer reads when the sign-in ended with nobody signed in.
+    /// What the composer reads when the sign-in ended with nobody signed in.
     fn reason(&self) -> Reason {
         match self {
             SignInEnded::Finished => Reason::new("The sign-in did not finish."),
-            // The program's own words, under ours.
-            SignInEnded::Failed(error) => {
-                Reason::new("The sign-in did not work.").detail(error.to_string())
-            }
+            SignInEnded::Failed(error) => Reason {
+                details: Some(error.to_string()),
+                ..Reason::new("The sign-in did not work. Try again.")
+            },
             SignInEnded::TimedOut => Reason::new("The sign-in took over 10 minutes."),
             SignInEnded::Cancelled => Reason::new("The sign-in was cancelled."),
         }

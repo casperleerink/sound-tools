@@ -74,9 +74,12 @@ pub fn section(_: &mut Window, cx: &mut App) -> impl IntoElement {
         (
             "Sign-in failed",
             Setup::SignedOut {
-                reason: Some(
-                    Reason::new("The sign-in did not work.").detail("OAuth error: access denied"),
-                ),
+                reason: Some(Reason {
+                    details: Some(
+                        "OpenAI OAuth token request failed (400): invalid_grant".to_string(),
+                    ),
+                    ..Reason::new("The sign-in did not work. Try again.")
+                }),
             },
         ),
         (
@@ -229,7 +232,12 @@ fn pi_states(
             "Pi after a sign-in that failed",
             pi(
                 Setup::SignedOut {
-                    reason: Some(Reason::new("The sign-in did not work.").detail("access denied")),
+                    reason: Some(Reason {
+                        details: Some(
+                            "OpenAI OAuth token request failed (400): invalid_grant".to_string(),
+                        ),
+                        ..Reason::new("The sign-in did not work. Try again.")
+                    }),
                 },
                 &[],
                 Some("openai"),

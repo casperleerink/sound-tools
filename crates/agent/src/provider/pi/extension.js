@@ -136,18 +136,20 @@ export default function (pi) {
       const runtime = await ModelRuntime.create();
       const providers = runtime
         .getProviders()
-        // Pi keeps a provider it replaced under the same sign-in, named "(legacy)".
-        .filter((provider) => !provider.name.endsWith("(legacy)"))
-        .map((provider) => ({
+        .map((provider) => ({ provider, status: runtime.getProviderAuthStatus(provider.id) }))
+        // Pi keeps a provider it replaced, named "(legacy)", with a sign-in of its own: listed
+        // only while signed in, so it can be signed out.
+        .filter(({ provider, status }) => !provider.name.endsWith("(legacy)") || status.configured)
+        .map(({ provider, status }) => ({
           id: provider.id,
-          name: provider.name,
+          name: provider.name.replace(/ \(legacy\)$/, ""),
           sign_in: provider.auth.oauth
             ? (provider.auth.oauth.loginLabel ?? `Sign in with ${provider.auth.oauth.name}`)
             : null,
           api_key: Boolean(provider.auth.apiKey?.login),
-          signed_in: runtime.getProviderAuthStatus(provider.id).configured === true,
+          signed_in: status.configured === true,
           // "stored" is what a sign-in here saved, which a sign-out removes.
-          stored: runtime.getProviderAuthStatus(provider.id).source === "stored",
+          stored: status.source === "stored",
         }));
       say(ctx, { providers });
     },
