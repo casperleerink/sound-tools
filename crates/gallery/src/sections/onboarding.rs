@@ -6,8 +6,8 @@ use gpui::{
     App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px,
 };
 use sound_agent::{
-    Account, Answer, Onboarding, Pick, Provider, Service, Setup, SignInChoice, SignInQuestion,
-    SignedIn, SigningIn,
+    Account, Answer, Onboarding, Pick, Provider, Reason, Service, Setup, SignInChoice,
+    SignInQuestion, SignedIn, SigningIn,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::text_input::TextInput;
@@ -68,13 +68,15 @@ pub fn section(_: &mut Window, cx: &mut App) -> impl IntoElement {
         (
             "Sign-in cancelled",
             Setup::SignedOut {
-                reason: Some("The sign-in was cancelled.".to_string()),
+                reason: Some(Reason::new("The sign-in was cancelled.")),
             },
         ),
         (
             "Sign-in failed",
             Setup::SignedOut {
-                reason: Some("The sign-in failed: OAuth error: access denied".to_string()),
+                reason: Some(
+                    Reason::new("The sign-in did not work.").detail("OAuth error: access denied"),
+                ),
             },
         ),
         (
@@ -203,10 +205,10 @@ fn pi_states(
                 SigningIn {
                     question: Some(SignInQuestion {
                         id: "method".to_string(),
-                        message: "Select Anthropic login method:".to_string(),
+                        message: "How do you want to sign in?".to_string(),
                         answer: Answer::Pick(vec![
-                            pick("browser", "Browser login (default)"),
-                            pick("copy_code", "Copy code login (headless)"),
+                            pick("browser", "Browser login"),
+                            pick("copy_code", "Copy code login"),
                         ]),
                     }),
                     ..SigningIn::default()
@@ -227,7 +229,7 @@ fn pi_states(
             "Pi after a sign-in that failed",
             pi(
                 Setup::SignedOut {
-                    reason: Some("The sign-in failed: access denied".to_string()),
+                    reason: Some(Reason::new("The sign-in did not work.").detail("access denied")),
                 },
                 &[],
                 Some("openai"),

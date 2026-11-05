@@ -243,15 +243,18 @@ fn asked(id: String, question: Question) -> SignInQuestion {
             false,
         ),
         Question::Secret { message } => text(message, true),
-        Question::Select { message, options } => SignInQuestion {
+        // Pi asks which way to sign in, in its words: "Select Anthropic login method:",
+        // "Copy code login (headless)".
+        Question::Select { options } => SignInQuestion {
             id: id.clone(),
-            message,
+            message: "How do you want to sign in?".to_string(),
             answer: Answer::Pick(
                 options
                     .into_iter()
                     .map(|option| Pick {
+                        label: (option.label.split_once(" ("))
+                            .map_or(option.label.clone(), |(label, _)| label.to_string()),
                         id: option.id,
-                        label: option.label,
                     })
                     .collect(),
             ),

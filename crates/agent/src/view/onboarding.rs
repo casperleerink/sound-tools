@@ -36,19 +36,56 @@ pub enum Setup {
     },
     /// `reason` says why an attempt to sign in ended without an account.
     SignedOut {
-        reason: Option<String>,
+        reason: Option<Reason>,
     },
     SigningIn(SigningIn),
     /// A thread can run on it. `reason` says why a sign-in to another of Pi's providers
     /// ended without it.
     Ready {
         account: Account,
-        reason: Option<String>,
+        reason: Option<Reason>,
     },
     /// The agent's program did not run. `message` is the first line it wrote.
     Stopped {
         message: String,
     },
+}
+
+/// Why a sign-in ended without an account: our sentence, then what the program said, which
+/// may be in its own words, quieter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reason {
+    pub sentence: String,
+    pub detail: Option<String>,
+}
+
+impl Reason {
+    pub fn new(sentence: impl Into<String>) -> Self {
+        Reason {
+            sentence: sentence.into(),
+            detail: None,
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    fn element(self, cx: &App) -> AnyElement {
+        let theme = cx.theme();
+        div()
+            .flex()
+            .flex_col()
+            .child(div().text_color(theme.gray_900).child(self.sentence))
+            .children(self.detail.map(|detail| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.gray_700)
+                    .child(detail)
+            }))
+            .into_any_element()
+    }
 }
 
 /// What a running sign-in has shown so far.
@@ -238,6 +275,7 @@ pub(super) fn skeleton(cx: &App) -> AnyElement {
 struct Shown {
     sentence: Option<String>,
     quiet: Option<String>,
+    reason: Option<Reason>,
     /// Shown large, as a code to type.
     code: Option<String>,
     controls: Vec<AnyElement>,
@@ -338,7 +376,7 @@ impl Buttons {
         let sentence = match &question {
             _ if code.is_some() => "Enter this code on the page in your browser:".to_string(),
             Some(question) if !in_browser => question.message.clone(),
-            _ => "Finish signing in in your browser.".to_string(),
+            _ => "Finish in your browser.".to_string(),
         };
         let (mut controls, more) = match in_browser {
             true => (Vec::new(), asked),
@@ -354,10 +392,12 @@ impl Buttons {
         controls.push(self.make("cancel", "Cancel", cancel, ghost, true, window, cx));
         Shown {
             sentence: Some(sentence),
-            quiet: note,
+            // Beside a code, the program's note only says it waits, in its own words.
+            quiet: note.filter(|_| code.is_none()),
             code,
             controls,
             more,
+            ..Shown::default()
         }
     }
 
@@ -416,6 +456,7 @@ fn shown_element(shown: Shown, cx: &App) -> AnyElement {
                 .quiet
                 .map(|quiet| div().text_color(muted).child(quiet)),
         )
+        .children(shown.reason.map(|reason| reason.element(cx)))
         .when(!shown.controls.is_empty(), |body| {
             body.child(column(shown.controls, 8.))
         })
@@ -450,7 +491,7 @@ struct Services {
 /// without it.
 enum Panel {
     Steps(String, SigningIn),
-    Ended(String, String),
+    Ended(String, Reason),
 }
 
 impl Services {
@@ -458,7 +499,7 @@ impl Services {
     /// in a row of the list they could scroll out of view.
     fn panel(&self, buttons: &Buttons, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let theme = cx.theme();
-        let (muted, strong, fill) = (theme.gray_700, theme.gray_950, theme.alpha_at(0.04));
+        let (strong, fill) = (theme.gray_950, theme.alpha_at(0.04));
         let named = |id: &str| {
             (self.services.iter())
                 .find(|service| service.id == id)
@@ -484,10 +525,7 @@ impl Services {
                 }
                 (format!("Signing in to {name}"), shown_element(shown, cx))
             }
-            Panel::Ended(id, reason) => {
-                let body = div().text_color(muted).child(reason.clone());
-                (named(id), body.into_any_element())
-            }
+            Panel::Ended(id, reason) => (named(id), reason.clone().element(cx)),
         };
         Some(
             div()
@@ -816,7 +854,7 @@ impl RenderOnce for Onboarding {
                     .flex_col()
                     .gap(px(8.))
                     .w_full()
-                    .children(reason.map(|reason| div().child(reason)))
+                    .children(reason.map(|reason| reason.element(cx)))
                     .child(
                         div()
                             .flex()
@@ -832,7 +870,7 @@ impl RenderOnce for Onboarding {
                 shown_element(
                     Shown {
                         sentence: Some("Sign in to start.".to_string()),
-                        quiet: reason,
+                        reason,
                         controls,
                         ..Shown::default()
                     },

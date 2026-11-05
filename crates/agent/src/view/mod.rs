@@ -14,5 +14,5 @@ mod sidebar;
 pub use agents::{Agents, AgentsEvent, Program};
 pub use agents_page::AgentsPage;
 pub use markdown::{Markdown, MarkdownText};
-pub use onboarding::{Onboarding, Setup, SetupAction, SigningIn};
+pub use onboarding::{Onboarding, Reason, Setup, SetupAction, SigningIn};
 pub use sidebar::{FIX_NOT_LIVE, Sidebar};

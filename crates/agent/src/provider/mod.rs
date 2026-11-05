@@ -235,15 +235,16 @@ impl Service {
         }
     }
 
-    /// The label of its sign-in in the browser, such as "Sign in with ChatGPT", when it says
-    /// more than its name.
+    /// What its sign-in in the browser signs in with, such as ChatGPT for OpenAI, when it is
+    /// not the service's own name. Pi's labels say it as "Sign in with ChatGPT" or as
+    /// "Anthropic (Claude Pro/Max)".
     pub fn plan(&self) -> Option<&str> {
         let label = self.in_browser.as_ref()?.label();
-        // "Anthropic (Claude Pro/Max)" says its plan in brackets.
         let bracketed = (label.strip_prefix(self.name.as_str()))
             .and_then(|rest| rest.trim().strip_prefix('('))
             .and_then(|rest| rest.strip_suffix(')'));
-        bracketed.or((label != self.name).then_some(label))
+        let plan = bracketed.unwrap_or(label.strip_prefix("Sign in with ").unwrap_or(label));
+        (plan != self.name).then_some(plan)
     }
 }
 

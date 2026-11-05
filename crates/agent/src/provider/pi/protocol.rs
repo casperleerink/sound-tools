@@ -285,8 +285,8 @@ pub(crate) enum Question {
     },
     /// The address the browser ended on, in case its way back to Pi does not arrive.
     ManualCode {},
+    /// Its message is left out: it is in Pi's words.
     Select {
-        message: String,
         options: Vec<SelectOption>,
     },
 }

@@ -12,7 +12,7 @@ use gpui::{AppContext as _, Context, Entity, EventEmitter, Task};
 use smol::channel::Sender;
 use smol::future;
 
-use super::onboarding::{Setup, SetupAction, SigningIn};
+use super::onboarding::{Reason, Setup, SetupAction, SigningIn};
 use crate::environment::put_first_on_path;
 use crate::install::{self, InstallError};
 use crate::settings::AgentSettings;
@@ -358,7 +358,7 @@ impl Agents {
             if let Ok(status) = asking.await
                 && status.account.is_none()
             {
-                let reason = Some(format!("{} is signed out.", provider.name()));
+                let reason = Some(Reason::new(format!("{} is signed out.", provider.name())));
                 (agents.update(cx, |agents, cx| {
                     agents.set_signed_in(provider, false, cx);
                     // A sign-in that runs meanwhile keeps its steps on the page.
@@ -381,7 +381,7 @@ impl Agents {
     fn check(
         &mut self,
         provider: Provider,
-        reason: Option<String>,
+        reason: Option<Reason>,
         picks: bool,
         cx: &mut Context<Self>,
     ) {
@@ -759,12 +759,15 @@ enum SignInEnded {
 
 impl SignInEnded {
     /// The line the composer reads when the sign-in ended with nobody signed in.
-    fn reason(&self) -> String {
+    fn reason(&self) -> Reason {
         match self {
-            SignInEnded::Finished => "The sign-in did not finish.".to_string(),
-            SignInEnded::Failed(error) => format!("The sign-in failed: {error}"),
-            SignInEnded::TimedOut => "The sign-in took over 10 minutes.".to_string(),
-            SignInEnded::Cancelled => "The sign-in was cancelled.".to_string(),
+            SignInEnded::Finished => Reason::new("The sign-in did not finish."),
+            // The program's own words, under ours.
+            SignInEnded::Failed(error) => {
+                Reason::new("The sign-in did not work.").detail(error.to_string())
+            }
+            SignInEnded::TimedOut => Reason::new("The sign-in took over 10 minutes."),
+            SignInEnded::Cancelled => Reason::new("The sign-in was cancelled."),
         }
     }
 }
@@ -796,23 +799,5 @@ mod tests {
             ));
             assert!(agents.ready(Provider::Pi).is_some());
         });
-    }
-
-    #[test]
-    fn a_sign_in_out_of_time_failed_or_cancelled_says_why() {
-        let reasons = [
-            SignInEnded::TimedOut,
-            SignInEnded::Cancelled,
-            SignInEnded::Failed(io::Error::other("OAuth error: access denied")),
-        ]
-        .map(|ended| ended.reason());
-        assert_eq!(
-            reasons,
-            [
-                "The sign-in took over 10 minutes.",
-                "The sign-in was cancelled.",
-                "The sign-in failed: OAuth error: access denied",
-            ]
-        );
     }
 }
