@@ -20,7 +20,7 @@ use sound_ui::{ActiveTheme, Session};
 #[cfg(doc)]
 use super::SettingsSlot;
 use super::project_menu::switch_devices;
-use super::{CloseSettings, SETTINGS_CONTEXT, Shell, TOP_ROW_HEIGHT};
+use super::{CloseSettings, LEFT_PANEL_WIDTH, SETTINGS_CONTEXT, Shell, TOP_ROW_HEIGHT};
 use crate::app::ChosenDevices;
 
 /// The audio devices of this machine, and which the composer chose.
@@ -46,6 +46,13 @@ impl Section {
         match self {
             Self::Agents => "Agents",
             Self::Audio => "Audio",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Agents => "bot",
+            Self::Audio => "volume-2",
         }
     }
 }
@@ -149,25 +156,40 @@ impl SettingsPage {
             .size(ButtonSize::Sm)
             .focus_handle(&self.back)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
+        let (strong, tint) = (cx.theme().gray_950, cx.theme().alpha_at(0.05));
+        let chevron = cx.theme().gray_500;
         let shown = self.agents.is_some().then_some(Section::Agents);
         let items = (shown.into_iter().chain([Section::Audio])).map(|section| {
-            let variant = match section == self.section {
-                true => ButtonVariant::Subtle,
-                false => ButtonVariant::GhostColor(muted),
-            };
+            let selected = section == self.section;
             let name = section.name();
-            Button::new(name, name)
+            let row = div()
+                .id(name)
                 .debug_selector(move || format!("settings-{}", name.to_lowercase()))
-                .variant(variant)
-                .size(ButtonSize::Sm)
-                .tab_stop(true)
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .w_full()
+                .h(px(32.))
+                .px(px(10.))
+                .rounded(px(8.))
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .map(|row| match selected {
+                    true => row.bg(tint).text_color(strong),
+                    false => row.text_color(muted).hover(move |row| row.bg(tint)),
+                })
+                .child(Icon::new(section.icon()))
+                .child(div().flex_1().child(name))
+                .child(Icon::new("chevron-right").size(14.).color(chevron));
+            TabStop::new(format!("settings-tab-{name}"), row)
                 .on_click(cx.listener(move |page, _, _, cx| page.show(section, cx)))
         });
         div()
             .flex()
             .flex_none()
             .flex_col()
-            .w(px(220.))
+            .w(px(LEFT_PANEL_WIDTH))
             .h_full()
             .border_r_1()
             .border_color(cx.theme().alpha_at(0.05))
@@ -176,11 +198,9 @@ impl SettingsPage {
                 div()
                     .flex()
                     .flex_col()
-                    .items_start()
-                    .gap(px(4.))
+                    .gap(px(2.))
                     .px(px(12.))
-                    .child(back)
-                    .child(div().h(px(12.)))
+                    .child(div().flex().pb(px(14.)).child(back))
                     .children(items),
             )
             .child(Shell::drag_region().flex_1())
