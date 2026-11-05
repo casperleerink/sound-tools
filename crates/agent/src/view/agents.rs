@@ -257,9 +257,12 @@ impl Agents {
         }
     }
 
+    /// Runs `task` for `provider`, in place of what ran. An older recheck goes too: its word
+    /// on the sign-in would be stale once this one has run.
     fn set_task(&mut self, provider: Provider, task: Task<()>) {
         if let Some(program) = self.program_mut(provider) {
             program.task = Some(task);
+            program.rechecking = None;
         }
     }
 
@@ -568,8 +571,8 @@ impl Agents {
         if let Some(program) = self.program_mut(provider) {
             program.signing_in = Some(choice);
             program.answers = Some(answers);
-            program.task = Some(task);
         }
+        self.set_task(provider, task);
         self.set_setup(provider, Setup::SigningIn(SigningIn::default()), cx);
     }
 

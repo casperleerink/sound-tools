@@ -13,13 +13,25 @@ const CHANGES = new Set(["edit", "write"]);
 // Pi reads these as plain spaces in a path.
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
+const WINDOWS = process.platform === "win32";
+
+// A Git Bash path such as `/c/Users` as Windows names it, as Pi reads it there.
+function windowsShellPath(given) {
+  if (!given.startsWith("/") || given.startsWith("//") || given.includes("\\")) return given;
+  const match = given.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+  if (!match) return given;
+  return `${match[1].toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
+}
+
 // The places a tool's path may name, as Pi's own tools read it: unicode spaces plain, `@`
 // dropped, `~` the home folder, a `file://` address its path. For `read` also the names Pi
 // tries when the given one is missing, those of macOS screenshots.
 function named(tool, input, cwd) {
   let given = input.replace(UNICODE_SPACES, " ");
   if (given.startsWith("@")) given = given.slice(1);
-  if (given === "~" || given.startsWith("~/")) given = path.join(homedir(), given.slice(2));
+  if (WINDOWS) given = windowsShellPath(given);
+  const home = given.startsWith("~/") || (WINDOWS && given.startsWith("~\\"));
+  if (given === "~" || home) given = path.join(homedir(), given.slice(2));
   if (given.startsWith("file://")) given = fileURLToPath(given);
   const resolved = path.resolve(cwd, given);
   if (tool !== "read") return [resolved];
@@ -29,35 +41,38 @@ function named(tool, input, cwd) {
   return [resolved, screenshot, decomposed, curly(resolved), curly(decomposed)];
 }
 
-function exists(file) {
-  try {
-    lstatSync(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Where a place really is: symlinks followed as far as the path exists, also one to a file
-// that is not there yet, which a write would make.
+// Where a place really is, as the system finds it: one part at a time, each symlink followed
+// before the `..` after it, also a symlink to a file that is not there yet, which a write
+// would make.
 function landing(place) {
-  let target = place;
-  for (let links = 0; links < 40; links += 1) {
-    let existing = target;
-    const rest = [];
-    while (!exists(existing)) {
-      const parent = path.dirname(existing);
-      if (parent === existing) return target;
-      rest.unshift(path.basename(existing));
-      existing = parent;
+  let resolved = path.parse(place).root;
+  let parts = place.slice(resolved.length).split(path.sep);
+  for (let links = 0; parts.length > 0; ) {
+    const part = parts.shift();
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      resolved = path.dirname(resolved);
+      continue;
     }
+    const next = path.join(resolved, part);
+    let target;
     try {
-      return path.join(realpathSync(existing), ...rest);
+      target = lstatSync(next).isSymbolicLink() ? readlinkSync(next) : undefined;
     } catch {
-      target = path.resolve(path.dirname(existing), readlinkSync(existing), ...rest);
+      // Not there: what comes after it is made as named.
     }
+    if (target === undefined) {
+      resolved = next;
+      continue;
+    }
+    links += 1;
+    // A loop of links: the system refuses it too, so whatever it names is not reached.
+    if (links > 40) return next;
+    if (path.isAbsolute(target)) resolved = path.parse(target).root;
+    const rest = target.slice(path.isAbsolute(target) ? resolved.length : 0);
+    parts = [...rest.split(WINDOWS ? /[\\/]/ : "/"), ...parts];
   }
-  return target;
+  return resolved;
 }
 
 // Where the tool call lands outside the project, or `undefined` inside it: its path, or the
