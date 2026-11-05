@@ -12,7 +12,7 @@ use gpui::{AppContext as _, Context, Entity, EventEmitter, Task};
 use smol::channel::Sender;
 use smol::future;
 
-use super::onboarding::{Reason, Setup, SetupAction, SigningIn};
+use super::onboarding::{Setup, SetupAction, SigningIn};
 use crate::environment::put_first_on_path;
 use crate::install::{self, InstallError};
 use crate::settings::AgentSettings;
@@ -358,7 +358,7 @@ impl Agents {
             if let Ok(status) = asking.await
                 && status.account.is_none()
             {
-                let reason = Some(Reason::new(format!("{} is signed out.", provider.name())));
+                let reason = Some(format!("{} is signed out.", provider.name()));
                 (agents.update(cx, |agents, cx| {
                     agents.set_signed_in(provider, false, cx);
                     // A sign-in that runs meanwhile keeps its steps on the page.
@@ -381,7 +381,7 @@ impl Agents {
     fn check(
         &mut self,
         provider: Provider,
-        reason: Option<Reason>,
+        reason: Option<String>,
         picks: bool,
         cx: &mut Context<Self>,
     ) {
@@ -758,17 +758,19 @@ enum SignInEnded {
 }
 
 impl SignInEnded {
-    /// The line the composer reads when the sign-in ended with nobody signed in.
-    fn reason(&self) -> Reason {
+    /// The line the composer reads when the sign-in ended with nobody signed in. The
+    /// program's own words are a programmer's, such as a server's answer, so they go to the log.
+    fn reason(&self) -> String {
         match self {
-            SignInEnded::Finished => Reason::new("The sign-in did not finish."),
-            // The program's own words, under ours.
+            SignInEnded::Finished => "The sign-in did not finish.",
             SignInEnded::Failed(error) => {
-                Reason::new("The sign-in did not work.").detail(error.to_string())
+                eprintln!("a sign-in failed: {error}");
+                "The sign-in did not work. Try again."
             }
-            SignInEnded::TimedOut => Reason::new("The sign-in took over 10 minutes."),
-            SignInEnded::Cancelled => Reason::new("The sign-in was cancelled."),
+            SignInEnded::TimedOut => "The sign-in took over 10 minutes.",
+            SignInEnded::Cancelled => "The sign-in was cancelled.",
         }
+        .to_string()
     }
 }
 

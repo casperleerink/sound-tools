@@ -35,14 +35,14 @@ pub enum Setup {
     },
     /// `reason` says why an attempt to sign in ended without an account.
     SignedOut {
-        reason: Option<Reason>,
+        reason: Option<String>,
     },
     SigningIn(SigningIn),
     /// A thread can run on it. `reason` says why a sign-in to another of Pi's providers
     /// ended without it.
     Ready {
         account: Account,
-        reason: Option<Reason>,
+        reason: Option<String>,
     },
     /// The agent's program did not run. `message` is the first line it wrote.
     Stopped {
@@ -50,41 +50,12 @@ pub enum Setup {
     },
 }
 
-/// Why a sign-in ended without an account: our sentence, then what the program said, which
-/// may be in its own words, quieter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Reason {
-    pub sentence: String,
-    pub detail: Option<String>,
-}
-
-impl Reason {
-    pub fn new(sentence: impl Into<String>) -> Self {
-        Reason {
-            sentence: sentence.into(),
-            detail: None,
-        }
-    }
-
-    pub fn detail(mut self, detail: impl Into<String>) -> Self {
-        self.detail = Some(detail.into());
-        self
-    }
-
-    fn element(self, cx: &App) -> AnyElement {
-        let theme = cx.theme();
-        div()
-            .flex()
-            .flex_col()
-            .child(div().text_color(theme.gray_900).child(self.sentence))
-            .children(self.detail.map(|detail| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(theme.gray_700)
-                    .child(detail)
-            }))
-            .into_any_element()
-    }
+/// Why a sign-in ended without an account, as strong as a sentence.
+fn reason_element(reason: String, cx: &App) -> AnyElement {
+    div()
+        .text_color(cx.theme().gray_900)
+        .child(reason)
+        .into_any_element()
 }
 
 /// What a running sign-in has shown so far.
@@ -274,7 +245,7 @@ pub(super) fn skeleton(cx: &App) -> AnyElement {
 struct Shown {
     sentence: Option<String>,
     quiet: Option<String>,
-    reason: Option<Reason>,
+    reason: Option<String>,
     /// Shown large, as a code to type.
     code: Option<String>,
     controls: Vec<AnyElement>,
@@ -455,7 +426,7 @@ fn shown_element(shown: Shown, cx: &App) -> AnyElement {
                 .quiet
                 .map(|quiet| div().text_color(muted).child(quiet)),
         )
-        .children(shown.reason.map(|reason| reason.element(cx)))
+        .children(shown.reason.map(|reason| reason_element(reason, cx)))
         .when(!shown.controls.is_empty(), |body| {
             body.child(column(shown.controls, 8.))
         })
@@ -490,7 +461,7 @@ struct Services {
 /// without it.
 enum Panel {
     Steps(String, SigningIn),
-    Ended(String, Reason),
+    Ended(String, String),
 }
 
 impl Services {
@@ -524,7 +495,7 @@ impl Services {
                 }
                 (format!("Signing in to {name}"), shown_element(shown, cx))
             }
-            Panel::Ended(id, reason) => (named(id), reason.clone().element(cx)),
+            Panel::Ended(id, reason) => (named(id), reason_element(reason.clone(), cx)),
         };
         Some(
             div()
@@ -853,7 +824,7 @@ impl RenderOnce for Onboarding {
                     .flex_col()
                     .gap(px(8.))
                     .w_full()
-                    .children(reason.map(|reason| reason.element(cx)))
+                    .children(reason.map(|reason| reason_element(reason, cx)))
                     .child(
                         div()
                             .flex()

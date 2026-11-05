@@ -6,8 +6,8 @@ use gpui::{
     App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px,
 };
 use sound_agent::{
-    Account, Answer, Onboarding, Pick, Provider, Reason, Service, Setup, SignInChoice,
-    SignInQuestion, SignedIn, SigningIn,
+    Account, Answer, Onboarding, Pick, Provider, Service, Setup, SignInChoice, SignInQuestion,
+    SignedIn, SigningIn,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::text_input::TextInput;
@@ -68,15 +68,13 @@ pub fn section(_: &mut Window, cx: &mut App) -> impl IntoElement {
         (
             "Sign-in cancelled",
             Setup::SignedOut {
-                reason: Some(Reason::new("The sign-in was cancelled.")),
+                reason: Some("The sign-in was cancelled.".to_string()),
             },
         ),
         (
             "Sign-in failed",
             Setup::SignedOut {
-                reason: Some(
-                    Reason::new("The sign-in did not work.").detail("OAuth error: access denied"),
-                ),
+                reason: Some("The sign-in did not work. Try again.".to_string()),
             },
         ),
         (
@@ -229,7 +227,7 @@ fn pi_states(
             "Pi after a sign-in that failed",
             pi(
                 Setup::SignedOut {
-                    reason: Some(Reason::new("The sign-in did not work.").detail("access denied")),
+                    reason: Some("The sign-in did not work. Try again.".to_string()),
                 },
                 &[],
                 Some("openai"),
