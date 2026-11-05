@@ -6,8 +6,8 @@ use gpui::{
     App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px,
 };
 use sound_agent::{
-    Account, Answer, Onboarding, Pick, Provider, Service, Setup, SignInChoice, SignInQuestion,
-    SignedIn, SigningIn,
+    Account, Answer, Onboarding, Pick, Provider, Reason, Service, Setup, SignInChoice,
+    SignInQuestion, SignedIn, SigningIn,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::text_input::TextInput;
@@ -68,13 +68,18 @@ pub fn section(_: &mut Window, cx: &mut App) -> impl IntoElement {
         (
             "Sign-in cancelled",
             Setup::SignedOut {
-                reason: Some("The sign-in was cancelled.".to_string()),
+                reason: Some(Reason::new("The sign-in was cancelled.")),
             },
         ),
         (
             "Sign-in failed",
             Setup::SignedOut {
-                reason: Some("The sign-in did not work. Try again.".to_string()),
+                reason: Some(Reason {
+                    details: Some(
+                        "OpenAI OAuth token request failed (400): invalid_grant".to_string(),
+                    ),
+                    ..Reason::new("The sign-in did not work. Try again.")
+                }),
             },
         ),
         (
@@ -227,7 +232,12 @@ fn pi_states(
             "Pi after a sign-in that failed",
             pi(
                 Setup::SignedOut {
-                    reason: Some("The sign-in did not work. Try again.".to_string()),
+                    reason: Some(Reason {
+                        details: Some(
+                            "OpenAI OAuth token request failed (400): invalid_grant".to_string(),
+                        ),
+                        ..Reason::new("The sign-in did not work. Try again.")
+                    }),
                 },
                 &[],
                 Some("openai"),
