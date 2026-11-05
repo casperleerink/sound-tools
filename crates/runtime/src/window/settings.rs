@@ -157,6 +157,7 @@ impl SettingsPage {
             .focus_handle(&self.back)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
         let (strong, tint) = (cx.theme().gray_950, cx.theme().alpha_at(0.05));
+        let chevron = cx.theme().gray_500;
         let shown = self.agents.is_some().then_some(Section::Agents);
         let items = (shown.into_iter().chain([Section::Audio])).map(|section| {
             let selected = section == self.section;
@@ -179,7 +180,8 @@ impl SettingsPage {
                     false => row.text_color(muted).hover(move |row| row.bg(tint)),
                 })
                 .child(Icon::new(section.icon()))
-                .child(name);
+                .child(div().flex_1().child(name))
+                .child(Icon::new("chevron-right").size(14.).color(chevron));
             TabStop::new(format!("settings-tab-{name}"), row)
                 .on_click(cx.listener(move |page, _, _, cx| page.show(section, cx)))
         });
