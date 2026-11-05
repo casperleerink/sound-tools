@@ -255,19 +255,21 @@ impl Repository {
             }
         }
         let tree = tree.ok_or_else(|| invalid_data(format!("commit {id} has no tree")))?;
-        let mut label = Vec::new();
-        let mut time = seconds * 1000;
-        for line in message.lines() {
-            match line.strip_prefix(TIME_TRAILER).map(str::parse) {
-                Some(Ok(milliseconds)) => time = milliseconds,
-                _ => label.push(line),
-            }
-        }
+        let time = (message.lines())
+            .find_map(|line| line.strip_prefix(TIME_TRAILER)?.parse().ok())
+            .unwrap_or(seconds * 1000);
+        // A message history did not write can run over lines; its first line is the label.
+        let label = message
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         Ok(Commit {
             tree,
             parents,
             time,
-            label: label.join("\n").trim().to_string(),
+            label,
         })
     }
 
