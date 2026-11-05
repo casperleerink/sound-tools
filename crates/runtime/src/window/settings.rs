@@ -20,7 +20,7 @@ use sound_ui::{ActiveTheme, Session};
 #[cfg(doc)]
 use super::SettingsSlot;
 use super::project_menu::switch_devices;
-use super::{CloseSettings, SETTINGS_CONTEXT, Shell, TOP_ROW_HEIGHT};
+use super::{CloseSettings, LEFT_PANEL_WIDTH, SETTINGS_CONTEXT, Shell, TOP_ROW_HEIGHT};
 use crate::app::ChosenDevices;
 
 /// The audio devices of this machine, and which the composer chose.
@@ -46,6 +46,13 @@ impl Section {
         match self {
             Self::Agents => "Agents",
             Self::Audio => "Audio",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Agents => "bot",
+            Self::Audio => "volume-2",
         }
     }
 }
@@ -157,6 +164,7 @@ impl SettingsPage {
             };
             let name = section.name();
             Button::new(name, name)
+                .icon(section.icon())
                 .debug_selector(move || format!("settings-{}", name.to_lowercase()))
                 .variant(variant)
                 .size(ButtonSize::Sm)
@@ -167,7 +175,7 @@ impl SettingsPage {
             .flex()
             .flex_none()
             .flex_col()
-            .w(px(220.))
+            .w(px(LEFT_PANEL_WIDTH))
             .h_full()
             .border_r_1()
             .border_color(cx.theme().alpha_at(0.05))
@@ -178,7 +186,7 @@ impl SettingsPage {
                     .flex_col()
                     .items_start()
                     .gap(px(4.))
-                    .px(px(12.))
+                    .px(px(16.))
                     .child(back)
                     .child(div().h(px(12.)))
                     .children(items),
