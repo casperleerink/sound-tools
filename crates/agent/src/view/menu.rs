@@ -1,5 +1,5 @@
-//! The sidebar's menus. In the composer: the model, with the account and **Sign out** under it,
-//! and how much the agent may do without asking, both settings of the machine (see
+//! The sidebar's menus. In the composer: the model, and how much the agent may do without
+//! asking, both settings of the machine (see
 //! `crate::settings`). In the header: **New**, the recent threads, and the instructions.
 
 use gpui::{Hsla, SharedString, rgb};
@@ -8,7 +8,7 @@ use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 use super::instructions::Scope;
 use crate::settings::Settings;
 use crate::store::RecentThread;
-use crate::{Account, ApprovalMode, Model, Provider};
+use crate::{ApprovalMode, Model, Provider};
 
 /// In the order the menu lists them, from the most careful.
 const APPROVAL_MODES: [ApprovalMode; 3] = [
@@ -29,7 +29,6 @@ pub(super) enum Choice {
     ApprovalMode(ApprovalMode),
     /// One of the provider's models, or `None` for its default.
     Model(Option<String>),
-    SignOut,
     NewThread,
     /// A recent thread of the project, by id.
     OpenThread(String),
@@ -44,7 +43,6 @@ impl Choice {
             Choice::ApprovalMode(mode) => format!("approval-{}", approval_text(*mode).0).into(),
             Choice::Model(Some(id)) => format!("model-{id}").into(),
             Choice::Model(None) => "model".into(),
-            Choice::SignOut => "sign-out".into(),
             Choice::NewThread => "new-thread".into(),
             Choice::OpenThread(id) => format!("thread-{id}").into(),
             Choice::Instructions(Scope::Project) => "instructions-project".into(),
@@ -54,7 +52,6 @@ impl Choice {
 
     pub(super) fn of(value: &str) -> Option<Choice> {
         match value {
-            "sign-out" => return Some(Choice::SignOut),
             "model" => return Some(Choice::Model(None)),
             "new-thread" => return Some(Choice::NewThread),
             "instructions-project" => return Some(Choice::Instructions(Scope::Project)),
@@ -179,11 +176,10 @@ pub(super) fn label(settings: &Settings, models: &[Model]) -> String {
     }
 }
 
-/// The provider's models under its name, then the account and **Sign out**. `models` are the
-/// provider's, its default first, or none until it listed them.
+/// The provider's models under its name. `models` are the provider's, its default first, or
+/// none until it listed them.
 pub(super) fn model_entries(
     provider: Provider,
-    account: &Account,
     settings: &Settings,
     models: &[Model],
 ) -> Vec<MenuEntry> {
@@ -206,22 +202,9 @@ pub(super) fn model_entries(
             })
             .collect()
     };
-    let who: Vec<&str> = [&account.email, &account.plan]
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let account = MenuGroup::new().item(row(Choice::SignOut, "Sign out", false));
-    let account = if who.is_empty() {
-        account
-    } else {
-        account.label(who.join(" · "))
-    };
-    vec![
-        MenuEntry::Group(MenuGroup::new().label(provider.name()).items(models)),
-        MenuEntry::Separator,
-        MenuEntry::Group(account),
-    ]
+    vec![MenuEntry::Group(
+        MenuGroup::new().label(provider.name()).items(models),
+    )]
 }
 
 #[cfg(test)]
@@ -233,7 +216,6 @@ mod tests {
         let choices = APPROVAL_MODES.map(Choice::ApprovalMode).into_iter().chain([
             Choice::Model(None),
             Choice::Model(Some("claude-opus-5-5".to_string())),
-            Choice::SignOut,
             Choice::NewThread,
             Choice::OpenThread("5f0c7a1e-0000-4000-8000-000000000000".to_string()),
             Choice::Instructions(Scope::Project),

@@ -173,6 +173,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
 - What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. A level is shapes in a space. Rejected: a meter node of the window, which drew the whole page as it moved; cached parts of the page, not needed yet.
 - "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
+- Settings is a page in place of the main view (cmd-, or the project menu). Rejected: a window of its own, more to manage; a dialog, which blocks.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 
 ## The agent sidebar
@@ -181,8 +182,9 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - The sidebar runs the `claude` CLI. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is how more agents come later.
 - Claude Code is not bundled: 215 MB more per download, and a release per version.
+- Agents are set up on the Settings page, once for the app; the sidebar only links there while none is ready.
 - New problems after a turn show to the composer, not the agent: its docs tell it to read `problems.txt`.
-- A picture goes as a picture, any other file as its path; nothing is copied in. Saved threads keep only their names.
+- A picture goes as a picture, any other file as its path; nothing is copied in.
 - Versions are named by the agent's own program with its small model, from a capped diff, one call at a time once the history is still for 5 s. Without a signed-in agent they stay "Version N". A name given by hand is never replaced.
 - Going back in History tells the agent once, before its next message, in a block the thread does not show: the point, the version, and where the history repository is. The agent cannot move through history itself yet.
 

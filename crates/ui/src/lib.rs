@@ -22,6 +22,14 @@ pub mod typography;
 pub mod views;
 pub mod waveforms;
 
+gpui::actions!(
+    sound_tools,
+    [
+        /// Opens the Settings page of the window, such as from the agent sidebar.
+        OpenSettings
+    ]
+);
+
 pub use assets::Assets;
 pub use control_edit::{ControlEdit, DragEdit, weak_action, weak_callback};
 pub use device_edit::{DeviceEdit, DeviceView};

@@ -46,6 +46,7 @@ const REVEAL: &str = "reveal";
 const TERMINAL: &str = "terminal";
 const INSTALL_TOOL: &str = "install-tool";
 const LOG: &str = "log";
+const SETTINGS: &str = "settings";
 
 /// The audio devices of this machine, and which the composer chose.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -210,6 +211,7 @@ impl ProjectMenu {
             INSTALL_TOOL => return install_command_line_tool(self.session.clone(), window, cx),
             EXPORT => return export_audio(self.session.clone(), false, window, cx),
             EXPORT_SELECTION => return export_audio(self.session.clone(), true, window, cx),
+            SETTINGS => return window.dispatch_action(Box::new(sound_ui::OpenSettings), cx),
             _ => {}
         }
         if let Some(chosen) = self.chosen(&picked.0) {
@@ -711,6 +713,7 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
         (LOG, "Reveal log file"),
+        (SETTINGS, "Settings…"),
     ];
     let rest = (rest.into_iter())
         .filter(|(value, _)| match *value {
@@ -722,6 +725,7 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
             let item = MenuItem::new(value, label).selectable(false);
             match value {
                 OPEN_PROJECT => item.shortcut("mod+o"),
+                SETTINGS => item.shortcut("mod+,"),
                 OPEN_RECENT => item
                     .submenu(recent_items(recent))
                     .disabled(recent.is_empty()),
@@ -865,6 +869,10 @@ mod tests {
         if cfg!(unix) {
             expected.push((INSTALL_TOOL.into(), "Install command line tool".into()));
         }
+        if log_file::path().is_some() {
+            expected.push((LOG.into(), "Reveal log file".into()));
+        }
+        expected.push((SETTINGS.into(), "Settings…".into()));
         assert_eq!(items, expected);
     }
 }

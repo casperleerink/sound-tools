@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
+    AnyElement, AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
     KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, SharedString, StyleRefinement, Subscription, Task, TitlebarOptions,
     WeakFocusHandle, Window, WindowBounds, WindowControlArea, WindowOptions, actions, div, point,
@@ -70,6 +70,7 @@ actions!(
         OpenCloseLeftPanel,
         NewProject,
         OpenProject,
+        CloseSettings,
         Quit
     ]
 );
@@ -113,6 +114,27 @@ impl LeftPanelSlot {
         Self {
             make: Rc::new(make),
             remembered,
+        }
+    }
+
+    pub fn install(self, cx: &mut App) {
+        cx.set_global(self);
+    }
+}
+
+/// What the window's Settings page shows, given by the composition root, as
+/// [`LeftPanelSlot`] is. With none installed the window has no Settings page.
+#[derive(Clone)]
+pub struct SettingsSlot {
+    make: Rc<dyn Fn(&mut Window, &mut Context<Shell>) -> AnyView>,
+}
+
+impl Global for SettingsSlot {}
+
+impl SettingsSlot {
+    pub fn new(make: impl Fn(&mut Window, &mut Context<Shell>) -> AnyView + 'static) -> Self {
+        Self {
+            make: Rc::new(make),
         }
     }
 
@@ -209,6 +231,9 @@ pub struct Shell {
     session: Entity<Session>,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
+    /// The Settings page, in place of the main view while it is open.
+    settings: Option<AnyView>,
+    settings_focus: FocusHandle,
     /// What the main view shows in the title bar, such as the transport of a song.
     title_bar: Option<Entity<sound_typescript::TitleBar>>,
     project_menu: Entity<ProjectMenu>,
@@ -340,6 +365,8 @@ impl Shell {
             live,
             session,
             main: None,
+            settings: None,
+            settings_focus: cx.focus_handle(),
             title_bar: None,
             focus_handle,
             left_panel,
@@ -617,6 +644,55 @@ impl Shell {
     }
 
     /// What the main area shows with no view: in an empty project, the ways to start one.
+    /// Opens the Settings page in place of the main view, when the app has one.
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.is_some() {
+            return;
+        }
+        let Some(slot) = cx.try_global::<SettingsSlot>().cloned() else {
+            return;
+        };
+        self.settings = Some((slot.make)(window, cx));
+        window.focus(&self.settings_focus, cx);
+        cx.notify();
+    }
+
+    /// The page: its title with the way back, then what the app shows on it, in a column.
+    fn settings_page(&self, page: AnyView, cx: &mut Context<Self>) -> AnyElement {
+        let back = Button::icon_only("settings-back", "arrow-left")
+            .debug_selector(|| "settings-back".to_string())
+            .variant(ButtonVariant::Ghost)
+            .size(ButtonSize::Sm)
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
+        div()
+            .id("settings")
+            .key_context(SETTINGS_CONTEXT)
+            .track_focus(&self.settings_focus)
+            .size_full()
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .mx_auto()
+                    .max_w(px(640.))
+                    .px(px(40.))
+                    .py(px(32.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(32.))
+                    .child(
+                        div().flex().items_center().gap(px(8.)).child(back).child(
+                            div()
+                                .text_size(px(20.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(cx.theme().gray_950)
+                                .child("Settings"),
+                        ),
+                    )
+                    .child(page),
+            )
+            .into_any_element()
+    }
+
     fn empty_state(&self, cx: &mut Context<Self>) -> EmptyState {
         if self.session.read(cx).project().instances().next().is_some() {
             return EmptyState::new(
@@ -915,9 +991,10 @@ impl Render for Shell {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Shell, "window");
         let theme = cx.theme();
         let (background, text) = (theme.gray_100, theme.gray_950);
-        let main = match &self.main {
-            Some((_, view)) => view.clone().into_any_element(),
-            None => div()
+        let main = match (&self.settings, &self.main) {
+            (Some(settings), _) => self.settings_page(settings.clone(), cx),
+            (None, Some((_, view))) => view.clone().into_any_element(),
+            (None, None) => div()
                 .size_full()
                 .flex()
                 .items_center()
@@ -988,6 +1065,15 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &OpenProject, _, cx| {
                 shell.session.update(cx, |_, cx| open_another_project(cx))
             }))
+            .on_action(
+                cx.listener(|shell, _: &sound_ui::OpenSettings, window, cx| {
+                    shell.open_settings(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|shell, _: &CloseSettings, _, cx| {
+                shell.settings = None;
+                cx.notify();
+            }))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()
@@ -1030,6 +1116,7 @@ impl Render for Shell {
 
 /// The key context of the window root. Every binding of the window names it.
 const KEY_CONTEXT: &str = "Shell";
+const SETTINGS_CONTEXT: &str = "Settings";
 
 /// Outside a text field, where keys are characters and cmd-z is not an undo of the project.
 fn outside_text() -> String {
@@ -1067,6 +1154,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-o", OpenProject, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-,", sound_ui::OpenSettings, Some(KEY_CONTEXT)),
+        KeyBinding::new("escape", CloseSettings, Some(SETTINGS_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());

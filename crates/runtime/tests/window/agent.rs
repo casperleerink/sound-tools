@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
-use runtime::window::LeftPanelSlot;
+use gpui::{App, AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
+use runtime::window::{LeftPanelSlot, SettingsSlot};
 use sound_agent::{
-    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Attachment, Command, Entry,
-    ExitReason, Image, ImageFormat, Installed, Message, Model, Sidebar, StepId, StepKind,
-    StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, AgentSettings, Agents, AgentsPage, ApprovalId, ApprovalMode, Attachment,
+    Command, Entry, ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, Sidebar,
+    StepId, StepKind, StepOutcome, Thread, TurnOutcome,
 };
 use tempfile::TempDir;
 
@@ -41,12 +41,17 @@ fn install_sidebar_with(
     let threads = runtime::app::threads_folder(support);
     cx.update(|cx| {
         let settings = cx.new(|cx| AgentSettings::new(None, cx));
+        let agents = agents(installed, &settings, cx);
+        SettingsSlot::new({
+            let agents = agents.clone();
+            move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
+        })
+        .install(cx);
         let shared = settings.clone();
         LeftPanelSlot::new(Some(remembered), move |session, window, cx| {
-            let (installed, threads) = (installed.clone(), Some(threads.clone()));
+            let (agents, threads) = (agents.clone(), Some(threads.clone()));
             let settings = shared.clone();
-            let sidebar = cx
-                .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
+            let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, window, cx));
             runtime::sidebar_panel(sidebar, cx)
         })
         .install(cx);
@@ -432,20 +437,24 @@ fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext
     assert!(shell_focused(&mut opened));
 }
 
-/// The account menu sits in the composer and offers **Sign out**.
+/// With no agent set up, the sidebar's one way on is Settings, which shows in place of the
+/// piece and goes with escape.
 #[gpui::test]
-fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
+fn with_no_agent_the_sidebar_opens_settings(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
-    install_sidebar(cx, machine.path());
+    install_sidebar_with(cx, machine.path(), None);
     let mut opened = support::open_new(cx);
-    assert!(opened.find("menu-sign-out").is_none());
-    let menu = opened.control("model-menu");
-    opened.click(menu);
-    assert!(opened.find("menu-sign-out").is_some());
+    assert!(opened.find("agent-composer").is_none());
+    let open = opened.control("agent-open-settings");
+    opened.click(open);
+    assert!(opened.find("settings-back").is_some());
+    assert!(opened.find("setup-set-up").is_some());
+    opened.keys("escape");
+    assert!(opened.find("settings-back").is_none());
 }
 
-/// Sign out ends the agent. The turn it worked on ends as stopped, and its request with it,
-/// so the sidebar is not left working.
+/// Sign out, in Settings, ends the agent. The turn it worked on ends as stopped, and its
+/// request with it, so the sidebar is not left working.
 #[gpui::test]
 fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
@@ -456,9 +465,8 @@ fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) 
     opened.receive([AgentEvent::TurnStarted]);
     write_outside(&mut opened, "state/bass.json", BASS_CLIP);
 
-    let menu = opened.control("model-menu");
-    opened.click(menu);
-    let sign_out = opened.control("menu-sign-out");
+    opened.keys("secondary-,");
+    let sign_out = opened.control("setup-sign-out");
     opened.click(sign_out);
 
     let sidebar = opened.sidebar();
@@ -1253,6 +1261,18 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     );
 }
 
+/// Claude Code signed in with `installed` as its program, or not installed.
+fn agents(
+    installed: Option<Installed>,
+    settings: &Entity<AgentSettings>,
+    cx: &mut App,
+) -> Entity<Agents> {
+    let programs = (installed.into_iter())
+        .map(|installed| (Provider::Claude, installed))
+        .collect();
+    cx.new(|_| Agents::with_programs(programs, settings.clone()))
+}
+
 /// Every sidebar of the app shows one setting: a change in one goes to the agents of all.
 #[gpui::test]
 fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
@@ -1266,9 +1286,8 @@ fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
     let shared = settings.clone();
     let other = opened.cx.update(|window, cx| {
         sidebar.update(cx, |sidebar, _| sidebar.connect(thread));
-        let installed = Some(nonexistent_claude());
-        let other =
-            cx.new(|cx| Sidebar::with_program(session, installed, None, shared, window, cx));
+        let agents = agents(Some(nonexistent_claude()), &shared, cx);
+        let other = cx.new(|cx| Sidebar::new(session, agents, None, shared, window, cx));
         other.update(cx, |other, _| other.connect(other_thread));
         other
     });

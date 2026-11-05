@@ -25,6 +25,9 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// In the order the app offers them.
+    pub const ALL: [Provider; 1] = [Provider::Claude];
+
     /// The program's name for the composer, as in "The agent runs Claude Code by Anthropic."
     pub fn name(self) -> &'static str {
         match self {
@@ -149,6 +152,10 @@ pub struct SignInChoice {
 }
 
 impl SignInChoice {
+    pub fn provider(self) -> Provider {
+        self.provider
+    }
+
     /// What its button says.
     pub fn label(self) -> &'static str {
         self.label

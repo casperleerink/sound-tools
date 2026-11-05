@@ -1,5 +1,7 @@
 //! The agent sidebar: the onboarding, the thread, its entries and the composer.
 
+mod agents;
+mod agents_page;
 mod entry;
 mod history;
 mod instructions;
@@ -8,6 +10,8 @@ mod menu;
 mod onboarding;
 mod sidebar;
 
+pub use agents::{Agents, AgentsEvent, Program};
+pub use agents_page::AgentsPage;
 pub use markdown::{Markdown, MarkdownText};
 pub use onboarding::{Onboarding, Setup, SetupAction};
 pub use sidebar::{FIX_NOT_LIVE, Sidebar};

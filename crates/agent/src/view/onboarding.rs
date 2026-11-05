@@ -1,12 +1,12 @@
-//! What the sidebar shows until the agent is ready: a skeleton of the thread while it checks,
-//! the download, then the sign-in. Plain state in, buttons out, so the gallery shows every
-//! state with no process.
+//! How far a provider is set up, as the Settings page shows it: the download, the sign-in, and
+//! the account with **Sign out**. Plain state in, buttons out, so the gallery shows every state
+//! with no process. The sidebar shows a skeleton of the thread while the app checks.
 
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, SharedString, Window, div, prelude::*,
+    Animation, AnimationExt, AnyElement, App, FontWeight, SharedString, Window, div, prelude::*,
     pulsating_between, px, relative,
 };
 use sound_ui::ActiveTheme;
@@ -14,7 +14,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 
 use crate::{Account, Provider, SignInChoice};
 
-/// Where the sidebar is in setting up its agent.
+/// Where the app is in setting up the agent of one provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Setup {
     /// The login shell is read and the agent asked whether it is signed in.
@@ -34,7 +34,7 @@ pub enum Setup {
     },
     /// The provider's page is open in the browser.
     SigningIn,
-    /// The thread shows.
+    /// A thread can run on it.
     Ready {
         account: Account,
     },
@@ -54,13 +54,14 @@ pub enum SetupAction {
     SignIn(SignInChoice),
     /// Starts the sign-in again, which opens the page again.
     OpenPageAgain,
+    SignOut,
     /// Try again after the program did not run.
     Check,
 }
 
 type ActionHandler = Rc<dyn Fn(&SetupAction, &mut Window, &mut App)>;
 
-/// Every state of [`Setup`] but `Ready`, which is the thread.
+/// Every state of [`Setup`] of one provider, under its name.
 #[derive(IntoElement)]
 pub struct Onboarding {
     provider: Provider,
@@ -96,7 +97,7 @@ fn megabytes(bytes: u64) -> u64 {
 
 /// The thread as it will show, in grey and pulsing: a message, an answer and the composer.
 /// Most starts end signed in, so the thread takes the same place without a jump.
-fn skeleton(cx: &App) -> AnyElement {
+pub(super) fn skeleton(cx: &App) -> AnyElement {
     let theme = cx.theme();
     let (bar, border, fill) = (theme.alpha_at(0.05), theme.alpha_at(0.10), theme.gray_200);
     let line = |width: f32| div().h(px(12.)).w(relative(width)).rounded(px(6.)).bg(bar);
@@ -145,11 +146,8 @@ fn skeleton(cx: &App) -> AnyElement {
 
 impl RenderOnce for Onboarding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if self.setup == Setup::Checking {
-            return skeleton(cx);
-        }
         let theme = cx.theme();
-        let (text, muted) = (theme.gray_900, theme.gray_700);
+        let (text, muted, strong) = (theme.gray_900, theme.gray_700, theme.gray_950);
         let name = self.provider.name();
         let on_action = self.on_action;
         // The keyboard reaches every button, and its focus stays across renders.
@@ -179,7 +177,24 @@ impl RenderOnce for Onboarding {
             }
         };
         let (sentence, quiet, buttons) = match self.setup {
-            Setup::Checking | Setup::Ready { .. } => (None, None, Vec::new()),
+            Setup::Checking => (None, Some("Checking…".to_string()), Vec::new()),
+            Setup::Ready { account } => {
+                let who: Vec<String> = [account.email, account.plan]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let signed_in = match who.is_empty() {
+                    true => "Signed in.".to_string(),
+                    false => format!("Signed in: {}", who.join(" · ")),
+                };
+                let sign_out = button(
+                    "sign-out",
+                    "Sign out".into(),
+                    SetupAction::SignOut,
+                    ButtonVariant::Subtle,
+                );
+                (None, Some(signed_in), vec![sign_out])
+            }
             Setup::NotInstalled => {
                 let size = self.provider.download().map_or(String::new(), |download| {
                     format!(" {} MB", megabytes(download.size))
@@ -273,16 +288,18 @@ impl RenderOnce for Onboarding {
             }
         };
         div()
-            .flex_1()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(16.))
-            .px(px(40.))
-            .text_center()
+            .items_start()
+            .gap(px(12.))
             .text_size(px(14.))
             .line_height(px(20.))
+            .child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(strong)
+                    .child(name),
+            )
             .children(sentence.map(|sentence| div().text_color(text).child(sentence)))
             .children(quiet.map(|quiet| div().text_color(muted).child(quiet)))
             .when(!buttons.is_empty(), |body| {

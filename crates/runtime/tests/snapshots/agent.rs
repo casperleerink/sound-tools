@@ -26,10 +26,10 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use gpui::{AppContext, Entity, Focusable, HeadlessAppContext};
-use runtime::window::LeftPanelSlot;
+use runtime::window::{LeftPanelSlot, SettingsSlot};
 use sound_agent::{
-    Account, AgentEvent, AgentSettings, ApprovalId, ExitReason, Installed, Model, Sidebar, StepId,
-    StepKind, StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, AgentSettings, Agents, AgentsPage, ApprovalId, ExitReason, Installed,
+    Model, Provider, Sidebar, StepId, StepKind, StepOutcome, Thread, TurnOutcome,
 };
 use sound_ui::components::dropdown_menu::MenuPicked;
 
@@ -405,6 +405,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     });
     cx.run_until_parked();
     save(cx, opened.window.into(), "agent-attachments")?;
+
+    // Where the agents are set up, signed in to Claude Code.
+    opened.key("cmd-,", cx)?;
+    save(cx, opened.window.into(), "agent-settings")?;
     Ok(())
 }
 
@@ -414,15 +418,20 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
 fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Sidebar>)> {
     cx.update(|cx| {
         let settings = cx.new(|cx| AgentSettings::new(None, cx));
+        let installed = Installed {
+            program: "/nonexistent/claude".into(),
+            environment: HashMap::new(),
+        };
+        let programs = vec![(Provider::Claude, installed)];
+        let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
+        SettingsSlot::new({
+            let agents = agents.clone();
+            move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
+        })
+        .install(cx);
         LeftPanelSlot::new(None, move |session, window, cx| {
-            let installed = Installed {
-                program: "/nonexistent/claude".into(),
-                environment: HashMap::new(),
-            };
-            let settings = settings.clone();
-            let sidebar = cx.new(|cx| {
-                Sidebar::with_program(session, Some(installed), None, settings, window, cx)
-            });
+            let (agents, settings) = (agents.clone(), settings.clone());
+            let sidebar = cx.new(|cx| Sidebar::new(session, agents, None, settings, window, cx));
             runtime::sidebar_panel(sidebar, cx)
         })
         .install(cx)

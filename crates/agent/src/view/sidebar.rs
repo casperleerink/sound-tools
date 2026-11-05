@@ -1,5 +1,6 @@
-//! The sidebar: the onboarding until the agent is set up, then the thread in a gpui `list` and
-//! the composer. Its **New** button goes in the window's header above it.
+//! The sidebar: the thread in a gpui `list` and the composer, once an agent is set up (see
+//! `super::agents`), else a way to Settings, where it is. Its **New** button goes in the
+//! window's header above it.
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **New**, or
 //! when a recent thread opens from its menu. Every message is one request of the session, so
@@ -10,7 +11,6 @@
 
 mod attachments;
 mod naming;
-mod setup;
 mod threads;
 mod turn;
 mod went_back;
@@ -25,26 +25,27 @@ use gpui::{
     div, hsla, list, point, prelude::*, px,
 };
 use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
-use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
+use sound_ui::{ActiveTheme, OpenSettings};
 
 use self::attachments::Attached;
 use self::naming::Namer;
 use self::went_back::WentBack;
+use super::agents::{Agents, AgentsEvent};
 use super::entry;
 use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
 use super::markdown::{self, Markdown, MarkdownText};
 use super::menu::{self, Choice};
-use super::onboarding::{Onboarding, Setup, SetupAction};
+use super::onboarding::{self, Setup};
 use crate::conversation::{Approval, Conversation, Entry, Turn, TurnEnd};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
-use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, TurnOutcome};
+use crate::{ApprovalAnswer, Installed, Provider, Thread, TurnOutcome};
 
 actions!(agent_sidebar, [Stop]);
 
@@ -83,20 +84,13 @@ struct Agent {
 pub struct Sidebar {
     session: Entity<sound_ui::Session>,
     provider: Provider,
-    /// Where downloaded programs are kept, `agents/` in the support folder. `None` when the
-    /// machine has no support folder; a program named in the environment still runs.
-    agents: Option<PathBuf>,
-    setup: Setup,
-    /// The program and its environment, once the login shell answered. The program may not be
-    /// downloaded yet.
-    installed: Option<Installed>,
-    /// The way in of the running sign-in, which **Open the page again** starts again.
-    signing_in: Option<SignInChoice>,
-    /// The download, the sign-in or a question to the program. Dropping it cancels it.
-    setup_task: Option<Task<()>>,
+    /// The app's agents, which the Settings page sets up.
+    agents: Entity<Agents>,
+    /// Whether the thread's provider was signed in at the last change of the agents.
+    ready: bool,
     /// **New**, with the recent threads and the instructions in its menu.
     new_button: Entity<SplitButton>,
-    /// The model, and the account with **Sign out**, in the composer.
+    /// The model, in the composer.
     model_menu: Entity<DropdownMenu>,
     /// The approval mode, beside the model.
     access_menu: Entity<DropdownMenu>,
@@ -157,56 +151,23 @@ pub struct Sidebar {
 }
 
 impl Sidebar {
-    /// Finds the program in the background, see [`Self::find_program`]. The threads of the
-    /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
-    /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
+    /// A sidebar whose thread runs on one of `agents`. The threads of the project are kept in
+    /// `threads`, `agent/threads` in the support folder of the machine; with `None` nothing is
+    /// saved. `settings` are the app's, shared by every sidebar.
     pub fn new(
         session: Entity<sound_ui::Session>,
-        agents: Option<PathBuf>,
-        threads: Option<PathBuf>,
-        settings: Entity<AgentSettings>,
-        first_on_path: Option<PathBuf>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut sidebar = Self::with(
-            session,
-            agents,
-            Setup::Checking,
-            threads,
-            settings,
-            window,
-            cx,
-        );
-        sidebar.find_program(first_on_path, cx);
-        sidebar
-    }
-
-    /// For a test or a snapshot: set up and signed in with `installed` as the program, or not
-    /// installed with `None`. Only the naming of versions runs in the background.
-    pub fn with_program(
-        session: Entity<sound_ui::Session>,
-        installed: Option<Installed>,
+        agents: Entity<Agents>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let setup = match installed {
-            Some(_) => Setup::Ready {
-                account: Account::default(),
-            },
-            None => Setup::NotInstalled,
-        };
-        let mut sidebar = Self::with(session, None, setup, threads, settings, window, cx);
-        sidebar.installed = installed;
-        sidebar
+        Self::with(session, agents, threads, settings, window, cx)
     }
 
     fn with(
         session: Entity<sound_ui::Session>,
-        agents: Option<PathBuf>,
-        setup: Setup,
+        agents: Entity<Agents>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
         window: &mut Window,
@@ -287,6 +248,13 @@ impl Sidebar {
                 sidebar.update_menu(cx);
                 cx.notify();
             }),
+            cx.observe(&agents, Self::agents_changed),
+            cx.subscribe(&agents, |sidebar, _, event: &AgentsEvent, cx| match event {
+                AgentsEvent::Notice(notice) => {
+                    sidebar.conversation.notice(notice.clone());
+                    sidebar.show(None, cx);
+                }
+            }),
             cx.subscribe(&settings, Self::settings_event),
             cx.subscribe(
                 &session,
@@ -307,11 +275,8 @@ impl Sidebar {
         let mut sidebar = Self {
             session,
             provider: Provider::Claude,
+            ready: agents.read(cx).ready(Provider::Claude).is_some(),
             agents,
-            setup,
-            installed: None,
-            signing_in: None,
-            setup_task: None,
             new_button,
             model_menu,
             access_menu,
@@ -411,7 +376,6 @@ impl Sidebar {
             Choice::Model(model) => self
                 .settings
                 .update(cx, |settings, cx| settings.set_model(model, cx)),
-            Choice::SignOut => self.sign_out(cx),
             Choice::NewThread => self.new_thread(window, cx),
             Choice::OpenThread(id) => self.open_thread(id, window, cx),
             Choice::Instructions(scope) => self.open_instructions(scope, window, cx),
@@ -425,15 +389,32 @@ impl Sidebar {
         menu.update(cx, |menu, cx| menu.set_entries(entries, cx));
     }
 
+    /// The program of the thread's provider, once it is signed in.
+    fn ready_program(&self, cx: &App) -> Option<Installed> {
+        self.agents.read(cx).ready(self.provider)
+    }
+
+    /// A change of the app's agents: one signed in, or out. Signed out, the thread's agent
+    /// ends; the thread shows again once it is signed in.
+    fn agents_changed(&mut self, _: Entity<Agents>, cx: &mut Context<Self>) {
+        let ready = self.ready_program(cx).is_some();
+        if self.ready && !ready {
+            self.end_agent(cx);
+        }
+        // Naming waits for an agent to name with.
+        if ready && !self.ready {
+            self.wait_for_quiet(cx);
+        }
+        self.ready = ready;
+        self.update_menu(cx);
+        cx.notify();
+    }
+
     fn update_menu(&mut self, cx: &mut Context<Self>) {
-        let account = match &self.setup {
-            Setup::Ready { account } => account.clone(),
-            _ => Account::default(),
-        };
         let shared = self.settings.read(cx);
         let (settings, models) = (shared.settings(), shared.models());
         let label = menu::label(settings, models);
-        let entries = menu::model_entries(self.provider, &account, settings, models);
+        let entries = menu::model_entries(self.provider, settings, models);
         let (access_icon, access_label) = menu::access_label(settings);
         let access_entries = menu::access_entries(settings);
         let (logo, brand) = menu::logo(self.provider);
@@ -793,6 +774,34 @@ impl Sidebar {
         )
     }
 
+    /// In place of the thread while no agent is signed in: the way to Settings, where the
+    /// agents are set up.
+    fn no_agent(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let stopped = (self.agents.read(cx).program(self.provider))
+            .is_some_and(|program| matches!(program.setup, Setup::Stopped { .. }));
+        let sentence = match stopped {
+            true => "The agent did not start. Settings says why.",
+            false => "Set up an agent to start.",
+        };
+        let open = Button::new("open-settings", "Open Settings")
+            .debug_selector(|| "agent-open-settings".to_string())
+            .variant(ButtonVariant::Primary)
+            .size(ButtonSize::Md)
+            .focus_handle(&self.send_focus)
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(16.))
+            .px(px(40.))
+            .text_center()
+            .child(sentence)
+            .child(div().w_full().max_w(px(280.)).child(open.w_full()))
+    }
+
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
@@ -943,9 +952,10 @@ impl Focusable for Sidebar {
         if let Some((editor, _)) = &self.instructions {
             return editor.focus_handle(cx);
         }
-        match self.setup {
-            Setup::Ready { .. } if self.conversation.can_continue() => self.input.focus_handle(cx),
-            _ => self.focus_handle.clone(),
+        if self.ready_program(cx).is_some() && self.conversation.can_continue() {
+            self.input.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
         }
     }
 }
@@ -954,23 +964,12 @@ impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
         let text = cx.theme().gray_950;
-        let body = match (&self.instructions, &self.setup) {
-            (Some((editor, _)), _) => editor.clone().into_any_element(),
-            (
-                None,
-                setup @ (Setup::Checking
-                | Setup::NotInstalled
-                | Setup::Downloading { .. }
-                | Setup::DownloadFailed { .. }
-                | Setup::SignedOut { .. }
-                | Setup::SigningIn
-                | Setup::Stopped { .. }),
-            ) => Onboarding::new(self.provider, setup.clone())
-                .on_action(
-                    cx.listener(|sidebar, action: &SetupAction, _, cx| sidebar.act(*action, cx)),
-                )
-                .into_any_element(),
-            (None, Setup::Ready { .. }) => div()
+        let ready = self.ready_program(cx).is_some();
+        let body = match &self.instructions {
+            Some((editor, _)) => editor.clone().into_any_element(),
+            None if !ready && self.agents.read(cx).is_checking() => onboarding::skeleton(cx),
+            None if !ready => self.no_agent(cx).into_any_element(),
+            None => div()
                 .flex_1()
                 .min_h_0()
                 .flex()
