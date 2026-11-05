@@ -1,14 +1,14 @@
-//! Onboarding section: every state of the agent sidebar before the thread shows, from the
-//! skeleton while it checks and **Set up** to signed in, each in a frame as wide as the sidebar.
+//! Onboarding section: every state of an agent on the Settings page, from **Set up** to signed
+//! in with **Sign out**, each in a frame as wide as the page's column.
 
 use gpui::{App, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px};
-use sound_agent::{Onboarding, Provider, Setup};
+use sound_agent::{Account, Onboarding, Provider, Setup};
 use sound_ui::ActiveTheme;
 
-/// The width of the sidebar.
-const WIDTH: f32 = 360.;
-/// Enough for the tallest state, as a sidebar below its header.
-const HEIGHT: f32 = 320.;
+/// The column of the Settings page, less its padding.
+const WIDTH: f32 = 560.;
+/// Enough for the tallest state.
+const HEIGHT: f32 = 200.;
 
 pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
     let size = Provider::Claude
@@ -16,6 +16,15 @@ pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
         .map_or(0, |download| download.size);
     let states = [
         ("Checking", Setup::Checking),
+        (
+            "Signed in",
+            Setup::Ready {
+                account: Account {
+                    email: Some("composer@example.com".to_string()),
+                    plan: Some("Claude Max".to_string()),
+                },
+            },
+        ),
         ("Not installed", Setup::NotInstalled),
         (
             "Downloading",
@@ -96,6 +105,7 @@ fn sample(title: &'static str, setup: Setup, cx: &App) -> impl IntoElement {
                 .h(px(HEIGHT))
                 .flex()
                 .flex_col()
+                .p(px(24.))
                 .rounded(px(12.))
                 .border_1()
                 .border_color(border)

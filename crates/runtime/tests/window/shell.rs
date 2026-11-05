@@ -14,7 +14,7 @@ use gpui::{
 use reverb::ReverbState;
 use runtime::OFFLINE;
 use runtime::window::new_project::TemplatePicker;
-use runtime::window::{DeviceMenu, ListDevices, Shell, bind_keys};
+use runtime::window::{DeviceList, ListDevices, Shell, bind_keys};
 use sound_core::{Changes, DeviceChoice, Engine, Instance, InstanceId, Project};
 use sound_ui::components::text_input::TextInput;
 use sound_ui::{Devices, Session, Views};
@@ -168,11 +168,11 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
     assert!(notice.size.height < px(40.), "{notice:?}");
 }
 
-/// The device menus list the devices of the machine when the window opens and each time the
-/// project menu opens, so an interface plugged in since is offered. Never on a timer: listing
-/// can take a while, and on Linux it opens each device.
+/// Settings lists the devices of the machine each time it opens, so an interface plugged in
+/// since is offered. Never on a timer: listing can take a while, and on Linux it opens each
+/// device.
 #[gpui::test]
-fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext) {
+fn settings_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext) {
     let device = |id: &str, name: &str| DeviceChoice {
         id: id.to_string(),
         name: name.to_string(),
@@ -184,24 +184,33 @@ fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext
         move || {
             listed.fetch_add(1, Ordering::Relaxed);
             let outputs = outputs.lock().unwrap().clone();
-            DeviceMenu {
+            DeviceList {
                 outputs,
-                ..DeviceMenu::default()
+                ..DeviceList::default()
             }
         }
     });
     let mut opened = support::open_with_devices(cx, list);
-    let menu = opened.cx.read(|cx| {
-        let shell = opened.shell.read(cx);
-        shell.project_menu().read(cx).menu().clone()
-    });
-    let offers = |opened: &mut Opened<'_>, id: &str| {
-        let value = format!("output-device:{id}");
-        opened.cx.read(|cx| menu.read(cx).item(&value).is_some())
+    let offered = |opened: &mut Opened<'_>| {
+        let shell = opened.shell.clone();
+        opened.cx.read(|cx| {
+            let page = shell.read(cx).settings().cloned();
+            let devices = page.and_then(|page| page.read(cx).devices().cloned());
+            devices
+                .map(|devices| devices.outputs.into_iter().map(|output| output.name))
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+        })
     };
-    assert_eq!(listed.load(Ordering::Relaxed), 1);
-    assert!(offers(&mut opened, "coreaudio:speakers"));
+    opened.cx.run_until_parked();
+    assert_eq!(listed.load(Ordering::Relaxed), 0);
 
+    opened.keys("secondary-,");
+    assert_eq!(listed.load(Ordering::Relaxed), 1);
+    assert_eq!(offered(&mut opened), ["Speakers"]);
+
+    opened.keys("escape");
     outputs
         .lock()
         .unwrap()
@@ -209,12 +218,10 @@ fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext
     opened.cx.executor().advance_clock(Duration::from_secs(10));
     opened.cx.run_until_parked();
     assert_eq!(listed.load(Ordering::Relaxed), 1);
-    assert!(!offers(&mut opened, "coreaudio:interface"));
 
-    let trigger = opened.control("project-menu");
-    opened.click(trigger);
+    opened.keys("secondary-,");
     assert_eq!(listed.load(Ordering::Relaxed), 2);
-    assert!(offers(&mut opened, "coreaudio:interface"));
+    assert_eq!(offered(&mut opened), ["Speakers", "Interface"]);
 }
 
 #[gpui::test]

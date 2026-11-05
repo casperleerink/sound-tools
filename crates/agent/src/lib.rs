@@ -9,9 +9,9 @@
 //!   keeps the composer's approval mode and model there too (`settings`).
 //! - [`login_shell_environment`] is the environment to run it in. An app opened from the
 //!   Finder has a bare `PATH`, and the agent needs `cargo` and `git`.
-//! - [`install`] downloads the provider's pinned program, which the sidebar runs, and
-//!   [`Provider::account`] and [`SignInChoice`] run its own sign-in. [`Onboarding`] shows
-//!   each [`Setup`] state until the agent is ready.
+//! - [`Agents`] finds each provider's program once for the app, downloads it ([`install`])
+//!   and runs its own sign-in ([`Provider::account`], [`SignInChoice`]). [`AgentsPage`] shows
+//!   each [`Setup`] state on the Settings page; the sidebar runs a thread once one is ready.
 //! - Once it is ready, the sidebar also names the versions of the project history with the
 //!   provider's small model ([`Provider::ask_small_model`], `naming`).
 //!
@@ -37,4 +37,7 @@ pub use provider::{
     StepKind, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
-pub use view::{FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};
+pub use view::{
+    Agents, AgentsEvent, AgentsPage, FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Program,
+    Setup, SetupAction, Sidebar,
+};

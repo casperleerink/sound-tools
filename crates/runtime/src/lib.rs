@@ -21,14 +21,14 @@ use plugin_host::{
     Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK,
     WeakPlugins, default_search_paths,
 };
-use sound_agent::{AgentSettings, Sidebar};
+use sound_agent::{AgentSettings, Agents, AgentsPage, Sidebar};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Project,
     ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks, ToolSchema,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
-use window::{LeftPanel, LeftPanelSlot, Shell};
+use window::{LeftPanel, LeftPanelSlot, SettingsSlot, Shell};
 
 pub use templates::{TEMPLATES, Template};
 
@@ -288,25 +288,30 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     (views, devices)
 }
 
-/// The agent sidebar, in the left panel of the window. The window names no agent type, so this
-/// is where the two meet. In `support`, the support folder of the machine, the panel keeps
-/// whether it is open (see [`LeftPanelSlot`]), and the sidebar the agent it downloads, the
-/// threads of each project and the composer's approval mode and model. The settings are read
+/// The agent sidebar, in the left panel of the window, and the Agents section of the Settings
+/// page, where its agents are set up. The window names no agent type, so this is where the two
+/// meet. In `support`, the support folder of the machine, the panel keeps whether it is open
+/// (see [`LeftPanelSlot`]), and the agents the programs they download, the threads of each
+/// project and the composer's approval mode and model. The agents and the settings are made
 /// once here and shared by every window, so a change in one is a change in all.
 pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
     let remembered = support.as_deref().map(app::left_panel_file);
-    let agents = support.as_deref().map(app::agents_folder);
+    let downloads = support.as_deref().map(app::agents_folder);
     let threads = support.as_deref().map(app::threads_folder);
     let file = support.as_deref().map(app::agent_settings_file);
     let settings = cx.new(|cx| AgentSettings::new(file, cx));
     // The agent checks the types of the project's tools with the Bun that runs them.
     let bun_folder =
         sound_typescript::bundled_bun().and_then(|bun| bun.parent().map(Path::to_path_buf));
+    let agents = cx.new(|cx| Agents::new(downloads, bun_folder, settings.clone(), cx));
+    SettingsSlot::new({
+        let agents = agents.clone();
+        move |_, cx| cx.new(|cx| AgentsPage::new(agents.clone(), cx)).into()
+    })
+    .install(cx);
     LeftPanelSlot::new(remembered, move |session, window, cx| {
         let (agents, threads, settings) = (agents.clone(), threads.clone(), settings.clone());
-        let bun_folder = bun_folder.clone();
-        let sidebar =
-            cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
+        let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, window, cx));
         sidebar_panel(sidebar, cx)
     })
 }

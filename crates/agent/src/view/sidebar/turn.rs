@@ -10,7 +10,6 @@ use sound_core::{GROUPING_WINDOW, Problem};
 use super::{Agent, Sidebar};
 use crate::conversation::request_label;
 use crate::store::{Line, SavedThread, Write};
-use crate::view::onboarding::Setup;
 use crate::{
     AgentEvent, ApprovalAnswer, Attachment, Events, Installed, Message, Thread, ThreadOptions,
     TurnOutcome,
@@ -82,10 +81,10 @@ impl Sidebar {
                     self.settings
                         .update(cx, |settings, cx| settings.set_models(models, cx));
                     // The account the running agent reports is the newest word on it.
-                    if matches!(self.setup, Setup::Ready { .. }) {
-                        let account = account.clone();
-                        self.set_setup(Setup::Ready { account }, cx);
-                    }
+                    let (provider, account) = (self.provider, account.clone());
+                    self.agents.update(cx, |agents, cx| {
+                        agents.signed_in_as(provider, account, cx);
+                    });
                 }
                 AgentEvent::TurnEnded {
                     outcome: TurnOutcome::Failed { .. },
@@ -122,7 +121,8 @@ impl Sidebar {
         }
         self.show(changed, cx);
         if failed {
-            self.check_still_signed_in(cx);
+            let provider = self.provider;
+            (self.agents).update(cx, |agents, cx| agents.check_still_signed_in(provider, cx));
         }
     }
 
@@ -198,10 +198,10 @@ impl Sidebar {
         if self.agent.is_some() {
             return true;
         }
-        let (Setup::Ready { .. }, Some(installed)) = (&self.setup, &self.installed) else {
+        let Some(installed) = self.ready_program(cx) else {
             return false;
         };
-        match self.start(installed.clone(), cx) {
+        match self.start(installed, cx) {
             Ok(agent) => {
                 self.attach(agent);
                 true

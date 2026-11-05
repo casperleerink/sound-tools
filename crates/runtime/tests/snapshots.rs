@@ -7,7 +7,8 @@
 //! - `new-project.png`: the templates a new project starts from.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.
-//! - `menu.png`, `menu-devices.png`: the project menu, open, after one edit.
+//! - `menu.png`: the project menu, open, after one edit.
+//! - `settings-audio.png`: the Audio section of Settings, with simulated devices.
 //! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
 //! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
@@ -34,7 +35,7 @@ use gpui::{
 use plugin_host::{PluginFormat, WeakPlugins};
 use runtime::app::ChosenDevices;
 use runtime::window::new_project::{TemplatePicker, choose_template};
-use runtime::window::{DeviceAccess, DeviceMenu, Shell};
+use runtime::window::{DeviceAccess, DeviceList, Section, Shell};
 use runtime::{OFFLINE, views};
 use sound_core::{DeviceChoice, Engine, InstanceId, Ticks};
 use sound_ui::{Assets, Session};
@@ -355,8 +356,8 @@ fn notices(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     Ok(())
 }
 
-/// The project menu after an edit, so that undo has something to name, with recent projects and
-/// the devices of a machine.
+/// The project menu after an edit, so that undo has something to name, with recent projects;
+/// then the Audio section of Settings with the devices of a machine.
 fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> {
     cx.update(|cx| {
         opened.session.update(cx, |session, cx| {
@@ -376,25 +377,6 @@ fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> 
                 "/Users/someone/Sketches/Piano",
             ];
             project_menu.set_recent_projects(recent.map(PathBuf::from).to_vec(), cx);
-            let device = |id: &str, name: &str| DeviceChoice {
-                id: id.to_string(),
-                name: name.to_string(),
-            };
-            let devices = DeviceMenu {
-                outputs: vec![
-                    device("coreaudio:speakers", "MacBook Pro Speakers"),
-                    device("coreaudio:blackhole", "BlackHole 2ch"),
-                ],
-                inputs: vec![
-                    device("coreaudio:microphone", "MacBook Pro Microphone"),
-                    device("coreaudio:blackhole", "BlackHole 2ch"),
-                ],
-                chosen: ChosenDevices {
-                    output: Some("coreaudio:blackhole".to_string()),
-                    input: None,
-                },
-            };
-            project_menu.set_devices(devices, cx);
         });
         anyhow::Ok(project_menu.read(cx).menu().clone())
     })?;
@@ -407,11 +389,40 @@ fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> 
         opened.key(key, cx)?;
     }
     save(cx, opened.window.into(), "menu")?;
-    // On up to the output device, which opens the devices of the machine.
-    for key in ["left", "up", "up", "up", "up", "right"] {
-        opened.key(key, cx)?;
-    }
-    save(cx, opened.window.into(), "menu-devices")?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        menu.update(cx, |menu, cx| menu.close(window, cx));
+    })?;
+
+    opened.key("cmd-,", cx)?;
+    cx.update(|cx| {
+        let shell = opened.window.read(cx)?;
+        let page = shell.settings().context("Settings did not open")?.clone();
+        let device = |id: &str, name: &str| DeviceChoice {
+            id: id.to_string(),
+            name: name.to_string(),
+        };
+        let devices = DeviceList {
+            outputs: vec![
+                device("coreaudio:speakers", "MacBook Pro Speakers"),
+                device("coreaudio:blackhole", "BlackHole 2ch"),
+            ],
+            inputs: vec![
+                device("coreaudio:microphone", "MacBook Pro Microphone"),
+                device("coreaudio:blackhole", "BlackHole 2ch"),
+            ],
+            chosen: ChosenDevices {
+                output: Some("coreaudio:blackhole".to_string()),
+                input: None,
+            },
+        };
+        page.update(cx, |page, cx| {
+            page.show(Section::Audio, cx);
+            page.set_devices(devices, cx);
+        });
+        anyhow::Ok(())
+    })?;
+    cx.run_until_parked();
+    save(cx, opened.window.into(), "settings-audio")?;
     Ok(())
 }
 

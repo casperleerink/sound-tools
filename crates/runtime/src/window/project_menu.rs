@@ -1,23 +1,18 @@
-//! The project menu: the project name top-left as a quiet menu. Export the project or the selected clips as a WAV, undo and redo with what they would do,
-//! the output and the input device, a new, recent or another project, the project folder in the
-//! Finder or in a terminal, the command line tool, and the app version. The terminal is where
-//! the composer starts a coding agent on the project, and the tool is what that agent runs to
-//! read the whole piece.
-//!
-//! A device picked here is kept for this machine, never in the project, and the app starts
-//! again on it, as "Open project…" does: the engine runs at the rate of its output device.
+//! The project menu: the project name top-left as a quiet menu. Export the project or the
+//! selected clips as a WAV, undo and redo with what they would do, a new, recent or another
+//! project, the project folder in the Finder or in a terminal, the command line tool, Settings
+//! and the app version. The terminal is where the composer starts a coding agent on the
+//! project, and the tool is what that agent runs to read the whole piece.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use gpui::{
-    App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Task,
-    WeakEntity, Window, prelude::*,
+    App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, WeakEntity,
+    Window, prelude::*,
 };
-use sound_core::DeviceChoice;
 use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -32,11 +27,6 @@ const EXPORT: &str = "export";
 const EXPORT_SELECTION: &str = "export-selection";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
-const OUTPUT_DEVICE: &str = "output-device";
-const INPUT_DEVICE: &str = "input-device";
-/// Followed by the id of the device, or by nothing for the default of the system.
-const OUTPUT_CHOICE: &str = "output-device:";
-const INPUT_CHOICE: &str = "input-device:";
 const NEW_PROJECT: &str = "new-project";
 const OPEN_PROJECT: &str = "open-project";
 const OPEN_RECENT: &str = "open-recent";
@@ -46,34 +36,13 @@ const REVEAL: &str = "reveal";
 const TERMINAL: &str = "terminal";
 const INSTALL_TOOL: &str = "install-tool";
 const LOG: &str = "log";
-
-/// The audio devices of this machine, and which the composer chose.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DeviceMenu {
-    pub outputs: Vec<DeviceChoice>,
-    pub inputs: Vec<DeviceChoice>,
-    pub chosen: ChosenDevices,
-}
-
-/// How the window lists the audio devices of this machine, or simulated ones. It is called on a
-/// background thread: asking can take a while.
-pub type ListDevices = Arc<dyn Fn() -> DeviceMenu + Send + Sync>;
+const SETTINGS: &str = "settings";
 
 pub struct ProjectMenu {
     session: Entity<Session>,
-    device_name: SharedString,
     menu: Entity<DropdownMenu>,
     /// The other projects the window had open, the last one first.
     recent: Vec<PathBuf>,
-    /// The devices to pick from, once they are listed. A test window has none.
-    devices: Option<DeviceMenu>,
-    /// Lists them when the window opens and each time the menu opens, so a device plugged in
-    /// since is offered.
-    list_devices: Option<ListDevices>,
-    /// The listing on its way. A newer one replaces it.
-    listing: Task<()>,
-    /// Whether the menu was open at its last change, to see it open.
-    menu_open: bool,
     /// What the items were made from. They are made again only when this changes.
     shown: Shown,
 }
@@ -101,18 +70,12 @@ impl Shown {
 }
 
 impl ProjectMenu {
-    pub fn new(
-        session: Entity<Session>,
-        device_name: SharedString,
-        list_devices: Option<ListDevices>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(session: Entity<Session>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let project = session.read(cx).project();
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
         let shown = Shown::of(session.read(cx));
-        let items = entries(&shown, &device_name, &[], None);
+        let items = entries(&shown, &[]);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
                 .debug_name("project-menu")
@@ -127,41 +90,12 @@ impl ProjectMenu {
         cx.observe(&session, |this, _, cx| this.refresh(cx))
             .detach();
         cx.subscribe_in(&menu, window, Self::on_picked).detach();
-        cx.observe(&menu, |this, menu, cx| {
-            let open = menu.read(cx).is_open();
-            if open && !this.menu_open {
-                this.refresh_devices(cx);
-            }
-            this.menu_open = open;
-        })
-        .detach();
-        let mut this = Self {
+        Self {
             session,
-            device_name,
             menu,
             recent: Vec::new(),
-            devices: None,
-            list_devices,
-            listing: Task::ready(()),
-            menu_open: false,
             shown,
-        };
-        this.refresh_devices(cx);
-        this
-    }
-
-    /// Lists the devices again, off the UI thread.
-    fn refresh_devices(&mut self, cx: &mut Context<Self>) {
-        let Some(list) = self.list_devices.clone() else {
-            return;
-        };
-        let listed = cx.background_spawn(async move { list() });
-        self.listing = cx.spawn(async move |this, cx| {
-            let devices = listed.await;
-            // Fails only when the window is gone.
-            this.update(cx, |this, cx| this.set_devices(devices, cx))
-                .ok();
-        });
+        }
     }
 
     /// Set by the app, after the window opens: a test window shows none, whatever this machine
@@ -172,17 +106,8 @@ impl ProjectMenu {
         self.set_entries(cx);
     }
 
-    /// The devices to pick from, as listed, or as a snapshot shows them.
-    pub fn set_devices(&mut self, devices: DeviceMenu, cx: &mut Context<Self>) {
-        if self.devices.as_ref() != Some(&devices) {
-            self.devices = Some(devices);
-            self.set_entries(cx);
-        }
-    }
-
     fn set_entries(&mut self, cx: &mut Context<Self>) {
-        let devices = self.devices.as_ref();
-        let items = entries(&self.shown, &self.device_name, &self.recent, devices);
+        let items = entries(&self.shown, &self.recent);
         self.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
     }
 
@@ -210,10 +135,8 @@ impl ProjectMenu {
             INSTALL_TOOL => return install_command_line_tool(self.session.clone(), window, cx),
             EXPORT => return export_audio(self.session.clone(), false, window, cx),
             EXPORT_SELECTION => return export_audio(self.session.clone(), true, window, cx),
+            SETTINGS => return window.dispatch_action(Box::new(sound_ui::OpenSettings), cx),
             _ => {}
-        }
-        if let Some(chosen) = self.chosen(&picked.0) {
-            return self.session.update(cx, |_, cx| switch_devices(chosen, cx));
         }
         let recent = picked.0.strip_prefix(RECENT_PROJECT);
         if let Some(folder) = recent.and_then(|index| self.recent.get(index.parse::<usize>().ok()?))
@@ -240,23 +163,10 @@ impl ProjectMenu {
                 _ => {}
             });
     }
-
-    /// The devices chosen after picking `value`, when it picks a device that is not chosen.
-    fn chosen(&self, value: &str) -> Option<ChosenDevices> {
-        let before = &self.devices.as_ref()?.chosen;
-        let id = |id: &str| (!id.is_empty()).then(|| id.to_string());
-        let mut chosen = before.clone();
-        if let Some(output) = value.strip_prefix(OUTPUT_CHOICE) {
-            chosen.output = id(output);
-        } else if let Some(input) = value.strip_prefix(INPUT_CHOICE) {
-            chosen.input = id(input);
-        }
-        (chosen != *before).then_some(chosen)
-    }
 }
 
 /// Keeps the devices for this machine, off the UI thread, then starts the app again on them.
-fn switch_devices(chosen: ChosenDevices, cx: &mut Context<Session>) {
+pub(super) fn switch_devices(chosen: ChosenDevices, cx: &mut Context<Session>) {
     cx.spawn(async move |session, cx| {
         let remembered = cx.background_spawn(async move { chosen.remember() }).await;
         match remembered {
@@ -597,12 +507,7 @@ fn installed_message(installed: &Installed) -> (String, String) {
     (message, detail)
 }
 
-fn entries(
-    shown: &Shown,
-    device_name: &SharedString,
-    recent: &[PathBuf],
-    devices: Option<&DeviceMenu>,
-) -> Vec<MenuEntry> {
+fn entries(shown: &Shown, recent: &[PathBuf]) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: String| MenuItem::new(value, label).selectable(false);
     let history = |value, verb: &str, label: Option<&str>, shortcut: &'static str| {
@@ -625,57 +530,9 @@ fn entries(
             history(REDO, "Redo", shown.redo.as_deref(), "shift+mod+z"),
         ])),
         MenuEntry::Separator,
-        MenuEntry::Group(MenuGroup::new().label("Output device").item(device_item(
-            OUTPUT_DEVICE,
-            device_name.clone(),
-            devices,
-            true,
-        ))),
-        MenuEntry::Group(MenuGroup::new().label("Input device").item(device_item(
-            INPUT_DEVICE,
-            input_name(devices),
-            devices,
-            false,
-        ))),
-        MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items(folder_items(recent))),
         MenuEntry::Note(format!("Sound Tools {}", crate::VERSION).into()),
     ]
-}
-
-/// The name of the chosen input, which the window opens only when a project needs it.
-fn input_name(devices: Option<&DeviceMenu>) -> SharedString {
-    let chosen = devices.and_then(|devices| {
-        let id = devices.chosen.input.as_ref()?;
-        devices.inputs.iter().find(|input| &input.id == id)
-    });
-    chosen.map_or("System default".into(), |input| input.name.clone().into())
-}
-
-/// The device in use, which opens the devices of the machine to pick from once they are known.
-fn device_item(
-    value: &'static str,
-    name: SharedString,
-    devices: Option<&DeviceMenu>,
-    output: bool,
-) -> MenuItem {
-    let item = MenuItem::new(value, name).selectable(false);
-    let Some(devices) = devices else {
-        return item;
-    };
-    let (prefix, choices, chosen) = match output {
-        true => (OUTPUT_CHOICE, &devices.outputs, &devices.chosen.output),
-        false => (INPUT_CHOICE, &devices.inputs, &devices.chosen.input),
-    };
-    let default = MenuItem::new(prefix, "System default")
-        .selectable(false)
-        .checked(chosen.is_none());
-    let each = choices.iter().map(|choice| {
-        MenuItem::new(format!("{prefix}{}", choice.id), choice.name.clone())
-            .selectable(false)
-            .checked(chosen.as_ref() == Some(&choice.id))
-    });
-    item.submenu(std::iter::once(default).chain(each))
 }
 
 /// The folder name, and the folder it is in to tell two of the same name apart.
@@ -711,6 +568,7 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
         (LOG, "Reveal log file"),
+        (SETTINGS, "Settings…"),
     ];
     let rest = (rest.into_iter())
         .filter(|(value, _)| match *value {
@@ -722,6 +580,7 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
             let item = MenuItem::new(value, label).selectable(false);
             match value {
                 OPEN_PROJECT => item.shortcut("mod+o"),
+                SETTINGS => item.shortcut("mod+,"),
                 OPEN_RECENT => item
                     .submenu(recent_items(recent))
                     .disabled(recent.is_empty()),
@@ -865,6 +724,10 @@ mod tests {
         if cfg!(unix) {
             expected.push((INSTALL_TOOL.into(), "Install command line tool".into()));
         }
+        if log_file::path().is_some() {
+            expected.push((LOG.into(), "Reveal log file".into()));
+        }
+        expected.push((SETTINGS.into(), "Settings…".into()));
         assert_eq!(items, expected);
     }
 }

@@ -12,7 +12,6 @@ use sound_core::{History, PointId};
 
 use super::Sidebar;
 use crate::naming::{self, Naming};
-use crate::view::onboarding::Setup;
 
 /// A program that takes longer is ended, so naming goes on.
 const ASK_TIMEOUT: Duration = Duration::from_secs(60);
@@ -54,7 +53,7 @@ impl Sidebar {
         if self.namer.asking.is_some() {
             return;
         }
-        let (Setup::Ready { .. }, Some(installed)) = (&self.setup, &self.installed) else {
+        let Some(installed) = self.ready_program(cx) else {
             return;
         };
         let Some(history) = self.session.read(cx).project().history() else {
@@ -72,7 +71,7 @@ impl Sidebar {
                 return;
             }
         };
-        let (provider, installed) = (self.provider, installed.clone());
+        let provider = self.provider;
         let asking = cx.background_spawn(async move {
             (provider.ask_small_model(&installed, naming::INSTRUCTIONS, &description)).await
         });
