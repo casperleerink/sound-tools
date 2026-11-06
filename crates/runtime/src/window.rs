@@ -22,6 +22,7 @@ mod start;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -34,8 +35,8 @@ use gpui::{
 };
 use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
-    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
-    StreamTiming,
+    Engine, EngineConfig, EngineControl, InstanceId, OutputDevice, OutputStream, Project,
+    ProjectEvent, StreamTiming,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -1230,13 +1231,14 @@ fn print_device_report(stream: &OutputStream) {
 pub fn run(folder: &Path) -> Result<()> {
     // A window must not wait while a Sampler reads hundreds of samples, also not to open.
     sound_media::load_in_background();
-    let opened = Opened::open(folder, Opened::load_tools(folder)?)?;
-    gpui_platform::application()
-        .with_assets(Assets)
-        .run(move |cx: &mut App| {
-            init(cx);
-            opened.show(cx);
-        });
+    let starting = Starting::new(folder.to_path_buf());
+    let application = gpui_platform::application().with_assets(Assets);
+    let (tools, output) = starting.wait()?;
+    let opened = Opened::open(folder, tools, output)?;
+    application.run(move |cx: &mut App| {
+        init(cx);
+        opened.show(cx);
+    });
     Ok(())
 }
 
@@ -1244,12 +1246,13 @@ pub fn run(folder: &Path) -> Result<()> {
 /// when there is none. See [`start`].
 pub fn run_app() {
     sound_media::load_in_background();
+    let starting = crate::app::last_project().map(Starting::new);
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
             init(cx);
-            match crate::app::last_project() {
-                Some(folder) => start::open_or_explain(folder, cx),
+            match starting {
+                Some(starting) => start::open_starting(starting, cx),
                 None => start::choose_project(cx),
             }
         });
@@ -1272,6 +1275,68 @@ fn init(cx: &mut App) {
     crate::agent_panel(support, cx).install(cx);
 }
 
+/// What opening a project waits for, each on a thread of its own from the start, so that they
+/// wait together and while the application starts: the project's tools wait for Bun, the
+/// output device for Core Audio.
+struct Starting {
+    folder: PathBuf,
+    tools: JoinHandle<Result<Option<FirstLoad>>>,
+    output: JoinHandle<Result<Output>>,
+}
+
+impl Starting {
+    fn new(folder: PathBuf) -> Self {
+        let tools = std::thread::spawn({
+            let folder = folder.clone();
+            // An experiment: every project the window opens can have tools of its own, written
+            // while it runs, so the folder for them is always there.
+            move || crate::load_tools(&folder, true)
+        });
+        Self {
+            folder,
+            tools,
+            output: std::thread::spawn(Output::start),
+        }
+    }
+
+    /// Waits for both, so that nothing of a failed open still runs. The tools fail first: what
+    /// is wrong with the folder is what to say.
+    fn wait(self) -> Result<(Option<FirstLoad>, Output)> {
+        let (tools, output) = (joined(self.tools), joined(self.output));
+        Ok((tools?, output?))
+    }
+}
+
+fn joined<T>(thread: JoinHandle<T>) -> T {
+    thread
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// The chosen output device, playing an engine that has no project yet.
+struct Output {
+    control: EngineControl,
+    stream: OutputStream,
+    device_name: String,
+    chosen: ChosenDevices,
+}
+
+impl Output {
+    fn start() -> Result<Self> {
+        let chosen = ChosenDevices::read();
+        let device = OutputDevice::open(chosen.output.as_deref())?;
+        let device_name = device.name()?;
+        let config = EngineConfig::new(device.sample_rate(), device.channels());
+        let (control, engine) = Engine::new(config);
+        Ok(Self {
+            control,
+            stream: device.start(engine)?,
+            device_name,
+            chosen,
+        })
+    }
+}
+
 /// A project that is open and plays on the chosen output, ready for its window.
 struct Opened {
     project: Project,
@@ -1284,20 +1349,14 @@ struct Opened {
 }
 
 impl Opened {
-    /// The project's own tools, for [`Opened::open`]. Waits for Bun: not on the thread that
-    /// draws.
-    fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
-        // An experiment: every project the window opens can have tools of its own, written
-        // while it runs, so the folder for them is always there.
-        crate::load_tools(folder, true)
-    }
-
-    fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {
-        let chosen = ChosenDevices::read();
-        let device = OutputDevice::open(chosen.output.as_deref())?;
-        let device_name = device.name()?;
-        let config = EngineConfig::new(device.sample_rate(), device.channels());
-        let (control, engine) = Engine::new(config);
+    /// Opens the project on this thread, the one that draws: plugins load on it.
+    fn open(folder: &Path, tools: Option<FirstLoad>, output: Output) -> Result<Self> {
+        let Output {
+            control,
+            stream,
+            device_name,
+            chosen,
+        } = output;
         // The scan of this machine runs on a thread of its own from here, so no plugin is ever
         // looked at on the thread that draws. A project that names a plugin the scan has not
         // reached yet opens and plays everything else, and the plugin comes in when it turns
@@ -1306,13 +1365,12 @@ impl Opened {
         plugins.start_scanning();
         let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools)?;
         project.watch()?;
+        println!("device: {device_name}, {} Hz", project.sample_rate());
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the
         // application keeps this until it quits.
         let weak_plugins = plugins.downgrade();
         drop(plugins);
-        let stream = device.start(engine)?;
-        println!("device: {device_name}, {} Hz", config.sample_rate);
         // What the Finder opens next time. Not being able to remember it costs nothing now.
         if let Err(error) = crate::app::remember_project(project.root()) {
             eprintln!("error: {error:#}");
