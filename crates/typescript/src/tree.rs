@@ -1735,6 +1735,7 @@ pub(crate) enum DragPart {
     X,
     Y,
     Active,
+    Alt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

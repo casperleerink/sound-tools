@@ -163,6 +163,8 @@ export interface DragValues {
   y: Live;
   /** 1 while the pointer holds it, and until its code answered the end. */
   active: Live;
+  /** 1 while it is held with alt. */
+  alt: Live;
 }
 
 /** What the window shows of a space, in its units. */
@@ -261,7 +263,7 @@ function sources(): Now<Record<string, number>> {
     file: (asset, options) => ({ source: "file", asset, ...options }),
     take: (name) => ({ source: "take", name }),
     drag: (id) =>
-      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
+      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active", "alt"]),
     space: (key) =>
       part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
     hover: (key) => new Live({ op: "hover", key }),
