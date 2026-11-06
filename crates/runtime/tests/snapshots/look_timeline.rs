@@ -10,6 +10,7 @@
 //! - `look-ruler-sections.png`: three sections, the chorus clicked.
 //! - `look-ruler-menu.png`: the menu of a right click past the middle of bar 7, two rows down.
 //! - `look-clip-menu.png`: the menu of a right click on a chosen clip.
+//! - `look-clip-copy.png`: that clip dragged two bars on with alt, still held.
 
 use anyhow::Result;
 use gpui::{
@@ -64,13 +65,14 @@ fn press(
     Ok(())
 }
 
-fn drag(
+/// Presses at `from` and moves to `to` with `modifiers` held, without letting go.
+fn hold(
     opened: &crate::Opened,
     from: Point<Pixels>,
     to: Point<Pixels>,
+    modifiers: Modifiers,
     cx: &mut HeadlessAppContext,
 ) -> Result<()> {
-    let modifiers = Modifiers::default();
     let down = MouseDownEvent {
         position: from,
         modifiers,
@@ -87,8 +89,18 @@ fn drag(
         };
         opened.event(PlatformInput::MouseMove(moved), cx)?;
     }
+    settle(cx);
+    Ok(())
+}
+
+fn release(
+    opened: &crate::Opened,
+    at: Point<Pixels>,
+    modifiers: Modifiers,
+    cx: &mut HeadlessAppContext,
+) -> Result<()> {
     let up = MouseUpEvent {
-        position: to,
+        position: at,
         modifiers,
         button: MouseButton::Left,
         click_count: 1,
@@ -96,6 +108,16 @@ fn drag(
     opened.event(PlatformInput::MouseUp(up), cx)?;
     settle(cx);
     Ok(())
+}
+
+fn drag(
+    opened: &crate::Opened,
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+    cx: &mut HeadlessAppContext,
+) -> Result<()> {
+    hold(opened, from, to, Modifiers::default(), cx)?;
+    release(opened, to, Modifiers::default(), cx)
 }
 
 /// The piece with `project` merged into its `project.json`.
@@ -187,5 +209,16 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &crate::Save) -> Resu
         cx,
     )?;
     save(cx, opened.window.into(), "look-clip-menu")?;
+    opened.key("escape", cx)?;
+    settle(cx);
+
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    let (from, to) = (at(4 * BAR + 960, 1.), at(6 * BAR + 960, 1.));
+    hold(&opened, from, to, alt, cx)?;
+    save(cx, opened.window.into(), "look-clip-copy")?;
+    release(&opened, to, alt, cx)?;
     Ok(())
 }

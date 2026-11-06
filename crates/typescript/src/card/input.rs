@@ -273,6 +273,7 @@ impl Held {
             },
             dy: whole(dy, snap.y, self.anchor.1),
             active: true,
+            alt: self.modifiers.alt,
         }
     }
 
