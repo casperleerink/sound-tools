@@ -163,7 +163,7 @@ export interface DragValues {
   y: Live;
   /** 1 while the pointer holds it, and until its code answered the end. */
   active: Live;
-  /** 1 while it is held with alt: a drag that copies. */
+  /** 1 while it is held with alt. */
   alt: Live;
 }
 
