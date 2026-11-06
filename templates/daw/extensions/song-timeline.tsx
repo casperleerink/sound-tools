@@ -36,13 +36,13 @@ export const Timeline = ({ page }: { page: Page }) => {
     onEnd: ({ dx, dy, alt }) =>
       choose(moveItems(page, state.order, memory.selected, Math.round(dx), (row) => rowMoved(row, Math.round(dy)), alt)),
   });
-  /** A chosen clip or region where it was, while a drag with alt copies it: the original stays. */
   const copying = now.drag("move").alt;
-  const Original = ({ x, row, width, picked, contents }: { x: Accessor<number>; row: Accessor<number>; width: Accessor<number>; picked: Accessor<boolean>; contents: (opacity: Live) => Shapes }) => (
+  /** A chosen clip or region where it was, while a drag with alt copies it: the original stays. */
+  const Original = ({ x, row, width, picked, dim = () => 1, contents }: { x: Accessor<number>; row: Accessor<number>; width: Accessor<number>; picked: Accessor<boolean>; dim?: Accessor<number>; contents: (opacity: Live) => Shapes }) => (
     <Show when={picked}>
       {() => (
         <Group x={x} y={() => topOf(row())} clip={() => ({ width: width(), height: 1 })}>
-          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border="alpha/10" borderWidth={1} opacity={copying} />
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border="alpha/10" borderWidth={1} opacity={() => copying.times(dim())} />
           {contents(copying)}
         </Group>
       )}
@@ -188,7 +188,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     // The clip and its notes move together, and its notes end at its end.
     return (
       <>
-        <Original x={() => clip.state.start} row={row} width={length} picked={picked} contents={(shown) => notes(() => shown.times(dim()))} />
+        <Original x={() => clip.state.start} row={row} width={length} picked={picked} dim={dim} contents={(shown) => notes(() => shown.times(dim()))} />
         <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
