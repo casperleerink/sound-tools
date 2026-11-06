@@ -10,7 +10,7 @@
 //! - `look-ruler-sections.png`: three sections, the chorus clicked.
 //! - `look-ruler-menu.png`: the menu of a right click past the middle of bar 7, two rows down.
 //! - `look-clip-menu.png`: the menu of a right click on a chosen clip.
-//! - `look-clip-copy.png`: that clip dragged two bars on with alt, still held.
+//! - `look-clip-copy.png`: that clip dragged with alt four bars on and a track down, still held.
 
 use anyhow::Result;
 use gpui::{
@@ -216,7 +216,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &crate::Save) -> Resu
         alt: true,
         ..Modifiers::default()
     };
-    let (from, to) = (at(4 * BAR + 960, 1.), at(6 * BAR + 960, 1.));
+    let (from, to) = (at(4 * BAR + 960, 1.), at(8 * BAR + 960, 2.));
     hold(&opened, from, to, alt, cx)?;
     save(cx, opened.window.into(), "look-clip-copy")?;
     release(&opened, to, alt, cx)?;
