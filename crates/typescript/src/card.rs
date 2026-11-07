@@ -548,12 +548,21 @@ impl TypeScriptCard {
             .flat_map(|canvas| canvas.take_measured())
             .map(|(name, value)| (name.to_string(), value))
             .collect();
+        let mut changed = false;
         for (name, value) in measured {
             self.live.update(cx, |live, cx| {
-                if let Err(error) = live.control(&id, &name, Some(value), None, cx) {
-                    live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx);
+                match live.play(&id, &name, Some(value), None, cx) {
+                    Ok(moved) => changed |= moved,
+                    Err(error) => {
+                        live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx)
+                    }
                 }
             });
+        }
+        // Only what reads the numbers it moved draws again.
+        if changed {
+            let parts = self.parts(cx);
+            self.draw_again(parts.each().map(|uses| uses.watches), cx);
         }
     }
 
