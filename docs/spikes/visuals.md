@@ -15,9 +15,11 @@ Tools of a project make pictures as well as sound, so Sound Tools builds interac
 
 Each demo under `docs/prototypes/` opens with `cargo run -p runtime -- docs/prototypes/<name>`: `glow`, `spectra`, `stage`, `video`, `eyes`, `smoke`, `ripples`, `liquid`. `--screenshot <png> --seconds 3` and `--render-video <mp4> --seconds 6` show them without a window.
 
+The agent evals `visuals-builder` and `video-builder` passed 4 runs of 4 (3 to 8 minutes, about $1 each): from the docs alone an agent built a drone with flowing colours on the `Stage` and a preview on the page, and a video kaleidoscope whose light and movement play a pad (`tooling/agent-eval/examples/`).
+
 ## What it is
 
-Branches `t3/visual-*`, stacked; PRs #392 to #408.
+Branches `t3/visual-*`, stacked; PRs #392 to #410, `t3/visual-gpu-all` on top.
 
 | Part | What a tool writes |
 | --- | --- |
@@ -46,8 +48,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #408.
 - A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
 - The DAW has no way in the window to pick its film; the agent sets `video`.
 - `measure` of a live value is a way round to play an input from the pointer; a space could say which live values play which inputs.
-- The agent evals `visuals-builder` and `video-builder` passed 4 runs of 4 (3 to 8 minutes, about $1 each): from the docs alone an agent built a drone with flowing colours on the `Stage` and a preview on the page, and a video kaleidoscope whose light and movement play a pad (`tooling/agent-eval/examples/`).
 
 ## Recommendation
 
-Keep `Picture` with `live`, `wave`, `last`, `noise`, `alpha`, `measure` and the threads, and `--screenshot --seconds`: small, in the grain of the SDK, and an agent used them well on the first try. Then `Stage` and video. Treat `--render-video` and the DAW film as product decisions.
+Keep `Picture` with `live`, `wave`, `last`, `noise`, `alpha`, `measure`, the GPU path with the CPU behind it, and `--screenshot --seconds`: in the grain of the SDK, and agents used them well from the docs alone. Then `Stage` and video. Treat `--render-video` and the DAW film as product decisions.
