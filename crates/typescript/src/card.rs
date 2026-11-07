@@ -557,7 +557,7 @@ impl TypeScriptCard {
             .collect();
         for (name, value) in measured {
             self.live.update(cx, |live, cx| {
-                if let Err(error) = live.play(&id, &name, Some(value), None, cx) {
+                if let Err(error) = live.play(&id, &name, value, cx) {
                     live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx);
                 }
             });

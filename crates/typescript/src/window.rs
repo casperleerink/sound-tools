@@ -1038,23 +1038,36 @@ impl Live {
         at: Option<f64>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        self.play(id, name, value, at, cx)?;
         // A pad or a knob of the card shows where it is, also while nothing else redraws.
-        if value.is_some() {
+        if self.send_input(id, name, value, at, cx)? {
             self.cards_of(id, cx);
         }
         Ok(())
     }
 
-    /// [`Self::control`] without drawing its cards again: only what reads values draws again.
+    /// [`Self::control`] for a number, drawing again only what reads values of its cards.
     pub(crate) fn play(
+        &mut self,
+        id: &InstanceId,
+        name: &str,
+        value: f32,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if self.send_input(id, name, Some(value), None, cx)? {
+            cx.emit(InputMoved(id.clone()));
+        }
+        Ok(())
+    }
+
+    /// Sends the number or the bang to the processor; whether a number moved.
+    fn send_input(
         &mut self,
         id: &InstanceId,
         name: &str,
         value: Option<f32>,
         at: Option<f64>,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let update = |info: &ToolInfo, session: &Session| match (info.input(name), value) {
             (Some((index, Input::Number { .. })), Some(value)) => Ok(SignalsUpdate::Live {
                 index,
@@ -1083,13 +1096,11 @@ impl Live {
             }
         };
         self.send_update(id, update, cx)?;
-        if let Some(value) = value {
-            let played = self.played.entry(id.clone()).or_default();
-            if played.insert(name.to_string(), value) != Some(value) {
-                cx.emit(InputMoved(id.clone()));
-            }
-        }
-        Ok(())
+        let Some(value) = value else {
+            return Ok(false);
+        };
+        let played = self.played.entry(id.clone()).or_default();
+        Ok(played.insert(name.to_string(), value) != Some(value))
     }
 
     /// The child `child` of `parent`, which a performer of `parent` plays. One it does not own
