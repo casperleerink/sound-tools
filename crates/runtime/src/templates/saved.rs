@@ -230,7 +230,7 @@ fn kept(path: &str, keep: &Keep) -> bool {
         ([crate::PROJECT_FILE | "instructions.md"] | ["extensions", ..], _) => true,
         (["state" | "assets", ..], Keep::Everything) => true,
         (["state", ..], Keep::Tools(ids)) => {
-            let record = path.trim_start_matches("state/");
+            let record = path.strip_prefix("state/").unwrap_or(path);
             let id = (record.strip_suffix("/instance.json")).or(record.strip_suffix(".json"));
             id.is_some_and(|id| ids.contains(id))
         }
@@ -346,6 +346,9 @@ mod tests {
             file["connections"].as_array().unwrap().len()
         };
         assert_eq!(connections(new.path()), 1);
+        // An instance may be called `state`.
+        let named_state = Keep::Tools(["state".to_string()].into());
+        assert!(kept("state/state/instance.json", &named_state));
         assert!(!new.path().join(crate::templates::KEPT).exists());
 
         let new = tempfile::tempdir().unwrap();

@@ -8,6 +8,7 @@ use gpui::{
 };
 use sound_ui::Session;
 use sound_ui::components::text_input::TextInput;
+use sound_ui::focus::TabStop;
 use sound_ui::{ActiveTheme, typography};
 
 use super::new_project::{small_window, template_row};
@@ -150,9 +151,10 @@ impl Render for SaveTemplate {
         let saving = self.saving;
         let picks = PICKS.map(|(everything, label, description)| {
             let row = template_row(label, description, cx);
+            let id = ("keep", usize::from(everything));
             match saving {
-                true => row.opacity(0.5).cursor_default(),
-                false => row.on_click(
+                true => TabStop::new(id, row.opacity(0.5).cursor_default()),
+                false => TabStop::new(id, row).on_click(
                     cx.listener(move |this, _, window, cx| this.save(everything, window, cx)),
                 ),
             }

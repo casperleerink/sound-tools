@@ -222,23 +222,26 @@ pub fn begin_merge(folder: &Path, update: &Update) -> Result<String> {
     ))
 }
 
-/// The files under `folder`, by their paths from `root`, with `/` between parts.
+/// The files under `folder`, by their paths from `root`, with `/` between parts. Folders the
+/// runtime writes, such as `node_modules`, are left out unread.
 fn files_under(root: &Path, folder: &Path) -> Result<Vec<String>> {
     let mut files = Vec::new();
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return Ok(files);
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(files),
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not read {}", folder.display()));
+        }
     };
     for entry in entries {
         let path = entry
             .with_context(|| format!("could not read {}", folder.display()))?
             .path();
+        let inside = (path.strip_prefix(root)?.to_string_lossy()).replace('\\', "/");
         match path.is_dir() {
+            true if written::written_by_the_runtime(&inside) => {}
             true => files.extend(files_under(root, &path)?),
-            false => files.push(
-                path.strip_prefix(root)?
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-            ),
+            false => files.push(inside),
         }
     }
     Ok(files)

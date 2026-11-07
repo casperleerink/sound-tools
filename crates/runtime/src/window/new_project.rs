@@ -9,6 +9,7 @@ use gpui::{
     WindowOptions, div, prelude::*, px, size,
 };
 use sound_ui::components::button::{Button, ButtonVariant};
+use sound_ui::focus::TabStop;
 use sound_ui::{ActiveTheme, typography};
 
 use crate::templates::{self, Choice, Saved};
@@ -131,26 +132,26 @@ impl Render for TemplatePicker {
         let theme = cx.theme();
         let (background, text, quiet) = (theme.gray_100, theme.gray_950, theme.gray_700);
         let rows = self.choices.iter().enumerate().map(|(index, choice)| {
-            let on_pick = self.on_pick.clone();
-            let picked = choice.clone();
-            let row = template_row(choice.name(), choice.description(), cx).on_click(
-                move |_, window, cx| {
-                    window.remove_window();
-                    on_pick(picked.clone(), cx);
-                },
-            );
-            match choice {
+            let row = template_row(choice.name(), choice.description(), cx);
+            let row = match choice {
                 Choice::Bundled(_) => row,
                 Choice::Saved(saved) => {
                     let saved = saved.clone();
                     let remove = Button::icon_only(("remove-template", index), "trash-2")
                         .variant(ButtonVariant::Ghost)
+                        .tab_stop(true)
                         .on_click(cx.listener(move |picker, _, window, cx| {
                             picker.remove(saved.clone(), window, cx)
                         }));
                     (row.relative().pr_10()).child(div().absolute().top_2().right_2().child(remove))
                 }
-            }
+            };
+            let on_pick = self.on_pick.clone();
+            let picked = choice.clone();
+            TabStop::new(("pick-template", index), row).on_click(move |_, window, cx| {
+                window.remove_window();
+                on_pick(picked.clone(), cx);
+            })
         });
         div()
             .id("templates")
@@ -170,7 +171,7 @@ impl Render for TemplatePicker {
     }
 }
 
-/// A template by its name and description, for a list to pick from.
+/// A template by its name and description, for a list to pick from in a [`TabStop`].
 pub fn template_row(name: &str, description: &str, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let id = SharedString::from(format!("template-{name}"));

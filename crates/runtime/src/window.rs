@@ -45,6 +45,7 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input::{self, TextInput};
+use sound_ui::focus::TabStop;
 use sound_ui::{
     ActiveTheme, Assets, Devices, GlobalKeys, Session, SpareKey, SpareKeys, Views, typography,
 };
@@ -737,8 +738,9 @@ impl Shell {
             .filter(|template| !template.files.is_empty())
             .map(Choice::Bundled);
         let saved = self.saved_templates.iter().cloned().map(Choice::Saved);
-        let templates = bundled.chain(saved).map(|template| {
-            new_project::template_row(template.name(), template.description(), cx).on_click(
+        let templates = bundled.chain(saved).enumerate().map(|(index, template)| {
+            let row = new_project::template_row(template.name(), template.description(), cx);
+            TabStop::new(("start-from", index), row).on_click(
                 cx.listener(move |shell, _, _, cx| shell.start_from(template.clone(), cx)),
             )
         });
