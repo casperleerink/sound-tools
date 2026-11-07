@@ -24,8 +24,9 @@ pub enum Keep {
 }
 
 impl Keep {
-    /// [`Keep::Tools`] of `project`. Refused while a tool, or a record it would keep, did not
-    /// load: what they require is then unknown.
+    /// [`Keep::Tools`] of `project`. Refused while a tool, or a record it would keep, is not
+    /// live as it is on disk: what it requires is then unknown, or the template copies a file
+    /// that does not load.
     pub fn tools_of(project: &Project) -> Result<Self> {
         let required = |id: &InstanceId| -> bool {
             let mut id = id.clone();
@@ -38,19 +39,12 @@ impl Keep {
             }
             true
         };
-        for problem in project.problems() {
-            if problem.path.starts_with("extensions/") {
+        for path in project.files_not_live() {
+            let id = record_id(path).map(|id| InstanceId::try_from(id.to_string()));
+            let required = matches!(&id, Some(Ok(id)) if required(id));
+            if required || path.starts_with("extensions/") {
                 bail!(
-                    "A tool of this project does not load, so what it requires is unknown. Fix it first, or save the tools and content."
-                );
-            }
-            let id = record_id(&problem.path).map(|id| InstanceId::try_from(id.to_string()));
-            if let Some(Ok(id)) = id
-                && project.tool_of(&id).is_none()
-                && required(&id)
-            {
-                bail!(
-                    "Part of this project did not load ({id}), so a template of its tools would miss it. Fix it first, or save the tools and content."
+                    "Part of this project is not live as it is ({path}), so a template of its tools would miss it. Fix it first, or save the tools and content."
                 );
             }
         }

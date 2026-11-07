@@ -76,8 +76,9 @@ fn a_project_from_the_tools_only_of_a_daw_project_opens_its_empty_song(cx: &mut 
     assert_eq!(window.problems(), []);
 }
 
-/// What a tool requires is unknown while its record does not load, so the tools alone are not
-/// saved then. A track that does not load is left out anyway.
+/// What a tool requires is unknown while its record does not load, and a file that does not
+/// load would be copied, so the tools alone are not saved then. A track that does not load is
+/// left out anyway.
 #[test]
 fn the_tools_only_of_a_project_whose_required_part_did_not_load_are_refused() {
     let project = tempfile::tempdir().unwrap();
@@ -86,7 +87,16 @@ fn the_tools_only_of_a_project_whose_required_part_did_not_load_are_refused() {
     let opened = runtime::open_for_inspect(project.path()).unwrap();
     runtime::templates::Keep::tools_of(&opened).unwrap();
 
-    std::fs::write(project.path().join("state/song/master.json"), "{").unwrap();
+    // Broken while the project is open: the older master plays on, the file does not load.
+    let (control, _engine) = sound_core::Engine::new(runtime::OFFLINE);
+    let (mut open, _plugins) = crate::plugin_hosts::open_or_create(project.path(), control);
+    let master = open.root().join("state/song/master.json");
+    std::fs::write(&master, "{").unwrap();
+    open.apply_outside_changes(&[master]).unwrap();
+    let error = runtime::templates::Keep::tools_of(&open).unwrap_err();
+    assert!(error.to_string().contains("song/master"), "{error}");
+    drop(open);
+
     let opened = runtime::open_for_inspect(project.path()).unwrap();
     let error = runtime::templates::Keep::tools_of(&opened).unwrap_err();
     assert!(error.to_string().contains("song/master"), "{error}");

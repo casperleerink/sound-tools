@@ -608,6 +608,12 @@ impl Project {
         }
     }
 
+    /// The files that are not live as they are on disk, by their paths in the project: a record
+    /// that did not load or plays an older version, or code of the project's tools.
+    pub fn files_not_live(&self) -> impl Iterator<Item = &str> {
+        self.file_problems.keys().map(String::as_str)
+    }
+
     /// Takes the events since the last call.
     pub fn drain_events(&mut self) -> Vec<ProjectEvent> {
         std::mem::take(&mut self.events)

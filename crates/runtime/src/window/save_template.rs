@@ -136,19 +136,21 @@ impl SaveTemplate {
     }
 }
 
-/// Lets the composer pick again, with why when there is a `message`.
+/// Lets the composer pick again, with why when there is a `message`. A window closed while it
+/// saved leaves the message to the log.
 fn failed(
     this: &gpui::WeakEntity<SaveTemplate>,
     message: Option<String>,
     cx: &mut gpui::AsyncWindowContext,
 ) {
-    // The window is gone when this fails.
-    (this.update(cx, |this, cx| {
+    let shown = this.update(cx, |this, cx| {
         this.saving = false;
-        this.message = message.map(SharedString::from);
+        this.message = message.clone().map(SharedString::from);
         cx.notify();
-    }))
-    .ok();
+    });
+    if let (Err(_), Some(message)) = (shown, message) {
+        eprintln!("error: {message}");
+    }
 }
 
 impl Render for SaveTemplate {
