@@ -1,0 +1,11 @@
+# What the app writes into a project it opens.
+*/extensions/sdk/
+*/extensions/sdk.ts
+*/extensions/bun.d.ts
+*/extensions/tsconfig.json
+*/extensions/log.txt
+*/AGENTS.md
+*/CLAUDE.md
+*/agent-docs/
+*/problems.txt
+*/.sound-tools*

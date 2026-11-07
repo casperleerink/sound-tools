@@ -489,6 +489,7 @@ impl TypeScriptCard {
         if self.let_go_of_ended_drag(cx) {
             cx.notify();
         }
+        self.send_measured(cx);
         let Some(state) = self.state(cx) else {
             return;
         };
@@ -515,6 +516,30 @@ impl TypeScriptCard {
             !body && self.title_bar.is_some() && changed(&parts.title_bar, Drawn::TitleBar);
         let over = !body && !parts.lifted.is_empty() && changed(&parts.over, Drawn::Over);
         self.draw_again([body, title_bar, over], cx);
+    }
+
+    /// Moves the number inputs its pictures measure, to what they measured since the last poll.
+    fn send_measured(&mut self, cx: &mut Context<Self>) {
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
+            return;
+        };
+        let pictures = (table.entries()).filter_map(|entry| match &entry.props {
+            Props::Shape(shape) => shape.picture.as_ref(),
+            _ => None,
+        });
+        let measured: Vec<(String, f32)> = pictures
+            .flat_map(|picture| picture.take_measured())
+            .map(|(name, value)| (name.to_string(), value))
+            .collect();
+        for (name, value) in measured {
+            let id = self.id.clone();
+            let sent = self.live.update(cx, |live, cx| {
+                live.control(&id, &name, Some(value), None, cx)
+            });
+            if let Err(error) = sent {
+                eprintln!("error: a picture measures `{name}`: {error}");
+            }
+        }
     }
 
     /// Draws the whole card again, or only its title bar or the layer over the page when

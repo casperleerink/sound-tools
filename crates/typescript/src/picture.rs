@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use gpui::{Bounds, Pixels, RenderImage, Window};
 use serde::{Deserialize, Deserializer};
 
-use sound_pictures::{Frame, Inputs, MAX_ACROSS, Node, Program, Rgb, render};
+use sound_pictures::{Frame, Inputs, MAX_ACROSS, Node, Program, Rendered, Rgb, render};
 
 use crate::tree::{List, Num, Uses};
 
@@ -20,7 +20,17 @@ struct Graph {
     #[serde(default)]
     videos: Vec<VideoSource>,
     output: Rgb,
+    /// The number inputs of its tool each frame moves to the mean of a node over the picture.
+    #[serde(default)]
+    measures: Vec<Measure>,
     across: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Measure {
+    name: String,
+    node: usize,
 }
 
 /// A video a picture reads: a file under `assets/video/`, at a second that is a live value.
@@ -41,12 +51,16 @@ struct Shown {
     lives: Vec<Num>,
     waves: Vec<List>,
     videos: Vec<VideoSource>,
+    /// The number inputs it moves, in the order of the means it renders.
+    measures: Vec<String>,
     memory: Mutex<Memory>,
 }
 
 #[derive(Default)]
 struct Memory {
     last: Frame,
+    /// What it measured in its last frame, until its card sends it.
+    measured: Option<Vec<f32>>,
     frame: u32,
     /// The images painted, newest last: one stays in the atlas a frame longer, as a cached
     /// view may paint the frame before again.
@@ -67,16 +81,22 @@ impl<'de> Deserialize<'de> for Picture {
             waves,
             videos,
             output,
+            measures,
             across,
         } = Graph::deserialize(deserializer)?;
         let counts = (lives.len(), waves.len(), videos.len());
-        let program =
-            Program::new(nodes, output, across, counts).map_err(serde::de::Error::custom)?;
+        let (names, measured) = measures
+            .into_iter()
+            .map(|each| (each.name, each.node))
+            .unzip();
+        let program = Program::new(nodes, (output, measured), across, counts)
+            .map_err(serde::de::Error::custom)?;
         Ok(Self(Arc::new(Shown {
             program,
             lives,
             waves,
             videos,
+            measures: names,
             memory: Mutex::default(),
         })))
     }
@@ -89,6 +109,15 @@ impl Picture {
 
     pub(crate) fn waves(&self) -> &[List] {
         &self.0.waves
+    }
+
+    /// The number inputs to move and where, measured since this was last asked.
+    pub(crate) fn take_measured(&self) -> Vec<(&str, f32)> {
+        let measured = (self.0.memory.lock())
+            .ok()
+            .and_then(|mut memory| memory.measured.take());
+        let names = self.0.measures.iter().map(String::as_str);
+        names.zip(measured.unwrap_or_default()).collect()
     }
 
     pub(crate) fn videos(&self) -> &[VideoSource] {
@@ -130,7 +159,8 @@ impl Picture {
             last: &memory.last,
             frame: memory.frame,
         };
-        let frame = render(program, &inputs, (across, down));
+        let Rendered { frame, means } = render(program, &inputs, (across, down));
+        memory.measured = Some(means);
         let image = Arc::new(image_of(&frame));
         memory.last = frame;
         memory.frame = memory.frame.wrapping_add(1);

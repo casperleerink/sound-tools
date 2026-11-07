@@ -178,6 +178,8 @@ pub struct Rgb {
 pub struct Program {
     nodes: Vec<Node>,
     output: [usize; 3],
+    /// The nodes whose mean over the frame it gives, see [`Rendered::means`].
+    measures: Vec<usize>,
     across: u32,
 }
 
@@ -242,7 +244,7 @@ impl Program {
     /// videos it may read.
     pub fn new(
         nodes: Vec<Node>,
-        output: Rgb,
+        (output, measures): (Rgb, Vec<usize>),
         across: Option<u32>,
         (lives, waves, videos): (usize, usize, usize),
     ) -> Result<Self, String> {
@@ -279,9 +281,13 @@ impl Program {
         if output.iter().any(|node| *node >= nodes.len()) {
             return Err("a picture's colour is a node it does not have".to_string());
         }
+        if measures.iter().any(|node| *node >= nodes.len()) {
+            return Err("a picture measures a node it does not have".to_string());
+        }
         Ok(Self {
             nodes,
             output,
+            measures,
             across: across.unwrap_or(DEFAULT_ACROSS).clamp(1, MAX_ACROSS),
         })
     }
@@ -334,10 +340,18 @@ impl Node {
     }
 }
 
+/// What a picture made of a frame.
+pub struct Rendered {
+    pub frame: Frame,
+    /// The mean over every pixel of each node it measures, in order.
+    pub means: Vec<f32>,
+}
+
 /// The frame of `size` pixels the graph of `program` makes, row by row: each node over a whole
 /// row at a time, as the machine of a sound runs a span of frames.
-pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, usize)) -> Frame {
+pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, usize)) -> Rendered {
     let nodes = &program.nodes;
+    let mut sums = vec![0.0_f64; program.measures.len()];
     let mut registers = vec![0.0_f32; nodes.len() * width];
     let mut pixels = vec![[0.0_f32; 3]; width * height];
     for row in 0..height {
@@ -361,6 +375,15 @@ pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, u
                 },
             );
         }
+        for (sum, node) in sums.iter_mut().zip(&program.measures) {
+            let values = registers
+                .get(node * width..(node + 1) * width)
+                .unwrap_or(&[]);
+            *sum += values
+                .iter()
+                .map(|value| f64::from(finite(*value)))
+                .sum::<f64>();
+        }
         let pixels = pixels
             .get_mut(row * width..(row + 1) * width)
             .unwrap_or_default();
@@ -375,10 +398,14 @@ pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, u
             }
         }
     }
-    Frame {
-        width,
-        height,
-        pixels,
+    let count = (width * height).max(1) as f64;
+    Rendered {
+        frame: Frame {
+            width,
+            height,
+            pixels,
+        },
+        means: sums.iter().map(|sum| (sum / count) as f32).collect(),
     }
 }
 
@@ -561,7 +588,7 @@ mod tests {
             lives,
             output,
         } = serde_json::from_value(json).unwrap();
-        Program::new(nodes, output, None, (lives, 1, 0)).unwrap()
+        Program::new(nodes, (output, vec![0]), None, (lives, 1, 0)).unwrap()
     }
 
     #[test]
@@ -580,9 +607,12 @@ mod tests {
             last: &last,
             frame: 0,
         };
-        let frame = render(&program, &inputs, (4, 2));
+        let rendered = render(&program, &inputs, (4, 2));
+        let frame = rendered.frame;
         assert_eq!(frame.pixels[0], [0.125, 0.25, 0.25]);
         assert_eq!(frame.pixels[7], [0.875, 0.75, 0.25]);
+        // It measures node 0, x: its mean over the frame is the middle.
+        assert_eq!(rendered.means, [0.5]);
     }
 
     #[test]
@@ -606,7 +636,7 @@ mod tests {
                 last: &last,
                 frame,
             };
-            last = render(&program, &inputs, (3, 3));
+            last = render(&program, &inputs, (3, 3)).frame;
             reds.push(last.pixels[4][0]);
         }
         assert_eq!(reds, [0.4, 0.8, 1.0]);
@@ -636,7 +666,7 @@ mod tests {
             last: &last,
             frame: 0,
         };
-        let frame = render(&program, &inputs, (4, 1));
+        let frame = render(&program, &inputs, (4, 1)).frame;
         let reds: Vec<f32> = frame.pixels.iter().map(|pixel| pixel[0]).collect();
         assert_eq!(reds, [0.25, 0.75, 0.75, 0.25]);
     }
@@ -649,6 +679,6 @@ mod tests {
             green: 0,
             blue: 0,
         };
-        assert!(Program::new(nodes, output, None, (0, 0, 0)).is_err());
+        assert!(Program::new(nodes, (output, Vec::new()), None, (0, 0, 0)).is_err());
     }
 }

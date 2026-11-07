@@ -47,3 +47,9 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 
 - Cost: decoding by seeking to each frame (`AVAssetImageGenerator`) is about a third of a core at 30 frames a second. Open: read frames in order (`AVAssetReader`) and seek only on a jump.
 - Open: Linux and Windows decode no video.
+
+### 6. Pictures play the sound (`t3/visual-measure`)
+
+`pixel.measure(name, value)` moves the number input `name` of the tool to the mean of `value` over the picture, on each poll, as a knob does: brightness, movement against `last`, how much is red. Nothing crosses to Bun. Demo: `docs/prototypes/eyes`, a video whose light opens a drone and whose movement makes it shimmer.
+
+- The screen draws faster than a video changes, so movement measured against the frame before is 0 in most frames: smooth it in the sound.
