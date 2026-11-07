@@ -4396,6 +4396,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-core-media",
+ "objc2-core-video",
  "objc2-foundation 0.3.2",
 ]
 
@@ -5794,6 +5795,7 @@ dependencies = [
  "gpui_apple",
  "gpui_platform",
  "hound",
+ "image",
  "instrument",
  "libc",
  "limiter",
@@ -6422,6 +6424,7 @@ dependencies = [
  "memmap2",
  "objc2 0.6.4",
  "objc2-av-foundation",
+ "objc2-core-audio-types",
  "objc2-core-foundation",
  "objc2-core-media",
  "objc2-core-video",

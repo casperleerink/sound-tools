@@ -69,3 +69,10 @@ The song of the DAW template has a field `video`: a film under `assets/video/` t
 ### 11. Transparent pictures (`t3/visual-alpha`)
 
 A picture's colour takes `alpha`, so a glow lies over shapes, a timeline or another picture. Frames hold four channels; `last` reads alpha too.
+
+### 12. A film of the piece (`t3/visual-render-video`)
+
+`--render-video <mp4> --seconds <n>` plays from the start and films the offscreen window: each frame is one thirtieth of a second of offline sound, and the window's clock moves by exactly that, so picture and sound keep time. Written by AVFoundation (H.264, AAC). The writer takes a track only as far as the other has come, so frames and sound wait in queues.
+
+- Feedback (`last`) runs once per frame, so in a film it runs 30 times a second, in the app as often as the screen draws: trails differ. Open: step `last` by time, not by frame.
+- Open: films the whole window, at its size on screen; a video of the stage alone.

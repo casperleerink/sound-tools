@@ -1059,3 +1059,31 @@ fn a_video_gives_the_frame_at_a_time_on_and_back_at_most_as_large_as_asked() {
     }
     assert!(Video::open(Path::new("no-such.mp4"), 32).is_err());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_film_written_reads_back_with_its_frames() {
+    use sound_media::video::{Video, VideoFrame, VideoWriter};
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("film.mp4");
+    let mut writer = VideoWriter::create(&path, (64, 36), 48_000).unwrap();
+    let red = VideoFrame {
+        width: 64,
+        height: 36,
+        rgba: [230, 20, 20, 255].repeat(64 * 36),
+    };
+    let tone: Vec<f32> = (0..4800)
+        .flat_map(|frame| [(frame as f32 * 0.05).sin() * 0.5; 2])
+        .collect();
+    for frame in 0..10_u64 {
+        writer.frame(&red, frame as f64 / 10.0).unwrap();
+        writer.sound(&tone, frame * 4800).unwrap();
+    }
+    writer.finish().unwrap();
+    let mut video = Video::open(&path, 64).unwrap();
+    assert!((video.seconds() - 1.0).abs() < 0.15, "{}", video.seconds());
+    let frame = video.frame_at(0.5).unwrap();
+    let middle = (18 * frame.width + 32) * 4;
+    let [r, g, b] = [0, 1, 2].map(|channel| frame.rgba[middle + channel]);
+    assert!(r > 190 && g < 70 && b < 70, "{r} {g} {b}");
+}
