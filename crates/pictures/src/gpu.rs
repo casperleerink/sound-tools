@@ -1,22 +1,24 @@
-//! A spike: the graph of a picture as a Metal compute shader, to measure what the GPU gives. The
-//! shader is the graph written out as Metal, one line per node, with the same maths as the CPU,
-//! so both make the same picture. It writes the colours to memory the CPU reads as it is.
+//! The graph of a picture as a Metal compute shader. The shader is the graph written out as
+//! Metal, one line per node, with the same maths as the CPU, so both make the same picture. It
+//! writes the colours, and each pixel's values to measure, to memory the CPU reads as it is.
 
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize,
 };
 
-use crate::{Channel, Frame, Node, Program};
+#[cfg(test)]
+use crate::Frame;
+use crate::{Inputs, Node, Program};
 
 /// The Metal of `program`, or why the GPU cannot run it: lists and images stay on the CPU here.
 pub fn shader(program: &Program) -> Result<String, String> {
-    if !program.measures.is_empty() {
-        return Err("a picture that measures runs on the CPU in this spike".into());
-    }
     let mut code = String::from(PRELUDE);
     code.push_str(
         "kernel void picture(device float4* out [[buffer(0)]], device const float4* last [[buffer(1)]],\n\
-         constant float* lives [[buffer(2)]], constant uint4& size [[buffer(3)]], uint2 at [[thread_position_in_grid]]) {\n\
+         constant float* lives [[buffer(2)]], constant uint4& size [[buffer(3)]],\n\
+         device const float4* images [[buffer(4)]], device const uint4* image_at [[buffer(5)]],\n\
+         device const float* lists [[buffer(6)]], device const uint2* list_at [[buffer(7)]],\n\
+         device float* measured [[buffer(8)]], uint2 at [[thread_position_in_grid]]) {\n\
          if (at.x >= size.x || at.y >= size.y) return;\n\
          uint width = size.x, height = size.y, frame = size.z, lastWidth = size.w;\n\
          uint lastHeight = lastWidth == 0 ? 0 : height;\n",
@@ -32,21 +34,30 @@ pub fn shader(program: &Program) -> Result<String, String> {
             Node::Noise => "hashed(at.y * width + at.x, frame)".into(),
             Node::SmoothNoise { x, y, z } => format!("smooth_noise({}, {}, {})", r(x), r(y), r(z)),
             Node::Last { channel, x, y } => {
-                let channel = match channel {
-                    Channel::Red => 0,
-                    Channel::Green => 1,
-                    Channel::Blue => 2,
-                    Channel::Alpha => 3,
-                };
+                let channel = *channel as u8;
                 format!(
                     "sample(last, lastWidth, lastHeight, {}, {}, {channel})",
                     r(x),
                     r(y)
                 )
             }
-            Node::Wave { .. } | Node::Image { .. } => {
-                return Err("lists and images are read on the CPU in this spike".into());
-            }
+            Node::Wave { table, at } => format!(
+                "along(lists + list_at[{0}].x, list_at[{0}].y, {1})",
+                table.wave,
+                r(at)
+            ),
+            Node::Image {
+                table,
+                channel,
+                x,
+                y,
+            } => format!(
+                "sample(images + image_at[{0}].x, image_at[{0}].y, image_at[{0}].z, {1}, {2}, {3})",
+                table.image,
+                r(x),
+                r(y),
+                *channel as u8
+            ),
             Node::Negate { x } => format!("-{}", r(x)),
             Node::Sin { x } => format!("sin({})", r(x)),
             Node::Cos { x } => format!("cos({})", r(x)),
@@ -87,6 +98,12 @@ pub fn shader(program: &Program) -> Result<String, String> {
         })
     };
     let [red, green, blue, alpha] = program.output.each_ref().map(channel);
+    let count = program.measures.len();
+    for (index, node) in program.measures.iter().enumerate() {
+        code.push_str(&format!(
+            "measured[(at.y * width + at.x) * {count} + {index}] = finite(r{node});\n"
+        ));
+    }
     code.push_str(&format!(
         "out[at.y * width + at.x] = float4({red}, {green}, {blue}, {alpha});\n}}\n"
     ));
@@ -123,6 +140,15 @@ float smooth_noise(float x, float y, float z) {
     return mix(mix(near0, far0, ay), mix(near1, far1, ay), az);
 }
 
+float along(device const float* values, uint length, float at) {
+    if (length == 0) return 0.0f;
+    float last = float(length - 1);
+    float place = clamp(finite(at) * last, 0.0f, last);
+    uint before = uint(floor(place));
+    if (before + 1 >= length) return values[before];
+    return values[before] + (values[before + 1] - values[before]) * (place - float(before));
+}
+
 float remainder_of(float a, float b) {
     if (b == 0.0f) return 0.0f;
     float magnitude = abs(b);
@@ -151,7 +177,9 @@ pub struct Gpu {
     pipeline: ComputePipelineState,
     frames: [Option<(Buffer, (usize, usize))>; 2],
     newest: usize,
-    frame: u32,
+    /// Each pixel's values of the nodes it measures, and how many there are.
+    measured: Option<Buffer>,
+    measures: usize,
 }
 
 impl Gpu {
@@ -170,14 +198,21 @@ impl Gpu {
             pipeline,
             frames: [None, None],
             newest: 0,
-            frame: 0,
+            measured: None,
+            measures: program.measures.len(),
         })
     }
 
-    /// The next step at `size`, with `lives`: its colours, as the GPU left them.
-    pub fn render(&mut self, lives: &[f32], (width, height): (usize, usize)) -> &[[f32; 4]] {
+    /// The next step at `size`, reading what `inputs` hold besides the last step, which it
+    /// keeps itself: its colours as the GPU left them, and the mean of each node it measures.
+    pub fn render(
+        &mut self,
+        inputs: &Inputs<'_>,
+        (width, height): (usize, usize),
+    ) -> (&[[f32; 4]], Vec<f32>) {
         let next = 1 - self.newest;
-        let bytes = (width * height * 16).max(16) as u64;
+        let pixels = width * height;
+        let bytes = (pixels * 16).max(16) as u64;
         if self.frames[next]
             .as_ref()
             .is_none_or(|(_, size)| *size != (width, height))
@@ -187,11 +222,57 @@ impl Gpu {
                 .new_buffer(bytes, MTLResourceOptions::StorageModeShared);
             self.frames[next] = Some((buffer, (width, height)));
         }
+        let measures = self.measures;
+        let measured_bytes = (pixels * measures * 4).max(16) as u64;
+        if self
+            .measured
+            .as_ref()
+            .is_none_or(|buffer| buffer.length() != measured_bytes)
+        {
+            self.measured = Some(
+                self.device
+                    .new_buffer(measured_bytes, MTLResourceOptions::StorageModeShared),
+            );
+        }
+        // What it reads besides itself, laid end to end, with where each starts and how long it is.
+        let mut images: Vec<[f32; 4]> = Vec::new();
+        let mut image_at: Vec<[u32; 4]> = Vec::new();
+        for frame in inputs.images {
+            image_at.push([
+                images.len() as u32,
+                frame.width as u32,
+                frame.height as u32,
+                0,
+            ]);
+            images.extend_from_slice(&frame.pixels);
+        }
+        let mut lists: Vec<f32> = Vec::new();
+        let mut list_at: Vec<[u32; 2]> = Vec::new();
+        for list in inputs.waves {
+            list_at.push([lists.len() as u32, list.len() as u32]);
+            lists.extend_from_slice(list);
+        }
+        let shared = |data: &[u8]| {
+            let padded = if data.is_empty() { &[0; 16][..] } else { data };
+            self.device.new_buffer_with_data(
+                padded.as_ptr().cast(),
+                padded.len() as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        };
+        let images = shared(bytes_of(&images));
+        let image_at = shared(bytes_of(&image_at));
+        let lists = shared(bytes_of(&lists));
+        let list_at = shared(bytes_of(&list_at));
         let commands = self.queue.new_command_buffer();
         let encoder = commands.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(&self.pipeline);
-        let (Some((out, _)), last) = (&self.frames[next], &self.frames[self.newest]) else {
-            return &[];
+        let (Some((out, _)), last, Some(measured)) = (
+            &self.frames[next],
+            &self.frames[self.newest],
+            &self.measured,
+        ) else {
+            return (&[], Vec::new());
         };
         encoder.set_buffer(0, Some(out), 0);
         let last_size = match last {
@@ -204,44 +285,61 @@ impl Gpu {
                 0
             }
         };
-        let lives = if lives.is_empty() { &[0.0][..] } else { lives };
+        let lives = if inputs.lives.is_empty() {
+            &[0.0][..]
+        } else {
+            inputs.lives
+        };
         encoder.set_bytes(
             2,
             std::mem::size_of_val(lives) as u64,
             lives.as_ptr().cast(),
         );
-        let size: [u32; 4] = [width as u32, height as u32, self.frame, last_size];
+        let size: [u32; 4] = [width as u32, height as u32, inputs.frame, last_size];
         encoder.set_bytes(3, 16, size.as_ptr().cast());
-        let side = 16;
+        for (index, buffer) in [
+            (4, &images),
+            (5, &image_at),
+            (6, &lists),
+            (7, &list_at),
+            (8, measured),
+        ] {
+            encoder.set_buffer(index, Some(buffer), 0);
+        }
         encoder.dispatch_threads(
             MTLSize::new(width as u64, height as u64, 1),
-            MTLSize::new(side, side, 1),
+            MTLSize::new(16, 16, 1),
         );
         encoder.end_encoding();
         commands.commit();
         commands.wait_until_completed();
         self.newest = next;
-        self.frame = self.frame.wrapping_add(1);
-        // SAFETY: the buffer is shared memory as long as the frame, written by the GPU before
+        // SAFETY: the buffers are shared memory as long as they say, written by the GPU before
         // `wait_until_completed` returned, and not written again until the next step.
-        unsafe { std::slice::from_raw_parts(out.contents().cast(), width * height) }
+        let (colours, values) = unsafe {
+            (
+                std::slice::from_raw_parts(out.contents().cast::<[f32; 4]>(), pixels),
+                std::slice::from_raw_parts(measured.contents().cast::<f32>(), pixels * measures),
+            )
+        };
+        let mut sums = vec![0.0_f64; measures];
+        for pixel in values.chunks_exact(measures.max(1)) {
+            for (sum, value) in sums.iter_mut().zip(pixel) {
+                *sum += f64::from(*value);
+            }
+        }
+        let means = sums
+            .iter()
+            .map(|sum| (sum / pixels.max(1) as f64) as f32)
+            .collect();
+        (colours, means)
     }
 }
 
-/// The CPU's picture for comparing.
-pub fn on_cpu(program: &Program, lives: &[f32], size: (usize, usize), steps: u32) -> Frame {
-    let mut last = Frame::default();
-    for frame in 0..steps {
-        let inputs = crate::Inputs {
-            lives,
-            waves: &[],
-            images: &[],
-            last: &last,
-            frame,
-        };
-        last = crate::render(program, &inputs, size).frame;
-    }
-    last
+/// The bytes of plain numbers, as the GPU reads them.
+fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
+    // SAFETY: plain numbers have no padding, and the bytes live as long as the values.
+    unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), std::mem::size_of_val(values)) }
 }
 
 #[cfg(test)]
@@ -249,15 +347,20 @@ mod tests {
     use super::*;
     use crate::Rgb;
 
-    fn program(nodes: serde_json::Value, output: serde_json::Value) -> Program {
+    fn program(
+        nodes: serde_json::Value,
+        output: serde_json::Value,
+        measures: Vec<usize>,
+    ) -> Program {
         let nodes = serde_json::from_value(nodes).unwrap();
         let output: Rgb = serde_json::from_value(output).unwrap();
-        Program::new(nodes, (output, Vec::new()), None, (1, 0, 0)).unwrap()
+        Program::new(nodes, (output, measures), None, (1, 1, 1)).unwrap()
     }
 
     #[test]
-    fn the_gpu_makes_the_picture_the_cpu_makes() {
-        // Rings of a live value, smooth noise, white noise and a trail of the step before.
+    fn the_gpu_makes_the_picture_and_the_measures_the_cpu_makes() {
+        // Rings of a live value, smooth and white noise, a trail of the step before, a list read
+        // across and a photo read upside down; it measures the rings.
         let program = program(
             serde_json::json!([
                 {"op": "x"}, {"op": "y"}, {"op": "live", "index": 0},
@@ -266,20 +369,48 @@ mod tests {
                 {"op": "noise"}, {"op": "last", "channel": "red", "x": 1, "y": 0},
                 {"op": "constant", "value": 0.9}, {"op": "multiply", "a": 8, "b": 9},
                 {"op": "max", "a": 5, "b": 10}, {"op": "remainder", "a": 6, "b": 2},
+                {"op": "wave", "table": {"wave": 0}, "at": 0},
+                {"op": "image", "table": {"image": 0}, "channel": "green", "x": 0, "y": 1},
+                {"op": "add", "a": 13, "b": 14},
             ]),
-            serde_json::json!({"red": 11, "green": 6, "blue": 7, "alpha": 12}),
+            serde_json::json!({"red": 11, "green": 6, "blue": 15, "alpha": 12}),
+            vec![5, 13],
         );
+        let waves = [vec![0.0, 1.0, 0.25, 0.5]];
+        let photo = Frame {
+            width: 3,
+            height: 2,
+            pixels: (0..6)
+                .map(|index| [0.0, index as f32 / 6.0, 0.0, 1.0])
+                .collect(),
+        };
         let (size, steps) = ((37, 23), 5);
-        let cpu = on_cpu(&program, &[0.3], size, steps);
         let mut gpu = Gpu::new(&program).unwrap();
-        let mut last = Vec::new();
-        for _ in 0..steps {
-            last = gpu.render(&[0.3], size).to_vec();
+        let mut cpu = crate::Rendered {
+            frame: Frame::default(),
+            means: Vec::new(),
+        };
+        let (mut colours, mut means) = (Vec::new(), Vec::new());
+        for frame in 0..steps {
+            let inputs = Inputs {
+                lives: &[0.3],
+                waves: &waves,
+                images: &[&photo],
+                last: &cpu.frame,
+                frame,
+            };
+            let (on_gpu, measured) = gpu.render(&inputs, size);
+            (colours, means) = (on_gpu.to_vec(), measured);
+            cpu = crate::render(&program, &inputs, size);
         }
-        let most = (cpu.pixels.iter().flatten())
-            .zip(last.iter().flatten())
+        let most = (cpu.frame.pixels.iter().flatten())
+            .zip(colours.iter().flatten())
             .map(|(cpu, gpu)| (cpu - gpu).abs())
             .fold(0.0, f32::max);
         assert!(most < 1e-4, "{most}");
+        for (cpu, gpu) in cpu.means.iter().zip(&means) {
+            assert!((cpu - gpu).abs() < 1e-4, "{cpu} {gpu}");
+        }
+        assert_eq!(means.len(), 2);
     }
 }

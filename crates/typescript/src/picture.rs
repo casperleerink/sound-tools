@@ -193,10 +193,19 @@ impl Picture {
         };
         memory.stepped = Some(due);
         let images: Vec<&Frame> = seen.images.iter().map(|frame| &**frame).collect();
+        let first = memory.frame;
         if let Some(Some(gpu)) = &mut memory.gpu {
             let mut pixels: &[[f32; 4]] = &[];
-            for _ in 0..steps {
-                pixels = gpu.render(&seen.lives, (across, down));
+            let mut means = Vec::new();
+            for frame in 0..steps {
+                let inputs = Inputs {
+                    lives: &seen.lives,
+                    waves: &seen.waves,
+                    images: &images,
+                    last: &Frame::default(),
+                    frame: first.wrapping_add(frame as u32),
+                };
+                (pixels, means) = gpu.render(&inputs, (across, down));
             }
             if steps > 0 {
                 let pixels = pixels.to_vec();
@@ -205,6 +214,8 @@ impl Picture {
                     height: down,
                     pixels,
                 });
+                memory.measured = Some(means);
+                memory.frame = memory.frame.wrapping_add(steps as u32);
             }
         }
         for _ in 0..if on_gpu { 0 } else { steps } {
