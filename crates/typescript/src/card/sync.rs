@@ -580,11 +580,10 @@ impl TypeScriptCard {
 
     /// Answers the open menu's question, once.
     pub(super) fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
-        let Some(question) = self
-            .menu
-            .as_mut()
-            .and_then(|(_, waiting, _)| waiting.take())
-        else {
+        let Some((_, waiting, _)) = &mut self.menu else {
+            return;
+        };
+        let Some(question) = waiting.take() else {
             return;
         };
         self.live

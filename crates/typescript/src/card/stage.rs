@@ -336,7 +336,9 @@ impl Stage {
             }
             true
         });
-        Self(card.downgrade(), cx.focus_handle())
+        let keys = cx.focus_handle();
+        card.update(cx, |card, _| card.stage_keys = Some(keys.clone()));
+        Self(card.downgrade(), keys)
     }
 }
 

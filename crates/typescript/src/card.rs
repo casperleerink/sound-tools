@@ -112,6 +112,8 @@ pub(crate) struct TypeScriptCard {
     stage_place: StagePlace,
     /// The window it draws in, which the stage's window hands the focus to.
     window: AnyWindowHandle,
+    /// The keys of the stage's window while it is open.
+    stage_keys: Option<FocusHandle>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
     parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
@@ -476,6 +478,7 @@ impl TypeScriptCard {
             stage_window: None,
             stage_place: StagePlace::default(),
             window: window.window_handle(),
+            stage_keys: None,
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),

@@ -407,11 +407,15 @@ fn listen(
                 return;
             }
             card.update(cx, |card, cx| {
-                // On the stage the keys stay with the stage, which hears them for the page.
-                if window.window_handle() == card.window
+                // The page takes the keys, in its window or the stage's, which hears them for it.
+                let keys = match window.window_handle() == card.window {
+                    true => Some(card.focus.clone()),
+                    false => card.stage_keys.clone(),
+                };
+                if let Some(keys) = keys
                     && (card.live.read(cx).info(card.card)).is_some_and(|info| info.keys)
                 {
-                    window.focus(&card.focus, cx);
+                    window.focus(&keys, cx);
                 }
                 card.press(&frame, target, bounds, event, cx);
             })
