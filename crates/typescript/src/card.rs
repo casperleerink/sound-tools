@@ -20,8 +20,9 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, MouseButton,
-    Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity, WeakFocusHandle, Window,
-    canvas, div, prelude::*, px,
+    Pixels, Point, ScrollHandle, StyleRefinement, Task, TitlebarOptions, WeakEntity,
+    WeakFocusHandle, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
+    point, prelude::*, px, size,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -102,9 +103,12 @@ pub(crate) struct TypeScriptCard {
     embedded: HashMap<u64, Embedded>,
     /// The slot of the div it shows in the window's title bar, as last drawn.
     title_bar: Option<usize>,
+    /// The slot of the div it shows on the stage, and the stage's window while it is open.
+    stage: Option<usize>,
+    stage_window: Option<WindowHandle<Stage>>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
-    parts: RefCell<Option<((u64, Option<usize>), Rc<Parts>)>>,
+    parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
     /// The spaces of a page the layer over it draws, by node, with where the page laid them out.
     lifted: Rc<RefCell<HashMap<u64, Lifted>>>,
     /// Where the page is in the window, which the layer over it draws from.
@@ -414,6 +418,7 @@ impl TypeScriptCard {
         })
         .detach();
         cx.on_release(|view, cx| {
+            view.close_stage(cx);
             view.edit.finish(&view.session, cx);
             // A card that is gone hears no focus out, nor the button go up.
             view.let_go_of_keys(cx);
@@ -446,6 +451,8 @@ impl TypeScriptCard {
             focus_before_overlays: None,
             embedded: HashMap::new(),
             title_bar: None,
+            stage: None,
+            stage_window: None,
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),
@@ -558,7 +565,7 @@ impl TypeScriptCard {
             });
         };
         let title = self.title_bar;
-        let key = (table.version(), title);
+        let key = (table.version(), title, self.stage);
         if let Some((at, parts)) = &*self.parts.borrow()
             && *at == key
         {
@@ -569,6 +576,7 @@ impl TypeScriptCard {
         let page = self.frame.is_none();
         let spaces: Vec<(usize, u64)> = (table.spaces().into_iter())
             .filter(|(slot, _)| page && title.is_none_or(|title| !table.within(*slot, title)))
+            .filter(|(slot, _)| self.stage.is_none_or(|stage| !table.within(*slot, stage)))
             .filter(|(slot, _)| !table.kept_in_page(*slot))
             .collect();
         let slots: Vec<usize> = spaces.iter().map(|(slot, _)| *slot).collect();
@@ -788,6 +796,7 @@ impl TypeScriptCard {
             button_down: self.button_down.get(),
             scroller: None,
             in_title_bar: false,
+            in_stage: false,
             out_of_page: false,
             under_tooltip: false,
             takes_keys,
@@ -829,6 +838,133 @@ impl TypeScriptCard {
             None => bar,
         };
         Some(bar.into_any_element())
+    }
+}
+
+impl TypeScriptCard {
+    /// Opens the stage's window when its div came, and closes it when it went.
+    pub(crate) fn place_stage(&mut self, stage: Option<usize>, cx: &mut Context<Self>) {
+        let came = self.stage.is_none() && stage.is_some();
+        self.stage = stage;
+        if stage.is_none() {
+            self.close_stage(cx);
+            return;
+        }
+        if !came {
+            cx.emit(StageChanged);
+            return;
+        }
+        let card = cx.entity();
+        // Not inside this update: the window's first draw reads the card.
+        cx.defer(move |cx| {
+            let options = stage_options(cx);
+            match cx.open_window(options, |_, cx| cx.new(|cx| Stage::new(card.clone(), cx))) {
+                Ok(window) => card.update(cx, |card, _| card.stage_window = Some(window)),
+                Err(error) => eprintln!("error: the stage did not open: {error:#}"),
+            }
+        });
+    }
+
+    fn close_stage(&mut self, cx: &mut App) {
+        if let Some(window) = self.stage_window.take()
+            && let Err(error) = window.update(cx, |_, window, _| window.remove_window())
+        {
+            // It was closed already.
+            drop(error);
+        }
+    }
+
+    /// The div its view shows on the stage, from the feeds as last read.
+    fn draw_stage(&self, window: &Window, cx: &App) -> Option<AnyElement> {
+        let slot = self.stage?;
+        let state = self.read_state()?;
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
+            return None;
+        };
+        let mut drawing = self.drawing(state, &table, window, cx);
+        drawing.in_stage = true;
+        drawing.out_of_page = true;
+        let shown = drawing.draw(slot);
+        let spaces = drawing.spaces;
+        self.keep_spaces(spaces);
+        Some(shown)
+    }
+}
+
+/// The stage fills a screen other than the main one when there is one. Else it floats over
+/// the app in a corner, a preview of what a projector would show.
+fn stage_options(cx: &App) -> WindowOptions {
+    let primary = cx.primary_display();
+    let primary_id = primary.as_ref().map(|display| display.id());
+    let other = (cx.displays().into_iter()).find(|display| Some(display.id()) != primary_id);
+    let (window_bounds, kind) = match (&other, &primary) {
+        (Some(display), _) => (
+            WindowBounds::Fullscreen(display.bounds()),
+            WindowKind::Normal,
+        ),
+        (None, Some(display)) => {
+            let room = display.visible_bounds();
+            let shown = size(px(480.), px(270.));
+            let corner = room.bottom_right() - point(shown.width + px(24.), shown.height + px(24.));
+            (
+                WindowBounds::Windowed(Bounds::new(corner, shown)),
+                WindowKind::Floating,
+            )
+        }
+        (None, None) => (
+            WindowBounds::Windowed(Bounds::centered(None, size(px(480.), px(270.)), cx)),
+            WindowKind::Floating,
+        ),
+    };
+    WindowOptions {
+        window_bounds: Some(window_bounds),
+        display_id: other.map(|display| display.id()),
+        titlebar: Some(TitlebarOptions {
+            title: Some("Stage".into()),
+            appears_transparent: true,
+            traffic_light_position: None,
+        }),
+        kind,
+        focus: false,
+        // It plays to an audience while the app has the focus: every frame, not a few.
+        inactive_frame_interval: None,
+        ..Default::default()
+    }
+}
+
+/// What the stage shows changed while nothing else of the page did.
+pub(crate) struct StageChanged;
+
+impl EventEmitter<StageChanged> for TypeScriptCard {}
+
+/// The window of a page's div that says `stage`: black, and the div over all of it.
+pub(crate) struct Stage(Entity<TypeScriptCard>);
+
+impl Stage {
+    fn new(card: Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&card, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&card, |_, _, _: &StageChanged, cx| cx.notify())
+            .detach();
+        Self(card)
+    }
+}
+
+impl Render for Stage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let card = self.0.read(cx);
+        // What moves on the stage draws the page again too, which reads the feeds for it.
+        if card.parts(cx).body.animates {
+            window.request_animation_frame();
+        }
+        let shown = card.draw_stage(window, cx);
+        div()
+            .size_full()
+            .bg(gpui::black())
+            .text_size(px(12.))
+            .text_color(cx.theme().gray_950)
+            .flex()
+            .flex_col()
+            .children(shown)
     }
 }
 

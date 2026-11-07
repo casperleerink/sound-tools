@@ -374,6 +374,14 @@ export const Button = (props: ButtonProps): UiNode => element("button", { ...pro
 export const TitleBar = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
   element("div", { titleBar: true, style }, [children]);
 
+/**
+ * Shows its children in a window of their own, the stage: on a second screen or a projector when
+ * there is one, else beside the app. The window fills its screen and is black; the view goes on
+ * in the app. One stage per view.
+ */
+export const Stage = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
+  element("div", { stage: true, style }, [children]);
+
 /** How a `div` lays out and looks. Numbers are points. */
 export interface Style {
   /** How children line up. A div is a column unless this says `row`. */

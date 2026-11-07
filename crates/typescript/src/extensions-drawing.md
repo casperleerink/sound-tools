@@ -64,3 +64,5 @@ These are live values too. A path such as `"bass/synth"` reaches a record deeper
     return { red: max(colour.red, trail.red.times(0.94)), green: max(colour.green, trail.green.times(0.94)), blue: max(colour.blue, trail.blue.times(0.94)) };
   }} />
 ```
+
+`<Stage>` around part of a page's view shows it in a window of its own: fullscreen on a second screen or a projector, else floating in a corner. The rest stays in the app, such as the knobs that play it. In a `Space key="stage" grow` there, `width={now.space("stage").right}` and `height={now.space("stage").bottom}` fill it.

@@ -190,6 +190,11 @@ impl TypeScriptCard {
             self.title_bar = title_bar;
             cx.emit(TitleBarChanged);
         }
+        // Only a page has a stage: a card in a rack is one of many.
+        let stage = table.stage().filter(|_| self.frame.is_none());
+        if self.stage != stage {
+            self.place_stage(stage, cx);
+        }
         let open: Vec<u64> = (table.entries())
             .filter(|entry| matches!(entry.props, Props::Overlay(_)))
             .map(|entry| entry.id)

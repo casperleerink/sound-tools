@@ -61,6 +61,8 @@ pub(super) struct Drawing<'a> {
     pub(super) scroller: Option<ScrollHandle>,
     /// Whether it draws the title bar's div, which the body leaves out.
     pub(super) in_title_bar: bool,
+    /// Whether it draws the stage's div, which the body leaves out.
+    pub(super) in_stage: bool,
     /// Whether what it draws shows out of its page, in the title bar.
     pub(super) out_of_page: bool,
     /// Whether what it draws is inside a div with a tooltip.
@@ -188,8 +190,12 @@ impl Drawing<'_> {
                 carry,
                 on_drop,
                 title_bar,
+                stage,
             }) => {
                 if *title_bar == Some(true) && !std::mem::take(&mut self.in_title_bar) {
+                    return div().into_any_element();
+                }
+                if *stage == Some(true) && !std::mem::take(&mut self.in_stage) {
                     return div().into_any_element();
                 }
                 let style = style.clone().unwrap_or_default();
