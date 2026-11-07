@@ -1,5 +1,5 @@
-//! The videos and photos pictures read. A video decodes on a thread of its own, the frame last
-//! asked for, so the window never waits for one. A picture shows the newest frame decoded. A film waits
+//! The videos and photos canvases read. A video decodes on a thread of its own, the frame last
+//! asked for, so the window never waits for one. A canvas shows the newest frame decoded. A film waits
 //! instead, see [`wait_for_video_frames`].
 
 use std::path::Path;
@@ -7,11 +7,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
+use sound_canvas::Frame;
 use sound_media::video::Video;
-use sound_pictures::Frame;
 
-/// The most pixels across or down of a frame: as many as a picture works out.
-const LONGEST: u32 = sound_pictures::MAX_ACROSS;
+/// The most pixels across or down of a frame: as many as a canvas works out.
+const LONGEST: u32 = sound_canvas::MAX_ACROSS;
 /// Frames a second it decodes at most, as most videos have: the window draws more often, and
 /// each frame of the video then decodes once.
 const RATE: f64 = 30.0;
@@ -20,7 +20,7 @@ const LONGEST_WAIT: Duration = Duration::from_secs(5);
 
 static WAITS: AtomicBool = AtomicBool::new(false);
 
-/// Whether a picture waits for the frame of a video it asks for, as a film of the window must
+/// Whether a canvas waits for the frame of a video it asks for, as a film of the window must
 /// to keep time, instead of showing the newest decoded.
 pub fn wait_for_video_frames(wait: bool) {
     WAITS.store(wait, Ordering::Relaxed);
@@ -34,7 +34,7 @@ pub(crate) struct Player {
 #[derive(Default)]
 struct Shared {
     state: Mutex<State>,
-    /// Wakes the thread when a second is asked for, and a waiting picture when a frame is
+    /// Wakes the thread when a second is asked for, and a waiting canvas when a frame is
     /// decoded.
     asked: Condvar,
     decoded: Condvar,
@@ -168,7 +168,7 @@ fn decode(path: &Path, shared: &Shared) {
             Ok(frame) => state.shown = Some((at, Arc::new(frame_of(&frame)))),
             Err(error) => {
                 eprintln!("error: {error}");
-                // A waiting picture takes what it has.
+                // A waiting canvas takes what it has.
                 if let Some((shown, _)) = &mut state.shown {
                     *shown = at;
                 }

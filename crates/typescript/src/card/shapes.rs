@@ -13,9 +13,9 @@ use sound_ui::components::knob::{
 use crate::live::{DragNumbers, Sources, SpaceView};
 use std::sync::Arc;
 
-use sound_pictures::Frame;
+use sound_canvas::Frame;
 
-use crate::picture::{ImageSource, Picture, Seen};
+use crate::canvas::{Canvas, ImageSource, Seen};
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
@@ -119,12 +119,12 @@ pub(super) enum Geometry {
         height: f64,
         notes: Rc<Notes>,
     },
-    Picture {
+    Canvas {
         x: f64,
         y: f64,
         width: f64,
         height: f64,
-        picture: Picture,
+        canvas: Canvas,
         seen: Rc<Seen>,
     },
     Path {
@@ -179,7 +179,7 @@ impl Geometry {
             | Self::Arc { x, y, .. }
             | Self::Text { x, y, .. }
             | Self::Wave { x, y, .. }
-            | Self::Picture { x, y, .. }
+            | Self::Canvas { x, y, .. }
             | Self::Notes { x, y, .. } => (x, y),
             Self::Line { from, .. } => from,
             Self::Path { ref bends, .. } => {
@@ -371,7 +371,7 @@ impl Extent {
                 height,
                 ..
             }
-            | Geometry::Picture {
+            | Geometry::Canvas {
                 x,
                 y,
                 width,
@@ -508,7 +508,7 @@ impl Placing<'_> {
     }
 
     /// The values of a wave, oldest first.
-    /// An image a picture reads as it is now: the newest frame of a video, or what the picture
+    /// An image a canvas reads as it is now: the newest frame of a video, or what the canvas
     /// of that key showed at its last step. Black until there is one.
     fn image(&self, image: &ImageSource) -> Arc<Frame> {
         match image {
@@ -522,14 +522,14 @@ impl Placing<'_> {
                 .unwrap_or_default()
             }
             ImageSource::Photo(asset) => self.sources.feeds.still(asset).unwrap_or_default(),
-            ImageSource::Picture(key) => (self.table.entries())
+            ImageSource::Canvas(key) => (self.table.entries())
                 .find_map(|entry| match &entry.props {
                     Props::Shape(shape) if shape.key.as_deref() == Some(key) => {
-                        shape.picture.as_ref()
+                        shape.canvas.as_ref()
                     }
                     _ => None,
                 })
-                .map(Picture::last)
+                .map(Canvas::last)
                 .unwrap_or_default(),
         }
     }
@@ -922,23 +922,23 @@ impl Placing<'_> {
                     }),
                 }
             }
-            ShapeKind::Picture => Geometry::Picture {
+            ShapeKind::Canvas => Geometry::Canvas {
                 x,
                 y,
                 width: self.number(&shape.width),
                 height: self.number(&shape.height),
-                picture: shape.picture.clone()?,
+                canvas: shape.canvas.clone()?,
                 seen: Rc::new(Seen {
-                    lives: (shape.picture.iter())
-                        .flat_map(|picture| picture.lives())
+                    lives: (shape.canvas.iter())
+                        .flat_map(|canvas| canvas.lives())
                         .map(|live| self.sources.number(live) as f32)
                         .collect(),
-                    waves: (shape.picture.iter())
-                        .flat_map(|picture| picture.waves())
+                    waves: (shape.canvas.iter())
+                        .flat_map(|canvas| canvas.waves())
                         .map(|list| self.list(Some(list)))
                         .collect(),
-                    images: (shape.picture.iter())
-                        .flat_map(|picture| picture.images())
+                    images: (shape.canvas.iter())
+                        .flat_map(|canvas| canvas.images())
                         .map(|image| self.image(image))
                         .collect(),
                     time: self.sources.feeds.time,

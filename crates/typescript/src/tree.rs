@@ -329,8 +329,8 @@ props! {
         /// What a wave's values are multiplied by along it: `[x, factor]` from its left, straight
         /// between them.
         level: Vec<[Num; 2]>,
-        /// What a picture draws in each pixel.
-        picture: crate::picture::Picture,
+        /// What a canvas draws in each pixel.
+        canvas: crate::canvas::Canvas,
     }
 }
 
@@ -1116,7 +1116,7 @@ impl ShapeProps {
         color
             && text
             && self.list.is_none()
-            && self.picture.is_none()
+            && self.canvas.is_none()
             && self.numbers().all(Num::steady)
     }
 
@@ -1156,8 +1156,8 @@ impl ShapeProps {
         if let Some(list) = &self.list {
             list.add_uses(&mut uses);
         }
-        if let Some(picture) = &self.picture {
-            picture.add_uses(&mut uses);
+        if let Some(canvas) = &self.canvas {
+            canvas.add_uses(&mut uses);
         }
         uses
     }
@@ -1297,7 +1297,7 @@ pub(crate) enum ShapeKind {
     Wave,
     Notes,
     Path,
-    Picture,
+    Canvas,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

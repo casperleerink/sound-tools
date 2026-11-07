@@ -1,13 +1,13 @@
-//! Pictures: a graph of signals the window runs once per pixel on every frame, as `sdk.ts`'s
-//! `picture` sends it. What it reads from outside are live values, worked out once a frame.
+//! Canvases: a graph of signals the window runs once per pixel on every frame, as `sdk.ts`'s
+//! `canvas` sends it. What it reads from outside are live values, worked out once a frame.
 
 use std::sync::{Arc, Mutex};
 
 use gpui::{Bounds, Pixels, RenderImage, Window, WindowId};
 use serde::{Deserialize, Deserializer};
 
-use sound_pictures::gpu::Gpu;
-use sound_pictures::{
+use sound_canvas::gpu::Gpu;
+use sound_canvas::{
     Frame, Inputs, MAX_ACROSS, MAX_ACROSS_ON_GPU, Node, Program, Rendered, Rgb, render,
 };
 
@@ -23,7 +23,7 @@ struct Graph {
     #[serde(default)]
     images: Vec<ImageSource>,
     output: Rgb,
-    /// The number inputs of its tool each frame moves to the mean of a node over the picture.
+    /// The number inputs of its tool each frame moves to the mean of a node over the canvas.
     #[serde(default)]
     measures: Vec<Measure>,
     across: Option<u32>,
@@ -36,17 +36,17 @@ struct Measure {
     node: usize,
 }
 
-/// An image a picture reads: a video, a photo, or the last step of another picture by its key.
+/// An image a canvas reads: a video, a photo, or the last step of another canvas by its key.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum ImageSource {
     Video(VideoSource),
-    Picture(String),
+    Canvas(String),
     /// A photo under `assets/images/`.
     Photo(String),
 }
 
-/// A video a picture reads: a file under `assets/video/`, at a second that is a live value.
+/// A video a canvas reads: a file under `assets/video/`, at a second that is a live value.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct VideoSource {
@@ -56,9 +56,9 @@ pub(crate) struct VideoSource {
     pub loops: bool,
 }
 
-/// A picture of a shape: its graph, checked, and what it showed last.
+/// A canvas of a shape: its graph, checked, and what it showed last.
 #[derive(Clone, Debug)]
-pub(crate) struct Picture(Arc<Shown>);
+pub(crate) struct Canvas(Arc<Shown>);
 
 #[derive(Debug)]
 struct Shown {
@@ -92,7 +92,7 @@ impl std::fmt::Debug for Memory {
     }
 }
 
-impl<'de> Deserialize<'de> for Picture {
+impl<'de> Deserialize<'de> for Canvas {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let Graph {
             nodes,
@@ -121,7 +121,7 @@ impl<'de> Deserialize<'de> for Picture {
     }
 }
 
-impl Picture {
+impl Canvas {
     pub(crate) fn lives(&self) -> &[Num] {
         &self.0.lives
     }
@@ -143,7 +143,7 @@ impl Picture {
         &self.0.images
     }
 
-    /// What it showed at its last step, for another picture that reads it.
+    /// What it showed at its last step, for another canvas that reads it.
     pub(crate) fn last(&self) -> Arc<Frame> {
         (self.0.memory.lock()).map_or_else(|_| Arc::default(), |memory| memory.last.clone())
     }
@@ -159,7 +159,7 @@ impl Picture {
         uses.animates = true;
     }
 
-    /// Paints the picture across `bounds` as it is at `seen.time`: it steps 60 times a second
+    /// Paints the canvas across `bounds` as it is at `seen.time`: it steps 60 times a second
     /// of that time, however often the window draws, so its feedback moves alike on any screen,
     /// in a screenshot and in a film.
     pub(crate) fn paint(&self, bounds: Bounds<Pixels>, seen: &Seen, window: &mut Window) {
@@ -241,7 +241,7 @@ impl Picture {
         };
         if let Err(error) = window.paint_image(bounds, bounds, Default::default(), image, 0, false)
         {
-            eprintln!("error: a picture did not paint: {error}");
+            eprintln!("error: a canvas did not paint: {error}");
         }
         let over = memory.images.len().saturating_sub(2);
         let old: Vec<_> = memory.images.drain(..over).collect();
@@ -255,14 +255,14 @@ impl Picture {
             if painted_in != here {
                 orphans.push((painted_in, image));
             } else if let Err(error) = window.drop_image(image) {
-                eprintln!("error: a picture's last frame stayed: {error}");
+                eprintln!("error: a canvas's last frame stayed: {error}");
             }
         }
     }
 }
 
-/// Images of pictures no longer shown, by the window they were painted in, which frees them at
-/// its next paint of a picture: the atlas of a window is freed only in that window.
+/// Images of canvases no longer shown, by the window they were painted in, which frees them at
+/// its next paint of a canvas: the atlas of a window is freed only in that window.
 static ORPHANS: Mutex<Vec<(WindowId, Arc<RenderImage>)>> = Mutex::new(Vec::new());
 
 impl Drop for Shown {
@@ -278,12 +278,12 @@ impl Drop for Shown {
     }
 }
 
-/// How often a picture steps, in its time.
+/// How often a canvas steps, in its time.
 const STEPS_PER_SECOND: f64 = 60.0;
 /// The most steps one draw makes up for, after the window was away a while.
 const MOST_STEPS: u64 = 4;
 
-/// What a picture reads for a draw: its live values, lists and images as they are now, and the
+/// What a canvas reads for a draw: its live values, lists and images as they are now, and the
 /// time.
 pub(crate) struct Seen {
     pub lives: Vec<f32>,

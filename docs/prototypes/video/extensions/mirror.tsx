@@ -1,4 +1,4 @@
-import { abs, adsr, h, max, mix, noise, now, number, output, phasor, Picture, rise, sin, Space, TAU, tool, wrap } from "./sdk";
+import { abs, adsr, h, max, mix, noise, now, number, output, phasor, Canvas, rise, sin, Space, TAU, tool, wrap } from "./sdk";
 
 tool({
   name: "mirror",
@@ -17,7 +17,7 @@ tool({
   },
   view: ({ size }) => (
     <Space grow>
-      <Picture
+      <Canvas
         x={0}
         y={0}
         width={() => size.width}

@@ -18,6 +18,7 @@ mod behaviours;
 #[cfg(test)]
 mod bindings;
 mod bun;
+mod canvas;
 mod card;
 mod fader;
 mod feeds;
@@ -26,7 +27,6 @@ mod live;
 mod meter;
 #[cfg(test)]
 mod performance;
-mod picture;
 mod recorder;
 mod records;
 mod region;
@@ -232,7 +232,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-drawing",
         group: WRITING,
-        when: "A view draws what moves: shapes, drags, a scope, pictures, video, a projector",
+        when: "A view draws what moves: shapes, drags, a scope, canvases, video, a projector",
         markdown: include_str!("extensions-drawing.md"),
     },
     AgentDoc {

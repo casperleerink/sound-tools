@@ -1,6 +1,6 @@
 import {
   clamp, delay, feedback, h, hsv, Knob, lowpass, bandpass, max, mix, mtof, noise, now, number, output, phasor, TAU,
-  Picture, pow, saturate, saw, sine, sin, smooth, Space, Stage, tanh, tool, wrap, abs,
+  Canvas, pow, saturate, saw, sine, sin, smooth, Space, Stage, tanh, tool, wrap, abs,
   type Pixel, type Signal, type Style,
 } from "./sdk";
 
@@ -123,7 +123,7 @@ tool({
     <div style={panel}>
       <Stage>
         <Space key="stage" grow>
-          <Picture x={0} y={0} width={now.space("stage").right} height={now.space("stage").bottom} across={360}
+          <Canvas x={0} y={0} width={now.space("stage").right} height={now.space("stage").bottom} across={360}
             pixels={flowingColours} />
         </Space>
       </Stage>
@@ -132,7 +132,7 @@ tool({
           <div style={heading}>On the projector</div>
           <Space width={() => Math.max(240, Math.min(560, size.width * 0.45))} height={() => Math.max(135, Math.min(315, size.width * 0.45 * 0.5625))}
             background="gray-950" radius={6}>
-            <Picture x={0} y={0} width={() => Math.max(240, Math.min(560, size.width * 0.45))}
+            <Canvas x={0} y={0} width={() => Math.max(240, Math.min(560, size.width * 0.45))}
               height={() => Math.max(135, Math.min(315, size.width * 0.45 * 0.5625))} across={200} pixels={flowingColours} />
           </Space>
         </div>

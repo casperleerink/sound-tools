@@ -14,7 +14,7 @@ use sound_media::Overview;
 use sound_media::analysis::{PowerSpectrum, WINDOW};
 use sound_ui::{LiveNotes, PeaksReader, Session, SharedPeaks};
 
-use sound_pictures::Frame;
+use sound_canvas::Frame;
 
 use crate::meter;
 use crate::tree::{Ease, Uses};

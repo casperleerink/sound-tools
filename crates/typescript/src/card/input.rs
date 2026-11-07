@@ -344,8 +344,8 @@ impl TypeScriptCard {
         let assets = self.session.read(cx).project().assets().clone();
         let imported = cx.background_spawn(async move {
             (paths.iter())
-                .map(|path| match sound_media::video::picture_folder(path) {
-                    Some(folder) => sound_media::video::import_picture(&assets, path, folder)
+                .map(|path| match sound_media::video::visual_folder(path) {
+                    Some(folder) => sound_media::video::import_visual(&assets, path, folder)
                         .map(|name| (folder, name)),
                     None => sound_media::import(&assets, path)
                         .map(|file| ("audio", file.asset.to_string())),

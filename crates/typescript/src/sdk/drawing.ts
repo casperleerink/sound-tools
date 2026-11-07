@@ -7,7 +7,7 @@ import { Child, element, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
 import type { Notes as NotesOfSound } from "./sound";
-import { pictureToJson, pixelLive, pixelSource, Signal, type PictureGraph, type Rgb, type Operand } from "./sound";
+import { canvasToJson, pixelLive, pixelSource, Signal, type CanvasGraph, type Rgb, type Operand } from "./sound";
 import { now } from "./live";
 import type { Key } from "./tools";
 
@@ -94,8 +94,8 @@ export type Shape =
          * them in the binding, `points={() => [...]}`, where TypeScript reads a list as points.
          */
         | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
-        /** A picture across its box, its pixels worked out on every frame: see `Picture`. */
-        | { kind: "picture"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; picture: PictureGraph<Num, WaveList> }
+        /** A canvas across its box, its pixels worked out on every frame: see `Canvas`. */
+        | { kind: "canvas"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; canvas: CanvasGraph<Num, WaveList> }
       ));
 
 /** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
@@ -127,12 +127,12 @@ export const Label = shape("text");
 export const Wave = shape("wave");
 export const Notes = shape("notes");
 export const Path = shape("path");
-/** A colour a picture reads, each part a `Signal` from 0 to 1. */
+/** A colour a canvas reads, each part a `Signal` from 0 to 1. */
 export type Colour = { red: Signal; green: Signal; blue: Signal; alpha: Signal };
 
-/** Where a pixel of a `Picture` is, and what else it reads. Each is a `Signal`: combine them with the functions of a sound. */
+/** Where a pixel of a `Canvas` is, and what else it reads. Each is a `Signal`: combine them with the functions of a sound. */
 export interface Pixel {
-  /** 0 at the left of the picture, 1 at its right. */
+  /** 0 at the left of the canvas, 1 at its right. */
   x: Signal;
   /** 0 at its top, 1 at its bottom. */
   y: Signal;
@@ -163,41 +163,41 @@ export interface Pixel {
    */
   video(asset: string, options?: { at?: Num; loops?: boolean; x?: Operand; y?: Operand }): Colour;
   /**
-   * The colour of the `Picture` of that `key` in this view at `x`, `y` (this pixel's place when
-   * left out), as it was at its last step: passes, such as a picture that blurs another, or a
+   * The colour of the `Canvas` of that `key` in this view at `x`, `y` (this pixel's place when
+   * left out), as it was at its last step: passes, such as a canvas that blurs another, or a
    * hidden one that runs a simulation and one that colours it.
    */
-  picture(key: string, options?: { x?: Operand; y?: Operand }): Colour;
+  canvas(key: string, options?: { x?: Operand; y?: Operand }): Colour;
   /**
    * The colour of a photo under `assets/images/`, such as `"sky.jpg"` (JPEG or PNG), at `x`, `y`
-   * of it (this pixel's place when left out): a texture, a mask, a picture to bend. At most 480
+   * of it (this pixel's place when left out): a texture, a mask, a canvas to bend. At most 480
    * pixels across; black until it is read.
    */
   photo(asset: string, options?: { x?: Operand; y?: Operand }): Colour;
   /**
-   * The colour the picture had one frame before at `x`, `y` (here when left out), between its
+   * The colour the canvas had one frame before at `x`, `y` (here when left out), between its
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
    */
   last(x?: Operand, y?: Operand): Colour;
   /**
    * Plays the number input `name` of this tool, every frame, with the mean of `value` over the
-   * whole picture: how bright it is, how much moved since the frame before, how much of it is
+   * whole canvas: how bright it is, how much moved since the frame before, how much of it is
    * red. The sound hears it as it hears a knob, gliding, with no code running.
    */
   measure(name: string, value: Operand): void;
 }
 
 /**
- * A picture across its box: `pixels` runs once, as the view does, and gives the colour of a pixel
+ * A canvas across its box: `pixels` runs once, as the view does, and gives the colour of a pixel
  * from where it is and what it reads; the window then works out every pixel on every frame,
  * with no code running. `across` is how many pixels wide it is worked out, 160 when left out,
  * at most 480; it is as many down as its box is tall for that.
  */
-export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">, "picture"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
+export const Canvas = ({ pixels, across, ...props }: Omit<ShapeProps<"canvas">, "canvas"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
   const lives: Num[] = [];
   const waves: WaveList[] = [];
-  const images: PictureGraph<Num, WaveList>["images"] = [];
-  const image = (source: PictureGraph<Num, WaveList>["images"][number], atX: Operand, atY: Operand): Colour => {
+  const images: CanvasGraph<Num, WaveList>["images"] = [];
+  const image = (source: CanvasGraph<Num, WaveList>["images"][number], atX: Operand, atY: Operand): Colour => {
     const index = images.push(source) - 1;
     const channel = (channel: "red" | "green" | "blue" | "alpha") =>
       new Signal({ op: "image", table: { image: index }, channel, x: atX, y: atY });
@@ -225,7 +225,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
     },
     video: (asset, { at = now.elapsed, loops = true, x: atX = x, y: atY = y } = {}) =>
       image({ video: { asset, at, loops } }, atX, atY),
-    picture: (key, { x: atX = x, y: atY = y } = {}) => image({ picture: key }, atX, atY),
+    canvas: (key, { x: atX = x, y: atY = y } = {}) => image({ canvas: key }, atX, atY),
     photo: (asset, { x: atX = x, y: atY = y } = {}) => image({ photo: asset }, atX, atY),
     measure: (name, value) => {
       measures.push({ name, value });
@@ -237,7 +237,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
       alpha: new Signal({ op: "last", channel: "alpha", x: atX, y: atY }),
     }),
   };
-  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, images, measures, across) }, []);
+  return shapeNode("canvas", { ...props, canvas: canvasToJson(pixels(pixel), lives, waves, images, measures, across) }, []);
 };
 
 /** Shapes moved together, see `Shape`. */

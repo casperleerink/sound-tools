@@ -1,4 +1,4 @@
-//! Pictures: a graph of signals run once per pixel, a whole row at a time, as the machine of a
+//! Canvases: a graph of signals run once per pixel, a whole row at a time, as the machine of a
 //! sound runs a span of frames. What it reads from outside are numbers worked out once a frame
 //! (`lives`), and the frame before (`last`).
 
@@ -7,14 +7,14 @@ use serde::Deserialize;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 
-/// Elsewhere no picture runs on the GPU.
+/// Elsewhere no canvas runs on the GPU.
 #[cfg(not(target_os = "macos"))]
 pub mod gpu {
     pub struct Gpu;
 
     impl Gpu {
         pub fn new(_: &crate::Program) -> Result<Self, String> {
-            Err("pictures run on the GPU on macOS only".into())
+            Err("canvases run on the GPU on macOS only".into())
         }
 
         pub fn render(
@@ -32,7 +32,7 @@ pub const MAX_ACROSS: u32 = 480;
 pub const MAX_ACROSS_ON_GPU: u32 = 1920;
 const DEFAULT_ACROSS: u32 = 160;
 
-/// A node of the graph of a picture; each `usize` is the index of a node before it.
+/// A node of the graph of a canvas; each `usize` is the index of a node before it.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Node {
@@ -53,7 +53,7 @@ pub enum Node {
         table: Wave,
         at: usize,
     },
-    /// A colour of a frame of [`Inputs::images`] at `x`, `y`: of a video, or of another picture.
+    /// A colour of a frame of [`Inputs::images`] at `x`, `y`: of a video, or of another canvas.
     Image {
         table: ImageTable,
         channel: Channel,
@@ -207,7 +207,7 @@ pub struct Rgb {
     alpha: Option<usize>,
 }
 
-/// A graph of a picture, checked.
+/// A graph of a canvas, checked.
 #[derive(Debug)]
 pub struct Program {
     nodes: Vec<Node>,
@@ -285,20 +285,20 @@ impl Program {
     ) -> Result<Self, String> {
         for (index, node) in nodes.iter().enumerate() {
             if node.reads().into_iter().flatten().any(|read| read >= index) {
-                return Err(format!("node {index} of a picture reads a node after it"));
+                return Err(format!("node {index} of a canvas reads a node after it"));
             }
             if let Node::Live { index: live } = node
                 && *live >= lives
             {
                 return Err(format!(
-                    "a picture reads live value {live}, which it does not have"
+                    "a canvas reads live value {live}, which it does not have"
                 ));
             }
             if let Node::Image { table, .. } = node
                 && table.image >= images
             {
                 return Err(format!(
-                    "a picture reads image {}, which it does not have",
+                    "a canvas reads image {}, which it does not have",
                     table.image
                 ));
             }
@@ -306,7 +306,7 @@ impl Program {
                 && table.wave >= waves
             {
                 return Err(format!(
-                    "a picture reads list {}, which it does not have",
+                    "a canvas reads list {}, which it does not have",
                     table.wave
                 ));
             }
@@ -319,10 +319,10 @@ impl Program {
         } = output;
         let output = [Some(red), Some(green), Some(blue), alpha];
         if output.iter().flatten().any(|node| *node >= nodes.len()) {
-            return Err("a picture's colour is a node it does not have".to_string());
+            return Err("a canvas's colour is a node it does not have".to_string());
         }
         if measures.iter().any(|node| *node >= nodes.len()) {
-            return Err("a picture measures a node it does not have".to_string());
+            return Err("a canvas measures a node it does not have".to_string());
         }
         Ok(Self {
             nodes,
@@ -381,7 +381,7 @@ impl Node {
     }
 }
 
-/// What a picture made of a frame.
+/// What a canvas made of a frame.
 pub struct Rendered {
     pub frame: Frame,
     /// The mean over every pixel of each node it measures, in order.
@@ -490,13 +490,13 @@ fn render_rows(
     sums
 }
 
-/// What a picture reads from outside, once a frame.
+/// What a canvas reads from outside, once a frame.
 pub struct Inputs<'a> {
     /// The values of its live values.
     pub lives: &'a [f32],
     /// The lists it reads.
     pub waves: &'a [Vec<f32>],
-    /// The frames of the videos and pictures it reads, as they are now.
+    /// The frames of the videos and canvases it reads, as they are now.
     pub images: &'a [&'a Frame],
     /// What it made the frame before.
     pub last: &'a Frame,
@@ -701,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_runs_its_graph_once_per_pixel() {
+    fn a_canvas_runs_its_graph_once_per_pixel() {
         // Red is x, green is y, blue is a live value: a gradient over a level.
         let program = program(serde_json::json!({
             "nodes": [{"op": "x"}, {"op": "y"}, {"op": "live", "index": 0}],
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_reads_its_last_frame_between_its_pixels() {
+    fn a_canvas_reads_its_last_frame_between_its_pixels() {
         // Each frame adds a little to what was there, then it stays at 1.
         let program = program(serde_json::json!({
             "nodes": [
@@ -760,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_reads_a_list_between_its_values() {
+    fn a_canvas_reads_a_list_between_its_values() {
         // Red is the list read across: 0 at the left, 1 halfway, back to 0 at the right.
         let program = program(serde_json::json!({
             "nodes": [{"op": "x"}, {"op": "wave", "table": {"wave": 0}, "at": 0}],
@@ -797,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_on_many_threads_is_the_picture_on_one() {
+    fn a_canvas_on_many_threads_is_the_canvas_on_one() {
         // Large enough for bands on threads of their own; noise that differs on every row.
         let program = program(serde_json::json!({
             "nodes": [{"op": "x"}, {"op": "y"}, {"op": "noise"}, {"op": "add", "a": 1, "b": 2}],
@@ -822,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_that_reads_ahead_does_not_load() {
+    fn a_canvas_that_reads_ahead_does_not_load() {
         let nodes = serde_json::from_value(serde_json::json!([{"op": "sin", "x": 0}])).unwrap();
         let output = Rgb {
             red: 0,

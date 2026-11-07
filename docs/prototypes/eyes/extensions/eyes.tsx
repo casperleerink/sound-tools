@@ -1,4 +1,4 @@
-import { abs, h, Label, lowpass, min, mix, noise, now, number, Picture, saw, smooth, Space, tool } from "./sdk";
+import { abs, h, Label, lowpass, min, mix, noise, now, number, Canvas, saw, smooth, Space, tool } from "./sdk";
 
 tool({
   name: "eyes",
@@ -19,7 +19,7 @@ tool({
   },
   view: ({ size }) => (
     <Space grow>
-      <Picture
+      <Canvas
         x={0}
         y={0}
         width={() => size.width}

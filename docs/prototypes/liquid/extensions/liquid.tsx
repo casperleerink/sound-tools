@@ -1,4 +1,4 @@
-import { adsr, h, lowpass, now, number, output, phasor, Picture, rise, saw, Space, tool, wrap } from "./sdk";
+import { adsr, h, lowpass, now, number, output, phasor, Canvas, rise, saw, Space, tool, wrap } from "./sdk";
 
 tool({
   name: "liquid",
@@ -14,7 +14,7 @@ tool({
   },
   view: ({ size }) => (
     <Space grow>
-      <Picture x={0} y={0} width={() => size.width} height={() => size.height} across={360}
+      <Canvas x={0} y={0} width={() => size.width} height={() => size.height} across={360}
         pixels={({ x, y, time, noise, live, photo }) => {
           const hit = live(now.value("hit"));
           const melt = hit.times(0.06).plus(0.01);

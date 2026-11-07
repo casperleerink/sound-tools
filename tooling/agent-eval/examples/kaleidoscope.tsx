@@ -1,6 +1,6 @@
 import {
   abs, clamp, hold, channel, cos, delay, exp, feedback, floor, h, list, lowpass, max, min, mix, noise,
-  now, number, phasor, Picture, PI, pow, rise, sampleRate, saturate, saw, sin, sine, smooth, Space,
+  now, number, phasor, Canvas, PI, pow, rise, sampleRate, saturate, saw, sin, sine, smooth, Space,
   sqrt, TAU, tool, type Operand, type Signal,
 } from "./sdk";
 
@@ -99,7 +99,7 @@ tool({
   },
   view: ({ size }) => (
     <Space grow>
-      <Picture x={0} y={0} width={() => size.width} height={() => size.height} across={480}
+      <Canvas x={0} y={0} width={() => size.width} height={() => size.height} across={480}
         pixels={({ x, y, aspect, time, live, video, measure }) => {
           // Measure the video itself, not the folded picture, so spinning adds no motion.
           const plain = video(VIDEO);

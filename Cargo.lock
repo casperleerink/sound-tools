@@ -6377,6 +6377,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-canvas"
+version = "0.0.0"
+dependencies = [
+ "metal",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sound-core"
 version = "0.0.0"
 dependencies = [
@@ -6454,15 +6463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sound-pictures"
-version = "0.0.0"
-dependencies = [
- "metal",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sound-signals"
 version = "0.0.0"
 dependencies = [
@@ -6488,11 +6488,11 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "smol",
+ "sound-canvas",
  "sound-core",
  "sound-dsp",
  "sound-media",
  "sound-notes",
- "sound-pictures",
  "sound-signals",
  "sound-ui",
  "tempfile",

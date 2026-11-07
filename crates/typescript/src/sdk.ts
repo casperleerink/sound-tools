@@ -17,11 +17,11 @@ export {
   abs, adsr, allpass, bandpass, beat, bpm, Buffer, buffer, change, channel, clamp, cos, db, delay,
   exp, Feedback, feedback, floor, graphToJson, highpass, highshelf, hold, hsv, input, inputLeft,
   inputRight, log, lookup, lowpass, lowshelf, max, min, mix, mtof, noise, notch, note, output,
-  Param, peak, phasor, PI, pictureToJson, playing, pow, rise, sampleRate, saturate, saw, Signal, sin, sine,
+  Param, peak, phasor, PI, canvasToJson, playing, pow, rise, sampleRate, saturate, saw, Signal, sin, sine,
   Sample, smooth, SoundInput, spectral, sqrt, square, Table, tan, tanh, TAU, triangle, wrap
 } from "./sdk/sound";
 export type {
-  Bin, Bins, Graph, GraphNode, Operand, PictureGraph, Rgb, Stereo, TableRef
+  Bin, Bins, Graph, GraphNode, Operand, CanvasGraph, Rgb, Stereo, TableRef
 } from "./sdk/sound";
 // `tool`, its `Context`, children and connections
 export {
@@ -59,7 +59,7 @@ export type {
 // the elements of a view: `div` and its `Style`, `Space` and its shapes, `Button`, `Input`
 export {
   Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  Picture, Rect, Space, Stage, TitleBar, Toggle, Wave
+  Canvas, Rect, Space, Stage, TitleBar, Toggle, Wave
 } from "./sdk/drawing";
 export type {
   ButtonProps, CardSelect, Color, Colour, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint, Pixel,

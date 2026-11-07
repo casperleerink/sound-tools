@@ -1,4 +1,4 @@
-import { abs, bandpass, h, hsv, lowpass, max, min, mix, noise, now, number, Picture, sine, smooth, Space, sqrt, tool } from "./sdk";
+import { abs, bandpass, h, hsv, lowpass, max, min, mix, noise, now, number, Canvas, sine, smooth, Space, sqrt, tool } from "./sdk";
 
 const ACROSS = 200;
 
@@ -20,19 +20,19 @@ tool({
     return (
       <div style={{ grow: true, direction: "row" }}>
         <Space key="light" grow>
-          <Picture x={0} y={0} width={() => size.width - 240} height={() => (size.width - 240) * (135 / 240)} across={320}
-            pixels={({ x, y, picture }) => {
+          <Canvas x={0} y={0} width={() => size.width - 240} height={() => (size.width - 240) * (135 / 240)} across={320}
+            pixels={({ x, y, canvas }) => {
               const step = 1 / ACROSS;
-              const height = (atX: ReturnType<typeof x.plus>) => picture("water", { x: atX, y }).red;
+              const height = (atX: ReturnType<typeof x.plus>) => canvas("water", { x: atX, y }).red;
               const slope = height(x.plus(step)).minus(height(x.minus(step)));
-              const level = picture("water", { x, y }).red.minus(0.5);
+              const level = canvas("water", { x, y }).red.minus(0.5);
               const light = max(0, slope.times(6).plus(0.15));
               const deep = hsv(mix(0.58, 0.52, level.times(2)), 0.7, level.times(0.6).plus(0.35));
               return { red: deep.red.plus(light), green: deep.green.plus(light), blue: deep.blue.plus(light) };
             }} />
         </Space>
         <Space key="water" width={240} height={135}>
-          <Picture key="water" x={0} y={0} width={240} height={135} across={ACROSS}
+          <Canvas key="water" x={0} y={0} width={240} height={135} across={ACROSS}
             pixels={({ x, y, aspect, last, live, measure }) => {
               const [dx, dy] = [1 / ACROSS, aspect.over(ACROSS)];
               const decode = (value: ReturnType<typeof x.plus>) => value.minus(0.5).times(2);

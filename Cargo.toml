@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/dsp", "crates/media", "crates/notes", "crates/pictures", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/dsp", "crates/media", "crates/notes", "crates/canvas", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -40,7 +40,7 @@ sound-core = { path = "crates/core" }
 sound-dsp = { path = "crates/dsp" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
-sound-pictures = { path = "crates/pictures" }
+sound-canvas = { path = "crates/canvas" }
 sound-signals = { path = "crates/signals" }
 sound-typescript = { path = "crates/typescript" }
 sound-ui = { path = "crates/ui" }
@@ -83,9 +83,9 @@ flate2 = "1.1"
 sha1_smol = "1.0.1"
 hound = "3.5"
 memmap2 = "0.9.11"
-# macOS: pictures worked out on the GPU, a spike. The version gpui uses. MIT OR Apache-2.0.
+# macOS: canvases worked out on the GPU, a spike. The version gpui uses. MIT OR Apache-2.0.
 metal = "0.33"
-# Also JPEG: the photos a picture of a tool reads, under `assets/images/`.
+# Also JPEG: the photos a canvas of a tool reads, under `assets/images/`.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # Snapshots of what the agent driver makes of recorded runs.
 insta = "1.48"
@@ -210,8 +210,8 @@ sound-core = { opt-level = 3 }
 sound-dsp = { opt-level = 3 }
 sound-media = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
-# Works out every pixel of a picture on every frame.
-sound-pictures = { opt-level = 3 }
+# Works out every pixel of a canvas on every frame.
+sound-canvas = { opt-level = 3 }
 sound-signals = { opt-level = 3 }
 test-clap-plugin = { opt-level = 3 }
 test-vst3-plugin = { opt-level = 3 }

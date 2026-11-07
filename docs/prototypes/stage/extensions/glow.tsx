@@ -1,4 +1,4 @@
-import { h, hsv, Knob, max, mix, now, number, output, phasor, Picture, sin, sine, Space, sqrt, Stage, TAU, tool } from "./sdk";
+import { h, hsv, Knob, max, mix, now, number, output, phasor, Canvas, sin, sine, Space, sqrt, Stage, TAU, tool } from "./sdk";
 
 tool({
   name: "glow",
@@ -25,7 +25,7 @@ tool({
         <div style={{ color: "gray-700" }}>The picture plays on the stage.</div>
         <Stage style={{ grow: true }}>
           <Space key="stage" grow>
-            <Picture
+            <Canvas
               x={0}
               y={0}
               width={room.right}

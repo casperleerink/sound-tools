@@ -1,4 +1,4 @@
-import { h, hsv, mix, now, Picture, Space, tool, Wave, type Declaration } from "./sdk";
+import { h, hsv, mix, now, Canvas, Space, tool, Wave, type Declaration } from "./sdk";
 import { voice } from "./voice";
 
 const children = { voice, meter: "meter" } as const;
@@ -19,7 +19,7 @@ tool({
   }),
   view: ({ size }) => (
     <Space grow>
-      <Picture
+      <Canvas
         x={0}
         y={0}
         width={() => size.width}

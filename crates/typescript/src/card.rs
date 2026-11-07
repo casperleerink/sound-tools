@@ -106,7 +106,7 @@ pub(crate) struct TypeScriptCard {
     /// The slot of the div it shows on the stage, and the stage's window while it is open.
     stage: Option<usize>,
     stage_window: Option<WindowHandle<Stage>>,
-    /// The number inputs its pictures measure that its tool refused.
+    /// The number inputs its canvases measure that its tool refused.
     measures_refused: HashSet<String>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
@@ -521,17 +521,17 @@ impl TypeScriptCard {
         self.draw_again([body, title_bar, over], cx);
     }
 
-    /// Moves the number inputs its pictures measure, to what they measured since the last poll.
+    /// Moves the number inputs its canvases measure, to what they measured since the last poll.
     fn send_measured(&mut self, cx: &mut Context<Self>) {
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return;
         };
-        let pictures = (table.entries()).filter_map(|entry| match &entry.props {
-            Props::Shape(shape) => shape.picture.as_ref(),
+        let canvases = (table.entries()).filter_map(|entry| match &entry.props {
+            Props::Shape(shape) => shape.canvas.as_ref(),
             _ => None,
         });
-        let measured: Vec<(String, f32)> = pictures
-            .flat_map(|picture| picture.take_measured())
+        let measured: Vec<(String, f32)> = canvases
+            .flat_map(|canvas| canvas.take_measured())
             .map(|(name, value)| (name.to_string(), value))
             .collect();
         for (name, value) in measured {
@@ -543,7 +543,7 @@ impl TypeScriptCard {
             if let Err(error) = sent
                 && self.measures_refused.insert(name.clone())
             {
-                eprintln!("error: a picture measures `{name}`: {error}");
+                eprintln!("error: a canvas measures `{name}`: {error}");
             }
         }
     }

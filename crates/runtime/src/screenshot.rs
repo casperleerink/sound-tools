@@ -23,7 +23,7 @@ use crate::{OFFLINE, open_with_extensions, views};
 /// milliseconds, and a page with a control loop moves for a while, as it does when the app opens.
 pub const SETTLE: Duration = Duration::from_millis(500);
 
-/// Draws the window after it ran for `settle`, in real time: what moves, such as a picture or
+/// Draws the window after it ran for `settle`, in real time: what moves, such as a canvas or
 /// a meter, shows as it is by then.
 pub fn screenshot(project: &Path, png: &Path, settle_for: Duration) -> Result<()> {
     let mut offline = Offline::open(project)?;
@@ -164,7 +164,7 @@ impl Offline {
 
     /// Runs the window for `time` as the app does, in polls of real time: the engine offline,
     /// the background work of the extensions, the timers, and Bun. It draws a frame every poll,
-    /// as a window on screen does, so what reads the frame before, such as a picture's `last`,
+    /// as a window on screen does, so what reads the frame before, such as a canvas's `last`,
     /// moves.
     fn settle(&mut self, time: Duration) -> Result<()> {
         let Self {

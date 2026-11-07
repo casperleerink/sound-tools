@@ -49,9 +49,9 @@ These are live values too. A path such as `"bass/synth"` reaches a record deeper
 - `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.spectrum(path)`, how loud it is from 20 Hz to 20 kHz; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far, and `<Notes list={now.take(path)}>` its notes. `now.input(channel)` is the level of the audio input while a recorder is armed or records.
 - A `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"` shows where the piece plays; `now.bpm` its tempo.
 
-## Pictures
+## Canvas
 
-`<Picture x y width height pixels={(pixel) => colour}>` is a shape of a `Space` filled with a colour per pixel: a light show, a texture that breathes with the sound, a video folded in a mirror. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...); the window then works out every pixel 60 times a second with no code running. The colour is `{ red, green, blue }`, each 0 to 1, and `alpha` to let what is under it show. `across` is how many pixels wide it is worked out, 160 when left out, at most 480.
+`<Canvas x y width height pixels={(pixel) => colour}>` is a shape of a `Space` filled with a colour per pixel: a light show, a texture that breathes with the sound, a video folded in a mirror. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...); the window then works out every pixel 60 times a second with no code running. The colour is `{ red, green, blue }`, each 0 to 1, and `alpha` to let what is under it show. `across` is how many pixels wide it is worked out, 160 when left out, at most 480.
 
 What a pixel reads:
 
@@ -60,14 +60,14 @@ What a pixel reads:
 - `pixel.live(value)`: any live value. `live(now.value("level"))` follows an output of the sound, `live(now.space("stage").pointerX)` the pointer.
 - `pixel.wave(list, at)`: a list at `at`, 0 to 1, such as `now.spectrum("meter")`, how loud each band of a meter's sound is from 20 Hz to 20 kHz, or `now.scope("meter")`, its last sound.
 - `pixel.video("clip.mp4", { at, loops, x, y })`: a video under `assets/video/`, `at` seconds in: `now.elapsed` loops it, `now.seconds` follows the piece. macOS only.
-- `pixel.photo("sky.jpg", { x, y })`: a photo under `assets/images/`, JPEG or PNG: a texture, a mask, a picture to bend.
-- `pixel.last(x, y)`: this picture a step before, for trails and feedback; `last(x.plus(1 / across), y)` scrolls it one pixel a step.
-- `pixel.picture(key, { x, y })`: the last step of the `Picture` of that `key` in the view, such as a water simulation in one and its light in another. It must show to step.
+- `pixel.photo("sky.jpg", { x, y })`: a photo under `assets/images/`, JPEG or PNG: a texture, a mask, a photo to bend.
+- `pixel.last(x, y)`: this canvas a step before, for trails and feedback; `last(x.plus(1 / across), y)` scrolls it one pixel a step.
+- `pixel.canvas(key, { x, y })`: the last step of the `Canvas` of that `key` in the view, such as a water simulation in one and its light in another. It must show to step.
 
-`pixel.measure("bright", value)` plays the number input `bright` of the tool, every step, with the mean of `value` over the picture: a picture or a video plays the sound, gliding, with no code running. A step comes 60 times a second, more often than a video changes: smooth what moves against the step before in the sound. What runs in time (`phasor`, filters, `delay`, the fields) belongs in the sound: send it with `output` and read it with `live`.
+`pixel.measure("bright", value)` plays the number input `bright` of the tool, every step, with the mean of `value` over the canvas: a canvas or a video plays the sound, gliding, with no code running. A step comes 60 times a second, more often than a video changes: smooth what moves against the step before in the sound. What runs in time (`phasor`, filters, `delay`, the fields) belongs in the sound: send it with `output` and read it with `live`.
 
 ```tsx
-<Picture x={0} y={0} width={() => size.width} height={() => size.height} across={240}
+<Canvas x={0} y={0} width={() => size.width} height={() => size.height} across={240}
   pixels={({ x, y, aspect, time, live, last }) => {
     const [across, down] = [x.minus(0.5).times(aspect), y.minus(0.5)];
     const distance = sqrt(across.times(across).plus(down.times(down)));

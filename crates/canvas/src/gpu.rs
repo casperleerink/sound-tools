@@ -1,5 +1,5 @@
-//! The graph of a picture as a Metal compute shader. The shader is the graph written out as
-//! Metal, one line per node, with the same maths as the CPU, so both make the same picture. It
+//! The graph of a canvas as a Metal compute shader. The shader is the graph written out as
+//! Metal, one line per node, with the same maths as the CPU, so both make the same canvas. It
 //! writes the colours, and each pixel's values to measure, to memory the CPU reads as it is.
 
 use metal::{
@@ -14,7 +14,7 @@ use crate::{Inputs, Node, Program};
 pub fn shader(program: &Program) -> Result<String, String> {
     let mut code = String::from(PRELUDE);
     code.push_str(
-        "kernel void picture(device float4* out [[buffer(0)]], device const float4* last [[buffer(1)]],\n\
+        "kernel void canvas(device float4* out [[buffer(0)]], device const float4* last [[buffer(1)]],\n\
          constant float* lives [[buffer(2)]], constant uint4& size [[buffer(3)]],\n\
          device const float4* images [[buffer(4)]], device const uint4* image_at [[buffer(5)]],\n\
          device const float* lists [[buffer(6)]], device const uint2* list_at [[buffer(7)]],\n\
@@ -170,7 +170,7 @@ float sample(device const float4* frame, uint width, uint height, float x, float
 }
 "#;
 
-/// A picture's shader on the GPU, and the memory it writes, which it reads as the last step.
+/// A canvas's shader on the GPU, and the memory it writes, which it reads as the last step.
 pub struct Gpu {
     device: Device,
     queue: CommandQueue,
@@ -190,7 +190,7 @@ impl Gpu {
         // The same maths as the CPU, to the last bit where it can.
         options.set_fast_math_enabled(false);
         let library = device.new_library_with_source(&source, &options)?;
-        let function = library.get_function("picture", None)?;
+        let function = library.get_function("canvas", None)?;
         let pipeline = device.new_compute_pipeline_state_with_function(&function)?;
         Ok(Self {
             queue: device.new_command_queue(),
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gpu_makes_the_picture_and_the_measures_the_cpu_makes() {
+    fn the_gpu_makes_the_canvas_and_the_measures_the_cpu_makes() {
         // Rings of a live value, smooth and white noise, a trail of the step before, a list read
         // across and a photo read upside down; it measures the rings.
         let program = program(

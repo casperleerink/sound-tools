@@ -1,5 +1,5 @@
-//! How long a step of a heavy picture takes on the CPU and on the GPU, at two sizes:
-//! `cargo run -p sound-pictures --example timing`.
+//! How long a step of a heavy canvas takes on the CPU and on the GPU, at two sizes:
+//! `cargo run -p sound-canvas --example timing`.
 #![allow(clippy::unwrap_used)]
 
 #[cfg(not(target_os = "macos"))]
@@ -9,8 +9,8 @@ fn main() {}
 fn main() {
     use std::time::Instant;
 
-    use sound_pictures::gpu::Gpu;
-    use sound_pictures::{Frame, Inputs, Program, render};
+    use sound_canvas::gpu::Gpu;
+    use sound_canvas::{Frame, Inputs, Program, render};
 
     // 60 sines a pixel, then a trail of the step before.
     let mut nodes = vec![

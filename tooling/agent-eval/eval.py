@@ -314,7 +314,7 @@ def check_video(folder: Path) -> dict:
 
 
 def check_visuals(folder: Path) -> dict:
-    return {**check_drones(folder), "draws a picture": code_says(folder, "<Picture"),
+    return {**check_drones(folder), "draws a picture": code_says(folder, "<Canvas"),
             "shows on the stage": code_says(folder, "<Stage")}
 
 

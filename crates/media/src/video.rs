@@ -10,9 +10,9 @@ use sound_core::{AssetName, Assets};
 
 use crate::MediaError;
 
-/// The folder under `assets/` a picture's file goes in, by its kind: `video/` for a film and
+/// The folder under `assets/` a film or photo goes in: `video/` for a film and
 /// `images/` for a photo. `None` for anything else, such as sound.
-pub fn picture_folder(path: &Path) -> Option<&'static str> {
+pub fn visual_folder(path: &Path) -> Option<&'static str> {
     let extension = path.extension()?.to_string_lossy().to_lowercase();
     match extension.as_str() {
         "mp4" | "mov" | "m4v" => Some("video"),
@@ -22,8 +22,8 @@ pub fn picture_folder(path: &Path) -> Option<&'static str> {
 }
 
 /// Copies a film or a photo into `assets/<folder>/` under a name of its own, never over a file
-/// that is there, and gives its file name there, as a picture names it.
-pub fn import_picture(assets: &Assets, source: &Path, folder: &str) -> Result<String, MediaError> {
+/// that is there, and gives its file name there, as a canvas names it.
+pub fn import_visual(assets: &Assets, source: &Path, folder: &str) -> Result<String, MediaError> {
     let io_error = |source| MediaError::Io {
         path: folder.to_string(),
         source,

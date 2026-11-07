@@ -1,4 +1,4 @@
-import { h, hsv, max, mix, now, number, output, phasor, Picture, sin, sine, Space, sqrt, TAU, tool } from "./sdk";
+import { h, hsv, max, mix, now, number, output, phasor, Canvas, sin, sine, Space, sqrt, TAU, tool } from "./sdk";
 
 tool({
   name: "glow",
@@ -15,7 +15,7 @@ tool({
   },
   view: ({ size }) => (
     <Space grow>
-      <Picture
+      <Canvas
         x={0}
         y={0}
         width={() => size.width}

@@ -620,9 +620,9 @@ function quantize(value: number): number {
   return Math.abs(value) < 1e-9 ? 0 : Number(value.toFixed(9));
 }
 
-// Pictures
+// Canvases
 
-/** A colour of a picture: red, green and blue, each 0 to 1, and `alpha`, how much it covers what is under it, 1 when left out. */
+/** A colour of a canvas: red, green and blue, each 0 to 1, and `alpha`, how much it covers what is under it, 1 when left out. */
 export interface Rgb {
   red: Operand;
   green: Operand;
@@ -638,23 +638,23 @@ export function hsv(hue: Operand, saturation: Operand, value: Operand): { red: S
   return { red: of(1), green: of(2 / 3), blue: of(1 / 3) };
 }
 
-/** For `Picture`: where a pixel is, and the live value of `index` in its `lives`. */
+/** For `Canvas`: where a pixel is, and the live value of `index` in its `lives`. */
 export const pixelSource = (op: PixelSource): Signal => new Named({ op });
 export const pixelLive = (index: number): Signal => new Named({ op: "live", index });
 
-/** A picture as the window gets it: a graph run once per pixel, which reads `lives`. */
-export interface PictureGraph<L = unknown, W = unknown> {
+/** A canvas as the window gets it: a graph run once per pixel, which reads `lives`. */
+export interface CanvasGraph<L = unknown, W = unknown> {
   nodes: GraphNode[];
   lives: L[];
   waves: W[];
-  /** What `image` nodes read: a video, another picture by its `key`, or a photo. */
-  images: Array<{ video: { asset: string; at: L; loops: boolean } } | { picture: string } | { photo: string }>;
+  /** What `image` nodes read: a video, another canvas by its `key`, or a photo. */
+  images: Array<{ video: { asset: string; at: L; loops: boolean } } | { canvas: string } | { photo: string }>;
   output: { red: number; green: number; blue: number; alpha?: number };
   measures: Array<{ name: string; node: number }>;
   across?: number;
 }
 
-/** What only a sound has: it runs in time, sample after sample, and a picture has no time between its pixels. */
+/** What only a sound has: it runs in time, sample after sample, and a canvas has no time between its pixels. */
 const SOUND_ONLY = new Set<string>([
   "input", "inputLeft", "inputRight", "channel", "sampleRate", "beat", "bpm", "playing", "frequency",
   "pitch", "gate", "velocity", "onset", "param", "feedback", "phasor", "delay", "lowpass", "highpass",
@@ -663,22 +663,22 @@ const SOUND_ONLY = new Set<string>([
   "sidePhase",
 ]);
 
-/** For `Picture`: the graph of `colour`, which `layout` lays out as a sound's. */
-export function pictureToJson<L, W>(
+/** For `Canvas`: the graph of `colour`, which `layout` lays out as a sound's. */
+export function canvasToJson<L, W>(
   colour: Rgb,
   lives: L[],
   waves: W[],
-  images: PictureGraph<L, W>["images"],
+  images: CanvasGraph<L, W>["images"],
   measures: Array<{ name: string; value: Operand }>,
   across?: number,
-): PictureGraph<L, W> {
+): CanvasGraph<L, W> {
   const { nodes, use } = layout(0);
   const rgb = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
   const output = colour.alpha === undefined ? rgb : { ...rgb, alpha: use(colour.alpha) };
   const measured = measures.map(({ name, value }) => ({ name, node: use(value) }));
   for (const node of nodes) {
     if (SOUND_ONLY.has(node.op)) {
-      throw new Error(`\`${node.op}\` belongs in a sound: a picture works out each pixel on its own, with no time between them`);
+      throw new Error(`\`${node.op}\` belongs in a sound: a canvas works out each pixel on its own, with no time between them`);
     }
   }
   const graph = { nodes, lives, waves, images, output, measures: measured };

@@ -1,4 +1,4 @@
-import { bandpass, exp, h, hsv, mtof, noise, now, number, Picture, sine, smooth, Space, sqrt, tool } from "./sdk";
+import { bandpass, exp, h, hsv, mtof, noise, now, number, Canvas, sine, smooth, Space, sqrt, tool } from "./sdk";
 
 tool({
   name: "smoke",
@@ -20,7 +20,7 @@ tool({
     const room = now.space("smoke");
     return (
       <Space key="smoke" grow>
-        <Picture
+        <Canvas
           x={0}
           y={0}
           width={room.right}

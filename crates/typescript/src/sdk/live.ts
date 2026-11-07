@@ -237,7 +237,7 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   /**
    * How loud each band of the last sound of a `meter` child is, by its path: `bins` bands (128
    * when left out) from 20 Hz at the start to 20 kHz at the end, each 0 (silence) to 1 (full
-   * scale). For a `Wave` from `low: 0`, or `pixel.wave` in a `Picture`.
+   * scale). For a `Wave` from `low: 0`, or `pixel.wave` in a `Canvas`.
    */
   spectrum(name: string, options?: { bins?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
