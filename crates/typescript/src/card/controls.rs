@@ -467,7 +467,7 @@ impl Drawing<'_> {
                 view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
             }))
             .on_drop(self.listener(move |view, carried: &Carried, _, cx| {
-                let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
+                let dropped = json!({ "files": [], "videos": [], "photos": [], "carried": carried.0, "x": 0, "y": 0 });
                 view.event(id, EventKind::Drop, dropped, cx);
             }))
     }

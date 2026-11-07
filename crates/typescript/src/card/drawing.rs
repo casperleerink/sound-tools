@@ -26,6 +26,7 @@ use crate::tree::{self, DivProps, IconProps, InputProps, NodeTable, Props, TextP
 use super::controls::{Control, Keys};
 use super::input::{Hears, Hovers, hears_hover, listener};
 use super::shapes::SpaceIndex;
+use super::stage::{StageDiv, open_stage_button};
 use super::sync::Embedded;
 use super::{Lifted, TypeScriptCard};
 
@@ -61,6 +62,8 @@ pub(super) struct Drawing<'a> {
     pub(super) scroller: Option<ScrollHandle>,
     /// Whether it draws the title bar's div, which the body leaves out.
     pub(super) in_title_bar: bool,
+    /// Where the stage's div draws.
+    pub(super) stage: StageDiv,
     /// Whether what it draws shows out of its page, in the title bar.
     pub(super) out_of_page: bool,
     /// Whether what it draws is inside a div with a tooltip.
@@ -188,10 +191,17 @@ impl Drawing<'_> {
                 carry,
                 on_drop,
                 title_bar,
+                stage,
             }) => {
                 if *title_bar == Some(true) && !std::mem::take(&mut self.in_title_bar) {
                     return div().into_any_element();
                 }
+                let stage_in_page = *stage == Some(true)
+                    && match std::mem::replace(&mut self.stage, StageDiv::Away) {
+                        StageDiv::Away => return div().into_any_element(),
+                        StageDiv::Here => false,
+                        StageDiv::InPage => true,
+                    };
                 let style = style.clone().unwrap_or_default();
                 let disabled = *disabled == Some(true);
                 let shown: Vec<usize> = (entry.children.iter())
@@ -291,6 +301,9 @@ impl Drawing<'_> {
                     (scroller.clone()).filter(|_| rows.is_some() && follow.is_none());
                 if let Some(scroller) = scrolled_rows {
                     children.push(drawn_again_when_more_shows(scroller, self.viewport));
+                }
+                if stage_in_page {
+                    children.push(open_stage_button(self.card.clone()));
                 }
                 if *on_hover == Some(true) {
                     let card = self.card.clone();

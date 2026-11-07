@@ -331,8 +331,9 @@ impl TypeScriptCard {
             .set(self.placed.borrow().get(&id).copied().map(under));
     }
 
-    /// Copies dropped files into `assets/audio/`, in the background, and tells the code of
-    /// `node` their names there and where they fell.
+    /// Copies dropped files into `assets/`, in the background: sound into `audio/`, films into
+    /// `video/` and photos into `images/`. Tells the code of `node` their names there and where
+    /// they fell.
     pub(super) fn drop_files(
         &mut self,
         node: u64,
@@ -343,23 +344,33 @@ impl TypeScriptCard {
         let assets = self.session.read(cx).project().assets().clone();
         let imported = cx.background_spawn(async move {
             (paths.iter())
-                .map(|path| sound_media::import(&assets, path))
+                .map(|path| match sound_media::video::visual_folder(path) {
+                    Some(folder) => sound_media::video::import_visual(&assets, path, folder)
+                        .map(|name| (folder, name)),
+                    None => sound_media::import(&assets, path)
+                        .map(|file| ("audio", file.asset.to_string())),
+                })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |view, cx| {
             let imported = imported.await;
             view.update(cx, |view, cx| {
-                let mut files = Vec::new();
+                let (mut files, mut videos, mut photos) = (Vec::new(), Vec::new(), Vec::new());
                 for file in imported {
                     match file {
-                        Ok(file) => files.push(file.asset.to_string()),
+                        Ok(("video", name)) => videos.push(name),
+                        Ok(("images", name)) => photos.push(name),
+                        Ok((_, name)) => files.push(name),
                         Err(error) => view
                             .session
                             .update(cx, |session, cx| session.report(error, cx)),
                     }
                 }
-                if !files.is_empty() {
-                    let dropped = json!({ "files": files, "carried": null, "x": x, "y": y });
+                if !files.is_empty() || !videos.is_empty() || !photos.is_empty() {
+                    let dropped = json!({
+                        "files": files, "videos": videos, "photos": photos,
+                        "carried": null, "x": x, "y": y,
+                    });
                     view.event(node, EventKind::Drop, dropped, cx);
                 }
             })
@@ -866,6 +877,21 @@ impl TypeScriptCard {
         }
         drop(spaces);
         cx.notify();
+    }
+
+    /// Keeps where the pointer is over the space `key`. Whether the card draws again for it: it
+    /// reads it, and it moved.
+    pub(super) fn point_at(&self, key: &str, pointer: Option<(f64, f64)>, cx: &App) -> bool {
+        let mut spaces = self.spaces.borrow_mut();
+        let Some(view) = spaces.get_mut(key) else {
+            return false;
+        };
+        let (at, over) = (pointer.unwrap_or(view.pointer), pointer.is_some());
+        if (view.pointer, view.pointer_over) == (at, over) {
+            return false;
+        }
+        (view.pointer, view.pointer_over) = (at, over);
+        self.live.read(cx).uses(self.card).pointer
     }
 
     pub(super) fn hover(&mut self, hovered: Option<(String, u64)>, cx: &mut Context<Self>) {

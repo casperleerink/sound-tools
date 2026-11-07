@@ -32,6 +32,7 @@ mod stream;
 mod stretch;
 mod take;
 mod varispeed;
+pub mod video;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -528,7 +529,7 @@ pub struct Imported {
 }
 
 /// Removes a file this module made, on the way out of a failure that is already reported.
-fn remove_quietly(path: &Path) {
+pub(crate) fn remove_quietly(path: &Path) {
     match fs::remove_file(path) {
         Ok(()) => {}
         // The failure that brought us here is the one to report. A file left behind starts
@@ -552,7 +553,7 @@ fn audio_folder(assets: &Assets) -> Result<PathBuf, MediaError> {
 }
 
 /// A part of an asset name from any text: lowercase letters and digits, `-` for the rest.
-fn asset_part(text: &str, fallback: &str) -> String {
+pub(crate) fn asset_part(text: &str, fallback: &str) -> String {
     let mut part = String::new();
     for character in text.chars().flat_map(char::to_lowercase) {
         if character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_' {

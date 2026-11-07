@@ -74,7 +74,7 @@ export interface View<State, I extends Inputs = Inputs, M = unknown, K extends C
 
 /** What a live value is made of, as the window gets it. */
 type LiveNode =
-  | { op: "tick" | "elapsed" | "bpm" }
+  | { op: "tick" | "elapsed" | "bpm" | "seconds" }
   | { op: "value"; name: string; child?: string; played: boolean; fraction: boolean }
   | { op: "peak"; name: string; channel?: Channel }
   | { op: "device_peak"; channel?: Channel }
@@ -177,14 +177,20 @@ export interface SpaceValues {
   /** How many units one point is: `width: space.pointX.times(6)` is 6 points wide at any zoom. */
   pointX: Live;
   pointY: Live;
+  /** Where the pointer is over it, in its units, as it moves: a light that follows the hand. Where it was last while it is away. */
+  pointerX: Live;
+  pointerY: Live;
+  /** 1 while the pointer is over it. */
+  pointerOver: Live;
 }
 
 /** The numbers of fields `State` holds. */
 type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
 
-/** What a wave draws: see `now.scope`, `now.history` and `now.file`. */
+/** What a wave draws: see `now.scope`, `now.spectrum`, `now.history` and `now.file`. */
 export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
+  | { source: "spectrum"; name: string; bins?: number }
   | { source: "history"; of: Num; frames: number; key: string }
   | { source: "file"; asset: string; from?: number | null; to?: number | null }
   | TakeList;
@@ -203,6 +209,8 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   bpm: Live;
   /** Seconds since the view opened, on every frame: `now.elapsed.mod(1).lt(0.5)` blinks once a second. */
   elapsed: Live;
+  /** Where the piece plays, in seconds from its start, through every tempo change: a video in time with it. */
+  seconds: Live;
   /**
    * A number as it is now: a field of the record, also as a drag turns it; a number input,
    * where it was put last; or a number output of the sound. A child's, or one deeper, as
@@ -226,6 +234,12 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   input(channel: number): Live;
   /** The last sound of a `meter` child by its path, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
   scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
+  /**
+   * How loud each band of the last sound of a `meter` child is, by its path: `bins` bands (128
+   * when left out) from 20 Hz at the start to 20 kHz at the end, each 0 (silence) to 1 (full
+   * scale). For a `Wave` from `low: 0`, or `pixel.wave` in a `Canvas`.
+   */
+  spectrum(name: string, options?: { bins?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
   history(of: Num, frames: number): WaveList;
   /**
@@ -251,6 +265,7 @@ function sources(): Now<Record<string, number>> {
     tick: new Live({ op: "tick" }),
     bpm: new Live({ op: "bpm" }),
     elapsed: new Live({ op: "elapsed" }),
+    seconds: new Live({ op: "seconds" }),
     value: (path, options) => {
       const { child, name } = splitPath(path);
       return new Live({ op: "value", name, ...(child === undefined ? {} : { child }), played: options?.played ?? false, fraction: options?.fraction ?? false });
@@ -259,13 +274,14 @@ function sources(): Now<Record<string, number>> {
     devicePeak: (channel) => new Live({ op: "device_peak", channel }),
     input: (channel) => new Live({ op: "input", channel }),
     scope: (name, options) => ({ source: "scope", name, ...options }),
+    spectrum: (name, options) => ({ source: "spectrum", name, ...options }),
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
     file: (asset, options) => ({ source: "file", asset, ...options }),
     take: (name) => ({ source: "take", name }),
     drag: (id) =>
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active", "alt"]),
     space: (key) =>
-      part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
+      part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY", "pointerX", "pointerY", "pointerOver"]),
     hover: (key) => new Live({ op: "hover", key }),
   };
 }
@@ -384,12 +400,15 @@ export interface PointerEvents {
 }
 
 /**
- * What was let go on a node that hears drops: audio files from the system, copied into
- * `assets/audio/` under the names in `files`, or what a dragged `div` carries. `x` and `y` are
- * where, in the units of a space (0 on a `div`).
+ * What was let go on a node that hears drops: files from the system, copied into `assets/`
+ * under the names in `files` (sound, in `audio/`), `videos` (films, in `video/`) and `photos`
+ * (in `images/`), or what a dragged `div` carries. `x` and `y` are where, in the units of a
+ * space (0 on a `div`).
  */
 export interface Dropped {
   files: string[];
+  videos: string[];
+  photos: string[];
   carried: string | null;
   x: number;
   y: number;

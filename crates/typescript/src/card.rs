@@ -11,6 +11,7 @@ mod paint;
 mod placed;
 mod shapes;
 mod space;
+mod stage;
 mod sync;
 
 use std::cell::{Cell, RefCell};
@@ -21,7 +22,7 @@ use std::time::Duration;
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, MouseButton,
     Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity, WeakFocusHandle, Window,
-    canvas, div, prelude::*, px,
+    WindowHandle, canvas, div, prelude::*, px,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -44,6 +45,8 @@ pub use self::drawing::drawn_nodes;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
+pub(crate) use self::stage::Stage;
+use self::stage::StagePlace;
 use self::sync::Embedded;
 
 /// How long an ended drag keeps its values at most, when the answer to its end does not come,
@@ -102,9 +105,15 @@ pub(crate) struct TypeScriptCard {
     embedded: HashMap<u64, Embedded>,
     /// The slot of the div it shows in the window's title bar, as last drawn.
     title_bar: Option<usize>,
+    /// The slot of the div it shows on the stage, and the stage's window while it is open.
+    stage: Option<usize>,
+    stage_window: Option<WindowHandle<Stage>>,
+    stage_place: StagePlace,
+    /// The number inputs its canvases measure that its tool refused.
+    measures_refused: HashSet<String>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
-    parts: RefCell<Option<((u64, Option<usize>), Rc<Parts>)>>,
+    parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
     /// The spaces of a page the layer over it draws, by node, with where the page laid them out.
     lifted: Rc<RefCell<HashMap<u64, Lifted>>>,
     /// Where the page is in the window, which the layer over it draws from.
@@ -414,6 +423,7 @@ impl TypeScriptCard {
         })
         .detach();
         cx.on_release(|view, cx| {
+            view.close_stage(cx);
             view.edit.finish(&view.session, cx);
             // A card that is gone hears no focus out, nor the button go up.
             view.let_go_of_keys(cx);
@@ -446,6 +456,10 @@ impl TypeScriptCard {
             focus_before_overlays: None,
             embedded: HashMap::new(),
             title_bar: None,
+            stage: None,
+            stage_window: None,
+            stage_place: StagePlace::default(),
+            measures_refused: HashSet::new(),
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),
@@ -482,6 +496,7 @@ impl TypeScriptCard {
         if self.let_go_of_ended_drag(cx) {
             cx.notify();
         }
+        self.send_measured(cx);
         let Some(state) = self.state(cx) else {
             return;
         };
@@ -508,6 +523,33 @@ impl TypeScriptCard {
             !body && self.title_bar.is_some() && changed(&parts.title_bar, Drawn::TitleBar);
         let over = !body && !parts.lifted.is_empty() && changed(&parts.over, Drawn::Over);
         self.draw_again([body, title_bar, over], cx);
+    }
+
+    /// Moves the number inputs its canvases measure, to what they measured since the last poll.
+    fn send_measured(&mut self, cx: &mut Context<Self>) {
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
+            return;
+        };
+        let canvases = (table.entries()).filter_map(|entry| match &entry.props {
+            Props::Shape(shape) => shape.canvas.as_ref(),
+            _ => None,
+        });
+        let measured: Vec<(String, f32)> = canvases
+            .flat_map(|canvas| canvas.take_measured())
+            .map(|(name, value)| (name.to_string(), value))
+            .collect();
+        for (name, value) in measured {
+            let id = self.id.clone();
+            let sent = self.live.update(cx, |live, cx| {
+                live.control(&id, &name, Some(value), None, cx)
+            });
+            // Said once, not on every poll.
+            if let Err(error) = sent
+                && self.measures_refused.insert(name.clone())
+            {
+                eprintln!("error: a canvas measures `{name}`: {error}");
+            }
+        }
     }
 
     /// Draws the whole card again, or only its title bar or the layer over the page when
@@ -558,7 +600,7 @@ impl TypeScriptCard {
             });
         };
         let title = self.title_bar;
-        let key = (table.version(), title);
+        let key = (table.version(), title, self.stage);
         if let Some((at, parts)) = &*self.parts.borrow()
             && *at == key
         {
@@ -569,6 +611,7 @@ impl TypeScriptCard {
         let page = self.frame.is_none();
         let spaces: Vec<(usize, u64)> = (table.spaces().into_iter())
             .filter(|(slot, _)| page && title.is_none_or(|title| !table.within(*slot, title)))
+            .filter(|(slot, _)| self.stage.is_none_or(|stage| !table.within(*slot, stage)))
             .filter(|(slot, _)| !table.kept_in_page(*slot))
             .collect();
         let slots: Vec<usize> = spaces.iter().map(|(slot, _)| *slot).collect();
@@ -788,6 +831,7 @@ impl TypeScriptCard {
             button_down: self.button_down.get(),
             scroller: None,
             in_title_bar: false,
+            stage: self.stage_in_page(),
             out_of_page: false,
             under_tooltip: false,
             takes_keys,

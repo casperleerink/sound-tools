@@ -11,10 +11,14 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use sound_core::{Clock, InstanceId, Peaks, Project, RecordStamp, Scope, Ticks, ValueRange};
 use sound_media::Overview;
+use sound_media::analysis::{PowerSpectrum, WINDOW};
 use sound_ui::{LiveNotes, PeaksReader, Session, SharedPeaks};
+
+use sound_canvas::Frame;
 
 use crate::meter;
 use crate::tree::{Ease, Uses};
+use crate::videos::{Player, Still};
 
 /// The name an owner keeps the watch of what a cable plays into the number of a child under,
 /// `child.number`.
@@ -103,6 +107,15 @@ pub(crate) struct Feeds {
     pub take_notes: HashMap<String, Rc<LiveNotes>>,
     /// Waveforms as drawn, by file name and the seconds of it, which stay until it changes.
     pub waves: RefCell<HashMap<(String, u64, u64), (u64, Rc<[f32]>)>>,
+    /// Spectra as drawn, by meter and how many bins, made once a frame.
+    spectra: RefCell<HashMap<(String, u32), (u64, Rc<[f32]>)>>,
+    sample_rate: u32,
+    /// The folder of the project, whose `assets/video/` its videos are in.
+    root: std::path::PathBuf,
+    /// The photos it shows, by file name, with the frame they were last read.
+    stills: RefCell<HashMap<String, (u64, Still)>>,
+    /// The videos it shows, by file name and read, with the frame they were last read.
+    videos: RefCell<HashMap<String, (u64, Player)>>,
     records: Records,
 }
 
@@ -164,6 +177,10 @@ impl Feeds {
             self.frame += 1;
         }
         let project = session.project();
+        self.sample_rate = project.sample_rate();
+        if self.root != project.root() {
+            self.root = project.root().to_path_buf();
+        }
         let clock = project.clock();
         if (self.clock.as_ref()).is_none_or(|kept| kept.tempo_map() != clock.tempo_map()) {
             self.clock = Some(clock.clone());
@@ -226,6 +243,9 @@ impl Feeds {
         (self.eased.borrow_mut()).retain(|_, eased| frame - eased.frame < 60);
         (self.histories.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.spectra.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.videos.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.stills.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
     }
 
     /// Whether a frame now would draw something else than the last, of what reads `uses`, the
@@ -361,6 +381,53 @@ impl Feeds {
     }
 
     /// The last `frames` values of `value` under `key`, one a frame, oldest first.
+    /// The spectrum of the last sound of the meter `name`, see [`List::Spectrum`].
+    ///
+    /// [`List::Spectrum`]: crate::tree::List::Spectrum
+    pub(crate) fn spectrum(&self, name: &str, bins: u32) -> Vec<f32> {
+        let mut spectra = self.spectra.borrow_mut();
+        let key = (name.to_string(), bins);
+        if let Some((frame, values)) = spectra.get(&key)
+            && *frame == self.frame
+        {
+            return values.to_vec();
+        }
+        let values = (self.scopes.get(name))
+            .map(|(frames, _)| spectrum_of(frames, self.sample_rate, bins as usize))
+            .unwrap_or_default();
+        spectra.insert(key, (self.frame, values.clone().into()));
+        values
+    }
+
+    /// The newest frame decoded of the video `asset` under `assets/video/`, asking for the one at
+    /// `seconds` into it, see [`Player::frame`]. Each read of a video, by `read`, has a player of
+    /// its own: two at other times would make one jump back and forth.
+    pub(crate) fn video(
+        &self,
+        (asset, read): (&str, &str),
+        seconds: f64,
+        loops: bool,
+    ) -> Option<Arc<Frame>> {
+        let mut videos = self.videos.borrow_mut();
+        let (last, player) = videos.entry(format!("{asset}|{read}")).or_insert_with(|| {
+            let path = self.root.join("assets").join("video").join(asset);
+            (self.frame, Player::open(&path))
+        });
+        *last = self.frame;
+        player.frame(seconds, loops)
+    }
+
+    /// The photo `asset` under `assets/images/`, once it is read.
+    pub(crate) fn still(&self, asset: &str) -> Option<Arc<Frame>> {
+        let mut stills = self.stills.borrow_mut();
+        let (last, still) = stills.entry(asset.to_string()).or_insert_with(|| {
+            let path = self.root.join("assets").join("images").join(asset);
+            (self.frame, Still::open(&path))
+        });
+        *last = self.frame;
+        still.frame()
+    }
+
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {
         let mut histories = self.histories.borrow_mut();
         let (last, values) = histories.entry(key.to_string()).or_default();
@@ -470,6 +537,40 @@ fn played(
     ))
 }
 
+/// The bottom of a spectrum, in dB: 0 there, 1 at full scale.
+const SPECTRUM_FLOOR_DB: f64 = -90.0;
+
+thread_local! {
+    static POWER: RefCell<PowerSpectrum> = RefCell::new(PowerSpectrum::new(WINDOW));
+}
+
+/// The levels of `bins` bands from 20 Hz to 20 kHz, each a band of equal octaves, of the last
+/// frames of `frames`, both channels mixed: 0 at [`SPECTRUM_FLOOR_DB`] and below, 1 at 0 dB.
+fn spectrum_of(frames: &VecDeque<[f32; 2]>, sample_rate: u32, bins: usize) -> Vec<f32> {
+    let skip = frames.len().saturating_sub(WINDOW);
+    let mixed: Vec<f32> = (frames.iter().skip(skip))
+        .map(|[left, right]| (left + right) / 2.0)
+        .collect();
+    let powers: Vec<f64> = POWER.with_borrow_mut(|power| power.powers(&mixed).collect());
+    let hz_per_bin = f64::from(sample_rate.max(1)) / WINDOW as f64;
+    let (low, high) = (20.0_f64.ln(), 20_000.0_f64.ln());
+    let edge = |band: usize| (low + (high - low) * band as f64 / bins as f64).exp() / hz_per_bin;
+    (0..bins)
+        .map(|band| {
+            let from = edge(band).floor() as usize;
+            let to = (edge(band + 1).ceil() as usize).max(from + 1);
+            let power: f64 = powers
+                .get(from..to.min(powers.len()))
+                .unwrap_or_default()
+                .iter()
+                .sum();
+            // A sine of amplitude `a` has a mean square of `a * a / 2`: it reads its peak in dB.
+            let db = 10.0 * (2.0 * power).max(1e-12).log10();
+            ((db - SPECTRUM_FLOOR_DB) / -SPECTRUM_FLOOR_DB).clamp(0.0, 1.0) as f32
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,5 +586,22 @@ mod tests {
         peaks.record_block([&[0.75], &[0.0]]);
         assert_eq!(second.take(), [0.75, 0.25]);
         assert_eq!(first.take(), [0.75, 0.0]);
+    }
+
+    #[test]
+    fn a_spectrum_shows_a_sine_at_full_scale_in_its_band_only() {
+        let rate = 48_000;
+        let frames: VecDeque<[f32; 2]> = (0..WINDOW)
+            .map(|frame| {
+                let sample = (std::f32::consts::TAU * 1000.0 * frame as f32 / rate as f32).sin();
+                [sample, sample]
+            })
+            .collect();
+        let bins = spectrum_of(&frames, rate, 30);
+        // 30 bands of a third of an octave from 20 Hz: 1 kHz is in band 17.
+        let loudest = (0..bins.len()).max_by(|a, b| bins[*a].total_cmp(&bins[*b]));
+        assert_eq!(loudest, Some(17));
+        assert!((bins[17] - 1.0).abs() < 0.03, "{}", bins[17]);
+        assert!(bins[5] < 0.2 && bins[28] < 0.2, "{bins:?}");
     }
 }
