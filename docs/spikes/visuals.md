@@ -30,3 +30,7 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 `pixel.wave(list, at)` reads any live list in a picture. New list `now.spectrum(meter)`: 20 Hz to 20 kHz, 0 to 1, made from the meter's scope once a frame; a `Wave` draws it too. Demo: `docs/prototypes/spectra`, a scrolling spectrogram made with `last`, with the scope as a `Wave` over it.
 
 - A picture paints after lines and text in its layer, as GPUI orders images, so shapes after it show over it.
+
+### 3. Screenshots after a while (`t3/visual-screenshot-seconds`)
+
+`--screenshot <png> --seconds <n>` runs the window n seconds, drawing every poll, before the picture. An agent sees what a picture, a scope or a meter does over time, as vork's loop of render and look.
