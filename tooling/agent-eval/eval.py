@@ -8,7 +8,8 @@ project. It prints one JSON line per run: whether the check passed, what it cost
 turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
-a storm drone played with an XY pad, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
+a storm drone played with an XY pad, a generative part in D dorian, a grain cloud of a sample, and a drone with
+colours for a projector, and a video kaleidoscope that plays a pad. Copy one into the
 `extensions/` folder of a project to try it.
 """
 
@@ -294,6 +295,29 @@ def check_drones(folder: Path) -> dict:
     return {**check_screen(folder), "it sounds": sounds(folder)}
 
 
+def code_says(folder: Path, text: str) -> bool:
+    """Whether a tool of the project has `text` in its code."""
+    return any(text in path.read_text() for path in (folder / "extensions").glob("*.ts*")
+               if path.name != "sdk.ts")
+
+
+def setup_video(folder: Path) -> None:
+    setup_tape_builder(folder)
+    video = folder / "assets" / "video"
+    video.mkdir(parents=True, exist_ok=True)
+    shutil.copy(HERE.parents[1] / "docs/prototypes/video/assets/video/zoom.mp4", video / "zoom.mp4")
+
+
+def check_video(folder: Path) -> dict:
+    return {**check_drones(folder), "reads the video": code_says(folder, "video("),
+            "the picture plays the sound": code_says(folder, "measure(")}
+
+
+def check_visuals(folder: Path) -> dict:
+    return {**check_drones(folder), "draws a picture": code_says(folder, "<Picture"),
+            "shows on the stage": code_says(folder, "<Stage")}
+
+
 def check_mic(folder: Path) -> dict:
     return {**check_screen(folder),
             "hears the input": any("device_input" in c.get("from", {}) for c in connections(folder))}
@@ -461,6 +485,17 @@ SCENARIOS = {
                      "across it column by column, playing the living cells of its column as a "
                      "chord: lower rows are lower notes of a pentatonic scale. A soft, "
                      "bell-like sound."),
+    "visuals-builder": (setup_tape_builder, check_visuals,
+                        "Turn this project into an audiovisual piece instead of a song, just one "
+                        "screen: a slow, evolving drone, and visuals of flowing colours that pulse "
+                        "with how loud the drone is and leave trails. I'll show the visuals on a "
+                        "projector at a concert while I keep the knobs for the drone on my "
+                        "laptop."),
+    "video-builder": (setup_video, check_video,
+                      "I put a video in assets/video/zoom.mp4. Turn this project into one screen "
+                      "instead of a song: the video loops full screen with a kaleidoscope effect, "
+                      "and the music comes from the video: a pad whose filter opens the brighter "
+                      "the video is, and a little sparkle when a lot changes in the picture."),
     "mic-builder": (setup_tape_builder, check_mic,
                     "Turn this project into a live toy for my voice instead of a song, just one "
                     "screen and no timeline: I sing into the microphone and it comes out as a "

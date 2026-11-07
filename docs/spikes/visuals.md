@@ -45,8 +45,8 @@ Branches `t3/visual-*`, stacked; PRs #392 to #405.
 - A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
 - The DAW has no way in the window to pick its film; the agent sets `video`.
 - `measure` of a live value is a way round to play an input from the pointer; a space could say which live values play which inputs.
-- No agent has written a picture from the docs yet: run the agent eval on a few visual requests.
+- The agent evals `visuals-builder` and `video-builder` passed their first run each (3 minutes, about $1): from the docs alone an agent built a drone with flowing colours on the `Stage` and a preview on the page, and a video kaleidoscope whose light and movement play a pad (`tooling/agent-eval/examples/`). One run each is no rate: run more.
 
 ## Recommendation
 
-Keep `Picture` with `live`, `wave`, `last`, `noise`, `alpha`, `measure` and the threads, and `--screenshot --seconds`: small, and in the grain of the SDK. Then `Stage` and video. Treat `--render-video` and the DAW film as product decisions.
+Keep `Picture` with `live`, `wave`, `last`, `noise`, `alpha`, `measure` and the threads, and `--screenshot --seconds`: small, in the grain of the SDK, and an agent used them well on the first try. Then `Stage` and video. Treat `--render-video` and the DAW film as product decisions.
