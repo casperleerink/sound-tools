@@ -80,7 +80,7 @@ What a pixel reads:
 
 ### The stage
 
-`<Stage>` around part of a page's view shows it in a window of its own, which the composer moves, sizes and puts full screen on any screen, such as a projector; closed, it shows in the page with a button to open it again. The rest stays in the app, such as the knobs that play it. In a `Space key="stage" grow` there, `width={now.space("stage").right}` and `height={now.space("stage").bottom}` fill it.
+`<Stage>` around part of a page's view shows it in a window of its own, which the composer moves, sizes and puts full screen on any screen, such as a projector; closed, it shows in the page with a button to open it again. Its window only shows, as to an audience: a press or a key there plays nothing, so the knobs that play it go in the rest of the view; where the pointer is still reads. In a `Space key="stage" grow` there, `width={now.space("stage").right}` and `height={now.space("stage").bottom}` fill it.
 
 ### Check it
 

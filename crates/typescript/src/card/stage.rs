@@ -5,16 +5,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, MouseButton,
-    MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowControlArea,
-    WindowOptions, div, point, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Render,
+    TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
+    size,
 };
 use serde::{Deserialize, Serialize};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 
 use super::TypeScriptCard;
-use super::input::{hearing_keys, hears_the_button};
 use crate::feeds::Drawn;
 
 /// Where the div that says `stage` draws.
@@ -102,8 +101,6 @@ impl TypeScriptCard {
         let came = self.stage.is_none() && stage.is_some();
         self.stage = stage;
         if stage.is_none() {
-            self.drop_stage_menu(cx);
-            self.let_go_of_keys(cx);
             self.close_stage(cx);
             return;
         }
@@ -164,19 +161,8 @@ impl TypeScriptCard {
         });
     }
 
-    /// A menu open on the stage goes with it, answered with nothing picked.
-    fn drop_stage_menu(&mut self, cx: &mut Context<Self>) {
-        if (self.menu.as_ref()).is_some_and(|(_, _, shown_in)| *shown_in != self.window) {
-            self.answer_menu(None, cx);
-            self.menu = None;
-        }
-    }
-
     /// The composer closed its window: it shows in the page until they open it again.
     fn stage_closed(&mut self, cx: &mut Context<Self>) {
-        self.drop_stage_menu(cx);
-        // Its window hears no key go up once it is gone.
-        self.let_go_of_keys(cx);
         self.stage_window = None;
         self.stage_place.closed = true;
         self.save_stage(cx);
@@ -209,9 +195,8 @@ impl TypeScriptCard {
         }
     }
 
-    /// The div its view shows on the stage, from the feeds as last read. A press on a control
-    /// there gives the keys back to `keys`, the stage's own.
-    fn draw_stage(&self, keys: &FocusHandle, window: &Window, cx: &App) -> Option<AnyElement> {
+    /// The div its view shows on the stage, from the feeds as last read.
+    fn draw_stage(&self, window: &Window, cx: &App) -> Option<AnyElement> {
         let slot = self.stage?;
         let state = self.read_state()?;
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
@@ -220,7 +205,6 @@ impl TypeScriptCard {
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.stage = StageDiv::Here;
         drawing.out_of_page = true;
-        drawing.keys_out_of_page = Some(keys.clone());
         let shown = drawing.draw(slot);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
@@ -289,7 +273,7 @@ impl EventEmitter<StageChanged> for TypeScriptCard {}
 
 /// The window of the stage: black, and the div over all of it. It holds its card weakly, so a
 /// card that goes takes its stage along.
-pub(crate) struct Stage(WeakEntity<TypeScriptCard>, FocusHandle);
+pub(crate) struct Stage(WeakEntity<TypeScriptCard>);
 
 impl Stage {
     fn new(card: &Entity<TypeScriptCard>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -307,27 +291,6 @@ impl Stage {
             }
         })
         .detach();
-        // A press on the stage hears its release, also when the window loses the focus first.
-        // Active, it takes the keys, so tab reaches its controls.
-        cx.observe_window_activation(window, |stage: &mut Self, window, cx| {
-            if window.is_window_active() {
-                if window.focused(cx).is_none() {
-                    window.focus(&stage.1, cx);
-                }
-            } else if let Some(card) = stage.0.upgrade() {
-                // Its keys go up wherever the focus went, as the page's do. The press that gave
-                // the page the focus is the page's, not one to let go of.
-                let to_page = cx.active_window() == Some(card.read(cx).window);
-                card.update(cx, |card, cx| {
-                    card.let_go_of_keys(cx);
-                    if !to_page {
-                        card.clicking = None;
-                        card.let_go(None, cx);
-                    }
-                });
-            }
-        })
-        .detach();
         let closed = card.downgrade();
         window.on_window_should_close(cx, move |_, cx| {
             if let Err(error) = closed.update(cx, |card, cx| card.stage_closed(cx)) {
@@ -336,9 +299,7 @@ impl Stage {
             }
             true
         });
-        let keys = cx.focus_handle();
-        card.update(cx, |card, _| card.stage_keys = Some(keys.clone()));
-        Self(card.downgrade(), keys)
+        Self(card.downgrade())
     }
 }
 
@@ -350,30 +311,13 @@ impl Render for Stage {
         };
         // Its own frames move on while the page's window is hidden.
         card.update(cx, |card, cx| card.read_frame_now(cx));
-        let weak = card.downgrade();
         let card = card.read(cx);
         if card.parts(cx).stage.animates {
             window.request_animation_frame();
         }
-        let shown = card.draw_stage(&self.1, window, cx);
-        // Its top edge moves it, as a title bar does, but for full screen.
-        let bar = (!window.is_fullscreen()).then(|| {
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .w_full()
-                .h(px(28.))
-                .window_control_area(WindowControlArea::Drag)
-                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
-                    if event.click_count == 2 {
-                        window.titlebar_double_click();
-                    } else {
-                        window.start_window_move();
-                    }
-                })
-        });
-        let root = div()
+        let shown = card.draw_stage(window, cx);
+        let fullscreen = window.is_fullscreen();
+        div()
             .size_full()
             .bg(gpui::black())
             .text_size(px(12.))
@@ -381,29 +325,17 @@ impl Render for Stage {
             .flex()
             .flex_col()
             .children(shown)
-            .children(bar)
-            .children(
-                (card.menu.as_ref())
-                    .filter(|(_, _, shown_in)| *shown_in == window.window_handle())
-                    .map(|(menu, ..)| menu.clone()),
-            )
-            .child(hears_the_button(card.button_down.clone(), weak))
-            // Its own window, out of the shell that moves the focus elsewhere.
-            .on_key_down(|event: &KeyDownEvent, window, cx| {
-                let modifiers = &event.keystroke.modifiers;
-                if event.keystroke.key == "tab" && !(modifiers.control || modifiers.platform) {
-                    match event.keystroke.modifiers.shift {
-                        true => window.focus_prev(cx),
-                        false => window.focus_next(cx),
+            // It only shows: a press plays nothing here, its controls are the page's. Its top
+            // edge moves it, as a title bar does, but for full screen.
+            .capture_any_mouse_down(move |event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left && !fullscreen && event.position.y < px(28.) {
+                    match event.click_count {
+                        2 => window.titlebar_double_click(),
+                        _ => window.start_window_move(),
                     }
-                    cx.stop_propagation();
                 }
-            });
-        // The keys its tool hears, and escape for what it opened, as on its page.
-        match card.keys_of_page(cx) {
-            Some(context) => hearing_keys(root, &self.1, context, &card.handle),
-            None => root.track_focus(&self.1),
-        }
-        .into_any_element()
+                cx.stop_propagation();
+            })
+            .into_any_element()
     }
 }

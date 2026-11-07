@@ -70,9 +70,8 @@ pub(super) struct Drawing<'a> {
     pub(super) under_tooltip: bool,
     /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
     pub(super) takes_keys: bool,
-    /// Where a press on a control out of the page gives the keys: the title bar's, while the
-    /// page hears keys, or the stage's window.
-    pub(super) keys_out_of_page: Option<FocusHandle>,
+    /// The keys of what the page shows in the title bar, while the page hears keys.
+    pub(super) title_focus: Option<FocusHandle>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
     pub(super) lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
     pub(super) card: WeakEntity<TypeScriptCard>,

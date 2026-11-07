@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    AnyView, AnyWindowHandle, App, Bounds, Context, Entity, Focusable, Pixels, PromptLevel,
-    SharedString, WeakEntity, Window, canvas, div, prelude::*, px,
+    AnyView, App, Bounds, Context, Entity, Focusable, Pixels, PromptLevel, SharedString,
+    WeakEntity, Window, canvas, div, prelude::*, px,
 };
 use serde_json::json;
 use sound_core::InstanceId;
@@ -165,16 +165,10 @@ impl TypeScriptCard {
             self.let_go_of_keys(cx);
             let buttons = [asked.confirm.as_str(), "Cancel"];
             let detail = asked.detail.as_deref();
-            // On the page's window, never on the stage, which an audience may see.
-            let answer = in_window(window, self.window, cx, |window, cx| {
-                window.prompt(PromptLevel::Warning, &asked.message, detail, &buttons, cx)
-            });
+            let answer = window.prompt(PromptLevel::Warning, &asked.message, detail, &buttons, cx);
             let live = self.live.downgrade();
             cx.spawn(async move |_, cx| {
-                let said = match answer {
-                    Some(answer) => answer.await == Ok(0),
-                    None => false,
-                };
+                let said = answer.await == Ok(0);
                 live.update(cx, |live, _| live.confirmed(asked.question, said))
                     .ok();
             })
@@ -211,14 +205,11 @@ impl TypeScriptCard {
             && !self.overlays.contains(&owner)
         {
             self.menu_overlay = None;
-            if let Some((menu, _, shown_in)) = &self.menu {
-                let (menu, shown_in) = (menu.clone(), *shown_in);
-                in_window(window, shown_in, cx, |window, cx| {
-                    menu.update(cx, |menu, cx| {
-                        if menu.is_open() {
-                            menu.close(window, cx);
-                        }
-                    });
+            if let Some((menu, _)) = &self.menu {
+                menu.update(cx, |menu, cx| {
+                    if menu.is_open() {
+                        menu.close(window, cx);
+                    }
                 });
             }
         }
@@ -524,7 +515,7 @@ impl TypeScriptCard {
         self.answer_menu(None, cx);
         // A menu with a search field is another menu than one without.
         let cached = (self.menu.take())
-            .map(|(menu, ..)| menu)
+            .map(|(menu, _)| menu)
             .filter(|menu| menu.read(cx).is_searchable() == search);
         let menu = match cached {
             Some(menu) => menu,
@@ -560,46 +551,21 @@ impl TypeScriptCard {
         menu.update(cx, |menu, cx| {
             menu.set_entries(entries, cx);
             menu.set_size(width.unwrap_or(MENU_WIDTH), max_height);
-        });
-        // In the window the composer works in, which draws it: the stage's or the page's.
-        let shown_in = (self.stage_window)
-            .map(AnyWindowHandle::from)
-            .filter(|stage| cx.active_window() == Some(*stage))
-            .unwrap_or(self.window);
-        let opened = menu.clone();
-        in_window(window, shown_in, cx, |window, cx| {
-            opened.update(cx, |menu, cx| match under {
+            match under {
                 Some(position) => menu.open_under(position, window, cx),
                 None => menu.open_at(window.mouse_position(), window, cx),
-            });
+            }
         });
-        cx.notify();
-        self.menu = Some((menu, Some(question), shown_in));
+        self.menu = Some((menu, Some(question)));
         self.menu_overlay = self.overlays.last().copied();
     }
 
     /// Answers the open menu's question, once.
-    pub(super) fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
-        let Some((_, waiting, _)) = &mut self.menu else {
-            return;
-        };
-        let Some(question) = waiting.take() else {
+    fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
+        let Some(question) = self.menu.as_mut().and_then(|(_, waiting)| waiting.take()) else {
             return;
         };
         self.live
             .update(cx, |live, _| live.menu_picked(question, item));
-    }
-}
-
-/// Runs `run` in `target`: the window it runs in now, or the card's other one.
-fn in_window<R>(
-    window: &mut Window,
-    target: AnyWindowHandle,
-    cx: &mut App,
-    run: impl FnOnce(&mut Window, &mut App) -> R,
-) -> Option<R> {
-    match window.window_handle() == target {
-        true => Some(run(window, cx)),
-        false => target.update(cx, |_, window, cx| run(window, cx)).ok(),
     }
 }

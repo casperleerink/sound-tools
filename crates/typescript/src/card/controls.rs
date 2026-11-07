@@ -303,7 +303,7 @@ impl Drawing<'_> {
     ) -> E {
         let page = match self.out_of_page {
             false => self.takes_keys.then(|| self.focus.clone()),
-            true => self.keys_out_of_page.clone(),
+            true => self.title_focus.clone(),
         };
         let before = Rc::new(RefCell::new(None));
         let wrap = wrap
