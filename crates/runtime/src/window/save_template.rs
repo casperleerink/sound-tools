@@ -11,7 +11,7 @@ use sound_ui::components::text_input::TextInput;
 use sound_ui::focus::TabStop;
 use sound_ui::{ActiveTheme, typography};
 
-use super::new_project::{small_window, template_row};
+use super::new_project::{small_window, small_window_root, template_row};
 use crate::templates::{Keep, exists_in, save_in, saved_folder};
 
 const WIDTH: f32 = 520.;
@@ -172,13 +172,8 @@ impl Render for SaveTemplate {
             true => Some("Saving…".into()),
             false => self.message.clone(),
         };
-        div()
+        small_window_root()
             .size_full()
-            .on_key_down(|event, window, _| {
-                if event.keystroke.key == "escape" {
-                    window.remove_window();
-                }
-            })
             .flex()
             .flex_col()
             .gap_3()

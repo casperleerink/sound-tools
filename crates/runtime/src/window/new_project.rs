@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, PromptLevel, SharedString, Stateful, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, size,
+    App, Context, Div, FocusHandle, PromptLevel, SharedString, Stateful, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::focus::TabStop;
@@ -34,12 +34,16 @@ pub fn choose_template(on_pick: OnPick, cx: &mut App) {
         }
     }
     let options = small_window("New project", WIDTH, HEIGHT, cx);
-    let opened = cx.open_window(options, |_, cx| {
+    let opened = cx.open_window(options, |window, cx| {
         cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            // The keys reach the window from there.
+            window.focus(&focus_handle, cx);
             let mut picker = TemplatePicker {
                 on_pick,
                 choices: Vec::new(),
                 message: None,
+                focus_handle,
             };
             picker.load(cx);
             picker
@@ -67,11 +71,29 @@ pub fn small_window(title: &'static str, width: f32, height: f32, cx: &App) -> W
     }
 }
 
+/// The key context of the app's small windows, see [`small_window_root`].
+pub(super) const SMALL_WINDOW: &str = "SmallWindow";
+
+/// The root of a small window of the app's own: tab moves the focus, as in the main window,
+/// and escape closes it.
+pub(super) fn small_window_root() -> Div {
+    div()
+        .key_context(SMALL_WINDOW)
+        .on_action(|_: &super::FocusNext, window, cx| window.focus_next(cx))
+        .on_action(|_: &super::FocusPrevious, window, cx| window.focus_prev(cx))
+        .on_key_down(|event, window, _| {
+            if event.keystroke.key == "escape" {
+                window.remove_window();
+            }
+        })
+}
+
 pub struct TemplatePicker {
     on_pick: OnPick,
     /// The templates of the app until the saved ones are read.
     choices: Vec<Choice>,
     message: Option<SharedString>,
+    focus_handle: FocusHandle,
 }
 
 impl TemplatePicker {
@@ -153,7 +175,8 @@ impl Render for TemplatePicker {
                 on_pick(picked.clone(), cx);
             })
         });
-        div()
+        small_window_root()
+            .track_focus(&self.focus_handle)
             .id("templates")
             .size_full()
             .overflow_y_scroll()

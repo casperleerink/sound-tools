@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, Render, TestAppContext,
-    VisualTestContext, Window, div, prelude::*, px,
+    AppContext, Context, Entity, Focusable, IntoElement, Render, TestAppContext, VisualTestContext,
+    Window, div, prelude::*, px,
 };
 use reverb::ReverbState;
 use runtime::OFFLINE;
@@ -240,8 +240,8 @@ fn cmd_z_waits_for_an_open_gesture(cx: &mut TestAppContext) {
     assert!(!has_reverb(&session, opened.cx));
 }
 
-/// "New project…" opens the templates, one row each; picking one closes them and asks where the
-/// project goes. A cancel there makes nothing.
+/// "New project…" opens the templates, one row each; picking one, with the keys, closes them and
+/// asks where the project goes. A cancel there makes nothing.
 #[gpui::test]
 fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAppContext) {
     let mut opened = open(cx);
@@ -262,8 +262,10 @@ fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAp
         .collect();
     assert_eq!(rows, ["Bare", "DAW"]);
 
-    let daw = picker.debug_bounds("template-DAW").unwrap().center();
-    picker.simulate_click(daw, Modifiers::default());
+    // The keys reach them: the second row is the DAW, and enter clicks it as it goes up.
+    picker.simulate_keystrokes("tab tab enter");
+    let enter = gpui::Keystroke::parse("enter").unwrap();
+    picker.simulate_event(gpui::KeyUpEvent { keystroke: enter });
     opened.cx.run_until_parked();
     assert!(opened.cx.did_prompt_for_new_path());
     let windows = opened.cx.update(|_, cx| cx.windows().len());

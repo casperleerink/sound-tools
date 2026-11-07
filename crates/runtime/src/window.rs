@@ -1162,6 +1162,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-secondary-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
+        KeyBinding::new("tab", FocusNext, Some(new_project::SMALL_WINDOW)),
+        KeyBinding::new("shift-tab", FocusPrevious, Some(new_project::SMALL_WINDOW)),
         KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
