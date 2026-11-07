@@ -92,6 +92,8 @@ pub(crate) struct TypeScriptCard {
     indexes: RefCell<HashMap<String, SpaceIndex>>,
     /// The menu its code opens where the pointer is, and the question of the open one.
     menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
+    /// The open menu shows on the stage, which asked for it.
+    menu_on_stage: bool,
     /// The newest overlay when the menu opened, whose closing closes it.
     menu_overlay: Option<u64>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
@@ -465,6 +467,7 @@ impl TypeScriptCard {
             feeds: Feeds::default(),
             indexes: RefCell::default(),
             menu: None,
+            menu_on_stage: false,
             menu_overlay: None,
             inputs: HashMap::new(),
             overlays: Vec::new(),
@@ -1008,7 +1011,11 @@ impl Render for TypeScriptCard {
                 self.button_down.clone(),
                 cx.entity().downgrade(),
             ))
-            .children(self.menu.as_ref().map(|(menu, _)| menu.clone()));
+            .children(
+                (self.menu.as_ref())
+                    .filter(|_| !self.menu_on_stage)
+                    .map(|(menu, _)| menu.clone()),
+            );
         match &self.frame {
             // At least as wide as a plain card, so the title fits.
             Some(frame) => frame

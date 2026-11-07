@@ -551,11 +551,18 @@ impl TypeScriptCard {
         menu.update(cx, |menu, cx| {
             menu.set_entries(entries, cx);
             menu.set_size(width.unwrap_or(MENU_WIDTH), max_height);
-            match under {
+        });
+        let open = move |menu: &Entity<DropdownMenu>, window: &mut Window, cx: &mut App| {
+            menu.update(cx, |menu, cx| match under {
                 Some(position) => menu.open_under(position, window, cx),
                 None => menu.open_at(window.mouse_position(), window, cx),
-            }
-        });
+            });
+        };
+        // In the window that asked for it, which draws it: the stage's or the page's.
+        self.menu_on_stage =
+            (self.stage_window).is_some_and(|stage| window.window_handle() == stage.into());
+        open(&menu, window, cx);
+        cx.notify();
         self.menu = Some((menu, Some(question)));
         self.menu_overlay = self.overlays.last().copied();
     }

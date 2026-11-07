@@ -14,7 +14,7 @@ use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 
 use super::TypeScriptCard;
-use super::input::hears_the_button;
+use super::input::{hearing_keys, hears_the_button};
 use crate::feeds::Drawn;
 
 /// Where the div that says `stage` draws.
@@ -355,8 +355,7 @@ impl Render for Stage {
                     }
                 })
         });
-        div()
-            .track_focus(&self.1)
+        let root = div()
             .size_full()
             .bg(gpui::black())
             .text_size(px(12.))
@@ -365,6 +364,11 @@ impl Render for Stage {
             .flex_col()
             .children(shown)
             .children(bar)
+            .children(
+                (card.menu.as_ref())
+                    .filter(|_| card.menu_on_stage)
+                    .map(|(menu, _)| menu.clone()),
+            )
             .child(hears_the_button(card.button_down.clone(), weak))
             // Its own window, out of the shell that moves the focus elsewhere.
             .on_key_down(|event: &KeyDownEvent, window, cx| {
@@ -376,7 +380,12 @@ impl Render for Stage {
                     }
                     cx.stop_propagation();
                 }
-            })
-            .into_any_element()
+            });
+        // The keys its tool hears, and escape for what it opened, as on its page.
+        match card.keys_of_page(cx) {
+            Some(context) => hearing_keys(root, &self.1, context, &card.handle),
+            None => root.track_focus(&self.1),
+        }
+        .into_any_element()
     }
 }
