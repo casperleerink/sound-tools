@@ -74,8 +74,7 @@ struct Shown {
 #[derive(Default)]
 struct Memory {
     last: Arc<Frame>,
-    /// Where it runs on the GPU, once it was tried: not where it reads lists, images or
-    /// measures, nor off macOS.
+    /// Where it runs on the GPU, once it was tried: not off macOS.
     gpu: Option<Option<Gpu>>,
     /// The step of its time it showed last.
     stepped: Option<u64>,
