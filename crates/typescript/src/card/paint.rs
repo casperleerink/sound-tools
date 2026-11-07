@@ -9,11 +9,7 @@ use gpui::{
 };
 use sound_ui::typography;
 
-use std::sync::Arc;
-
-use sound_pictures::Frame;
-
-use crate::picture::Picture;
+use crate::picture::{Picture, Seen};
 use crate::tree::{Align, Cursor, Weight};
 
 use super::shapes::{Area, Bend, Geometry, Notes, TextPart, Wave};
@@ -29,9 +25,6 @@ pub(super) struct Painted {
     clip: Option<Bounds<Pixels>>,
 }
 
-/// What a picture reads this frame: its live values, lists and videos.
-type PictureInputs = (Rc<[f32]>, Rc<[Vec<f32>]>, Rc<[Arc<Frame>]>);
-
 enum PaintedShape {
     Rect(Bounds<Pixels>, f32, Option<(Hsla, f32)>),
     Circle(Point<Pixels>, f32),
@@ -41,7 +34,7 @@ enum PaintedShape {
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
     Path(Rc<[Bend<Point<Pixels>>]>, Option<f32>),
-    Picture(Bounds<Pixels>, Picture, PictureInputs),
+    Picture(Bounds<Pixels>, Picture, Rc<Seen>),
 }
 
 impl PaintedShape {
@@ -198,15 +191,13 @@ pub(super) fn prepaint(
                 width,
                 height,
                 picture,
-                lives,
-                waves,
-                videos,
+                seen,
             } => {
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Picture(
                     Bounds::new(at((*x, *y)), size),
                     picture.clone(),
-                    (lives.clone(), waves.clone(), videos.clone()),
+                    seen.clone(),
                 )
             }
             Geometry::Path { bends, outline } => {
@@ -344,9 +335,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
-        PaintedShape::Picture(bounds, picture, (lives, waves, videos)) => {
-            picture.paint(*bounds, (lives, waves, videos), window);
-        }
+        PaintedShape::Picture(bounds, picture, seen) => picture.paint(*bounds, seen, window),
         PaintedShape::Path(bends, outline) => {
             let mut path = match outline {
                 Some(width) => gpui::PathBuilder::stroke(px(*width)),

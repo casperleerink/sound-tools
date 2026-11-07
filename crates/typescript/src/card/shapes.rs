@@ -11,14 +11,12 @@ use sound_ui::components::knob::{
 };
 
 use crate::live::{DragNumbers, Sources, SpaceView};
-use crate::picture::Picture;
+use crate::picture::{Picture, Seen};
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
     Weight, Words,
 };
-use sound_pictures::Frame;
-use std::sync::Arc;
 
 use super::input::Hears;
 
@@ -123,10 +121,7 @@ pub(super) enum Geometry {
         width: f64,
         height: f64,
         picture: Picture,
-        /// The values of its live values now, and of its lists.
-        lives: Rc<[f32]>,
-        waves: Rc<[Vec<f32>]>,
-        videos: Rc<[Arc<Frame>]>,
+        seen: Rc<Seen>,
     },
     Path {
         bends: Rc<[Bend<(f64, f64)>]>,
@@ -903,22 +898,25 @@ impl Placing<'_> {
                 width: self.number(&shape.width),
                 height: self.number(&shape.height),
                 picture: shape.picture.clone()?,
-                lives: (shape.picture.iter())
-                    .flat_map(|picture| picture.lives())
-                    .map(|live| self.sources.number(live) as f32)
-                    .collect(),
-                waves: (shape.picture.iter())
-                    .flat_map(|picture| picture.waves())
-                    .map(|list| self.list(Some(list)))
-                    .collect(),
-                videos: (shape.picture.iter())
-                    .flat_map(|picture| picture.videos())
-                    .map(|video| {
-                        let at = self.sources.number(&video.at);
-                        (self.sources.feeds.video(&video.asset, at, video.loops))
-                            .unwrap_or_default()
-                    })
-                    .collect(),
+                seen: Rc::new(Seen {
+                    lives: (shape.picture.iter())
+                        .flat_map(|picture| picture.lives())
+                        .map(|live| self.sources.number(live) as f32)
+                        .collect(),
+                    waves: (shape.picture.iter())
+                        .flat_map(|picture| picture.waves())
+                        .map(|list| self.list(Some(list)))
+                        .collect(),
+                    videos: (shape.picture.iter())
+                        .flat_map(|picture| picture.videos())
+                        .map(|video| {
+                            let at = self.sources.number(&video.at);
+                            (self.sources.feeds.video(&video.asset, at, video.loops))
+                                .unwrap_or_default()
+                        })
+                        .collect(),
+                    time: self.sources.feeds.time,
+                }),
             },
             ShapeKind::Notes => {
                 let take = match &shape.list {
