@@ -135,9 +135,16 @@ fn folder_of(root: &Path, name: &str) -> Result<PathBuf> {
     }
 }
 
-/// Whether saving `name` in `root` would replace a template.
+/// Whether saving `name` in `root` would replace a template, also one a failed save put aside.
 pub fn exists_in(root: &Path, name: &str) -> Result<bool> {
-    Ok(folder_of(root, name)?.exists())
+    let folder = folder_of(root, name)?;
+    Ok(folder.exists() || replaced_of(&folder).exists())
+}
+
+/// Where a save puts the template `folder` aside until the new one is in place.
+fn replaced_of(folder: &Path) -> PathBuf {
+    let file_name = folder.file_name().unwrap_or_default().to_string_lossy();
+    folder.with_file_name(format!(".replaced-{file_name}"))
 }
 
 /// Saves the project in `project` as the template `name` in `root`, in place of one of that
@@ -152,7 +159,7 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
     }
     let file_name = target.file_name().unwrap_or_default().to_string_lossy();
     let saving = root.join(format!(".saving-{file_name}"));
-    let replaced = root.join(format!(".replaced-{file_name}"));
+    let replaced = replaced_of(&target);
     remove_folder(&saving)?;
     // The template before a save that could not put it back.
     if replaced.exists() && !target.exists() {
