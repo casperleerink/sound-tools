@@ -427,9 +427,10 @@ export const TitleBar = ({ children, style }: { children?: Child; style?: Bind<S
   element("div", { titleBar: true, style }, [children]);
 
 /**
- * Shows its children in a window of their own, the stage: on a second screen or a projector when
- * there is one, else beside the app. The window fills its screen and is black; the view goes on
- * in the app. One stage per view.
+ * Shows its children in a window of their own, the stage, black, which the composer moves, sizes
+ * and puts full screen on any screen, such as a projector. Closed, they show here in the view,
+ * under a button that opens the window again. The rest of the view stays in the app. One stage
+ * per view.
  */
 export const Stage = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
   element("div", { stage: true, style }, [children]);

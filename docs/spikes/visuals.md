@@ -26,7 +26,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #411, `t3/visual-drop-film` on top.
 | `Canvas` | `<Canvas pixels={(pixel) => ({ red, green, blue, alpha })}>`: a graph per pixel, from `pixel.x`, `y`, `aspect`, `time`, `noise(x, y, z)` |
 | Reads | `pixel.live(value)` any live value; `pixel.wave(list, at)` a list such as `now.spectrum(meter)` or `now.scope(meter)`; `pixel.video(file, { at })`; `pixel.photo(file)`; `pixel.canvas(key)` another canvas; `pixel.last(x, y)` the step before, for feedback |
 | Plays the sound | `pixel.measure(input, value)`: the mean over the canvas moves a number input, as a knob does |
-| Stage | `<Stage>` shows part of a page in its own window: full screen on a second screen, else floating in a corner |
+| Stage | `<Stage>` shows part of a page in a window of its own the composer moves, sizes and puts full screen on any screen; closed, it shows in the page |
 | Time | `now.seconds` follows the piece; a film dropped on the DAW's timeline shows on the stage at the playhead |
 | Pointer | `now.space(key).pointerX`, `pointerY`, `pointerOver` |
 | Output | `--render-video` films the window with its sound, frame by frame |
@@ -34,6 +34,8 @@ Branches `t3/visual-*`, stacked; PRs #392 to #411, `t3/visual-drop-film` on top.
 ## Decisions
 
 - **A graph per pixel on the GPU on macOS, else the CPU.** `crates/canvas/src/gpu.rs` writes the graph as a Metal compute shader, line for line the CPU's maths, and a test holds both canvases and measures equal. It writes to memory the CPU reads as it is, and the canvas paints as a GPUI image, so screenshots and films work alike. 1920 by 1080 pixels of 60 sines: 1.5 ms on the GPU, 35 ms on all CPU cores; a canvas may be 1920 across there, 480 on the CPU. The video demo went from 88% of a core to 40%. Rejected: `paint_surface`, which GPUI takes only as video (YCbCr), without alpha.
+- **Named `Canvas`**: an area a tool fills every frame, whatever fills it. Rejected: `Picture`, which sounds still.
+- **The stage is the composer's window**, kept where they left it per project on this machine (`.sound-tools/stages.json`): screen, size, full screen, closed. Closed, it shows in the page. Rejected: opening full screen on a second screen by itself.
 - **Its own small evaluator**, not the signals machine: a pixel has no time between its neighbours, so filters, delays and phasors make no sense in it. The SDK refuses them with a sentence that says so.
 - **A canvas steps 60 times a second of its time**, whatever the screen draws, so feedback looks alike on any screen, in a screenshot and in a film.
 - **Painted as a GPUI image**, freed by the window it was painted in. Under lines and text drawn after it, as GPUI orders images.
@@ -45,7 +47,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #411, `t3/visual-drop-film` on top.
 - The GPU: the shader could write the bytes GPUI paints, not the CPU; Linux and Windows could use wgpu.
 - Camera input: as a video, from `AVCaptureSession`; it needs the camera permission, so it was not tried.
 - A canvas another reads must show to step; a hidden one could step too.
-- A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
+- No keys on the stage. A film shows the main window, not the stage.
 - `measure` of a live value is a way round to play an input from the pointer; a space could say which live values play which inputs.
 
 ## Recommendation

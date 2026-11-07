@@ -11,6 +11,7 @@ mod paint;
 mod placed;
 mod shapes;
 mod space;
+mod stage;
 mod sync;
 
 use std::cell::{Cell, RefCell};
@@ -20,9 +21,8 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, MouseButton,
-    Pixels, Point, ScrollHandle, StyleRefinement, Task, TitlebarOptions, WeakEntity,
-    WeakFocusHandle, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
-    point, prelude::*, px, size,
+    Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity, WeakFocusHandle, Window,
+    WindowHandle, canvas, div, prelude::*, px,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -45,6 +45,8 @@ pub use self::drawing::drawn_nodes;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
+pub(crate) use self::stage::Stage;
+use self::stage::StagePlace;
 use self::sync::Embedded;
 
 /// How long an ended drag keeps its values at most, when the answer to its end does not come,
@@ -106,6 +108,7 @@ pub(crate) struct TypeScriptCard {
     /// The slot of the div it shows on the stage, and the stage's window while it is open.
     stage: Option<usize>,
     stage_window: Option<WindowHandle<Stage>>,
+    stage_place: StagePlace,
     /// The number inputs its canvases measure that its tool refused.
     measures_refused: HashSet<String>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
@@ -455,6 +458,7 @@ impl TypeScriptCard {
             title_bar: None,
             stage: None,
             stage_window: None,
+            stage_place: StagePlace::default(),
             measures_refused: HashSet::new(),
             parts: RefCell::default(),
             lifted: Rc::default(),
@@ -827,7 +831,7 @@ impl TypeScriptCard {
             button_down: self.button_down.get(),
             scroller: None,
             in_title_bar: false,
-            in_stage: false,
+            stage: self.stage_in_page(),
             out_of_page: false,
             under_tooltip: false,
             takes_keys,
@@ -869,144 +873,6 @@ impl TypeScriptCard {
             None => bar,
         };
         Some(bar.into_any_element())
-    }
-}
-
-impl TypeScriptCard {
-    /// Opens the stage's window when its div came, and closes it when it went.
-    pub(crate) fn place_stage(&mut self, stage: Option<usize>, cx: &mut Context<Self>) {
-        let came = self.stage.is_none() && stage.is_some();
-        self.stage = stage;
-        if stage.is_none() {
-            self.close_stage(cx);
-            return;
-        }
-        if !came {
-            cx.emit(StageChanged);
-            return;
-        }
-        let card = cx.entity();
-        // Not inside this update: the window's first draw reads the card.
-        cx.defer(move |cx| {
-            // It went again in the same update.
-            if card.read(cx).stage.is_none() {
-                return;
-            }
-            let options = stage_options(cx);
-            match cx.open_window(options, |_, cx| cx.new(|cx| Stage::new(&card, cx))) {
-                Ok(window) => card.update(cx, |card, _| card.stage_window = Some(window)),
-                Err(error) => eprintln!("error: the stage did not open: {error:#}"),
-            }
-        });
-    }
-
-    fn close_stage(&mut self, cx: &mut App) {
-        if let Some(window) = self.stage_window.take()
-            && let Err(error) = window.update(cx, |_, window, _| window.remove_window())
-        {
-            // It was closed already.
-            drop(error);
-        }
-    }
-
-    /// The div its view shows on the stage, from the feeds as last read.
-    fn draw_stage(&self, window: &Window, cx: &App) -> Option<AnyElement> {
-        let slot = self.stage?;
-        let state = self.read_state()?;
-        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
-            return None;
-        };
-        let mut drawing = self.drawing(state, &table, window, cx);
-        drawing.in_stage = true;
-        drawing.out_of_page = true;
-        let shown = drawing.draw(slot);
-        let spaces = drawing.spaces;
-        self.keep_spaces(spaces);
-        Some(shown)
-    }
-}
-
-/// The stage fills a screen other than the main one when there is one. Else it floats over
-/// the app in a corner, a preview of what a projector would show.
-fn stage_options(cx: &App) -> WindowOptions {
-    let primary = cx.primary_display();
-    let primary_id = primary.as_ref().map(|display| display.id());
-    let other = (cx.displays().into_iter()).find(|display| Some(display.id()) != primary_id);
-    let (window_bounds, kind) = match (&other, &primary) {
-        (Some(display), _) => (
-            WindowBounds::Fullscreen(display.bounds()),
-            WindowKind::Normal,
-        ),
-        (None, Some(display)) => {
-            let room = display.visible_bounds();
-            let shown = size(px(480.), px(270.));
-            let corner = room.bottom_right() - point(shown.width + px(24.), shown.height + px(24.));
-            (
-                WindowBounds::Windowed(Bounds::new(corner, shown)),
-                WindowKind::Floating,
-            )
-        }
-        (None, None) => (
-            WindowBounds::Windowed(Bounds::centered(None, size(px(480.), px(270.)), cx)),
-            WindowKind::Floating,
-        ),
-    };
-    WindowOptions {
-        window_bounds: Some(window_bounds),
-        display_id: other.map(|display| display.id()),
-        titlebar: Some(TitlebarOptions {
-            title: Some("Stage".into()),
-            appears_transparent: true,
-            traffic_light_position: None,
-        }),
-        kind,
-        focus: false,
-        // It plays to an audience while the app has the focus: every frame, not a few.
-        inactive_frame_interval: None,
-        ..Default::default()
-    }
-}
-
-/// What the stage shows changed while nothing else of the page did.
-pub(crate) struct StageChanged;
-
-impl EventEmitter<StageChanged> for TypeScriptCard {}
-
-/// The window of a page's div that says `stage`: black, and the div over all of it. It holds
-/// its card weakly, so a card that goes takes its stage along.
-pub(crate) struct Stage(WeakEntity<TypeScriptCard>);
-
-impl Stage {
-    fn new(card: &Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
-        cx.observe(card, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(card, |_, _, _: &StageChanged, cx| cx.notify())
-            .detach();
-        cx.observe_release(card, |_, _, cx| cx.notify()).detach();
-        Self(card.downgrade())
-    }
-}
-
-impl Render for Stage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(card) = self.0.upgrade() else {
-            window.remove_window();
-            return div().into_any_element();
-        };
-        let card = card.read(cx);
-        // What moves on the stage draws the page again too, which reads the feeds for it.
-        if card.parts(cx).body.animates {
-            window.request_animation_frame();
-        }
-        let shown = card.draw_stage(window, cx);
-        div()
-            .size_full()
-            .bg(gpui::black())
-            .text_size(px(12.))
-            .text_color(cx.theme().gray_950)
-            .flex()
-            .flex_col()
-            .children(shown)
-            .into_any_element()
     }
 }
 

@@ -22,7 +22,7 @@ tool({
           <Knob field="speed" label="Speed" />
           <Knob field="rings" label="Rings" />
         </div>
-        <div style={{ color: "gray-700" }}>The picture plays on the stage.</div>
+        <div style={{ color: "gray-700" }}>It plays on the stage. Close the stage's window to see it here.</div>
         <Stage style={{ grow: true }}>
           <Space key="stage" grow>
             <Canvas
