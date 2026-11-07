@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, DispatchPhase, ElementId, ExternalPaths, Hitbox, Hsla, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollEvent,
-    WeakEntity, Window, canvas, div, point, prelude::*, px,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
+    ScrollEvent, WeakEntity, Window, canvas, div, point, prelude::*, px,
 };
 use serde_json::json;
 use sound_ui::ActiveTheme;
@@ -451,6 +451,20 @@ fn listen(
                 }
             })
             .ok();
+        }
+    });
+    // Out of the window no move comes, so the pointer is over nothing of it.
+    window.on_mouse_event({
+        let (frame, card) = (frame.clone(), card.clone());
+        move |_: &MouseExitEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble {
+                (card.update(cx, |card, cx| {
+                    if card.point_at(&frame.key, None, cx) {
+                        cx.notify();
+                    }
+                }))
+                .ok();
+            }
         }
     });
     window.on_mouse_event({
