@@ -177,6 +177,11 @@ export interface SpaceValues {
   /** How many units one point is: `width: space.pointX.times(6)` is 6 points wide at any zoom. */
   pointX: Live;
   pointY: Live;
+  /** Where the pointer is over it, in its units, as it moves: a light that follows the hand. Where it was last while it is away. */
+  pointerX: Live;
+  pointerY: Live;
+  /** 1 while the pointer is over it. */
+  pointerOver: Live;
 }
 
 /** The numbers of fields `State` holds. */
@@ -276,7 +281,7 @@ function sources(): Now<Record<string, number>> {
     drag: (id) =>
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active", "alt"]),
     space: (key) =>
-      part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
+      part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY", "pointerX", "pointerY", "pointerOver"]),
     hover: (key) => new Live({ op: "hover", key }),
   };
 }

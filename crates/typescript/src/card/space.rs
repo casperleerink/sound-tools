@@ -430,6 +430,10 @@ fn listen(
             }
             let over = hitbox.is_hovered(window);
             card.update(cx, |card, cx| {
+                let pointer = over.then(|| frame.units_at(bounds, event.position));
+                if card.point_at(&frame.key, pointer, cx) {
+                    cx.notify();
+                }
                 if event.dragging() {
                     card.drag_to(&frame, event.position, event.modifiers, cx);
                     return;

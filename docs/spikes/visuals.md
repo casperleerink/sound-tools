@@ -53,3 +53,9 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 `pixel.measure(name, value)` moves the number input `name` of the tool to the mean of `value` over the picture, on each poll, as a knob does: brightness, movement against `last`, how much is red. Nothing crosses to Bun. Demo: `docs/prototypes/eyes`, a video whose light opens a drone and whose movement makes it shimmer.
 
 - The screen draws faster than a video changes, so movement measured against the frame before is 0 in most frames: smooth it in the sound.
+
+### 7. Pointer and smooth noise (`t3/visual-pointer-noise`)
+
+`now.space(key).pointerX`, `pointerY` and `pointerOver`: where the pointer is over a space, a live value, so a light follows the hand with no code. `pixel.noise(x, y, z)`: smooth noise, the base of smoke, water and clouds. Demo: `docs/prototypes/smoke`, smoke lit where the pointer is; its place plays a breathy tone through `measure`.
+
+- Open: `measure` of a live value is a way round to play an input from the pointer. A space could say which live values play which inputs.

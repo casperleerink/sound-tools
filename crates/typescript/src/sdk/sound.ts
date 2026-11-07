@@ -62,6 +62,7 @@ type SignalNode<R> =
   | { op: "live"; index: number }
   | { op: "last"; channel: "red" | "green" | "blue"; x: R; y: R }
   | { op: "wave"; table: { wave: number }; at: R }
+  | { op: "smoothNoise"; x: R; y: R; z: R }
   | { op: "video"; table: { video: number }; channel: "red" | "green" | "blue"; x: R; y: R };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */

@@ -868,6 +868,21 @@ impl TypeScriptCard {
         cx.notify();
     }
 
+    /// Keeps where the pointer is over the space `key`. Whether the card draws again for it: it
+    /// reads it, and it moved.
+    pub(super) fn point_at(&self, key: &str, pointer: Option<(f64, f64)>, cx: &App) -> bool {
+        let mut spaces = self.spaces.borrow_mut();
+        let Some(view) = spaces.get_mut(key) else {
+            return false;
+        };
+        let (at, over) = (pointer.unwrap_or(view.pointer), pointer.is_some());
+        if (view.pointer, view.pointer_over) == (at, over) {
+            return false;
+        }
+        (view.pointer, view.pointer_over) = (at, over);
+        self.live.read(cx).uses(self.card).pointer
+    }
+
     pub(super) fn hover(&mut self, hovered: Option<(String, u64)>, cx: &mut Context<Self>) {
         if self.hovered != hovered {
             self.hovered = hovered;

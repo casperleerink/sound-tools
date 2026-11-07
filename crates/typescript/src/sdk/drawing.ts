@@ -137,6 +137,12 @@ export interface Pixel {
   aspect: Signal;
   /** Seconds since the view opened. */
   time: Signal;
+  /**
+   * Noise that changes smoothly from place to place, -1 to 1, about one bump per unit of `x` and
+   * `y`: clouds, smoke, water. `z` moves through it, such as `time`, so it flows. Scale the place
+   * for finer or coarser grain: `noise(x.times(8), y.times(8), time)`.
+   */
+  noise(x: Operand, y: Operand, z?: Operand): Signal;
   /** A live value, worked out once a frame: a level, an output of the sound, a field as it turns, a drag. */
   live(value: Num): Signal;
   /**
@@ -187,6 +193,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
     x,
     y,
     aspect: pixelSource("aspect"),
+    noise: (atX, atY, atZ = 0) => new Signal({ op: "smoothNoise", x: atX, y: atY, z: atZ }),
     time: live(now.elapsed),
     live,
     wave: (list, at) => {

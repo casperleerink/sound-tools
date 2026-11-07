@@ -528,6 +528,8 @@ pub(crate) struct Uses {
     pub files: BTreeSet<String>,
     /// The recorders whose takes it draws as they grow.
     pub takes: BTreeSet<String>,
+    /// It reads where the pointer is over a space, which draws again as it moves.
+    pub pointer: bool,
 }
 
 impl Uses {
@@ -558,6 +560,7 @@ impl Uses {
         self.animates |= other.animates;
         self.output |= other.output;
         self.input |= other.input;
+        self.pointer |= other.pointer;
         let sets = [
             (&mut self.peaks, &other.peaks),
             (&mut self.played, &other.played),
@@ -580,6 +583,7 @@ struct UseCounts {
     animates: usize,
     output: usize,
     input: usize,
+    pointer: usize,
     named: HashMap<(Named, String), usize>,
 }
 
@@ -609,6 +613,7 @@ impl UseCounts {
         step(&mut self.animates, uses.animates);
         step(&mut self.output, uses.output);
         step(&mut self.input, uses.input);
+        step(&mut self.pointer, uses.pointer);
         let named = [
             (Named::Peak, &uses.peaks),
             (Named::Played, &uses.played),
@@ -642,6 +647,7 @@ impl UseCounts {
             animates: self.animates > 0,
             output: self.output > 0,
             input: self.input > 0,
+            pointer: self.pointer > 0,
             peaks: names(Named::Peak),
             played: names(Named::Played),
             scopes: names(Named::Scope),
@@ -1733,6 +1739,10 @@ impl Live {
                 // It may be an output, which moves with the watches.
                 uses.watches = true;
             }
+            Self::Space {
+                part: SpacePart::PointerX | SpacePart::PointerY | SpacePart::PointerOver,
+                ..
+            } => uses.pointer = true,
             Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
@@ -1786,6 +1796,10 @@ pub(crate) enum SpacePart {
     Bottom,
     PointX,
     PointY,
+    /// Where the pointer is over it, in its units, and 1 while it is.
+    PointerX,
+    PointerY,
+    PointerOver,
 }
 
 /// The pointer pressing and dragging a shape or a space.
