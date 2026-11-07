@@ -858,6 +858,7 @@ impl TypeScriptCard {
             in_title_bar: false,
             stage: self.stage_in_page(),
             out_of_page: false,
+            only_shows: false,
             under_tooltip: false,
             takes_keys,
             title_focus,

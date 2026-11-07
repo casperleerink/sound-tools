@@ -66,6 +66,8 @@ pub(super) struct Drawing<'a> {
     pub(super) stage: StageDiv,
     /// Whether what it draws shows out of its page, in the title bar.
     pub(super) out_of_page: bool,
+    /// Whether it draws the stage's window, which only shows.
+    pub(super) only_shows: bool,
     /// Whether what it draws is inside a div with a tooltip.
     pub(super) under_tooltip: bool,
     /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
@@ -309,7 +311,7 @@ impl Drawing<'_> {
                 if stage_in_page {
                     children.push(open_stage_button(self.card.clone()));
                 }
-                if *on_hover == Some(true) {
+                if *on_hover == Some(true) && !self.only_shows {
                     let card = self.card.clone();
                     let hovered = hears_hover(id, self.hovers.clone(), card);
                     children.push(hovered.into_any_element());

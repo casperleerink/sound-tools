@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Entity, EventEmitter, MouseButton,
-    MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions,
-    canvas, div, point, prelude::*, px, size,
+    MouseDownEvent, PinchEvent, Render, ScrollEvent, TitlebarOptions, WeakEntity, Window,
+    WindowBounds, WindowOptions, canvas, div, point, prelude::*, px, size,
 };
 use serde::{Deserialize, Serialize};
 use sound_ui::ActiveTheme;
@@ -205,6 +205,7 @@ impl TypeScriptCard {
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.stage = StageDiv::Here;
         drawing.out_of_page = true;
+        drawing.only_shows = true;
         let shown = drawing.draw(slot);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
@@ -324,9 +325,9 @@ impl Render for Stage {
             .text_color(cx.theme().gray_950)
             .flex()
             .flex_col()
-            // It only shows: a press plays nothing here, its controls are the page's. The window
-            // hears it first, before anything drawn in it. Its top edge moves it, as a title bar
-            // does, but for full screen.
+            // It only shows: the pointer plays nothing here, its controls are the page's, though
+            // where it is still reads. The window hears it first, before anything drawn in it.
+            // Its top edge moves it, as a title bar does, but for full screen.
             .child(canvas(
                 |_, _, _| {},
                 move |_, (), window, _| {
@@ -344,6 +345,16 @@ impl Render for Stage {
                             }
                         }
                         cx.stop_propagation();
+                    });
+                    window.on_mouse_event(|_: &ScrollEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Capture {
+                            cx.stop_propagation();
+                        }
+                    });
+                    window.on_mouse_event(|_: &PinchEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Capture {
+                            cx.stop_propagation();
+                        }
                     });
                 },
             ))
