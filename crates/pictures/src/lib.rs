@@ -354,14 +354,62 @@ pub struct Rendered {
     pub means: Vec<f32>,
 }
 
+/// Fewer pixels than this are worked out on one thread: starting more costs more than it gives.
+const PIXELS_PER_THREAD: usize = 16_384;
+
 /// The frame of `size` pixels the graph of `program` makes, row by row: each node over a whole
-/// row at a time, as the machine of a sound runs a span of frames.
+/// row at a time, as the machine of a sound runs a span of frames. Rows read nothing of each
+/// other, so bands of them run on threads of their own.
 pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, usize)) -> Rendered {
+    let mut pixels = vec![[0.0_f32; 3]; width * height];
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let threads = threads
+        .min((width * height / PIXELS_PER_THREAD).max(1))
+        .min(height.max(1));
+    let rows_each = height.div_ceil(threads).max(1);
+    let size = (width, height);
+    let sums = match threads {
+        1 => render_rows(program, inputs, size, 0, &mut pixels),
+        _ => std::thread::scope(|scope| {
+            let bands: Vec<_> = (pixels.chunks_mut(rows_each * width).enumerate())
+                .map(|(band, pixels)| {
+                    scope
+                        .spawn(move || render_rows(program, inputs, size, band * rows_each, pixels))
+                })
+                .collect();
+            let mut sums = vec![0.0_f64; program.measures.len()];
+            for band in bands {
+                // A band that panicked leaves its rows black.
+                for (sum, part) in sums.iter_mut().zip(band.join().unwrap_or_default()) {
+                    *sum += part;
+                }
+            }
+            sums
+        }),
+    };
+    let count = (width * height).max(1) as f64;
+    Rendered {
+        frame: Frame {
+            width,
+            height,
+            pixels,
+        },
+        means: sums.iter().map(|sum| (sum / count) as f32).collect(),
+    }
+}
+
+/// The rows of `pixels`, from `first` on, and the sum over them of each node it measures.
+fn render_rows(
+    program: &Program,
+    inputs: &Inputs<'_>,
+    (width, height): (usize, usize),
+    first: usize,
+    pixels: &mut [[f32; 3]],
+) -> Vec<f64> {
     let nodes = &program.nodes;
     let mut sums = vec![0.0_f64; program.measures.len()];
     let mut registers = vec![0.0_f32; nodes.len() * width];
-    let mut pixels = vec![[0.0_f32; 3]; width * height];
-    for row in 0..height {
+    for (row, pixels) in (first..).zip(pixels.chunks_mut(width.max(1))) {
         let y = (row as f32 + 0.5) / height as f32;
         for (index, node) in nodes.iter().enumerate() {
             let (before, after) = registers.split_at_mut(index * width);
@@ -382,38 +430,26 @@ pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, u
                 },
             );
         }
-        for (sum, node) in sums.iter_mut().zip(&program.measures) {
-            let values = registers
+        let row_of = |node: &usize| {
+            registers
                 .get(node * width..(node + 1) * width)
-                .unwrap_or(&[]);
-            *sum += values
+                .unwrap_or(&[])
+        };
+        for (sum, node) in sums.iter_mut().zip(&program.measures) {
+            *sum += row_of(node)
                 .iter()
                 .map(|value| f64::from(finite(*value)))
                 .sum::<f64>();
         }
-        let pixels = pixels
-            .get_mut(row * width..(row + 1) * width)
-            .unwrap_or_default();
         for (channel, node) in program.output.iter().enumerate() {
-            let values = registers
-                .get(node * width..(node + 1) * width)
-                .unwrap_or(&[]);
-            for (pixel, value) in pixels.iter_mut().zip(values) {
+            for (pixel, value) in pixels.iter_mut().zip(row_of(node)) {
                 if let Some(colour) = pixel.get_mut(channel) {
                     *colour = finite(*value).clamp(0.0, 1.0);
                 }
             }
         }
     }
-    let count = (width * height).max(1) as f64;
-    Rendered {
-        frame: Frame {
-            width,
-            height,
-            pixels,
-        },
-        means: sums.iter().map(|sum| (sum / count) as f32).collect(),
-    }
+    sums
 }
 
 /// What a picture reads from outside, once a frame.
@@ -719,6 +755,31 @@ mod tests {
             .iter()
             .fold(0.0_f32, |most, value| most.max(value.abs()));
         assert!(spread > 0.5, "{spread}");
+    }
+
+    #[test]
+    fn a_picture_on_many_threads_is_the_picture_on_one() {
+        // Large enough for bands on threads of their own; noise that differs on every row.
+        let program = program(serde_json::json!({
+            "nodes": [{"op": "x"}, {"op": "y"}, {"op": "noise"}, {"op": "add", "a": 1, "b": 2}],
+            "lives": 0,
+            "output": {"red": 0, "green": 3, "blue": 2},
+        }));
+        let last = Frame::default();
+        let inputs = Inputs {
+            lives: &[],
+            waves: &[],
+            videos: &[],
+            last: &last,
+            frame: 7,
+        };
+        let size = (300, 301);
+        let whole = render(&program, &inputs, size);
+        let mut pixels = vec![[0.0_f32; 3]; size.0 * size.1];
+        let sums = render_rows(&program, &inputs, size, 0, &mut pixels);
+        assert_eq!(whole.frame.pixels, pixels);
+        let mean = (sums[0] / (size.0 * size.1) as f64) as f32;
+        assert!((whole.means[0] - mean).abs() < 1e-6);
     }
 
     #[test]
