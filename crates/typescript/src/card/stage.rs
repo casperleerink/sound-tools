@@ -14,6 +14,7 @@ use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 
 use super::TypeScriptCard;
+use crate::feeds::Drawn;
 
 /// Where the div that says `stage` draws.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -112,6 +113,11 @@ impl TypeScriptCard {
         self.open_stage_window(cx);
     }
 
+    /// The slot of the stage while it shows in a window of its own.
+    pub(super) fn stage_away(&self) -> Option<usize> {
+        self.stage.filter(|_| !self.stage_place.closed)
+    }
+
     /// Where the page draws the stage's div.
     pub(super) fn stage_in_page(&self) -> StageDiv {
         match self.stage_place.closed {
@@ -195,6 +201,7 @@ impl TypeScriptCard {
         let shown = drawing.draw(slot);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
+        self.feeds.drawn(Drawn::Stage);
         Some(shown)
     }
 }
@@ -297,7 +304,7 @@ impl Render for Stage {
         // Its own frames move on while the page's window is hidden.
         card.update(cx, |card, cx| card.read_frame_now(cx));
         let card = card.read(cx);
-        if card.parts(cx).body.animates {
+        if card.parts(cx).stage.animates {
             window.request_animation_frame();
         }
         let shown = card.draw_stage(window, cx);

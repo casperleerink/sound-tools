@@ -95,6 +95,8 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
+    /// What is wrong with the videos and photos each card reads now.
+    media_problems: HashMap<InstanceId, Vec<Problem>>,
     /// Hears the changes in `extensions/`.
     watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
@@ -477,6 +479,7 @@ impl Live {
                 performed_on: HashSet::new(),
                 last_frame: Instant::now(),
                 problems,
+                media_problems: HashMap::new(),
                 watcher,
                 watch_problem,
                 changed,
@@ -1244,6 +1247,33 @@ impl Live {
                 session.report(error, cx);
             }
         });
+    }
+
+    /// What is wrong with the videos and photos the card of `id` reads, in place of what was.
+    pub(crate) fn media_problems(
+        &mut self,
+        id: &InstanceId,
+        messages: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let tools = self.tools.borrow();
+        let info = (session.read(cx).project().tool_of(id)).and_then(|tool| find(&tools, tool));
+        let problems: Vec<Problem> = (info.into_iter())
+            .flat_map(|info| messages.iter().map(|message| info.problem(message)))
+            .collect();
+        drop(tools);
+        let kept = self.media_problems.get(id).map_or(&[][..], Vec::as_slice);
+        if kept != problems.as_slice() {
+            if problems.is_empty() {
+                self.media_problems.remove(id);
+            } else {
+                self.media_problems.insert(id.clone(), problems);
+            }
+            self.report(cx);
+        }
     }
 
     /// `message` as a problem of the tool of `id`, once.
@@ -2299,7 +2329,11 @@ impl Live {
             return;
         };
         let watched = self.watch_problem.clone();
-        let problems = self.problems.iter().cloned().chain(watched).collect();
+        let media = self.media_problems.values().flatten().cloned();
+        let problems = (self.problems.iter().cloned())
+            .chain(media)
+            .chain(watched)
+            .collect();
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);

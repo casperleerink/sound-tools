@@ -3,12 +3,15 @@
 
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::Duration;
 
 use sound_canvas::Frame;
 use sound_media::video::Video;
 
 /// The most pixels across or down of a frame: as many as a canvas works out.
 const LONGEST: u32 = sound_canvas::MAX_ACROSS;
+/// How often a video or photo that did not open is looked for again.
+const AGAIN: Duration = Duration::from_secs(1);
 /// Frames a second it decodes at most, as most videos have: the window draws more often, and
 /// each frame of the video then decodes once.
 const RATE: f64 = 30.0;
@@ -90,11 +93,22 @@ impl Drop for Player {
 }
 
 fn decode(path: &Path, shared: &Shared) {
-    let mut video = match Video::open(path, LONGEST) {
-        Ok(video) => video,
-        Err(error) => {
-            shared.state().problem = Some(error.to_string());
-            return;
+    let mut video = loop {
+        match Video::open(path, LONGEST) {
+            Ok(video) => break video,
+            Err(error) => {
+                let mut state = shared.state();
+                state.problem = Some(error.to_string());
+                // Looked for again each second, as the file may come.
+                let waited = (shared.asked).wait_timeout_while(state, AGAIN, |state| !state.gone);
+                let gone = match waited {
+                    Ok((state, _)) => state.gone,
+                    Err(poisoned) => poisoned.into_inner().0.gone,
+                };
+                if gone {
+                    return;
+                }
+            }
         }
     };
     let first = video
@@ -105,6 +119,7 @@ fn decode(path: &Path, shared: &Shared) {
         let mut state = shared.state();
         state.length = Some(video.seconds());
         state.shown = first;
+        state.problem = None;
     }
     loop {
         let at = {
@@ -156,21 +171,30 @@ impl Still {
         let path = path.to_path_buf();
         let spawned = std::thread::Builder::new().name("photo".into()).spawn({
             let read = read.clone();
+            // Looked for again each second, as the file may come, while the photo is shown.
             move || {
-                let opened = image::open(&path).map(|photo| {
-                    let photo = photo.thumbnail(LONGEST, LONGEST).to_rgba8();
-                    let (width, height) = (photo.width() as usize, photo.height() as usize);
-                    Arc::new(Frame::from_rgba(width, height, photo.as_raw()))
-                });
-                let mut read = read
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                match opened {
-                    Ok(frame) => read.frame = Some(frame),
-                    Err(error) => {
-                        let name = path.file_name().unwrap_or_default().to_string_lossy();
-                        read.problem = Some(format!("the photo {name} did not open: {error}"));
+                while Arc::strong_count(&read) > 1 {
+                    let opened = image::open(&path).map(|photo| {
+                        let photo = photo.thumbnail(LONGEST, LONGEST).to_rgba8();
+                        let (width, height) = (photo.width() as usize, photo.height() as usize);
+                        Arc::new(Frame::from_rgba(width, height, photo.as_raw()))
+                    });
+                    let mut read = read
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match opened {
+                        Ok(frame) => {
+                            read.frame = Some(frame);
+                            read.problem = None;
+                            return;
+                        }
+                        Err(error) => {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            read.problem = Some(format!("the photo {name} did not open: {error}"));
+                        }
                     }
+                    drop(read);
+                    std::thread::sleep(AGAIN);
                 }
             }
         });

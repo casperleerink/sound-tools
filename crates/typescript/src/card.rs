@@ -46,7 +46,7 @@ use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
 pub(crate) use self::stage::Stage;
-use self::stage::StagePlace;
+use self::stage::{StageChanged, StagePlace};
 use self::sync::Embedded;
 
 /// How long an ended drag keeps its values at most, when the answer to its end does not come,
@@ -283,7 +283,15 @@ pub(crate) struct Parts {
     title_bar: Uses,
     /// The spaces of a page that move every frame, which the layer over it draws, together.
     over: Uses,
+    /// The stage while it is in a window of its own.
+    stage: Uses,
     lifted: HashSet<u64>,
+}
+
+impl Parts {
+    fn each(&self) -> [&Uses; 4] {
+        [&self.body, &self.title_bar, &self.over, &self.stage]
+    }
 }
 
 /// A space the layer over a page draws: its slot, and where the page laid it out and cut it
@@ -363,8 +371,7 @@ impl TypeScriptCard {
                         .filter_map(|name| view.id.child(name.split_once('.')?.0).ok())
                         .any(|inside| inside == *id)
                 };
-                let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
-                view.draw_again([reads(body), reads(title_bar), reads(over)], cx);
+                view.draw_again(parts.each().map(reads), cx);
             }
             _ => {}
         })
@@ -373,7 +380,7 @@ impl TypeScriptCard {
         let playhead = session.read(cx).playhead().clone();
         cx.observe(&playhead, |view, _, cx| {
             let parts = view.parts(cx);
-            view.draw_again([parts.body.tick, parts.title_bar.tick, parts.over.tick], cx);
+            view.draw_again(parts.each().map(|uses| uses.tick), cx);
         })
         .detach();
         cx.subscribe_in(
@@ -392,9 +399,7 @@ impl TypeScriptCard {
         let recording = session.read(cx).recording().clone();
         cx.observe(&recording, |view, _, cx| {
             let parts = view.parts(cx);
-            let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
-            let shown = |uses: &Uses| !uses.takes.is_empty();
-            view.draw_again([shown(body), shown(title_bar), shown(over)], cx);
+            view.draw_again(parts.each().map(|uses| !uses.takes.is_empty()), cx);
         })
         .detach();
         // A waveform it draws is made in the background.
@@ -511,6 +516,7 @@ impl TypeScriptCard {
                         || recording.notes_of(&recorder).is_some()
                 })
         };
+        let staged = self.stage_away().is_some();
         let feeds = &mut self.feeds;
         let mut changed = |uses, part| {
             growing(uses) || feeds.changed(session, (&self.id, &state), (uses, part), tick, input)
@@ -519,17 +525,17 @@ impl TypeScriptCard {
         let title_bar =
             !body && self.title_bar.is_some() && changed(&parts.title_bar, Drawn::TitleBar);
         let over = !body && !parts.lifted.is_empty() && changed(&parts.over, Drawn::Over);
-        self.draw_again([body, title_bar, over], cx);
+        let stage = !body && staged && changed(&parts.stage, Drawn::Stage);
+        self.draw_again([body, title_bar, over, stage], cx);
     }
 
     /// Moves the number inputs its canvases measure, to what they measured since the last poll,
     /// and tells the problems of the tool of what its canvases could not read.
     fn send_measured(&mut self, cx: &mut Context<Self>) {
         let id = self.id.clone();
-        for problem in self.feeds.take_problems() {
-            self.live
-                .update(cx, |live, cx| live.tool_problem(&id, problem, cx));
-        }
+        let problems = self.feeds.media_problems();
+        self.live
+            .update(cx, |live, cx| live.media_problems(&id, problems, cx));
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return;
         };
@@ -552,12 +558,15 @@ impl TypeScriptCard {
 
     /// Draws the whole card again, or only its title bar or the layer over the page when
     /// nothing else changed. A part that moves on every frame draws in the next one anyway.
-    fn draw_again(&mut self, [body, title_bar, over]: [bool; 3], cx: &mut Context<Self>) {
+    fn draw_again(&mut self, [body, title_bar, over, stage]: [bool; 4], cx: &mut Context<Self>) {
         if body {
             cx.notify();
             return;
         }
         let parts = self.parts(cx);
+        if stage && !parts.stage.animates {
+            cx.emit(StageChanged);
+        }
         let title_bar = title_bar && !parts.title_bar.animates;
         let over = over && !parts.over.animates;
         self.draw_alone(title_bar, over, cx);
@@ -594,7 +603,8 @@ impl TypeScriptCard {
             });
         };
         let title = self.title_bar;
-        let key = (table.version(), title, self.stage);
+        let staged = self.stage_away();
+        let key = (table.version(), title, staged);
         if let Some((at, parts)) = &*self.parts.borrow()
             && *at == key
         {
@@ -615,18 +625,22 @@ impl TypeScriptCard {
             .map(|(space, _)| space)
             .collect();
         let parts_of: Vec<usize> = (title.into_iter())
+            .chain(staged)
             .chain(lifted.iter().map(|(slot, _)| *slot))
             .collect();
         let (body, mut each) = table.uses_split(&parts_of);
-        let title_bar = match title {
+        let mut part = |slot: Option<usize>| match slot {
             Some(_) if !each.is_empty() => each.remove(0),
             _ => Uses::default(),
         };
+        let title_bar = part(title);
+        let stage = part(staged);
         let mut over = Uses::default();
         each.iter().for_each(|uses| over.join(uses));
         let parts = Rc::new(Parts {
             body,
             title_bar,
+            stage,
             over,
             lifted: lifted.into_iter().map(|(_, id)| id).collect(),
         });

@@ -62,6 +62,8 @@ pub(crate) enum Drawn {
     TitleBar,
     /// The layer over a page.
     Over,
+    /// The stage, in a window of its own.
+    Stage,
 }
 
 #[derive(Default)]
@@ -93,9 +95,9 @@ pub(crate) struct Feeds {
     /// that eases.
     pub moving: Cell<bool>,
     /// Whether what each part drew since the last poll still moves.
-    moved: Cell<[bool; 3]>,
+    moved: Cell<[bool; 4]>,
     /// The frame the last poll saw, and what had moved until then.
-    polled: (u64, [bool; 3]),
+    polled: (u64, [bool; 4]),
     pub histories: RefCell<HashMap<String, (u64, VecDeque<f32>)>>,
     /// The clock of the project, for the tempo and the places in the piece a tree shows.
     pub clock: Option<Clock>,
@@ -116,8 +118,8 @@ pub(crate) struct Feeds {
     stills: RefCell<HashMap<String, (u64, Still)>>,
     /// The videos it shows, by file name and read, with the frame they were last read.
     videos: RefCell<HashMap<String, (u64, Player)>>,
-    /// Videos and photos named outside their folder, until its card takes them.
-    misnamed: RefCell<Vec<String>>,
+    /// Videos and photos named outside their folder, with the frame they were last read.
+    misnamed: RefCell<HashMap<String, u64>>,
     records: Records,
 }
 
@@ -248,6 +250,7 @@ impl Feeds {
         (self.spectra.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.videos.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.stills.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.misnamed.borrow_mut()).retain(|_, last| frame - *last < 60);
     }
 
     /// Whether a frame now would draw something else than the last, of what reads `uses`, the
@@ -435,22 +438,28 @@ impl Feeds {
                 Some(self.root.join("assets").join(folder).join(asset))
             }
             _ => {
-                (self.misnamed.borrow_mut())
-                    .push(format!("`{asset}` is no file name in assets/{folder}/"));
+                (self.misnamed.borrow_mut()).insert(
+                    format!("`{asset}` is no file name in assets/{folder}/"),
+                    self.frame,
+                );
                 None
             }
         }
     }
 
-    /// What is wrong with the videos and photos it reads. Told on every poll, as a new load of
-    /// the tools starts their problems again.
-    pub(crate) fn take_problems(&self) -> Vec<String> {
+    /// What is wrong with the videos and photos it reads now.
+    pub(crate) fn media_problems(&self) -> Vec<String> {
         let videos = self.videos.borrow();
         let stills = self.stills.borrow();
-        (videos.values().filter_map(|(_, player)| player.problem()))
+        let misnamed = self.misnamed.borrow();
+        let mut problems: Vec<String> = (videos.values())
+            .filter_map(|(_, player)| player.problem())
             .chain(stills.values().filter_map(|(_, still)| still.problem()))
-            .chain(self.misnamed.take())
-            .collect()
+            .chain(misnamed.keys().cloned())
+            .collect();
+        // In the same order each poll, so the same problems are no change.
+        problems.sort();
+        problems
     }
 
     /// The last `frames` values of `value` under `key`, one a frame, oldest first.
