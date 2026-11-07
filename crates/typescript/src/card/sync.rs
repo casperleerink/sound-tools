@@ -211,8 +211,8 @@ impl TypeScriptCard {
             && !self.overlays.contains(&owner)
         {
             self.menu_overlay = None;
-            if let Some((menu, _)) = &self.menu {
-                let (menu, shown_in) = (menu.clone(), self.menu_window());
+            if let Some((menu, _, shown_in)) = &self.menu {
+                let (menu, shown_in) = (menu.clone(), *shown_in);
                 in_window(window, shown_in, cx, |window, cx| {
                     menu.update(cx, |menu, cx| {
                         if menu.is_open() {
@@ -524,7 +524,7 @@ impl TypeScriptCard {
         self.answer_menu(None, cx);
         // A menu with a search field is another menu than one without.
         let cached = (self.menu.take())
-            .map(|(menu, _)| menu)
+            .map(|(menu, ..)| menu)
             .filter(|menu| menu.read(cx).is_searchable() == search);
         let menu = match cached {
             Some(menu) => menu,
@@ -562,23 +562,29 @@ impl TypeScriptCard {
             menu.set_size(width.unwrap_or(MENU_WIDTH), max_height);
         });
         // In the window the composer works in, which draws it: the stage's or the page's.
-        self.menu_on_stage =
-            (self.stage_window).is_some_and(|stage| cx.active_window() == Some(stage.into()));
+        let shown_in = (self.stage_window)
+            .map(AnyWindowHandle::from)
+            .filter(|stage| cx.active_window() == Some(*stage))
+            .unwrap_or(self.window);
         let opened = menu.clone();
-        in_window(window, self.menu_window(), cx, |window, cx| {
+        in_window(window, shown_in, cx, |window, cx| {
             opened.update(cx, |menu, cx| match under {
                 Some(position) => menu.open_under(position, window, cx),
                 None => menu.open_at(window.mouse_position(), window, cx),
             });
         });
         cx.notify();
-        self.menu = Some((menu, Some(question)));
+        self.menu = Some((menu, Some(question), shown_in));
         self.menu_overlay = self.overlays.last().copied();
     }
 
     /// Answers the open menu's question, once.
     pub(super) fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
-        let Some(question) = self.menu.as_mut().and_then(|(_, waiting)| waiting.take()) else {
+        let Some(question) = self
+            .menu
+            .as_mut()
+            .and_then(|(_, waiting, _)| waiting.take())
+        else {
             return;
         };
         self.live

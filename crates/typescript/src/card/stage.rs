@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, EventEmitter, FocusHandle,
-    KeyDownEvent, MouseButton, MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window,
-    WindowBounds, WindowControlArea, WindowOptions, div, point, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, MouseButton,
+    MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowControlArea,
+    WindowOptions, div, point, prelude::*, px, size,
 };
 use serde::{Deserialize, Serialize};
 use sound_ui::ActiveTheme;
@@ -164,17 +164,9 @@ impl TypeScriptCard {
         });
     }
 
-    /// The window an open menu shows in.
-    pub(super) fn menu_window(&self) -> AnyWindowHandle {
-        match self.stage_window.filter(|_| self.menu_on_stage) {
-            Some(stage) => stage.into(),
-            None => self.window,
-        }
-    }
-
     /// A menu open on the stage goes with it, answered with nothing picked.
     fn drop_stage_menu(&mut self, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.menu_on_stage) {
+        if (self.menu.as_ref()).is_some_and(|(_, _, shown_in)| *shown_in != self.window) {
             self.answer_menu(None, cx);
             self.menu = None;
         }
@@ -322,14 +314,16 @@ impl Stage {
                 if window.focused(cx).is_none() {
                     window.focus(&stage.1, cx);
                 }
-            } else if let Some(card) = stage.0.upgrade()
-                // The press that gave its page the focus is the page's, not one to let go of.
-                && cx.active_window() != Some(card.read(cx).window)
-            {
+            } else if let Some(card) = stage.0.upgrade() {
+                // Its keys go up wherever the focus went, as the page's do. The press that gave
+                // the page the focus is the page's, not one to let go of.
+                let to_page = cx.active_window() == Some(card.read(cx).window);
                 card.update(cx, |card, cx| {
-                    card.clicking = None;
-                    card.let_go(None, cx);
                     card.let_go_of_keys(cx);
+                    if !to_page {
+                        card.clicking = None;
+                        card.let_go(None, cx);
+                    }
                 });
             }
         })
@@ -388,8 +382,8 @@ impl Render for Stage {
             .children(bar)
             .children(
                 (card.menu.as_ref())
-                    .filter(|_| card.menu_on_stage)
-                    .map(|(menu, _)| menu.clone()),
+                    .filter(|(_, _, shown_in)| *shown_in == window.window_handle())
+                    .map(|(menu, ..)| menu.clone()),
             )
             .child(hears_the_button(card.button_down.clone(), weak))
             // Its own window, out of the shell that moves the focus elsewhere.

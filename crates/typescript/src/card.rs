@@ -90,10 +90,9 @@ pub(crate) struct TypeScriptCard {
     feeds: Feeds,
     /// The shapes of each space, by its key, with where those that stay are.
     indexes: RefCell<HashMap<String, SpaceIndex>>,
-    /// The menu its code opens where the pointer is, and the question of the open one.
-    menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
-    /// The open menu shows on the stage, which asked for it.
-    menu_on_stage: bool,
+    /// The menu its code opens where the pointer is, the question of the open one, and the
+    /// window it shows in: the page's, or the stage's.
+    menu: Option<(Entity<DropdownMenu>, Option<u64>, AnyWindowHandle)>,
     /// The newest overlay when the menu opened, whose closing closes it.
     menu_overlay: Option<u64>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
@@ -467,7 +466,6 @@ impl TypeScriptCard {
             feeds: Feeds::default(),
             indexes: RefCell::default(),
             menu: None,
-            menu_on_stage: false,
             menu_overlay: None,
             inputs: HashMap::new(),
             overlays: Vec::new(),
@@ -1013,8 +1011,8 @@ impl Render for TypeScriptCard {
             ))
             .children(
                 (self.menu.as_ref())
-                    .filter(|_| !self.menu_on_stage)
-                    .map(|(menu, _)| menu.clone()),
+                    .filter(|(_, _, shown_in)| *shown_in == self.window)
+                    .map(|(menu, ..)| menu.clone()),
             );
         match &self.frame {
             // At least as wide as a plain card, so the title fits.
