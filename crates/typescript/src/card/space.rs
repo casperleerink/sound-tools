@@ -407,11 +407,9 @@ fn listen(
                 return;
             }
             card.update(cx, |card, cx| {
-                if card
-                    .live
-                    .read(cx)
-                    .info(card.card)
-                    .is_some_and(|info| info.keys)
+                // On the stage the keys stay with the stage, which hears them for the page.
+                if window.window_handle() == card.window
+                    && (card.live.read(cx).info(card.card)).is_some_and(|info| info.keys)
                 {
                     window.focus(&card.focus, cx);
                 }
