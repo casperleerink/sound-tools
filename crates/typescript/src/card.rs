@@ -431,7 +431,7 @@ impl TypeScriptCard {
             // A card that is gone hears no focus out, nor the button go up.
             view.let_go_of_keys(cx);
             view.let_go(None, cx);
-            view.live.update(cx, |live, _| live.remove(view.card));
+            view.live.update(cx, |live, cx| live.remove(view.card, cx));
         })
         .detach();
         Self {
@@ -534,8 +534,9 @@ impl TypeScriptCard {
     fn send_measured(&mut self, cx: &mut Context<Self>) {
         let id = self.id.clone();
         let problems = self.feeds.media_problems();
-        self.live
-            .update(cx, |live, cx| live.media_problems(&id, problems, cx));
+        self.live.update(cx, |live, cx| {
+            live.media_problems((self.card, &id), problems, cx)
+        });
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return;
         };

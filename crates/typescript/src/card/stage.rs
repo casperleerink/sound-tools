@@ -149,7 +149,11 @@ impl TypeScriptCard {
                 cx.new(|cx| Stage::new(&card, window, cx))
             }) {
                 Ok(window) => card.update(cx, |card, _| card.stage_window = Some(window)),
-                Err(error) => eprintln!("error: the stage did not open: {error:#}"),
+                Err(error) => {
+                    eprintln!("error: the stage did not open: {error:#}");
+                    // Shown in the page, not nowhere.
+                    card.update(cx, |card, cx| card.stage_closed(cx));
+                }
             }
         });
     }

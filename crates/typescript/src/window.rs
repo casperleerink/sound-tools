@@ -95,8 +95,8 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// What is wrong with the videos and photos each card reads now.
-    media_problems: HashMap<InstanceId, Vec<Problem>>,
+    /// What is wrong with the videos and photos each card reads now, by card.
+    media_problems: HashMap<u64, Vec<Problem>>,
     /// Hears the changes in `extensions/`.
     watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
@@ -710,9 +710,12 @@ impl Live {
         card
     }
 
-    pub(crate) fn remove(&mut self, card: u64) {
+    pub(crate) fn remove(&mut self, card: u64, cx: &mut Context<Self>) {
         self.cards.remove(&card);
         self.host.send(&Request::Drop { card });
+        if self.media_problems.remove(&card).is_some() {
+            self.report(cx);
+        }
     }
 
     /// Asks the code of the card to make its nodes, from the records as they are now.
@@ -1249,10 +1252,10 @@ impl Live {
         });
     }
 
-    /// What is wrong with the videos and photos the card of `id` reads, in place of what was.
+    /// What is wrong with the videos and photos `card`, of `id`, reads, in place of what was.
     pub(crate) fn media_problems(
         &mut self,
-        id: &InstanceId,
+        (card, id): (u64, &InstanceId),
         messages: Vec<String>,
         cx: &mut Context<Self>,
     ) {
@@ -1265,12 +1268,15 @@ impl Live {
             .flat_map(|info| messages.iter().map(|message| info.problem(message)))
             .collect();
         drop(tools);
-        let kept = self.media_problems.get(id).map_or(&[][..], Vec::as_slice);
+        let kept = self
+            .media_problems
+            .get(&card)
+            .map_or(&[][..], Vec::as_slice);
         if kept != problems.as_slice() {
             if problems.is_empty() {
-                self.media_problems.remove(id);
+                self.media_problems.remove(&card);
             } else {
-                self.media_problems.insert(id.clone(), problems);
+                self.media_problems.insert(card, problems);
             }
             self.report(cx);
         }
