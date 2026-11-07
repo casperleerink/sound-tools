@@ -11,7 +11,7 @@
 //! runtime <project-folder> --render <wav> --from <at> --to <at> [--no-tail]
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
-//! runtime <project-folder> --screenshot <png>              draw the window as it opens (macOS)
+//! runtime <project-folder> --screenshot <png> [--seconds <n>]  draw the window as it opens, or after n seconds (macOS)
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
 //! runtime --plugins                                        list the plugins of this machine
 //! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
@@ -732,7 +732,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png>]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> [--seconds <n>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -803,11 +803,19 @@ fn main() -> Result<()> {
         }
         [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
         #[cfg(target_os = "macos")]
-        [folder, "--screenshot", png] => {
-            runtime::screenshot::screenshot(Path::new(folder), Path::new(png))
-        }
+        [folder, "--screenshot", png] => runtime::screenshot::screenshot(
+            Path::new(folder),
+            Path::new(png),
+            runtime::screenshot::SETTLE,
+        ),
+        #[cfg(target_os = "macos")]
+        [folder, "--screenshot", png, "--seconds", seconds] => runtime::screenshot::screenshot(
+            Path::new(folder),
+            Path::new(png),
+            std::time::Duration::from_secs_f64(parse_seconds(seconds)?.min(60.0)),
+        ),
         #[cfg(not(target_os = "macos"))]
-        [_, "--screenshot", _] => bail!("--screenshot works on macOS only"),
+        [_, "--screenshot", _, ..] => bail!("--screenshot works on macOS only"),
         _ => bail!(USAGE),
     }
 }

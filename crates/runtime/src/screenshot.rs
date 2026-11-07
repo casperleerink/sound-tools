@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
-use gpui::{AppContext as _, Entity, HeadlessAppContext, px, size};
+use gpui::{AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, px, size};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
 use sound_core::Engine;
 use sound_ui::{Assets, POLL_INTERVAL, Session};
@@ -18,11 +18,13 @@ use sound_ui::{Assets, POLL_INTERVAL, Session};
 use crate::window::{Shell, WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::{OFFLINE, open_with_extensions, views};
 
-/// How long the window runs before the picture: Bun draws a card within milliseconds, and a
-/// page with a control loop moves for a while, as it does when the app opens.
-const SETTLE: Duration = Duration::from_millis(500);
+/// How long the window runs before the picture when not told: Bun draws a card within
+/// milliseconds, and a page with a control loop moves for a while, as it does when the app opens.
+pub const SETTLE: Duration = Duration::from_millis(500);
 
-pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
+/// Draws the window after it ran for `settle`, in real time: what moves, such as a picture or
+/// a meter, shows as it is by then.
+pub fn screenshot(project: &Path, png: &Path, settle_for: Duration) -> Result<()> {
     if !project.join(crate::PROJECT_FILE).is_file() {
         bail!("{} is not a Sound Tools project", project.display());
     }
@@ -67,7 +69,13 @@ pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
         })
     })?;
 
-    settle(&mut cx, &mut engine, &session, &plugins);
+    settle(
+        &mut cx,
+        &mut engine,
+        (&session, window.into()),
+        &plugins,
+        settle_for,
+    )?;
     // A capture is of the last frame. Some views place themselves by what the frame before
     // measured, such as the add track row, and the app always draws another frame.
     cx.update_window(window.into(), |_, window, _| window.refresh())?;
@@ -83,27 +91,34 @@ pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Runs the window for [`SETTLE`] as the app does, in polls of real time: the engine offline,
-/// the background work of the extensions, the timers, and Bun.
+/// Runs the window for `time` as the app does, in polls of real time: the engine offline,
+/// the background work of the extensions, the timers, and Bun. It draws a frame every poll, as
+/// a window on screen does, so what reads the frame before, such as a picture's `last`, moves.
 fn settle(
     cx: &mut HeadlessAppContext,
     engine: &mut Engine,
-    session: &Entity<Session>,
+    (session, window): (&Entity<Session>, AnyWindowHandle),
     plugins: &Plugins,
-) {
+    time: Duration,
+) -> Result<()> {
     let frames = (OFFLINE.sample_rate as f32 * POLL_INTERVAL.as_secs_f32()) as usize;
     let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
     let mut scanned = plugins.scan_generation();
     let started = Instant::now();
-    while started.elapsed() < SETTLE {
+    while started.elapsed() < time {
         drum_pad::wait_for_sounds();
         cx.update(|cx| crate::window::tick(session, plugins, &mut scanned, cx));
         engine.process_block(&mut buffer);
         cx.advance_clock(POLL_INTERVAL);
         cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })?;
         std::thread::sleep(POLL_INTERVAL);
     }
     cx.run_until_parked();
+    Ok(())
 }
 
 /// Copies the folder `from` to `to`. Hidden files, such as `.git` and the lock, are no part of
