@@ -457,7 +457,7 @@ impl Drawing<'_> {
                 }),
             None => element,
         };
-        if *on_drop != Some(true) {
+        if *on_drop != Some(true) || self.only_shows {
             return element;
         }
         element

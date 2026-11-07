@@ -235,7 +235,7 @@ impl Drawing<'_> {
             },
         );
         let holder = div().size_full().child(element.size_full());
-        if space.on_drop != Some(true) {
+        if space.on_drop != Some(true) || self.only_shows {
             return holder.into_any_element();
         }
         let element_id = ElementId::Name(format!("{}-drop", frame.key).into());
