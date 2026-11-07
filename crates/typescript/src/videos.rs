@@ -1,5 +1,5 @@
-//! The videos pictures read: each decoded on a thread of its own, the frame last asked for, so
-//! the window never waits for one. A picture shows the newest frame decoded. A film waits
+//! The videos and photos pictures read. A video decodes on a thread of its own, the frame last
+//! asked for, so the window never waits for one. A picture shows the newest frame decoded. A film waits
 //! instead, see [`wait_for_video_frames`].
 
 use std::path::Path;
@@ -181,4 +181,36 @@ fn decode(path: &Path, shared: &Shared) {
 
 fn frame_of(frame: &sound_media::video::VideoFrame) -> Frame {
     Frame::from_rgba(frame.width, frame.height, &frame.rgba)
+}
+
+/// A photo under `assets/images/`, read once on a thread of its own: black until it is.
+pub(crate) struct Still(Arc<Mutex<Option<Arc<Frame>>>>);
+
+impl Still {
+    pub(crate) fn open(path: &Path) -> Self {
+        let read = Arc::new(Mutex::new(None));
+        let path = path.to_path_buf();
+        let spawned = std::thread::Builder::new().name("photo".into()).spawn({
+            let read = read.clone();
+            move || match image::open(&path) {
+                Ok(photo) => {
+                    let photo = photo.thumbnail(LONGEST, LONGEST).to_rgba8();
+                    let (width, height) = (photo.width() as usize, photo.height() as usize);
+                    let frame = Arc::new(Frame::from_rgba(width, height, photo.as_raw()));
+                    *read
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(frame);
+                }
+                Err(error) => eprintln!("error: {} did not open: {error}", path.display()),
+            }
+        });
+        if let Err(error) = spawned {
+            eprintln!("error: a photo did not start to open: {error}");
+        }
+        Self(read)
+    }
+
+    pub(crate) fn frame(&self) -> Option<Arc<Frame>> {
+        self.0.lock().ok().and_then(|frame| frame.clone())
+    }
 }

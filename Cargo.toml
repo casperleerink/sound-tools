@@ -83,7 +83,8 @@ flate2 = "1.1"
 sha1_smol = "1.0.1"
 hound = "3.5"
 memmap2 = "0.9.11"
-image = { version = "0.25", default-features = false, features = ["png"] }
+# Also JPEG: the photos a picture of a tool reads, under `assets/images/`.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # Snapshots of what the agent driver makes of recorded runs.
 insta = "1.48"
 # Ends the agent's process group, so its own children stop with it.

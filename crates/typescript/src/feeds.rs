@@ -18,7 +18,7 @@ use sound_pictures::Frame;
 
 use crate::meter;
 use crate::tree::{Ease, Uses};
-use crate::videos::Player;
+use crate::videos::{Player, Still};
 
 /// The name an owner keeps the watch of what a cable plays into the number of a child under,
 /// `child.number`.
@@ -112,6 +112,8 @@ pub(crate) struct Feeds {
     sample_rate: u32,
     /// The folder of the project, whose `assets/video/` its videos are in.
     root: std::path::PathBuf,
+    /// The photos it shows, by file name, with the frame they were last read.
+    stills: RefCell<HashMap<String, (u64, Still)>>,
     /// The videos it shows, by file name and read, with the frame they were last read.
     videos: RefCell<HashMap<String, (u64, Player)>>,
     records: Records,
@@ -243,6 +245,7 @@ impl Feeds {
         (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.spectra.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.videos.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.stills.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
     }
 
     /// Whether a frame now would draw something else than the last, of what reads `uses`, the
@@ -412,6 +415,17 @@ impl Feeds {
         });
         *last = self.frame;
         player.frame(seconds, loops)
+    }
+
+    /// The photo `asset` under `assets/images/`, once it is read.
+    pub(crate) fn still(&self, asset: &str) -> Option<Arc<Frame>> {
+        let mut stills = self.stills.borrow_mut();
+        let (last, still) = stills.entry(asset.to_string()).or_insert_with(|| {
+            let path = self.root.join("assets").join("images").join(asset);
+            (self.frame, Still::open(&path))
+        });
+        *last = self.frame;
+        still.frame()
     }
 
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {

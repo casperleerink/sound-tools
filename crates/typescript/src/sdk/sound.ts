@@ -647,8 +647,8 @@ export interface PictureGraph<L = unknown, W = unknown> {
   nodes: GraphNode[];
   lives: L[];
   waves: W[];
-  /** What `image` nodes read: a video, or another picture by its `key`. */
-  images: Array<{ video: { asset: string; at: L; loops: boolean } } | { picture: string }>;
+  /** What `image` nodes read: a video, another picture by its `key`, or a photo. */
+  images: Array<{ video: { asset: string; at: L; loops: boolean } } | { picture: string } | { photo: string }>;
   output: { red: number; green: number; blue: number; alpha?: number };
   measures: Array<{ name: string; node: number }>;
   across?: number;
