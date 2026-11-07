@@ -47,14 +47,18 @@ impl Player {
         Self { shared }
     }
 
-    /// Asks for the frame at `seconds`, round the video's length, and gives the newest decoded.
-    pub(crate) fn frame(&self, seconds: f64) -> Option<Arc<Frame>> {
+    /// Asks for the frame at `seconds`, round and round the video when it `loops`, else held at
+    /// its ends, and gives the newest decoded.
+    pub(crate) fn frame(&self, seconds: f64, loops: bool) -> Option<Arc<Frame>> {
         let (shown, length) = match self.shared.shown.lock() {
             Ok(shown) => (shown.0.clone(), shown.1),
             Err(_) => return None,
         };
         if let (Some(length), Ok(mut asked)) = (length, self.shared.asked.lock()) {
-            let at = seconds.rem_euclid(length.max(f64::MIN_POSITIVE));
+            let at = match loops {
+                true => seconds.rem_euclid(length.max(f64::MIN_POSITIVE)),
+                false => seconds.clamp(0.0, length),
+            };
             asked.at = Some((at * RATE).floor() / RATE);
             self.shared.wake.notify_one();
         }

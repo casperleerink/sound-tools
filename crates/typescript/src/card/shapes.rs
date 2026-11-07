@@ -915,7 +915,8 @@ impl Placing<'_> {
                     .flat_map(|picture| picture.videos())
                     .map(|video| {
                         let at = self.sources.number(&video.at);
-                        (self.sources.feeds.video(&video.asset, at)).unwrap_or_default()
+                        (self.sources.feeds.video(&video.asset, at, video.loops))
+                            .unwrap_or_default()
                     })
                     .collect(),
             },
