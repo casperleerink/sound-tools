@@ -83,6 +83,8 @@ flate2 = "1.1"
 sha1_smol = "1.0.1"
 hound = "3.5"
 memmap2 = "0.9.11"
+# macOS: pictures worked out on the GPU, a spike. The version gpui uses. MIT OR Apache-2.0.
+metal = "0.33"
 # Also JPEG: the photos a picture of a tool reads, under `assets/images/`.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # Snapshots of what the agent driver makes of recorded runs.

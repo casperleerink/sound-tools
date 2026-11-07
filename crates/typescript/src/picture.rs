@@ -6,7 +6,10 @@ use std::sync::{Arc, Mutex};
 use gpui::{Bounds, Pixels, RenderImage, Window, WindowId};
 use serde::{Deserialize, Deserializer};
 
-use sound_pictures::{Frame, Inputs, MAX_ACROSS, Node, Program, Rendered, Rgb, render};
+use sound_pictures::gpu::Gpu;
+use sound_pictures::{
+    Frame, Inputs, MAX_ACROSS, MAX_ACROSS_ON_GPU, Node, Program, Rendered, Rgb, render,
+};
 
 use crate::tree::{List, Num, Uses};
 
@@ -71,6 +74,9 @@ struct Shown {
 #[derive(Default)]
 struct Memory {
     last: Arc<Frame>,
+    /// Where it runs on the GPU, once it was tried: not where it reads lists, images or
+    /// measures, nor off macOS.
+    gpu: Option<Option<Gpu>>,
     /// The step of its time it showed last.
     stepped: Option<u64>,
     /// What it measured in its last frame, until its card sends it.
@@ -165,12 +171,20 @@ impl Picture {
         if width < 1.0 || height < 1.0 {
             return;
         }
-        let across = program.across() as usize;
-        let down =
-            ((across as f32 * height / width).round() as usize).clamp(1, MAX_ACROSS as usize);
         let Ok(mut memory) = memory.lock() else {
             return;
         };
+        if memory.gpu.is_none() {
+            memory.gpu = Some(Gpu::new(program).ok());
+        }
+        let on_gpu = matches!(memory.gpu, Some(Some(_)));
+        let most = if on_gpu {
+            MAX_ACROSS_ON_GPU
+        } else {
+            MAX_ACROSS
+        };
+        let across = program.across().min(most) as usize;
+        let down = ((across as f32 * height / width).round() as usize).clamp(1, most as usize);
         let due = (seen.time * STEPS_PER_SECOND).floor() as u64;
         let resized = (memory.last.width, memory.last.height) != (across, down);
         let steps = match memory.stepped {
@@ -179,7 +193,21 @@ impl Picture {
         };
         memory.stepped = Some(due);
         let images: Vec<&Frame> = seen.images.iter().map(|frame| &**frame).collect();
-        for _ in 0..steps {
+        if let Some(Some(gpu)) = &mut memory.gpu {
+            let mut pixels: &[[f32; 4]] = &[];
+            for _ in 0..steps {
+                pixels = gpu.render(&seen.lives, (across, down));
+            }
+            if steps > 0 {
+                let pixels = pixels.to_vec();
+                memory.last = Arc::new(Frame {
+                    width: across,
+                    height: down,
+                    pixels,
+                });
+            }
+        }
+        for _ in 0..if on_gpu { 0 } else { steps } {
             let inputs = Inputs {
                 lives: &seen.lives,
                 waves: &seen.waves,

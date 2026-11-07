@@ -10,5 +10,8 @@ workspace = true
 [dependencies]
 serde.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+metal.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
