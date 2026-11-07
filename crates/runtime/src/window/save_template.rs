@@ -79,19 +79,8 @@ impl SaveTemplate {
         if self.saving {
             return;
         }
-        let project = self.session.read(cx).project();
-        let keep = match everything {
-            true => Keep::Everything,
-            false => match Keep::tools_of(project) {
-                Ok(keep) => keep,
-                Err(error) => {
-                    self.message = Some(format!("{error:#}").into());
-                    cx.notify();
-                    return;
-                }
-            },
-        };
-        let project = project.root().to_path_buf();
+        let session = self.session.clone();
+        let project = session.read(cx).project().root().to_path_buf();
         self.saving = true;
         self.message = None;
         cx.notify();
@@ -122,6 +111,16 @@ impl SaveTemplate {
             if !replace {
                 return failed(&this, None, cx);
             }
+            // After the answer, so the records are the project's as it saves.
+            let keep = match everything {
+                true => Ok(Keep::Everything),
+                false => (cx.update(|_, cx| Keep::tools_of(session.read(cx).project())))
+                    .and_then(|keep| keep),
+            };
+            let keep = match keep {
+                Ok(keep) => keep,
+                Err(error) => return failed(&this, Some(format!("{error:#}")), cx),
+            };
             let saved = cx
                 .background_spawn(async move { save_in(&saved_folder()?, &project, &name, &keep) })
                 .await;
