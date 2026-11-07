@@ -44,8 +44,10 @@ pub fn import_visual(assets: &Assets, source: &Path, folder: &str) -> Result<Str
         .reserve(&wanted)
         .map_err(|error| io_error(std::io::Error::other(error)))?;
     let target = assets.path(&reserved);
-    // Copied next to its place, then renamed over the empty file that holds its name.
-    let temporary = target.with_file_name(format!(".import-{}.tmp", std::process::id()));
+    // Copied next to its place, then renamed over the empty file that holds its name. Its
+    // name is reserved for this import alone, so no other import writes the same copy.
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    let temporary = target.with_file_name(format!(".{name}.import.tmp"));
     let copied =
         std::fs::copy(source, &temporary).and_then(|_| std::fs::rename(&temporary, &target));
     if let Err(error) = copied {

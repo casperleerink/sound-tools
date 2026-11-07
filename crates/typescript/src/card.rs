@@ -568,11 +568,7 @@ impl TypeScriptCard {
         if !title_bar && !over {
             return;
         }
-        if let Some(state) = self.state(cx) {
-            let uses = self.live.read(cx).uses(self.card);
-            let tick = self.session.read(cx).playhead().read(cx).tick;
-            self.read_frame(&state, &uses, tick, cx);
-        }
+        self.read_frame_now(cx);
         if title_bar {
             cx.emit(TitleBarChanged);
         }
@@ -692,6 +688,15 @@ impl TypeScriptCard {
             if let Some((width, height)) = size {
                 (entry.width, entry.height) = (width, height);
             }
+        }
+    }
+
+    /// Reads the feeds for a frame drawn apart from the page.
+    fn read_frame_now(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.state(cx) {
+            let uses = self.live.read(cx).uses(self.card);
+            let tick = self.session.read(cx).playhead().read(cx).tick;
+            self.read_frame(&state, &uses, tick, cx);
         }
     }
 

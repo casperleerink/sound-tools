@@ -192,8 +192,9 @@ export interface Pixel {
  * from where it is and what it reads; the window then works out every pixel on every frame,
  * with no code running. `across` is how many pixels wide it is worked out, 160 when left out,
  * at most 1920 on macOS and 480 elsewhere; it is as many down as its box is tall for that.
+ * It fades by the `alpha` of its colour, which may read a live value, not by `opacity`.
  */
-export const Canvas = ({ pixels, across, ...props }: Omit<ShapeProps<"canvas">, "canvas"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
+export const Canvas = ({ pixels, across, ...props }: Omit<ShapeProps<"canvas">, "canvas" | "opacity" | "hover"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
   const lives: Num[] = [];
   const waves: WaveList[] = [];
   const images: CanvasGraph<Num, WaveList>["images"] = [];

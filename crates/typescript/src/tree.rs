@@ -2082,6 +2082,12 @@ impl TryFrom<String> for Color {
 }
 
 impl Style {
+    pub(crate) fn grow(&mut self) {
+        self.grow = true;
+    }
+}
+
+impl Style {
     /// Whether it may draw what is in it at less than full opacity.
     fn fades(&self, disabled: bool) -> bool {
         let looks = [self.hover, self.pressed].into_iter().flatten();

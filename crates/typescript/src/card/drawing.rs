@@ -202,7 +202,11 @@ impl Drawing<'_> {
                         StageDiv::Here => false,
                         StageDiv::InPage => true,
                     };
-                let style = style.clone().unwrap_or_default();
+                let mut style = style.clone().unwrap_or_default();
+                // Its own window is all the room it has.
+                if *stage == Some(true) && !stage_in_page {
+                    style.grow();
+                }
                 let disabled = *disabled == Some(true);
                 let shown: Vec<usize> = (entry.children.iter())
                     .filter(|child| {

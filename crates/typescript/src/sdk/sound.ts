@@ -654,13 +654,12 @@ export interface CanvasGraph<L = unknown, W = unknown> {
   across?: number;
 }
 
-/** What only a sound has: it runs in time, sample after sample, and a canvas has no time between its pixels. */
-const SOUND_ONLY = new Set<string>([
-  "input", "inputLeft", "inputRight", "channel", "sampleRate", "beat", "bpm", "playing", "frequency",
-  "pitch", "gate", "velocity", "onset", "param", "feedback", "phasor", "delay", "lowpass", "highpass",
-  "bandpass", "notch", "allpass", "peak", "lowshelf", "highshelf", "smooth", "adsr", "hold", "rise",
-  "change", "at", "lookup", "length", "spectral", "magnitude", "phase", "hz", "index", "sideMagnitude",
-  "sidePhase",
+/** What a canvas works out: each pixel on its own, with no time between them, so nothing that runs in time. */
+const CANVAS_OPS = new Set<GraphNode["op"]>([
+  "constant", "x", "y", "aspect", "live", "wave", "image", "last", "noise", "smoothNoise", "negate",
+  "sin", "cos", "tan", "tanh", "abs", "sqrt", "exp", "log", "floor", "wrap", "add", "subtract",
+  "multiply", "divide", "remainder", "less", "greater", "lessOrEqual", "greaterOrEqual", "equal",
+  "notEqual", "min", "max", "pow", "clamp", "mix",
 ]);
 
 /** For `Canvas`: the graph of `colour`, which `layout` lays out as a sound's. */
@@ -677,8 +676,8 @@ export function canvasToJson<L, W>(
   const output = colour.alpha === undefined ? rgb : { ...rgb, alpha: use(colour.alpha) };
   const measured = measures.map(({ name, value }) => ({ name, node: use(value) }));
   for (const node of nodes) {
-    if (SOUND_ONLY.has(node.op)) {
-      throw new Error(`\`${node.op}\` belongs in a sound: a canvas works out each pixel on its own, with no time between them`);
+    if (!CANVAS_OPS.has(node.op)) {
+      throw new Error(`\`${node.op}\` does not run in a canvas, which works out each pixel on its own with no time between them: work it out in the sound, send it with \`output\` and read it with \`live\``);
     }
   }
   const graph = { nodes, lives, waves, images, output, measures: measured };

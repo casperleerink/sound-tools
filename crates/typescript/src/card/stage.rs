@@ -294,8 +294,9 @@ impl Render for Stage {
             window.remove_window();
             return div().into_any_element();
         };
+        // Its own frames move on while the page's window is hidden.
+        card.update(cx, |card, cx| card.read_frame_now(cx));
         let card = card.read(cx);
-        // What moves on the stage draws the page again too, which reads the feeds for it.
         if card.parts(cx).body.animates {
             window.request_animation_frame();
         }
