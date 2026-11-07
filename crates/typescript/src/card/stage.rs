@@ -196,8 +196,9 @@ impl TypeScriptCard {
         }
     }
 
-    /// The div its view shows on the stage, from the feeds as last read.
-    fn draw_stage(&self, window: &Window, cx: &App) -> Option<AnyElement> {
+    /// The div its view shows on the stage, from the feeds as last read. A press on a control
+    /// there gives the keys back to `keys`, the stage's own.
+    fn draw_stage(&self, keys: &FocusHandle, window: &Window, cx: &App) -> Option<AnyElement> {
         let slot = self.stage?;
         let state = self.read_state()?;
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
@@ -206,6 +207,7 @@ impl TypeScriptCard {
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.stage = StageDiv::Here;
         drawing.out_of_page = true;
+        drawing.title_focus = Some(keys.clone());
         let shown = drawing.draw(slot);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
@@ -335,7 +337,7 @@ impl Render for Stage {
         if card.parts(cx).stage.animates {
             window.request_animation_frame();
         }
-        let shown = card.draw_stage(window, cx);
+        let shown = card.draw_stage(&self.1, window, cx);
         // Its top edge moves it, as a title bar does, but for full screen.
         let bar = (!window.is_fullscreen()).then(|| {
             div()
