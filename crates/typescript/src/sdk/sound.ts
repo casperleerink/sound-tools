@@ -60,7 +60,7 @@ type SignalNode<R> =
   | { op: BinSource }
   | { op: PixelSource }
   | { op: "live"; index: number }
-  | { op: "last"; channel: "red" | "green" | "blue"; x: R; y: R }
+  | { op: "last"; channel: "red" | "green" | "blue" | "alpha"; x: R; y: R }
   | { op: "wave"; table: { wave: number }; at: R }
   | { op: "smoothNoise"; x: R; y: R; z: R }
   | { op: "video"; table: { video: number }; channel: "red" | "green" | "blue"; x: R; y: R };
@@ -622,11 +622,12 @@ function quantize(value: number): number {
 
 // Pictures
 
-/** A colour of a picture: red, green and blue, each 0 to 1. */
+/** A colour of a picture: red, green and blue, each 0 to 1, and `alpha`, how much it covers what is under it, 1 when left out. */
 export interface Rgb {
   red: Operand;
   green: Operand;
   blue: Operand;
+  alpha?: Operand;
 }
 
 /** The colour at hue `hue` (0 to 1 round the circle, red at 0), `saturation` and `value`, each 0 to 1. */
@@ -647,7 +648,7 @@ export interface PictureGraph<L = unknown, W = unknown> {
   lives: L[];
   waves: W[];
   videos: Array<{ asset: string; at: L; loops: boolean }>;
-  output: { red: number; green: number; blue: number };
+  output: { red: number; green: number; blue: number; alpha?: number };
   measures: Array<{ name: string; node: number }>;
   across?: number;
 }
@@ -671,7 +672,8 @@ export function pictureToJson<L, W>(
   across?: number,
 ): PictureGraph<L, W> {
   const { nodes, use } = layout(0);
-  const output = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
+  const rgb = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
+  const output = colour.alpha === undefined ? rgb : { ...rgb, alpha: use(colour.alpha) };
   const measured = measures.map(({ name, value }) => ({ name, node: use(value) }));
   for (const node of nodes) {
     if (SOUND_ONLY.has(node.op)) {

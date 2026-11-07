@@ -169,21 +169,24 @@ pub enum Channel {
     Red,
     Green,
     Blue,
+    Alpha,
 }
 
+/// The colour of a pixel: red, green, blue and how much it covers, 1 when left out.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rgb {
     red: usize,
     green: usize,
     blue: usize,
+    alpha: Option<usize>,
 }
 
 /// A graph of a picture, checked.
 #[derive(Debug)]
 pub struct Program {
     nodes: Vec<Node>,
-    output: [usize; 3],
+    output: [Option<usize>; 4],
     /// The nodes whose mean over the frame it gives, see [`Rendered::means`].
     measures: Vec<usize>,
     across: u32,
@@ -194,7 +197,7 @@ pub struct Program {
 pub struct Frame {
     pub width: usize,
     pub height: usize,
-    pub pixels: Vec<[f32; 3]>,
+    pub pixels: Vec<[f32; 4]>,
 }
 
 impl Frame {
@@ -202,7 +205,8 @@ impl Frame {
     pub fn from_rgba(width: usize, height: usize, rgba: &[u8]) -> Self {
         let pixels = (rgba.chunks_exact(4))
             .map(|pixel| {
-                [0, 1, 2].map(|channel| f32::from(pixel.get(channel).copied().unwrap_or(0)) / 255.0)
+                [0, 1, 2, 3]
+                    .map(|channel| f32::from(pixel.get(channel).copied().unwrap_or(0)) / 255.0)
             })
             .collect();
         Self {
@@ -216,7 +220,7 @@ impl Frame {
     pub fn bgra(&self) -> Vec<u8> {
         let byte = |value: f32| (value * 255.0).round() as u8;
         (self.pixels.iter())
-            .flat_map(|[red, green, blue]| [byte(*blue), byte(*green), byte(*red), 255])
+            .flat_map(|[red, green, blue, alpha]| [*blue, *green, *red, *alpha].map(byte))
             .collect()
     }
 
@@ -282,9 +286,14 @@ impl Program {
                 ));
             }
         }
-        let Rgb { red, green, blue } = output;
-        let output = [red, green, blue];
-        if output.iter().any(|node| *node >= nodes.len()) {
+        let Rgb {
+            red,
+            green,
+            blue,
+            alpha,
+        } = output;
+        let output = [Some(red), Some(green), Some(blue), alpha];
+        if output.iter().flatten().any(|node| *node >= nodes.len()) {
             return Err("a picture's colour is a node it does not have".to_string());
         }
         if measures.iter().any(|node| *node >= nodes.len()) {
@@ -361,7 +370,7 @@ const PIXELS_PER_THREAD: usize = 16_384;
 /// row at a time, as the machine of a sound runs a span of frames. Rows read nothing of each
 /// other, so bands of them run on threads of their own.
 pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, usize)) -> Rendered {
-    let mut pixels = vec![[0.0_f32; 3]; width * height];
+    let mut pixels = vec![[0.0_f32; 4]; width * height];
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
     let threads = threads
         .min((width * height / PIXELS_PER_THREAD).max(1))
@@ -404,7 +413,7 @@ fn render_rows(
     inputs: &Inputs<'_>,
     (width, height): (usize, usize),
     first: usize,
-    pixels: &mut [[f32; 3]],
+    pixels: &mut [[f32; 4]],
 ) -> Vec<f64> {
     let nodes = &program.nodes;
     let mut sums = vec![0.0_f64; program.measures.len()];
@@ -442,9 +451,13 @@ fn render_rows(
                 .sum::<f64>();
         }
         for (channel, node) in program.output.iter().enumerate() {
-            for (pixel, value) in pixels.iter_mut().zip(row_of(node)) {
+            for (column, pixel) in pixels.iter_mut().enumerate() {
+                let value = match node {
+                    Some(node) => row_of(node).get(column).copied().unwrap_or(0.0),
+                    None => 1.0,
+                };
                 if let Some(colour) = pixel.get_mut(channel) {
-                    *colour = finite(*value).clamp(0.0, 1.0);
+                    *colour = finite(value).clamp(0.0, 1.0);
                 }
             }
         }
@@ -668,7 +681,7 @@ mod tests {
         let program = program(serde_json::json!({
             "nodes": [{"op": "x"}, {"op": "y"}, {"op": "live", "index": 0}],
             "lives": 1,
-            "output": {"red": 0, "green": 1, "blue": 2},
+            "output": {"red": 0, "green": 1, "blue": 2, "alpha": 2},
         }));
         let last = Frame::default();
         let inputs = Inputs {
@@ -680,8 +693,9 @@ mod tests {
         };
         let rendered = render(&program, &inputs, (4, 2));
         let frame = rendered.frame;
-        assert_eq!(frame.pixels[0], [0.125, 0.25, 0.25]);
-        assert_eq!(frame.pixels[7], [0.875, 0.75, 0.25]);
+        // It covers a quarter of what is under it, as the live value says.
+        assert_eq!(frame.pixels[0], [0.125, 0.25, 0.25, 0.25]);
+        assert_eq!(frame.pixels[7], [0.875, 0.75, 0.25, 0.25]);
         // It measures node 0, x: its mean over the frame is the middle.
         assert_eq!(rendered.means, [0.5]);
     }
@@ -715,7 +729,7 @@ mod tests {
         let edge = Frame {
             width: 2,
             height: 1,
-            pixels: vec![[0.0; 3], [1.0; 3]],
+            pixels: vec![[0.0; 4], [1.0; 4]],
         };
         assert_eq!(edge.at(0.5, 0.5, 0), 0.5);
     }
@@ -775,7 +789,7 @@ mod tests {
         };
         let size = (300, 301);
         let whole = render(&program, &inputs, size);
-        let mut pixels = vec![[0.0_f32; 3]; size.0 * size.1];
+        let mut pixels = vec![[0.0_f32; 4]; size.0 * size.1];
         let sums = render_rows(&program, &inputs, size, 0, &mut pixels);
         assert_eq!(whole.frame.pixels, pixels);
         let mean = (sums[0] / (size.0 * size.1) as f64) as f32;
@@ -789,6 +803,7 @@ mod tests {
             red: 0,
             green: 0,
             blue: 0,
+            alpha: None,
         };
         assert!(Program::new(nodes, (output, Vec::new()), None, (0, 0, 0)).is_err());
     }

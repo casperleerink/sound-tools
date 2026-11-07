@@ -65,3 +65,7 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 The song of the DAW template has a field `video`: a film under `assets/video/` that shows on the stage at the playhead, still while stopped, so it scrubs with the ruler. A part of the template (`song-movie.tsx`), no new Rust. `pixel.video` gets `loops: false` to hold the last frame past the end.
 
 - Open: no way in the window to pick the film yet; the agent sets `video`. The film is stretched to the stage.
+
+### 11. Transparent pictures (`t3/visual-alpha`)
+
+A picture's colour takes `alpha`, so a glow lies over shapes, a timeline or another picture. Frames hold four channels; `last` reads alpha too.

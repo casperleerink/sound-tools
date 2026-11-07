@@ -163,7 +163,7 @@ export interface Pixel {
    * The colour the picture had one frame before at `x`, `y` (here when left out), between its
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
    */
-  last(x?: Operand, y?: Operand): { red: Signal; green: Signal; blue: Signal };
+  last(x?: Operand, y?: Operand): { red: Signal; green: Signal; blue: Signal; alpha: Signal };
   /**
    * Plays the number input `name` of this tool, every frame, with the mean of `value` over the
    * whole picture: how bright it is, how much moved since the frame before, how much of it is
@@ -215,6 +215,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
       red: new Signal({ op: "last", channel: "red", x: atX, y: atY }),
       green: new Signal({ op: "last", channel: "green", x: atX, y: atY }),
       blue: new Signal({ op: "last", channel: "blue", x: atX, y: atY }),
+      alpha: new Signal({ op: "last", channel: "alpha", x: atX, y: atY }),
     }),
   };
   return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, videos, measures, across) }, []);
