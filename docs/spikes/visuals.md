@@ -23,7 +23,7 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 
 - Cost: a 240 pixel wide picture at 120 frames a second is about 14% of one core on an M-series Mac.
 - Rejected for now: a GPU shader. GPUI draws no shader of ours; a Metal texture would need `paint_surface` and macOS-only code. The graph is the same either way, so a GPU backend can come later without changing the SDK.
-- Open: the picture runs on the main thread. Past 480 across it should move to a thread.
+- Rows of a picture run in bands on all cores (prototype 8): 480 by 270 pixels of 60 sines take 2.2 ms a frame, 12.8 ms on one core.
 
 ### 2. Pictures read lists: spectrum and scope (`t3/visual-picture-waves`)
 
