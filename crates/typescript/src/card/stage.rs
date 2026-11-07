@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Render,
-    TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
-    size,
+    AnyElement, App, Bounds, Context, DispatchPhase, Entity, EventEmitter, MouseButton,
+    MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions,
+    canvas, div, point, prelude::*, px, size,
 };
 use serde::{Deserialize, Serialize};
 use sound_ui::ActiveTheme;
@@ -324,18 +324,30 @@ impl Render for Stage {
             .text_color(cx.theme().gray_950)
             .flex()
             .flex_col()
+            // It only shows: a press plays nothing here, its controls are the page's. The window
+            // hears it first, before anything drawn in it. Its top edge moves it, as a title bar
+            // does, but for full screen.
+            .child(canvas(
+                |_, _, _| {},
+                move |_, (), window, _| {
+                    window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                        if phase != DispatchPhase::Capture {
+                            return;
+                        }
+                        if event.button == MouseButton::Left
+                            && !fullscreen
+                            && event.position.y < px(28.)
+                        {
+                            match event.click_count {
+                                2 => window.titlebar_double_click(),
+                                _ => window.start_window_move(),
+                            }
+                        }
+                        cx.stop_propagation();
+                    });
+                },
+            ))
             .children(shown)
-            // It only shows: a press plays nothing here, its controls are the page's. Its top
-            // edge moves it, as a title bar does, but for full screen.
-            .capture_any_mouse_down(move |event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left && !fullscreen && event.position.y < px(28.) {
-                    match event.click_count {
-                        2 => window.titlebar_double_click(),
-                        _ => window.start_window_move(),
-                    }
-                }
-                cx.stop_propagation();
-            })
             .into_any_element()
     }
 }
