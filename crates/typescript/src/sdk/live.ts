@@ -400,12 +400,15 @@ export interface PointerEvents {
 }
 
 /**
- * What was let go on a node that hears drops: audio files from the system, copied into
- * `assets/audio/` under the names in `files`, or what a dragged `div` carries. `x` and `y` are
- * where, in the units of a space (0 on a `div`).
+ * What was let go on a node that hears drops: files from the system, copied into `assets/`
+ * under the names in `files` (sound, in `audio/`), `videos` (films, in `video/`) and `photos`
+ * (in `images/`), or what a dragged `div` carries. `x` and `y` are where, in the units of a
+ * space (0 on a `div`).
  */
 export interface Dropped {
   files: string[];
+  videos: string[];
+  photos: string[];
   carried: string | null;
   x: number;
   y: number;

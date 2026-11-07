@@ -143,7 +143,10 @@ export const Timeline = ({ page }: { page: Page }) => {
     });
     if (added) choose(new Set([added]));
   };
-  const dropOnTimeline = ({ files, x, y }: Dropped) => {
+  const dropOnTimeline = ({ files, videos, x, y }: Dropped) => {
+    // A film dropped anywhere is the one the song is scored to.
+    const film = videos[0];
+    if (film !== undefined) update("Score to a film", ({ state }) => { state.video = film; });
     const row = layout()[rowAt(y)]?.each;
     const owner = row?.tool === "tape" ? row : rows().find((each) => each.tool === "tape");
     if (!owner || files.length === 0) return;
