@@ -25,8 +25,9 @@ pub enum Keep {
 }
 
 impl Keep {
-    /// [`Keep::Tools`] of `project`.
-    pub fn tools_of(project: &Project) -> Self {
+    /// [`Keep::Tools`] of `project`. Refused while a record it would keep did not load: what
+    /// its tool requires is then unknown.
+    pub fn tools_of(project: &Project) -> Result<Self> {
         let required = |id: &InstanceId| -> bool {
             let mut id = id.clone();
             while let Some(parent) = id.parent() {
@@ -38,11 +39,22 @@ impl Keep {
             }
             true
         };
+        for problem in project.problems() {
+            let id = record_id(&problem.path).map(|id| InstanceId::try_from(id.to_string()));
+            if let Some(Ok(id)) = id
+                && project.tool_of(&id).is_none()
+                && required(&id)
+            {
+                bail!(
+                    "Part of this project did not load ({id}), so a template of its tools would miss it. Fix it first, or save the tools and content."
+                );
+            }
+        }
         let kept = (project.instances())
             .filter(|(id, _)| required(id))
             .map(|(id, _)| id.to_string())
             .collect();
-        Self::Tools(kept)
+        Ok(Self::Tools(kept))
     }
 }
 
@@ -219,6 +231,13 @@ fn without_connections_to_others(file: &str, ids: &BTreeSet<String>) -> Result<S
     }
 }
 
+/// The id of the instance whose record is at `path` in a project, such as `song/master` of
+/// `state/song/master.json`.
+fn record_id(path: &str) -> Option<&str> {
+    let record = path.strip_prefix("state/")?;
+    (record.strip_suffix("/instance.json")).or(record.strip_suffix(".json"))
+}
+
 /// Whether `path`, in a project, goes into a template that keeps `keep`: the project's own
 /// files, not what the runtime writes nor what else sits in its folder.
 fn kept(path: &str, keep: &Keep) -> bool {
@@ -229,11 +248,7 @@ fn kept(path: &str, keep: &Keep) -> bool {
     match (parts.as_slice(), keep) {
         ([crate::PROJECT_FILE | "instructions.md"] | ["extensions", ..], _) => true,
         (["state" | "assets", ..], Keep::Everything) => true,
-        (["state", ..], Keep::Tools(ids)) => {
-            let record = path.strip_prefix("state/").unwrap_or(path);
-            let id = (record.strip_suffix("/instance.json")).or(record.strip_suffix(".json"));
-            id.is_some_and(|id| ids.contains(id))
-        }
+        (["state", ..], Keep::Tools(ids)) => record_id(path).is_some_and(|id| ids.contains(id)),
         _ => false,
     }
 }

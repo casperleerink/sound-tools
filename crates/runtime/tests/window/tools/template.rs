@@ -61,7 +61,7 @@ fn a_project_from_the_tools_only_of_a_daw_project_opens_its_empty_song(cx: &mut 
     runtime::templates::write(project.path(), crate::song::daw()).unwrap();
     let templates = tempfile::tempdir().unwrap();
     let opened = runtime::open_for_inspect(project.path()).unwrap();
-    let keep = runtime::templates::Keep::tools_of(&opened);
+    let keep = runtime::templates::Keep::tools_of(&opened).unwrap();
     let saved = runtime::templates::save_in(templates.path(), project.path(), "Mine", &keep);
     let folder = tempfile::tempdir().unwrap();
     saved.unwrap().write(folder.path()).unwrap();
@@ -74,6 +74,22 @@ fn a_project_from_the_tools_only_of_a_daw_project_opens_its_empty_song(cx: &mut 
     window.until("the track added", |window| window.has("song/track"));
     window.after_the_runs();
     assert_eq!(window.problems(), []);
+}
+
+/// What a tool requires is unknown while its record does not load, so the tools alone are not
+/// saved then. A track that does not load is left out anyway.
+#[test]
+fn the_tools_only_of_a_project_whose_required_part_did_not_load_are_refused() {
+    let project = tempfile::tempdir().unwrap();
+    runtime::templates::write(project.path(), crate::song::daw()).unwrap();
+    std::fs::write(project.path().join("state/song/t00/mix.json"), "{").unwrap();
+    let opened = runtime::open_for_inspect(project.path()).unwrap();
+    runtime::templates::Keep::tools_of(&opened).unwrap();
+
+    std::fs::write(project.path().join("state/song/master.json"), "{").unwrap();
+    let opened = runtime::open_for_inspect(project.path()).unwrap();
+    let error = runtime::templates::Keep::tools_of(&opened).unwrap_err();
+    assert!(error.to_string().contains("song/master"), "{error}");
 }
 
 #[gpui::test]

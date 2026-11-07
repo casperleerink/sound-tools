@@ -12,7 +12,7 @@
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
 //! runtime <project-folder> --screenshot <png>              draw the window as it opens (macOS)
-//! runtime <project-folder> --save-template <name> [--with-content]
+//! runtime <project-folder> --save-template <name> [--with-content] [--replace]
 //!                                                          save the project as a template
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
 //! runtime --plugins                                        list the plugins of this machine
@@ -248,12 +248,23 @@ fn inspect(folder: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Saves the project as the template `name` for a new project on this machine, in place of
-/// one of that name.
-fn save_template(folder: &Path, name: &str, keep: &Keep) -> Result<()> {
+/// Saves the project as the template `name` for a new project on this machine. One of that
+/// name is replaced only with `--replace`: the command cannot ask.
+fn save_template(folder: &Path, name: &str, flags: &[&str]) -> Result<()> {
+    if let Some(flag) = (flags.iter()).find(|flag| !["--with-content", "--replace"].contains(flag))
+    {
+        bail!("unknown option {flag}\n{USAGE}");
+    }
     let root = templates::saved_folder()?;
     let replaced = templates::exists_in(&root, name)?;
-    let saved = templates::save_in(&root, folder, name, keep)?;
+    if replaced && !flags.contains(&"--replace") {
+        bail!("There is a template “{name}” already. Ask the composer, then add --replace.");
+    }
+    let keep = match flags.contains(&"--with-content") {
+        true => Keep::Everything,
+        false => Keep::tools_of(&runtime::open_for_inspect(folder)?)?,
+    };
+    let saved = templates::save_in(&root, folder, name, &keep)?;
     let verb = if replaced { "Replaced" } else { "Saved" };
     println!(
         "{verb} the template “{}”: {}",
@@ -749,7 +760,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -819,13 +830,8 @@ fn main() -> Result<()> {
             render(Path::new(folder), Path::new(wav), &options, progress)
         }
         [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
-        [folder, "--save-template", name, keep @ ..] => {
-            let keep = match keep {
-                [] => Keep::tools_of(&runtime::open_for_inspect(Path::new(folder))?),
-                ["--with-content"] => Keep::Everything,
-                _ => bail!(USAGE),
-            };
-            save_template(Path::new(folder), name, &keep)
+        [folder, "--save-template", name, flags @ ..] => {
+            save_template(Path::new(folder), name, flags)
         }
         #[cfg(target_os = "macos")]
         [folder, "--screenshot", png] => {

@@ -109,7 +109,7 @@ To check a vibrato or the tuning, solo the track and measure one held note with 
 
 ## Save the project as a template
 
-`sound-tools . --save-template <name>` saves a template a new project on this machine can start from: the tools, the records at the top and the children their tools require. `--with-content` after it keeps every record and asset. Ask the composer for the name and which of the two first; a template of that name is replaced.
+`sound-tools . --save-template <name>` saves a template a new project on this machine can start from: the tools, the records at the top and the children their tools require. `--with-content` after it keeps every record and asset. Ask the composer for the name and which of the two first. A template of that name is replaced only with `--replace`, once the composer said so.
 
 When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };

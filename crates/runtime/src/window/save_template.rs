@@ -82,7 +82,14 @@ impl SaveTemplate {
         let project = self.session.read(cx).project();
         let keep = match everything {
             true => Keep::Everything,
-            false => Keep::tools_of(project),
+            false => match Keep::tools_of(project) {
+                Ok(keep) => keep,
+                Err(error) => {
+                    self.message = Some(format!("{error:#}").into());
+                    cx.notify();
+                    return;
+                }
+            },
         };
         let project = project.root().to_path_buf();
         self.saving = true;
