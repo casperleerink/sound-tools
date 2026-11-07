@@ -101,6 +101,7 @@ mod apple {
         AVAssetReader, AVAssetReaderStatus, AVAssetReaderTrackOutput, AVAssetTrack,
         AVMediaTypeVideo, AVURLAsset,
     };
+    use objc2_core_foundation::CGSize;
     use objc2_core_media::{CMTime, CMTimeRange};
     use objc2_core_video::{
         CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
@@ -145,7 +146,7 @@ mod apple {
                 if !seconds.is_finite() || seconds <= 0.0 {
                     return None;
                 }
-                let natural = track.naturalSize();
+                let natural: CGSize = track.naturalSize();
                 let scale = (f64::from(longest) / natural.width.max(natural.height)).min(1.0);
                 let size =
                     |side: f64| NSNumber::new_usize(((side * scale).round() as usize).max(1));
