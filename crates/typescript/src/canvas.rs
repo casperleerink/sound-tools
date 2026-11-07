@@ -73,7 +73,12 @@ struct Shown {
 
 #[derive(Default)]
 struct Memory {
+    /// The last step on the CPU; on the GPU, a copy made when another canvas reads it.
     last: Arc<Frame>,
+    /// `last` is older than the GPU's newest step.
+    last_behind: bool,
+    /// How many pixels across and down it last stepped.
+    size: (usize, usize),
     /// Where it runs on the GPU, once it was tried: not off macOS.
     gpu: Option<Option<Gpu>>,
     /// The step of its time it showed last.
@@ -145,7 +150,20 @@ impl Canvas {
 
     /// What it showed at its last step, for another canvas that reads it.
     pub(crate) fn last(&self) -> Arc<Frame> {
-        (self.0.memory.lock()).map_or_else(|_| Arc::default(), |memory| memory.last.clone())
+        let Ok(mut memory) = self.0.memory.lock() else {
+            return Arc::default();
+        };
+        if let (Some(Some(gpu)), true) = (&memory.gpu, memory.last_behind) {
+            let (width, height) = memory.size;
+            let pixels = gpu.colours().to_vec();
+            memory.last = Arc::new(Frame {
+                width,
+                height,
+                pixels,
+            });
+            memory.last_behind = false;
+        }
+        memory.last.clone()
     }
 
     pub(crate) fn add_uses(&self, uses: &mut Uses) {
@@ -185,7 +203,7 @@ impl Canvas {
         let across = program.across().min(most) as usize;
         let down = ((across as f32 * height / width).round() as usize).clamp(1, most as usize);
         let due = (seen.time * STEPS_PER_SECOND).floor() as u64;
-        let resized = (memory.last.width, memory.last.height) != (across, down);
+        let resized = memory.size != (across, down);
         let steps = match memory.stepped {
             Some(stepped) if !resized => due.saturating_sub(stepped).min(MOST_STEPS),
             _ => 1,
@@ -194,7 +212,6 @@ impl Canvas {
         let images: Vec<&Frame> = seen.images.iter().map(|frame| &**frame).collect();
         let first = memory.frame;
         if let Some(Some(gpu)) = &mut memory.gpu {
-            let mut pixels: &[[f32; 4]] = &[];
             let mut means = Vec::new();
             for frame in 0..steps {
                 let inputs = Inputs {
@@ -204,15 +221,10 @@ impl Canvas {
                     last: &Frame::default(),
                     frame: first.wrapping_add(frame as u32),
                 };
-                (pixels, means) = gpu.render(&inputs, (across, down));
+                means = gpu.render(&inputs, (across, down));
             }
             if steps > 0 {
-                let pixels = pixels.to_vec();
-                memory.last = Arc::new(Frame {
-                    width: across,
-                    height: down,
-                    pixels,
-                });
+                memory.last_behind = true;
                 memory.measured = Some(means);
                 memory.frame = memory.frame.wrapping_add(steps as u32);
             }
@@ -230,11 +242,16 @@ impl Canvas {
             memory.last = Arc::new(frame);
             memory.frame = memory.frame.wrapping_add(1);
         }
+        memory.size = (across, down);
         let here = window.window_handle().window_id();
         let image = match (steps, memory.images.last()) {
             (0, Some((painted_in, image))) if *painted_in == here => image.clone(),
             _ => {
-                let image = Arc::new(image_of(&memory.last));
+                let bytes = match &memory.gpu {
+                    Some(Some(gpu)) => gpu.shown().to_vec(),
+                    _ => memory.last.bgra(),
+                };
+                let image = Arc::new(image_of(memory.size, bytes));
                 memory.images.push((here, image.clone()));
                 image
             }
@@ -293,9 +310,9 @@ pub(crate) struct Seen {
     pub time: f64,
 }
 
-/// The frame as GPUI paints an image.
-fn image_of(frame: &Frame) -> RenderImage {
-    let buffer = image::RgbaImage::from_raw(frame.width as u32, frame.height as u32, frame.bgra())
+/// Bytes of blue, green, red and alpha as GPUI paints an image.
+fn image_of((width, height): (usize, usize), bytes: Vec<u8>) -> RenderImage {
+    let buffer = image::RgbaImage::from_raw(width as u32, height as u32, bytes)
         .unwrap_or_else(|| image::RgbaImage::new(1, 1));
     RenderImage::new(vec![image::Frame::new(buffer)])
 }

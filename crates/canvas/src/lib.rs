@@ -17,12 +17,16 @@ pub mod gpu {
             Err("canvases run on the GPU on macOS only".into())
         }
 
-        pub fn render(
-            &mut self,
-            _: &crate::Inputs<'_>,
-            _: (usize, usize),
-        ) -> (&[[f32; 4]], Vec<f32>) {
-            (&[], Vec::new())
+        pub fn render(&mut self, _: &crate::Inputs<'_>, _: (usize, usize)) -> Vec<f32> {
+            Vec::new()
+        }
+
+        pub fn colours(&self) -> &[[f32; 4]] {
+            &[]
+        }
+
+        pub fn shown(&self) -> &[u8] {
+            &[]
         }
     }
 }

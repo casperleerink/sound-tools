@@ -1,6 +1,7 @@
 //! The graph of a canvas as a Metal compute shader. The shader is the graph written out as
 //! Metal, one line per node, with the same maths as the CPU, so both make the same canvas. It
-//! writes the colours, and each pixel's values to measure, to memory the CPU reads as it is.
+//! writes the colours, the bytes the window paints, and each pixel's values to measure, to
+//! memory the CPU reads as it is.
 
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize,
@@ -18,7 +19,8 @@ pub fn shader(program: &Program) -> Result<String, String> {
          constant float* lives [[buffer(2)]], constant uint4& size [[buffer(3)]],\n\
          device const float4* images [[buffer(4)]], device const uint4* image_at [[buffer(5)]],\n\
          device const float* lists [[buffer(6)]], device const uint2* list_at [[buffer(7)]],\n\
-         device float* measured [[buffer(8)]], uint2 at [[thread_position_in_grid]]) {\n\
+         device float* measured [[buffer(8)]], device uchar4* shown [[buffer(9)]],\n\
+         uint2 at [[thread_position_in_grid]]) {\n\
          if (at.x >= size.x || at.y >= size.y) return;\n\
          uint width = size.x, height = size.y, frame = size.z, lastWidth = size.w;\n\
          uint lastHeight = lastWidth == 0 ? 0 : height;\n",
@@ -105,7 +107,9 @@ pub fn shader(program: &Program) -> Result<String, String> {
         ));
     }
     code.push_str(&format!(
-        "out[at.y * width + at.x] = float4({red}, {green}, {blue}, {alpha});\n}}\n"
+        "float4 colour = float4({red}, {green}, {blue}, {alpha});\n\
+         out[at.y * width + at.x] = colour;\n\
+         shown[at.y * width + at.x] = uchar4(round(colour.zyxw * 255.0f));\n}}\n"
     ));
     Ok(code)
 }
@@ -177,6 +181,8 @@ pub struct Gpu {
     pipeline: ComputePipelineState,
     frames: [Option<(Buffer, (usize, usize))>; 2],
     newest: usize,
+    /// The newest step as the window paints it.
+    shown: Option<Buffer>,
     /// Each pixel's values of the nodes it measures, and how many there are.
     measured: Option<Buffer>,
     measures: usize,
@@ -198,18 +204,15 @@ impl Gpu {
             pipeline,
             frames: [None, None],
             newest: 0,
+            shown: None,
             measured: None,
             measures: program.measures.len(),
         })
     }
 
     /// The next step at `size`, reading what `inputs` hold besides the last step, which it
-    /// keeps itself: its colours as the GPU left them, and the mean of each node it measures.
-    pub fn render(
-        &mut self,
-        inputs: &Inputs<'_>,
-        (width, height): (usize, usize),
-    ) -> (&[[f32; 4]], Vec<f32>) {
+    /// keeps itself: the mean of each node it measures.
+    pub fn render(&mut self, inputs: &Inputs<'_>, (width, height): (usize, usize)) -> Vec<f32> {
         let next = 1 - self.newest;
         let pixels = width * height;
         let bytes = (pixels * 16).max(16) as u64;
@@ -221,6 +224,16 @@ impl Gpu {
                 .device
                 .new_buffer(bytes, MTLResourceOptions::StorageModeShared);
             self.frames[next] = Some((buffer, (width, height)));
+        }
+        if self
+            .shown
+            .as_ref()
+            .is_none_or(|buffer| buffer.length() != (pixels * 4).max(16) as u64)
+        {
+            self.shown = Some(self.device.new_buffer(
+                (pixels * 4).max(16) as u64,
+                MTLResourceOptions::StorageModeShared,
+            ));
         }
         let measures = self.measures;
         let measured_bytes = (pixels * measures * 4).max(16) as u64;
@@ -267,12 +280,13 @@ impl Gpu {
         let commands = self.queue.new_command_buffer();
         let encoder = commands.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(&self.pipeline);
-        let (Some((out, _)), last, Some(measured)) = (
+        let (Some((out, _)), last, Some(measured), Some(shown)) = (
             &self.frames[next],
             &self.frames[self.newest],
             &self.measured,
+            &self.shown,
         ) else {
-            return (&[], Vec::new());
+            return Vec::new();
         };
         encoder.set_buffer(0, Some(out), 0);
         let last_size = match last {
@@ -303,6 +317,7 @@ impl Gpu {
             (6, &lists),
             (7, &list_at),
             (8, measured),
+            (9, shown),
         ] {
             encoder.set_buffer(index, Some(buffer), 0);
         }
@@ -314,13 +329,10 @@ impl Gpu {
         commands.commit();
         commands.wait_until_completed();
         self.newest = next;
-        // SAFETY: the buffers are shared memory as long as they say, written by the GPU before
+        // SAFETY: the buffer is shared memory as long as it says, written by the GPU before
         // `wait_until_completed` returned, and not written again until the next step.
-        let (colours, values) = unsafe {
-            (
-                std::slice::from_raw_parts(out.contents().cast::<[f32; 4]>(), pixels),
-                std::slice::from_raw_parts(measured.contents().cast::<f32>(), pixels * measures),
-            )
+        let values = unsafe {
+            std::slice::from_raw_parts(measured.contents().cast::<f32>(), pixels * measures)
         };
         let mut sums = vec![0.0_f64; measures];
         for pixel in values.chunks_exact(measures.max(1)) {
@@ -328,11 +340,31 @@ impl Gpu {
                 *sum += f64::from(*value);
             }
         }
-        let means = sums
-            .iter()
+        sums.iter()
             .map(|sum| (sum / pixels.max(1) as f64) as f32)
-            .collect();
-        (colours, means)
+            .collect()
+    }
+
+    /// The colours of the newest step, as another canvas reads them.
+    pub fn colours(&self) -> &[[f32; 4]] {
+        match &self.frames[self.newest] {
+            // SAFETY: as in `render`, the newest step's buffer holds a colour for each pixel.
+            Some((buffer, (width, height))) => unsafe {
+                std::slice::from_raw_parts(buffer.contents().cast(), width * height)
+            },
+            None => &[],
+        }
+    }
+
+    /// The newest step as the window paints it: blue, green, red and alpha, a byte each.
+    pub fn shown(&self) -> &[u8] {
+        match (&self.frames[self.newest], &self.shown) {
+            // SAFETY: as in `render`, written with the newest step, four bytes a pixel.
+            (Some((_, (width, height))), Some(shown)) => unsafe {
+                std::slice::from_raw_parts(shown.contents().cast(), width * height * 4)
+            },
+            _ => &[],
+        }
     }
 }
 
@@ -399,10 +431,13 @@ mod tests {
                 last: &cpu.frame,
                 frame,
             };
-            let (on_gpu, measured) = gpu.render(&inputs, size);
-            (colours, means) = (on_gpu.to_vec(), measured);
+            means = gpu.render(&inputs, size);
+            colours = gpu.colours().to_vec();
             cpu = crate::render(&program, &inputs, size);
         }
+        let shown = gpu.shown();
+        assert_eq!(shown.len(), cpu.frame.bgra().len());
+        assert!((shown.iter().zip(cpu.frame.bgra())).all(|(gpu, cpu)| gpu.abs_diff(cpu) <= 1));
         let most = (cpu.frame.pixels.iter().flatten())
             .zip(colours.iter().flatten())
             .map(|(cpu, gpu)| (cpu - gpu).abs())
