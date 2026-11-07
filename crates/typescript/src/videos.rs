@@ -174,7 +174,7 @@ impl Still {
             // Looked for again each second, as the file may come, while the photo is shown.
             move || {
                 while Arc::strong_count(&read) > 1 {
-                    let opened = image::open(&path).map(|photo| {
+                    let opened = upright(&path).map(|photo| {
                         let photo = photo.thumbnail(LONGEST, LONGEST).to_rgba8();
                         let (width, height) = (photo.width() as usize, photo.height() as usize);
                         Arc::new(Frame::from_rgba(width, height, photo.as_raw()))
@@ -217,4 +217,16 @@ impl Still {
     pub(crate) fn problem(&self) -> Option<String> {
         self.read().problem.clone()
     }
+}
+
+/// The photo at `path`, turned as its camera noted.
+fn upright(path: &Path) -> image::ImageResult<image::DynamicImage> {
+    use image::ImageDecoder as _;
+    let mut decoder = image::ImageReader::open(path)?
+        .with_guessed_format()?
+        .into_decoder()?;
+    let orientation = decoder.orientation()?;
+    let mut photo = image::DynamicImage::from_decoder(decoder)?;
+    photo.apply_orientation(orientation);
+    Ok(photo)
 }

@@ -255,6 +255,7 @@ pub(super) fn open_stage_button(card: WeakEntity<TypeScriptCard>) -> AnyElement 
             Button::new("open-stage", "Open in a window")
                 .size(ButtonSize::Xs)
                 .variant(ButtonVariant::Subtle)
+                .tab_stop(true)
                 .on_click(move |_, _, cx| {
                     if let Err(error) = card.update(cx, |card, cx| card.open_stage(cx)) {
                         // The page is gone.
