@@ -157,6 +157,12 @@ export interface Pixel {
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
    */
   last(x?: Operand, y?: Operand): { red: Signal; green: Signal; blue: Signal };
+  /**
+   * Plays the number input `name` of this tool, every frame, with the mean of `value` over the
+   * whole picture: how bright it is, how much moved since the frame before, how much of it is
+   * red. The sound hears it as it hears a knob, gliding, with no code running.
+   */
+  measure(name: string, value: Operand): void;
 }
 
 /**
@@ -169,6 +175,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
   const lives: Num[] = [];
   const waves: WaveList[] = [];
   const videos: Array<{ asset: string; at: Num }> = [];
+  const measures: Array<{ name: string; value: Operand }> = [];
   const live = (value: Num): Signal => {
     if (typeof value === "number") return new Signal({ op: "add", a: value, b: 0 });
     let index = lives.indexOf(value);
@@ -193,13 +200,16 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
         new Signal({ op: "video", table: { video: index }, channel, x: atX, y: atY });
       return { red: channel("red"), green: channel("green"), blue: channel("blue") };
     },
+    measure: (name, value) => {
+      measures.push({ name, value });
+    },
     last: (atX = x, atY = y) => ({
       red: new Signal({ op: "last", channel: "red", x: atX, y: atY }),
       green: new Signal({ op: "last", channel: "green", x: atX, y: atY }),
       blue: new Signal({ op: "last", channel: "blue", x: atX, y: atY }),
     }),
   };
-  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, videos, across) }, []);
+  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, videos, measures, across) }, []);
 };
 
 /** Shapes moved together, see `Shape`. */

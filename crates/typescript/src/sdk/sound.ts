@@ -647,6 +647,7 @@ export interface PictureGraph<L = unknown, W = unknown> {
   waves: W[];
   videos: Array<{ asset: string; at: L }>;
   output: { red: number; green: number; blue: number };
+  measures: Array<{ name: string; node: number }>;
   across?: number;
 }
 
@@ -665,15 +666,17 @@ export function pictureToJson<L, W>(
   lives: L[],
   waves: W[],
   videos: Array<{ asset: string; at: L }>,
+  measures: Array<{ name: string; value: Operand }>,
   across?: number,
 ): PictureGraph<L, W> {
   const { nodes, use } = layout(0);
   const output = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
+  const measured = measures.map(({ name, value }) => ({ name, node: use(value) }));
   for (const node of nodes) {
     if (SOUND_ONLY.has(node.op)) {
       throw new Error(`\`${node.op}\` belongs in a sound: a picture works out each pixel on its own, with no time between them`);
     }
   }
-  const graph = { nodes, lives, waves, videos, output };
+  const graph = { nodes, lives, waves, videos, output, measures: measured };
   return across === undefined ? graph : { ...graph, across };
 }
