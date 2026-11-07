@@ -4,8 +4,28 @@
 
 use serde::Deserialize;
 
-/// The most pixels across.
+#[cfg(target_os = "macos")]
+pub mod gpu;
+
+/// Elsewhere no picture runs on the GPU.
+#[cfg(not(target_os = "macos"))]
+pub mod gpu {
+    pub struct Gpu;
+
+    impl Gpu {
+        pub fn new(_: &crate::Program) -> Result<Self, String> {
+            Err("pictures run on the GPU on macOS only".into())
+        }
+
+        pub fn render(&mut self, _: &[f32], _: (usize, usize)) -> &[[f32; 4]] {
+            &[]
+        }
+    }
+}
+
+/// The most pixels across on the CPU, and on the GPU.
 pub const MAX_ACROSS: u32 = 480;
+pub const MAX_ACROSS_ON_GPU: u32 = 1920;
 const DEFAULT_ACROSS: u32 = 160;
 
 /// A node of the graph of a picture; each `usize` is the index of a node before it.
@@ -303,7 +323,7 @@ impl Program {
             nodes,
             output,
             measures,
-            across: across.unwrap_or(DEFAULT_ACROSS).clamp(1, MAX_ACROSS),
+            across: across.unwrap_or(DEFAULT_ACROSS).clamp(1, MAX_ACROSS_ON_GPU),
         })
     }
 

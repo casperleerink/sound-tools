@@ -31,7 +31,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #408.
 
 ## Decisions
 
-- **A graph per pixel on the CPU**, `crates/pictures`, a row at a time, rows in bands on all cores: 480 by 270 pixels of 60 sines take 2.2 ms. Rejected for now: a GPU shader. GPUI draws no shader of ours; a Metal texture would need `paint_surface` and macOS-only code. The graph stays the same, so a GPU backend can come later without changing the SDK.
+- **A graph per pixel, on the GPU where it can, else the CPU.** `crates/pictures/src/gpu.rs` (a spike, prototype 18) writes the graph as a Metal compute shader, line for line the CPU's maths, and the test holds both pictures equal. It writes to memory the CPU reads as it is, and the picture paints as a GPUI image, so screenshots and films work alike. 1920 by 1080 pixels of 60 sines: 1.5 ms on the GPU, 35 ms on all CPU cores; a picture may then be 1920 across. Lists, images and `measure` still run on the CPU, at most 480 across. Rejected: `paint_surface`, which GPUI takes only as video (YCbCr), without alpha.
 - **Its own small evaluator**, not the signals machine: a pixel has no time between its neighbours, so filters, delays and phasors make no sense in it. The SDK refuses them with a sentence that says so.
 - **A picture steps 60 times a second of its time**, whatever the screen draws, so feedback looks alike on any screen, in a screenshot and in a film.
 - **Painted as a GPUI image**, freed by the window it was painted in. Under lines and text drawn after it, as GPUI orders images.
@@ -40,6 +40,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #408.
 
 ## Open
 
+- The GPU spike: lists, images and `measure` on the GPU too; the shader writing the bytes GPUI paints, not the CPU; Linux and Windows (wgpu).
 - Camera input: as a video, from `AVCaptureSession`; it needs the camera permission, so it was not tried.
 - A picture another reads must show to step; a hidden one could step too.
 - A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
