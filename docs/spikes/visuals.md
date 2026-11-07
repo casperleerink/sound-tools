@@ -45,7 +45,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #406.
 - A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
 - The DAW has no way in the window to pick its film; the agent sets `video`.
 - `measure` of a live value is a way round to play an input from the pointer; a space could say which live values play which inputs.
-- The agent evals `visuals-builder` and `video-builder` passed their first run each (3 minutes, about $1): from the docs alone an agent built a drone with flowing colours on the `Stage` and a preview on the page, and a video kaleidoscope whose light and movement play a pad (`tooling/agent-eval/examples/`). One run each is no rate: run more.
+- The agent evals `visuals-builder` and `video-builder` passed 4 runs of 4 (3 to 8 minutes, about $1 each): from the docs alone an agent built a drone with flowing colours on the `Stage` and a preview on the page, and a video kaleidoscope whose light and movement play a pad (`tooling/agent-eval/examples/`).
 
 ## Recommendation
 

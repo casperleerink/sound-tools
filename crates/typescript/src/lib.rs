@@ -232,7 +232,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-drawing",
         group: WRITING,
-        when: "A tool's view draws shapes that move: a piano roll, a meter, a scope, drags",
+        when: "A view draws what moves: shapes, drags, a scope, pictures, video, a projector",
         markdown: include_str!("extensions-drawing.md"),
     },
     AgentDoc {
