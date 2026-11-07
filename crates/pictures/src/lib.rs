@@ -44,6 +44,12 @@ pub enum Node {
     },
     /// White noise from -1 to 1, new on every frame.
     Noise,
+    /// Noise that changes smoothly with `x`, `y` and `z`, from -1 to 1: one bump per unit.
+    SmoothNoise {
+        x: usize,
+        y: usize,
+        z: usize,
+    },
     Negate {
         x: usize,
     },
@@ -308,6 +314,7 @@ impl Node {
             | Self::Live { .. }
             | Self::Noise => [None; 3],
             Self::Last { x, y, .. } | Self::Video { x, y, .. } => [Some(x), Some(y), None],
+            Self::SmoothNoise { x, y, z } => [Some(x), Some(y), Some(z)],
             Self::Wave { at, .. } => [Some(at), None, None],
             Self::Negate { x }
             | Self::Sin { x }
@@ -488,6 +495,11 @@ fn run<'a>(node: Node, out: &mut [f32], read: impl Fn(usize) -> &'a [f32], place
                 *out = hashed(pixel, place.inputs.frame);
             }
         }
+        Node::SmoothNoise { x, y, z } => {
+            for (out, ((x, y), z)) in out.iter_mut().zip(read(x).iter().zip(read(y)).zip(read(z))) {
+                *out = smooth_noise(*x, *y, *z);
+            }
+        }
         Node::Negate { x } => unary(out, x, |x| -x),
         Node::Sin { x } => unary(out, x, f32::sin),
         Node::Cos { x } => unary(out, x, f32::cos),
@@ -550,6 +562,29 @@ fn along(values: &[f32], at: f32) -> f32 {
         true => from,
         false => from + (to - from) * (place - before as f32),
     }
+}
+
+/// Value noise: a random level at each whole `x`, `y`, `z`, and between them a smooth blend of
+/// the eight around, so it has no edges.
+fn smooth_noise(x: f32, y: f32, z: f32) -> f32 {
+    let [x, y, z] = [x, y, z].map(finite);
+    let (cell_x, cell_y, cell_z) = (x.floor(), y.floor(), z.floor());
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    let (along_x, along_y, along_z) = (ease(x - cell_x), ease(y - cell_y), ease(z - cell_z));
+    let corner = |dx: f32, dy: f32, dz: f32| {
+        let at = |value: f32| (value as i64) as u32;
+        let key = at(cell_x + dx).wrapping_mul(0x8DA6_B343)
+            ^ at(cell_y + dy).wrapping_mul(0xD816_3841)
+            ^ at(cell_z + dz).wrapping_mul(0xCB1A_B31F);
+        hashed(key, 0)
+    };
+    let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let face = |dz: f32| {
+        let near = mix(corner(0.0, 0.0, dz), corner(1.0, 0.0, dz), along_x);
+        let far = mix(corner(0.0, 1.0, dz), corner(1.0, 1.0, dz), along_x);
+        mix(near, far, along_y)
+    };
+    mix(face(0.0), face(1.0), along_z)
 }
 
 /// -1 to 1, the same for the same pixel and frame.
@@ -669,6 +704,21 @@ mod tests {
         let frame = render(&program, &inputs, (4, 1)).frame;
         let reds: Vec<f32> = frame.pixels.iter().map(|pixel| pixel[0]).collect();
         assert_eq!(reds, [0.25, 0.75, 0.75, 0.25]);
+    }
+
+    #[test]
+    fn smooth_noise_moves_little_between_near_places_and_stays_in_range() {
+        let steps = (0..2000).map(|step| step as f32 * 0.01);
+        let values: Vec<f32> = steps.map(|at| smooth_noise(at, at * 0.7, 3.0)).collect();
+        assert!(values.iter().all(|value| (-1.0..=1.0).contains(value)));
+        let largest_step = (values.windows(2))
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(largest_step < 0.1, "{largest_step}");
+        let spread = values
+            .iter()
+            .fold(0.0_f32, |most, value| most.max(value.abs()));
+        assert!(spread > 0.5, "{spread}");
     }
 
     #[test]
