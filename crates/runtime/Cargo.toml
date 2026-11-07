@@ -28,6 +28,7 @@ gate.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 hound.workspace = true
+image.workspace = true
 instrument.workspace = true
 limiter.workspace = true
 metronome.workspace = true

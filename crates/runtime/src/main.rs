@@ -12,6 +12,7 @@
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
 //! runtime <project-folder> --screenshot <png> [--seconds <n>]  draw the window as it opens, or after n seconds (macOS)
+//! runtime <project-folder> --render-video <mp4> --seconds <n>   film the window and its sound as it plays n seconds (macOS)
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
 //! runtime --plugins                                        list the plugins of this machine
 //! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
@@ -732,7 +733,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> [--seconds <n>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> [--seconds <n>] | --render-video <mp4> --seconds <n>]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -814,8 +815,14 @@ fn main() -> Result<()> {
             Path::new(png),
             std::time::Duration::from_secs_f64(parse_seconds(seconds)?.min(60.0)),
         ),
+        #[cfg(target_os = "macos")]
+        [folder, "--render-video", mp4, "--seconds", seconds] => {
+            runtime::screenshot::film(Path::new(folder), Path::new(mp4), parse_seconds(seconds)?)
+        }
         #[cfg(not(target_os = "macos"))]
-        [_, "--screenshot", _, ..] => bail!("--screenshot works on macOS only"),
+        [_, "--screenshot" | "--render-video", _, ..] => {
+            bail!("--screenshot and --render-video work on macOS only")
+        }
         _ => bail!(USAGE),
     }
 }

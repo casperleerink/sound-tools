@@ -97,6 +97,7 @@ notify = "8.2"
 objc2 = "0.6"
 # macOS: the frames of video files, decoded by the system. The versions of objc2 above. MIT.
 objc2-av-foundation = { version = "0.3", default-features = false }
+objc2-core-audio-types = { version = "0.3", default-features = false }
 objc2-core-media = { version = "0.3", default-features = false }
 objc2-core-video = { version = "0.3", default-features = false }
 objc2-core-audio = { version = "0.3", default-features = false }
