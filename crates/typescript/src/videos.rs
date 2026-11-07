@@ -76,7 +76,7 @@ impl Drop for Player {
 }
 
 fn decode(path: &Path, shared: &Shared) {
-    let video = match Video::open(path, LONGEST) {
+    let mut video = match Video::open(path, LONGEST) {
         Ok(video) => video,
         Err(error) => {
             eprintln!("error: {error}");
