@@ -12,6 +12,8 @@
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
 //! runtime <project-folder> --screenshot <png>              draw the window as it opens (macOS)
+//! runtime <project-folder> --save-template <name> [--with-content]
+//!                                                          save the project as a template
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
 //! runtime --plugins                                        list the plugins of this machine
 //! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
@@ -47,6 +49,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
 use runtime::report::Timeline;
+use runtime::templates::{self, Keep};
 use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
@@ -242,6 +245,20 @@ fn run(folder: &Path) -> Result<()> {
 fn inspect(folder: &Path) -> Result<()> {
     let project = runtime::open_for_inspect(folder)?;
     print_summary(&project);
+    Ok(())
+}
+
+/// Saves the project as the template `name` for a new project on this machine, in place of
+/// one of that name.
+fn save_template(folder: &Path, name: &str, keep: &Keep) -> Result<()> {
+    let root = templates::saved_folder()?;
+    let replaced = templates::exists_in(&root, name)?;
+    let saved = templates::save_in(&root, folder, name, keep)?;
+    let verb = if replaced { "Replaced" } else { "Saved" };
+    println!(
+        "{verb} the template “{}”: {}",
+        saved.name, saved.description
+    );
     Ok(())
 }
 
@@ -732,7 +749,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png>]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -802,6 +819,14 @@ fn main() -> Result<()> {
             render(Path::new(folder), Path::new(wav), &options, progress)
         }
         [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
+        [folder, "--save-template", name, keep @ ..] => {
+            let keep = match keep {
+                [] => Keep::tools_of(&runtime::open_for_inspect(Path::new(folder))?),
+                ["--with-content"] => Keep::Everything,
+                _ => bail!(USAGE),
+            };
+            save_template(Path::new(folder), name, &keep)
+        }
         #[cfg(target_os = "macos")]
         [folder, "--screenshot", png] => {
             runtime::screenshot::screenshot(Path::new(folder), Path::new(png))

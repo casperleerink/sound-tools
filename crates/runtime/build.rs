@@ -5,8 +5,11 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+#[path = "src/templates/about.rs"]
+mod about;
 #[path = "src/templates/written.rs"]
 mod written;
+use about::About;
 use written::written_by_the_runtime;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -33,14 +36,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::write(&resource, format!("1 ICON \"{icon}\"\n"))?;
     embed_resource::compile(&resource, embed_resource::NONE).manifest_required()?;
     Ok(())
-}
-
-/// What a template says of itself in its `template.json`, which is not copied.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct About {
-    name: String,
-    description: String,
 }
 
 /// Writes `templates.rs` into `OUT_DIR`: a `Template` per folder of `templates`, in name order,
