@@ -7,6 +7,8 @@ import { Child, element, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
 import type { Notes as NotesOfSound } from "./sound";
+import { pictureToJson, pixelLive, pixelSource, Signal, type PictureGraph, type Rgb, type Operand } from "./sound";
+import { now } from "./live";
 import type { Key } from "./tools";
 
 /** `Input` is also the type of an input of a tool, `Notes` that of notes a sound sends. */
@@ -92,6 +94,8 @@ export type Shape =
          * them in the binding, `points={() => [...]}`, where TypeScript reads a list as points.
          */
         | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
+        /** A picture across its box, its pixels worked out on every frame: see `Picture`. */
+        | { kind: "picture"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; picture: PictureGraph<Num> }
       ));
 
 /** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
@@ -123,6 +127,55 @@ export const Label = shape("text");
 export const Wave = shape("wave");
 export const Notes = shape("notes");
 export const Path = shape("path");
+/** Where a pixel of a `Picture` is, and what else it reads. Each is a `Signal`: combine them with the functions of a sound. */
+export interface Pixel {
+  /** 0 at the left of the picture, 1 at its right. */
+  x: Signal;
+  /** 0 at its top, 1 at its bottom. */
+  y: Signal;
+  /** How many times wider than tall it is: `x.minus(0.5).times(aspect)` and `y.minus(0.5)` are the same distance across and down. */
+  aspect: Signal;
+  /** Seconds since the view opened. */
+  time: Signal;
+  /** A live value, worked out once a frame: a level, an output of the sound, a field as it turns, a drag. */
+  live(value: Num): Signal;
+  /**
+   * The colour the picture had one frame before at `x`, `y` (here when left out), between its
+   * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
+   */
+  last(x?: Operand, y?: Operand): { red: Signal; green: Signal; blue: Signal };
+}
+
+/**
+ * A picture across its box: `pixels` runs once, as the view does, and gives the colour of a pixel
+ * from where it is and what it reads; the window then works out every pixel on every frame,
+ * with no code running. `across` is how many pixels wide it is worked out, 160 when left out,
+ * at most 480; it is as many down as its box is tall for that.
+ */
+export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">, "picture"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
+  const lives: Num[] = [];
+  const live = (value: Num): Signal => {
+    if (typeof value === "number") return new Signal({ op: "add", a: value, b: 0 });
+    let index = lives.indexOf(value);
+    if (index < 0) index = lives.push(value) - 1;
+    return pixelLive(index);
+  };
+  const [x, y] = [pixelSource("x"), pixelSource("y")];
+  const pixel: Pixel = {
+    x,
+    y,
+    aspect: pixelSource("aspect"),
+    time: live(now.elapsed),
+    live,
+    last: (atX = x, atY = y) => ({
+      red: new Signal({ op: "last", channel: "red", x: atX, y: atY }),
+      green: new Signal({ op: "last", channel: "green", x: atX, y: atY }),
+      blue: new Signal({ op: "last", channel: "blue", x: atX, y: atY }),
+    }),
+  };
+  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, across) }, []);
+};
+
 /** Shapes moved together, see `Shape`. */
 export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?: Child }): UiNode => shapeNode("group", props, [children]);
 

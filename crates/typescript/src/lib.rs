@@ -26,6 +26,7 @@ mod live;
 mod meter;
 #[cfg(test)]
 mod performance;
+mod picture;
 mod recorder;
 mod records;
 mod region;

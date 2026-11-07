@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/dsp", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/dsp", "crates/media", "crates/notes", "crates/pictures", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -40,6 +40,7 @@ sound-core = { path = "crates/core" }
 sound-dsp = { path = "crates/dsp" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
+sound-pictures = { path = "crates/pictures" }
 sound-signals = { path = "crates/signals" }
 sound-typescript = { path = "crates/typescript" }
 sound-ui = { path = "crates/ui" }
@@ -201,6 +202,8 @@ sound-core = { opt-level = 3 }
 sound-dsp = { opt-level = 3 }
 sound-media = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
+# Works out every pixel of a picture on every frame.
+sound-pictures = { opt-level = 3 }
 sound-signals = { opt-level = 3 }
 test-clap-plugin = { opt-level = 3 }
 test-vst3-plugin = { opt-level = 3 }
