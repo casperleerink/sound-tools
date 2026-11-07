@@ -17,8 +17,18 @@ struct Graph {
     lives: Vec<Num>,
     #[serde(default)]
     waves: Vec<List>,
+    #[serde(default)]
+    videos: Vec<VideoSource>,
     output: Rgb,
     across: Option<u32>,
+}
+
+/// A video a picture reads: a file under `assets/video/`, at a second that is a live value.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VideoSource {
+    pub asset: String,
+    pub at: Num,
 }
 
 /// A picture of a shape: its graph, checked, and what it showed last.
@@ -30,6 +40,7 @@ struct Shown {
     program: Program,
     lives: Vec<Num>,
     waves: Vec<List>,
+    videos: Vec<VideoSource>,
     memory: Mutex<Memory>,
 }
 
@@ -54,15 +65,18 @@ impl<'de> Deserialize<'de> for Picture {
             nodes,
             lives,
             waves,
+            videos,
             output,
             across,
         } = Graph::deserialize(deserializer)?;
-        let program = Program::new(nodes, output, across, (lives.len(), waves.len()))
-            .map_err(serde::de::Error::custom)?;
+        let counts = (lives.len(), waves.len(), videos.len());
+        let program =
+            Program::new(nodes, output, across, counts).map_err(serde::de::Error::custom)?;
         Ok(Self(Arc::new(Shown {
             program,
             lives,
             waves,
+            videos,
             memory: Mutex::default(),
         })))
     }
@@ -77,7 +91,12 @@ impl Picture {
         &self.0.waves
     }
 
+    pub(crate) fn videos(&self) -> &[VideoSource] {
+        &self.0.videos
+    }
+
     pub(crate) fn add_uses(&self, uses: &mut Uses) {
+        (self.0.videos.iter()).for_each(|video| video.at.add_uses(uses));
         self.0.lives.iter().for_each(|live| live.add_uses(uses));
         self.0.waves.iter().for_each(|list| list.add_uses(uses));
         uses.animates = true;
@@ -87,7 +106,7 @@ impl Picture {
     pub(crate) fn paint(
         &self,
         bounds: Bounds<Pixels>,
-        (lives, waves): (&[f32], &[Vec<f32>]),
+        (lives, waves, videos): (&[f32], &[Vec<f32>], &[Arc<Frame>]),
         window: &mut Window,
     ) {
         let Shown {
@@ -103,9 +122,11 @@ impl Picture {
         let Ok(mut memory) = memory.lock() else {
             return;
         };
+        let videos: Vec<&Frame> = videos.iter().map(|frame| &**frame).collect();
         let inputs = Inputs {
             lives,
             waves,
+            videos: &videos,
             last: &memory.last,
             frame: memory.frame,
         };

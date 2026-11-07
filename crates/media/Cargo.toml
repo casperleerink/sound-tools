@@ -20,5 +20,13 @@ sound-dsp.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-av-foundation = { workspace = true, features = ["std", "AVAsset", "AVAssetImageGenerator", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+objc2-core-foundation = { workspace = true, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { workspace = true, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
+objc2-core-media = { workspace = true, features = ["std", "CMTime"] }
+objc2-foundation = { workspace = true, features = ["std", "NSError", "NSString", "NSURL"] }
+
 [dev-dependencies]
 serde_json.workspace = true

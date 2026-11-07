@@ -172,6 +172,9 @@ impl Sources<'_> {
                 clock.tempo_map().change_at(tick).bpm.bpm()
             }),
             Live::Elapsed => self.feeds.time,
+            Live::Seconds => (self.feeds.clock.as_ref()).map_or(0.0, |clock| {
+                clock.seconds_of(sound_core::Ticks(self.tick.max(0.0) as u64))
+            }),
             Live::Value {
                 name,
                 child: None,

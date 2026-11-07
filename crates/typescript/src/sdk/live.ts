@@ -74,7 +74,7 @@ export interface View<State, I extends Inputs = Inputs, M = unknown, K extends C
 
 /** What a live value is made of, as the window gets it. */
 type LiveNode =
-  | { op: "tick" | "elapsed" | "bpm" }
+  | { op: "tick" | "elapsed" | "bpm" | "seconds" }
   | { op: "value"; name: string; child?: string; played: boolean; fraction: boolean }
   | { op: "peak"; name: string; channel?: Channel }
   | { op: "device_peak"; channel?: Channel }
@@ -204,6 +204,8 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   bpm: Live;
   /** Seconds since the view opened, on every frame: `now.elapsed.mod(1).lt(0.5)` blinks once a second. */
   elapsed: Live;
+  /** Where the piece plays, in seconds from its start, through every tempo change: a video in time with it. */
+  seconds: Live;
   /**
    * A number as it is now: a field of the record, also as a drag turns it; a number input,
    * where it was put last; or a number output of the sound. A child's, or one deeper, as
@@ -258,6 +260,7 @@ function sources(): Now<Record<string, number>> {
     tick: new Live({ op: "tick" }),
     bpm: new Live({ op: "bpm" }),
     elapsed: new Live({ op: "elapsed" }),
+    seconds: new Live({ op: "seconds" }),
     value: (path, options) => {
       const { child, name } = splitPath(path);
       return new Live({ op: "value", name, ...(child === undefined ? {} : { child }), played: options?.played ?? false, fraction: options?.fraction ?? false });

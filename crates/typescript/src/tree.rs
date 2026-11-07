@@ -1528,6 +1528,8 @@ pub(crate) enum Live {
     Bpm,
     /// Seconds since the view opened.
     Elapsed,
+    /// Where the piece plays, in seconds from its start.
+    Seconds,
     /// A number by its name: a field of the record, a number input or a number output of the
     /// sound; of the instance at the path `child` inside it, its field or its output.
     Value {
@@ -1674,6 +1676,7 @@ impl Live {
             Self::Tick
             | Self::Bpm
             | Self::Elapsed
+            | Self::Seconds
             | Self::Value { .. }
             | Self::Peak { .. }
             | Self::DevicePeak { .. }
@@ -1706,7 +1709,7 @@ impl Live {
 
     fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Tick | Self::Bpm => uses.tick = true,
+            Self::Tick | Self::Bpm | Self::Seconds => uses.tick = true,
             Self::Elapsed => uses.animates = true,
             Self::Peak { name, .. } => _ = uses.peaks.insert(name.clone()),
             Self::DevicePeak { .. } => uses.output = true,

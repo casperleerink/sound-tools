@@ -61,7 +61,8 @@ type SignalNode<R> =
   | { op: PixelSource }
   | { op: "live"; index: number }
   | { op: "last"; channel: "red" | "green" | "blue"; x: R; y: R }
-  | { op: "wave"; table: { wave: number }; at: R };
+  | { op: "wave"; table: { wave: number }; at: R }
+  | { op: "video"; table: { video: number }; channel: "red" | "green" | "blue"; x: R; y: R };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
 export type GraphNode =
@@ -644,6 +645,7 @@ export interface PictureGraph<L = unknown, W = unknown> {
   nodes: GraphNode[];
   lives: L[];
   waves: W[];
+  videos: Array<{ asset: string; at: L }>;
   output: { red: number; green: number; blue: number };
   across?: number;
 }
@@ -658,7 +660,13 @@ const SOUND_ONLY = new Set<string>([
 ]);
 
 /** For `Picture`: the graph of `colour`, which `layout` lays out as a sound's. */
-export function pictureToJson<L, W>(colour: Rgb, lives: L[], waves: W[], across?: number): PictureGraph<L, W> {
+export function pictureToJson<L, W>(
+  colour: Rgb,
+  lives: L[],
+  waves: W[],
+  videos: Array<{ asset: string; at: L }>,
+  across?: number,
+): PictureGraph<L, W> {
   const { nodes, use } = layout(0);
   const output = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
   for (const node of nodes) {
@@ -666,5 +674,6 @@ export function pictureToJson<L, W>(colour: Rgb, lives: L[], waves: W[], across?
       throw new Error(`\`${node.op}\` belongs in a sound: a picture works out each pixel on its own, with no time between them`);
     }
   }
-  return across === undefined ? { nodes, lives, waves, output } : { nodes, lives, waves, output, across };
+  const graph = { nodes, lives, waves, videos, output };
+  return across === undefined ? graph : { ...graph, across };
 }

@@ -35,6 +35,7 @@ mod samples;
 mod timeline;
 mod tools;
 mod tree;
+mod videos;
 mod window;
 
 use std::io::Write as _;
