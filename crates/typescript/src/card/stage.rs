@@ -5,15 +5,16 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Render,
-    TitlebarOptions, WeakEntity, Window, WindowBounds, WindowControlArea, WindowOptions, div,
-    point, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, MouseButton,
+    MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowControlArea,
+    WindowOptions, div, point, prelude::*, px, size,
 };
 use serde::{Deserialize, Serialize};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 
 use super::TypeScriptCard;
+use super::input::hears_the_button;
 use crate::feeds::Drawn;
 
 /// Where the div that says `stage` draws.
@@ -273,7 +274,7 @@ impl EventEmitter<StageChanged> for TypeScriptCard {}
 
 /// The window of the stage: black, and the div over all of it. It holds its card weakly, so a
 /// card that goes takes its stage along.
-pub(crate) struct Stage(WeakEntity<TypeScriptCard>);
+pub(crate) struct Stage(WeakEntity<TypeScriptCard>, FocusHandle);
 
 impl Stage {
     fn new(card: &Entity<TypeScriptCard>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -291,6 +292,21 @@ impl Stage {
             }
         })
         .detach();
+        // A press on the stage hears its release, also when the window loses the focus first.
+        // Active, it takes the keys, so tab reaches its controls.
+        cx.observe_window_activation(window, |stage: &mut Self, window, cx| {
+            if window.is_window_active() {
+                if window.focused(cx).is_none() {
+                    window.focus(&stage.1, cx);
+                }
+            } else if let Some(card) = stage.0.upgrade() {
+                card.update(cx, |card, cx| {
+                    card.clicking = None;
+                    card.let_go(None, cx);
+                });
+            }
+        })
+        .detach();
         let closed = card.downgrade();
         window.on_window_should_close(cx, move |_, cx| {
             if let Err(error) = closed.update(cx, |card, cx| card.stage_closed(cx)) {
@@ -299,7 +315,7 @@ impl Stage {
             }
             true
         });
-        Self(card.downgrade())
+        Self(card.downgrade(), cx.focus_handle())
     }
 }
 
@@ -311,6 +327,7 @@ impl Render for Stage {
         };
         // Its own frames move on while the page's window is hidden.
         card.update(cx, |card, cx| card.read_frame_now(cx));
+        let weak = card.downgrade();
         let card = card.read(cx);
         if card.parts(cx).stage.animates {
             window.request_animation_frame();
@@ -334,6 +351,7 @@ impl Render for Stage {
                 })
         });
         div()
+            .track_focus(&self.1)
             .size_full()
             .bg(gpui::black())
             .text_size(px(12.))
@@ -342,6 +360,17 @@ impl Render for Stage {
             .flex_col()
             .children(shown)
             .children(bar)
+            .child(hears_the_button(card.button_down.clone(), weak))
+            // Its own window, out of the shell that moves the focus elsewhere.
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "tab" {
+                    match event.keystroke.modifiers.shift {
+                        true => window.focus_prev(cx),
+                        false => window.focus_next(cx),
+                    }
+                    cx.stop_propagation();
+                }
+            })
             .into_any_element()
     }
 }
