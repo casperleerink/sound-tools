@@ -203,8 +203,8 @@ impl Drawing<'_> {
                         StageDiv::InPage => true,
                     };
                 let mut style = style.clone().unwrap_or_default();
-                // Its own window is all the room it has.
-                if *stage == Some(true) && !stage_in_page {
+                // The stage takes the room it has, in its window or in the page.
+                if *stage == Some(true) {
                     style.grow();
                 }
                 let disabled = *disabled == Some(true);
