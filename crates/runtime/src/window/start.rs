@@ -107,7 +107,7 @@ pub(super) fn choose_project(cx: &mut App) {
 
 /// Asks where a new project goes, writes `template` there and opens it. Does nothing while a
 /// project opens.
-fn new_project(template: &'static crate::Template, cx: &mut App) {
+fn new_project(template: crate::templates::Choice, cx: &mut App) {
     if opening(cx) {
         return;
     }
@@ -125,7 +125,7 @@ fn new_project(template: &'static crate::Template, cx: &mut App) {
         let written = cx
             .background_spawn({
                 let folder = folder.clone();
-                async move { crate::templates::write(&folder, template) }
+                async move { template.write(&folder) }
             })
             .await;
         cx.update(|cx| match written {

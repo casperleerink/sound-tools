@@ -1,6 +1,6 @@
 //! The project menu: the project name top-left as a quiet menu. Export the project or the
 //! selected clips as a WAV, undo and redo with what they would do, a new, recent or another
-//! project, the project folder in the Finder or in a terminal, the command line tool, Settings
+//! project, the project as a template, the project folder in the Finder or in a terminal, the command line tool, Settings
 //! and the app version. The terminal is where the composer starts a coding agent on the
 //! project, and the tool is what that agent runs to read the whole piece.
 
@@ -21,6 +21,7 @@ use sound_ui::components::dropdown_menu::{
 use crate::app::ChosenDevices;
 #[cfg(unix)]
 use crate::app::Installed;
+use crate::templates::Choice;
 use crate::{app, log_file};
 
 const EXPORT: &str = "export";
@@ -28,6 +29,7 @@ const EXPORT_SELECTION: &str = "export-selection";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const NEW_PROJECT: &str = "new-project";
+const SAVE_TEMPLATE: &str = "save-template";
 const OPEN_PROJECT: &str = "open-project";
 const OPEN_RECENT: &str = "open-recent";
 /// Followed by the index in the recent projects.
@@ -152,6 +154,7 @@ impl ProjectMenu {
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
                 NEW_PROJECT => choose_new_project(cx.entity(), cx),
+                SAVE_TEMPLATE => super::save_template::save_as_template(cx.entity(), cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 LOG => {
@@ -351,7 +354,7 @@ pub(super) fn choose_new_project(session: Entity<Session>, cx: &mut App) {
 
 /// Asks for the name and place of a new project in the save panel, next to the open project,
 /// and opens it as [`open_another_project`] does. A folder with files in it is refused.
-fn new_project(session: &Session, template: &'static crate::Template, cx: &mut Context<Session>) {
+fn new_project(session: &Session, template: Choice, cx: &mut Context<Session>) {
     let root = session.project().root();
     let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
     cx.spawn(async move |session, cx| {
@@ -392,14 +395,14 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
 /// starts the app again on it.
 async fn start_on(
     folder: PathBuf,
-    template: Option<&'static crate::Template>,
+    template: Option<Choice>,
     session: &WeakEntity<Session>,
     cx: &mut AsyncApp,
 ) {
     let remembered = cx
         .background_spawn(async move {
             match template {
-                Some(template) => crate::templates::write(&folder, template)?,
+                Some(template) => template.write(&folder)?,
                 None => app::check_project_folder(&folder)?,
             }
             app::remember_project(&folder)
@@ -551,7 +554,7 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
     })
 }
 
-/// The last group: a new project, another one, a recent one in a submenu, the project folder in the
+/// The last group: a new project, this one as a template, another one, a recent one in a submenu, the project folder in the
 /// Finder, a terminal in it for a coding agent, the command that agent runs, and the app's log
 /// to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
 /// started from a terminal writes no log, see `log_file`.
@@ -562,6 +565,7 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
             .shortcut("mod+n"),
     ];
     let rest = [
+        (SAVE_TEMPLATE, "Save as template…"),
         (OPEN_PROJECT, "Open project…"),
         (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
@@ -715,6 +719,7 @@ mod tests {
             .collect();
         let mut expected: Vec<(SharedString, SharedString)> = vec![
             (NEW_PROJECT.into(), "New project…".into()),
+            (SAVE_TEMPLATE.into(), "Save as template…".into()),
             (OPEN_PROJECT.into(), "Open project…".into()),
             (OPEN_RECENT.into(), "Open recent".into()),
             (REVEAL.into(), "Reveal project folder".into()),

@@ -16,6 +16,7 @@ pub mod new_project;
 pub mod other_apps;
 mod project_menu;
 pub mod recorders;
+mod save_template;
 mod settings;
 mod start;
 
@@ -57,7 +58,8 @@ use recorders::Recorders;
 pub use settings::{DeviceList, ListDevices, Section, SettingsPage};
 
 use crate::app::ChosenDevices;
-use crate::{TEMPLATES, Template, open_with_loaded, update, views};
+use crate::templates::{Choice, Saved, saved_folder};
+use crate::{TEMPLATES, open_with_loaded, update, views};
 
 actions!(
     sound_tools,
@@ -266,6 +268,8 @@ pub struct Shell {
     /// A newer template's code for files the project changed, until the composer merges or
     /// dismisses it.
     template_update: Option<crate::templates::Update>,
+    /// For an empty project to start from, next to the app's.
+    saved_templates: Vec<Saved>,
 }
 
 impl Shell {
@@ -388,6 +392,7 @@ impl Shell {
             _other_apps: other_apps,
             recorders,
             template_update: None,
+            saved_templates: Vec::new(),
         };
         // Asked again after the open brought the rest up to date, which changes nothing more.
         let root = shell.session.read(cx).project().root().to_path_buf();
@@ -728,12 +733,15 @@ impl Shell {
                 "Nothing in this project has a view yet. Ask the agent for one.",
             );
         }
-        let templates = (TEMPLATES.iter())
+        let bundled = (TEMPLATES.iter())
             .filter(|template| !template.files.is_empty())
-            .map(|template| {
-                new_project::template_row(template, cx)
-                    .on_click(cx.listener(move |shell, _, _, cx| shell.start_from(template, cx)))
-            });
+            .map(Choice::Bundled);
+        let saved = self.saved_templates.iter().cloned().map(Choice::Saved);
+        let templates = bundled.chain(saved).map(|template| {
+            new_project::template_row(template.name(), template.description(), cx).on_click(
+                cx.listener(move |shell, _, _, cx| shell.start_from(template.clone(), cx)),
+            )
+        });
         let ask = self.left_panel.as_ref().map(|_| {
             Button::new("ask-the-agent", "Ask the agent")
                 .on_click(cx.listener(|shell, _, window, cx| shell.focus_left_panel(window, cx)))
@@ -755,12 +763,12 @@ impl Shell {
 
     /// Writes `template` into this empty project, which then shows it as it would a change
     /// of the agent's.
-    fn start_from(&mut self, template: &'static Template, cx: &mut Context<Self>) {
+    fn start_from(&mut self, template: Choice, cx: &mut Context<Self>) {
         let root = self.session.read(cx).project().root().to_path_buf();
         let session = self.session.downgrade();
         cx.spawn(async move |_, cx| {
             let written = (cx.background_executor())
-                .spawn(async move { crate::templates::write(&root, template) })
+                .spawn(async move { template.write(&root) })
                 .await;
             if let Err(error) = written {
                 // The window is gone when this fails, and there is nobody left to tell.
@@ -1180,19 +1188,29 @@ fn widen_for_left_panel(window: &mut Window, cx: &App) {
     }
 }
 
-/// Gives the project menu of the app's window the recent projects. Off the UI thread: each is
-/// a look at a folder, which a network drive that went away can hold up. A test window never
-/// gets them, so a snapshot does not show what this machine opened.
-fn show_recent_projects(window: gpui::WindowHandle<Shell>, cx: &mut App) {
+/// Gives the app's window the recent projects and the saved templates. Off the UI thread: each
+/// is a look at a folder, which a network drive that went away can hold up. A test window never
+/// gets them, so a snapshot does not show what this machine keeps.
+fn show_what_this_machine_keeps(window: gpui::WindowHandle<Shell>, cx: &mut App) {
     cx.spawn(async move |cx| {
-        let recent = cx
-            .background_spawn(async { crate::app::recent_projects() })
+        let (recent, saved) = cx
+            .background_spawn(async {
+                let saved = saved_folder().and_then(|folder| crate::templates::saved_in(&folder));
+                (crate::app::recent_projects(), saved)
+            })
             .await;
         // Fails only when the window is gone.
         window
             .update(cx, |shell, _, cx| {
                 let menu = shell.project_menu().clone();
                 menu.update(cx, |menu, cx| menu.set_recent_projects(recent, cx));
+                match saved {
+                    Ok(saved) => shell.saved_templates = saved,
+                    Err(error) => shell
+                        .session
+                        .update(cx, |session, cx| session.report(error, cx)),
+                }
+                cx.notify();
             })
             .ok();
     })
@@ -1526,7 +1544,7 @@ impl Opened {
         let shell = match opened {
             Ok(window) => {
                 cx.activate(true);
-                show_recent_projects(window, cx);
+                show_what_this_machine_keeps(window, cx);
                 window
             }
             Err(error) => {

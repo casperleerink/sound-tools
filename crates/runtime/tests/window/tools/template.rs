@@ -53,6 +53,29 @@ fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
+/// A template saved with the tools only: the song keeps the master, limiter and mute lane its
+/// tool requires, and no track.
+#[gpui::test]
+fn a_project_from_the_tools_only_of_a_daw_project_opens_its_empty_song(cx: &mut TestAppContext) {
+    let project = tempfile::tempdir().unwrap();
+    runtime::templates::write(project.path(), crate::song::daw()).unwrap();
+    let templates = tempfile::tempdir().unwrap();
+    let opened = runtime::open_for_inspect(project.path()).unwrap();
+    let keep = runtime::templates::Keep::tools_of(&opened);
+    let saved = runtime::templates::save_in(templates.path(), project.path(), "Mine", &keep);
+    let folder = tempfile::tempdir().unwrap();
+    saved.unwrap().write(folder.path()).unwrap();
+    let mut window = open_folder(cx, folder);
+    window.wait_for_bun();
+    assert!(!window.has("song/t00"));
+
+    let add = window.until_found("div-add-track");
+    window.click(add);
+    window.until("the track added", |window| window.has("song/track"));
+    window.after_the_runs();
+    assert_eq!(window.problems(), []);
+}
+
 #[gpui::test]
 fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
