@@ -20,9 +20,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, MouseButton,
-    Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity, WeakFocusHandle, Window,
-    WindowHandle, canvas, div, prelude::*, px,
+    AnyElement, AnyView, AnyWindowHandle, App, Bounds, Context, Div, Entity, EventEmitter,
+    FocusHandle, MouseButton, Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity,
+    WeakFocusHandle, Window, WindowHandle, canvas, div, prelude::*, px,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -109,6 +109,8 @@ pub(crate) struct TypeScriptCard {
     stage: Option<usize>,
     stage_window: Option<WindowHandle<Stage>>,
     stage_place: StagePlace,
+    /// The window it draws in, which the stage's window hands the focus to.
+    window: AnyWindowHandle,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
     parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
@@ -426,7 +428,10 @@ impl TypeScriptCard {
         .detach();
         // A window in the back may never hear the button go up.
         cx.observe_window_activation(window, |view, window, cx| {
-            if !window.is_window_active() {
+            // The press that gave its stage the focus is the stage's, not one to let go of.
+            let to_stage =
+                (view.stage_window).is_some_and(|stage| cx.active_window() == Some(stage.into()));
+            if !window.is_window_active() && !to_stage {
                 view.clicking = None;
                 view.let_go(None, cx);
             }
@@ -469,6 +474,7 @@ impl TypeScriptCard {
             stage: None,
             stage_window: None,
             stage_place: StagePlace::default(),
+            window: window.window_handle(),
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),

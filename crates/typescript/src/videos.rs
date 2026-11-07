@@ -225,7 +225,9 @@ fn upright(path: &Path) -> image::ImageResult<image::DynamicImage> {
     let mut decoder = image::ImageReader::open(path)?
         .with_guessed_format()?
         .into_decoder()?;
-    let orientation = (decoder.orientation()).unwrap_or(image::metadata::Orientation::NoTransforms);
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
     let mut photo = image::DynamicImage::from_decoder(decoder)?;
     photo.apply_orientation(orientation);
     Ok(photo)

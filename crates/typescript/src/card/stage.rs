@@ -299,7 +299,10 @@ impl Stage {
                 if window.focused(cx).is_none() {
                     window.focus(&stage.1, cx);
                 }
-            } else if let Some(card) = stage.0.upgrade() {
+            } else if let Some(card) = stage.0.upgrade()
+                // The press that gave its page the focus is the page's, not one to let go of.
+                && cx.active_window() != Some(card.read(cx).window)
+            {
                 card.update(cx, |card, cx| {
                     card.clicking = None;
                     card.let_go(None, cx);
@@ -363,7 +366,8 @@ impl Render for Stage {
             .child(hears_the_button(card.button_down.clone(), weak))
             // Its own window, out of the shell that moves the focus elsewhere.
             .on_key_down(|event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "tab" {
+                let modifiers = &event.keystroke.modifiers;
+                if event.keystroke.key == "tab" && !(modifiers.control || modifiers.platform) {
                     match event.keystroke.modifiers.shift {
                         true => window.focus_prev(cx),
                         false => window.focus_next(cx),
