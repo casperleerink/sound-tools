@@ -163,7 +163,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `extensions/plugin-host`.
 
-- Nothing a plugin sends out is read, so a plugin cannot make our audio thread allocate.
+- What a plugin sends out is dropped or read into fixed-size queues, so a plugin cannot make our audio thread allocate.
 - Inspect loads no plugin. Printing a project must not run third-party code.
 
 ## The window

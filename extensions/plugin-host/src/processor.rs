@@ -1,36 +1,14 @@
-//! The engine processor around a plugin's audio processor, and the note contract it speaks.
+//! The engine processor around a plugin's audio side, and the note contract it speaks.
 //!
-//! The plugin's own handle stays on the control thread, see `host.rs`. What comes here is the
-//! part every format allows on the audio thread: CLAP's audio processor, VST 3's
-//! `IAudioProcessor`. This wrapper translates the note contract into what that format takes,
-//! gives the plugin our one stereo input port, calls it and copies its first output port into
-//! our one stereo output port.
+//! The note translation and the automation lanes are here and not in a backend: both formats
+//! need the same keys that are down, the same memory of the pedal and the wheels, the same
+//! expansion of `AllOff` and the same bound on events per block. A backend only writes one
+//! event down, through [`Started::push`]. The plugin smooths its parameters itself, so nothing
+//! here ramps a lane.
 //!
-//! One wrapper serves an instrument and an effect, because one record does: nothing here knows
-//! which slot it is in. An instrument's input is connected to nothing and is silent, which is
-//! what every audio input of a plugin got before effects existed. A slot with no plugin passes
-//! its input to its output unchanged, so a missing effect is a slot the sound goes through and
-//! not a track that goes silent.
-//!
-//! The translation is here and not in a backend: both formats need the same list of keys that
-//! are down, the same memory of where the pedal and the wheels stand, the same expansion of
-//! `AllOff` and the same bound on how many events one block may carry. A backend only says how
-//! one event is written down, through [`Started::push`].
-//!
-//! So are the automation lanes of the pins: a lane sends its value every block, which goes to
-//! the plugin as a parameter change, and a pin that hears nothing in a block goes back to its
-//! record value, the rule every device of the core follows. The plugin smooths its parameters
-//! itself, so nothing here ramps.
-//!
-//! Nothing here allocates, locks or makes a system call. Every buffer is made when the plugin
-//! is loaded. What the plugin does inside its own calls is not ours: the realtime sanitizer is
-//! switched off for exactly those calls and nothing around them ([`not_ours`]).
-//!
-//! Both formats want processing started and stopped on the thread that processes. This wrapper
-//! is the only place that has one, so it stops the plugin before it lets it go: on a swap in
-//! [`Processor::update`] and on [`Processor::leaving`], which is the engine handing the
-//! processor back. The backend's own `Drop` is the last resort, for the engine itself being
-//! torn down, when there is no audio thread left to do it on.
+//! Both formats want processing stopped on the thread that processes, so this wrapper stops the
+//! plugin before it lets it go: in [`Processor::update`] and [`Processor::leaving`]. The
+//! backend's own `Drop` is the last resort, for when the engine itself is torn down.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
@@ -45,8 +23,8 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pedal};
 /// Anything above this is counted and dropped, never allocated.
 pub(crate) const EVENT_CAPACITY: usize = 512;
 
-/// One thing to tell the plugin, at a frame offset in the block. This is the note contract with
-/// `AllOff` already expanded into the keys that are really down and the controls that moved.
+/// The note contract with `AllOff` already expanded into the keys that are really down and the
+/// controls that moved.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PluginEvent {
     On { key: u8, velocity: u8 },
@@ -54,16 +32,15 @@ pub(crate) enum PluginEvent {
     Control(Control),
 }
 
-/// A control of the whole instrument and where it stands: the sustain pedal, a wheel, the key
-/// pressure or another MIDI controller. Each format has one way in for each of them, which a plugin may not offer, see
-/// [`Started::takes`].
+/// A control of the whole instrument and where it stands. A plugin may offer no way in for one,
+/// see [`Started::takes`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Control {
     Pedal(Pedal),
     Bend(Bend),
     ModWheel(Amount),
     Pressure(Amount),
-    /// `AllOff` leaves it where it is, so nothing keeps where it stands.
+    /// Has no rest: `AllOff` leaves it where it is.
     Other {
         controller: Controller,
         value: Amount,
@@ -71,8 +48,8 @@ pub(crate) enum Control {
 }
 
 impl Control {
-    /// Every control at rest, one of each in the order of [`Self::index`]. It is where a plugin
-    /// stands before it hears any of them, and where `AllOff` puts it back.
+    /// Every control at rest, in the order of [`Self::index`]: where a plugin stands before it
+    /// hears any, and where `AllOff` puts it back.
     pub(crate) const REST: [Self; 4] = [
         Self::Pedal(Pedal::UP),
         Self::Bend(Bend::MIDDLE),
@@ -80,8 +57,7 @@ impl Control {
         Self::Pressure(Amount::NONE),
     ];
 
-    /// Which control this is, as its place in [`Self::REST`], for a table with one entry each.
-    /// `None` for another controller, which has no rest.
+    /// Its place in [`Self::REST`].
     pub(crate) fn index(self) -> Option<usize> {
         match self {
             Self::Pedal(_) => Some(0),
@@ -92,8 +68,7 @@ impl Control {
         }
     }
 
-    /// Where it stands as MIDI sends it: 0 to 127, and for the bend 0 to 16383 with the middle
-    /// at 8192.
+    /// 0 to 127, and for the bend 0 to 16383 with the middle at 8192.
     pub(crate) fn midi_value(self) -> u16 {
         match self {
             Self::Pedal(pedal) => u16::from(pedal.value()),
@@ -108,32 +83,31 @@ impl Control {
 /// A plugin that is loaded and started, seen from the audio thread. One implementation per
 /// format.
 ///
-/// No call of this trait may allocate, lock or make a system call in our own code. A call into
-/// the plugin itself is wrapped in [`not_ours`].
+/// No call may allocate, lock or make a system call in our own code; every buffer is made when
+/// the plugin loads. A call into the plugin itself is wrapped in [`not_ours`].
 pub(crate) trait Started: Send {
-    /// Whether this control reaches the plugin; only which control it is counts, not where it
-    /// stands. A plugin that offers no way to receive one gets the notes and not that control.
-    /// For the pedal its record says so.
+    /// Whether this kind of control reaches the plugin. One that offers no way in for the
+    /// pedal is reported as [`crate::PluginProblem::NoPedal`].
     fn takes(&self, control: Control) -> bool;
 
-    /// How many frames late the plugin plays, as it said when it was activated.
+    /// As the plugin said when it was activated.
     fn latency(&self) -> u32;
 
     /// A new block: everything the last one carried is forgotten.
     fn begin_block(&mut self);
 
-    /// One event for this block. `false` says there was no room, which the caller counts.
+    /// `false` says there was no room, which the caller counts.
     fn push(&mut self, offset: u32, event: PluginEvent) -> bool;
 
-    /// The value of the parameter `id` from an automation lane, at the first frame of this
-    /// block. Called after [`Self::begin_block`] and before any event, so it comes after a value
-    /// the host sent for the same parameter and is the one the block ends on. Room for
-    /// [`MAX_AUTOMATED`] of them is kept on top of the events. `false` says there was no room.
+    /// A lane's value of the parameter `id`, at the first frame of this block. Called after
+    /// [`Self::begin_block`] and before any event, so it comes after a value the host sent for
+    /// the same parameter and wins. Room for [`MAX_AUTOMATED`] is kept on top of the events.
+    /// `false` says there was no room.
     fn automate(&mut self, id: u32, value: f64) -> bool;
 
-    /// Runs the plugin for `frames` frames with `input` on its first audio input port, and
-    /// writes its first output port into `left` and `right`. `false` says the plugin failed
-    /// and is not to be called again.
+    /// Runs the plugin with `input` on its first audio input port, and writes its first output
+    /// port into `left` and `right`. `false` says the plugin failed and is not to be called
+    /// again; it then writes nothing.
     fn run(
         &mut self,
         frames: usize,
@@ -142,32 +116,25 @@ pub(crate) trait Started: Send {
         right: &mut [f32],
     ) -> bool;
 
-    /// Stops the plugin's processing. The audio thread only, as both formats ask, and only from
-    /// the places here that have one. Calling it again does nothing.
+    /// Audio thread only, as both formats ask. Calling it again does nothing.
     fn stop(&mut self);
 }
 
-/// Everything a plugin does inside its own code. The realtime sanitizer is switched off for
-/// exactly the call and nothing around it: what a plugin allocates is its business, what this
-/// crate allocates is a bug.
+/// A call into the plugin's own code. The realtime sanitizer is off for exactly the call: what
+/// a plugin allocates is its business, what this crate allocates is a bug.
 pub(crate) fn not_ours<T>(call: impl FnOnce() -> T) -> T {
     let _disabled = rtsan_standalone::ScopedDisabler::default();
     call()
 }
 
-/// What a slot plays when no plugin plays it: what it was given, unchanged. Nothing here
-/// allocates.
 fn pass_through(input: [&[f32]; CHANNELS], left: &mut [f32], right: &mut [f32], frames: usize) {
     left[..frames].copy_from_slice(&input[0][..frames]);
     right[..frames].copy_from_slice(&input[1][..frames]);
 }
 
-/// Copies our one stereo port into the channels of a plugin's first audio input port.
-///
-/// A plugin that takes one channel gets the left one, which is where a processor that makes
-/// one signal puts it. A plugin that takes more than two gets silence in the rest, as it did
-/// before effects existed. A plugin with no audio input takes nothing: what came before it in
-/// the chain is lost, and what it plays takes its place.
+/// Copies our one stereo port into the channels of a plugin's first audio input port. One
+/// channel gets the left, which is where a processor that makes one signal puts it. More than
+/// two get silence in the rest.
 pub(crate) fn copy_in(channels: &mut [Vec<f32>], frames: usize, input: [&[f32]; CHANNELS]) {
     for (index, channel) in channels.iter_mut().enumerate() {
         match input.get(index) {
@@ -177,8 +144,7 @@ pub(crate) fn copy_in(channels: &mut [Vec<f32>], frames: usize, input: [&[f32]; 
     }
 }
 
-/// Copies the channels a plugin wrote into our one stereo port. A plugin with one channel is
-/// heard on both, as every processor that makes one signal.
+/// Copies the channels a plugin wrote into our one stereo port. One channel is heard on both.
 pub(crate) fn copy_out(channels: &[Vec<f32>], frames: usize, left: &mut [f32], right: &mut [f32]) {
     match channels.len() {
         0 => {}
@@ -193,25 +159,21 @@ pub(crate) fn copy_out(channels: &[Vec<f32>], frames: usize, left: &mut [f32], r
     }
 }
 
-/// A pin of the record as the audio side knows it: whether a lane may move it, its range,
-/// which a lane value is held to, and its value in the record, which it goes back to when its
-/// lane lets go. In the format's own units.
+/// A pin of the record as the audio side knows it, in the format's own units. A lane value is
+/// held to its range, and it goes back to `record` when its lane lets go.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct AutomatedPin {
     pub id: u32,
-    /// Whether a lane may move it: the plugin says a host may automate it and it is not
-    /// stepped.
     pub takes_lane: bool,
     pub minimum: f64,
     pub maximum: f64,
     pub record: f64,
 }
 
-/// The pins of a record: first those a lane may move, in the order of the index of an
-/// [`Automation`] event, which is the order of the numbers the behaviour named, then the rest.
-/// The rest are here for their record value: a pin that stops taking a lane, because the plugin
-/// changed its parameters, goes back to it all the same. A fixed array, so it is copied in an
-/// update and nothing is dropped on the audio thread.
+/// The pins of a record: first those a lane may move, in the order of an [`Automation`]
+/// event's index, then the rest. The rest are here for their record value: a pin that stops
+/// taking a lane, because the plugin changed its parameters, still goes back to it. A fixed
+/// array, so an update copies it and nothing is dropped on the audio thread.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct AutomatedPins {
     pins: [AutomatedPin; MAX_AUTOMATED],
@@ -233,8 +195,7 @@ impl AutomatedPins {
         laned: 0,
     };
 
-    /// The first [`MAX_AUTOMATED`] of `pins`, which is as many as a record holds, those that
-    /// take a lane first in the order given.
+    /// The first [`MAX_AUTOMATED`] of `pins`, as many as a record holds.
     pub(crate) fn new(pins: &[AutomatedPin]) -> Self {
         let mut automated = Self::NONE;
         let laned = pins.iter().filter(|pin| pin.takes_lane);
@@ -257,7 +218,7 @@ impl AutomatedPins {
     }
 }
 
-/// Pins and the value of each, at most one of each pin, in a fixed array.
+/// Pins and the value of each, at most one per pin, in a fixed array.
 #[derive(Copy, Clone, Debug)]
 struct PinValues {
     pins: [(u32, f64); MAX_AUTOMATED],
@@ -278,8 +239,7 @@ impl PinValues {
         self.as_slice().iter().any(|(pin, _)| *pin == id)
     }
 
-    /// Notes the value of `id`, over the one it had. Only the pins of one record are noted,
-    /// which never fill it.
+    /// Only the pins of one record are noted, which never fill it.
     fn insert(&mut self, id: u32, value: f64) {
         if let Some(place) = self.pins[..self.count]
             .iter_mut()
@@ -296,15 +256,13 @@ impl PinValues {
 }
 
 /// The pins whose value in the plugin may be a lane's, with that value, for the main thread: it
-/// reads no such pin into the record, and shows the lane value in the plugin's own window where
-/// the format needs the host to. A block writes a pin in before the plugin hears its lane, and
-/// takes it out only after the plugin played its record value again, so a plugin value that is
-/// a lane's is never read while the pin is out of it.
+/// reads no such pin into the record, and shows the lane value in the plugin's window where the
+/// format needs the host to. A block writes a pin in before the plugin hears its lane, and takes
+/// it out only after the plugin played its record value again.
 ///
 /// A sequence lock of atomics: the audio side never waits, and the main thread reads again
-/// when a block wrote while it read. The generation goes up whenever the pins it holds change,
-/// not their values, so the main thread can tell that a lane came or went while it read the
-/// plugin, even when it came and went between two reads of this.
+/// when a block wrote while it read. The generation goes up when the set of pins changes, so
+/// the main thread can tell a lane came and went between two reads.
 pub(crate) struct LanedPins {
     sequence: AtomicU64,
     generation: AtomicU64,
@@ -324,7 +282,7 @@ impl LanedPins {
         }
     }
 
-    /// The audio side, the only one that writes, so it reads what it wrote last as it is.
+    /// The audio side, the only writer, so it may read its own last write relaxed.
     fn write(&self, held: &PinValues) {
         let count = self.count.load(Ordering::Relaxed).min(MAX_AUTOMATED);
         let ids = &self.ids[..count];
@@ -351,8 +309,8 @@ impl LanedPins {
             .store(sequence.wrapping_add(2), Ordering::Release);
     }
 
-    /// The main thread: the generation, and each pin a lane holds with the value it plays.
-    /// `None` when blocks kept writing while it read.
+    /// The main thread: the generation, and each held pin with its lane value. `None` when
+    /// blocks kept writing while it read.
     pub(crate) fn read(&self) -> Option<(u64, Vec<(u32, f64)>)> {
         for _ in 0..8 {
             let before = self.sequence.load(Ordering::Acquire);
@@ -377,38 +335,33 @@ impl LanedPins {
     }
 }
 
-/// A started plugin and what its audio side tells the main thread of its lanes.
 pub(crate) struct Playing {
     pub started: Box<dyn Started>,
     pub laned: Arc<LanedPins>,
 }
 
-/// The processor an instance of the plugin tool keeps. It is silent until the control side
-/// sends it a plugin, and silent again when it is sent `None`.
+/// The processor of the plugin tool. It passes its input through until the control side sends
+/// it a plugin, and again when it is sent `None`.
 pub(crate) struct HostedPlugin {
     plugin: Option<Playing>,
-    /// Whether the plugin's own `run` failed. It is left silent instead of called again.
+    /// The plugin's `run` failed. It passes its input through instead of being called again.
     failed: bool,
-    /// The keys this processor has sent a note on for and no note off yet, so an `AllOff` ends
-    /// exactly those. A plugin need not understand a note off that matches every key.
+    /// The keys sent a note on and no note off yet, so an `AllOff` ends exactly those. A
+    /// plugin need not understand a note off that matches every key.
     keys_down: [bool; 128],
     /// Where each control stands as the plugin last heard it, by [`Control::index`], so an
     /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps
     /// what it heard, and telling a new one "at rest" once more costs nothing.
     controls: [Control; 4],
-    /// The pins of the record.
     pins: AutomatedPins,
-    /// The pins whose value in the plugin is a lane's, with that value. Each goes back to its
-    /// record value in the first block in which its lane says nothing.
+    /// The pins whose value in the plugin is a lane's, with that value.
     held: PinValues,
 }
 
-/// What the control side sends.
 pub(crate) enum HostedUpdate {
-    /// The plugin to play, or nothing, and the pins of its record. The plugin that was there
-    /// rides back to the control thread inside the update and is dropped there.
+    /// The plugin to play, or nothing, and the pins of its record.
     Plugin(Option<Playing>, AutomatedPins),
-    /// The pins of the record, for the plugin that plays: its record changed only its pins.
+    /// The record changed only its pins.
     Pins(AutomatedPins),
 }
 
@@ -418,7 +371,7 @@ impl HostedPlugin {
     pub(crate) const INPUT: AudioInput = AudioInput::new(0);
     pub(crate) const AUDIO: AudioOutput = AudioOutput::new(0);
 
-    /// A processor with no plugin. It makes no sound.
+    /// No plugin yet: it passes its input through, which for an instrument is silence.
     pub(crate) fn silent() -> Self {
         Self {
             plugin: None,
@@ -452,9 +405,8 @@ impl Processor for HostedPlugin {
                 return;
             }
         };
-        // The plugin that was here goes back inside the update and is dropped on the control
-        // thread. It stops here, while this is still the audio thread. Nothing heap-allocated
-        // is dropped here.
+        // The plugin that was here rides back inside the update, so it stops now, while this
+        // is still the audio thread.
         if let Some(leaving) = &mut self.plugin {
             leaving.started.stop();
         }
@@ -462,25 +414,23 @@ impl Processor for HostedPlugin {
         self.keys_down = [false; 128];
         self.failed = false;
         self.pins = *pins;
-        // A new plugin starts at the values of its record, which the host sends it first, and
-        // the main thread hears that no lane holds a pin of it.
+        // A new plugin starts at its record values, which the host sends it first, so no lane
+        // holds a pin of it.
         self.held = PinValues::NONE;
         if let Some(playing) = &self.plugin {
             playing.laned.write(&self.held);
         }
     }
 
-    /// The engine is handing this processor back. The plugin stops here, on the audio thread,
-    /// so that the control thread only ever deactivates one that is already stopped.
+    /// So that the control thread only ever deactivates a plugin that is already stopped.
     fn leaving(&mut self) {
         if let Some(plugin) = &mut self.plugin {
             plugin.started.stop();
         }
     }
 
-    /// The plugin's own latency. A slot with no plugin passes its input through and has none.
-    /// A plugin that is started again after its latency changed arrives in an update, which is
-    /// when the engine reads this.
+    /// A plugin started again after its latency changed arrives in an update, which is when the
+    /// engine reads this.
     fn latency(&self) -> u32 {
         self.plugin
             .as_ref()
@@ -495,10 +445,7 @@ impl Processor for HostedPlugin {
         let frames = context.frames;
         let playing = self.plugin.as_mut().filter(|_| !self.failed);
         let Some(Playing { started, laned }) = playing else {
-            // No plugin, or one that failed in an earlier block: the slot passes what it is
-            // given through. For an instrument that is the silence of an input nothing
-            // reaches, and for an effect it is the track playing on through a slot whose
-            // plugin is missing.
+            // So a missing or failed effect does not silence what plays into it.
             pass_through(input, left, right, frames);
             return;
         };
@@ -511,8 +458,6 @@ impl Processor for HostedPlugin {
             &mut self.held,
             laned,
             |plugin| {
-                // More events in one block than the plugin's buffer holds. Counted, never
-                // allocated.
                 dropped = translate(plugin, events, keys_down, controls);
                 plugin.run(frames, input, &mut left[..frames], &mut right[..frames])
             },
@@ -521,10 +466,8 @@ impl Processor for HostedPlugin {
             context.event_outputs.count_dropped();
         }
         if !played {
-            // The block a plugin fails on is the first one it does not play, so the slot
-            // passes it through here and not from the next block. A backend writes nothing
-            // into the output when it fails, so whatever it left there is the silence the
-            // engine gave it, which would be a gap of one block in the chain.
+            // This block too: a backend that fails writes nothing, which would leave a gap of
+            // one block.
             self.failed = true;
             pass_through(input, left, right, frames);
         }
@@ -532,9 +475,8 @@ impl Processor for HostedPlugin {
 }
 
 /// One block of a plugin with its lanes: the lanes go in, then `play` puts in the notes and
-/// runs the plugin. What [`LanedPins`] says brackets it: every pin a lane holds before or in
-/// this block is written held before the plugin hears anything, and only the pins a lane still
-/// holds once it has run. A plugin with no lanes writes nothing.
+/// runs the plugin. [`LanedPins`] gets every pin a lane holds before or in this block before
+/// the plugin hears anything, and only those a lane still holds once it has run.
 fn with_lanes(
     plugin: &mut dyn Started,
     lanes: &[Timed<Automation>],
@@ -564,10 +506,9 @@ fn with_lanes(
     played
 }
 
-/// Plays the lanes of one block into the plugin: the value of every lane, held to the range of
-/// its pin, and the record value of a pin in `held` whose lane said nothing, which is a lane
-/// that went. A lane value that does not fit comes again in the next block, as every lane value
-/// does; a record value that does not fit stays held and goes in the next block.
+/// Plays the lanes of one block into the plugin: every lane value, held to its pin's range, and
+/// the record value of a pin in `held` whose lane went quiet. A lane value that does not fit
+/// comes again next block anyway; a record value that does not fit stays held for the next.
 fn automate(
     plugin: &mut dyn Started,
     lanes: &[Timed<Automation>],
@@ -579,7 +520,7 @@ fn automate(
         let Some(pin) = pins.get(usize::from(timed.event.parameter)) else {
             continue;
         };
-        // Not `clamp`: it panics on a NaN, and nothing may panic on the audio thread.
+        // Not `clamp`: it lets a NaN value through and panics on a NaN bound.
         let value = f64::from(timed.event.value)
             .max(pin.minimum)
             .min(pin.maximum);
@@ -590,8 +531,7 @@ fn automate(
         if heard.contains(*id) {
             continue;
         }
-        // A pin the record no longer holds has no value to go back to: the plugin keeps the
-        // one it has, as when a pin no lane moves is taken out.
+        // A pin the record no longer holds has no value to go back to: the plugin keeps its own.
         if let Some(pin) = pins.find(*id)
             && !plugin.automate(pin.id, pin.record)
         {
@@ -601,8 +541,8 @@ fn automate(
     *held = heard;
 }
 
-/// Fills the plugin's own event buffer from one block of the note contract, after
-/// [`Started::begin_block`]. Returns how many events did not fit.
+/// One block of the note contract into the plugin, after [`Started::begin_block`]. Returns how
+/// many events did not fit.
 fn translate(
     plugin: &mut dyn Started,
     events: &[Timed<NoteEvent>],
@@ -672,9 +612,8 @@ fn translate(
     dropped
 }
 
-/// Tells the plugin where a control stands, when it takes that control. It is noted as heard
-/// only when it really reached the plugin, so a move that did not fit is put back by a later
-/// `AllOff` all the same. `false` says there was no room.
+/// Noted as heard only when it really reached the plugin, so a later `AllOff` still puts back a
+/// move that did not fit. `false` says there was no room.
 fn send_control(
     plugin: &mut dyn Started,
     time: u32,

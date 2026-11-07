@@ -1,10 +1,7 @@
-//! The parameters of a plugin, whatever its format, as the plugin itself describes them.
+//! The parameters of a plugin, whatever its format.
 //!
-//! Every number is in the format's own units: the plain value for CLAP, such as `440` for a
-//! frequency, and the normalized value from 0 to 1 for VST 3. Nothing converts between them, so
-//! a value read from a plugin is a value that can be sent back to it unchanged.
-//!
-//! All of it is read on the main thread, where both formats put these calls.
+//! Every number is in the format's own units: CLAP's plain value, such as `440`, VST 3's 0 to 1.
+//! Nothing converts, so a value read from a plugin can be sent back to it unchanged.
 
 use std::collections::BTreeMap;
 
@@ -12,16 +9,14 @@ use crate::backend::ParameterChange;
 use crate::scan::ScannedPlugin;
 use crate::{Pin, PluginProblem};
 
-/// The most steps a parameter has names for. A list longer than this is a knob with many
-/// values, not a choice a composer reads through, and asking the plugin for every name would
-/// be thousands of calls.
+/// A longer list is a knob, not a choice a composer reads through, and asking the plugin for
+/// every name would be thousands of calls.
 pub const MAX_NAMED_STEPS: u32 = 128;
 
-/// One parameter a host may set. A read-only one, such as a meter, is the plugin's to set and
-/// is never listed.
+/// One parameter a host may set. Read-only and hidden ones are never listed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parameter {
-    /// The plugin's own id of it, which stays the same across versions of the plugin.
+    /// Stays the same across versions of the plugin.
     pub id: u32,
     pub name: String,
     pub minimum: f64,
@@ -29,31 +24,26 @@ pub struct Parameter {
     pub default: f64,
     /// `None` for a parameter that takes any value in its range.
     pub steps: Option<Steps>,
-    /// Whether the plugin says a host may move it while it plays.
     pub automatable: bool,
 }
 
 impl Parameter {
-    /// Whether `value` is in its range.
     pub(crate) fn takes(&self, value: f64) -> bool {
         (self.minimum..=self.maximum).contains(&value)
     }
 
-    /// Whether an automation lane may move it: the plugin says a host may automate it, and it
-    /// takes any value in its range, as a whole number of a built-in device takes no lane.
+    /// A stepped parameter takes no lane, as a whole number of a built-in device takes none.
     pub fn takes_lane(&self) -> bool {
         self.automatable && self.steps.is_none()
     }
 
-    /// Whether a lane may move it while a record pins it at `pin`: it takes a lane and the pin
-    /// is in its range, else the pin moves nothing and neither would its lane.
+    /// A pin outside the range moves nothing, and neither would its lane.
     pub fn takes_lane_at(&self, pin: &Pin) -> bool {
         self.takes_lane() && self.takes(pin.value)
     }
 
-    /// The value of the step `index` of a stepped parameter, inside its range. A CLAP plugin
-    /// cuts a value to its whole step, so its first step may lie just below the minimum it
-    /// gives, and the minimum is what reaches it.
+    /// Inside the range: a CLAP plugin cuts a value to its whole step, so its first step may lie
+    /// just below the minimum it gives.
     pub(crate) fn step_value(&self, steps: &Steps, index: u32) -> f64 {
         steps.value(index).max(self.minimum).min(self.maximum)
     }
@@ -62,15 +52,14 @@ impl Parameter {
 /// A parameter that takes only some values, evenly spaced from its minimum to its maximum.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Steps {
-    /// How many values it takes, the minimum and the maximum among them.
+    /// The minimum and the maximum among them.
     pub count: u32,
-    /// The values of the first and the last step. The ones between are worked out from them
-    /// as the plugin does, so a step written to a record is the plugin's own value of it.
+    /// The steps between are worked out from these as the plugin does, so a step written to a
+    /// record is the plugin's own value of it.
     first: f64,
     last: f64,
-    /// The plugin's name of each value, in order, when it says the steps are a list of names
-    /// (CLAP `IS_ENUM`, VST 3 `kIsList`) and has no more than [`MAX_NAMED_STEPS`]. A value the
-    /// plugin gives no text for has no name here.
+    /// When the plugin says the steps are a list (CLAP `IS_ENUM`, VST 3 `kIsList`) of at most
+    /// [`MAX_NAMED_STEPS`]. A value the plugin gives no text for has no name here.
     pub names: Vec<StepName>,
 }
 
@@ -80,17 +69,14 @@ pub struct StepName {
     pub name: String,
 }
 
-/// What a parameter is now, as the plugin says.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParameterValue {
     pub value: f64,
-    /// The plugin's own text for the value, such as `1.2 kHz`, when it gives one.
+    /// Such as `1.2 kHz`.
     pub text: Option<String>,
 }
 
 impl Steps {
-    /// The steps of a parameter with `count` values evenly from `first` to `last`, named by
-    /// `text` when the plugin says they are a list.
     pub(crate) fn new(
         count: u32,
         first: f64,
@@ -118,8 +104,8 @@ impl Steps {
         steps
     }
 
-    /// The value of the step `index`. Multiplied before it is divided, so a whole step of
-    /// CLAP and `index / steps` of VST 3 come out exact.
+    /// Multiplied before it is divided, so a whole step of CLAP and `index / steps` of VST 3
+    /// come out exact.
     pub fn value(&self, index: u32) -> f64 {
         match self.count {
             0 | 1 => self.first,
@@ -129,7 +115,6 @@ impl Steps {
         }
     }
 
-    /// The step nearest `value`.
     pub fn index(&self, value: f64) -> u32 {
         let gaps = f64::from(self.count.saturating_sub(1));
         let index = ((value - self.first) * gaps / (self.last - self.first)).round();
@@ -137,13 +122,11 @@ impl Steps {
         index.clamp(0.0, gaps) as u32
     }
 
-    /// Whether every step has a name, which is what a list a composer picks from needs.
     pub fn all_named(&self) -> bool {
         self.names.len() == self.count as usize
     }
 }
 
-/// Parameters by their id, as the host keeps them.
 pub(crate) fn by_id(parameters: Vec<Parameter>) -> BTreeMap<u32, Parameter> {
     let parameters = parameters.into_iter();
     parameters
@@ -151,8 +134,7 @@ pub(crate) fn by_id(parameters: Vec<Parameter>) -> BTreeMap<u32, Parameter> {
         .collect()
 }
 
-/// The pins of a record that a plugin with `parameters` takes: one it has a parameter for, with
-/// a value in its range. Only these are sent; the others move nothing and are reported.
+/// The pins a plugin with `parameters` takes. The others move nothing and are reported.
 pub(crate) fn playable<'a>(
     parameters: &'a BTreeMap<u32, Parameter>,
     pins: &'a BTreeMap<u32, Pin>,
@@ -165,15 +147,12 @@ pub(crate) fn playable<'a>(
         })
 }
 
-/// The name an automation lane gives the pin `id`: its path in the record, as a lane names a
-/// number of a built-in device by its path.
+/// A lane names a pin by its path in the record, as a number of a built-in device.
 pub(crate) fn lane_of_pin(id: u32) -> String {
     format!("parameters.{id}.value")
 }
 
-/// Why the pin `id` of a record moves nothing, when it does not: the plugin has no such
-/// parameter a host may set, or the value is outside its range. Such a pin is not sent, and the
-/// rest of the record plays.
+/// Why the pin `id` moves nothing, when it does not.
 pub(crate) fn pin_problem(
     plugin_id: &str,
     parameters: &BTreeMap<u32, Parameter>,
@@ -196,12 +175,8 @@ pub(crate) fn pin_problem(
     })
 }
 
-/// Every parameter of `plugin` a host may set, read from the plugin itself. Read-only and
-/// hidden parameters are left out.
-///
-/// It makes the plugin in this process and lets it go again, which runs the plugin's own code
-/// here. That is for a command that runs once and ends, `sound-tools --plugin-params`. The
-/// plugin is initialized and never activated: nothing is prepared for audio.
+/// Makes the plugin in this process, never activated, and lets it go again. Running the
+/// plugin's own code here is only for a command that runs once and ends, `--plugin-params`.
 pub fn read_parameters(plugin: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
     match plugin.format {
         crate::PluginFormat::Clap => crate::clap::read_parameters(plugin),

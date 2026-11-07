@@ -1,9 +1,5 @@
-//! A hosted plugin in an effect slot: the audio that reaches it, the audio that comes out, and
-//! what a slot whose plugin is missing does to the sound that was going through it.
-//!
-//! One record and one wrapper serve both slots, so what is checked here is the wrapper: the
-//! stereo input it gives the plugin, the pass-through when there is no plugin, and that neither
-//! allocates on the audio thread.
+//! A hosted plugin as an effect: the audio that reaches it, the audio that comes out, and the
+//! pass-through when its plugin is missing.
 
 use plugin_host::PluginFormat;
 use sound_core::Changes;
@@ -20,7 +16,6 @@ fn played() -> Vec<Played> {
     }]
 }
 
-/// What the track plays without any effect, for what every test here compares against.
 fn without_effect(format: PluginFormat) -> Vec<f32> {
     let mut harness = Harness::new();
     harness.add_track(record(format, "piano"), played());
@@ -33,7 +28,7 @@ fn an_effect_plays_what_it_is_given_and_adds_what_its_state_says() {
         let plain = without_effect(format);
         let mut harness = Harness::new();
         harness.add_track(record(format, "piano"), played());
-        // A state of its own: the effect half adds 0.25 to every sample.
+        // The effect half adds 0.25 to every sample.
         harness.write_offset(format, "trim", 25);
         harness.add_effect(record(format, "trim"));
         assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
@@ -44,8 +39,6 @@ fn an_effect_plays_what_it_is_given_and_adds_what_its_state_says() {
     }
 }
 
-/// The rule that keeps one missing plugin from silencing a track: a slot with no plugin passes
-/// what it is given straight through.
 #[test]
 fn an_effect_slot_whose_plugin_is_missing_passes_the_sound_through_unchanged() {
     for format in FORMATS {
@@ -75,8 +68,6 @@ fn an_effect_slot_whose_plugin_is_missing_passes_the_sound_through_unchanged() {
     }
 }
 
-/// An effect that is taken off the chain while it plays. The sound goes back to what the
-/// instrument makes, and nothing is left behind.
 #[test]
 fn taking_an_effect_off_gives_the_sound_of_the_instrument_back() {
     for format in FORMATS {
@@ -101,9 +92,7 @@ fn taking_an_effect_off_gives_the_sound_of_the_instrument_back() {
     }
 }
 
-/// The audio thread allocates nothing with a chain, which is one buffer more to copy per block
-/// in each direction. The realtime sanitizer cannot see inside a plugin's own call; this
-/// counts every allocation of the process instead.
+/// The realtime sanitizer cannot see inside a plugin's own call, so this counts allocations.
 #[test]
 fn a_block_through_an_effect_allocates_nothing() {
     for format in FORMATS {
@@ -111,20 +100,18 @@ fn a_block_through_an_effect_allocates_nothing() {
         harness.add_track(record(format, "piano"), played());
         harness.add_effect(record(format, "trim"));
         assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
-        // The first blocks are what a plugin sets up in; the count is of the ones after.
+        // A plugin sets up in its first blocks.
         harness.play(2048);
         let (_render, allocations) = harness.render_counting_allocations(2048);
         assert_eq!(allocations, 0, "{format:?}");
     }
 }
 
-/// A plugin that gives up in the middle of a render. The block it fails on is the first one
-/// the slot passes through: a backend writes nothing into its output when it fails, so a host
-/// that only passed through from the next block would leave one block of silence in the chain.
+/// A backend writes nothing into its output when it fails, so a host that only passed through
+/// from the next block would leave one block of silence.
 #[test]
 fn the_block_a_plugin_fails_on_is_passed_through_and_is_no_gap() {
     for format in FORMATS {
-        // The instrument is a steady level and not a plugin, so only the effect gives up.
         tell_the_plugin_to_fail_from(Some(FAILS_FROM));
         let mut harness = Harness::new();
         harness.write_offset(format, "trim", 25);
@@ -134,7 +121,7 @@ fn the_block_a_plugin_fails_on_is_passed_through_and_is_no_gap() {
         let render = harness.play(BLOCK * 8);
         tell_the_plugin_to_fail_from(None);
         let left = render.left();
-        // Until it fails: the dry signal through the effect, `input * 0.5 + offset`.
+        // The effect plays `input * 0.5 + offset`.
         let wet = DRY * 0.5 + 0.25;
         let played = BLOCK * FAILS_FROM as usize;
         assert!(
@@ -142,7 +129,6 @@ fn the_block_a_plugin_fails_on_is_passed_through_and_is_no_gap() {
             "{format:?}: {:?}",
             &left[..4]
         );
-        // From the block it fails on: the dry signal, with no gap at the join.
         assert!(
             left[played..].iter().all(|sample| *sample == DRY),
             "{format:?}: {:?}",
@@ -151,15 +137,10 @@ fn the_block_a_plugin_fails_on_is_passed_through_and_is_no_gap() {
     }
 }
 
-/// The level the instrument of that test plays, and how many blocks the effect plays first.
-/// The engine block is `sound_core::MAX_BLOCK`, so the failure lands on a frame a test can
-/// name.
 const DRY: f32 = 0.4;
 const FAILS_FROM: u64 = 4;
 const BLOCK: usize = sound_core::MAX_BLOCK;
 
-/// Makes the test plugins of this process fail their `process` from a block on. The plugin
-/// runs in this process, and nextest gives every test a process of its own.
 fn tell_the_plugin_to_fail_from(block: Option<u64>) {
     // SAFETY: nextest runs one test per process and the audio of this test is driven from the
     // test thread, so no other thread reads the environment.
@@ -173,8 +154,7 @@ fn tell_the_plugin_to_fail_from(block: Option<u64>) {
     }
 }
 
-/// An ordinary effect has nowhere to take notes, so nothing about the sustain pedal is missing
-/// from it. The line is for a plugin that takes notes and offers the pedal no way in.
+/// An effect that takes no notes is missing nothing about the sustain pedal.
 #[test]
 fn an_audio_only_effect_reports_nothing_about_the_pedal() {
     for format in FORMATS {
@@ -182,7 +162,7 @@ fn an_audio_only_effect_reports_nothing_about_the_pedal() {
         let mut harness = Harness::new();
         harness.add_level_track(DRY, record(format, "trim"));
         assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
-        // And it is in the chain: what comes out is what the effect makes of the dry signal.
+        // And it is in the chain.
         let render = harness.play(BLOCK * 4);
         assert!(
             render.left().iter().all(|sample| *sample == DRY * 0.5),
@@ -192,9 +172,8 @@ fn an_audio_only_effect_reports_nothing_about_the_pedal() {
     }
 }
 
-/// CLAP wants one buffer per audio port. A plugin with a sidechain input and an aux output gets
-/// the track on its main ports, silence on the others, and only its main output is heard.
-/// Nothing more is allocated on the audio thread for the extra ports.
+/// A plugin with a sidechain input and an aux output gets the track on its main ports and
+/// silence on the others.
 #[test]
 fn a_clap_plugin_with_extra_ports_gets_a_buffer_for_every_port() {
     // SAFETY: as `tell_the_plugin_to_fail_from`.
@@ -212,8 +191,6 @@ fn a_clap_plugin_with_extra_ports_gets_a_buffer_for_every_port() {
     assert_eq!(allocations, 0);
 }
 
-/// The other side of that rule: a plugin that takes notes and offers the pedal no way in is
-/// still reported, because for that one the pedal really is missing.
 #[test]
 fn a_plugin_that_takes_notes_and_no_pedal_is_still_reported() {
     for format in FORMATS {
