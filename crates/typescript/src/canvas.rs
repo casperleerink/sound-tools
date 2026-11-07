@@ -205,8 +205,11 @@ impl Canvas {
         } else {
             MAX_ACROSS
         };
-        let across = program.across().min(most) as usize;
-        let down = ((across as f32 * height / width).round() as usize).clamp(1, most as usize);
+        // Both sides shrink together at the limit, so a pixel stays square.
+        let wanted = program.across() as f32;
+        let fit = (most as f32 / wanted.max(wanted * height / width)).min(1.0);
+        let across = ((wanted * fit).round() as usize).max(1);
+        let down = ((wanted * fit * height / width).round() as usize).clamp(1, most as usize);
         let due = (seen.time * STEPS_PER_SECOND).floor() as u64;
         let resized = memory.size != (across, down);
         let steps = match memory.stepped {

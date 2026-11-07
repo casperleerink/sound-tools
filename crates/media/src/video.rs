@@ -69,6 +69,42 @@ pub struct VideoFrame {
     pub rgba: Vec<u8>,
 }
 
+impl VideoFrame {
+    /// Turned `turns` quarter turns clockwise.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn turned(self, turns: u8) -> Self {
+        let Self {
+            width,
+            height,
+            rgba,
+        } = &self;
+        let (width, height) = (*width, *height);
+        let from = |column: usize, row: usize| match turns % 4 {
+            1 => (row, height - 1 - column),
+            2 => (width - 1 - column, height - 1 - row),
+            _ => (width - 1 - row, column),
+        };
+        let (across, down) = match turns % 4 {
+            0 => return self,
+            2 => (width, height),
+            _ => (height, width),
+        };
+        let mut turned = Vec::with_capacity(rgba.len());
+        for row in 0..down {
+            for column in 0..across {
+                let (x, y) = from(column, row);
+                let at = (y * width + x) * 4;
+                turned.extend_from_slice(rgba.get(at..at + 4).unwrap_or(&[0; 4]));
+            }
+        }
+        Self {
+            width: across,
+            height: down,
+            rgba: turned,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum VideoError {
     #[error("this computer plays no video: only macOS does")]
@@ -152,8 +188,9 @@ impl Video {
                 Some((next, _)) if *next <= at => reading.shown = reading.next.take(),
                 Some(_) => break,
                 None => match reading.read() {
-                    Some(frame) => reading.next = Some(frame),
-                    None => break,
+                    Ok(Some(frame)) => reading.next = Some(frame),
+                    Ok(None) => break,
+                    Err(error) => return Err(VideoError::NoFrame(at, error)),
                 },
             }
         }
@@ -196,6 +233,8 @@ mod apple {
         track: Retained<AVAssetTrack>,
         settings: Retained<NSDictionary<NSString, AnyObject>>,
         reader: Option<(Retained<AVAssetReader>, Retained<AVAssetReaderTrackOutput>)>,
+        /// Quarter turns clockwise that show it upright, as a phone records it on its side.
+        turns: u8,
         pub(super) seconds: f64,
         /// The frame shown now, and the one after it, read but not yet due.
         pub(super) shown: Option<Timed>,
@@ -222,6 +261,10 @@ mod apple {
                     return None;
                 }
                 let natural: CGSize = track.naturalSize();
+                let transform = track.preferredTransform();
+                let turns = (transform.b.atan2(transform.a).to_degrees() / 90.0)
+                    .round()
+                    .rem_euclid(4.0) as u8;
                 let scale = (f64::from(longest) / natural.width.max(natural.height)).min(1.0);
                 let size =
                     |side: f64| NSNumber::new_usize(((side * scale).round() as usize).max(1));
@@ -243,6 +286,7 @@ mod apple {
                     track,
                     settings,
                     reader: None,
+                    turns,
                     seconds,
                     shown: None,
                     next: None,
@@ -287,20 +331,36 @@ mod apple {
             true
         }
 
-        /// The next frame, or `None` at the end or when it cannot.
-        pub(super) fn read(&mut self) -> Option<Timed> {
-            let (reader, output) = self.reader.as_ref()?;
+        /// The next frame, or `None` at the end, or why it cannot read one.
+        pub(super) fn read(&mut self) -> Result<Option<Timed>, String> {
+            let Some((reader, output)) = self.reader.as_ref() else {
+                return Ok(None);
+            };
+            let failed = |reader: &AVAssetReader| {
+                // SAFETY: a plain read of the reader's error.
+                let error = unsafe { reader.error() };
+                error.map_or("it stopped reading".into(), |error| {
+                    error.localizedDescription().to_string()
+                })
+            };
             // SAFETY: the pixels are read only while their buffer is locked, row by row within
             // its bytes per row.
             unsafe {
-                if reader.status() != AVAssetReaderStatus::Reading {
-                    return None;
+                match reader.status() {
+                    AVAssetReaderStatus::Reading => {}
+                    AVAssetReaderStatus::Failed => return Err(failed(reader)),
+                    _ => return Ok(None),
                 }
-                let sample = output.copyNextSampleBuffer()?;
+                let Some(sample) = output.copyNextSampleBuffer() else {
+                    return match reader.status() {
+                        AVAssetReaderStatus::Failed => Err(failed(reader)),
+                        _ => Ok(None),
+                    };
+                };
                 let at = sample.presentation_time_stamp().seconds();
-                let pixels = sample.image_buffer()?;
+                let pixels = sample.image_buffer().ok_or("a frame had no picture")?;
                 if CVPixelBufferLockBaseAddress(&pixels, CVPixelBufferLockFlags::ReadOnly) != 0 {
-                    return None;
+                    return Err("a frame could not be read".into());
                 }
                 let (width, height) = (
                     CVPixelBufferGetWidth(&pixels),
@@ -320,15 +380,32 @@ mod apple {
                     }
                 }
                 CVPixelBufferUnlockBaseAddress(&pixels, CVPixelBufferLockFlags::ReadOnly);
-                Some((
-                    at,
-                    VideoFrame {
-                        width,
-                        height,
-                        rgba,
-                    },
-                ))
+                let frame = VideoFrame {
+                    width,
+                    height,
+                    rgba,
+                };
+                Ok(Some((at, frame.turned(self.turns))))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VideoFrame;
+
+    #[test]
+    fn a_frame_turned_clockwise_puts_its_left_on_top() {
+        let (a, b) = ([1, 1, 1, 255], [2, 2, 2, 255]);
+        let wide = VideoFrame {
+            width: 2,
+            height: 1,
+            rgba: [a, b].concat(),
+        };
+        let column = |frame: VideoFrame| (frame.width, frame.height, frame.rgba);
+        assert_eq!(column(wide.clone().turned(1)), (1, 2, [a, b].concat()));
+        assert_eq!(column(wide.clone().turned(2)), (2, 1, [b, a].concat()));
+        assert_eq!(column(wide.turned(3)), (1, 2, [b, a].concat()));
     }
 }
