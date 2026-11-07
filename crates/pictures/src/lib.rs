@@ -17,8 +17,12 @@ pub mod gpu {
             Err("pictures run on the GPU on macOS only".into())
         }
 
-        pub fn render(&mut self, _: &[f32], _: (usize, usize)) -> &[[f32; 4]] {
-            &[]
+        pub fn render(
+            &mut self,
+            _: &crate::Inputs<'_>,
+            _: (usize, usize),
+        ) -> (&[[f32; 4]], Vec<f32>) {
+            (&[], Vec::new())
         }
     }
 }
@@ -185,6 +189,7 @@ pub struct ImageTable {
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[repr(u8)]
 pub enum Channel {
     Red,
     Green,
