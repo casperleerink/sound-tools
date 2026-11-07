@@ -26,6 +26,7 @@ use crate::tree::{self, DivProps, IconProps, InputProps, NodeTable, Props, TextP
 use super::controls::{Control, Keys};
 use super::input::{Hears, Hovers, hears_hover, listener};
 use super::shapes::SpaceIndex;
+use super::stage::{StageDiv, open_stage_button};
 use super::sync::Embedded;
 use super::{Lifted, TypeScriptCard};
 
@@ -61,8 +62,12 @@ pub(super) struct Drawing<'a> {
     pub(super) scroller: Option<ScrollHandle>,
     /// Whether it draws the title bar's div, which the body leaves out.
     pub(super) in_title_bar: bool,
+    /// Where the stage's div draws.
+    pub(super) stage: StageDiv,
     /// Whether what it draws shows out of its page, in the title bar.
     pub(super) out_of_page: bool,
+    /// Whether it draws the stage's window, which only shows.
+    pub(super) only_shows: bool,
     /// Whether what it draws is inside a div with a tooltip.
     pub(super) under_tooltip: bool,
     /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
@@ -188,11 +193,22 @@ impl Drawing<'_> {
                 carry,
                 on_drop,
                 title_bar,
+                stage,
             }) => {
                 if *title_bar == Some(true) && !std::mem::take(&mut self.in_title_bar) {
                     return div().into_any_element();
                 }
-                let style = style.clone().unwrap_or_default();
+                let stage_in_page = *stage == Some(true)
+                    && match std::mem::replace(&mut self.stage, StageDiv::Away) {
+                        StageDiv::Away => return div().into_any_element(),
+                        StageDiv::Here => false,
+                        StageDiv::InPage => true,
+                    };
+                let mut style = style.clone().unwrap_or_default();
+                // The stage takes the room it has, in its window or in the page.
+                if *stage == Some(true) {
+                    style.grow();
+                }
                 let disabled = *disabled == Some(true);
                 let shown: Vec<usize> = (entry.children.iter())
                     .filter(|child| {
@@ -292,7 +308,10 @@ impl Drawing<'_> {
                 if let Some(scroller) = scrolled_rows {
                     children.push(drawn_again_when_more_shows(scroller, self.viewport));
                 }
-                if *on_hover == Some(true) {
+                if stage_in_page {
+                    children.push(open_stage_button(self.card.clone()));
+                }
+                if *on_hover == Some(true) && !self.only_shows {
                     let card = self.card.clone();
                     let hovered = hears_hover(id, self.hovers.clone(), card);
                     children.push(hovered.into_any_element());

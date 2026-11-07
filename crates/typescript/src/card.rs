@@ -11,6 +11,7 @@ mod paint;
 mod placed;
 mod shapes;
 mod space;
+mod stage;
 mod sync;
 
 use std::cell::{Cell, RefCell};
@@ -21,7 +22,7 @@ use std::time::Duration;
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, MouseButton,
     Pixels, Point, ScrollHandle, StyleRefinement, Task, WeakEntity, WeakFocusHandle, Window,
-    canvas, div, prelude::*, px,
+    WindowHandle, canvas, div, prelude::*, px,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -37,13 +38,15 @@ use crate::feeds::{Drawn, Feeds};
 use crate::live::SpaceView;
 use crate::tools::ToolInfo;
 use crate::tree::{NodeTable, Props, Uses};
-use crate::window::{CardsChanged, Live, Surface, state_of};
+use crate::window::{CardsChanged, InputMoved, Live, Surface, state_of};
 
 use self::drawing::Drawing;
 pub use self::drawing::drawn_nodes;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
+pub(crate) use self::stage::Stage;
+use self::stage::{StageChanged, StagePlace};
 use self::sync::Embedded;
 
 /// How long an ended drag keeps its values at most, when the answer to its end does not come,
@@ -102,9 +105,13 @@ pub(crate) struct TypeScriptCard {
     embedded: HashMap<u64, Embedded>,
     /// The slot of the div it shows in the window's title bar, as last drawn.
     title_bar: Option<usize>,
+    /// The slot of the div it shows on the stage, and the stage's window while it is open.
+    stage: Option<usize>,
+    stage_window: Option<WindowHandle<Stage>>,
+    stage_place: StagePlace,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
-    parts: RefCell<Option<((u64, Option<usize>), Rc<Parts>)>>,
+    parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
     /// The spaces of a page the layer over it draws, by node, with where the page laid them out.
     lifted: Rc<RefCell<HashMap<u64, Lifted>>>,
     /// Where the page is in the window, which the layer over it draws from.
@@ -276,7 +283,15 @@ pub(crate) struct Parts {
     title_bar: Uses,
     /// The spaces of a page that move every frame, which the layer over it draws, together.
     over: Uses,
+    /// The stage while it is in a window of its own.
+    stage: Uses,
     lifted: HashSet<u64>,
+}
+
+impl Parts {
+    fn each(&self) -> [&Uses; 4] {
+        [&self.body, &self.title_bar, &self.over, &self.stage]
+    }
 }
 
 /// A space the layer over a page draws: its slot, and where the page laid it out and cut it
@@ -356,8 +371,7 @@ impl TypeScriptCard {
                         .filter_map(|name| view.id.child(name.split_once('.')?.0).ok())
                         .any(|inside| inside == *id)
                 };
-                let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
-                view.draw_again([reads(body), reads(title_bar), reads(over)], cx);
+                view.draw_again(parts.each().map(reads), cx);
             }
             _ => {}
         })
@@ -366,7 +380,14 @@ impl TypeScriptCard {
         let playhead = session.read(cx).playhead().clone();
         cx.observe(&playhead, |view, _, cx| {
             let parts = view.parts(cx);
-            view.draw_again([parts.body.tick, parts.title_bar.tick, parts.over.tick], cx);
+            view.draw_again(parts.each().map(|uses| uses.tick), cx);
+        })
+        .detach();
+        cx.subscribe(&live, |view, _, InputMoved(id), cx| {
+            if *id == view.id {
+                let parts = view.parts(cx);
+                view.draw_again(parts.each().map(|uses| uses.watches), cx);
+            }
         })
         .detach();
         cx.subscribe_in(
@@ -385,9 +406,7 @@ impl TypeScriptCard {
         let recording = session.read(cx).recording().clone();
         cx.observe(&recording, |view, _, cx| {
             let parts = view.parts(cx);
-            let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
-            let shown = |uses: &Uses| !uses.takes.is_empty();
-            view.draw_again([shown(body), shown(title_bar), shown(over)], cx);
+            view.draw_again(parts.each().map(|uses| !uses.takes.is_empty()), cx);
         })
         .detach();
         // A waveform it draws is made in the background.
@@ -414,11 +433,12 @@ impl TypeScriptCard {
         })
         .detach();
         cx.on_release(|view, cx| {
+            view.close_stage(cx);
             view.edit.finish(&view.session, cx);
             // A card that is gone hears no focus out, nor the button go up.
             view.let_go_of_keys(cx);
             view.let_go(None, cx);
-            view.live.update(cx, |live, _| live.remove(view.card));
+            view.live.update(cx, |live, cx| live.remove(view.card, cx));
         })
         .detach();
         Self {
@@ -446,6 +466,9 @@ impl TypeScriptCard {
             focus_before_overlays: None,
             embedded: HashMap::new(),
             title_bar: None,
+            stage: None,
+            stage_window: None,
+            stage_place: StagePlace::default(),
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),
@@ -482,6 +505,7 @@ impl TypeScriptCard {
         if self.let_go_of_ended_drag(cx) {
             cx.notify();
         }
+        self.send_measured(cx);
         let Some(state) = self.state(cx) else {
             return;
         };
@@ -499,6 +523,7 @@ impl TypeScriptCard {
                         || recording.notes_of(&recorder).is_some()
                 })
         };
+        let staged = self.stage_away().is_some();
         let feeds = &mut self.feeds;
         let mut changed = |uses, part| {
             growing(uses) || feeds.changed(session, (&self.id, &state), (uses, part), tick, input)
@@ -507,17 +532,49 @@ impl TypeScriptCard {
         let title_bar =
             !body && self.title_bar.is_some() && changed(&parts.title_bar, Drawn::TitleBar);
         let over = !body && !parts.lifted.is_empty() && changed(&parts.over, Drawn::Over);
-        self.draw_again([body, title_bar, over], cx);
+        let stage = !body && staged && changed(&parts.stage, Drawn::Stage);
+        self.draw_again([body, title_bar, over, stage], cx);
+    }
+
+    /// Moves the number inputs its canvases measure, to what they measured since the last poll,
+    /// and tells the problems of the tool of what its canvases could not read.
+    fn send_measured(&mut self, cx: &mut Context<Self>) {
+        let id = self.id.clone();
+        let problems = self.feeds.media_problems();
+        self.live.update(cx, |live, cx| {
+            live.media_problems((self.card, &id), problems, cx)
+        });
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
+            return;
+        };
+        let canvases = (table.entries()).filter_map(|entry| match &entry.props {
+            Props::Shape(shape) => shape.canvas.as_ref(),
+            _ => None,
+        });
+        let measured: Vec<(String, f32)> = canvases
+            .flat_map(|canvas| canvas.take_measured())
+            .map(|(name, value)| (name.to_string(), value))
+            .collect();
+        for (name, value) in measured {
+            self.live.update(cx, |live, cx| {
+                if let Err(error) = live.play(&id, &name, value, cx) {
+                    live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx);
+                }
+            });
+        }
     }
 
     /// Draws the whole card again, or only its title bar or the layer over the page when
     /// nothing else changed. A part that moves on every frame draws in the next one anyway.
-    fn draw_again(&mut self, [body, title_bar, over]: [bool; 3], cx: &mut Context<Self>) {
+    fn draw_again(&mut self, [body, title_bar, over, stage]: [bool; 4], cx: &mut Context<Self>) {
         if body {
             cx.notify();
             return;
         }
         let parts = self.parts(cx);
+        if stage && !parts.stage.animates {
+            cx.emit(StageChanged);
+        }
         let title_bar = title_bar && !parts.title_bar.animates;
         let over = over && !parts.over.animates;
         self.draw_alone(title_bar, over, cx);
@@ -528,11 +585,7 @@ impl TypeScriptCard {
         if !title_bar && !over {
             return;
         }
-        if let Some(state) = self.state(cx) {
-            let uses = self.live.read(cx).uses(self.card);
-            let tick = self.session.read(cx).playhead().read(cx).tick;
-            self.read_frame(&state, &uses, tick, cx);
-        }
+        self.read_frame_now(cx);
         if title_bar {
             cx.emit(TitleBarChanged);
         }
@@ -558,7 +611,8 @@ impl TypeScriptCard {
             });
         };
         let title = self.title_bar;
-        let key = (table.version(), title);
+        let staged = self.stage_away();
+        let key = (table.version(), title, staged);
         if let Some((at, parts)) = &*self.parts.borrow()
             && *at == key
         {
@@ -569,6 +623,7 @@ impl TypeScriptCard {
         let page = self.frame.is_none();
         let spaces: Vec<(usize, u64)> = (table.spaces().into_iter())
             .filter(|(slot, _)| page && title.is_none_or(|title| !table.within(*slot, title)))
+            .filter(|(slot, _)| self.stage.is_none_or(|stage| !table.within(*slot, stage)))
             .filter(|(slot, _)| !table.kept_in_page(*slot))
             .collect();
         let slots: Vec<usize> = spaces.iter().map(|(slot, _)| *slot).collect();
@@ -578,18 +633,22 @@ impl TypeScriptCard {
             .map(|(space, _)| space)
             .collect();
         let parts_of: Vec<usize> = (title.into_iter())
+            .chain(staged)
             .chain(lifted.iter().map(|(slot, _)| *slot))
             .collect();
         let (body, mut each) = table.uses_split(&parts_of);
-        let title_bar = match title {
+        let mut part = |slot: Option<usize>| match slot {
             Some(_) if !each.is_empty() => each.remove(0),
             _ => Uses::default(),
         };
+        let title_bar = part(title);
+        let stage = part(staged);
         let mut over = Uses::default();
         each.iter().for_each(|uses| over.join(uses));
         let parts = Rc::new(Parts {
             body,
             title_bar,
+            stage,
             over,
             lifted: lifted.into_iter().map(|(_, id)| id).collect(),
         });
@@ -651,6 +710,15 @@ impl TypeScriptCard {
             if let Some((width, height)) = size {
                 (entry.width, entry.height) = (width, height);
             }
+        }
+    }
+
+    /// Reads the feeds for a frame drawn apart from the page.
+    fn read_frame_now(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.state(cx) {
+            let uses = self.live.read(cx).uses(self.card);
+            let tick = self.session.read(cx).playhead().read(cx).tick;
+            self.read_frame(&state, &uses, tick, cx);
         }
     }
 
@@ -788,7 +856,9 @@ impl TypeScriptCard {
             button_down: self.button_down.get(),
             scroller: None,
             in_title_bar: false,
+            stage: self.stage_in_page(),
             out_of_page: false,
+            only_shows: false,
             under_tooltip: false,
             takes_keys,
             title_focus,

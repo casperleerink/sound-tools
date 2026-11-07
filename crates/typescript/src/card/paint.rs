@@ -9,6 +9,7 @@ use gpui::{
 };
 use sound_ui::typography;
 
+use crate::canvas::{Canvas, Seen};
 use crate::tree::{Align, Cursor, Weight};
 
 use super::shapes::{Area, Bend, Geometry, Notes, TextPart, Wave};
@@ -33,6 +34,7 @@ enum PaintedShape {
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
     Path(Rc<[Bend<Point<Pixels>>]>, Option<f32>),
+    Canvas(Bounds<Pixels>, Canvas, Rc<Seen>),
 }
 
 impl PaintedShape {
@@ -44,7 +46,10 @@ impl PaintedShape {
             )
         };
         match self {
-            Self::Rect(bounds, ..) | Self::Wave(bounds, _) | Self::Notes(bounds, _) => *bounds,
+            Self::Rect(bounds, ..)
+            | Self::Wave(bounds, _)
+            | Self::Notes(bounds, _)
+            | Self::Canvas(bounds, ..) => *bounds,
             Self::Path(bends, outline) => {
                 let (mut low, mut high) = (
                     point(px(f32::MAX), px(f32::MAX)),
@@ -83,12 +88,13 @@ impl PaintedShape {
         }
     }
 
-    /// Where GPUI paints its primitives among those of the same order: quads, paths, text.
+    /// Where GPUI paints its primitives among those of the same order: quads, paths, text, images.
     fn batch_rank(&self) -> u8 {
         match self {
             Self::Rect(..) | Self::Circle(..) | Self::Notes(..) => 0,
             Self::Line(..) | Self::Arc(..) | Self::Wave(..) | Self::Path(..) => 1,
             Self::Text(..) => 2,
+            Self::Canvas(..) => 3,
         }
     }
 
@@ -178,6 +184,21 @@ pub(super) fn prepaint(
             } => {
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Notes(Bounds::new(at((*x, *y)), size), notes.clone())
+            }
+            Geometry::Canvas {
+                x,
+                y,
+                width,
+                height,
+                canvas,
+                seen,
+            } => {
+                let size = size(px((width * across) as f32), px((height * down) as f32));
+                PaintedShape::Canvas(
+                    Bounds::new(at((*x, *y)), size),
+                    canvas.clone(),
+                    seen.clone(),
+                )
             }
             Geometry::Path { bends, outline } => {
                 PaintedShape::Path(bends.iter().map(|bend| bend.map(at)).collect(), *outline)
@@ -314,6 +335,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
+        PaintedShape::Canvas(bounds, canvas, seen) => canvas.paint(*bounds, seen, window),
         PaintedShape::Path(bends, outline) => {
             let mut path = match outline {
                 Some(width) => gpui::PathBuilder::stroke(px(*width)),

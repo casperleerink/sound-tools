@@ -190,7 +190,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 ## Tools of the project
 
-`crates/typescript`, `crates/signals`.
+`crates/typescript`, `crates/signals`, `crates/canvas`.
 
 - **Written in TypeScript, run by Bun as a separate process**, started fresh on a code change, crash or hang. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang; an engine in the app (QuickJS), where an endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core**, so its records load and are checked without Bun.
@@ -212,4 +212,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **A child's notes pass its own feed**, which ends what a removed or moved sender held; a new Bun ends only what the old one held. Rejected: a reset in the core, for every instrument to declare; releasing the whole child, which cuts its clips at every save.
 - **Regions into one place play through one player of their parent.** Rejected: a player per region, which dips at a join and sums an overlap.
 - **A tool sends and hears the note events a cable carries**, its `notes` to the sample, whatever plays them. Rejected: tapping the MIDI device thread, deaf to clips and cables.
+- **A canvas is a graph per pixel of the same signal functions**, run in the window every step, 60 a second of its time. Its own small evaluator: a pixel has no time between its neighbours, so filters and delays stay in the sound. On macOS a Metal shader of the graph writes the bytes GPUI paints as an image; elsewhere the CPU, at most 480 pixels across. Rejected: `paint_surface`, which takes only YCbCr video, without alpha.
+- **Video by the system** (AVFoundation), read in order on a thread per video; photos by the `image` crate. Rejected: seeking for each frame. Linux and Windows show no video.
+- **The stage is the composer's window**, kept where they left it per project on this machine, in `.sound-tools/stages.json`; closed, it shows in the page. Its window only shows; the controls stay on the page. Rejected: going full screen on a second screen by itself; controls in its window, a second place for keys, focus and menus.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

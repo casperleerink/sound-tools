@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, DispatchPhase, ElementId, ExternalPaths, Hitbox, Hsla, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollEvent,
-    WeakEntity, Window, canvas, div, point, prelude::*, px,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
+    ScrollEvent, WeakEntity, Window, canvas, div, point, prelude::*, px,
 };
 use serde_json::json;
 use sound_ui::ActiveTheme;
@@ -235,7 +235,7 @@ impl Drawing<'_> {
             },
         );
         let holder = div().size_full().child(element.size_full());
-        if space.on_drop != Some(true) {
+        if space.on_drop != Some(true) || self.only_shows {
             return holder.into_any_element();
         }
         let element_id = ElementId::Name(format!("{}-drop", frame.key).into());
@@ -256,7 +256,7 @@ impl Drawing<'_> {
             )
             .on_drop(self.listener(move |view, carried: &Carried, window, cx| {
                 let (x, y) = units(window);
-                let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
+                let dropped = json!({ "files": [], "videos": [], "photos": [], "carried": carried.0, "x": x, "y": y });
                 view.event(id, EventKind::Drop, dropped, cx);
             }))
             .into_any_element()
@@ -430,6 +430,10 @@ fn listen(
             }
             let over = hitbox.is_hovered(window);
             card.update(cx, |card, cx| {
+                let pointer = over.then(|| frame.units_at(bounds, event.position));
+                if card.point_at(&frame.key, pointer, cx) {
+                    cx.notify();
+                }
                 if event.dragging() {
                     card.drag_to(&frame, event.position, event.modifiers, cx);
                     return;
@@ -447,6 +451,20 @@ fn listen(
                 }
             })
             .ok();
+        }
+    });
+    // Out of the window no move comes, so the pointer is over nothing of it.
+    window.on_mouse_event({
+        let (frame, card) = (frame.clone(), card.clone());
+        move |_: &MouseExitEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble {
+                (card.update(cx, |card, cx| {
+                    if card.point_at(&frame.key, None, cx) {
+                        cx.notify();
+                    }
+                }))
+                .ok();
+            }
         }
     });
     window.on_mouse_event({

@@ -11,6 +11,11 @@ use sound_ui::components::knob::{
 };
 
 use crate::live::{DragNumbers, Sources, SpaceView};
+use std::sync::Arc;
+
+use sound_canvas::Frame;
+
+use crate::canvas::{Canvas, ImageSource, Seen};
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
@@ -18,6 +23,9 @@ use crate::tree::{
 };
 
 use super::input::Hears;
+
+/// The most bands of a spectrum: more than a canvas is pixels across.
+const MOST_BINS: u32 = 2048;
 
 /// What a shape of a space does with the pointer.
 #[derive(Clone)]
@@ -114,6 +122,14 @@ pub(super) enum Geometry {
         height: f64,
         notes: Rc<Notes>,
     },
+    Canvas {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        canvas: Canvas,
+        seen: Rc<Seen>,
+    },
     Path {
         bends: Rc<[Bend<(f64, f64)>]>,
         /// The width of its outline, else it is filled.
@@ -166,6 +182,7 @@ impl Geometry {
             | Self::Arc { x, y, .. }
             | Self::Text { x, y, .. }
             | Self::Wave { x, y, .. }
+            | Self::Canvas { x, y, .. }
             | Self::Notes { x, y, .. } => (x, y),
             Self::Line { from, .. } => from,
             Self::Path { ref bends, .. } => {
@@ -356,6 +373,13 @@ impl Extent {
                 width,
                 height,
                 ..
+            }
+            | Geometry::Canvas {
+                x,
+                y,
+                width,
+                height,
+                ..
             } => extent((x, x + width), (y, y + height), (1.0, 1.0)),
             Geometry::Circle { x, y, radius } | Geometry::Arc { x, y, radius, .. } => {
                 extent((x, x), (y, y), (radius + 2.0, radius + 2.0))
@@ -486,8 +510,34 @@ impl Placing<'_> {
         }
     }
 
+    /// An image a canvas reads as it is now: the newest frame of a video, or what the canvas
+    /// of that key showed at its last step. Black until there is one.
+    fn image(&self, image: &ImageSource) -> Arc<Frame> {
+        match image {
+            ImageSource::Video(video) => {
+                let at = self.sources.number(&video.at);
+                let read = format!("{:?} {}", video.at, video.loops);
+                (self
+                    .sources
+                    .feeds
+                    .video((&video.asset, &read), at, video.loops))
+                .unwrap_or_default()
+            }
+            ImageSource::Photo(asset) => self.sources.feeds.still(asset).unwrap_or_default(),
+            ImageSource::Canvas(key) => (self.table.entries())
+                .find_map(|entry| match &entry.props {
+                    Props::Shape(shape) if shape.key.as_deref() == Some(key) => {
+                        shape.canvas.as_ref()
+                    }
+                    _ => None,
+                })
+                .map(Canvas::last)
+                .unwrap_or_default(),
+        }
+    }
+
     /// The values of a wave, oldest first.
-    fn list(&self, list: Option<&List>) -> Vec<f32> {
+    pub(super) fn list(&self, list: Option<&List>) -> Vec<f32> {
         let feeds = self.sources.feeds;
         match list {
             Some(List::Scope {
@@ -514,6 +564,9 @@ impl Placing<'_> {
             Some(List::Take { name }) => (feeds.takes.get(name))
                 .map(|wave| wave.to_vec())
                 .unwrap_or_default(),
+            Some(List::Spectrum { name, bins }) => {
+                feeds.spectrum(name, bins.unwrap_or(128).clamp(1, MOST_BINS))
+            }
             None => Vec::new(),
         }
     }
@@ -874,6 +927,28 @@ impl Placing<'_> {
                     }),
                 }
             }
+            ShapeKind::Canvas => Geometry::Canvas {
+                x,
+                y,
+                width: self.number(&shape.width),
+                height: self.number(&shape.height),
+                canvas: shape.canvas.clone()?,
+                seen: Rc::new(Seen {
+                    lives: (shape.canvas.iter())
+                        .flat_map(|canvas| canvas.lives())
+                        .map(|live| self.sources.number(live) as f32)
+                        .collect(),
+                    waves: (shape.canvas.iter())
+                        .flat_map(|canvas| canvas.waves())
+                        .map(|list| self.list(Some(list)))
+                        .collect(),
+                    images: (shape.canvas.iter())
+                        .flat_map(|canvas| canvas.images())
+                        .map(|image| self.image(image))
+                        .collect(),
+                    time: self.sources.feeds.time,
+                }),
+            },
             ShapeKind::Notes => {
                 let take = match &shape.list {
                     Some(List::Take { name }) => self.sources.feeds.take_notes.get(name),

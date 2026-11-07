@@ -74,6 +74,8 @@ props! {
         on_drop: bool,
         /// It shows in the window's title bar instead, when the tool's view is the window's.
         title_bar: bool,
+        /// It shows in a window of its own instead, the stage.
+        stage: bool,
     }
 }
 
@@ -327,6 +329,8 @@ props! {
         /// What a wave's values are multiplied by along it: `[x, factor]` from its left, straight
         /// between them.
         level: Vec<[Num; 2]>,
+        /// What a canvas draws in each pixel.
+        canvas: crate::canvas::Canvas,
     }
 }
 
@@ -524,6 +528,8 @@ pub(crate) struct Uses {
     pub files: BTreeSet<String>,
     /// The recorders whose takes it draws as they grow.
     pub takes: BTreeSet<String>,
+    /// It reads where the pointer is over a space, which draws again as it moves.
+    pub pointer: bool,
 }
 
 impl Uses {
@@ -554,6 +560,7 @@ impl Uses {
         self.animates |= other.animates;
         self.output |= other.output;
         self.input |= other.input;
+        self.pointer |= other.pointer;
         let sets = [
             (&mut self.peaks, &other.peaks),
             (&mut self.played, &other.played),
@@ -576,6 +583,7 @@ struct UseCounts {
     animates: usize,
     output: usize,
     input: usize,
+    pointer: usize,
     named: HashMap<(Named, String), usize>,
 }
 
@@ -605,6 +613,7 @@ impl UseCounts {
         step(&mut self.animates, uses.animates);
         step(&mut self.output, uses.output);
         step(&mut self.input, uses.input);
+        step(&mut self.pointer, uses.pointer);
         let named = [
             (Named::Peak, &uses.peaks),
             (Named::Played, &uses.played),
@@ -638,6 +647,7 @@ impl UseCounts {
             animates: self.animates > 0,
             output: self.output > 0,
             input: self.input > 0,
+            pointer: self.pointer > 0,
             peaks: names(Named::Peak),
             played: names(Named::Played),
             scopes: names(Named::Scope),
@@ -845,6 +855,22 @@ impl NodeTable {
             match &entry.props {
                 Props::Div(div) if div.title_bar == Some(true) => return Some(slot),
                 Props::Div(_) | Props::Overlay(_) => todo.extend(&entry.children),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The slot of the div that says `stage`.
+    pub(crate) fn stage(&self) -> Option<usize> {
+        let mut todo = vec![self.root?];
+        while let Some(slot) = todo.pop() {
+            let Some(entry) = self.get(slot) else {
+                continue;
+            };
+            match &entry.props {
+                Props::Div(div) if div.stage == Some(true) => return Some(slot),
+                Props::Div(_) => todo.extend(&entry.children),
                 _ => {}
             }
         }
@@ -1087,7 +1113,11 @@ impl ShapeProps {
             _ => true,
         };
         let text = !matches!(self.text, Some(Words::Live(_)));
-        color && text && self.list.is_none() && self.numbers().all(Num::steady)
+        color
+            && text
+            && self.list.is_none()
+            && self.canvas.is_none()
+            && self.numbers().all(Num::steady)
     }
 
     /// Whether where it is never moves: no live number places or sizes it and no drag moves
@@ -1123,20 +1153,11 @@ impl ShapeProps {
         if let Some(Paint::Mix { by, .. }) = &self.color {
             by.add_uses(&mut uses);
         }
-        match &self.list {
-            Some(List::Scope { name, .. }) => {
-                uses.scopes.insert(name.clone());
-                uses.animates = true;
-            }
-            Some(List::History { of, .. }) => {
-                of.add_uses(&mut uses);
-                uses.animates = true;
-            }
-            Some(List::File { asset, .. }) => {
-                uses.files.insert(asset.clone());
-            }
-            Some(List::Take { name }) => _ = uses.takes.insert(name.clone()),
-            None => {}
+        if let Some(list) = &self.list {
+            list.add_uses(&mut uses);
+        }
+        if let Some(canvas) = &self.canvas {
+            canvas.add_uses(&mut uses);
         }
         uses
     }
@@ -1276,6 +1297,7 @@ pub(crate) enum ShapeKind {
     Wave,
     Notes,
     Path,
+    Canvas,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -1356,6 +1378,26 @@ pub(crate) enum List {
     /// The waveform of the take a `recorder` at the path `name` inside records, as it grows,
     /// in the form of [`List::File`].
     Take { name: String },
+    /// The levels of the last sound of a meter, `bins` of them from 20 Hz to 20 kHz, each 0
+    /// (silence, -90 dB) to 1 (0 dB).
+    Spectrum { name: String, bins: Option<u32> },
+}
+
+impl List {
+    pub(crate) fn add_uses(&self, uses: &mut Uses) {
+        match self {
+            Self::Scope { name, .. } | Self::Spectrum { name, .. } => {
+                uses.scopes.insert(name.clone());
+                uses.animates = true;
+            }
+            Self::History { of, .. } => {
+                of.add_uses(uses);
+                uses.animates = true;
+            }
+            Self::File { asset, .. } => _ = uses.files.insert(asset.clone()),
+            Self::Take { name } => _ = uses.takes.insert(name.clone()),
+        }
+    }
 }
 
 /// An end of a line, a point, or of an arc, a turn.
@@ -1476,7 +1518,7 @@ impl Num {
         }
     }
 
-    fn add_uses(&self, uses: &mut Uses) {
+    pub(crate) fn add_uses(&self, uses: &mut Uses) {
         if let Self::Live(live) = self {
             live.add_uses(uses);
         }
@@ -1492,6 +1534,8 @@ pub(crate) enum Live {
     Bpm,
     /// Seconds since the view opened.
     Elapsed,
+    /// Where the piece plays, in seconds from its start.
+    Seconds,
     /// A number by its name: a field of the record, a number input or a number output of the
     /// sound; of the instance at the path `child` inside it, its field or its output.
     Value {
@@ -1638,6 +1682,7 @@ impl Live {
             Self::Tick
             | Self::Bpm
             | Self::Elapsed
+            | Self::Seconds
             | Self::Value { .. }
             | Self::Peak { .. }
             | Self::DevicePeak { .. }
@@ -1670,7 +1715,7 @@ impl Live {
 
     fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Tick | Self::Bpm => uses.tick = true,
+            Self::Tick | Self::Bpm | Self::Seconds => uses.tick = true,
             Self::Elapsed => uses.animates = true,
             Self::Peak { name, .. } => _ = uses.peaks.insert(name.clone()),
             Self::DevicePeak { .. } => uses.output = true,
@@ -1694,6 +1739,10 @@ impl Live {
                 // It may be an output, which moves with the watches.
                 uses.watches = true;
             }
+            Self::Space {
+                part: SpacePart::PointerX | SpacePart::PointerY | SpacePart::PointerOver,
+                ..
+            } => uses.pointer = true,
             Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
@@ -1747,6 +1796,10 @@ pub(crate) enum SpacePart {
     Bottom,
     PointX,
     PointY,
+    /// Where the pointer is over it, in its units, and 1 while it is.
+    PointerX,
+    PointerY,
+    PointerOver,
 }
 
 /// The pointer pressing and dragging a shape or a space.
@@ -2025,6 +2078,12 @@ impl TryFrom<String> for Color {
             color.a = (percent / 100.0).clamp(0.0, 1.0);
         }
         Ok(Self(color))
+    }
+}
+
+impl Style {
+    pub(crate) fn grow(&mut self) {
+        self.grow = true;
     }
 }
 

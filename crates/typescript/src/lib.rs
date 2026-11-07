@@ -18,6 +18,7 @@ mod behaviours;
 #[cfg(test)]
 mod bindings;
 mod bun;
+mod canvas;
 mod card;
 mod fader;
 mod feeds;
@@ -34,6 +35,7 @@ mod samples;
 mod timeline;
 mod tools;
 mod tree;
+mod videos;
 mod window;
 
 use std::io::Write as _;
@@ -229,7 +231,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-drawing",
         group: WRITING,
-        when: "A tool's view draws shapes that move: a piano roll, a meter, a scope, drags",
+        when: "A view draws what moves: shapes, drags, a scope, canvases, video, a projector",
         markdown: include_str!("extensions-drawing.md"),
     },
     AgentDoc {

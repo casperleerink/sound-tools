@@ -95,6 +95,8 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
+    /// What is wrong with the videos and photos each card reads now, by card.
+    media_problems: HashMap<u64, Vec<Problem>>,
     /// Hears the changes in `extensions/`.
     watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
@@ -175,6 +177,11 @@ impl CardsChanged {
 
 impl EventEmitter<CardsChanged> for Live {}
 
+/// A number input of the instance moved, which the parts of its cards that read values show.
+pub(crate) struct InputMoved(pub InstanceId);
+
+impl EventEmitter<InputMoved> for Live {}
+
 /// What a tree is drawn on.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Surface {
@@ -228,6 +235,8 @@ fn start(
     watched: bool,
     cx: &mut App,
 ) -> smol::channel::Sender<()> {
+    cx.on_window_closed(|_, window| crate::canvas::window_closed(window))
+        .detach();
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
     let live = Live::start(extensions, session, &tools, &generation, watched, cx);
@@ -475,6 +484,7 @@ impl Live {
                 performed_on: HashSet::new(),
                 last_frame: Instant::now(),
                 problems,
+                media_problems: HashMap::new(),
                 watcher,
                 watch_problem,
                 changed,
@@ -705,9 +715,12 @@ impl Live {
         card
     }
 
-    pub(crate) fn remove(&mut self, card: u64) {
+    pub(crate) fn remove(&mut self, card: u64, cx: &mut Context<Self>) {
         self.cards.remove(&card);
         self.host.send(&Request::Drop { card });
+        if self.media_problems.remove(&card).is_some() {
+            self.report(cx);
+        }
     }
 
     /// Asks the code of the card to make its nodes, from the records as they are now.
@@ -1025,6 +1038,36 @@ impl Live {
         at: Option<f64>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        // A pad or a knob of the card shows where it is, also while nothing else redraws.
+        if self.send_input(id, name, value, at, cx)? {
+            self.cards_of(id, cx);
+        }
+        Ok(())
+    }
+
+    /// [`Self::control`] for a number, drawing again only what reads values of its cards.
+    pub(crate) fn play(
+        &mut self,
+        id: &InstanceId,
+        name: &str,
+        value: f32,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if self.send_input(id, name, Some(value), None, cx)? {
+            cx.emit(InputMoved(id.clone()));
+        }
+        Ok(())
+    }
+
+    /// Sends the number or the bang to the processor; whether a number moved.
+    fn send_input(
+        &mut self,
+        id: &InstanceId,
+        name: &str,
+        value: Option<f32>,
+        at: Option<f64>,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, String> {
         let update = |info: &ToolInfo, session: &Session| match (info.input(name), value) {
             (Some((index, Input::Number { .. })), Some(value)) => Ok(SignalsUpdate::Live {
                 index,
@@ -1053,15 +1096,11 @@ impl Live {
             }
         };
         self.send_update(id, update, cx)?;
-        if let Some(value) = value {
-            self.played
-                .entry(id.clone())
-                .or_default()
-                .insert(name.to_string(), value);
-            // A pad or a knob of the card shows where it is, also while nothing else redraws.
-            self.cards_of(id, cx);
-        }
-        Ok(())
+        let Some(value) = value else {
+            return Ok(false);
+        };
+        let played = self.played.entry(id.clone()).or_default();
+        Ok(played.insert(name.to_string(), value) != Some(value))
     }
 
     /// The child `child` of `parent`, which a performer of `parent` plays. One it does not own
@@ -1244,8 +1283,43 @@ impl Live {
         });
     }
 
+    /// What is wrong with the videos and photos `card`, of `id`, reads, in place of what was.
+    pub(crate) fn media_problems(
+        &mut self,
+        (card, id): (u64, &InstanceId),
+        messages: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let tools = self.tools.borrow();
+        let info = (session.read(cx).project().tool_of(id)).and_then(|tool| find(&tools, tool));
+        let problems: Vec<Problem> = (info.into_iter())
+            .flat_map(|info| messages.iter().map(|message| info.problem(message)))
+            .collect();
+        drop(tools);
+        let kept = self
+            .media_problems
+            .get(&card)
+            .map_or(&[][..], Vec::as_slice);
+        if kept != problems.as_slice() {
+            if problems.is_empty() {
+                self.media_problems.remove(&card);
+            } else {
+                self.media_problems.insert(card, problems);
+            }
+            self.report(cx);
+        }
+    }
+
     /// `message` as a problem of the tool of `id`, once.
-    fn tool_problem(&mut self, id: &InstanceId, message: String, cx: &mut Context<Self>) {
+    pub(crate) fn tool_problem(
+        &mut self,
+        id: &InstanceId,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
@@ -2292,7 +2366,11 @@ impl Live {
             return;
         };
         let watched = self.watch_problem.clone();
-        let problems = self.problems.iter().cloned().chain(watched).collect();
+        let media = self.media_problems.values().flatten().cloned();
+        let problems = (self.problems.iter().cloned())
+            .chain(media)
+            .chain(watched)
+            .collect();
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);

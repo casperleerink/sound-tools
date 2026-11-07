@@ -14,6 +14,7 @@ test-support = []
 [dependencies]
 dunce.workspace = true
 gpui.workspace = true
+image.workspace = true
 notify.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -24,6 +25,7 @@ sound-core.workspace = true
 sound-dsp.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
+sound-canvas.workspace = true
 sound-signals.workspace = true
 sound-ui.workspace = true
 tempfile.workspace = true

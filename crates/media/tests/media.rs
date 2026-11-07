@@ -1030,3 +1030,32 @@ fn a_flac_file_streamed_from_several_threads_at_once_is_read_once_and_plays_whol
         });
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_video_gives_the_frame_at_a_time_on_and_back_at_most_as_large_as_asked() {
+    use sound_media::video::Video;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/red-then-blue.mp4");
+    let mut video = Video::open(&path, 32).unwrap();
+    assert!((video.seconds() - 2.0).abs() < 0.05, "{}", video.seconds());
+    // A second of red, then a second of blue: on, on again, far back.
+    for (at, red) in [
+        (0.2, true),
+        (0.4, true),
+        (1.5, false),
+        (1.6, false),
+        (0.3, true),
+    ] {
+        let frame = video.frame_at(at).unwrap();
+        assert_eq!((frame.width, frame.height), (32, 18));
+        let middle = (9 * frame.width + 16) * 4;
+        let [r, g, b] = [0, 1, 2].map(|channel| frame.rgba[middle + channel]);
+        let looks = if red {
+            r > 200 && b < 60
+        } else {
+            b > 200 && r < 60
+        };
+        assert!(looks && g < 60, "at {at}: {r} {g} {b}");
+    }
+    assert!(Video::open(Path::new("no-such.mp4"), 32).is_err());
+}

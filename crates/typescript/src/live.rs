@@ -52,6 +52,9 @@ pub(crate) struct SpaceView {
     pub height: f64,
     /// Whether its `fit` was applied, once it was laid out.
     pub fitted: bool,
+    /// Where the pointer was last over it, in its units, and whether it is now.
+    pub pointer: (f64, f64),
+    pub pointer_over: bool,
 }
 
 impl Default for SpaceView {
@@ -66,6 +69,8 @@ impl Default for SpaceView {
             width: 0.0,
             height: 0.0,
             fitted: false,
+            pointer: (0.0, 0.0),
+            pointer_over: false,
         }
     }
 }
@@ -85,6 +90,9 @@ impl SpaceView {
             SpacePart::Bottom => self.top + self.height / down,
             SpacePart::PointX => 1.0 / across,
             SpacePart::PointY => 1.0 / down,
+            SpacePart::PointerX => self.pointer.0,
+            SpacePart::PointerY => self.pointer.1,
+            SpacePart::PointerOver => f64::from(u8::from(self.pointer_over)),
         }
     }
 }
@@ -172,6 +180,9 @@ impl Sources<'_> {
                 clock.tempo_map().change_at(tick).bpm.bpm()
             }),
             Live::Elapsed => self.feeds.time,
+            Live::Seconds => (self.feeds.clock.as_ref()).map_or(0.0, |clock| {
+                clock.seconds_of(sound_core::Ticks(self.tick.max(0.0) as u64))
+            }),
             Live::Value {
                 name,
                 child: None,
