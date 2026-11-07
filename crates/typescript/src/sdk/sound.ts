@@ -646,7 +646,7 @@ export interface PictureGraph<L = unknown, W = unknown> {
   nodes: GraphNode[];
   lives: L[];
   waves: W[];
-  videos: Array<{ asset: string; at: L }>;
+  videos: Array<{ asset: string; at: L; loops: boolean }>;
   output: { red: number; green: number; blue: number };
   measures: Array<{ name: string; node: number }>;
   across?: number;
@@ -666,7 +666,7 @@ export function pictureToJson<L, W>(
   colour: Rgb,
   lives: L[],
   waves: W[],
-  videos: Array<{ asset: string; at: L }>,
+  videos: Array<{ asset: string; at: L; loops: boolean }>,
   measures: Array<{ name: string; value: Operand }>,
   across?: number,
 ): PictureGraph<L, W> {

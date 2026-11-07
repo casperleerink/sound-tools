@@ -153,11 +153,12 @@ export interface Pixel {
   wave(list: WaveList, at: Operand): Signal;
   /**
    * The colour of a video under `assets/video/`, such as `"waves.mp4"`, at `x`, `y` of its frame
-   * (this pixel's place when left out), `at` seconds into it, round and round: `now.elapsed` when
-   * left out, so it plays; `now.seconds` follows the piece. Decoded as it plays, at most 480
-   * pixels across; until the first frame it is black. macOS only.
+   * (this pixel's place when left out), `at` seconds into it: `now.elapsed` when left out, so it
+   * plays; `now.seconds` follows the piece. It plays round and round unless `loops` is false,
+   * when it holds its first and last frame. Decoded as it plays, at most 480 pixels across; until
+   * the first frame it is black. macOS only.
    */
-  video(asset: string, options?: { at?: Num; x?: Operand; y?: Operand }): { red: Signal; green: Signal; blue: Signal };
+  video(asset: string, options?: { at?: Num; loops?: boolean; x?: Operand; y?: Operand }): { red: Signal; green: Signal; blue: Signal };
   /**
    * The colour the picture had one frame before at `x`, `y` (here when left out), between its
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
@@ -180,7 +181,7 @@ export interface Pixel {
 export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">, "picture"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
   const lives: Num[] = [];
   const waves: WaveList[] = [];
-  const videos: Array<{ asset: string; at: Num }> = [];
+  const videos: Array<{ asset: string; at: Num; loops: boolean }> = [];
   const measures: Array<{ name: string; value: Operand }> = [];
   const live = (value: Num): Signal => {
     if (typeof value === "number") return new Signal({ op: "add", a: value, b: 0 });
@@ -201,8 +202,8 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
       if (index < 0) index = waves.push(list) - 1;
       return new Signal({ op: "wave", table: { wave: index }, at });
     },
-    video: (asset, { at = now.elapsed, x: atX = x, y: atY = y } = {}) => {
-      const index = videos.push({ asset, at }) - 1;
+    video: (asset, { at = now.elapsed, loops = true, x: atX = x, y: atY = y } = {}) => {
+      const index = videos.push({ asset, at, loops }) - 1;
       const channel = (channel: "red" | "green" | "blue") =>
         new Signal({ op: "video", table: { video: index }, channel, x: atX, y: atY });
       return { red: channel("red"), green: channel("green"), blue: channel("blue") };

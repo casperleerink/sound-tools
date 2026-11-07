@@ -59,3 +59,9 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 `now.space(key).pointerX`, `pointerY` and `pointerOver`: where the pointer is over a space, a live value, so a light follows the hand with no code. `pixel.noise(x, y, z)`: smooth noise, the base of smoke, water and clouds. Demo: `docs/prototypes/smoke`, smoke lit where the pointer is; its place plays a breathy tone through `measure`.
 
 - Open: `measure` of a live value is a way round to play an input from the pointer. A space could say which live values play which inputs.
+
+### 9. Scoring to picture in the DAW (`t3/visual-daw-movie`)
+
+The song of the DAW template has a field `video`: a film under `assets/video/` that shows on the stage at the playhead, still while stopped, so it scrubs with the ruler. A part of the template (`song-movie.tsx`), no new Rust. `pixel.video` gets `loops: false` to hold the last frame past the end.
+
+- Open: no way in the window to pick the film yet; the agent sets `video`. The film is stretched to the stage.

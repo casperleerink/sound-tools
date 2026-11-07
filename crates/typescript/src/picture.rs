@@ -39,6 +39,8 @@ struct Measure {
 pub(crate) struct VideoSource {
     pub asset: String,
     pub at: Num,
+    /// It plays round and round, else it holds its first and last frame outside its length.
+    pub loops: bool,
 }
 
 /// A picture of a shape: its graph, checked, and what it showed last.

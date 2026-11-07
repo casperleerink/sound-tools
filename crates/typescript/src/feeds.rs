@@ -397,15 +397,15 @@ impl Feeds {
     }
 
     /// The newest frame decoded of the video `asset` under `assets/video/`, asking for the one at
-    /// `seconds` into it.
-    pub(crate) fn video(&self, asset: &str, seconds: f64) -> Option<Arc<Frame>> {
+    /// `seconds` into it, see [`Player::frame`].
+    pub(crate) fn video(&self, asset: &str, seconds: f64, loops: bool) -> Option<Arc<Frame>> {
         let mut videos = self.videos.borrow_mut();
         let (last, player) = videos.entry(asset.to_string()).or_insert_with(|| {
             let path = self.root.join("assets").join("video").join(asset);
             (self.frame, Player::open(&path))
         });
         *last = self.frame;
-        player.frame(seconds)
+        player.frame(seconds, loops)
     }
 
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {
