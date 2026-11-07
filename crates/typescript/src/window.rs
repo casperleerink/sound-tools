@@ -177,6 +177,11 @@ impl CardsChanged {
 
 impl EventEmitter<CardsChanged> for Live {}
 
+/// A number input of the instance moved, which the parts of its cards that read values show.
+pub(crate) struct InputMoved(pub InstanceId);
+
+impl EventEmitter<InputMoved> for Live {}
+
 /// What a tree is drawn on.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Surface {
@@ -1041,7 +1046,7 @@ impl Live {
         Ok(())
     }
 
-    /// [`Self::control`] without drawing its cards again; whether the number changed.
+    /// [`Self::control`] without drawing its cards again: only what reads values draws again.
     pub(crate) fn play(
         &mut self,
         id: &InstanceId,
@@ -1049,7 +1054,7 @@ impl Live {
         value: Option<f32>,
         at: Option<f64>,
         cx: &mut Context<Self>,
-    ) -> Result<bool, String> {
+    ) -> Result<(), String> {
         let update = |info: &ToolInfo, session: &Session| match (info.input(name), value) {
             (Some((index, Input::Number { .. })), Some(value)) => Ok(SignalsUpdate::Live {
                 index,
@@ -1078,11 +1083,13 @@ impl Live {
             }
         };
         self.send_update(id, update, cx)?;
-        let Some(value) = value else {
-            return Ok(false);
-        };
-        let played = self.played.entry(id.clone()).or_default();
-        Ok(played.insert(name.to_string(), value) != Some(value))
+        if let Some(value) = value {
+            let played = self.played.entry(id.clone()).or_default();
+            if played.insert(name.to_string(), value) != Some(value) {
+                cx.emit(InputMoved(id.clone()));
+            }
+        }
+        Ok(())
     }
 
     /// The child `child` of `parent`, which a performer of `parent` plays. One it does not own

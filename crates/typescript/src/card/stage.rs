@@ -151,8 +151,11 @@ impl TypeScriptCard {
                 Ok(window) => card.update(cx, |card, _| card.stage_window = Some(window)),
                 Err(error) => {
                     eprintln!("error: the stage did not open: {error:#}");
-                    // Shown in the page, not nowhere.
-                    card.update(cx, |card, cx| card.stage_closed(cx));
+                    // Shown in the page, not nowhere, until the composer opens it again.
+                    card.update(cx, |card, cx| {
+                        card.stage_place.closed = true;
+                        cx.notify();
+                    });
                 }
             }
         });

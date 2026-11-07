@@ -38,7 +38,7 @@ use crate::feeds::{Drawn, Feeds};
 use crate::live::SpaceView;
 use crate::tools::ToolInfo;
 use crate::tree::{NodeTable, Props, Uses};
-use crate::window::{CardsChanged, Live, Surface, state_of};
+use crate::window::{CardsChanged, InputMoved, Live, Surface, state_of};
 
 use self::drawing::Drawing;
 pub use self::drawing::drawn_nodes;
@@ -383,6 +383,13 @@ impl TypeScriptCard {
             view.draw_again(parts.each().map(|uses| uses.tick), cx);
         })
         .detach();
+        cx.subscribe(&live, |view, _, InputMoved(id), cx| {
+            if *id == view.id {
+                let parts = view.parts(cx);
+                view.draw_again(parts.each().map(|uses| uses.watches), cx);
+            }
+        })
+        .detach();
         cx.subscribe_in(
             &live,
             window,
@@ -548,21 +555,12 @@ impl TypeScriptCard {
             .flat_map(|canvas| canvas.take_measured())
             .map(|(name, value)| (name.to_string(), value))
             .collect();
-        let mut changed = false;
         for (name, value) in measured {
             self.live.update(cx, |live, cx| {
-                match live.play(&id, &name, Some(value), None, cx) {
-                    Ok(moved) => changed |= moved,
-                    Err(error) => {
-                        live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx)
-                    }
+                if let Err(error) = live.play(&id, &name, Some(value), None, cx) {
+                    live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx);
                 }
             });
-        }
-        // Only what reads the numbers it moved draws again.
-        if changed {
-            let parts = self.parts(cx);
-            self.draw_again(parts.each().map(|uses| uses.watches), cx);
         }
     }
 
