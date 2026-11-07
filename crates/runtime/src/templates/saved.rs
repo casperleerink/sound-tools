@@ -42,7 +42,7 @@ impl Keep {
         for path in project.files_not_live() {
             let id = record_id(path).map(|id| InstanceId::try_from(id.to_string()));
             let required = matches!(&id, Some(Ok(id)) if required(id));
-            if required || path.starts_with("extensions/") {
+            if required || path == crate::PROJECT_FILE || path.starts_with("extensions/") {
                 bail!(
                     "Part of this project is not live as it is ({path}), so a template of its tools would miss it. Fix it first, or save the tools and content."
                 );
@@ -154,6 +154,11 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
     let saving = root.join(format!(".saving-{file_name}"));
     let replaced = root.join(format!(".replaced-{file_name}"));
     remove_folder(&saving)?;
+    // The template before a save that could not put it back.
+    if replaced.exists() && !target.exists() {
+        std::fs::rename(&replaced, &target)
+            .with_context(|| format!("could not put {} back", target.display()))?;
+    }
     remove_folder(&replaced)?;
     let about = match copy_project(&saving, project, name.trim(), keep) {
         Ok(about) => about,
@@ -166,14 +171,13 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
         return Err(left_out(&saving, error));
     }
     if let Err(error) = std::fs::rename(&saving, &target) {
-        if moved_aside {
-            std::fs::rename(&replaced, &target)
-                .with_context(|| format!("could not put {} back", target.display()))?;
-        }
-        let error = anyhow::Error::from(error).context(format!(
+        let mut error = anyhow::Error::from(error).context(format!(
             "could not move the template into {}",
             target.display()
         ));
+        if moved_aside && let Err(back) = std::fs::rename(&replaced, &target) {
+            error = error.context(format!("and could not put it back: {back}"));
+        }
         return Err(left_out(&saving, error));
     }
     // Saved already: what is left of the one before goes before the next save of the name.
