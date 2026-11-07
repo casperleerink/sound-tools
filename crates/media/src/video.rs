@@ -75,10 +75,6 @@ pub enum VideoError {
     Unreadable(String),
     #[error("no frame at {0} s: {1}")]
     NoFrame(f64, String),
-    #[error("{0} cannot be written: {1}")]
-    Unwritable(String, String),
-    #[error("the film stopped being written: {0}")]
-    Writing(String),
 }
 
 /// Further ahead than this, reading on costs more than starting again from there.
@@ -116,8 +112,16 @@ impl Video {
 #[cfg(target_os = "macos")]
 impl Video {
     pub fn open(path: &Path, longest: u32) -> Result<Self, VideoError> {
-        let reading = apple::Reading::open(path, longest)
-            .ok_or_else(|| VideoError::Unreadable(path.display().to_string()))?;
+        // A thread of its own has no pool of its own: what AVFoundation autoreleases would stay.
+        let reading = objc2::rc::autoreleasepool(|_| apple::Reading::open(path, longest))
+            .ok_or_else(|| {
+                VideoError::Unreadable(
+                    path.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into(),
+                )
+            })?;
         Ok(Self {
             seconds: reading.seconds,
             reading,
@@ -126,6 +130,10 @@ impl Video {
 
     /// The frame shown at `seconds` into it: the last that starts at or before it.
     pub fn frame_at(&mut self, seconds: f64) -> Result<VideoFrame, VideoError> {
+        objc2::rc::autoreleasepool(|_| self.read_to(seconds))
+    }
+
+    fn read_to(&mut self, seconds: f64) -> Result<VideoFrame, VideoError> {
         let at = seconds.clamp(0.0, self.seconds);
         let reading = &mut self.reading;
         let jumped = match &reading.shown {

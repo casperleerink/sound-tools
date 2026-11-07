@@ -11,8 +11,8 @@ use metal::{
 use crate::Frame;
 use crate::{Inputs, Node, Program};
 
-/// The Metal of `program`, or why the GPU cannot run it: lists and images stay on the CPU here.
-pub fn shader(program: &Program) -> Result<String, String> {
+/// The Metal of `program`.
+fn shader(program: &Program) -> String {
     let mut code = String::from(PRELUDE);
     code.push_str(
         "kernel void canvas(device float4* out [[buffer(0)]], device const float4* last [[buffer(1)]],\n\
@@ -111,7 +111,7 @@ pub fn shader(program: &Program) -> Result<String, String> {
          out[at.y * width + at.x] = colour;\n\
          shown[at.y * width + at.x] = uchar4(round(colour.zyxw * 255.0f));\n}}\n"
     ));
-    Ok(code)
+    code
 }
 
 const PRELUDE: &str = r#"
@@ -190,7 +190,7 @@ pub struct Gpu {
 
 impl Gpu {
     pub fn new(program: &Program) -> Result<Self, String> {
-        let source = shader(program)?;
+        let source = shader(program);
         let device = Device::system_default().ok_or("no GPU")?;
         let options = CompileOptions::new();
         // The same maths as the CPU, to the last bit where it can.
@@ -321,9 +321,12 @@ impl Gpu {
         ] {
             encoder.set_buffer(index, Some(buffer), 0);
         }
+        // A large graph may run fewer threads at once than a smaller one.
+        let across = self.pipeline.thread_execution_width().max(1);
+        let down = (self.pipeline.max_total_threads_per_threadgroup() / across).max(1);
         encoder.dispatch_threads(
             MTLSize::new(width as u64, height as u64, 1),
-            MTLSize::new(16, 16, 1),
+            MTLSize::new(across, down, 1),
         );
         encoder.end_encoding();
         commands.commit();

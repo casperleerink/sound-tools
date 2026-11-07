@@ -305,7 +305,7 @@ def setup_video(folder: Path) -> None:
     setup_tape_builder(folder)
     video = folder / "assets" / "video"
     video.mkdir(parents=True, exist_ok=True)
-    shutil.copy(HERE.parents[1] / "docs/prototypes/video/assets/video/zoom.mp4", video / "zoom.mp4")
+    shutil.copy(HERE / "fixtures" / "zoom.mp4", video / "zoom.mp4")
 
 
 def check_video(folder: Path) -> dict:

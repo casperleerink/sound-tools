@@ -1,6 +1,7 @@
 //! Canvases: a graph of signals the window runs once per pixel on every frame, as `sdk.ts`'s
 //! `canvas` sends it. What it reads from outside are live values, worked out once a frame.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use gpui::{Bounds, Pixels, RenderImage, Window, WindowId};
@@ -192,7 +193,11 @@ impl Canvas {
             return;
         };
         if memory.gpu.is_none() {
-            memory.gpu = Some(Gpu::new(program).ok());
+            let gpu = Gpu::new(program);
+            if let Err(error) = &gpu {
+                eprintln!("error: a canvas runs on the CPU: {error}");
+            }
+            memory.gpu = Some(gpu.ok());
         }
         let on_gpu = matches!(memory.gpu, Some(Some(_)));
         let most = if on_gpu {
@@ -263,12 +268,14 @@ impl Canvas {
         let over = memory.images.len().saturating_sub(2);
         let old: Vec<_> = memory.images.drain(..over).collect();
         drop(memory);
-        let mut orphans = ORPHANS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut orphans = lock(&ORPHANS);
         orphans.extend(old);
-        // Each window frees what was painted in it.
+        // Each window frees what was painted in it; a closed one freed it all as it closed.
+        let closed = lock(&CLOSED);
         for (painted_in, image) in std::mem::take(&mut *orphans) {
+            if closed.contains(&painted_in) {
+                continue;
+            }
             if painted_in != here {
                 orphans.push((painted_in, image));
             } else if let Err(error) = window.drop_image(image) {
@@ -282,16 +289,27 @@ impl Canvas {
 /// its next paint of a canvas: the atlas of a window is freed only in that window.
 static ORPHANS: Mutex<Vec<(WindowId, Arc<RenderImage>)>> = Mutex::new(Vec::new());
 
+/// The windows closed since the app started, whose images no canvas frees.
+static CLOSED: Mutex<BTreeSet<WindowId>> = Mutex::new(BTreeSet::new());
+
+pub(crate) fn window_closed(window: WindowId) {
+    lock(&CLOSED).insert(window);
+    lock(&ORPHANS).retain(|(painted_in, _)| *painted_in != window);
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 impl Drop for Shown {
     fn drop(&mut self) {
         let images = match self.memory.get_mut() {
             Ok(memory) => std::mem::take(&mut memory.images),
             Err(_) => return,
         };
-        (ORPHANS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
-        .extend(images);
+        lock(&ORPHANS).extend(images);
     }
 }
 

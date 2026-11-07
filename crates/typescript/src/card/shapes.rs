@@ -24,6 +24,9 @@ use crate::tree::{
 
 use super::input::Hears;
 
+/// The most bands of a spectrum: more than a canvas is pixels across.
+const MOST_BINS: u32 = 2048;
+
 /// What a shape of a space does with the pointer.
 #[derive(Clone)]
 pub(super) struct Pointer {
@@ -507,7 +510,6 @@ impl Placing<'_> {
         }
     }
 
-    /// The values of a wave, oldest first.
     /// An image a canvas reads as it is now: the newest frame of a video, or what the canvas
     /// of that key showed at its last step. Black until there is one.
     fn image(&self, image: &ImageSource) -> Arc<Frame> {
@@ -534,6 +536,7 @@ impl Placing<'_> {
         }
     }
 
+    /// The values of a wave, oldest first.
     pub(super) fn list(&self, list: Option<&List>) -> Vec<f32> {
         let feeds = self.sources.feeds;
         match list {
@@ -561,7 +564,9 @@ impl Placing<'_> {
             Some(List::Take { name }) => (feeds.takes.get(name))
                 .map(|wave| wave.to_vec())
                 .unwrap_or_default(),
-            Some(List::Spectrum { name, bins }) => feeds.spectrum(name, bins.unwrap_or(128)),
+            Some(List::Spectrum { name, bins }) => {
+                feeds.spectrum(name, bins.unwrap_or(128).clamp(1, MOST_BINS))
+            }
             None => Vec::new(),
         }
     }

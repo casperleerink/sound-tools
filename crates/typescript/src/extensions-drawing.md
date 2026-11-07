@@ -51,7 +51,7 @@ These are live values too. A path such as `"bass/synth"` reaches a record deeper
 
 ## Canvas
 
-`<Canvas x y width height pixels={(pixel) => colour}>` is a shape of a `Space` filled with a colour per pixel: a light show, a texture that breathes with the sound, a video folded in a mirror. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...); the window then works out every pixel 60 times a second with no code running. The colour is `{ red, green, blue }`, each 0 to 1, and `alpha` to let what is under it show. `across` is how many pixels wide it is worked out, 160 when left out, at most 480.
+`<Canvas x y width height pixels={(pixel) => colour}>` is a shape of a `Space` filled with a colour per pixel: a light show, a texture that breathes with the sound, a video folded in a mirror. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...); the window then works out every pixel 60 times a second with no code running. The colour is `{ red, green, blue }`, each 0 to 1, and `alpha` to let what is under it show. `across` is how many pixels wide it is worked out, 160 when left out, at most 1920 on macOS and 480 elsewhere.
 
 What a pixel reads:
 

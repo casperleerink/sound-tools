@@ -109,8 +109,6 @@ pub(crate) struct TypeScriptCard {
     stage: Option<usize>,
     stage_window: Option<WindowHandle<Stage>>,
     stage_place: StagePlace,
-    /// The number inputs its canvases measure that its tool refused.
-    measures_refused: HashSet<String>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
     parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
@@ -459,7 +457,6 @@ impl TypeScriptCard {
             stage: None,
             stage_window: None,
             stage_place: StagePlace::default(),
-            measures_refused: HashSet::new(),
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),
@@ -525,8 +522,14 @@ impl TypeScriptCard {
         self.draw_again([body, title_bar, over], cx);
     }
 
-    /// Moves the number inputs its canvases measure, to what they measured since the last poll.
+    /// Moves the number inputs its canvases measure, to what they measured since the last poll,
+    /// and tells the problems of the tool of what its canvases could not read.
     fn send_measured(&mut self, cx: &mut Context<Self>) {
+        let id = self.id.clone();
+        for problem in self.feeds.take_problems() {
+            self.live
+                .update(cx, |live, cx| live.tool_problem(&id, problem, cx));
+        }
         let Some(Ok(table)) = self.live.read(cx).tree(self.card).cloned() else {
             return;
         };
@@ -539,16 +542,11 @@ impl TypeScriptCard {
             .map(|(name, value)| (name.to_string(), value))
             .collect();
         for (name, value) in measured {
-            let id = self.id.clone();
-            let sent = self.live.update(cx, |live, cx| {
-                live.control(&id, &name, Some(value), None, cx)
+            self.live.update(cx, |live, cx| {
+                if let Err(error) = live.control(&id, &name, Some(value), None, cx) {
+                    live.tool_problem(&id, format!("a canvas measures `{name}`: {error}"), cx);
+                }
             });
-            // Said once, not on every poll.
-            if let Err(error) = sent
-                && self.measures_refused.insert(name.clone())
-            {
-                eprintln!("error: a canvas measures `{name}`: {error}");
-            }
         }
     }
 

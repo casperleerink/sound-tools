@@ -33,6 +33,8 @@ struct State {
     /// once it opened.
     shown: Option<(f64, Arc<Frame>)>,
     length: Option<f64>,
+    /// What went wrong reading it last.
+    problem: Option<String>,
     /// The player is gone.
     gone: bool,
 }
@@ -74,6 +76,10 @@ impl Player {
         shared.asked.notify_one();
         state.shown.as_ref().map(|(_, frame)| frame.clone())
     }
+
+    pub(crate) fn problem(&self) -> Option<String> {
+        self.shared.state().problem.clone()
+    }
 }
 
 impl Drop for Player {
@@ -87,7 +93,7 @@ fn decode(path: &Path, shared: &Shared) {
     let mut video = match Video::open(path, LONGEST) {
         Ok(video) => video,
         Err(error) => {
-            eprintln!("error: {error}");
+            shared.state().problem = Some(error.to_string());
             return;
         }
     };
@@ -120,9 +126,13 @@ fn decode(path: &Path, shared: &Shared) {
             }
         };
         let frame = video.frame_at(at);
+        let mut state = shared.state();
         match frame {
-            Ok(frame) => shared.state().shown = Some((at, Arc::new(frame_of(&frame)))),
-            Err(error) => eprintln!("error: {error}"),
+            Ok(frame) => {
+                state.shown = Some((at, Arc::new(frame_of(&frame))));
+                state.problem = None;
+            }
+            Err(error) => state.problem = Some(error.to_string()),
         }
     }
 }
@@ -132,24 +142,36 @@ fn frame_of(frame: &sound_media::video::VideoFrame) -> Frame {
 }
 
 /// A photo under `assets/images/`, read once on a thread of its own: black until it is.
-pub(crate) struct Still(Arc<Mutex<Option<Arc<Frame>>>>);
+pub(crate) struct Still(Arc<Mutex<Read>>);
+
+#[derive(Default)]
+struct Read {
+    frame: Option<Arc<Frame>>,
+    problem: Option<String>,
+}
 
 impl Still {
     pub(crate) fn open(path: &Path) -> Self {
-        let read = Arc::new(Mutex::new(None));
+        let read = Arc::new(Mutex::new(Read::default()));
         let path = path.to_path_buf();
         let spawned = std::thread::Builder::new().name("photo".into()).spawn({
             let read = read.clone();
-            move || match image::open(&path) {
-                Ok(photo) => {
+            move || {
+                let opened = image::open(&path).map(|photo| {
                     let photo = photo.thumbnail(LONGEST, LONGEST).to_rgba8();
                     let (width, height) = (photo.width() as usize, photo.height() as usize);
-                    let frame = Arc::new(Frame::from_rgba(width, height, photo.as_raw()));
-                    *read
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(frame);
+                    Arc::new(Frame::from_rgba(width, height, photo.as_raw()))
+                });
+                let mut read = read
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                match opened {
+                    Ok(frame) => read.frame = Some(frame),
+                    Err(error) => {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        read.problem = Some(format!("the photo {name} did not open: {error}"));
+                    }
                 }
-                Err(error) => eprintln!("error: {} did not open: {error}", path.display()),
             }
         });
         if let Err(error) = spawned {
@@ -158,7 +180,17 @@ impl Still {
         Self(read)
     }
 
+    fn read(&self) -> std::sync::MutexGuard<'_, Read> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub(crate) fn frame(&self) -> Option<Arc<Frame>> {
-        self.0.lock().ok().and_then(|frame| frame.clone())
+        self.read().frame.clone()
+    }
+
+    pub(crate) fn problem(&self) -> Option<String> {
+        self.read().problem.clone()
     }
 }

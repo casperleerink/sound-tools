@@ -116,6 +116,8 @@ pub(crate) struct Feeds {
     stills: RefCell<HashMap<String, (u64, Still)>>,
     /// The videos it shows, by file name and read, with the frame they were last read.
     videos: RefCell<HashMap<String, (u64, Player)>>,
+    /// Videos and photos named outside their folder, until its card takes them.
+    misnamed: RefCell<Vec<String>>,
     records: Records,
 }
 
@@ -380,7 +382,6 @@ impl Feeds {
         kept.value
     }
 
-    /// The last `frames` values of `value` under `key`, one a frame, oldest first.
     /// The spectrum of the last sound of the meter `name`, see [`List::Spectrum`].
     ///
     /// [`List::Spectrum`]: crate::tree::List::Spectrum
@@ -408,26 +409,51 @@ impl Feeds {
         seconds: f64,
         loops: bool,
     ) -> Option<Arc<Frame>> {
+        let path = self.asset("video", asset)?;
         let mut videos = self.videos.borrow_mut();
-        let (last, player) = videos.entry(format!("{asset}|{read}")).or_insert_with(|| {
-            let path = self.root.join("assets").join("video").join(asset);
-            (self.frame, Player::open(&path))
-        });
+        let (last, player) = (videos.entry(format!("{asset}|{read}")))
+            .or_insert_with(|| (self.frame, Player::open(&path)));
         *last = self.frame;
         player.frame(seconds, loops)
     }
 
     /// The photo `asset` under `assets/images/`, once it is read.
     pub(crate) fn still(&self, asset: &str) -> Option<Arc<Frame>> {
+        let path = self.asset("images", asset)?;
         let mut stills = self.stills.borrow_mut();
-        let (last, still) = stills.entry(asset.to_string()).or_insert_with(|| {
-            let path = self.root.join("assets").join("images").join(asset);
-            (self.frame, Still::open(&path))
-        });
+        let (last, still) =
+            (stills.entry(asset.to_string())).or_insert_with(|| (self.frame, Still::open(&path)));
         *last = self.frame;
         still.frame()
     }
 
+    /// The file `asset` under `assets/<folder>/`, when it names one there.
+    fn asset(&self, folder: &str, asset: &str) -> Option<std::path::PathBuf> {
+        let mut parts = std::path::Path::new(asset).components();
+        match (parts.next(), parts.next()) {
+            (Some(std::path::Component::Normal(_)), None) => {
+                Some(self.root.join("assets").join(folder).join(asset))
+            }
+            _ => {
+                (self.misnamed.borrow_mut())
+                    .push(format!("`{asset}` is no file name in assets/{folder}/"));
+                None
+            }
+        }
+    }
+
+    /// What is wrong with the videos and photos it reads. Told on every poll, as a new load of
+    /// the tools starts their problems again.
+    pub(crate) fn take_problems(&self) -> Vec<String> {
+        let videos = self.videos.borrow();
+        let stills = self.stills.borrow();
+        (videos.values().filter_map(|(_, player)| player.problem()))
+            .chain(stills.values().filter_map(|(_, still)| still.problem()))
+            .chain(self.misnamed.take())
+            .collect()
+    }
+
+    /// The last `frames` values of `value` under `key`, one a frame, oldest first.
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {
         let mut histories = self.histories.borrow_mut();
         let (last, values) = histories.entry(key.to_string()).or_default();

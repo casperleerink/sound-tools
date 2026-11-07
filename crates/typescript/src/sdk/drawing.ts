@@ -191,7 +191,7 @@ export interface Pixel {
  * A canvas across its box: `pixels` runs once, as the view does, and gives the colour of a pixel
  * from where it is and what it reads; the window then works out every pixel on every frame,
  * with no code running. `across` is how many pixels wide it is worked out, 160 when left out,
- * at most 480; it is as many down as its box is tall for that.
+ * at most 1920 on macOS and 480 elsewhere; it is as many down as its box is tall for that.
  */
 export const Canvas = ({ pixels, across, ...props }: Omit<ShapeProps<"canvas">, "canvas"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
   const lives: Num[] = [];

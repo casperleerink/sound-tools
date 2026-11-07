@@ -228,6 +228,8 @@ fn start(
     watched: bool,
     cx: &mut App,
 ) -> smol::channel::Sender<()> {
+    cx.on_window_closed(|_, window| crate::canvas::window_closed(window))
+        .detach();
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
     let live = Live::start(extensions, session, &tools, &generation, watched, cx);
@@ -1245,7 +1247,12 @@ impl Live {
     }
 
     /// `message` as a problem of the tool of `id`, once.
-    fn tool_problem(&mut self, id: &InstanceId, message: String, cx: &mut Context<Self>) {
+    pub(crate) fn tool_problem(
+        &mut self,
+        id: &InstanceId,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
