@@ -6417,6 +6417,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-pictures"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sound-signals"
 version = "0.0.0"
 dependencies = [
@@ -6435,6 +6443,7 @@ dependencies = [
  "dunce",
  "gpui",
  "hound",
+ "image",
  "notify",
  "schemars",
  "serde",
@@ -6445,6 +6454,7 @@ dependencies = [
  "sound-dsp",
  "sound-media",
  "sound-notes",
+ "sound-pictures",
  "sound-signals",
  "sound-ui",
  "tempfile",

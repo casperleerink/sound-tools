@@ -327,6 +327,8 @@ props! {
         /// What a wave's values are multiplied by along it: `[x, factor]` from its left, straight
         /// between them.
         level: Vec<[Num; 2]>,
+        /// What a picture draws in each pixel.
+        picture: crate::picture::Picture,
     }
 }
 
@@ -1087,7 +1089,11 @@ impl ShapeProps {
             _ => true,
         };
         let text = !matches!(self.text, Some(Words::Live(_)));
-        color && text && self.list.is_none() && self.numbers().all(Num::steady)
+        color
+            && text
+            && self.list.is_none()
+            && self.picture.is_none()
+            && self.numbers().all(Num::steady)
     }
 
     /// Whether where it is never moves: no live number places or sizes it and no drag moves
@@ -1137,6 +1143,9 @@ impl ShapeProps {
             }
             Some(List::Take { name }) => _ = uses.takes.insert(name.clone()),
             None => {}
+        }
+        if let Some(picture) = &self.picture {
+            picture.add_uses(&mut uses);
         }
         uses
     }
@@ -1276,6 +1285,7 @@ pub(crate) enum ShapeKind {
     Wave,
     Notes,
     Path,
+    Picture,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -1476,7 +1486,7 @@ impl Num {
         }
     }
 
-    fn add_uses(&self, uses: &mut Uses) {
+    pub(crate) fn add_uses(&self, uses: &mut Uses) {
         if let Self::Live(live) = self {
             live.add_uses(uses);
         }

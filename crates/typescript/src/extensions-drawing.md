@@ -48,3 +48,19 @@ These are live values too. A path such as `"bass/synth"` reaches a record deeper
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
 - `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far, and `<Notes list={now.take(path)}>` its notes. `now.input(channel)` is the level of the audio input while a recorder is armed or records.
 - A `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"` shows where the piece plays; `now.bpm` its tempo.
+
+## Pictures
+
+`<Picture x y width height pixels={(pixel) => colour}>` fills its box with a colour per pixel, worked out by the window on every frame with no code running: a light show, a texture that breathes with the sound. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...) from `pixel.x` and `pixel.y` (0 to 1), `pixel.aspect`, `pixel.time` in seconds, and `pixel.live(value)` for any live value: `pixel.live(now.value("level"))` follows an output of the sound. `pixel.last(x, y)` is the frame before at that place, for trails and feedback. What runs in time (`phasor`, filters, `delay`, fields) belongs in the sound: send it out with `output` and read it with `live`.
+
+```tsx
+<Picture x={0} y={0} width={() => size.width} height={() => size.height} across={240}
+  pixels={({ x, y, aspect, time, live, last }) => {
+    const [across, down] = [x.minus(0.5).times(aspect), y.minus(0.5)];
+    const distance = sqrt(across.times(across).plus(down.times(down)));
+    const ring = sin(distance.times(40).minus(time.times(3))).times(live(now.value("swell")));
+    const colour = hsv(distance, 0.7, ring);
+    const trail = last(mix(x, 0.5, 0.015), mix(y, 0.5, 0.015));
+    return { red: max(colour.red, trail.red.times(0.94)), green: max(colour.green, trail.green.times(0.94)), blue: max(colour.blue, trail.blue.times(0.94)) };
+  }} />
+```

@@ -17,6 +17,7 @@ type Binary =
   | "greaterOrEqual" | "equal" | "notEqual" | "min" | "max" | "pow";
 
 type BinSource = "magnitude" | "phase" | "hz" | "index" | "sideMagnitude" | "sidePhase";
+type PixelSource = "x" | "y" | "aspect";
 
 /** Where a table reads: a list or file field by name, one side of a file, or a `buffer` by its number. */
 export type TableRef = { list: string } | { left: string } | { right: string } | { buffer: number };
@@ -56,7 +57,10 @@ type SignalNode<R> =
   | { op: "lookup"; table: TableRef; phase: R }
   | { op: "length"; table: TableRef }
   | { op: "spectral"; x: R; side?: R; size: number; bins: Bins<R> }
-  | { op: BinSource };
+  | { op: BinSource }
+  | { op: PixelSource }
+  | { op: "live"; index: number }
+  | { op: "last"; channel: "red" | "green" | "blue"; x: R; y: R };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
 export type GraphNode =
@@ -110,7 +114,7 @@ export class Signal {
 
 /** A value read where it is used, with no memory: a source, a field, an input, a feedback. */
 class Named extends Signal {
-  declare readonly node: Extract<SignalNode<Operand>, { op: Source | InputOp | BinSource | "param" | "feedback" }>;
+  declare readonly node: Extract<SignalNode<Operand>, { op: Source | InputOp | BinSource | PixelSource | "param" | "feedback" | "live" }>;
 }
 
 /**
@@ -611,4 +615,54 @@ function quantize(value: number): number {
     throw new Error(`${value} is not a number a sound can play`);
   }
   return Math.abs(value) < 1e-9 ? 0 : Number(value.toFixed(9));
+}
+
+// Pictures
+
+/** A colour of a picture: red, green and blue, each 0 to 1. */
+export interface Rgb {
+  red: Operand;
+  green: Operand;
+  blue: Operand;
+}
+
+/** The colour at hue `hue` (0 to 1 round the circle, red at 0), `saturation` and `value`, each 0 to 1. */
+export function hsv(hue: Operand, saturation: Operand, value: Operand): Rgb {
+  const part = (offset: number) =>
+    clamp(abs(wrap(new Signal({ op: "add", a: hue, b: offset })).times(6).minus(3)).minus(1), 0, 1);
+  const of = (offset: number) => mix(1, part(offset), saturation).times(value);
+  return { red: of(1), green: of(2 / 3), blue: of(1 / 3) };
+}
+
+/** For `Picture`: where a pixel is, and the live value of `index` in its `lives`. */
+export const pixelSource = (op: PixelSource): Signal => new Named({ op });
+export const pixelLive = (index: number): Signal => new Named({ op: "live", index });
+
+/** A picture as the window gets it: a graph run once per pixel, which reads `lives`. */
+export interface PictureGraph<L = unknown> {
+  nodes: GraphNode[];
+  lives: L[];
+  output: { red: number; green: number; blue: number };
+  across?: number;
+}
+
+/** What only a sound has: it runs in time, sample after sample, and a picture has no time between its pixels. */
+const SOUND_ONLY = new Set<string>([
+  "input", "inputLeft", "inputRight", "channel", "sampleRate", "beat", "bpm", "playing", "frequency",
+  "pitch", "gate", "velocity", "onset", "param", "feedback", "phasor", "delay", "lowpass", "highpass",
+  "bandpass", "notch", "allpass", "peak", "lowshelf", "highshelf", "smooth", "adsr", "hold", "rise",
+  "change", "at", "lookup", "length", "spectral", "magnitude", "phase", "hz", "index", "sideMagnitude",
+  "sidePhase",
+]);
+
+/** For `Picture`: the graph of `colour`, which `layout` lays out as a sound's. */
+export function pictureToJson<L>(colour: Rgb, lives: L[], across?: number): PictureGraph<L> {
+  const { nodes, use } = layout(0);
+  const output = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
+  for (const node of nodes) {
+    if (SOUND_ONLY.has(node.op)) {
+      throw new Error(`\`${node.op}\` belongs in a sound: a picture works out each pixel on its own, with no time between them`);
+    }
+  }
+  return across === undefined ? { nodes, lives, output } : { nodes, lives, output, across };
 }

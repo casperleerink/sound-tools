@@ -11,6 +11,7 @@ use sound_ui::components::knob::{
 };
 
 use crate::live::{DragNumbers, Sources, SpaceView};
+use crate::picture::Picture;
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
@@ -114,6 +115,15 @@ pub(super) enum Geometry {
         height: f64,
         notes: Rc<Notes>,
     },
+    Picture {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        picture: Picture,
+        /// The values of its live values now.
+        lives: Rc<[f32]>,
+    },
     Path {
         bends: Rc<[Bend<(f64, f64)>]>,
         /// The width of its outline, else it is filled.
@@ -166,6 +176,7 @@ impl Geometry {
             | Self::Arc { x, y, .. }
             | Self::Text { x, y, .. }
             | Self::Wave { x, y, .. }
+            | Self::Picture { x, y, .. }
             | Self::Notes { x, y, .. } => (x, y),
             Self::Line { from, .. } => from,
             Self::Path { ref bends, .. } => {
@@ -351,6 +362,13 @@ impl Extent {
                 ..
             }
             | Geometry::Notes {
+                x,
+                y,
+                width,
+                height,
+                ..
+            }
+            | Geometry::Picture {
                 x,
                 y,
                 width,
@@ -874,6 +892,17 @@ impl Placing<'_> {
                     }),
                 }
             }
+            ShapeKind::Picture => Geometry::Picture {
+                x,
+                y,
+                width: self.number(&shape.width),
+                height: self.number(&shape.height),
+                picture: shape.picture.clone()?,
+                lives: (shape.picture.iter())
+                    .flat_map(|picture| picture.lives())
+                    .map(|live| self.sources.number(live) as f32)
+                    .collect(),
+            },
             ShapeKind::Notes => {
                 let take = match &shape.list {
                     Some(List::Take { name }) => self.sources.feeds.take_notes.get(name),
