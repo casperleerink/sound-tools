@@ -1,13 +1,8 @@
 //! Which thread each call of a plugin's life arrives on, and in which order.
 //!
 //! Both formats put starting and stopping the processing on the audio thread, and activating
-//! and deactivating on the main thread while nothing is processing. The engine of these tests
-//! is driven from a thread of its own here, so the log the test plugin writes says which calls
-//! really arrived on the thread that processes. A strict plugin asserts exactly this.
-//!
-//! The test plugin of each format writes the same five names down, so every check here runs
-//! for both. A VST 3 plugin writes more than that, `initialize` and `terminate`, which are not
-//! what this file is about.
+//! and deactivating on the main thread while nothing is processing. A strict plugin asserts
+//! exactly this, so the engine here runs on a thread of its own.
 
 use std::sync::mpsc;
 
@@ -19,7 +14,7 @@ use crate::support::{
     tell_the_plugin,
 };
 
-/// The calls both formats write down, which is what this file is about.
+/// The calls both formats write down.
 const LIFECYCLE: [&str; 5] = [
     "activate",
     "start_processing",
@@ -47,15 +42,12 @@ fn played() -> Vec<Played> {
         .collect()
 }
 
-/// Everything the test plugin wrote down, with the thread that processed it.
 struct Life {
     calls: Vec<LoggedCall>,
 }
 
 impl Life {
-    /// The calls about the audio processors, in order. The calls about the plugin itself,
-    /// written down with plugin 0, are not part of what this file is about; `window.rs` reads
-    /// those.
+    /// The calls about the audio processors. Plugin 0 is the plugin itself, such as its window.
     fn names(&self) -> Vec<String> {
         self.calls
             .iter()
@@ -64,7 +56,6 @@ impl Life {
             .collect()
     }
 
-    /// The same, with only the calls both formats have.
     fn lifecycle_names(&self) -> Vec<String> {
         self.calls
             .iter()
@@ -73,7 +64,6 @@ impl Life {
             .collect()
     }
 
-    /// The one call `name` of plugin `plugin`.
     fn of(&self, name: &str, plugin: u64) -> &LoggedCall {
         let found = self
             .calls
@@ -90,9 +80,7 @@ impl Life {
         found.unwrap_or_else(|| panic!("no {name} of plugin {plugin} in {:?}", self.names()))
     }
 
-    /// Which audio processors appear. The library counts them for the whole process, so a test
-    /// reads its own by position and not by a fixed number. Number 0 is not one: it is what a
-    /// call about the plugin itself, such as one of the window, is written down with.
+    /// The library counts them for the whole process, so a test reads its own by position.
     fn plugins(&self) -> Vec<u64> {
         let mut plugins: Vec<u64> = self
             .calls
@@ -106,30 +94,25 @@ impl Life {
     }
 }
 
-/// The audio thread of one test: it owns the engine and renders when it is asked to.
 struct Audio {
     work: mpsc::Sender<usize>,
     done: mpsc::Receiver<()>,
 }
 
 impl Audio {
-    /// Renders `blocks` blocks of 512 frames and waits for them, so the test knows what the
-    /// plugin has been through before it looks.
     fn render(&self, blocks: usize) {
         self.work.send(blocks).expect("the audio thread takes work");
         self.done.recv().expect("the audio thread answers");
     }
 }
 
-/// Opens a project with one plugin, runs `steps` with a real audio thread beside it, and gives
-/// back what the plugin wrote down. The project and the engine both go before the log is read,
-/// so the log holds the whole life of every plugin.
+/// Runs `steps` with a real audio thread beside it. The project and the engine go before the
+/// log is read, so the log holds the whole life of every plugin.
 fn run(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life {
     run_with(format, false, played(), steps)
 }
 
-/// The same with a second plugin in the effect slot of the rack, after the instrument. One
-/// wrapper serves both slots, so the thread rules must hold for the effect as well.
+/// The same with a second plugin as the rack's effect.
 fn run_with_an_effect(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life {
     run_with(format, true, played(), steps)
 }
@@ -141,11 +124,10 @@ fn run_with(
     steps: impl FnOnce(&mut Parts<'_>, &Audio),
 ) -> Life {
     let folder = tempfile::tempdir().expect("a temporary folder");
-    // Outside the project folder, which goes with the project at the end of this.
+    // Outside the project folder, which goes with the project.
     let log_folder = tempfile::tempdir().expect("a temporary folder");
     let log = log_folder.path().join("lifecycle.log");
     tell_the_plugin(Some(&log), None);
-    // Only this format's test plugin is in the folder, so the log holds one plugin's life.
     let search = vec![plugin_folder_of(folder.path(), format)];
     let mut harness = Harness::open_with_paths(folder, search, true);
     harness.add_track(record(format, "piano"), played);
@@ -181,13 +163,11 @@ fn run_with(
             plugins.poll(project);
             let mut parts = Parts { project, plugins };
             steps(&mut parts, &audio);
-            // Whatever is waiting for the engine to give a processor back.
             audio.render(2);
             plugins.poll(project);
         });
     }
 
-    // The engine goes first, as the runtime does when a stream closes, and then the project.
     drop(harness);
     tell_the_plugin(None, None);
     Life {
@@ -195,14 +175,11 @@ fn run_with(
     }
 }
 
-/// What a step may touch while the audio thread has the engine.
 struct Parts<'a> {
     project: &'a mut sound_core::Project,
     plugins: &'a mut plugin_host::Plugins,
 }
 
-/// Swapping the plugin of a record. The one that goes is stopped on the thread that processed
-/// it, before the new one plays a block, and only then deactivated on the main thread.
 #[test]
 fn a_swap_stops_the_plugin_that_goes_on_the_audio_thread_before_the_new_one_plays() {
     for format in FORMATS {
@@ -226,7 +203,6 @@ fn a_swap_stops_the_one_that_goes(format: PluginFormat) {
     assert_eq!(plugins.len(), 2, "{:?}", life.names());
     let (first, second) = (plugins[0], plugins[1]);
 
-    // Stopped on the thread that processed it.
     let audio_thread = &life.of("process", first).thread;
     assert_eq!(
         &life.of("stop_processing", first).thread,
@@ -234,14 +210,12 @@ fn a_swap_stops_the_one_that_goes(format: PluginFormat) {
         "{:?}",
         life.names()
     );
-    // And never processed after that.
     assert_eq!(
         life.of("deactivate", first).processed,
         life.of("stop_processing", first).processed,
         "{:?}",
         life.names()
     );
-    // Before the new plugin played, and before the main thread deactivated the old one.
     assert!(
         life.position("stop_processing", first) < life.position("start_processing", second),
         "{:?}",
@@ -260,8 +234,6 @@ fn a_swap_stops_the_one_that_goes(format: PluginFormat) {
     );
 }
 
-/// Deleting the record. The engine takes the processor out of its slot and the plugin is
-/// stopped there, on the audio thread, before the main thread deactivates it.
 #[test]
 fn a_delete_stops_the_plugin_on_the_audio_thread_and_deactivates_it_on_the_main_thread() {
     for format in FORMATS {
@@ -305,9 +277,7 @@ fn a_delete_stops_it_on_the_audio_thread(format: PluginFormat) {
     );
 }
 
-/// Closing the project. The engine is gone by then, so there is no audio thread left to stop a
-/// plugin on: the wrapper stops it as it is dropped, which is still before anyone deactivates
-/// it and after its last block.
+/// The engine is gone by then, so the wrapper stops the plugin as it is dropped.
 #[test]
 fn closing_the_project_stops_every_plugin_before_it_is_deactivated() {
     for format in FORMATS {
@@ -334,9 +304,8 @@ fn closing_stops_before_deactivating(format: PluginFormat) {
     );
 }
 
-/// A load that fails after the plugin has been initialized must undo that. VST 3 asks a host to
-/// terminate a plugin it is done with, and a plugin that is only released holds the host
-/// objects it was given and may reach for them as it goes.
+/// VST 3 asks a host to terminate a plugin it is done with: a plugin that is only released holds
+/// the host objects it was given and may reach for them as it goes.
 #[test]
 fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
     let folder = tempfile::tempdir().expect("a temporary folder");
@@ -346,8 +315,7 @@ fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
     let search = vec![plugin_folder_of(folder.path(), PluginFormat::Vst3)];
     let mut harness = Harness::open_with_paths(folder, search, true);
 
-    // A state file the plugin refuses, so the load fails after `initialize` and before the
-    // plugin is activated. This is what a stale or wrong state asset does.
+    // A state file the plugin refuses, so the load fails after `initialize`.
     let asset = harness.project.assets().path(&state_asset("piano"));
     std::fs::create_dir_all(asset.parent().expect("the folder")).expect("the folder");
     let vst3_state = b"SVT3\x08\x00\x00\x00not-mine\x00\x00\x00\x00";
@@ -363,8 +331,7 @@ fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
     let life = Life {
         calls: lifecycle(&log),
     };
-    // The plugin was never activated, and `setActive(0)` on one that is not active is
-    // nothing. What matters is that it is terminated and not only released.
+    // `setActive(0)` on a plugin that is not active is harmless.
     let names: Vec<String> = life.calls.iter().map(|call| call.call.clone()).collect();
     assert_eq!(
         names,
@@ -373,9 +340,6 @@ fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
     );
 }
 
-/// The same rules for a plugin in an effect slot: the record of the effect is deleted while
-/// the audio thread runs, and its plugin is stopped there before the main thread deactivates
-/// it. The instrument of the track goes on playing through all of it.
 #[test]
 fn deleting_an_effect_stops_its_plugin_on_the_audio_thread_and_leaves_the_instrument_playing() {
     for format in FORMATS {
@@ -395,7 +359,6 @@ fn deleting_an_effect_keeps_the_thread_rules(format: PluginFormat) {
         harness.plugins.poll(harness.project);
     });
 
-    // Two plugins: the instrument first, then the effect.
     let plugins = life.plugins();
     assert_eq!(plugins.len(), 2, "{:?}", life.names());
     let (instrument, effect) = (plugins[0], plugins[1]);
@@ -421,8 +384,7 @@ fn deleting_an_effect_keeps_the_thread_rules(format: PluginFormat) {
         life.of("stop_processing", effect).processed,
         "the effect processed after it was stopped: {names:?}"
     );
-    // The instrument played on: it was stopped later and after more blocks than the effect,
-    // which is the project closing and not the delete.
+    // The instrument is stopped by the project closing, not by the delete.
     assert!(
         life.position("stop_processing", instrument) > life.position("stop_processing", effect),
         "the instrument stopped before the effect: {names:?}"
@@ -434,10 +396,6 @@ fn deleting_an_effect_keeps_the_thread_rules(format: PluginFormat) {
     );
 }
 
-/// A plugin whose latency changes asks to be started again, and the host does it by the same
-/// rules as any other time a plugin stops and starts: processing stops on the audio thread,
-/// the plugin is deactivated and activated again on the main thread, and processing starts
-/// again on the audio thread. The test plugin asks when it gets a note on its latency key.
 #[test]
 fn a_latency_change_starts_the_plugin_again_by_the_thread_rules() {
     for format in FORMATS {
@@ -472,7 +430,7 @@ fn a_latency_change_keeps_the_thread_rules(format: PluginFormat) {
         .filter(|call| LIFECYCLE.contains(&call.call.as_str()))
         .collect();
     let names: Vec<&str> = after.iter().map(|call| call.call.as_str()).collect();
-    // Until the project closes, which stops and deactivates it once more.
+    // Then the project closing stops and deactivates it once more.
     assert_eq!(
         names[..4],
         [

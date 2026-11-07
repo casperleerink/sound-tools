@@ -1,30 +1,12 @@
-//! The card of a hosted plugin in a rack.
+//! The card of a hosted plugin. The plugin draws its interface in a window of its own; the card
+//! has the button that opens it, the list that pins parameters to the card, and a cell per pin,
+//! two to a column, so the card grows wider and never taller.
 //!
-//! A plugin draws its whole interface in a window of its own. The card shows what the record
-//! holds of it: at the left, a control that opens that window and closes it again, the list of
-//! the plugin's parameters that puts one on the card and takes it off again, and the format and
-//! the maker on the value line of the second row, `CLAP · <maker>`. Then a cell for each
-//! parameter the record pins, two to a column, so the card grows wider with them and never
-//! taller. A dropdown spans two cells, so the names of its steps fit. The rack gives the
-//! frame of the card, whose title is the name of the plugin and where another one is picked.
-//! Nothing is hidden, so there is no expand. The power and close icons of an effect come from
-//! the rack, in the frame, because the rack keeps whether a slot is on.
+//! A stepped parameter is driven by the number of its step, never by its value, so a control
+//! always writes one of the plugin's own step values.
 //!
-//! A stepped parameter is driven by the number of its step, never by its value, so what a
-//! control writes is always the plugin's own value of a step.
-//!
-//! The knob of a pin an automation lane moves shows what the lane plays and does not drag, as
-//! every automated knob does, with the plugin's text for that value.
-//!
-//! The list of parameters and the plugin's text both call into the plugin, which a frame may
-//! not do. So the view asks when the session tells it something changed, and draws from what it
-//! was told. A lane that sweeps changes its value every frame, so the text of a value a lane
-//! plays is asked for at most 15 times a second per pin, and the knob shows the last text it
-//! got.
-//!
-//! A plugin this machine does not have shows what is wrong and the id the record names, so a
-//! composer can see which plugin to install and an agent can be asked to correct the record.
-//! The record itself is untouched, as everywhere else.
+//! The list of parameters and the plugin's text both call into the plugin, which drawing may
+//! not do. So the view asks when the session says something changed and draws from the answers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -62,21 +44,19 @@ const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
 /// A dropdown spans two cells, so the names of its steps fit, and leaves air on either side.
 const DROPDOWN_SPAN: usize = 2;
 const DROPDOWN_WIDTH: f32 = DROPDOWN_SPAN as f32 * CELL_WIDTH - 8.;
-/// How often at most the card asks the plugin for its text of a value a lane plays.
+/// How often at most the card asks the plugin for its text of a value a lane plays, which
+/// changes every frame.
 const LANE_READ_OUT: Duration = Duration::from_millis(66);
 
-/// Registers the card of the `plugin` tool and what a rack calls one.
-///
-/// `plugins` is the host of this session, held weakly: the host must go when the project goes,
-/// because that is what saves the state of every plugin.
+/// `plugins` is held weakly: the host must go when the project goes, because that is what saves
+/// the state of every plugin.
 pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) {
     let (for_view, for_label) = (plugins.clone(), plugins.clone());
     views.register_card(move |session, plugin, frame, window, cx| {
         PluginView::new(for_view.clone(), session, plugin, frame, window, cx)
     });
     devices.describe::<PluginRecord>(move |record| {
-        // The name its maker gave it, or the id, which is all that is left of a plugin this
-        // machine does not have.
+        // A plugin this machine does not have is named by its id.
         let installed = for_label
             .upgrade()
             .and_then(|plugins| plugins.installed_name(record.format, &record.plugin_id));
@@ -88,8 +68,7 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
     devices.numbers::<PluginRecord>(PluginNumbers(plugins));
 }
 
-/// The parameters of a plugin a lane can move: a lane names a pin by its path,
-/// `parameters.12.value`.
+/// The parameters of a plugin a lane can move.
 struct PluginNumbers(WeakPlugins);
 
 impl Numbers<PluginRecord> for PluginNumbers {
@@ -108,8 +87,7 @@ impl Numbers<PluginRecord> for PluginNumbers {
     }
 }
 
-/// Whether a lane can be added for `parameter` of the plugin of `record`: pinned, its pin takes
-/// one as the host plays it; else it takes one and the record has room to pin it.
+/// A parameter not pinned yet takes a lane only when the record has room to pin it.
 fn can_take_lane(record: &PluginRecord, parameter: &Parameter) -> bool {
     match record.parameters.get(&parameter.id) {
         Some(pin) => parameter.takes_lane_at(pin),
@@ -161,28 +139,23 @@ impl<'a> Control<'a> {
 pub struct PluginView {
     device: DeviceEdit<PluginRecord>,
     plugins: WeakPlugins,
-    /// The title and the close icon the rack gives the card.
     frame: CardFrame,
-    /// The button takes one to be a tab stop and to show a focus ring.
+    /// Of the window button: a tab stop with a focus ring.
     window_focus: FocusHandle,
-    /// Every parameter of the plugin, as the host last gave it. `None` while no plugin is
-    /// loaded for the record.
+    /// As the host last gave them. `None` while no plugin is loaded for the record.
     parameters: Option<Rc<BTreeMap<u32, Parameter>>>,
     /// The plugin's own text for the value each pin plays, with the value it is for. `None`
     /// when the plugin gives no text.
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
-    /// When the card last asked for the text of the value a lane plays, by pin, and the ask
-    /// that waits for [`LANE_READ_OUT`] to pass.
+    /// When the card last asked for the text of a lane's value, by pin.
     lane_asked: BTreeMap<u32, Instant>,
     read_out_later: Option<Task<()>>,
-    /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
     /// The pins an automation lane moves, as the list last showed them: those do not come off.
     laned: BTreeSet<u32>,
-    /// The pin whose knob is being dragged, and what its values meant when the drag began. A
-    /// drag whose knob goes away, because the pin was taken off or became another control,
-    /// sends no end, so the card ends it. So it does when the plugin gives the knob other
-    /// values, whose numbers the open drag would read wrongly.
+    /// The pin whose knob is being dragged, and how its values mapped when the drag began. A
+    /// knob that goes away mid-drag sends no end, so the card ends the drag; so it does when
+    /// the mapping changes, which the open drag would read wrongly.
     dragged: Option<(u32, Mapping)>,
 }
 
@@ -214,9 +187,8 @@ impl PluginView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Every notify of the session, not only a change of this record: a plugin's window can
-        // also close by itself, and a plugin can load after the card was made. The poll that
-        // saw either notifies.
+        // Every notify, not only a change of this record: a plugin's window can close by
+        // itself, and a plugin can load after the card was made.
         cx.observe(&session, |view, _, cx| {
             view.ask_the_plugin(false, cx);
             view.end_a_drag_whose_knob_changed(cx);
@@ -275,9 +247,7 @@ impl PluginView {
         device.session.read(cx).project().state(&device.instance)
     }
 
-    /// Asks the plugin what the card draws from: its parameters, and its text for the value of
-    /// every pin that changed. Only what is new costs a call into the plugin. The list of
-    /// parameters is filled again when the record changed or the plugin's list did.
+    /// Asks the plugin what the card draws from. Only what is new costs a call into the plugin.
     fn ask_the_plugin(&mut self, record_changed: bool, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
@@ -304,8 +274,7 @@ impl PluginView {
         self.fill_menu(record_changed || !same_list, cx);
     }
 
-    /// Fills the list of parameters again, when `changed` says what it shows did or the pins a
-    /// lane moves are others now.
+    /// Fills the list of parameters again when `changed`, or when the laned pins changed.
     fn fill_menu(&mut self, changed: bool, cx: &mut Context<Self>) {
         let (Some(parameters), Some(record)) = (&self.parameters, self.record(cx)) else {
             return;
@@ -326,9 +295,8 @@ impl PluginView {
     }
 
     /// Asks the plugin for its text for the value each pin plays now, the record's or a lane's,
-    /// where that is not the value of the text the card has. The text of a lane value is asked
-    /// for at most once in [`LANE_READ_OUT`] per pin, whatever asks; one that has to wait is
-    /// asked for when that has passed.
+    /// where the card has no text for that value yet. A lane's value waits for
+    /// [`LANE_READ_OUT`].
     fn read_out(&mut self, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
@@ -348,8 +316,7 @@ impl PluginView {
             if known.is_some_and(|(read, _)| read.to_bits() == value.to_bits()) {
                 continue;
             }
-            // A pin that moves nothing says so instead, and its value is not the plugin's to
-            // read out.
+            // A pin that moves nothing shows "Out of range" instead.
             let parameter = self.parameters.as_ref().and_then(|list| list.get(pin));
             if !parameter.is_some_and(|parameter| parameter.takes(value)) {
                 continue;
@@ -373,7 +340,6 @@ impl PluginView {
         {
             self.read_out_later = Some(cx.spawn(async move |view, cx| {
                 cx.background_executor().timer(wait).await;
-                // A card that is gone has nothing to read out.
                 view.update(cx, |view, cx| {
                     view.read_out_later = None;
                     view.read_out(cx);
@@ -384,8 +350,7 @@ impl PluginView {
         }
     }
 
-    /// Ends the drag of a knob that is no longer on the card or maps to other values now. See
-    /// [`Self::dragged`].
+    /// See [`Self::dragged`].
     fn end_a_drag_whose_knob_changed(&mut self, cx: &mut Context<Self>) {
         let Some((dragged, began)) = &self.dragged else {
             return;
@@ -399,14 +364,12 @@ impl PluginView {
         }
     }
 
-    /// How the knob of the pin `id` maps to values now, when it is a knob.
     fn mapping(&self, id: u32) -> Option<Mapping> {
         let parameter = self.parameters.as_ref()?.get(&id)?;
         Mapping::of(parameter)
     }
 
-    /// A row of the list was picked: a pinned parameter comes off the card, another goes on it
-    /// at the value the plugin has now. One undo step either way.
+    /// A pinned parameter comes off the card, another goes on it at the value the plugin has now.
     fn pin_or_unpin(&mut self, value: &SharedString, cx: &mut Context<Self>) {
         let Ok(parameter_id) = value.parse::<u32>() else {
             return;
@@ -444,7 +407,7 @@ impl PluginView {
         self.device.change(&label, ValueChange::Set(pin), add, cx);
     }
 
-    /// Notes which knob a drag is on, see [`Self::dragged`].
+    /// See [`Self::dragged`].
     fn dragged_to(&mut self, id: u32, change: &ValueChange) {
         match change {
             ValueChange::Drag(_) if self.dragged.as_ref().is_some_and(|(on, _)| *on == id) => {}
@@ -455,7 +418,6 @@ impl PluginView {
         }
     }
 
-    /// A change of the control of the pin `id`, as one gesture or one step.
     fn change<V>(
         &mut self,
         id: u32,
@@ -472,9 +434,7 @@ impl PluginView {
         self.device.change(label, change, set, cx);
     }
 
-    /// Opens the plugin's own window, or closes the one that is open. Not an edit: nothing of
-    /// the project changes and there is no undo step. The host remembers it for the next time
-    /// the project opens, on this computer.
+    /// Not an edit and no undo step: the host remembers the window on this computer only.
     fn toggle_window(&mut self, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
@@ -502,7 +462,6 @@ impl PluginView {
         let name = SharedString::from(parameter.name.clone());
         let label = format!("Change {name}");
         let out_of_range = !parameter.takes(pin.value);
-        // Only a knob over any value takes a lane, so only a knob shows one.
         let lane = self
             .device
             .lanes
@@ -510,14 +469,13 @@ impl PluginView {
             .value(&lane_of_pin(id))
             .map(f64::from);
         let value = lane.unwrap_or(pin.value);
-        // The text of what a lane plays may be a few frames old, see `LANE_READ_OUT`.
+        // The text of what a lane plays may be a few frames old.
         let readout = self
             .readouts
             .get(&id)
             .filter(|(read, _)| lane.is_some() || read.to_bits() == value.to_bits())
             .and_then(|(_, text)| text.clone());
         let (minimum, maximum) = (parameter.minimum, parameter.maximum);
-        // Every step the control can write, by its number, as the plugin's own value.
         let step_values = |steps: &Steps| -> Vec<f64> {
             (0..steps.count)
                 .map(|index| parameter.step_value(steps, index))
@@ -573,9 +531,7 @@ impl PluginView {
                     .readout(readout)
                     .automated(lane.is_some());
                 let knob = match control {
-                    // The knob goes over the numbers of the steps, one at a time.
-                    // A parameter may have millions of steps, so they are worked out one at a
-                    // time and not listed.
+                    // A parameter may have millions of steps, so they are not listed.
                     Control::Stepped(steps) => {
                         let last = steps.count - 1;
                         let (value, default) =
@@ -605,7 +561,6 @@ impl PluginView {
                             view.change(id, &label, change, value, cx);
                         })),
                 };
-                // The knob is a cell of its own, with its label and readout.
                 return (knob.into_any_element(), 1);
             }
         };
@@ -616,11 +571,8 @@ impl PluginView {
     }
 }
 
-/// The rows of the list of parameters: every parameter of the plugin, with a check on the
-/// pinned ones, and after them the pins the plugin has no parameter for, so those can come off
-/// too. At the most pins, the others cannot be picked and a line says why. A pin in `laned` an
-/// automation lane moves, and it stays: as a knob of a built-in device, its lane would move
-/// nothing without it.
+/// Every parameter of the plugin, then the pins it has no parameter for, so those can come off
+/// too. A laned pin cannot come off, as its lane would move nothing without it.
 fn menu_entries(
     parameters: &BTreeMap<u32, Parameter>,
     pins: &BTreeMap<u32, Pin>,
@@ -667,8 +619,7 @@ fn inside(value: f64, minimum: f64, maximum: f64) -> f64 {
     value.max(minimum).min(maximum)
 }
 
-/// The cell of a pin whose id the plugin does not have: its name from the record, and what is
-/// wrong in plain words.
+/// The cell of a pin whose id the plugin does not have.
 fn missing(id: u32, pin: &Pin, cx: &mut Context<PluginView>) -> AnyElement {
     let peach = cx.theme().peach;
     let explained = format!(
@@ -676,7 +627,7 @@ fn missing(id: u32, pin: &Pin, cx: &mut Context<PluginView>) -> AnyElement {
     );
     let face = div()
         .id(("missing", u64::from(id)))
-        // For tests, which find the cell of a pin that moves nothing by its id.
+        // For tests.
         .debug_selector(move || format!("missing-{id}"))
         .text_size(px(12.))
         .line_height(px(14.))
@@ -699,7 +650,7 @@ impl DeviceView for PluginView {
 
 impl Render for PluginView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // `None` once the record is deleted. Whatever hosts the view takes it away then.
+        // `None` once the record is deleted; whatever hosts the view takes it away then.
         let Some(record) = self.record(cx).cloned() else {
             return div().into_any_element();
         };
@@ -715,8 +666,6 @@ impl Render for PluginView {
                 .child(text)
         };
         let plain = self.frame.card().w(px(PLAIN_CARD_WIDTH));
-        // The left of the body: what is at its top, and the line on the value line of the
-        // second row.
         let left = |top: Div, bottom: Option<Div>| {
             div()
                 .relative()
@@ -727,9 +676,6 @@ impl Render for PluginView {
         };
 
         let Some(installed) = plugins.installed(record.format, &record.plugin_id) else {
-            // Missing. The card is named by the id, which is all that is left of the plugin.
-            // The record stays as it is, the track is silent, and `problems.txt` says the
-            // same thing to an agent.
             let text = format!(
                 "This computer has no {} plugin with this id. Install it, or pick another.",
                 record.format.name()
@@ -746,9 +692,8 @@ impl Render for PluginView {
                 .child(left(line(text.to_string()), Some(detail)))
                 .into_any_element();
         };
-        // A plugin's view is put in an `NSView` or an `HWND` of ours, and Linux has neither.
-        // The host itself does not know: its tests open windows without a view on every
-        // platform.
+        // A plugin's view goes in an `NSView` or an `HWND`, and Linux has neither. The host
+        // does not check, so its tests can open windows on every platform.
         let (has_window, no_window) = if cfg!(any(target_os = "macos", target_os = "windows")) {
             (has_window, "This plugin has no window of its own.")
         } else {
@@ -779,8 +724,7 @@ impl Render for PluginView {
             .children((!has_window).then(|| line(no_window.to_string())))
             .children(self.parameters.is_some().then(|| self.menu.clone()));
 
-        // Two pins to a column, in the order of their ids. A column is as wide as its wider
-        // cell, and the columns make the card as wide as it is.
+        // Two pins to a column, in the order of their ids.
         let pins: Vec<(AnyElement, usize)> = record
             .parameters
             .iter()

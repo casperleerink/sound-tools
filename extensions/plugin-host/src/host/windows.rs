@@ -1,5 +1,7 @@
-//! The plugins' own windows: opening, closing and settling them, the keys and moves they
-//! hand on, and where they are kept on this machine.
+//! The plugins' own windows, and where they are kept on this machine.
+//!
+//! The table is never borrowed while GPUI runs: opening or closing a window draws, and a card
+//! being drawn asks this host about its plugin.
 
 use gpui::{Keystroke, WindowHandle, WindowId};
 use sound_core::{InstanceId, Project};
@@ -11,10 +13,9 @@ use crate::placements::PlacementStore;
 use crate::window::{Placement, PluginFrame, Prepared, WindowOwner, WindowRequest, WindowSize};
 
 impl Table {
-    /// Says whether the window of `id` is to be open, the next time it can be. Only the
-    /// composer decides this: opening a window, closing one, or a plugin's own window that
-    /// the composer closed. A window the host takes down because its plugin reloads, or because
-    /// the project closes, stays open in here, and comes back.
+    /// Whether the window of `id` is to be open the next time it can be. Only the composer
+    /// decides this: a window the host takes down because its plugin reloads, or because the
+    /// project closes, stays open in here and comes back.
     pub(super) fn keep_open(&mut self, id: &InstanceId, open: bool) {
         if let Some(placement) = self.placements.get_mut(id)
             && placement.open != open
@@ -24,7 +25,6 @@ impl Table {
         }
     }
 
-    /// Notes where the window of `id` is now.
     fn place(&mut self, id: &InstanceId, placement: Placement) {
         if self.placements.get(id) != Some(&placement) {
             self.placements.insert(id.clone(), placement);
@@ -34,20 +34,14 @@ impl Table {
 }
 
 impl Plugins {
-    /// Whether the plugin of this record has a window of its own to open. `None` says the
-    /// record has no plugin loaded at all, which is a plugin that did not load and is already
-    /// reported; its card says that instead of offering a window.
-    ///
-    /// A card asks on every frame it draws. The answer is the one the plugin gave while it
-    /// loaded, so this calls into no plugin, and it gives up rather than wait for a table that
-    /// a plugin's own call has borrowed.
+    /// `None` when no plugin is loaded for the record. A card asks on every frame, so this
+    /// calls into no plugin, and gives up on a table that a plugin's own call has borrowed.
     pub fn window_offered(&self, id: &InstanceId) -> Option<bool> {
         let table = self.0.table.try_borrow().ok()?;
         table.loaded.get(id).map(|hosted| hosted.has_window)
     }
 
-    /// Whether the window of this record's plugin is open. Read while drawing a card, so it
-    /// gives up on a table that a plugin's own call has borrowed, as [`Self::window_offered`].
+    /// Read while drawing a card, as [`Self::window_offered`].
     pub fn window_is_open(&self, id: &InstanceId) -> bool {
         let Ok(table) = self.0.table.try_borrow() else {
             return false;
@@ -58,8 +52,7 @@ impl Plugins {
             .is_some_and(|hosted| hosted.window.is_open())
     }
 
-    /// Opens the plugin's own window, or brings the one that is open forward, for the composer.
-    /// It opens where it was the last time, and the project remembers that it is open.
+    /// Opens the plugin's own window where it was last, or brings it forward.
     pub fn open_window(&self, id: &InstanceId, cx: &mut gpui::App) -> Result<(), PluginProblem> {
         let opened = self.show_window(id, true, cx);
         let mut table = self.0.table.borrow_mut();
@@ -67,23 +60,18 @@ impl Plugins {
         opened
     }
 
-    /// Opens the window of `id`, taking the keyboard or not. See [`Self::open_window`].
-    ///
-    /// It is in three steps because the table may not be borrowed while GPUI runs: opening a
-    /// window draws, and a card being drawn asks this host what its plugin has.
     fn show_window(
         &self,
         id: &InstanceId,
         focus: bool,
         cx: &mut gpui::App,
     ) -> Result<(), PluginProblem> {
-        // One: what the plugin says, with the table borrowed and no GPUI in sight.
+        // One: what the plugin says, with the table borrowed.
         let prepared = {
             let mut table = self.0.table.borrow_mut();
             let placement = table.placements.get(id).copied();
             let Some(hosted) = table.loaded.get_mut(id) else {
-                // The record names a plugin this machine does not have, or the load failed.
-                // That is reported, and the card shows it instead of offering a window.
+                // The plugin did not load. That is reported already.
                 return Ok(());
             };
             let plugin_id = hosted.plugin_id.clone();
@@ -101,10 +89,8 @@ impl Plugins {
                 Some(gui) => window.prepare(gui),
                 None => Err(no_window()),
             };
-            // A plugin that turns out to have no window says so once. The card stops offering
-            // one for the rest of this session, so the composer is not asked to find out again.
-            // A VST 3 plugin is offered a window without being asked, because asking means
-            // building its whole interface; this is where the answer arrives instead.
+            // A plugin that turns out to have no window says so once, and the card stops
+            // offering one for the rest of this session.
             if matches!(prepared, Err(PluginProblem::NoWindow { .. })) {
                 *has_window = false;
             }
@@ -177,7 +163,7 @@ impl Plugins {
         }
     }
 
-    /// What a plugin's window is called: the plugin and the piece it plays in.
+    /// The plugin and the piece it plays in.
     fn title(&self, hosted: &Hosted) -> String {
         let name = self
             .installed_name(hosted.format, &hosted.plugin_id)
@@ -190,24 +176,20 @@ impl Plugins {
         }
     }
 
-    /// Closes the plugin's own window, for the composer. Its sound and its state are untouched,
-    /// and the project remembers that it is closed.
     pub fn close_window(&self, id: &InstanceId, cx: &mut gpui::App) {
         self.0.table.borrow_mut().keep_open(id, false);
         self.take_down(id, cx);
     }
 
-    /// Takes the window of `id` down, and leaves what the project remembers of it as it is.
+    /// Leaves whether the window is to be open as it is.
     fn take_down(&self, id: &InstanceId, cx: &mut gpui::App) {
-        // Outside the borrow: taking a window down runs GPUI.
         if let Some(handle) = self.give_up_window(id) {
             crate::window::remove(handle, cx);
         }
     }
 
-    /// A key the window of `id` got while the plugin's own view did not have the keyboard.
-    /// `true` says the plugin used it. See `backend::PluginGui::key`. The window is checked, as
-    /// for a move: a window that is going may still hand on a key.
+    /// A key the window got while the plugin's own view did not have the keyboard. `true` says
+    /// the plugin used it. The window is checked: one that is going may still hand on a key.
     pub(crate) fn key(
         &self,
         id: &InstanceId,
@@ -230,9 +212,7 @@ impl Plugins {
             .is_some_and(|gui| gui.key(keystroke, direction))
     }
 
-    /// The window of `id` moved or was resized. Where it is now is noted for the project, and
-    /// a drag of its edge is given to the plugin. The window this says is checked, because one
-    /// that went may still report a move on its way out.
+    /// The window is checked: one that went may still report a move on its way out.
     pub(crate) fn window_bounds_changed(
         &self,
         id: &InstanceId,
@@ -240,8 +220,8 @@ impl Plugins {
         placement: Placement,
         content: WindowSize,
     ) {
-        // A move that GPUI reports from inside a call of ours that has the table is noted by
-        // that call itself.
+        // A move GPUI reports from inside a call of ours that has the table is noted by that
+        // call.
         let Ok(mut table) = self.0.table.try_borrow_mut() else {
             return;
         };
@@ -258,8 +238,7 @@ impl Plugins {
         table.place(id, placement);
     }
 
-    /// Frees whatever the plugin of `id` holds for a window and gives back the window it was
-    /// in, for the caller to take down.
+    /// Frees what the plugin holds for its window, and gives the window back to take down.
     #[must_use]
     fn give_up_window(&self, id: &InstanceId) -> Option<WindowHandle<PluginFrame>> {
         let mut table = self.0.table.borrow_mut();
@@ -270,11 +249,8 @@ impl Plugins {
     }
 
     /// The window is going, whatever took it down. GPUI tells its observers while it still
-    /// holds the window, so this is the moment the plugin lets go of the view it is in, before
-    /// that view is released. See `window::open_window`.
-    ///
-    /// A window this host took down has let go of its view already. One that still has it was
-    /// closed by the composer, with its close control, and the project remembers that.
+    /// holds the window, so the plugin lets go of its view before that view is released. A
+    /// window that still has its view here was closed by the composer.
     pub(crate) fn window_was_closed(&self, id: &InstanceId) {
         let mut table = self.0.table.borrow_mut();
         if let Some(hosted) = table.loaded.get_mut(id)
@@ -285,15 +261,10 @@ impl Plugins {
         }
     }
 
-    /// The window work that needs the application: taking down the windows of plugins that
-    /// have gone, giving a window the size its plugin asked for, and opening the windows the
-    /// project remembers as open whose plugin is loaded, which is how they come back when the
-    /// project opens and when their plugin reloads. Whoever polls the host calls it after
-    /// [`Self::poll`]; the moments that find such a plugin, a record that was deleted, an undo
-    /// or a reload, have no application at hand.
+    /// The window work that needs the application, which a poll does not have: taking down
+    /// windows of plugins that went, resizing, and opening the windows that are to be open.
+    /// Call it after [`Self::poll`].
     pub fn settle_windows(&self, cx: &mut gpui::App) {
-        // Everything is read out first: running GPUI while the table is borrowed would let a
-        // card that is drawn ask this host about its plugin.
         let (finished, resize, reopen) = {
             let mut table = self.0.table.borrow_mut();
             let Table {
@@ -325,11 +296,9 @@ impl Plugins {
         for handle in finished {
             crate::window::remove(handle, cx);
         }
-        // A window that comes back by itself leaves the keyboard where it is. The application
-        // is waited for while it is becoming active, which it is at the first polls: AppKit
-        // gives the keyboard to the front window once it is, and a plugin's window, which
-        // floats, would be that window. One that cannot come back is forgotten as open, so it
-        // is not tried again at every poll.
+        // Wait while the application is becoming active, at the first polls: AppKit then gives
+        // the keyboard to the front window, which a floating plugin window would be. One that
+        // cannot come back is forgotten as open, so it is not tried at every poll.
         let active = cx.active_window();
         if reopen.is_empty() || (active.is_none() && !cx.windows().is_empty()) {
             return;
@@ -352,8 +321,7 @@ impl Plugins {
         }
     }
 
-    /// Frees the view of every plugin window and takes the windows down. The application
-    /// calls it as it quits, before anything of it is torn down, so that no plugin is left
+    /// For the application quitting, before anything of it is torn down, so no plugin is left
     /// holding a view of a window that is going.
     pub fn close_all_windows(&self, cx: &mut gpui::App) {
         let open: Vec<InstanceId> = {
@@ -363,14 +331,13 @@ impl Plugins {
                 .map(|(id, _)| id.clone())
                 .collect()
         };
-        // The project remembers them as open: they come back when it opens again.
+        // Still to be open, so they come back when the project opens again.
         for id in open {
             self.take_down(&id, cx);
         }
     }
 
-    /// The first poll of a project reads where its plugin windows were. Every host reads it,
-    /// and only the one that has windows opens any, see [`Self::settle_windows`].
+    /// The first poll of a project reads where its plugin windows were.
     pub(super) fn remember_the_windows(
         &self,
         project: &Project,
@@ -388,9 +355,8 @@ impl Plugins {
     }
 }
 
-/// Keeps where the plugin windows are in this machine's store, when they changed since the
-/// last write. A window whose record is gone is forgotten on the way, when the project is at
-/// hand. A write that fails is said once and not tried again until a window changes again.
+/// Writes the placements when they changed. A window whose record is gone is forgotten on the
+/// way, when the project is at hand.
 pub(super) fn write_placements(
     table: &mut Table,
     store: &PlacementStore,

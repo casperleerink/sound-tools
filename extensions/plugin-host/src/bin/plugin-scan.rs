@@ -1,8 +1,5 @@
-//! Lists one plugin bundle and prints one line of JSON per plugin in it.
-//!
-//! Loading a plugin runs its code, so the scan never happens in the application's own process.
-//! The runtime does this with its own executable and `--scan-plugin`; this program is the same
-//! thing for the tests of this crate, which have no runtime.
+//! The scan's child process for the tests of this crate, which have no runtime: lists one
+//! bundle, one line of JSON per plugin. The runtime uses its own executable instead.
 
 use std::path::PathBuf;
 

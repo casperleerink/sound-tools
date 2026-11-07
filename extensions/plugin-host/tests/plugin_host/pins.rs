@@ -1,10 +1,6 @@
-//! Pins: parameters of a plugin that its record holds. The record wins over the plugin's own
-//! state for them, an edit of the record moves the plugin as it plays, and what the plugin
-//! changes of them itself is written back, one undo step per turn of a knob.
+//! Pins: parameters of a plugin that its record holds.
 //!
-//! Each test plugin has a `Level` that is heard: how loud its notes play. Each can set it
-//! itself on `LEVEL_KEY`, and the VST 3 one's controller can edit it through the host the way
-//! its window would, with a `beginEdit` and an `endEdit`.
+//! Each test plugin has a `Level`: how loud its notes play. Each sets it itself on `LEVEL_KEY`.
 
 use std::time::{Duration, Instant};
 
@@ -17,7 +13,6 @@ use crate::support::{
     tell_the_plugin_to_smooth, vst3_state,
 };
 
-/// The `Level` parameter of the test plugin of `format`.
 pub(crate) fn level(format: PluginFormat) -> u32 {
     match format {
         PluginFormat::Clap => test_clap_plugin::LEVEL,
@@ -32,7 +27,6 @@ pub(crate) fn pin(name: &str, value: f64) -> Pin {
     }
 }
 
-/// The record of the test plugin of `format` with `Level` pinned at `value`.
 pub(crate) fn pinned(format: PluginFormat, value: f64) -> PluginRecord {
     let mut record = record(format, "piano");
     record.parameters.insert(level(format), pin("Level", value));
@@ -62,12 +56,10 @@ fn record_of(harness: &Harness) -> PluginRecord {
     record.expect("the plugin record").clone()
 }
 
-/// The value of the pin `pin` as the record holds it.
 pub(crate) fn pinned_value(harness: &Harness, pin: u32) -> f64 {
     record_of(harness).parameters[&pin].value
 }
 
-/// The value of the pin `pin` as the record's file holds it.
 pub(crate) fn written_value(harness: &Harness, pin: u32) -> f64 {
     let text = std::fs::read_to_string(harness.path("state/track/instrument.json")).unwrap();
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -76,7 +68,6 @@ pub(crate) fn written_value(harness: &Harness, pin: u32) -> f64 {
         .expect("a pinned value in the file")
 }
 
-/// What the plugin says the parameter is now.
 pub(crate) fn plugin_value(harness: &Harness, parameter: u32) -> f64 {
     let value = harness
         .plugins
@@ -84,8 +75,6 @@ pub(crate) fn plugin_value(harness: &Harness, parameter: u32) -> f64 {
     value.expect("the plugin says").value
 }
 
-/// The record with the value of one pin changed, as one undo step, as a knob on a card or an
-/// agent writing the file would.
 pub(crate) fn set_pin(harness: &mut Harness, pin: u32, value: f64) {
     let mut record = record_of(harness);
     record.parameters.get_mut(&pin).expect("the pin").value = value;
@@ -94,15 +83,14 @@ pub(crate) fn set_pin(harness: &mut Harness, pin: u32, value: f64) {
     harness.project.commit("Set level", changes).unwrap();
 }
 
-/// How loud the instrument plays with nothing pinned, from its first block.
 fn full_level(format: PluginFormat) -> f32 {
     let mut harness = Harness::new();
     harness.add_track(record(format, "piano"), one_note());
     peak(&harness.play(512).left())
 }
 
-/// One device buffer and the main-thread work after it, at a time the test says, so the end
-/// of a turn of a knob does not depend on how fast the machine is.
+/// At a time the test says, so the end of a turn of a knob does not depend on how fast the
+/// machine is.
 fn step(harness: &mut Harness, frames: usize, now: Instant) -> Vec<f32> {
     let render = harness.render_without_polling(frames);
     harness.plugins.poll_at(&harness.project, now);
@@ -116,8 +104,7 @@ pub(crate) fn is_near(level: f32, expected: f32) -> bool {
     (level - expected).abs() < 0.01
 }
 
-/// The record wins over the state the plugin saved: the state says half, the pin says a
-/// quarter, and the plugin plays a quarter from its very first block.
+/// The record wins over the state the plugin saved.
 #[test]
 fn a_pinned_value_reaches_the_plugin_before_its_first_block_and_is_heard() {
     for format in FORMATS {
@@ -141,7 +128,6 @@ fn a_pinned_value_reaches_the_plugin_before_its_first_block_and_is_heard() {
         let first = peak(&harness.play(512).left());
         assert!(is_near(first, full / 4.0), "{format:?}: {first} of {full}");
         assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
-        // Playing a pin the plugin took as it is writes nothing and makes no undo step.
         harness.play(4096);
         assert_eq!(
             harness.project.undo_label().as_deref(),
@@ -152,9 +138,8 @@ fn a_pinned_value_reaches_the_plugin_before_its_first_block_and_is_heard() {
     }
 }
 
-/// A plugin that smooths its parameters, as real ones do, glides to a value it is sent while it
-/// plays. A pin it has before it is activated it plays from the first frame of a render: there
-/// is nothing to glide from. Its state says full level and the pin a quarter.
+/// A smoothing plugin glides to a value sent while it plays, but a pin it has before it is
+/// activated has nothing to glide from.
 #[test]
 fn a_plugin_that_smooths_plays_its_pins_from_the_first_frame() {
     tell_the_plugin_to_smooth();
@@ -162,11 +147,10 @@ fn a_plugin_that_smooths_plays_its_pins_from_the_first_frame() {
         let mut harness = Harness::new();
         harness.add_track(pinned(format, 0.25), one_note());
         let left = harness.play(4096).left();
-        // The first millisecond, and after the glide would be over.
         let (first, steady) = (peak(&left[..48]), peak(&left[1024..]));
         assert!(is_near(first, steady), "{format:?}: {first} then {steady}");
 
-        // An edit while it plays glides, so the first test is not true of any plugin.
+        // An edit while it plays glides, so the check above is not true of any plugin.
         set_pin(&mut harness, level(format), 1.0);
         let left = harness.render(4096).left();
         let (first, steady) = (peak(&left[..48]), peak(&left[1024..]));
@@ -174,9 +158,7 @@ fn a_plugin_that_smooths_plays_its_pins_from_the_first_frame() {
     }
 }
 
-/// A pin that changes while the plugin is started again, for a new latency, is given to it
-/// before it is activated again, as at a load: the note of its first block plays it from the
-/// first frame. A short note starts every block, so whichever block that is has one.
+/// A short note starts every block, so whichever block comes first after the restart has one.
 #[test]
 fn a_pin_changed_while_the_plugin_is_started_again_is_played_from_the_first_frame() {
     tell_the_plugin_to_smooth();
@@ -193,13 +175,11 @@ fn a_pin_changed_while_the_plugin_is_started_again_is_played_from_the_first_fram
         }
         harness.add_track(pinned(format, 1.0), played);
         let now = Instant::now();
-        // Up to the block that asks to be started again, and the pin changes in that moment.
         for _ in 0..3 {
             step(&mut harness, 512, now);
         }
         set_pin(&mut harness, level(format), 0.25);
         let left: Vec<f32> = (0..32).flat_map(|_| step(&mut harness, 512, now)).collect();
-        // While the plugin is started again the slot is silent, for a block at least.
         let gap = left
             .windows(512)
             .position(|block| block.iter().all(|it| *it == 0.0));
@@ -215,9 +195,8 @@ fn a_pin_changed_while_the_plugin_is_started_again_is_played_from_the_first_fram
     }
 }
 
-/// A CLAP plugin that asks for a flush as it reads its state gets one before it is activated.
 /// Six Sines takes a state it reads only at a flush or in a block, and taken in the first block
-/// it ends the notes of that block, so a render with a note at its start was silent.
+/// it ends the notes of that block, so a render with a note at its start is silent.
 #[test]
 fn a_flush_a_plugin_asks_for_as_it_reads_its_state_comes_before_its_activation() {
     let folder = tempfile::tempdir().unwrap();
@@ -235,8 +214,7 @@ fn a_flush_a_plugin_asks_for_as_it_reads_its_state_comes_before_its_activation()
     assert!(at("flush") < at("activate"), "{calls:?}");
 }
 
-/// A change of the record moves the plugin as it plays: no second load, and the value it took,
-/// rounded to the hundredths the test plugin keeps, is not written back over the record's.
+/// The test plugin rounds to hundredths, which must not be written back over the record's value.
 #[test]
 fn an_edit_of_a_pin_moves_the_plugin_without_loading_it_again_and_is_not_written_back() {
     for format in FORMATS {
@@ -256,8 +234,7 @@ fn an_edit_of_a_pin_moves_the_plugin_without_loading_it_again_and_is_not_written
             .filter(|call| call.call == "activate");
         assert_eq!(loads.count(), 1, "{format:?}: the plugin was loaded again");
 
-        // The plugin holds 0.33, the record still holds what was written, and the edit is the
-        // last undo step, also once any turn of a knob would have ended.
+        // Also once any turn of a knob would have ended.
         assert_eq!(plugin_value(&harness, level(format)), 0.33, "{format:?}");
         let later = Instant::now() + Duration::from_secs(1);
         harness.plugins.follow_pins_at(&mut harness.project, later);
@@ -269,15 +246,13 @@ fn an_edit_of_a_pin_moves_the_plugin_without_loading_it_again_and_is_not_written
             "{format:?}"
         );
 
-        // Undo is a change of the record as well, and the plugin follows it.
         harness.project.undo().unwrap();
         let left = harness.render(4096).left();
         assert!(is_near(peak(&left[2048..]), full), "{format:?}");
     }
 }
 
-/// The plugin moves its own `Level` three times, a block or more apart, and then rests. The
-/// record follows, and the three moves are one undo step, which takes the record back.
+/// Three moves a block or more apart, then a rest: one undo step.
 #[test]
 fn a_value_the_plugin_changes_itself_lands_in_the_record_as_one_undo_step() {
     for format in FORMATS {
@@ -302,10 +277,9 @@ fn a_value_the_plugin_changes_itself_lands_in_the_record_as_one_undo_step() {
         let own = plugin_value(&harness, level(format));
         assert_eq!(own, 0.25, "{format:?}");
         assert_eq!(pinned_value(&harness, level(format)), own, "{format:?}");
-        // Still turning, as far as the host can tell: nothing is written yet.
+        // Still turning, as far as the host can tell.
         assert_eq!(written_value(&harness, level(format)), 1.0, "{format:?}");
 
-        // Quiet for long enough: one step, written, named after the pin.
         step(&mut harness, 512, start + Duration::from_secs(2));
         assert_eq!(written_value(&harness, level(format)), own, "{format:?}");
         assert_eq!(
@@ -320,7 +294,6 @@ fn a_value_the_plugin_changes_itself_lands_in_the_record_as_one_undo_step() {
             "{format:?}"
         );
         assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
-        // And the plugin is given the record's value back.
         let later = start + Duration::from_secs(3);
         step(&mut harness, 512, later);
         let left = step(&mut harness, 512, later);
@@ -329,8 +302,7 @@ fn a_value_the_plugin_changes_itself_lands_in_the_record_as_one_undo_step() {
     }
 }
 
-/// A VST 3 plugin says where the composer's hand lets go of a knob of its window, so the undo
-/// step ends there, with no time passing.
+/// With `endEdit`, so no time has to pass.
 #[test]
 fn a_turn_of_a_knob_in_a_vst3_window_is_one_undo_step_that_ends_where_the_hand_lets_go() {
     tell_the_plugin(None, None);
@@ -345,7 +317,6 @@ fn a_turn_of_a_knob_in_a_vst3_window_is_one_undo_step_that_ends_where_the_hand_l
     for _ in 0..6 {
         step(&mut harness, 512, now);
     }
-    // Four edits on the way down to a quarter, between a `beginEdit` and an `endEdit`.
     assert_eq!(written_value(&harness, level(format)), 0.25);
     assert_eq!(
         harness.project.undo_label().as_deref(),
@@ -355,8 +326,6 @@ fn a_turn_of_a_knob_in_a_vst3_window_is_one_undo_step_that_ends_where_the_hand_l
     assert_eq!(harness.project.undo_label().as_deref(), Some("Add track"));
 }
 
-/// A pin of a parameter the plugin does not have, and a value outside the range of one it
-/// has, are each a line in `problems.txt`. Neither is sent, and the rest of the record plays.
 #[test]
 fn an_unknown_pin_and_a_value_out_of_range_are_problems_and_the_rest_plays() {
     for format in FORMATS {
@@ -381,7 +350,6 @@ fn an_unknown_pin_and_a_value_out_of_range_are_problems_and_the_rest_plays() {
         let first = peak(&harness.play(512).left());
         assert!(is_near(first, full / 4.0), "{format:?}: {first} of {full}");
 
-        // Taking them out of the record takes the problems away, with the plugin as it plays.
         let mut fixed = record_of(&harness);
         fixed.parameters.retain(|pin, _| *pin == level(format));
         let mut changes = Changes::new();
@@ -391,14 +359,12 @@ fn an_unknown_pin_and_a_value_out_of_range_are_problems_and_the_rest_plays() {
     }
 }
 
-/// A plugin that lists `Level` only once a key asks, and says so: CLAP with a `rescan`, VST 3
-/// with `kParamIDMappingChanged`. The pin is a problem until then, and moves the plugin after.
+/// CLAP says so with a `rescan`, VST 3 with `kParamIDMappingChanged`.
 #[test]
 fn a_pin_of_a_parameter_the_plugin_lists_later_moves_it_once_it_is_listed() {
     for format in FORMATS {
         tell_the_plugin(None, None);
-        // SAFETY: nextest runs one test per process and no other thread reads the environment
-        // yet.
+        // SAFETY: as in `tell_the_plugin`.
         unsafe { std::env::set_var(test_plugin_support::LATE_LEVEL_VARIABLE, "1") };
         let full = full_level(format);
         let mut harness = Harness::new();
@@ -413,22 +379,18 @@ fn a_pin_of_a_parameter_the_plugin_lists_later_moves_it_once_it_is_listed() {
 
         let left = harness.play(2048).left();
         assert!(is_near(peak(&left[..512]), full), "{format:?}");
-        // The host read the list again and asks for the behaviour to run, which the runtime
-        // does at every tick.
+        // What the runtime does at every tick.
         for retry in harness.plugins.take_retries() {
             harness.project.rebind(&retry).unwrap();
         }
         assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
         let left = harness.render(2048).left();
         assert!(is_near(peak(&left[1024..]), full / 4.0), "{format:?}");
-        // SAFETY: as above.
+        // SAFETY: as in `tell_the_plugin`.
         unsafe { std::env::remove_var(test_plugin_support::LATE_LEVEL_VARIABLE) };
     }
 }
 
-/// A pin that changes while the plugin plays is carried into a block with nothing allocated on
-/// the audio thread, inside the plugin's own call included, where the realtime sanitizer is
-/// switched off.
 #[test]
 fn a_pin_that_changes_while_the_plugin_plays_allocates_nothing() {
     for format in FORMATS {
@@ -445,7 +407,6 @@ fn a_pin_that_changes_while_the_plugin_plays_allocates_nothing() {
     }
 }
 
-/// How many times the plugin's log has `call`.
 fn count(log: &std::path::Path, call: &str) -> usize {
     lifecycle(log)
         .iter()
@@ -453,7 +414,7 @@ fn count(log: &std::path::Path, call: &str) -> usize {
         .count()
 }
 
-/// The left channel of device buffers `blocks`, one [`step`] each, a tenth of a second apart.
+/// One [`step`] per block, a tenth of a second apart.
 fn steps(harness: &mut Harness, blocks: std::ops::Range<u32>, start: Instant) -> Vec<f32> {
     let mut left = Vec::new();
     for block in blocks {
@@ -463,9 +424,8 @@ fn steps(harness: &mut Harness, blocks: std::ops::Range<u32>, start: Instant) ->
     left
 }
 
-/// The plugin moves its own `Level` to a half, and then asks to be started again for a new
-/// latency. Started again, it gets the pins as the record has them now, the half, and not an
-/// older value that was sent before: neither the plugin nor the record goes back.
+/// The plugin moves its own `Level` to a half, then asks to be started again. It must not get
+/// the older value that was sent before.
 #[test]
 fn a_plugin_started_again_gets_the_pins_as_the_record_has_them_now() {
     for format in FORMATS {
@@ -484,7 +444,6 @@ fn a_plugin_started_again_gets_the_pins_as_the_record_has_them_now() {
         harness.project.engine().play();
         let start = Instant::now();
         let left = steps(&mut harness, 0..16, start);
-        // Started again once, and not loaded again.
         assert_eq!(count(log.path(), "activate"), 2, "{format:?}");
         assert_eq!(count(log.path(), "mode[realtime]"), 1, "{format:?}");
         assert_eq!(plugin_value(&harness, level(format)), 0.5, "{format:?}");
@@ -496,8 +455,6 @@ fn a_plugin_started_again_gets_the_pins_as_the_record_has_them_now() {
     }
 }
 
-/// A pin that changes while the plugin is being started again keeps the plugin, which gets the
-/// new value once it has started.
 #[test]
 fn a_pin_that_changes_while_the_plugin_starts_again_does_not_load_it_again() {
     for format in FORMATS {
@@ -510,7 +467,6 @@ fn a_pin_that_changes_while_the_plugin_starts_again_does_not_load_it_again() {
         harness.add_track(pinned(format, 1.0), played);
         harness.project.engine().play();
         let start = Instant::now();
-        // The block with the key: the plugin asked, and the engine is to give it back.
         steps(&mut harness, 0..3, start);
         set_pin(&mut harness, level(format), 0.25);
         let left = steps(&mut harness, 3..12, start);
@@ -522,8 +478,7 @@ fn a_pin_that_changes_while_the_plugin_starts_again_does_not_load_it_again() {
     }
 }
 
-/// A plugin started again gets the pins of its record before its first block, with no poll of
-/// the pins in between: on a device the new audio side may play before the next poll does.
+/// On a device the new audio side may play before the next poll of the pins.
 #[test]
 fn a_plugin_started_again_has_its_pins_before_its_first_block() {
     for format in FORMATS {
@@ -535,7 +490,7 @@ fn a_plugin_started_again_has_its_pins_before_its_first_block() {
         harness.project.engine().play();
         let start = Instant::now();
         steps(&mut harness, 0..3, start);
-        // Changed while the plugin starts again, and never followed by the poll of the pins.
+        // Never followed by the poll of the pins.
         set_pin(&mut harness, level(format), 0.25);
         let mut left = Vec::new();
         for _ in 3..12 {
@@ -548,9 +503,6 @@ fn a_plugin_started_again_has_its_pins_before_its_first_block() {
     }
 }
 
-/// A turn of a knob whose record is deleted in the middle of it ends at once, with no step of
-/// its own: the delete is the one undo step, and undoing it brings the record back as it was
-/// before the turn.
 #[test]
 fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
     for format in FORMATS {
@@ -565,7 +517,7 @@ fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
         let mut changes = Changes::new();
         changes.delete(&id("track/instrument"));
         harness.project.commit("Delete", changes).unwrap();
-        // Well inside the quiet time of a turn: it ends because its record went.
+        // Well inside the quiet time of a turn.
         steps(&mut harness, 4..5, start);
         let record = harness
             .project
@@ -587,9 +539,8 @@ fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
     }
 }
 
-/// Another pin of the record is written while the plugin turns `Level`. That write is the one
-/// step that covers what happened before it, the turn so far included, and the turn makes no
-/// second one when it rests. A later move of the plugin is a step of its own.
+/// A write of another pin mid-turn is the one step for everything before it, the turn so far
+/// included.
 #[test]
 fn a_write_of_the_record_during_a_turn_is_one_step_and_the_moves_after_it_another() {
     for format in FORMATS {
@@ -610,7 +561,6 @@ fn a_write_of_the_record_during_a_turn_is_one_step_and_the_moves_after_it_anothe
         harness.project.engine().play();
         let start = Instant::now();
         steps(&mut harness, 0..4, start);
-        // Mid-turn: the plugin moved `Level` to a half and has not rested.
         let mut written = record_of(&harness);
         written.parameters.get_mut(&wave).expect("the pin").value = 1.0;
         let mut changes = Changes::new();
@@ -646,8 +596,7 @@ fn a_write_of_the_record_during_a_turn_is_one_step_and_the_moves_after_it_anothe
     }
 }
 
-/// More values than the ring of a CLAP plugin holds, sent before it plays a block. The newest
-/// waits on the main thread and arrives a block later: the plugin ends on the last value.
+/// More values than the ring holds, sent before a block plays.
 #[test]
 fn a_clap_value_that_finds_the_ring_full_waits_and_arrives() {
     tell_the_plugin(None, None);
@@ -669,9 +618,8 @@ fn a_clap_value_that_finds_the_ring_full_waits_and_arrives() {
     assert!(is_near(last, full * 0.7), "{last} of {full}");
 }
 
-/// The VST 3 processor reports a `Level` of its own in a block the host has not polled yet,
-/// and the record then sends another. The report is older than the send, so the controller is
-/// not put back on it: plugin, controller and record agree on the record's value.
+/// The processor reports a `Level` of its own in a block the host has not polled yet, and the
+/// record then sends another. The controller must not be put back on the older report.
 #[test]
 fn a_vst3_report_older_than_a_value_the_host_sent_is_left_out() {
     tell_the_plugin(None, None);
@@ -682,7 +630,6 @@ fn a_vst3_report_older_than_a_value_the_host_sent_is_left_out() {
     harness.project.engine().play();
     let start = Instant::now();
     steps(&mut harness, 0..2, start);
-    // The block that reports a half, with no poll after it.
     harness.render_without_polling(512);
     set_pin(&mut harness, level(format), 0.25);
     let errors = harness.plugins.follow_pins_at(&mut harness.project, start);
@@ -692,9 +639,8 @@ fn a_vst3_report_older_than_a_value_the_host_sent_is_left_out() {
     assert_eq!(written_value(&harness, level(format)), 0.25);
 }
 
-/// The same with the edit ring of the processor full: the last value the host sends waits for
-/// room, and a report the processor makes meanwhile is older than it, though it comes from a
-/// block that took every edit that had room.
+/// The same with the edit ring full: a report from a block that took every edit that had room
+/// is still older than the value that waits.
 #[test]
 fn a_vst3_report_made_while_a_sent_value_waits_for_room_is_left_out() {
     tell_the_plugin(None, None);
@@ -705,8 +651,7 @@ fn a_vst3_report_made_while_a_sent_value_waits_for_room_is_left_out() {
     harness.project.engine().play();
     let start = Instant::now();
     steps(&mut harness, 0..2, start);
-    // More values than the ring holds before a block plays, each another one so each is sent:
-    // the last ones wait, and the last of all is a quarter.
+    // Each value differs from the one before, so each is sent.
     for step in 0..520 {
         let value = match step {
             519 => 0.25,
@@ -717,7 +662,6 @@ fn a_vst3_report_made_while_a_sent_value_waits_for_room_is_left_out() {
         let errors = harness.plugins.follow_pins_at(&mut harness.project, start);
         assert!(errors.is_empty(), "{errors:?}");
     }
-    // The block that takes the ring and reports a half of its own, then the rest.
     steps(&mut harness, 2..30, start);
     assert_eq!(plugin_value(&harness, level(format)), 0.25);
     assert_eq!(written_value(&harness, level(format)), 0.25);
