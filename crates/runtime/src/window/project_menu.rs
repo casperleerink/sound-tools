@@ -1,8 +1,8 @@
 //! The project menu: the project name top-left as a quiet menu. Export the project or the
 //! selected clips as a WAV, undo and redo with what they would do, a new, recent or another
-//! project, the project as a template, the project folder in the Finder or in a terminal, the command line tool, Settings
-//! and the app version. The terminal is where the composer starts a coding agent on the
-//! project, and the tool is what that agent runs to read the whole piece.
+//! project, the project as a template, the project folder in the Finder or in a terminal, the
+//! command line tool, Settings and the app version. The terminal is where the composer starts a
+//! coding agent on the project, and the tool is what that agent runs to read the whole piece.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -554,9 +554,9 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
     })
 }
 
-/// The last group: a new project, this one as a template, another one, a recent one in a submenu, the project folder in the
-/// Finder, a terminal in it for a coding agent, the command that agent runs, and the app's log
-/// to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
+/// The last group: a new project, this one as a template, another one, a recent one in a
+/// submenu, the project folder in the Finder, a terminal in it for a coding agent, the command
+/// that agent runs, and the app's log to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
 /// started from a terminal writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     let mut items = vec![

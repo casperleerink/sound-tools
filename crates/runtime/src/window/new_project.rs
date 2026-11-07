@@ -84,7 +84,10 @@ impl TemplatePicker {
             // The window is gone when this fails.
             (picker.update(cx, |picker, cx| {
                 match choices {
-                    Ok(choices) => picker.choices = choices,
+                    Ok(choices) => {
+                        picker.choices = choices;
+                        picker.message = None;
+                    }
                     Err(error) => picker.message = Some(format!("{error:#}").into()),
                 }
                 cx.notify();

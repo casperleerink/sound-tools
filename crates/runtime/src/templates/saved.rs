@@ -134,18 +134,33 @@ pub fn exists_in(root: &Path, name: &str) -> Result<bool> {
 /// name. A save that fails leaves the one before.
 pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<Saved> {
     let target = folder_of(root, name)?;
+    // `.` has no name of its own to describe the template with.
+    let project = &std::fs::canonicalize(project)
+        .with_context(|| format!("could not find {}", project.display()))?;
+    if !project.join(crate::PROJECT_FILE).is_file() {
+        bail!("{} is not a project.", project.display());
+    }
     let name = name.trim().to_string();
     let file_name = target.file_name().unwrap_or_default().to_string_lossy();
     let saving = root.join(format!(".saving-{file_name}"));
+    let replaced = root.join(format!(".replaced-{file_name}"));
     remove_folder(&saving)?;
+    remove_folder(&replaced)?;
     for path in files_under(project, project)? {
         if !kept(&path, keep) {
             continue;
         }
         let to = saving.join(&path);
         make_room(&to)?;
-        std::fs::copy(project.join(&path), &to)
-            .with_context(|| format!("could not copy {path} into the template"))?;
+        match (path == crate::PROJECT_FILE, keep) {
+            (true, Keep::Tools(ids)) => {
+                let file = std::fs::read_to_string(project.join(&path))
+                    .with_context(|| format!("could not read {path}"))?;
+                std::fs::write(&to, without_connections_to_others(&file, ids)?)
+            }
+            _ => std::fs::copy(project.join(&path), &to).map(drop),
+        }
+        .with_context(|| format!("could not copy {path} into the template"))?;
     }
     let project_name = project.file_name().unwrap_or(project.as_os_str());
     let project_name = project_name.to_string_lossy();
@@ -158,14 +173,50 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
     make_room(&file)?;
     std::fs::write(&file, serde_json::to_string_pretty(&about)?)
         .with_context(|| format!("could not write {}", file.display()))?;
-    remove_folder(&target)?;
-    std::fs::rename(&saving, &target)
-        .with_context(|| format!("could not move the template into {}", target.display()))?;
+    let moved_aside = target.exists();
+    if moved_aside {
+        std::fs::rename(&target, &replaced)
+            .with_context(|| format!("could not move {} aside", target.display()))?;
+    }
+    if let Err(error) = std::fs::rename(&saving, &target) {
+        if moved_aside {
+            std::fs::rename(&replaced, &target)
+                .with_context(|| format!("could not put {} back", target.display()))?;
+        }
+        return Err(error)
+            .with_context(|| format!("could not move the template into {}", target.display()));
+    }
+    remove_folder(&replaced)?;
     Ok(Saved {
         name: about.name,
         description: about.description,
         folder: target,
     })
+}
+
+/// The `project.json` in `file` without the connections that name an instance not in `ids`,
+/// which would be problems in every new project. The file as it was when there are none.
+fn without_connections_to_others(file: &str, ids: &BTreeSet<String>) -> Result<String> {
+    let mut project: serde_json::Value =
+        serde_json::from_str(file).context("project.json is no JSON")?;
+    let Some(connections) = project
+        .get_mut("connections")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(file.to_string());
+    };
+    let names_another = |connection: &serde_json::Value| {
+        ["from", "to"].iter().any(|end| {
+            let instance = connection[end]["instance"].as_str();
+            instance.is_some_and(|instance| !ids.contains(instance))
+        })
+    };
+    let before = connections.len();
+    connections.retain(|connection| !names_another(connection));
+    match connections.len() == before {
+        true => Ok(file.to_string()),
+        false => Ok(serde_json::to_string_pretty(&project)?),
+    }
 }
 
 /// Whether `path`, in a project, goes into a template that keeps `keep`: the project's own
@@ -191,6 +242,9 @@ impl Saved {
     /// Writes its files into `folder`, as [`super::write`] does a template of the app's. A
     /// project made from it keeps no template code: a saved template has no newer version.
     pub fn write(&self, folder: &Path) -> Result<()> {
+        if !self.folder.is_dir() {
+            bail!("The template “{}” is not there anymore.", self.name);
+        }
         super::check_new(folder)?;
         for path in files_under(&self.folder, &self.folder)? {
             if path == ABOUT_FILE || written_by_the_runtime(&path) {
@@ -223,11 +277,22 @@ mod tests {
     use super::*;
     use crate::templates::{named, write};
 
-    /// A DAW project with a sound file, an export dropped in its folder and what the runtime
-    /// writes.
+    /// A DAW project with a sound file, an export dropped in its folder, what the runtime
+    /// writes, and the device input into its first track.
     fn project() -> tempfile::TempDir {
         let folder = tempfile::tempdir().unwrap();
         write(folder.path(), named("DAW").unwrap()).unwrap();
+        let file = folder.path().join(crate::PROJECT_FILE);
+        let mut project: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        project["connections"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "from": { "device_input": 0 },
+                "to": { "instance": "song/t00/rec", "port": "audio" }
+            }));
+        std::fs::write(&file, project.to_string()).unwrap();
         for (path, contents) in [
             ("assets/audio/take.wav", "RIFF"),
             ("export.wav", "RIFF"),
@@ -274,6 +339,13 @@ mod tests {
         );
         assert!(new.path().join("extensions/song.tsx").exists());
         assert!(!new.path().join("extensions/sdk.ts").exists());
+        // The input into the track it left out is left out too; the song still plays out.
+        let connections = |folder: &Path| {
+            let file = std::fs::read_to_string(folder.join(crate::PROJECT_FILE)).unwrap();
+            let file: serde_json::Value = serde_json::from_str(&file).unwrap();
+            file["connections"].as_array().unwrap().len()
+        };
+        assert_eq!(connections(new.path()), 1);
         assert!(!new.path().join(crate::templates::KEPT).exists());
 
         let new = tempfile::tempdir().unwrap();
@@ -283,6 +355,7 @@ mod tests {
         expected.retain(|path| !path.starts_with('.'));
         assert_eq!(files(new.path()), expected);
         assert!(expected.contains(&"assets/audio/take.wav".to_string()));
+        assert_eq!(connections(new.path()), 2);
     }
 
     #[test]

@@ -67,16 +67,11 @@ impl Choice {
     }
 }
 
-/// The templates of the app, then the ones saved in `root`.
-pub fn choices_in(root: &Path) -> Result<Vec<Choice>> {
-    let bundled = TEMPLATES.iter().map(Choice::Bundled);
-    let saved = saved_in(root)?.into_iter().map(Choice::Saved);
-    Ok(bundled.chain(saved).collect())
-}
-
-/// See [`choices_in`].
+/// The templates of the app, then the ones saved on this machine.
 pub fn choices() -> Result<Vec<Choice>> {
-    choices_in(&saved_folder()?)
+    let bundled = TEMPLATES.iter().map(Choice::Bundled);
+    let saved = saved_in(&saved_folder()?)?.into_iter().map(Choice::Saved);
+    Ok(bundled.chain(saved).collect())
 }
 
 /// Makes `folder` for a new project unless it is there and has files in it: it must be
