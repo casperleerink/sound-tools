@@ -1030,3 +1030,18 @@ fn a_flac_file_streamed_from_several_threads_at_once_is_read_once_and_plays_whol
         });
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_video_gives_its_frames_at_most_as_large_as_asked() {
+    use sound_media::video::Video;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/red.mp4");
+    let video = Video::open(&path, 32).unwrap();
+    assert!((video.seconds() - 1.0).abs() < 0.05, "{}", video.seconds());
+    let frame = video.frame_at(0.5).unwrap();
+    assert_eq!((frame.width, frame.height), (32, 18));
+    let middle = (9 * frame.width + 16) * 4;
+    let [red, green, blue] = [0, 1, 2].map(|channel| frame.rgba[middle + channel]);
+    assert!(red > 200 && green < 60 && blue < 60, "{red} {green} {blue}");
+    assert!(Video::open(Path::new("no-such.mp4"), 32).is_err());
+}

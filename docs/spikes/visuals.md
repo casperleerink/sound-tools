@@ -40,3 +40,10 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 `<Stage>` is a div of a page shown in a window of its own: fullscreen on a second screen, else floating in a corner as a preview. The rest of the view stays in the app. Drawn from the page's nodes, as the title bar is. Demo: `docs/prototypes/stage`.
 
 - Open: a stage closed by hand comes back only when the view drops and adds it again. No keys on the stage.
+
+### 5. Video in pictures (`t3/visual-video`)
+
+`pixel.video(asset, { at, x, y })` reads a video under `assets/video/`, decoded by macOS (AVFoundation) on a thread per video; the picture shows the newest frame decoded. `now.seconds` is the playhead in seconds, to keep a video with the piece. Demo: `docs/prototypes/video`, a video folded in a mirror whose colours split on each kick.
+
+- Cost: decoding by seeking to each frame (`AVAssetImageGenerator`) is about a third of a core at 30 frames a second. Open: read frames in order (`AVAssetReader`) and seek only on a jump.
+- Open: Linux and Windows decode no video.

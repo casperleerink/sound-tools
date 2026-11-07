@@ -32,6 +32,7 @@ mod stream;
 mod stretch;
 mod take;
 mod varispeed;
+pub mod video;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;

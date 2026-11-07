@@ -17,6 +17,8 @@ use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
     Weight, Words,
 };
+use sound_pictures::Frame;
+use std::sync::Arc;
 
 use super::input::Hears;
 
@@ -124,6 +126,7 @@ pub(super) enum Geometry {
         /// The values of its live values now, and of its lists.
         lives: Rc<[f32]>,
         waves: Rc<[Vec<f32>]>,
+        videos: Rc<[Arc<Frame>]>,
     },
     Path {
         bends: Rc<[Bend<(f64, f64)>]>,
@@ -907,6 +910,13 @@ impl Placing<'_> {
                 waves: (shape.picture.iter())
                     .flat_map(|picture| picture.waves())
                     .map(|list| self.list(Some(list)))
+                    .collect(),
+                videos: (shape.picture.iter())
+                    .flat_map(|picture| picture.videos())
+                    .map(|video| {
+                        let at = self.sources.number(&video.at);
+                        (self.sources.feeds.video(&video.asset, at)).unwrap_or_default()
+                    })
                     .collect(),
             },
             ShapeKind::Notes => {

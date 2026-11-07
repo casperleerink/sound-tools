@@ -9,6 +9,10 @@ use gpui::{
 };
 use sound_ui::typography;
 
+use std::sync::Arc;
+
+use sound_pictures::Frame;
+
 use crate::picture::Picture;
 use crate::tree::{Align, Cursor, Weight};
 
@@ -25,6 +29,9 @@ pub(super) struct Painted {
     clip: Option<Bounds<Pixels>>,
 }
 
+/// What a picture reads this frame: its live values, lists and videos.
+type PictureInputs = (Rc<[f32]>, Rc<[Vec<f32>]>, Rc<[Arc<Frame>]>);
+
 enum PaintedShape {
     Rect(Bounds<Pixels>, f32, Option<(Hsla, f32)>),
     Circle(Point<Pixels>, f32),
@@ -34,7 +41,7 @@ enum PaintedShape {
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
     Path(Rc<[Bend<Point<Pixels>>]>, Option<f32>),
-    Picture(Bounds<Pixels>, Picture, Rc<[f32]>, Rc<[Vec<f32>]>),
+    Picture(Bounds<Pixels>, Picture, PictureInputs),
 }
 
 impl PaintedShape {
@@ -193,13 +200,13 @@ pub(super) fn prepaint(
                 picture,
                 lives,
                 waves,
+                videos,
             } => {
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Picture(
                     Bounds::new(at((*x, *y)), size),
                     picture.clone(),
-                    lives.clone(),
-                    waves.clone(),
+                    (lives.clone(), waves.clone(), videos.clone()),
                 )
             }
             Geometry::Path { bends, outline } => {
@@ -337,8 +344,8 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
-        PaintedShape::Picture(bounds, picture, lives, waves) => {
-            picture.paint(*bounds, (lives, waves), window);
+        PaintedShape::Picture(bounds, picture, (lives, waves, videos)) => {
+            picture.paint(*bounds, (lives, waves, videos), window);
         }
         PaintedShape::Path(bends, outline) => {
             let mut path = match outline {

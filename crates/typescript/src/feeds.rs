@@ -14,8 +14,11 @@ use sound_media::Overview;
 use sound_media::analysis::{PowerSpectrum, WINDOW};
 use sound_ui::{LiveNotes, PeaksReader, Session, SharedPeaks};
 
+use sound_pictures::Frame;
+
 use crate::meter;
 use crate::tree::{Ease, Uses};
+use crate::videos::Player;
 
 /// The name an owner keeps the watch of what a cable plays into the number of a child under,
 /// `child.number`.
@@ -107,6 +110,10 @@ pub(crate) struct Feeds {
     /// Spectra as drawn, by meter and how many bins, made once a frame.
     spectra: RefCell<HashMap<(String, u32), (u64, Rc<[f32]>)>>,
     sample_rate: u32,
+    /// The folder of the project, whose `assets/video/` its videos are in.
+    root: std::path::PathBuf,
+    /// The videos it shows, by file name, with the frame they were last read.
+    videos: RefCell<HashMap<String, (u64, Player)>>,
     records: Records,
 }
 
@@ -169,6 +176,9 @@ impl Feeds {
         }
         let project = session.project();
         self.sample_rate = project.sample_rate();
+        if self.root != project.root() {
+            self.root = project.root().to_path_buf();
+        }
         let clock = project.clock();
         if (self.clock.as_ref()).is_none_or(|kept| kept.tempo_map() != clock.tempo_map()) {
             self.clock = Some(clock.clone());
@@ -232,6 +242,7 @@ impl Feeds {
         (self.histories.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.spectra.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.videos.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
     }
 
     /// Whether a frame now would draw something else than the last, of what reads `uses`, the
@@ -383,6 +394,18 @@ impl Feeds {
             .unwrap_or_default();
         spectra.insert(key, (self.frame, values.clone().into()));
         values
+    }
+
+    /// The newest frame decoded of the video `asset` under `assets/video/`, asking for the one at
+    /// `seconds` into it.
+    pub(crate) fn video(&self, asset: &str, seconds: f64) -> Option<Arc<Frame>> {
+        let mut videos = self.videos.borrow_mut();
+        let (last, player) = videos.entry(asset.to_string()).or_insert_with(|| {
+            let path = self.root.join("assets").join("video").join(asset);
+            (self.frame, Player::open(&path))
+        });
+        *last = self.frame;
+        player.frame(seconds)
     }
 
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {

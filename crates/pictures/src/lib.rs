@@ -29,6 +29,13 @@ pub enum Node {
         table: Wave,
         at: usize,
     },
+    /// A colour of a frame of [`Inputs::videos`] at `x`, `y`.
+    Video {
+        table: VideoTable,
+        channel: Channel,
+        x: usize,
+        y: usize,
+    },
     /// A colour of the last frame at `x`, `y`.
     Last {
         channel: Channel,
@@ -145,6 +152,12 @@ pub struct Wave {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoTable {
+    video: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Channel {
     Red,
@@ -177,6 +190,20 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// A frame of `width` by `height` from bytes of red, green, blue and alpha.
+    pub fn from_rgba(width: usize, height: usize, rgba: &[u8]) -> Self {
+        let pixels = (rgba.chunks_exact(4))
+            .map(|pixel| {
+                [0, 1, 2].map(|channel| f32::from(pixel.get(channel).copied().unwrap_or(0)) / 255.0)
+            })
+            .collect();
+        Self {
+            width,
+            height,
+            pixels,
+        }
+    }
+
     /// Its pixels as blue, green, red and alpha, a byte each: as GPUI paints an image.
     pub fn bgra(&self) -> Vec<u8> {
         let byte = |value: f32| (value * 255.0).round() as u8;
@@ -211,12 +238,13 @@ impl Frame {
 }
 
 impl Program {
-    /// Checks the graph; `lives` and `waves` are how many live values and lists it may read.
+    /// Checks the graph; `lives`, `waves` and `videos` are how many live values, lists and
+    /// videos it may read.
     pub fn new(
         nodes: Vec<Node>,
         output: Rgb,
         across: Option<u32>,
-        (lives, waves): (usize, usize),
+        (lives, waves, videos): (usize, usize, usize),
     ) -> Result<Self, String> {
         for (index, node) in nodes.iter().enumerate() {
             if node.reads().into_iter().flatten().any(|read| read >= index) {
@@ -227,6 +255,14 @@ impl Program {
             {
                 return Err(format!(
                     "a picture reads live value {live}, which it does not have"
+                ));
+            }
+            if let Node::Video { table, .. } = node
+                && table.video >= videos
+            {
+                return Err(format!(
+                    "a picture reads video {}, which it does not have",
+                    table.video
                 ));
             }
             if let Node::Wave { table, .. } = node
@@ -265,7 +301,7 @@ impl Node {
             | Self::Aspect
             | Self::Live { .. }
             | Self::Noise => [None; 3],
-            Self::Last { x, y, .. } => [Some(x), Some(y), None],
+            Self::Last { x, y, .. } | Self::Video { x, y, .. } => [Some(x), Some(y), None],
             Self::Wave { at, .. } => [Some(at), None, None],
             Self::Negate { x }
             | Self::Sin { x }
@@ -352,6 +388,8 @@ pub struct Inputs<'a> {
     pub lives: &'a [f32],
     /// The lists it reads.
     pub waves: &'a [Vec<f32>],
+    /// The frames of the videos it reads, as they are now.
+    pub videos: &'a [&'a Frame],
     /// What it made the frame before.
     pub last: &'a Frame,
     /// Counts the frames, for noise that changes on each.
@@ -399,6 +437,17 @@ fn run<'a>(node: Node, out: &mut [f32], read: impl Fn(usize) -> &'a [f32], place
                 .map_or(&[][..], Vec::as_slice);
             for (out, at) in out.iter_mut().zip(read(at)) {
                 *out = along(values, *at);
+            }
+        }
+        Node::Video {
+            table,
+            channel,
+            x,
+            y,
+        } => {
+            let frame = place.inputs.videos.get(table.video);
+            for ((out, x), y) in out.iter_mut().zip(read(x)).zip(read(y)) {
+                *out = frame.map_or(0.0, |frame| frame.at(*x, *y, channel as usize));
             }
         }
         Node::Last { channel, x, y } => {
@@ -512,7 +561,7 @@ mod tests {
             lives,
             output,
         } = serde_json::from_value(json).unwrap();
-        Program::new(nodes, output, None, (lives, 1)).unwrap()
+        Program::new(nodes, output, None, (lives, 1, 0)).unwrap()
     }
 
     #[test]
@@ -527,6 +576,7 @@ mod tests {
         let inputs = Inputs {
             lives: &[0.25],
             waves: &[],
+            videos: &[],
             last: &last,
             frame: 0,
         };
@@ -552,6 +602,7 @@ mod tests {
             let inputs = Inputs {
                 lives: &[],
                 waves: &[],
+                videos: &[],
                 last: &last,
                 frame,
             };
@@ -581,6 +632,7 @@ mod tests {
         let inputs = Inputs {
             lives: &[],
             waves: &waves,
+            videos: &[],
             last: &last,
             frame: 0,
         };
@@ -597,6 +649,6 @@ mod tests {
             green: 0,
             blue: 0,
         };
-        assert!(Program::new(nodes, output, None, (0, 0)).is_err());
+        assert!(Program::new(nodes, output, None, (0, 0, 0)).is_err());
     }
 }
