@@ -835,7 +835,7 @@ impl TypeScriptCard {
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
         let takes_keys = self.takes_keys(info.as_deref());
-        let title_focus = (info.as_deref())
+        let keys_out_of_page = (info.as_deref())
             .is_some_and(|info| info.keys)
             .then(|| self.title_focus.clone());
         Drawing {
@@ -866,7 +866,7 @@ impl TypeScriptCard {
             out_of_page: false,
             under_tooltip: false,
             takes_keys,
-            title_focus,
+            keys_out_of_page,
             lifting: None,
             card: self.handle.clone(),
             generation: live.generation(),

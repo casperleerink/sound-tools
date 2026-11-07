@@ -207,7 +207,7 @@ impl TypeScriptCard {
         let mut drawing = self.drawing(state, &table, window, cx);
         drawing.stage = StageDiv::Here;
         drawing.out_of_page = true;
-        drawing.title_focus = Some(keys.clone());
+        drawing.keys_out_of_page = Some(keys.clone());
         let shown = drawing.draw(slot);
         let spaces = drawing.spaces;
         self.keep_spaces(spaces);
