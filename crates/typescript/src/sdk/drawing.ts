@@ -95,7 +95,7 @@ export type Shape =
          */
         | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
         /** A picture across its box, its pixels worked out on every frame: see `Picture`. */
-        | { kind: "picture"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; picture: PictureGraph<Num> }
+        | { kind: "picture"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; picture: PictureGraph<Num, WaveList> }
       ));
 
 /** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
@@ -140,6 +140,12 @@ export interface Pixel {
   /** A live value, worked out once a frame: a level, an output of the sound, a field as it turns, a drag. */
   live(value: Num): Signal;
   /**
+   * A list worked out once a frame, read at `at`, 0 its first value and 1 its last, between them:
+   * `wave(now.spectrum("meter"), x)` is how loud the sound is at the frequency across;
+   * `wave(now.scope("meter"), x)` its last sound.
+   */
+  wave(list: WaveList, at: Operand): Signal;
+  /**
    * The colour the picture had one frame before at `x`, `y` (here when left out), between its
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
    */
@@ -154,6 +160,7 @@ export interface Pixel {
  */
 export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">, "picture"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
   const lives: Num[] = [];
+  const waves: WaveList[] = [];
   const live = (value: Num): Signal => {
     if (typeof value === "number") return new Signal({ op: "add", a: value, b: 0 });
     let index = lives.indexOf(value);
@@ -167,13 +174,18 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
     aspect: pixelSource("aspect"),
     time: live(now.elapsed),
     live,
+    wave: (list, at) => {
+      let index = waves.findIndex((each) => JSON.stringify(each) === JSON.stringify(list));
+      if (index < 0) index = waves.push(list) - 1;
+      return new Signal({ op: "wave", table: { wave: index }, at });
+    },
     last: (atX = x, atY = y) => ({
       red: new Signal({ op: "last", channel: "red", x: atX, y: atY }),
       green: new Signal({ op: "last", channel: "green", x: atX, y: atY }),
       blue: new Signal({ op: "last", channel: "blue", x: atX, y: atY }),
     }),
   };
-  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, across) }, []);
+  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, across) }, []);
 };
 
 /** Shapes moved together, see `Shape`. */

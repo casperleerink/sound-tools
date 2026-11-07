@@ -1129,20 +1129,8 @@ impl ShapeProps {
         if let Some(Paint::Mix { by, .. }) = &self.color {
             by.add_uses(&mut uses);
         }
-        match &self.list {
-            Some(List::Scope { name, .. }) => {
-                uses.scopes.insert(name.clone());
-                uses.animates = true;
-            }
-            Some(List::History { of, .. }) => {
-                of.add_uses(&mut uses);
-                uses.animates = true;
-            }
-            Some(List::File { asset, .. }) => {
-                uses.files.insert(asset.clone());
-            }
-            Some(List::Take { name }) => _ = uses.takes.insert(name.clone()),
-            None => {}
+        if let Some(list) = &self.list {
+            list.add_uses(&mut uses);
         }
         if let Some(picture) = &self.picture {
             picture.add_uses(&mut uses);
@@ -1366,6 +1354,26 @@ pub(crate) enum List {
     /// The waveform of the take a `recorder` at the path `name` inside records, as it grows,
     /// in the form of [`List::File`].
     Take { name: String },
+    /// The levels of the last sound of a meter, `bins` of them from 20 Hz to 20 kHz, each 0
+    /// (silence, -90 dB) to 1 (0 dB).
+    Spectrum { name: String, bins: Option<u32> },
+}
+
+impl List {
+    pub(crate) fn add_uses(&self, uses: &mut Uses) {
+        match self {
+            Self::Scope { name, .. } | Self::Spectrum { name, .. } => {
+                uses.scopes.insert(name.clone());
+                uses.animates = true;
+            }
+            Self::History { of, .. } => {
+                of.add_uses(uses);
+                uses.animates = true;
+            }
+            Self::File { asset, .. } => _ = uses.files.insert(asset.clone()),
+            Self::Take { name } => _ = uses.takes.insert(name.clone()),
+        }
+    }
 }
 
 /// An end of a line, a point, or of an arc, a turn.

@@ -121,8 +121,9 @@ pub(super) enum Geometry {
         width: f64,
         height: f64,
         picture: Picture,
-        /// The values of its live values now.
+        /// The values of its live values now, and of its lists.
         lives: Rc<[f32]>,
+        waves: Rc<[Vec<f32>]>,
     },
     Path {
         bends: Rc<[Bend<(f64, f64)>]>,
@@ -505,7 +506,7 @@ impl Placing<'_> {
     }
 
     /// The values of a wave, oldest first.
-    fn list(&self, list: Option<&List>) -> Vec<f32> {
+    pub(super) fn list(&self, list: Option<&List>) -> Vec<f32> {
         let feeds = self.sources.feeds;
         match list {
             Some(List::Scope {
@@ -532,6 +533,7 @@ impl Placing<'_> {
             Some(List::Take { name }) => (feeds.takes.get(name))
                 .map(|wave| wave.to_vec())
                 .unwrap_or_default(),
+            Some(List::Spectrum { name, bins }) => feeds.spectrum(name, bins.unwrap_or(128)),
             None => Vec::new(),
         }
     }
@@ -901,6 +903,10 @@ impl Placing<'_> {
                 lives: (shape.picture.iter())
                     .flat_map(|picture| picture.lives())
                     .map(|live| self.sources.number(live) as f32)
+                    .collect(),
+                waves: (shape.picture.iter())
+                    .flat_map(|picture| picture.waves())
+                    .map(|list| self.list(Some(list)))
                     .collect(),
             },
             ShapeKind::Notes => {
