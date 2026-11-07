@@ -712,6 +712,25 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     assert_eq!(window.problems(), []);
 }
 
+/// A film dropped on the timeline is copied into the project and the song is scored to it, as
+/// one undo step: no clip comes of it.
+#[gpui::test]
+fn a_film_dropped_on_the_timeline_is_the_one_the_song_is_scored_to(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let files = tempfile::tempdir().unwrap();
+    let film = files.path().join("My Film.mp4");
+    std::fs::write(&film, b"not decoded here").unwrap();
+    let to = window.on_lane(2 * BAR, 1);
+    window.drop_files(&[film], to);
+    window.until("the film to be scored to", |window| {
+        window.record("song")["video"] == "my-film.mp4"
+    });
+    assert!(window.path("assets/video/my-film.mp4").is_file());
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Score to a film"));
+}
+
 /// A clip moved on its own track takes the line of its automation along: the line under it
 /// lands where it lands, and the move is one undo step.
 #[gpui::test]

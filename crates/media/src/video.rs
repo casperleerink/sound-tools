@@ -6,6 +6,59 @@
 
 use std::path::Path;
 
+use sound_core::{AssetName, Assets};
+
+use crate::MediaError;
+
+/// The folder under `assets/` a picture's file goes in, by its kind: `video/` for a film and
+/// `images/` for a photo. `None` for anything else, such as sound.
+pub fn picture_folder(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_string_lossy().to_lowercase();
+    match extension.as_str() {
+        "mp4" | "mov" | "m4v" => Some("video"),
+        "jpg" | "jpeg" | "png" => Some("images"),
+        _ => None,
+    }
+}
+
+/// Copies a film or a photo into `assets/<folder>/` under a name of its own, never over a file
+/// that is there, and gives its file name there, as a picture names it.
+pub fn import_picture(assets: &Assets, source: &Path, folder: &str) -> Result<String, MediaError> {
+    let io_error = |source| MediaError::Io {
+        path: folder.to_string(),
+        source,
+    };
+    let part = |text: Option<&std::ffi::OsStr>, fallback: &str| {
+        crate::asset_part(
+            &text.map(|text| text.to_string_lossy()).unwrap_or_default(),
+            fallback,
+        )
+    };
+    let (stem, extension) = (
+        part(source.file_stem(), folder),
+        part(source.extension(), "mp4"),
+    );
+    let wanted = AssetName::new(folder, &stem, &extension)
+        .map_err(|error| io_error(std::io::Error::new(std::io::ErrorKind::InvalidInput, error)))?;
+    let reserved = assets
+        .reserve(&wanted)
+        .map_err(|error| io_error(std::io::Error::other(error)))?;
+    let target = assets.path(&reserved);
+    // Copied next to its place, then renamed over the empty file that holds its name.
+    let temporary = target.with_file_name(format!(".import-{}.tmp", std::process::id()));
+    let copied =
+        std::fs::copy(source, &temporary).and_then(|_| std::fs::rename(&temporary, &target));
+    if let Err(error) = copied {
+        crate::remove_quietly(&temporary);
+        crate::remove_quietly(&target);
+        return Err(io_error(error));
+    }
+    Ok(target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default())
+}
+
 /// A frame of a video: red, green, blue and alpha, a byte each, row by row from the top.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VideoFrame {

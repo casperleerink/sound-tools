@@ -19,7 +19,7 @@ The agent evals `visuals-builder` and `video-builder` passed 4 runs of 4 (3 to 8
 
 ## What it is
 
-Branches `t3/visual-*`, stacked; PRs #392 to #410, `t3/visual-gpu-all` on top.
+Branches `t3/visual-*`, stacked; PRs #392 to #411, `t3/visual-drop-film` on top.
 
 | Part | What a tool writes |
 | --- | --- |
@@ -27,7 +27,7 @@ Branches `t3/visual-*`, stacked; PRs #392 to #410, `t3/visual-gpu-all` on top.
 | Reads | `pixel.live(value)` any live value; `pixel.wave(list, at)` a list such as `now.spectrum(meter)` or `now.scope(meter)`; `pixel.video(file, { at })`; `pixel.photo(file)`; `pixel.picture(key)` another picture; `pixel.last(x, y)` the step before, for feedback |
 | Plays the sound | `pixel.measure(input, value)`: the mean over the picture moves a number input, as a knob does |
 | Stage | `<Stage>` shows part of a page in its own window: full screen on a second screen, else floating in a corner |
-| Time | `now.seconds` follows the piece; the DAW song's `video` field shows a film at the playhead |
+| Time | `now.seconds` follows the piece; a film dropped on the DAW's timeline shows on the stage at the playhead |
 | Pointer | `now.space(key).pointerX`, `pointerY`, `pointerOver` |
 | Output | `--render-video` films the window with its sound, frame by frame |
 
@@ -46,7 +46,6 @@ Branches `t3/visual-*`, stacked; PRs #392 to #410, `t3/visual-gpu-all` on top.
 - Camera input: as a video, from `AVCaptureSession`; it needs the camera permission, so it was not tried.
 - A picture another reads must show to step; a hidden one could step too.
 - A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
-- The DAW has no way in the window to pick its film; the agent sets `video`.
 - `measure` of a live value is a way round to play an input from the pointer; a space could say which live values play which inputs.
 
 ## Recommendation
