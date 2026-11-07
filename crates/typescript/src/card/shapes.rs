@@ -11,7 +11,11 @@ use sound_ui::components::knob::{
 };
 
 use crate::live::{DragNumbers, Sources, SpaceView};
-use crate::picture::{Picture, Seen};
+use std::sync::Arc;
+
+use sound_pictures::Frame;
+
+use crate::picture::{ImageSource, Picture, Seen};
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
@@ -504,6 +508,31 @@ impl Placing<'_> {
     }
 
     /// The values of a wave, oldest first.
+    /// An image a picture reads as it is now: the newest frame of a video, or what the picture
+    /// of that key showed at its last step. Black until there is one.
+    fn image(&self, image: &ImageSource) -> Arc<Frame> {
+        match image {
+            ImageSource::Video(video) => {
+                let at = self.sources.number(&video.at);
+                let read = format!("{:?} {}", video.at, video.loops);
+                (self
+                    .sources
+                    .feeds
+                    .video((&video.asset, &read), at, video.loops))
+                .unwrap_or_default()
+            }
+            ImageSource::Picture(key) => (self.table.entries())
+                .find_map(|entry| match &entry.props {
+                    Props::Shape(shape) if shape.key.as_deref() == Some(key) => {
+                        shape.picture.as_ref()
+                    }
+                    _ => None,
+                })
+                .map(Picture::last)
+                .unwrap_or_default(),
+        }
+    }
+
     pub(super) fn list(&self, list: Option<&List>) -> Vec<f32> {
         let feeds = self.sources.feeds;
         match list {
@@ -907,17 +936,9 @@ impl Placing<'_> {
                         .flat_map(|picture| picture.waves())
                         .map(|list| self.list(Some(list)))
                         .collect(),
-                    videos: (shape.picture.iter())
-                        .flat_map(|picture| picture.videos())
-                        .map(|video| {
-                            let at = self.sources.number(&video.at);
-                            let read = format!("{:?} {}", video.at, video.loops);
-                            (self
-                                .sources
-                                .feeds
-                                .video((&video.asset, &read), at, video.loops))
-                            .unwrap_or_default()
-                        })
+                    images: (shape.picture.iter())
+                        .flat_map(|picture| picture.images())
+                        .map(|image| self.image(image))
                         .collect(),
                     time: self.sources.feeds.time,
                 }),

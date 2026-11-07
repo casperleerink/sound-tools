@@ -29,9 +29,9 @@ pub enum Node {
         table: Wave,
         at: usize,
     },
-    /// A colour of a frame of [`Inputs::videos`] at `x`, `y`.
-    Video {
-        table: VideoTable,
+    /// A colour of a frame of [`Inputs::images`] at `x`, `y`: of a video, or of another picture.
+    Image {
+        table: ImageTable,
         channel: Channel,
         x: usize,
         y: usize,
@@ -159,8 +159,8 @@ pub struct Wave {
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct VideoTable {
-    video: usize,
+pub struct ImageTable {
+    image: usize,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -250,13 +250,13 @@ impl Frame {
 }
 
 impl Program {
-    /// Checks the graph; `lives`, `waves` and `videos` are how many live values, lists and
-    /// videos it may read.
+    /// Checks the graph; `lives`, `waves` and `images` are how many live values, lists and
+    /// images it may read.
     pub fn new(
         nodes: Vec<Node>,
         (output, measures): (Rgb, Vec<usize>),
         across: Option<u32>,
-        (lives, waves, videos): (usize, usize, usize),
+        (lives, waves, images): (usize, usize, usize),
     ) -> Result<Self, String> {
         for (index, node) in nodes.iter().enumerate() {
             if node.reads().into_iter().flatten().any(|read| read >= index) {
@@ -269,12 +269,12 @@ impl Program {
                     "a picture reads live value {live}, which it does not have"
                 ));
             }
-            if let Node::Video { table, .. } = node
-                && table.video >= videos
+            if let Node::Image { table, .. } = node
+                && table.image >= images
             {
                 return Err(format!(
-                    "a picture reads video {}, which it does not have",
-                    table.video
+                    "a picture reads image {}, which it does not have",
+                    table.image
                 ));
             }
             if let Node::Wave { table, .. } = node
@@ -322,7 +322,7 @@ impl Node {
             | Self::Aspect
             | Self::Live { .. }
             | Self::Noise => [None; 3],
-            Self::Last { x, y, .. } | Self::Video { x, y, .. } => [Some(x), Some(y), None],
+            Self::Last { x, y, .. } | Self::Image { x, y, .. } => [Some(x), Some(y), None],
             Self::SmoothNoise { x, y, z } => [Some(x), Some(y), Some(z)],
             Self::Wave { at, .. } => [Some(at), None, None],
             Self::Negate { x }
@@ -471,8 +471,8 @@ pub struct Inputs<'a> {
     pub lives: &'a [f32],
     /// The lists it reads.
     pub waves: &'a [Vec<f32>],
-    /// The frames of the videos it reads, as they are now.
-    pub videos: &'a [&'a Frame],
+    /// The frames of the videos and pictures it reads, as they are now.
+    pub images: &'a [&'a Frame],
     /// What it made the frame before.
     pub last: &'a Frame,
     /// Counts the frames, for noise that changes on each.
@@ -522,13 +522,13 @@ fn run<'a>(node: Node, out: &mut [f32], read: impl Fn(usize) -> &'a [f32], place
                 *out = along(values, *at);
             }
         }
-        Node::Video {
+        Node::Image {
             table,
             channel,
             x,
             y,
         } => {
-            let frame = place.inputs.videos.get(table.video);
+            let frame = place.inputs.images.get(table.image);
             for ((out, x), y) in out.iter_mut().zip(read(x)).zip(read(y)) {
                 *out = frame.map_or(0.0, |frame| frame.at(*x, *y, channel as usize));
             }
@@ -687,7 +687,7 @@ mod tests {
         let inputs = Inputs {
             lives: &[0.25],
             waves: &[],
-            videos: &[],
+            images: &[],
             last: &last,
             frame: 0,
         };
@@ -717,7 +717,7 @@ mod tests {
             let inputs = Inputs {
                 lives: &[],
                 waves: &[],
-                videos: &[],
+                images: &[],
                 last: &last,
                 frame,
             };
@@ -747,7 +747,7 @@ mod tests {
         let inputs = Inputs {
             lives: &[],
             waves: &waves,
-            videos: &[],
+            images: &[],
             last: &last,
             frame: 0,
         };
@@ -783,7 +783,7 @@ mod tests {
         let inputs = Inputs {
             lives: &[],
             waves: &[],
-            videos: &[],
+            images: &[],
             last: &last,
             frame: 7,
         };

@@ -63,7 +63,7 @@ type SignalNode<R> =
   | { op: "last"; channel: "red" | "green" | "blue" | "alpha"; x: R; y: R }
   | { op: "wave"; table: { wave: number }; at: R }
   | { op: "smoothNoise"; x: R; y: R; z: R }
-  | { op: "video"; table: { video: number }; channel: "red" | "green" | "blue"; x: R; y: R };
+  | { op: "image"; table: { image: number }; channel: "red" | "green" | "blue" | "alpha"; x: R; y: R };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
 export type GraphNode =
@@ -647,7 +647,8 @@ export interface PictureGraph<L = unknown, W = unknown> {
   nodes: GraphNode[];
   lives: L[];
   waves: W[];
-  videos: Array<{ asset: string; at: L; loops: boolean }>;
+  /** What `image` nodes read: a video, or another picture by its `key`. */
+  images: Array<{ video: { asset: string; at: L; loops: boolean } } | { picture: string }>;
   output: { red: number; green: number; blue: number; alpha?: number };
   measures: Array<{ name: string; node: number }>;
   across?: number;
@@ -667,7 +668,7 @@ export function pictureToJson<L, W>(
   colour: Rgb,
   lives: L[],
   waves: W[],
-  videos: Array<{ asset: string; at: L; loops: boolean }>,
+  images: PictureGraph<L, W>["images"],
   measures: Array<{ name: string; value: Operand }>,
   across?: number,
 ): PictureGraph<L, W> {
@@ -680,6 +681,6 @@ export function pictureToJson<L, W>(
       throw new Error(`\`${node.op}\` belongs in a sound: a picture works out each pixel on its own, with no time between them`);
     }
   }
-  const graph = { nodes, lives, waves, videos, output, measures: measured };
+  const graph = { nodes, lives, waves, images, output, measures: measured };
   return across === undefined ? graph : { ...graph, across };
 }
