@@ -3,9 +3,8 @@
 //! files a new project starts with. One layout for both, so a saved template can later be
 //! shared as it is.
 
-use std::path::{Path, PathBuf};
-
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use sound_core::{InstanceId, Project};
@@ -25,8 +24,8 @@ pub enum Keep {
 }
 
 impl Keep {
-    /// [`Keep::Tools`] of `project`. Refused while a record it would keep did not load: what
-    /// its tool requires is then unknown.
+    /// [`Keep::Tools`] of `project`. Refused while a tool, or a record it would keep, did not
+    /// load: what they require is then unknown.
     pub fn tools_of(project: &Project) -> Result<Self> {
         let required = |id: &InstanceId| -> bool {
             let mut id = id.clone();
@@ -40,6 +39,11 @@ impl Keep {
             true
         };
         for problem in project.problems() {
+            if problem.path.starts_with("extensions/") {
+                bail!(
+                    "A tool of this project does not load, so what it requires is unknown. Fix it first, or save the tools and content."
+                );
+            }
             let id = record_id(&problem.path).map(|id| InstanceId::try_from(id.to_string()));
             if let Some(Ok(id)) = id
                 && project.tool_of(&id).is_none()
@@ -143,7 +147,7 @@ pub fn exists_in(root: &Path, name: &str) -> Result<bool> {
 }
 
 /// Saves the project in `project` as the template `name` in `root`, in place of one of that
-/// name. A save that fails leaves the one before.
+/// name. A save that fails leaves the one before, and no copy.
 pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<Saved> {
     let target = folder_of(root, name)?;
     // `.` has no name of its own to describe the template with.
@@ -152,12 +156,54 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
     if !project.join(crate::PROJECT_FILE).is_file() {
         bail!("{} is not a project.", project.display());
     }
-    let name = name.trim().to_string();
     let file_name = target.file_name().unwrap_or_default().to_string_lossy();
     let saving = root.join(format!(".saving-{file_name}"));
     let replaced = root.join(format!(".replaced-{file_name}"));
     remove_folder(&saving)?;
     remove_folder(&replaced)?;
+    let about = match copy_project(&saving, project, name.trim(), keep) {
+        Ok(about) => about,
+        Err(error) => return Err(left_out(&saving, error)),
+    };
+    let moved_aside = target.exists();
+    if moved_aside && let Err(error) = std::fs::rename(&target, &replaced) {
+        let error = anyhow::Error::from(error)
+            .context(format!("could not move {} aside", target.display()));
+        return Err(left_out(&saving, error));
+    }
+    if let Err(error) = std::fs::rename(&saving, &target) {
+        if moved_aside {
+            std::fs::rename(&replaced, &target)
+                .with_context(|| format!("could not put {} back", target.display()))?;
+        }
+        let error = anyhow::Error::from(error).context(format!(
+            "could not move the template into {}",
+            target.display()
+        ));
+        return Err(left_out(&saving, error));
+    }
+    // Saved already: what is left of the one before goes before the next save of the name.
+    if let Err(error) = remove_folder(&replaced) {
+        eprintln!("error: {error:#}");
+    }
+    Ok(Saved {
+        name: about.name,
+        description: about.description,
+        folder: target,
+    })
+}
+
+/// `error`, once the copy in `saving` is gone: a failed save of every sound file must not keep
+/// the disk full.
+fn left_out(saving: &Path, error: anyhow::Error) -> anyhow::Error {
+    if let Err(removed) = remove_folder(saving) {
+        eprintln!("error: {removed:#}");
+    }
+    error
+}
+
+/// Copies what `keep` keeps of `project` into `saving`, with the template's `template.json`.
+fn copy_project(saving: &Path, project: &Path, name: &str, keep: &Keep) -> Result<About> {
     for path in files_under(project, project)? {
         if !kept(&path, keep) {
             continue;
@@ -168,7 +214,7 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
             (true, Keep::Tools(ids)) => {
                 let file = std::fs::read_to_string(project.join(&path))
                     .with_context(|| format!("could not read {path}"))?;
-                std::fs::write(&to, without_connections_to_others(&file, ids)?)
+                std::fs::write(&to, project_file_of_tools(&file, ids)?)
             }
             _ => std::fs::copy(project.join(&path), &to).map(drop),
         }
@@ -180,55 +226,41 @@ pub fn save_in(root: &Path, project: &Path, name: &str, keep: &Keep) -> Result<S
         Keep::Tools(_) => format!("From “{project_name}”: its tools, with nothing in them."),
         Keep::Everything => format!("From “{project_name}”: its tools and everything in them."),
     };
-    let about = About { name, description };
+    let about = About {
+        name: name.to_string(),
+        description,
+    };
     let file = saving.join(ABOUT_FILE);
     make_room(&file)?;
     std::fs::write(&file, serde_json::to_string_pretty(&about)?)
         .with_context(|| format!("could not write {}", file.display()))?;
-    let moved_aside = target.exists();
-    if moved_aside {
-        std::fs::rename(&target, &replaced)
-            .with_context(|| format!("could not move {} aside", target.display()))?;
-    }
-    if let Err(error) = std::fs::rename(&saving, &target) {
-        if moved_aside {
-            std::fs::rename(&replaced, &target)
-                .with_context(|| format!("could not put {} back", target.display()))?;
-        }
-        return Err(error)
-            .with_context(|| format!("could not move the template into {}", target.display()));
-    }
-    remove_folder(&replaced)?;
-    Ok(Saved {
-        name: about.name,
-        description: about.description,
-        folder: target,
-    })
+    Ok(about)
 }
 
-/// The `project.json` in `file` without the connections that name an instance not in `ids`,
-/// which would be problems in every new project. The file as it was when there are none.
-fn without_connections_to_others(file: &str, ids: &BTreeSet<String>) -> Result<String> {
-    let mut project: serde_json::Value =
-        serde_json::from_str(file).context("project.json is no JSON")?;
-    let Some(connections) = project
-        .get_mut("connections")
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        return Ok(file.to_string());
-    };
-    let names_another = |connection: &serde_json::Value| {
+/// The `project.json` in `file` with its tools only: no connection that names an instance not
+/// in `ids`, which would be a problem in every new project, no section, and the first tempo and
+/// time signature alone.
+fn project_file_of_tools(file: &str, ids: &BTreeSet<String>) -> Result<String> {
+    use serde_json::Value;
+    let mut project: Value = serde_json::from_str(file).context("project.json is no JSON")?;
+    let names_another = |connection: &Value| {
         ["from", "to"].iter().any(|end| {
             let instance = connection[end]["instance"].as_str();
             instance.is_some_and(|instance| !ids.contains(instance))
         })
     };
-    let before = connections.len();
-    connections.retain(|connection| !names_another(connection));
-    match connections.len() == before {
-        true => Ok(file.to_string()),
-        false => Ok(serde_json::to_string_pretty(&project)?),
+    if let Some(connections) = project["connections"].as_array_mut() {
+        connections.retain(|connection| !names_another(connection));
     }
+    if let Some(project) = project.as_object_mut() {
+        project.remove("sections");
+    }
+    for list in ["time_signatures", "tempo_changes"] {
+        if let Some(list) = project["tempo_map"][list].as_array_mut() {
+            list.truncate(1);
+        }
+    }
+    Ok(serde_json::to_string_pretty(&project)?)
 }
 
 /// The id of the instance whose record is at `path` in a project, such as `song/master` of
@@ -354,13 +386,28 @@ mod tests {
         );
         assert!(new.path().join("extensions/song.tsx").exists());
         assert!(!new.path().join("extensions/sdk.ts").exists());
-        // The input into the track it left out is left out too; the song still plays out.
-        let connections = |folder: &Path| {
+        // The input into the track it left out is left out too; the song still plays out. The
+        // sections and the later tempo were the piece's.
+        let project_file = |folder: &Path| -> serde_json::Value {
             let file = std::fs::read_to_string(folder.join(crate::PROJECT_FILE)).unwrap();
-            let file: serde_json::Value = serde_json::from_str(&file).unwrap();
-            file["connections"].as_array().unwrap().len()
+            serde_json::from_str(&file).unwrap()
+        };
+        let connections = |folder: &Path| {
+            project_file(folder)["connections"]
+                .as_array()
+                .unwrap()
+                .len()
         };
         assert_eq!(connections(new.path()), 1);
+        let tools_only = project_file(new.path());
+        assert!(tools_only.get("sections").is_none());
+        assert_eq!(
+            tools_only["tempo_map"]["tempo_changes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         // An instance may be called `state`.
         let named_state = Keep::Tools(["state".to_string()].into());
         assert!(kept("state/state/instance.json", &named_state));

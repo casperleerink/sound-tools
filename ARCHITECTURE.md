@@ -132,7 +132,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - A project keeps its own copy of the template's code. Rejected: the template loaded from the app, which updates by itself but makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which leave a merge nothing to merge from.
 - The DAW is only a template of tools of the project. Rejected: keeping the Rust arrangement next to it, two DAWs to maintain.
-- A saved template is a folder in the support folder, laid out as one of `templates/`, so it can later be shared as it is. "Tools only" keeps the records at the top and the children their tools require by name, such as a song's master and no track: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: there is no newer version to update from.
+- A saved template is a folder in the support folder, laid out as one of `templates/`, so it can later be shared as it is. "Tools only" keeps the records at the top and the children their tools require by name, such as a song's master and no track, and no sections or later tempo: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: there is no newer version to update from.
 
 ## Audio files and the Sampler
 

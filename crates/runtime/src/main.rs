@@ -251,6 +251,9 @@ fn inspect(folder: &Path) -> Result<()> {
 /// Saves the project as the template `name` for a new project on this machine. One of that
 /// name is replaced only with `--replace`: the command cannot ask.
 fn save_template(folder: &Path, name: &str, flags: &[&str]) -> Result<()> {
+    if name.starts_with("--") {
+        bail!("--save-template takes a name first\n{USAGE}");
+    }
     if let Some(flag) = (flags.iter()).find(|flag| !["--with-content", "--replace"].contains(flag))
     {
         bail!("unknown option {flag}\n{USAGE}");

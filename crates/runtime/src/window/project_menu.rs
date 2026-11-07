@@ -556,8 +556,8 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
 
 /// The last group: a new project, this one as a template, another one, a recent one in a
 /// submenu, the project folder in the Finder, a terminal in it for a coding agent, the command
-/// that agent runs, and the app's log to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
-/// started from a terminal writes no log, see `log_file`.
+/// that agent runs, and the app's log to send us. Windows has no command line tool, see
+/// `app::Installed`. A dev build or one started from a terminal writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     let mut items = vec![
         MenuItem::new(NEW_PROJECT, "New project…")

@@ -172,6 +172,11 @@ impl Render for SaveTemplate {
         };
         div()
             .size_full()
+            .on_key_down(|event, window, _| {
+                if event.keystroke.key == "escape" {
+                    window.remove_window();
+                }
+            })
             .flex()
             .flex_col()
             .gap_3()
