@@ -55,6 +55,7 @@ pub use card::{node_counts, page_has_text, page_ready};
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use tools::forget_gone;
+pub use videos::wait_for_video_frames;
 pub use window::start_window;
 #[cfg(feature = "test-support")]
 pub use window::{CodeChanges, start_window_unwatched};

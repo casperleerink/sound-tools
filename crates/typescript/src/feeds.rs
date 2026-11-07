@@ -112,7 +112,7 @@ pub(crate) struct Feeds {
     sample_rate: u32,
     /// The folder of the project, whose `assets/video/` its videos are in.
     root: std::path::PathBuf,
-    /// The videos it shows, by file name, with the frame they were last read.
+    /// The videos it shows, by file name and read, with the frame they were last read.
     videos: RefCell<HashMap<String, (u64, Player)>>,
     records: Records,
 }
@@ -397,10 +397,16 @@ impl Feeds {
     }
 
     /// The newest frame decoded of the video `asset` under `assets/video/`, asking for the one at
-    /// `seconds` into it, see [`Player::frame`].
-    pub(crate) fn video(&self, asset: &str, seconds: f64, loops: bool) -> Option<Arc<Frame>> {
+    /// `seconds` into it, see [`Player::frame`]. Each read of a video, by `read`, has a player of
+    /// its own: two at other times would make one jump back and forth.
+    pub(crate) fn video(
+        &self,
+        (asset, read): (&str, &str),
+        seconds: f64,
+        loops: bool,
+    ) -> Option<Arc<Frame>> {
         let mut videos = self.videos.borrow_mut();
-        let (last, player) = videos.entry(asset.to_string()).or_insert_with(|| {
+        let (last, player) = videos.entry(format!("{asset}|{read}")).or_insert_with(|| {
             let path = self.root.join("assets").join("video").join(asset);
             (self.frame, Player::open(&path))
         });

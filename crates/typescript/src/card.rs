@@ -106,6 +106,8 @@ pub(crate) struct TypeScriptCard {
     /// The slot of the div it shows on the stage, and the stage's window while it is open.
     stage: Option<usize>,
     stage_window: Option<WindowHandle<Stage>>,
+    /// The number inputs its pictures measure that its tool refused.
+    measures_refused: HashSet<String>,
     /// What its nodes read by where they draw, for the version of the nodes and the slot of the
     /// title bar it was worked out for.
     parts: RefCell<Option<((u64, Option<usize>, Option<usize>), Rc<Parts>)>>,
@@ -453,6 +455,7 @@ impl TypeScriptCard {
             title_bar: None,
             stage: None,
             stage_window: None,
+            measures_refused: HashSet::new(),
             parts: RefCell::default(),
             lifted: Rc::default(),
             origin: Rc::default(),
@@ -536,7 +539,10 @@ impl TypeScriptCard {
             let sent = self.live.update(cx, |live, cx| {
                 live.control(&id, &name, Some(value), None, cx)
             });
-            if let Err(error) = sent {
+            // Said once, not on every poll.
+            if let Err(error) = sent
+                && self.measures_refused.insert(name.clone())
+            {
                 eprintln!("error: a picture measures `{name}`: {error}");
             }
         }
@@ -882,8 +888,12 @@ impl TypeScriptCard {
         let card = cx.entity();
         // Not inside this update: the window's first draw reads the card.
         cx.defer(move |cx| {
+            // It went again in the same update.
+            if card.read(cx).stage.is_none() {
+                return;
+            }
             let options = stage_options(cx);
-            match cx.open_window(options, |_, cx| cx.new(|cx| Stage::new(card.clone(), cx))) {
+            match cx.open_window(options, |_, cx| cx.new(|cx| Stage::new(&card, cx))) {
                 Ok(window) => card.update(cx, |card, _| card.stage_window = Some(window)),
                 Err(error) => eprintln!("error: the stage did not open: {error:#}"),
             }
@@ -962,21 +972,27 @@ pub(crate) struct StageChanged;
 
 impl EventEmitter<StageChanged> for TypeScriptCard {}
 
-/// The window of a page's div that says `stage`: black, and the div over all of it.
-pub(crate) struct Stage(Entity<TypeScriptCard>);
+/// The window of a page's div that says `stage`: black, and the div over all of it. It holds
+/// its card weakly, so a card that goes takes its stage along.
+pub(crate) struct Stage(WeakEntity<TypeScriptCard>);
 
 impl Stage {
-    fn new(card: Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&card, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&card, |_, _, _: &StageChanged, cx| cx.notify())
+    fn new(card: &Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
+        cx.observe(card, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(card, |_, _, _: &StageChanged, cx| cx.notify())
             .detach();
-        Self(card)
+        cx.observe_release(card, |_, _, cx| cx.notify()).detach();
+        Self(card.downgrade())
     }
 }
 
 impl Render for Stage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let card = self.0.read(cx);
+        let Some(card) = self.0.upgrade() else {
+            window.remove_window();
+            return div().into_any_element();
+        };
+        let card = card.read(cx);
         // What moves on the stage draws the page again too, which reads the feeds for it.
         if card.parts(cx).body.animates {
             window.request_animation_frame();
@@ -990,6 +1006,7 @@ impl Render for Stage {
             .flex()
             .flex_col()
             .children(shown)
+            .into_any_element()
     }
 }
 

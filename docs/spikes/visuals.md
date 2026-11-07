@@ -2,77 +2,51 @@
 
 ## Goal
 
-Tools of a project make pictures as well as sound, so Sound Tools builds interactive sound and visual pieces, as Max with Jitter does. Prototypes, one branch each, stacked.
+Tools of a project make pictures as well as sound, so Sound Tools builds interactive sound and visual pieces, as Max with Jitter does.
 
 ## Decided constraints
 
-- **One language.** A picture is built from the same `Signal` functions as a sound. An agent who can write a sound can write a picture.
-- **Motion never crosses to Bun.** A picture runs in the window on every frame, as live values do; code runs once to build it.
-- **Sound drives pictures through what exists:** `output` in the sound, `now.value` in the view.
+- **One language.** A picture is built from the same `Signal` functions as a sound. An agent who writes sounds writes pictures.
+- **Motion never crosses to Bun.** A picture runs in the window on every step, as live values do; its code runs once to build it.
+- **Sound and picture talk through what exists:** `output` and `now.value` one way, number inputs the other.
 - **The core knows no pictures.** Nothing in `crates/core`.
 
 ## How to verify
 
-Open a demo project under `docs/prototypes/` with `cargo run -p runtime -- docs/prototypes/<name>`. It plays a sound and shows a picture that follows it.
+Each demo under `docs/prototypes/` opens with `cargo run -p runtime -- docs/prototypes/<name>`: `glow`, `spectra`, `stage`, `video`, `eyes`, `smoke`. `--screenshot <png> --seconds 3` and `--render-video <mp4> --seconds 6` show them without a window.
 
-## Prototypes
+## What it is
 
-### 1. `Picture`, a graph per pixel (`t3/visual-picture`)
+Branches `t3/visual-*`, stacked; PRs #392 to #405.
 
-A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.time`, `pixel.live(value)` and `pixel.last(x, y)`, the frame before, for feedback. Run on the CPU, a row at a time, in `crates/pictures` (optimized in dev). Demo: `docs/prototypes/glow`.
+| Part | What a tool writes |
+| --- | --- |
+| `Picture` | `<Picture pixels={(pixel) => ({ red, green, blue, alpha })}>`: a graph per pixel, from `pixel.x`, `y`, `aspect`, `time`, `noise(x, y, z)` |
+| Reads | `pixel.live(value)` any live value; `pixel.wave(list, at)` a list such as `now.spectrum(meter)` or `now.scope(meter)`; `pixel.video(file, { at })`; `pixel.last(x, y)` the step before, for feedback |
+| Plays the sound | `pixel.measure(input, value)`: the mean over the picture moves a number input, as a knob does |
+| Stage | `<Stage>` shows part of a page in its own window: full screen on a second screen, else floating in a corner |
+| Time | `now.seconds` follows the piece; the DAW song's `video` field shows a film at the playhead |
+| Pointer | `now.space(key).pointerX`, `pointerY`, `pointerOver` |
+| Output | `--render-video` films the window with its sound, frame by frame |
 
-- Cost: a 240 pixel wide picture at 120 frames a second is about 14% of one core on an M-series Mac.
-- Rejected for now: a GPU shader. GPUI draws no shader of ours; a Metal texture would need `paint_surface` and macOS-only code. The graph is the same either way, so a GPU backend can come later without changing the SDK.
-- Rows of a picture run in bands on all cores (prototype 8): 480 by 270 pixels of 60 sines take 2.2 ms a frame, 12.8 ms on one core.
+## Decisions
 
-### 2. Pictures read lists: spectrum and scope (`t3/visual-picture-waves`)
+- **A graph per pixel on the CPU**, `crates/pictures`, a row at a time, rows in bands on all cores: 480 by 270 pixels of 60 sines take 2.2 ms. Rejected for now: a GPU shader. GPUI draws no shader of ours; a Metal texture would need `paint_surface` and macOS-only code. The graph stays the same, so a GPU backend can come later without changing the SDK.
+- **Its own small evaluator**, not the signals machine: a pixel has no time between its neighbours, so filters, delays and phasors make no sense in it. The SDK refuses them with a sentence that says so.
+- **A picture steps 60 times a second of its time**, whatever the screen draws, so feedback looks alike on any screen, in a screenshot and in a film.
+- **Painted as a GPUI image**, freed by the window it was painted in. Under lines and text drawn after it, as GPUI orders images.
+- **Video by the system:** AVFoundation reads frames in order on a thread per video and starts again only on a jump. A 1080p film costs about a tenth of a core. Rejected: seeking for each frame (`AVAssetImageGenerator`). Linux and Windows show no video.
+- **A film is the offscreen window stepped by its clock:** each frame is one thirtieth of a second of offline sound, and videos wait for their frame, so picture and sound keep time and repeat.
 
-`pixel.wave(list, at)` reads any live list in a picture. New list `now.spectrum(meter)`: 20 Hz to 20 kHz, 0 to 1, made from the meter's scope once a frame; a `Wave` draws it too. Demo: `docs/prototypes/spectra`, a scrolling spectrogram made with `last`, with the scope as a `Wave` over it.
+## Open
 
-- A picture paints after lines and text in its layer, as GPUI orders images, so shapes after it show over it.
+- Camera input: as a video, from `AVCaptureSession`; it needs the camera permission, so it was not tried.
+- One picture reading another (`pixel.picture(key)`), for passes such as blur.
+- A stage closed by hand comes back only when the view drops and adds it again; no keys on the stage. A film shows the main window, not the stage.
+- The DAW has no way in the window to pick its film; the agent sets `video`.
+- `measure` of a live value is a way round to play an input from the pointer; a space could say which live values play which inputs.
+- The agent evals `visuals-builder` and `video-builder` passed their first run each (3 minutes, about $1): from the docs alone an agent built a drone with flowing colours on the `Stage` and a preview on the page, and a video kaleidoscope whose light and movement play a pad (`tooling/agent-eval/examples/`). One run each is no rate: run more.
 
-### 3. Screenshots after a while (`t3/visual-screenshot-seconds`)
+## Recommendation
 
-`--screenshot <png> --seconds <n>` runs the window n seconds, drawing every poll, before the picture. An agent sees what a picture, a scope or a meter does over time, as vork's loop of render and look.
-
-### 4. Stage, a window for the audience (`t3/visual-stage`)
-
-`<Stage>` is a div of a page shown in a window of its own: fullscreen on a second screen, else floating in a corner as a preview. The rest of the view stays in the app. Drawn from the page's nodes, as the title bar is. Demo: `docs/prototypes/stage`.
-
-- Open: a stage closed by hand comes back only when the view drops and adds it again. No keys on the stage.
-
-### 5. Video in pictures (`t3/visual-video`)
-
-`pixel.video(asset, { at, x, y })` reads a video under `assets/video/`, decoded by macOS (AVFoundation) on a thread per video; the picture shows the newest frame decoded. `now.seconds` is the playhead in seconds, to keep a video with the piece. Demo: `docs/prototypes/video`, a video folded in a mirror whose colours split on each kick.
-
-- Frames are read in order (`AVAssetReader`, scaled by the decoder) and it starts again only on a jump back or more than 2 s ahead (prototype 10): a 1080p film costs about a tenth of a core. Rejected: `AVAssetImageGenerator`, which seeks for every frame.
-- Open: Linux and Windows decode no video.
-
-### 6. Pictures play the sound (`t3/visual-measure`)
-
-`pixel.measure(name, value)` moves the number input `name` of the tool to the mean of `value` over the picture, on each poll, as a knob does: brightness, movement against `last`, how much is red. Nothing crosses to Bun. Demo: `docs/prototypes/eyes`, a video whose light opens a drone and whose movement makes it shimmer.
-
-- The screen draws faster than a video changes, so movement measured against the frame before is 0 in most frames: smooth it in the sound.
-
-### 7. Pointer and smooth noise (`t3/visual-pointer-noise`)
-
-`now.space(key).pointerX`, `pointerY` and `pointerOver`: where the pointer is over a space, a live value, so a light follows the hand with no code. `pixel.noise(x, y, z)`: smooth noise, the base of smoke, water and clouds. Demo: `docs/prototypes/smoke`, smoke lit where the pointer is; its place plays a breathy tone through `measure`.
-
-- Open: `measure` of a live value is a way round to play an input from the pointer. A space could say which live values play which inputs.
-
-### 9. Scoring to picture in the DAW (`t3/visual-daw-movie`)
-
-The song of the DAW template has a field `video`: a film under `assets/video/` that shows on the stage at the playhead, still while stopped, so it scrubs with the ruler. A part of the template (`song-movie.tsx`), no new Rust. `pixel.video` gets `loops: false` to hold the last frame past the end.
-
-- Open: no way in the window to pick the film yet; the agent sets `video`. The film is stretched to the stage.
-
-### 11. Transparent pictures (`t3/visual-alpha`)
-
-A picture's colour takes `alpha`, so a glow lies over shapes, a timeline or another picture. Frames hold four channels; `last` reads alpha too.
-
-### 12. A film of the piece (`t3/visual-render-video`)
-
-`--render-video <mp4> --seconds <n>` plays from the start and films the offscreen window: each frame is one thirtieth of a second of offline sound, and the window's clock moves by exactly that, so picture and sound keep time. Written by AVFoundation (H.264, AAC). The writer takes a track only as far as the other has come, so frames and sound wait in queues.
-
-- A picture steps 60 times a second of its time, whatever the screen draws (prototype 13), so feedback looks alike in the app, a screenshot and a film.
-- Open: films the whole window, at its size on screen; a video of the stage alone.
+Keep `Picture` with `live`, `wave`, `last`, `noise`, `alpha`, `measure` and the threads, and `--screenshot --seconds`: small, in the grain of the SDK, and an agent used them well on the first try. Then `Stage` and video. Treat `--render-video` and the DAW film as product decisions.

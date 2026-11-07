@@ -31,6 +31,9 @@ pub enum VideoError {
 /// Further ahead than this, reading on costs more than starting again from there.
 #[cfg(target_os = "macos")]
 const READ_ON_SECONDS: f64 = 2.0;
+/// How far before a time it starts reading again.
+#[cfg(target_os = "macos")]
+const PREROLL_SECONDS: f64 = 0.5;
 
 /// An open video file. Each frame it gives is at most `longest` pixels across or down.
 pub struct Video {
@@ -76,7 +79,9 @@ impl Video {
             Some((shown, _)) => at < *shown || at > shown + READ_ON_SECONDS,
             None => true,
         };
-        if jumped && !reading.start(at) {
+        // From a little before: the first frame read may start after `at`, and at the very end
+        // there is none.
+        if jumped && !reading.start((at - PREROLL_SECONDS).max(0.0)) {
             return Err(VideoError::NoFrame(at, "it did not start to read".into()));
         }
         loop {
@@ -88,6 +93,9 @@ impl Video {
                     None => break,
                 },
             }
+        }
+        if reading.shown.is_none() {
+            reading.shown = reading.next.take();
         }
         (reading.shown.as_ref())
             .map(|(_, frame)| frame.clone())
