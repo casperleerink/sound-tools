@@ -6,15 +6,17 @@ use std::sync::{Arc, Mutex};
 use gpui::{Bounds, Pixels, RenderImage, Window};
 use serde::{Deserialize, Deserializer};
 
-use sound_pictures::{Frame, MAX_ACROSS, Node, Program, Rgb, render};
+use sound_pictures::{Frame, Inputs, MAX_ACROSS, Node, Program, Rgb, render};
 
-use crate::tree::{Num, Uses};
+use crate::tree::{List, Num, Uses};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Graph {
     nodes: Vec<Node>,
     lives: Vec<Num>,
+    #[serde(default)]
+    waves: Vec<List>,
     output: Rgb,
     across: Option<u32>,
 }
@@ -27,6 +29,7 @@ pub(crate) struct Picture(Arc<Shown>);
 struct Shown {
     program: Program,
     lives: Vec<Num>,
+    waves: Vec<List>,
     memory: Mutex<Memory>,
 }
 
@@ -50,14 +53,16 @@ impl<'de> Deserialize<'de> for Picture {
         let Graph {
             nodes,
             lives,
+            waves,
             output,
             across,
         } = Graph::deserialize(deserializer)?;
-        let program =
-            Program::new(nodes, output, across, lives.len()).map_err(serde::de::Error::custom)?;
+        let program = Program::new(nodes, output, across, (lives.len(), waves.len()))
+            .map_err(serde::de::Error::custom)?;
         Ok(Self(Arc::new(Shown {
             program,
             lives,
+            waves,
             memory: Mutex::default(),
         })))
     }
@@ -68,13 +73,23 @@ impl Picture {
         &self.0.lives
     }
 
+    pub(crate) fn waves(&self) -> &[List] {
+        &self.0.waves
+    }
+
     pub(crate) fn add_uses(&self, uses: &mut Uses) {
         self.0.lives.iter().for_each(|live| live.add_uses(uses));
+        self.0.waves.iter().for_each(|list| list.add_uses(uses));
         uses.animates = true;
     }
 
     /// Paints the next frame across `bounds`, with `lives` the values of [`Picture::lives`] now.
-    pub(crate) fn paint(&self, bounds: Bounds<Pixels>, lives: &[f32], window: &mut Window) {
+    pub(crate) fn paint(
+        &self,
+        bounds: Bounds<Pixels>,
+        (lives, waves): (&[f32], &[Vec<f32>]),
+        window: &mut Window,
+    ) {
         let Shown {
             program, memory, ..
         } = &*self.0;
@@ -88,7 +103,13 @@ impl Picture {
         let Ok(mut memory) = memory.lock() else {
             return;
         };
-        let frame = render(program, lives, (across, down), &memory.last, memory.frame);
+        let inputs = Inputs {
+            lives,
+            waves,
+            last: &memory.last,
+            frame: memory.frame,
+        };
+        let frame = render(program, &inputs, (across, down));
         let image = Arc::new(image_of(&frame));
         memory.last = frame;
         memory.frame = memory.frame.wrapping_add(1);

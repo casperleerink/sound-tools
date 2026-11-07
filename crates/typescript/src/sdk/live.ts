@@ -182,9 +182,10 @@ export interface SpaceValues {
 /** The numbers of fields `State` holds. */
 type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
 
-/** What a wave draws: see `now.scope`, `now.history` and `now.file`. */
+/** What a wave draws: see `now.scope`, `now.spectrum`, `now.history` and `now.file`. */
 export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
+  | { source: "spectrum"; name: string; bins?: number }
   | { source: "history"; of: Num; frames: number; key: string }
   | { source: "file"; asset: string; from?: number | null; to?: number | null }
   | TakeList;
@@ -226,6 +227,12 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   input(channel: number): Live;
   /** The last sound of a `meter` child by its path, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
   scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
+  /**
+   * How loud each band of the last sound of a `meter` child is, by its path: `bins` bands (128
+   * when left out) from 20 Hz at the start to 20 kHz at the end, each 0 (silence) to 1 (full
+   * scale). For a `Wave` from `low: 0`, or `pixel.wave` in a `Picture`.
+   */
+  spectrum(name: string, options?: { bins?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
   history(of: Num, frames: number): WaveList;
   /**
@@ -259,6 +266,7 @@ function sources(): Now<Record<string, number>> {
     devicePeak: (channel) => new Live({ op: "device_peak", channel }),
     input: (channel) => new Live({ op: "input", channel }),
     scope: (name, options) => ({ source: "scope", name, ...options }),
+    spectrum: (name, options) => ({ source: "spectrum", name, ...options }),
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
     file: (asset, options) => ({ source: "file", asset, ...options }),
     take: (name) => ({ source: "take", name }),

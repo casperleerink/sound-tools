@@ -34,7 +34,7 @@ enum PaintedShape {
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
     Path(Rc<[Bend<Point<Pixels>>]>, Option<f32>),
-    Picture(Bounds<Pixels>, Picture, Rc<[f32]>),
+    Picture(Bounds<Pixels>, Picture, Rc<[f32]>, Rc<[Vec<f32>]>),
 }
 
 impl PaintedShape {
@@ -88,12 +88,13 @@ impl PaintedShape {
         }
     }
 
-    /// Where GPUI paints its primitives among those of the same order: quads, paths, text.
+    /// Where GPUI paints its primitives among those of the same order: quads, paths, text, images.
     fn batch_rank(&self) -> u8 {
         match self {
-            Self::Rect(..) | Self::Circle(..) | Self::Notes(..) | Self::Picture(..) => 0,
+            Self::Rect(..) | Self::Circle(..) | Self::Notes(..) => 0,
             Self::Line(..) | Self::Arc(..) | Self::Wave(..) | Self::Path(..) => 1,
             Self::Text(..) => 2,
+            Self::Picture(..) => 3,
         }
     }
 
@@ -191,12 +192,14 @@ pub(super) fn prepaint(
                 height,
                 picture,
                 lives,
+                waves,
             } => {
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Picture(
                     Bounds::new(at((*x, *y)), size),
                     picture.clone(),
                     lives.clone(),
+                    waves.clone(),
                 )
             }
             Geometry::Path { bends, outline } => {
@@ -334,7 +337,9 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
-        PaintedShape::Picture(bounds, picture, lives) => picture.paint(*bounds, lives, window),
+        PaintedShape::Picture(bounds, picture, lives, waves) => {
+            picture.paint(*bounds, (lives, waves), window);
+        }
         PaintedShape::Path(bends, outline) => {
             let mut path = match outline {
                 Some(width) => gpui::PathBuilder::stroke(px(*width)),

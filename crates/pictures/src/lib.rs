@@ -24,6 +24,11 @@ pub enum Node {
     Live {
         index: usize,
     },
+    /// A list of [`Inputs::waves`] at `at`, 0 its first value and 1 its last, between them.
+    Wave {
+        table: Wave,
+        at: usize,
+    },
     /// A colour of the last frame at `x`, `y`.
     Last {
         channel: Channel,
@@ -134,6 +139,12 @@ pub enum Node {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Wave {
+    wave: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Channel {
     Red,
@@ -200,12 +211,12 @@ impl Frame {
 }
 
 impl Program {
-    /// Checks the graph; `lives` is how many live values it may read.
+    /// Checks the graph; `lives` and `waves` are how many live values and lists it may read.
     pub fn new(
         nodes: Vec<Node>,
         output: Rgb,
         across: Option<u32>,
-        lives: usize,
+        (lives, waves): (usize, usize),
     ) -> Result<Self, String> {
         for (index, node) in nodes.iter().enumerate() {
             if node.reads().into_iter().flatten().any(|read| read >= index) {
@@ -216,6 +227,14 @@ impl Program {
             {
                 return Err(format!(
                     "a picture reads live value {live}, which it does not have"
+                ));
+            }
+            if let Node::Wave { table, .. } = node
+                && table.wave >= waves
+            {
+                return Err(format!(
+                    "a picture reads list {}, which it does not have",
+                    table.wave
                 ));
             }
         }
@@ -247,6 +266,7 @@ impl Node {
             | Self::Live { .. }
             | Self::Noise => [None; 3],
             Self::Last { x, y, .. } => [Some(x), Some(y), None],
+            Self::Wave { at, .. } => [Some(at), None, None],
             Self::Negate { x }
             | Self::Sin { x }
             | Self::Cos { x }
@@ -280,13 +300,7 @@ impl Node {
 
 /// The frame of `size` pixels the graph of `program` makes, row by row: each node over a whole
 /// row at a time, as the machine of a sound runs a span of frames.
-pub fn render(
-    program: &Program,
-    lives: &[f32],
-    (width, height): (usize, usize),
-    last: &Frame,
-    frame: u32,
-) -> Frame {
+pub fn render(program: &Program, inputs: &Inputs<'_>, (width, height): (usize, usize)) -> Frame {
     let nodes = &program.nodes;
     let mut registers = vec![0.0_f32; nodes.len() * width];
     let mut pixels = vec![[0.0_f32; 3]; width * height];
@@ -307,9 +321,7 @@ pub fn render(
                     y,
                     width,
                     height,
-                    lives,
-                    last,
-                    frame,
+                    inputs,
                 },
             );
         }
@@ -334,6 +346,18 @@ pub fn render(
     }
 }
 
+/// What a picture reads from outside, once a frame.
+pub struct Inputs<'a> {
+    /// The values of its live values.
+    pub lives: &'a [f32],
+    /// The lists it reads.
+    pub waves: &'a [Vec<f32>],
+    /// What it made the frame before.
+    pub last: &'a Frame,
+    /// Counts the frames, for noise that changes on each.
+    pub frame: u32,
+}
+
 /// What a node reads of where it runs.
 #[derive(Clone, Copy)]
 struct Place<'a> {
@@ -341,9 +365,7 @@ struct Place<'a> {
     y: f32,
     width: usize,
     height: usize,
-    lives: &'a [f32],
-    last: &'a Frame,
-    frame: u32,
+    inputs: &'a Inputs<'a>,
 }
 
 fn run<'a>(node: Node, out: &mut [f32], read: impl Fn(usize) -> &'a [f32], place: Place<'_>) {
@@ -366,16 +388,28 @@ fn run<'a>(node: Node, out: &mut [f32], read: impl Fn(usize) -> &'a [f32], place
         }
         Node::Y => out.fill(place.y),
         Node::Aspect => out.fill(place.width as f32 / place.height as f32),
-        Node::Live { index } => out.fill(place.lives.get(index).copied().unwrap_or(0.0)),
+        Node::Live { index } => {
+            out.fill(place.inputs.lives.get(index).copied().unwrap_or(0.0));
+        }
+        Node::Wave { table, at } => {
+            let values = place
+                .inputs
+                .waves
+                .get(table.wave)
+                .map_or(&[][..], Vec::as_slice);
+            for (out, at) in out.iter_mut().zip(read(at)) {
+                *out = along(values, *at);
+            }
+        }
         Node::Last { channel, x, y } => {
             for ((out, x), y) in out.iter_mut().zip(read(x)).zip(read(y)) {
-                *out = place.last.at(*x, *y, channel as usize);
+                *out = place.inputs.last.at(*x, *y, channel as usize);
             }
         }
         Node::Noise => {
             for (column, out) in out.iter_mut().enumerate() {
                 let pixel = (place.row * place.width + column) as u32;
-                *out = hashed(pixel, place.frame);
+                *out = hashed(pixel, place.inputs.frame);
             }
         }
         Node::Negate { x } => unary(out, x, |x| -x),
@@ -425,6 +459,23 @@ fn run<'a>(node: Node, out: &mut [f32], read: impl Fn(usize) -> &'a [f32], place
     }
 }
 
+/// `values` at `at`, 0 the first and 1 the last, between two of them; past an end, the end.
+fn along(values: &[f32], at: f32) -> f32 {
+    let Some(last) = values.len().checked_sub(1) else {
+        return 0.0;
+    };
+    let place = (finite(at) * last as f32).clamp(0.0, last as f32);
+    let before = place.floor() as usize;
+    let (from, to) = (
+        values.get(before).copied().unwrap_or(0.0),
+        values.get(before + 1).copied().unwrap_or(0.0),
+    );
+    match before == last {
+        true => from,
+        false => from + (to - from) * (place - before as f32),
+    }
+}
+
 /// -1 to 1, the same for the same pixel and frame.
 fn hashed(pixel: u32, frame: u32) -> f32 {
     let mut value = pixel.wrapping_mul(0x9E37_79B9) ^ frame.wrapping_mul(0x85EB_CA6B);
@@ -461,7 +512,7 @@ mod tests {
             lives,
             output,
         } = serde_json::from_value(json).unwrap();
-        Program::new(nodes, output, None, lives).unwrap()
+        Program::new(nodes, output, None, (lives, 1)).unwrap()
     }
 
     #[test]
@@ -472,7 +523,14 @@ mod tests {
             "lives": 1,
             "output": {"red": 0, "green": 1, "blue": 2},
         }));
-        let frame = render(&program, &[0.25], (4, 2), &Frame::default(), 0);
+        let last = Frame::default();
+        let inputs = Inputs {
+            lives: &[0.25],
+            waves: &[],
+            last: &last,
+            frame: 0,
+        };
+        let frame = render(&program, &inputs, (4, 2));
         assert_eq!(frame.pixels[0], [0.125, 0.25, 0.25]);
         assert_eq!(frame.pixels[7], [0.875, 0.75, 0.25]);
     }
@@ -491,7 +549,13 @@ mod tests {
         let mut last = Frame::default();
         let mut reds = Vec::new();
         for frame in 0..3 {
-            last = render(&program, &[], (3, 3), &last, frame);
+            let inputs = Inputs {
+                lives: &[],
+                waves: &[],
+                last: &last,
+                frame,
+            };
+            last = render(&program, &inputs, (3, 3));
             reds.push(last.pixels[4][0]);
         }
         assert_eq!(reds, [0.4, 0.8, 1.0]);
@@ -505,6 +569,27 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_reads_a_list_between_its_values() {
+        // Red is the list read across: 0 at the left, 1 halfway, back to 0 at the right.
+        let program = program(serde_json::json!({
+            "nodes": [{"op": "x"}, {"op": "wave", "table": {"wave": 0}, "at": 0}],
+            "lives": 0,
+            "output": {"red": 1, "green": 1, "blue": 1},
+        }));
+        let last = Frame::default();
+        let waves = [vec![0.0, 1.0, 0.0]];
+        let inputs = Inputs {
+            lives: &[],
+            waves: &waves,
+            last: &last,
+            frame: 0,
+        };
+        let frame = render(&program, &inputs, (4, 1));
+        let reds: Vec<f32> = frame.pixels.iter().map(|pixel| pixel[0]).collect();
+        assert_eq!(reds, [0.25, 0.75, 0.75, 0.25]);
+    }
+
+    #[test]
     fn a_picture_that_reads_ahead_does_not_load() {
         let nodes = serde_json::from_value(serde_json::json!([{"op": "sin", "x": 0}])).unwrap();
         let output = Rgb {
@@ -512,6 +597,6 @@ mod tests {
             green: 0,
             blue: 0,
         };
-        assert!(Program::new(nodes, output, None, 0).is_err());
+        assert!(Program::new(nodes, output, None, (0, 0)).is_err());
     }
 }

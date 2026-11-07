@@ -60,7 +60,8 @@ type SignalNode<R> =
   | { op: BinSource }
   | { op: PixelSource }
   | { op: "live"; index: number }
-  | { op: "last"; channel: "red" | "green" | "blue"; x: R; y: R };
+  | { op: "last"; channel: "red" | "green" | "blue"; x: R; y: R }
+  | { op: "wave"; table: { wave: number }; at: R };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
 export type GraphNode =
@@ -627,7 +628,7 @@ export interface Rgb {
 }
 
 /** The colour at hue `hue` (0 to 1 round the circle, red at 0), `saturation` and `value`, each 0 to 1. */
-export function hsv(hue: Operand, saturation: Operand, value: Operand): Rgb {
+export function hsv(hue: Operand, saturation: Operand, value: Operand): { red: Signal; green: Signal; blue: Signal } {
   const part = (offset: number) =>
     clamp(abs(wrap(new Signal({ op: "add", a: hue, b: offset })).times(6).minus(3)).minus(1), 0, 1);
   const of = (offset: number) => mix(1, part(offset), saturation).times(value);
@@ -639,9 +640,10 @@ export const pixelSource = (op: PixelSource): Signal => new Named({ op });
 export const pixelLive = (index: number): Signal => new Named({ op: "live", index });
 
 /** A picture as the window gets it: a graph run once per pixel, which reads `lives`. */
-export interface PictureGraph<L = unknown> {
+export interface PictureGraph<L = unknown, W = unknown> {
   nodes: GraphNode[];
   lives: L[];
+  waves: W[];
   output: { red: number; green: number; blue: number };
   across?: number;
 }
@@ -656,7 +658,7 @@ const SOUND_ONLY = new Set<string>([
 ]);
 
 /** For `Picture`: the graph of `colour`, which `layout` lays out as a sound's. */
-export function pictureToJson<L>(colour: Rgb, lives: L[], across?: number): PictureGraph<L> {
+export function pictureToJson<L, W>(colour: Rgb, lives: L[], waves: W[], across?: number): PictureGraph<L, W> {
   const { nodes, use } = layout(0);
   const output = { red: use(colour.red), green: use(colour.green), blue: use(colour.blue) };
   for (const node of nodes) {
@@ -664,5 +666,5 @@ export function pictureToJson<L>(colour: Rgb, lives: L[], across?: number): Pict
       throw new Error(`\`${node.op}\` belongs in a sound: a picture works out each pixel on its own, with no time between them`);
     }
   }
-  return across === undefined ? { nodes, lives, output } : { nodes, lives, output, across };
+  return across === undefined ? { nodes, lives, waves, output } : { nodes, lives, waves, output, across };
 }

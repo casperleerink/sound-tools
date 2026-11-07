@@ -24,3 +24,9 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 - Cost: a 240 pixel wide picture at 120 frames a second is about 14% of one core on an M-series Mac.
 - Rejected for now: a GPU shader. GPUI draws no shader of ours; a Metal texture would need `paint_surface` and macOS-only code. The graph is the same either way, so a GPU backend can come later without changing the SDK.
 - Open: the picture runs on the main thread. Past 480 across it should move to a thread.
+
+### 2. Pictures read lists: spectrum and scope (`t3/visual-picture-waves`)
+
+`pixel.wave(list, at)` reads any live list in a picture. New list `now.spectrum(meter)`: 20 Hz to 20 kHz, 0 to 1, made from the meter's scope once a frame; a `Wave` draws it too. Demo: `docs/prototypes/spectra`, a scrolling spectrogram made with `last`, with the scope as a `Wave` over it.
+
+- A picture paints after lines and text in its layer, as GPUI orders images, so shapes after it show over it.
