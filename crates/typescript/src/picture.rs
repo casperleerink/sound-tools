@@ -61,6 +61,8 @@ struct Shown {
 #[derive(Default)]
 struct Memory {
     last: Frame,
+    /// The step of its time it showed last.
+    stepped: Option<u64>,
     /// What it measured in its last frame, until its card sends it.
     measured: Option<Vec<f32>>,
     frame: u32,
@@ -133,13 +135,10 @@ impl Picture {
         uses.animates = true;
     }
 
-    /// Paints the next frame across `bounds`, with `lives` the values of [`Picture::lives`] now.
-    pub(crate) fn paint(
-        &self,
-        bounds: Bounds<Pixels>,
-        (lives, waves, videos): (&[f32], &[Vec<f32>], &[Arc<Frame>]),
-        window: &mut Window,
-    ) {
+    /// Paints the picture across `bounds` as it is at `seen.time`: it steps 60 times a second
+    /// of that time, however often the window draws, so its feedback moves alike on any screen,
+    /// in a screenshot and in a film.
+    pub(crate) fn paint(&self, bounds: Bounds<Pixels>, seen: &Seen, window: &mut Window) {
         let Shown {
             program, memory, ..
         } = &*self.0;
@@ -153,22 +152,38 @@ impl Picture {
         let Ok(mut memory) = memory.lock() else {
             return;
         };
-        let videos: Vec<&Frame> = videos.iter().map(|frame| &**frame).collect();
-        let inputs = Inputs {
-            lives,
-            waves,
-            videos: &videos,
-            last: &memory.last,
-            frame: memory.frame,
+        let due = (seen.time * STEPS_PER_SECOND).floor() as u64;
+        let resized = (memory.last.width, memory.last.height) != (across, down);
+        let steps = match memory.stepped {
+            Some(stepped) if !resized => due.saturating_sub(stepped).min(MOST_STEPS),
+            _ => 1,
         };
-        let Rendered { frame, means } = render(program, &inputs, (across, down));
-        memory.measured = Some(means);
-        let image = Arc::new(image_of(&frame));
-        memory.last = frame;
-        memory.frame = memory.frame.wrapping_add(1);
-        match window.paint_image(bounds, bounds, Default::default(), image.clone(), 0, false) {
-            Ok(()) => memory.images.push(image),
-            Err(error) => eprintln!("error: a picture did not paint: {error}"),
+        memory.stepped = Some(due);
+        let videos: Vec<&Frame> = seen.videos.iter().map(|frame| &**frame).collect();
+        for _ in 0..steps {
+            let inputs = Inputs {
+                lives: &seen.lives,
+                waves: &seen.waves,
+                videos: &videos,
+                last: &memory.last,
+                frame: memory.frame,
+            };
+            let Rendered { frame, means } = render(program, &inputs, (across, down));
+            memory.measured = Some(means);
+            memory.last = frame;
+            memory.frame = memory.frame.wrapping_add(1);
+        }
+        let image = match (steps, memory.images.last()) {
+            (0, Some(image)) => image.clone(),
+            _ => {
+                let image = Arc::new(image_of(&memory.last));
+                memory.images.push(image.clone());
+                image
+            }
+        };
+        if let Err(error) = window.paint_image(bounds, bounds, Default::default(), image, 0, false)
+        {
+            eprintln!("error: a picture did not paint: {error}");
         }
         while memory.images.len() > 2 {
             let old = memory.images.remove(0);
@@ -177,6 +192,21 @@ impl Picture {
             }
         }
     }
+}
+
+/// How often a picture steps, in its time.
+const STEPS_PER_SECOND: f64 = 60.0;
+/// The most steps one draw makes up for, after the window was away a while.
+const MOST_STEPS: u64 = 4;
+
+/// What a picture reads for a draw: its live values, lists and videos as they are now, and the
+/// time.
+pub(crate) struct Seen {
+    pub lives: Vec<f32>,
+    pub waves: Vec<Vec<f32>>,
+    pub videos: Vec<Arc<Frame>>,
+    /// Seconds since the card opened.
+    pub time: f64,
 }
 
 /// The frame as GPUI paints an image.

@@ -74,5 +74,5 @@ A picture's colour takes `alpha`, so a glow lies over shapes, a timeline or anot
 
 `--render-video <mp4> --seconds <n>` plays from the start and films the offscreen window: each frame is one thirtieth of a second of offline sound, and the window's clock moves by exactly that, so picture and sound keep time. Written by AVFoundation (H.264, AAC). The writer takes a track only as far as the other has come, so frames and sound wait in queues.
 
-- Feedback (`last`) runs once per frame, so in a film it runs 30 times a second, in the app as often as the screen draws: trails differ. Open: step `last` by time, not by frame.
+- A picture steps 60 times a second of its time, whatever the screen draws (prototype 13), so feedback looks alike in the app, a screenshot and a film.
 - Open: films the whole window, at its size on screen; a video of the stage alone.
