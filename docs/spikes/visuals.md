@@ -45,7 +45,7 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 
 `pixel.video(asset, { at, x, y })` reads a video under `assets/video/`, decoded by macOS (AVFoundation) on a thread per video; the picture shows the newest frame decoded. `now.seconds` is the playhead in seconds, to keep a video with the piece. Demo: `docs/prototypes/video`, a video folded in a mirror whose colours split on each kick.
 
-- Cost: decoding by seeking to each frame (`AVAssetImageGenerator`) is about a third of a core at 30 frames a second. Open: read frames in order (`AVAssetReader`) and seek only on a jump.
+- Frames are read in order (`AVAssetReader`, scaled by the decoder) and it starts again only on a jump back or more than 2 s ahead (prototype 10): a 1080p film costs about a tenth of a core. Rejected: `AVAssetImageGenerator`, which seeks for every frame.
 - Open: Linux and Windows decode no video.
 
 ### 6. Pictures play the sound (`t3/visual-measure`)
