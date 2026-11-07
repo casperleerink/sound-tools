@@ -51,7 +51,19 @@ These are live values too. A path such as `"bass/synth"` reaches a record deeper
 
 ## Pictures
 
-`<Picture x y width height pixels={(pixel) => colour}>` fills its box with a colour per pixel (`{ red, green, blue }`, each 0 to 1, and `alpha` to let what is under it show), worked out by the window on every frame with no code running: a light show, a texture that breathes with the sound. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...) from `pixel.x` and `pixel.y` (0 to 1), `pixel.aspect`, `pixel.time` in seconds, `pixel.noise(x, y, z)` for smoke and water, and `pixel.live(value)` for any live value: `pixel.live(now.value("level"))` follows an output of the sound. `pixel.wave(list, at)` reads a list such as `now.spectrum("meter")` or `now.scope("meter")` at `at`, 0 to 1: a spectrum across or down. `pixel.video("clip.mp4", { at, x, y })` is a video under `assets/video/` at that place, `at` seconds in: `now.elapsed` loops it, `now.seconds` follows the piece. `pixel.measure("bright", value)` plays the number input `bright` of the tool with the mean of `value` over the picture every frame, so a picture or a video plays the sound. `pixel.picture(key, { x, y })` is the last step of the `Picture` of that `key` in the view: a water simulation in one and its light in another. `pixel.last(x, y)` is the frame before at that place, for trails and feedback; `last(x.plus(1 / across), y)` scrolls it left one pixel a frame. What runs in time (`phasor`, filters, `delay`, fields) belongs in the sound: send it out with `output` and read it with `live`.
+`<Picture x y width height pixels={(pixel) => colour}>` is a shape of a `Space` filled with a colour per pixel: a light show, a texture that breathes with the sound, a video folded in a mirror. `pixels` runs once and builds the colour with the functions of a sound (`sin`, `mix`, `max`, `wrap`, `hsv`...); the window then works out every pixel 60 times a second with no code running. The colour is `{ red, green, blue }`, each 0 to 1, and `alpha` to let what is under it show. `across` is how many pixels wide it is worked out, 160 when left out, at most 480.
+
+What a pixel reads:
+
+- `pixel.x` and `pixel.y`, 0 to 1 across and down; `pixel.aspect`, so `x.minus(0.5).times(aspect)` and `y.minus(0.5)` measure alike; `pixel.time` in seconds.
+- `pixel.noise(x, y, z)`: smooth noise, -1 to 1, a bump per unit, for smoke, water and clouds; `z` of `time` makes it flow.
+- `pixel.live(value)`: any live value. `live(now.value("level"))` follows an output of the sound, `live(now.space("stage").pointerX)` the pointer.
+- `pixel.wave(list, at)`: a list at `at`, 0 to 1, such as `now.spectrum("meter")`, how loud each band of a meter's sound is from 20 Hz to 20 kHz, or `now.scope("meter")`, its last sound.
+- `pixel.video("clip.mp4", { at, loops, x, y })`: a video under `assets/video/`, `at` seconds in: `now.elapsed` loops it, `now.seconds` follows the piece. macOS only.
+- `pixel.last(x, y)`: this picture a step before, for trails and feedback; `last(x.plus(1 / across), y)` scrolls it one pixel a step.
+- `pixel.picture(key, { x, y })`: the last step of the `Picture` of that `key` in the view, such as a water simulation in one and its light in another. It must show to step.
+
+`pixel.measure("bright", value)` plays the number input `bright` of the tool, every step, with the mean of `value` over the picture: a picture or a video plays the sound, gliding, with no code running. A step comes 60 times a second, more often than a video changes: smooth what moves against the step before in the sound. What runs in time (`phasor`, filters, `delay`, the fields) belongs in the sound: send it with `output` and read it with `live`.
 
 ```tsx
 <Picture x={0} y={0} width={() => size.width} height={() => size.height} across={240}
@@ -65,4 +77,10 @@ These are live values too. A path such as `"bass/synth"` reaches a record deeper
   }} />
 ```
 
-`<Stage>` around part of a page's view shows it in a window of its own: fullscreen on a second screen or a projector, else floating in a corner. The rest stays in the app, such as the knobs that play it. In a `Space key="stage" grow` there, `width={now.space("stage").right}` and `height={now.space("stage").bottom}` fill it.
+### The stage
+
+`<Stage>` around part of a page's view shows it in a window of its own: full screen on a second screen or a projector, else floating in a corner. The rest stays in the app, such as the knobs that play it. In a `Space key="stage" grow` there, `width={now.space("stage").right}` and `height={now.space("stage").bottom}` fill it.
+
+### Check it
+
+`sound-tools . --screenshot screenshot.png --seconds 3` draws the window after 3 seconds, so what moves shows; the stage is not in it. `--render-video film.mp4 --seconds 10` films the window with its sound, for the composer.
