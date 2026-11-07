@@ -103,6 +103,7 @@ impl TypeScriptCard {
         self.stage = stage;
         if stage.is_none() {
             self.drop_stage_menu(cx);
+            self.let_go_of_keys(cx);
             self.close_stage(cx);
             return;
         }
@@ -182,6 +183,8 @@ impl TypeScriptCard {
     /// The composer closed its window: it shows in the page until they open it again.
     fn stage_closed(&mut self, cx: &mut Context<Self>) {
         self.drop_stage_menu(cx);
+        // Its window hears no key go up once it is gone.
+        self.let_go_of_keys(cx);
         self.stage_window = None;
         self.stage_place.closed = true;
         self.save_stage(cx);
@@ -326,6 +329,7 @@ impl Stage {
                 card.update(cx, |card, cx| {
                     card.clicking = None;
                     card.let_go(None, cx);
+                    card.let_go_of_keys(cx);
                 });
             }
         })
