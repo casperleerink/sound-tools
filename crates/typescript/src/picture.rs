@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use gpui::{Bounds, Pixels, RenderImage, Window};
+use gpui::{Bounds, Pixels, RenderImage, Window, WindowId};
 use serde::{Deserialize, Deserializer};
 
 use sound_pictures::{Frame, Inputs, MAX_ACROSS, Node, Program, Rendered, Rgb, render};
@@ -68,7 +68,7 @@ struct Memory {
     frame: u32,
     /// The images painted, newest last: one stays in the atlas a frame longer, as a cached
     /// view may paint the frame before again.
-    images: Vec<Arc<RenderImage>>,
+    images: Vec<(WindowId, Arc<RenderImage>)>,
 }
 
 impl std::fmt::Debug for Memory {
@@ -173,11 +173,12 @@ impl Picture {
             memory.last = frame;
             memory.frame = memory.frame.wrapping_add(1);
         }
+        let here = window.window_handle().window_id();
         let image = match (steps, memory.images.last()) {
-            (0, Some(image)) => image.clone(),
+            (0, Some((painted_in, image))) if *painted_in == here => image.clone(),
             _ => {
                 let image = Arc::new(image_of(&memory.last));
-                memory.images.push(image.clone());
+                memory.images.push((here, image.clone()));
                 image
             }
         };
@@ -185,12 +186,38 @@ impl Picture {
         {
             eprintln!("error: a picture did not paint: {error}");
         }
-        while memory.images.len() > 2 {
-            let old = memory.images.remove(0);
-            if let Err(error) = window.drop_image(old) {
+        let over = memory.images.len().saturating_sub(2);
+        let old: Vec<_> = memory.images.drain(..over).collect();
+        drop(memory);
+        let mut orphans = ORPHANS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        orphans.extend(old);
+        // Each window frees what was painted in it.
+        for (painted_in, image) in std::mem::take(&mut *orphans) {
+            if painted_in != here {
+                orphans.push((painted_in, image));
+            } else if let Err(error) = window.drop_image(image) {
                 eprintln!("error: a picture's last frame stayed: {error}");
             }
         }
+    }
+}
+
+/// Images of pictures no longer shown, by the window they were painted in, which frees them at
+/// its next paint of a picture: the atlas of a window is freed only in that window.
+static ORPHANS: Mutex<Vec<(WindowId, Arc<RenderImage>)>> = Mutex::new(Vec::new());
+
+impl Drop for Shown {
+    fn drop(&mut self) {
+        let images = match self.memory.get_mut() {
+            Ok(memory) => std::mem::take(&mut memory.images),
+            Err(_) => return,
+        };
+        (ORPHANS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+        .extend(images);
     }
 }
 

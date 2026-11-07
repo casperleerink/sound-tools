@@ -1,8 +1,11 @@
 //! The videos pictures read: each decoded on a thread of its own, the frame last asked for, so
-//! the window never waits for one. A picture shows the newest frame decoded.
+//! the window never waits for one. A picture shows the newest frame decoded. A film waits
+//! instead, see [`wait_for_video_frames`].
 
 use std::path::Path;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::Duration;
 
 use sound_media::video::Video;
 use sound_pictures::Frame;
@@ -12,6 +15,16 @@ const LONGEST: u32 = sound_pictures::MAX_ACROSS;
 /// Frames a second it decodes at most, as most videos have: the window draws more often, and
 /// each frame of the video then decodes once.
 const RATE: f64 = 30.0;
+/// The longest a film waits for a frame, so a video that cannot decode does not stop it.
+const LONGEST_WAIT: Duration = Duration::from_secs(5);
+
+static WAITS: AtomicBool = AtomicBool::new(false);
+
+/// Whether a picture waits for the frame of a video it asks for, as a film of the window must
+/// to keep time, instead of showing the newest decoded.
+pub fn wait_for_video_frames(wait: bool) {
+    WAITS.store(wait, Ordering::Relaxed);
+}
 
 /// A video being decoded. Dropping it ends its thread.
 pub(crate) struct Player {
@@ -20,17 +33,32 @@ pub(crate) struct Player {
 
 #[derive(Default)]
 struct Shared {
-    /// The second to decode next, or that the player is gone.
-    asked: Mutex<Asked>,
-    wake: Condvar,
-    /// The newest frame decoded, and how long the video is once it opened.
-    shown: Mutex<(Option<Arc<Frame>>, Option<f64>)>,
+    state: Mutex<State>,
+    /// Wakes the thread when a second is asked for, and a waiting picture when a frame is
+    /// decoded.
+    asked: Condvar,
+    decoded: Condvar,
 }
 
 #[derive(Default)]
-struct Asked {
-    at: Option<f64>,
+struct State {
+    /// The second to decode next.
+    asked: Option<f64>,
+    /// The newest frame decoded and the second it was asked for, and how long the video is
+    /// once it opened.
+    shown: Option<(f64, Arc<Frame>)>,
+    length: Option<f64>,
+    /// It did not open, or the player is gone.
+    ended: bool,
     gone: bool,
+}
+
+impl Shared {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 impl Player {
@@ -50,28 +78,48 @@ impl Player {
     /// Asks for the frame at `seconds`, round and round the video when it `loops`, else held at
     /// its ends, and gives the newest decoded.
     pub(crate) fn frame(&self, seconds: f64, loops: bool) -> Option<Arc<Frame>> {
-        let (shown, length) = match self.shared.shown.lock() {
-            Ok(shown) => (shown.0.clone(), shown.1),
-            Err(_) => return None,
-        };
-        if let (Some(length), Ok(mut asked)) = (length, self.shared.asked.lock()) {
-            let at = match loops {
-                true => seconds.rem_euclid(length.max(f64::MIN_POSITIVE)),
-                false => seconds.clamp(0.0, length),
-            };
-            asked.at = Some((at * RATE).floor() / RATE);
-            self.shared.wake.notify_one();
+        let waits = WAITS.load(Ordering::Relaxed);
+        let shared = &self.shared;
+        let mut state = shared.state();
+        if waits {
+            state = wait_while(shared, state, |state| state.length.is_none());
         }
-        shown
+        let length = state.length?;
+        let at = match loops {
+            true => seconds.rem_euclid(length.max(f64::MIN_POSITIVE)),
+            false => seconds.clamp(0.0, length),
+        };
+        let at = (at * RATE).floor() / RATE;
+        state.asked = Some(at);
+        shared.asked.notify_one();
+        if waits {
+            state = wait_while(shared, state, |state| {
+                state.shown.as_ref().is_none_or(|(shown, _)| *shown != at)
+            });
+        }
+        state.shown.as_ref().map(|(_, frame)| frame.clone())
+    }
+}
+
+/// Waits while `pending` holds, until the video ended or [`LONGEST_WAIT`] passed.
+fn wait_while<'a>(
+    shared: &'a Shared,
+    state: MutexGuard<'a, State>,
+    pending: impl Fn(&State) -> bool,
+) -> MutexGuard<'a, State> {
+    let waited = shared
+        .decoded
+        .wait_timeout_while(state, LONGEST_WAIT, |state| !state.ended && pending(state));
+    match waited {
+        Ok((state, _)) => state,
+        Err(poisoned) => poisoned.into_inner().0,
     }
 }
 
 impl Drop for Player {
     fn drop(&mut self) {
-        if let Ok(mut asked) = self.shared.asked.lock() {
-            asked.gone = true;
-        }
-        self.shared.wake.notify_one();
+        self.shared.state().gone = true;
+        self.shared.asked.notify_one();
     }
 }
 
@@ -80,44 +128,54 @@ fn decode(path: &Path, shared: &Shared) {
         Ok(video) => video,
         Err(error) => {
             eprintln!("error: {error}");
+            shared.state().ended = true;
+            shared.decoded.notify_all();
             return;
         }
     };
-    let first = video.frame_at(0.0);
-    if let Ok(mut shown) = shared.shown.lock() {
-        shown.1 = Some(video.seconds());
-        shown.0 = first.ok().map(|frame| Arc::new(frame_of(&frame)));
+    let first = video
+        .frame_at(0.0)
+        .ok()
+        .map(|frame| (0.0, Arc::new(frame_of(&frame))));
+    {
+        let mut state = shared.state();
+        state.length = Some(video.seconds());
+        state.shown = first;
     }
-    let mut last = None;
+    shared.decoded.notify_all();
     loop {
         let at = {
-            let Ok(mut asked) = shared.asked.lock() else {
-                return;
+            let state = shared.state();
+            let waited = shared.asked.wait_while(state, |state| {
+                let done = state.shown.as_ref().map(|(shown, _)| *shown);
+                !state.gone && (state.asked.is_none() || state.asked == done)
+            });
+            let mut state = match waited {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
             };
-            loop {
-                if asked.gone {
-                    return;
-                }
-                if let Some(at) = asked.at.take()
-                    && Some(at) != last
-                {
-                    break at;
-                }
-                asked = match shared.wake.wait(asked) {
-                    Ok(asked) => asked,
-                    Err(_) => return,
-                };
+            if state.gone {
+                return;
+            }
+            match state.asked.take() {
+                Some(at) => at,
+                None => continue,
             }
         };
-        last = Some(at);
-        match video.frame_at(at) {
-            Ok(frame) => {
-                if let Ok(mut shown) = shared.shown.lock() {
-                    shown.0 = Some(Arc::new(frame_of(&frame)));
+        let frame = video.frame_at(at);
+        let mut state = shared.state();
+        match frame {
+            Ok(frame) => state.shown = Some((at, Arc::new(frame_of(&frame)))),
+            Err(error) => {
+                eprintln!("error: {error}");
+                // A waiting picture takes what it has.
+                if let Some((shown, _)) = &mut state.shown {
+                    *shown = at;
                 }
             }
-            Err(error) => eprintln!("error: {error}"),
         }
+        drop(state);
+        shared.decoded.notify_all();
     }
 }
 

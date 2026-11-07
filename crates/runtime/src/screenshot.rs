@@ -47,6 +47,8 @@ pub fn film(project: &Path, mp4: &Path, seconds: f64) -> Result<()> {
         bail!("{} exists already", mp4.display());
     }
     let mut offline = Offline::open(project)?;
+    // Each frame shows the frame of a video at its time, decoded or not yet.
+    sound_typescript::wait_for_video_frames(true);
     offline.settle(SETTLE)?;
     let first = offline.capture()?;
     let size = (first.width() as usize, first.height() as usize);
