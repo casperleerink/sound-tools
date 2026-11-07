@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, MouseButton,
-    MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowControlArea,
-    WindowOptions, div, point, prelude::*, px, size,
+    AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, EventEmitter, FocusHandle,
+    KeyDownEvent, MouseButton, MouseDownEvent, Render, TitlebarOptions, WeakEntity, Window,
+    WindowBounds, WindowControlArea, WindowOptions, div, point, prelude::*, px, size,
 };
 use serde::{Deserialize, Serialize};
 use sound_ui::ActiveTheme;
@@ -102,6 +102,7 @@ impl TypeScriptCard {
         let came = self.stage.is_none() && stage.is_some();
         self.stage = stage;
         if stage.is_none() {
+            self.drop_stage_menu(cx);
             self.close_stage(cx);
             return;
         }
@@ -162,8 +163,25 @@ impl TypeScriptCard {
         });
     }
 
+    /// The window an open menu shows in.
+    pub(super) fn menu_window(&self) -> AnyWindowHandle {
+        match self.stage_window.filter(|_| self.menu_on_stage) {
+            Some(stage) => stage.into(),
+            None => self.window,
+        }
+    }
+
+    /// A menu open on the stage goes with it, answered with nothing picked.
+    fn drop_stage_menu(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.menu_on_stage) {
+            self.answer_menu(None, cx);
+            self.menu = None;
+        }
+    }
+
     /// The composer closed its window: it shows in the page until they open it again.
     fn stage_closed(&mut self, cx: &mut Context<Self>) {
+        self.drop_stage_menu(cx);
         self.stage_window = None;
         self.stage_place.closed = true;
         self.save_stage(cx);

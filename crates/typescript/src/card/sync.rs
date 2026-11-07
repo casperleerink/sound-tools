@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, Focusable, Pixels, PromptLevel, SharedString,
-    WeakEntity, Window, canvas, div, prelude::*, px,
+    AnyView, AnyWindowHandle, App, Bounds, Context, Entity, Focusable, Pixels, PromptLevel,
+    SharedString, WeakEntity, Window, canvas, div, prelude::*, px,
 };
 use serde_json::json;
 use sound_core::InstanceId;
@@ -165,10 +165,16 @@ impl TypeScriptCard {
             self.let_go_of_keys(cx);
             let buttons = [asked.confirm.as_str(), "Cancel"];
             let detail = asked.detail.as_deref();
-            let answer = window.prompt(PromptLevel::Warning, &asked.message, detail, &buttons, cx);
+            // On the page's window, never on the stage, which an audience may see.
+            let answer = in_window(window, self.window, cx, |window, cx| {
+                window.prompt(PromptLevel::Warning, &asked.message, detail, &buttons, cx)
+            });
             let live = self.live.downgrade();
             cx.spawn(async move |_, cx| {
-                let said = answer.await == Ok(0);
+                let said = match answer {
+                    Some(answer) => answer.await == Ok(0),
+                    None => false,
+                };
                 live.update(cx, |live, _| live.confirmed(asked.question, said))
                     .ok();
             })
@@ -206,10 +212,13 @@ impl TypeScriptCard {
         {
             self.menu_overlay = None;
             if let Some((menu, _)) = &self.menu {
-                menu.update(cx, |menu, cx| {
-                    if menu.is_open() {
-                        menu.close(window, cx);
-                    }
+                let (menu, shown_in) = (menu.clone(), self.menu_window());
+                in_window(window, shown_in, cx, |window, cx| {
+                    menu.update(cx, |menu, cx| {
+                        if menu.is_open() {
+                            menu.close(window, cx);
+                        }
+                    });
                 });
             }
         }
@@ -552,27 +561,40 @@ impl TypeScriptCard {
             menu.set_entries(entries, cx);
             menu.set_size(width.unwrap_or(MENU_WIDTH), max_height);
         });
-        let open = move |menu: &Entity<DropdownMenu>, window: &mut Window, cx: &mut App| {
-            menu.update(cx, |menu, cx| match under {
+        // In the window the composer works in, which draws it: the stage's or the page's.
+        self.menu_on_stage =
+            (self.stage_window).is_some_and(|stage| cx.active_window() == Some(stage.into()));
+        let opened = menu.clone();
+        in_window(window, self.menu_window(), cx, |window, cx| {
+            opened.update(cx, |menu, cx| match under {
                 Some(position) => menu.open_under(position, window, cx),
                 None => menu.open_at(window.mouse_position(), window, cx),
             });
-        };
-        // In the window that asked for it, which draws it: the stage's or the page's.
-        self.menu_on_stage =
-            (self.stage_window).is_some_and(|stage| window.window_handle() == stage.into());
-        open(&menu, window, cx);
+        });
         cx.notify();
         self.menu = Some((menu, Some(question)));
         self.menu_overlay = self.overlays.last().copied();
     }
 
     /// Answers the open menu's question, once.
-    fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
+    pub(super) fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
         let Some(question) = self.menu.as_mut().and_then(|(_, waiting)| waiting.take()) else {
             return;
         };
         self.live
             .update(cx, |live, _| live.menu_picked(question, item));
+    }
+}
+
+/// Runs `run` in `target`: the window it runs in now, or the card's other one.
+fn in_window<R>(
+    window: &mut Window,
+    target: AnyWindowHandle,
+    cx: &mut App,
+    run: impl FnOnce(&mut Window, &mut App) -> R,
+) -> Option<R> {
+    match window.window_handle() == target {
+        true => Some(run(window, cx)),
+        false => target.update(cx, |_, window, cx| run(window, cx)).ok(),
     }
 }
