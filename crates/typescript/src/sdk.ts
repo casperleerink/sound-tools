@@ -62,7 +62,7 @@ export {
   Picture, Rect, Space, Stage, TitleBar, Toggle, Wave
 } from "./sdk/drawing";
 export type {
-  ButtonProps, CardSelect, Color, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint, Pixel,
+  ButtonProps, CardSelect, Color, Colour, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint, Pixel,
   Shape, SpaceProps, Style, TextPart, ThemeColor, ToggleProps
 } from "./sdk/drawing";
 // controls made of them: `Knob`, `Fader`, `Select`, `Steps`, `Pad`

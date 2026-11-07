@@ -18,7 +18,7 @@ struct Graph {
     #[serde(default)]
     waves: Vec<List>,
     #[serde(default)]
-    videos: Vec<VideoSource>,
+    images: Vec<ImageSource>,
     output: Rgb,
     /// The number inputs of its tool each frame moves to the mean of a node over the picture.
     #[serde(default)]
@@ -31,6 +31,14 @@ struct Graph {
 struct Measure {
     name: String,
     node: usize,
+}
+
+/// An image a picture reads: a video, or the last step of another picture by its key.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) enum ImageSource {
+    Video(VideoSource),
+    Picture(String),
 }
 
 /// A video a picture reads: a file under `assets/video/`, at a second that is a live value.
@@ -52,7 +60,7 @@ struct Shown {
     program: Program,
     lives: Vec<Num>,
     waves: Vec<List>,
-    videos: Vec<VideoSource>,
+    images: Vec<ImageSource>,
     /// The number inputs it moves, in the order of the means it renders.
     measures: Vec<String>,
     memory: Mutex<Memory>,
@@ -60,7 +68,7 @@ struct Shown {
 
 #[derive(Default)]
 struct Memory {
-    last: Frame,
+    last: Arc<Frame>,
     /// The step of its time it showed last.
     stepped: Option<u64>,
     /// What it measured in its last frame, until its card sends it.
@@ -83,12 +91,12 @@ impl<'de> Deserialize<'de> for Picture {
             nodes,
             lives,
             waves,
-            videos,
+            images,
             output,
             measures,
             across,
         } = Graph::deserialize(deserializer)?;
-        let counts = (lives.len(), waves.len(), videos.len());
+        let counts = (lives.len(), waves.len(), images.len());
         let (names, measured) = measures
             .into_iter()
             .map(|each| (each.name, each.node))
@@ -99,7 +107,7 @@ impl<'de> Deserialize<'de> for Picture {
             program,
             lives,
             waves,
-            videos,
+            images,
             measures: names,
             memory: Mutex::default(),
         })))
@@ -124,12 +132,21 @@ impl Picture {
         names.zip(measured.unwrap_or_default()).collect()
     }
 
-    pub(crate) fn videos(&self) -> &[VideoSource] {
-        &self.0.videos
+    pub(crate) fn images(&self) -> &[ImageSource] {
+        &self.0.images
+    }
+
+    /// What it showed at its last step, for another picture that reads it.
+    pub(crate) fn last(&self) -> Arc<Frame> {
+        (self.0.memory.lock()).map_or_else(|_| Arc::default(), |memory| memory.last.clone())
     }
 
     pub(crate) fn add_uses(&self, uses: &mut Uses) {
-        (self.0.videos.iter()).for_each(|video| video.at.add_uses(uses));
+        for image in &self.0.images {
+            if let ImageSource::Video(video) = image {
+                video.at.add_uses(uses);
+            }
+        }
         self.0.lives.iter().for_each(|live| live.add_uses(uses));
         self.0.waves.iter().for_each(|list| list.add_uses(uses));
         uses.animates = true;
@@ -159,18 +176,18 @@ impl Picture {
             _ => 1,
         };
         memory.stepped = Some(due);
-        let videos: Vec<&Frame> = seen.videos.iter().map(|frame| &**frame).collect();
+        let images: Vec<&Frame> = seen.images.iter().map(|frame| &**frame).collect();
         for _ in 0..steps {
             let inputs = Inputs {
                 lives: &seen.lives,
                 waves: &seen.waves,
-                videos: &videos,
+                images: &images,
                 last: &memory.last,
                 frame: memory.frame,
             };
             let Rendered { frame, means } = render(program, &inputs, (across, down));
             memory.measured = Some(means);
-            memory.last = frame;
+            memory.last = Arc::new(frame);
             memory.frame = memory.frame.wrapping_add(1);
         }
         let here = window.window_handle().window_id();
@@ -226,12 +243,12 @@ const STEPS_PER_SECOND: f64 = 60.0;
 /// The most steps one draw makes up for, after the window was away a while.
 const MOST_STEPS: u64 = 4;
 
-/// What a picture reads for a draw: its live values, lists and videos as they are now, and the
+/// What a picture reads for a draw: its live values, lists and images as they are now, and the
 /// time.
 pub(crate) struct Seen {
     pub lives: Vec<f32>,
     pub waves: Vec<Vec<f32>>,
-    pub videos: Vec<Arc<Frame>>,
+    pub images: Vec<Arc<Frame>>,
     /// Seconds since the card opened.
     pub time: f64,
 }

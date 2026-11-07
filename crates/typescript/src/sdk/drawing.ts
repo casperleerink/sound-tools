@@ -127,6 +127,9 @@ export const Label = shape("text");
 export const Wave = shape("wave");
 export const Notes = shape("notes");
 export const Path = shape("path");
+/** A colour a picture reads, each part a `Signal` from 0 to 1. */
+export type Colour = { red: Signal; green: Signal; blue: Signal; alpha: Signal };
+
 /** Where a pixel of a `Picture` is, and what else it reads. Each is a `Signal`: combine them with the functions of a sound. */
 export interface Pixel {
   /** 0 at the left of the picture, 1 at its right. */
@@ -158,12 +161,18 @@ export interface Pixel {
    * when it holds its first and last frame. Decoded as it plays, at most 480 pixels across; until
    * the first frame it is black. macOS only.
    */
-  video(asset: string, options?: { at?: Num; loops?: boolean; x?: Operand; y?: Operand }): { red: Signal; green: Signal; blue: Signal };
+  video(asset: string, options?: { at?: Num; loops?: boolean; x?: Operand; y?: Operand }): Colour;
+  /**
+   * The colour of the `Picture` of that `key` in this view at `x`, `y` (this pixel's place when
+   * left out), as it was at its last step: passes, such as a picture that blurs another, or a
+   * hidden one that runs a simulation and one that colours it.
+   */
+  picture(key: string, options?: { x?: Operand; y?: Operand }): Colour;
   /**
    * The colour the picture had one frame before at `x`, `y` (here when left out), between its
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
    */
-  last(x?: Operand, y?: Operand): { red: Signal; green: Signal; blue: Signal; alpha: Signal };
+  last(x?: Operand, y?: Operand): Colour;
   /**
    * Plays the number input `name` of this tool, every frame, with the mean of `value` over the
    * whole picture: how bright it is, how much moved since the frame before, how much of it is
@@ -181,7 +190,13 @@ export interface Pixel {
 export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">, "picture"> & { pixels: (pixel: Pixel) => Rgb; across?: number }): UiNode => {
   const lives: Num[] = [];
   const waves: WaveList[] = [];
-  const videos: Array<{ asset: string; at: Num; loops: boolean }> = [];
+  const images: PictureGraph<Num, WaveList>["images"] = [];
+  const image = (source: PictureGraph<Num, WaveList>["images"][number], atX: Operand, atY: Operand): Colour => {
+    const index = images.push(source) - 1;
+    const channel = (channel: "red" | "green" | "blue" | "alpha") =>
+      new Signal({ op: "image", table: { image: index }, channel, x: atX, y: atY });
+    return { red: channel("red"), green: channel("green"), blue: channel("blue"), alpha: channel("alpha") };
+  };
   const measures: Array<{ name: string; value: Operand }> = [];
   const live = (value: Num): Signal => {
     if (typeof value === "number") return new Signal({ op: "add", a: value, b: 0 });
@@ -202,12 +217,9 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
       if (index < 0) index = waves.push(list) - 1;
       return new Signal({ op: "wave", table: { wave: index }, at });
     },
-    video: (asset, { at = now.elapsed, loops = true, x: atX = x, y: atY = y } = {}) => {
-      const index = videos.push({ asset, at, loops }) - 1;
-      const channel = (channel: "red" | "green" | "blue") =>
-        new Signal({ op: "video", table: { video: index }, channel, x: atX, y: atY });
-      return { red: channel("red"), green: channel("green"), blue: channel("blue") };
-    },
+    video: (asset, { at = now.elapsed, loops = true, x: atX = x, y: atY = y } = {}) =>
+      image({ video: { asset, at, loops } }, atX, atY),
+    picture: (key, { x: atX = x, y: atY = y } = {}) => image({ picture: key }, atX, atY),
     measure: (name, value) => {
       measures.push({ name, value });
     },
@@ -218,7 +230,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
       alpha: new Signal({ op: "last", channel: "alpha", x: atX, y: atY }),
     }),
   };
-  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, videos, measures, across) }, []);
+  return shapeNode("picture", { ...props, picture: pictureToJson(pixels(pixel), lives, waves, images, measures, across) }, []);
 };
 
 /** Shapes moved together, see `Shape`. */
