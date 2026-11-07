@@ -60,6 +60,7 @@ What a pixel reads:
 - `pixel.live(value)`: any live value. `live(now.value("level"))` follows an output of the sound, `live(now.space("stage").pointerX)` the pointer.
 - `pixel.wave(list, at)`: a list at `at`, 0 to 1, such as `now.spectrum("meter")`, how loud each band of a meter's sound is from 20 Hz to 20 kHz, or `now.scope("meter")`, its last sound.
 - `pixel.video("clip.mp4", { at, loops, x, y })`: a video under `assets/video/`, `at` seconds in: `now.elapsed` loops it, `now.seconds` follows the piece. macOS only.
+- `pixel.photo("sky.jpg", { x, y })`: a photo under `assets/images/`, JPEG or PNG: a texture, a mask, a picture to bend.
 - `pixel.last(x, y)`: this picture a step before, for trails and feedback; `last(x.plus(1 / across), y)` scrolls it one pixel a step.
 - `pixel.picture(key, { x, y })`: the last step of the `Picture` of that `key` in the view, such as a water simulation in one and its light in another. It must show to step.
 

@@ -169,6 +169,12 @@ export interface Pixel {
    */
   picture(key: string, options?: { x?: Operand; y?: Operand }): Colour;
   /**
+   * The colour of a photo under `assets/images/`, such as `"sky.jpg"` (JPEG or PNG), at `x`, `y`
+   * of it (this pixel's place when left out): a texture, a mask, a picture to bend. At most 480
+   * pixels across; black until it is read.
+   */
+  photo(asset: string, options?: { x?: Operand; y?: Operand }): Colour;
+  /**
    * The colour the picture had one frame before at `x`, `y` (here when left out), between its
    * pixels: feedback. Mixed in a little, trails; read a little nearer the middle, a zoom that goes on.
    */
@@ -220,6 +226,7 @@ export const Picture = ({ pixels, across, ...props }: Omit<ShapeProps<"picture">
     video: (asset, { at = now.elapsed, loops = true, x: atX = x, y: atY = y } = {}) =>
       image({ video: { asset, at, loops } }, atX, atY),
     picture: (key, { x: atX = x, y: atY = y } = {}) => image({ picture: key }, atX, atY),
+    photo: (asset, { x: atX = x, y: atY = y } = {}) => image({ photo: asset }, atX, atY),
     measure: (name, value) => {
       measures.push({ name, value });
     },

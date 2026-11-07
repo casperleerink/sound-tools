@@ -33,12 +33,14 @@ struct Measure {
     node: usize,
 }
 
-/// An image a picture reads: a video, or the last step of another picture by its key.
+/// An image a picture reads: a video, a photo, or the last step of another picture by its key.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum ImageSource {
     Video(VideoSource),
     Picture(String),
+    /// A photo under `assets/images/`.
+    Photo(String),
 }
 
 /// A video a picture reads: a file under `assets/video/`, at a second that is a live value.

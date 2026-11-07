@@ -521,6 +521,7 @@ impl Placing<'_> {
                     .video((&video.asset, &read), at, video.loops))
                 .unwrap_or_default()
             }
+            ImageSource::Photo(asset) => self.sources.feeds.still(asset).unwrap_or_default(),
             ImageSource::Picture(key) => (self.table.entries())
                 .find_map(|entry| match &entry.props {
                     Props::Shape(shape) if shape.key.as_deref() == Some(key) => {

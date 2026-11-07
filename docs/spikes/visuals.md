@@ -13,16 +13,16 @@ Tools of a project make pictures as well as sound, so Sound Tools builds interac
 
 ## How to verify
 
-Each demo under `docs/prototypes/` opens with `cargo run -p runtime -- docs/prototypes/<name>`: `glow`, `spectra`, `stage`, `video`, `eyes`, `smoke`, `ripples`. `--screenshot <png> --seconds 3` and `--render-video <mp4> --seconds 6` show them without a window.
+Each demo under `docs/prototypes/` opens with `cargo run -p runtime -- docs/prototypes/<name>`: `glow`, `spectra`, `stage`, `video`, `eyes`, `smoke`, `ripples`, `liquid`. `--screenshot <png> --seconds 3` and `--render-video <mp4> --seconds 6` show them without a window.
 
 ## What it is
 
-Branches `t3/visual-*`, stacked; PRs #392 to #406.
+Branches `t3/visual-*`, stacked; PRs #392 to #408.
 
 | Part | What a tool writes |
 | --- | --- |
 | `Picture` | `<Picture pixels={(pixel) => ({ red, green, blue, alpha })}>`: a graph per pixel, from `pixel.x`, `y`, `aspect`, `time`, `noise(x, y, z)` |
-| Reads | `pixel.live(value)` any live value; `pixel.wave(list, at)` a list such as `now.spectrum(meter)` or `now.scope(meter)`; `pixel.video(file, { at })`; `pixel.picture(key)` another picture; `pixel.last(x, y)` the step before, for feedback |
+| Reads | `pixel.live(value)` any live value; `pixel.wave(list, at)` a list such as `now.spectrum(meter)` or `now.scope(meter)`; `pixel.video(file, { at })`; `pixel.photo(file)`; `pixel.picture(key)` another picture; `pixel.last(x, y)` the step before, for feedback |
 | Plays the sound | `pixel.measure(input, value)`: the mean over the picture moves a number input, as a knob does |
 | Stage | `<Stage>` shows part of a page in its own window: full screen on a second screen, else floating in a corner |
 | Time | `now.seconds` follows the piece; the DAW song's `video` field shows a film at the playhead |
