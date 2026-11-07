@@ -74,6 +74,8 @@ props! {
         on_drop: bool,
         /// It shows in the window's title bar instead, when the tool's view is the window's.
         title_bar: bool,
+        /// It shows in a window of its own instead, the stage.
+        stage: bool,
     }
 }
 
@@ -847,6 +849,22 @@ impl NodeTable {
             match &entry.props {
                 Props::Div(div) if div.title_bar == Some(true) => return Some(slot),
                 Props::Div(_) | Props::Overlay(_) => todo.extend(&entry.children),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The slot of the div that says `stage`.
+    pub(crate) fn stage(&self) -> Option<usize> {
+        let mut todo = vec![self.root?];
+        while let Some(slot) = todo.pop() {
+            let Some(entry) = self.get(slot) else {
+                continue;
+            };
+            match &entry.props {
+                Props::Div(div) if div.stage == Some(true) => return Some(slot),
+                Props::Div(_) => todo.extend(&entry.children),
                 _ => {}
             }
         }

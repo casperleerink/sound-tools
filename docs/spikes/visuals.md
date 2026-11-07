@@ -34,3 +34,9 @@ A shape whose colour per pixel is a signal graph: `pixel.x`, `pixel.y`, `pixel.t
 ### 3. Screenshots after a while (`t3/visual-screenshot-seconds`)
 
 `--screenshot <png> --seconds <n>` runs the window n seconds, drawing every poll, before the picture. An agent sees what a picture, a scope or a meter does over time, as vork's loop of render and look.
+
+### 4. Stage, a window for the audience (`t3/visual-stage`)
+
+`<Stage>` is a div of a page shown in a window of its own: fullscreen on a second screen, else floating in a corner as a preview. The rest of the view stays in the app. Drawn from the page's nodes, as the title bar is. Demo: `docs/prototypes/stage`.
+
+- Open: a stage closed by hand comes back only when the view drops and adds it again. No keys on the stage.

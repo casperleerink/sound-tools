@@ -59,7 +59,7 @@ export type {
 // the elements of a view: `div` and its `Style`, `Space` and its shapes, `Button`, `Input`
 export {
   Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  Picture, Rect, Space, TitleBar, Toggle, Wave
+  Picture, Rect, Space, Stage, TitleBar, Toggle, Wave
 } from "./sdk/drawing";
 export type {
   ButtonProps, CardSelect, Color, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint, Pixel,
