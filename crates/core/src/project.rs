@@ -421,6 +421,12 @@ impl Project {
         self.instances.get(id).map(|record| record.tool)
     }
 
+    /// The names of the children each record of `tool` must have, see
+    /// [`JsonTool::required_children`].
+    pub fn required_children(&self, tool: &str) -> &[String] {
+        (self.registry.definition(tool)).map_or(&[], |tool| &tool.required_children)
+    }
+
     /// Resolves a saved reference. `None` when the instance does not exist or belongs to
     /// another tool. A reference owns nothing and keeps nothing alive.
     pub fn resolve<S: State>(&self, id: &InstanceId) -> Option<Instance<S>> {
@@ -600,6 +606,12 @@ impl Project {
         if cleared || !problems.is_empty() {
             self.push_event(ProjectEvent::ProblemsChanged);
         }
+    }
+
+    /// The files that are not live as they are on disk, by their paths in the project: a record
+    /// that did not load or plays an older version, or code of the project's tools.
+    pub fn files_not_live(&self) -> impl Iterator<Item = &str> {
+        self.file_problems.keys().map(String::as_str)
     }
 
     /// Takes the events since the last call.

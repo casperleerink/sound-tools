@@ -57,8 +57,8 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
     group: "Project",
-    when: "You can run commands: check how your work sounds, read the whole piece, or render a WAV",
-    markdown: "# Inspect, measure and render from a command line
+    when: "Run commands: check how your work sounds, read the whole piece, render WAVs or save templates",
+    markdown: "# Inspect, measure, render and save from a command line
 
 Every form works while the project is open and changes no record.
 
@@ -106,6 +106,10 @@ A note starts at an attack, a syllable or a change of pitch:
 Silence is 40 dB under the loudest moment, or 10 dB over the noise of a recording. Which key and which bar the notes belong to is for you and the composer to decide.
 
 To check a vibrato or the tuning, solo the track and measure one held note with `--from` and `--to`. A mono file measures 3 dB above what a meter of one channel shows, as it plays on both. Compare runs (before and after your change, a soloed track against the whole); the composer says whether it sounds good.
+
+## Save the project as a template
+
+`sound-tools . --save-template <name>` saves a template a new project on this machine can start from: the tools, the records at the top and the children their tools require. `--with-content` after it keeps every record and asset. Ask the composer for the name and which of the two first. A template of that name is replaced only with `--replace`, once the composer said so.
 
 When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };

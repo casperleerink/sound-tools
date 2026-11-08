@@ -1,6 +1,6 @@
 //! What a new project starts as: the files of a folder of `templates/`, written into its empty
 //! folder before it opens. Each folder there is one of [`TEMPLATES`], with what its
-//! `template.json` says of it; `build.rs` embeds them.
+//! `template.json` says of it; `build.rs` embeds them. The composer's own are [`Saved`].
 //!
 //! A project keeps the template's code as it wrote it, in [`KEPT`], so that a later release
 //! with a newer template can [`update`] what the project never changed and leave the rest to a
@@ -12,7 +12,14 @@ use anyhow::{Context as _, Result, bail};
 
 use crate::PROJECT_FILE;
 
+mod about;
+mod saved;
 mod written;
+
+pub use saved::{Keep, Saved, exists_in, save_in, saved_folder, saved_in};
+
+/// What a template says of itself, see [`about::About`].
+const ABOUT_FILE: &str = "template.json";
 
 pub struct Template {
     pub name: &'static str,
@@ -29,10 +36,48 @@ pub fn named(name: &str) -> Option<&'static Template> {
     TEMPLATES.iter().find(|template| template.name == name)
 }
 
-/// Writes the files of `template` into `folder`, which must be missing, empty (see [`is_empty`])
-/// or an empty project: one that holds nothing but its `project.json` and what the runtime
-/// writes. Makes the folder when it is missing.
-pub fn write(folder: &Path, template: &Template) -> Result<()> {
+/// A template of the app's or one the composer saved, as a list to pick from shows them.
+#[derive(Clone)]
+pub enum Choice {
+    Bundled(&'static Template),
+    Saved(Saved),
+}
+
+impl Choice {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Bundled(template) => template.name,
+            Self::Saved(template) => &template.name,
+        }
+    }
+
+    pub fn description(&self) -> &str {
+        match self {
+            Self::Bundled(template) => template.description,
+            Self::Saved(template) => &template.description,
+        }
+    }
+
+    /// See [`write`] and [`Saved::write`].
+    pub fn write(&self, folder: &Path) -> Result<()> {
+        match self {
+            Self::Bundled(template) => write(folder, template),
+            Self::Saved(template) => template.write(folder),
+        }
+    }
+}
+
+/// The templates of the app, then the ones saved on this machine.
+pub fn choices() -> Result<Vec<Choice>> {
+    let bundled = TEMPLATES.iter().map(Choice::Bundled);
+    let saved = saved_in(&saved_folder()?)?.into_iter().map(Choice::Saved);
+    Ok(bundled.chain(saved).collect())
+}
+
+/// Makes `folder` for a new project unless it is there and has files in it: it must be
+/// missing, empty (see [`is_empty`]) or an empty project, one that holds nothing but its
+/// `project.json` and what the runtime writes.
+fn check_new(folder: &Path) -> Result<()> {
     let empty_project = || -> Result<bool> {
         Ok(folder.join(PROJECT_FILE).exists() && is_empty_project(folder, folder)?)
     };
@@ -43,14 +88,15 @@ pub fn write(folder: &Path, template: &Template) -> Result<()> {
             name.to_string_lossy()
         );
     }
-    std::fs::create_dir_all(folder)
-        .with_context(|| format!("could not make {}", folder.display()))?;
+    std::fs::create_dir_all(folder).with_context(|| format!("could not make {}", folder.display()))
+}
+
+/// Writes the files of `template` into `folder`, see [`check_new`].
+pub fn write(folder: &Path, template: &Template) -> Result<()> {
+    check_new(folder)?;
     for (path, contents) in template.files {
         let target = folder.join(path);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("could not make {}", parent.display()))?;
-        }
+        make_room(&target)?;
         let contents = match *path == PROJECT_FILE {
             true => with_extensions(contents)?,
             false => (*contents).to_string(),
@@ -176,23 +222,26 @@ pub fn begin_merge(folder: &Path, update: &Update) -> Result<String> {
     ))
 }
 
-/// The files under `folder`, by their paths from `root`, with `/` between parts.
+/// The files under `folder`, by their paths from `root`, with `/` between parts. Folders the
+/// runtime writes, such as `node_modules`, are left out unread.
 fn files_under(root: &Path, folder: &Path) -> Result<Vec<String>> {
     let mut files = Vec::new();
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return Ok(files);
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(files),
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not read {}", folder.display()));
+        }
     };
     for entry in entries {
         let path = entry
             .with_context(|| format!("could not read {}", folder.display()))?
             .path();
+        let inside = (path.strip_prefix(root)?.to_string_lossy()).replace('\\', "/");
         match path.is_dir() {
+            true if written::written_by_the_runtime(&inside) => {}
             true => files.extend(files_under(root, &path)?),
-            false => files.push(
-                path.strip_prefix(root)?
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-            ),
+            false => files.push(inside),
         }
     }
     Ok(files)
@@ -210,10 +259,7 @@ fn read(path: &Path) -> Result<Option<String>> {
 fn put(path: &Path, contents: Option<&str>) -> Result<()> {
     match contents {
         Some(contents) => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("could not make {}", parent.display()))?;
-            }
+            make_room(path)?;
             std::fs::write(path, contents)
                 .with_context(|| format!("could not write {}", path.display()))
         }
@@ -223,6 +269,15 @@ fn put(path: &Path, contents: Option<&str>) -> Result<()> {
             }
             _ => Ok(()),
         },
+    }
+}
+
+/// Makes the folder `path` goes in.
+fn make_room(path: &Path) -> Result<()> {
+    match path.parent() {
+        Some(parent) => std::fs::create_dir_all(parent)
+            .with_context(|| format!("could not make {}", parent.display())),
+        None => Ok(()),
     }
 }
 

@@ -72,6 +72,7 @@ pub(crate) fn json_tool() -> JsonTool {
         // A file that arrives plays a region that waited for it.
         asset_folders: vec![AUDIO_FOLDER],
         owns_children: false,
+        required_children: Vec::new(),
         end: Some(Box::new(end)),
     }
 }

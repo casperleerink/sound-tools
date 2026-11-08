@@ -839,6 +839,10 @@ impl Sounds {
             // A sample its record names may come after the record, as an audio clip's may.
             asset_folders: vec![sound_media::AUDIO_FOLDER],
             owns_children: info.behaviour,
+            required_children: (info.children.iter().flat_map(|named| &named.0))
+                .map(|(name, _)| name.clone())
+                .filter(|name| !name.ends_with(ANY_NAME))
+                .collect(),
             end: None,
         }
     }

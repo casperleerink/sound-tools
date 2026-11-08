@@ -50,6 +50,8 @@ pub struct JsonTool {
     pub asset_folders: Vec<&'static str>,
     /// What [`State::OWNS_CHILDREN`] is for a typed tool.
     pub owns_children: bool,
+    /// The names of the children each of its records must have. A typed tool requires none.
+    pub required_children: Vec<String>,
     /// What [`ToolRegistration::end`] is for a typed tool. It gets the project and the `state`.
     pub end: Option<Box<dyn Fn(&Project, &serde_json::Value) -> Option<Ticks>>>,
 }
@@ -167,6 +169,8 @@ pub(crate) struct ToolDefinition {
     pub behaviour: Option<ErasedBehaviour>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
+    /// See [`JsonTool::required_children`].
+    pub required_children: Vec<String>,
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
     /// again. See [`ToolRegistration::rebinds_on_assets`].
     pub asset_folders: Vec<&'static str>,
@@ -235,6 +239,7 @@ impl Registry {
             behaviour: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
+            required_children: Vec::new(),
             asset_folders: Vec::new(),
             schema: None,
         });
@@ -295,6 +300,7 @@ impl Registry {
             doc,
             asset_folders,
             owns_children,
+            required_children,
             end,
         } = tool;
         let name = match self.tools.get_key_value(name.as_str()) {
@@ -358,6 +364,7 @@ impl Registry {
                     Box::new(move |project, id| end(project, project.json_state(id)?))
                 }),
                 owns_children,
+                required_children,
                 asset_folders,
                 schema: None,
             },
