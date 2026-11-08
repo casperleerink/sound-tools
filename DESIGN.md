@@ -15,7 +15,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Chrome is one quiet menu on the project name, and the live input beside it.
 - Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind the expand icon of a card.
 - Text in the window is for the composer, a musician, not for a programmer: no names of languages, programs, formats or files (TypeScript, Bun, JSON, `extensions/`). Something that cannot run says why in plain words (`This project does not load plugins.`); what to edit is for the agent docs.
-- Notices are quiet lines in a corner. Nothing blocks.
+- Notices are quiet lines in the bottom right corner. Nothing blocks. Files that are not live are a sign beside the project menu, not a notice: they stay until fixed.
 - Accessible: visible focus rings for keyboard focus, labelled controls, full keyboard reach. This is a product requirement.
 
 ### One calm instrument
