@@ -268,11 +268,12 @@ fn project_file_of_tools(file: &str, ids: &BTreeSet<String>) -> Result<String> {
     Ok(serde_json::to_string_pretty(&project)?)
 }
 
-/// The id of the instance whose record is at `path` in a project, such as `song/master` of
-/// `state/song/master.json`.
+/// The id of the instance whose record or folder is at `path` in a project, such as
+/// `song/master` of `state/song/master.json` and `song` of the folder `state/song`.
 fn record_id(path: &str) -> Option<&str> {
     let record = path.strip_prefix("state/")?;
-    (record.strip_suffix("/instance.json")).or(record.strip_suffix(".json"))
+    let id = (record.strip_suffix("/instance.json")).or(record.strip_suffix(".json"));
+    Some(id.unwrap_or(record.trim_end_matches('/')))
 }
 
 /// Whether `path`, in a project, goes into a template that keeps `keep`: the project's own
@@ -416,6 +417,8 @@ mod tests {
         // An instance may be called `state`.
         let named_state = Keep::Tools(["state".to_string()].into());
         assert!(kept("state/state/instance.json", &named_state));
+        // A problem of a folder whose record is missing names it so.
+        assert_eq!(record_id("state/song"), Some("song"));
         assert!(!new.path().join(crate::templates::KEPT).exists());
 
         let new = tempfile::tempdir().unwrap();

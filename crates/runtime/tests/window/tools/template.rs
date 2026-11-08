@@ -100,6 +100,14 @@ fn the_tools_only_of_a_project_whose_required_part_did_not_load_are_refused() {
     let opened = runtime::open_for_inspect(project.path()).unwrap();
     let error = runtime::templates::Keep::tools_of(&opened).unwrap_err();
     assert!(error.to_string().contains("song/master"), "{error}");
+
+    // A song whose own record is gone leaves its folder of parts.
+    let fader = r#"{"tool": "fader", "state": {}}"#;
+    std::fs::write(project.path().join("state/song/master.json"), fader).unwrap();
+    std::fs::remove_file(project.path().join("state/song/instance.json")).unwrap();
+    let opened = runtime::open_for_inspect(project.path()).unwrap();
+    let error = runtime::templates::Keep::tools_of(&opened).unwrap_err();
+    assert!(error.to_string().contains("(state/song)"), "{error}");
 }
 
 #[gpui::test]
