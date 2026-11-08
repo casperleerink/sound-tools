@@ -1,0 +1,54 @@
+---
+source: crates/agent/src/provider/pi/tests.rs
+expression: "replay(\"interrupt\")"
+---
+[
+    TurnStarted,
+    Started {
+        account: None,
+        models: [
+            Model {
+                id: "openrouter/google/gemini-2.5-flash-lite",
+                name: "Google: Gemini 2.5 Flash Lite",
+                description: "",
+                short_name: "Google: Gemini 2.5 Flash Lite",
+                source: Some(
+                    "OpenRouter",
+                ),
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "tool_bash_lvfQ1I2vL9JWUEfql6ur",
+        ),
+        title: "Ran a command",
+        running_title: "Running a command",
+        request_title: "Run a command",
+        command: Some(
+            "echo again > d.txt",
+        ),
+        kind: Run,
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "4d478198-ca69-493d-97c9-32985ea311b7",
+        ),
+        title: "Run",
+        command: Some(
+            "echo again > d.txt",
+        ),
+    },
+    StepDone {
+        id: StepId(
+            "tool_bash_lvfQ1I2vL9JWUEfql6ur",
+        ),
+        outcome: Failed,
+    },
+    TurnEnded {
+        outcome: Interrupted,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

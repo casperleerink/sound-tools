@@ -1,4 +1,4 @@
-import { Button, For, Fragment, h, Icon, Input, Label, now, onCleanup, PeakMeter, Select, Show, Space, Toggle, untrack, type Color, type StateOfTool } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, Label, Meter, now, onCleanup, Select, Show, Space, Toggle, untrack, type Color, type StateOfTool } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
@@ -120,7 +120,7 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
               </div>
             )
           }
-          {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
+          {() => (memory.armed.has(each.name) ? <Meter key={`input-${each.name}`} peaks={{ input: inputOf(each) }} horizontal /> : null)}
         </div>
         <div style={{ height: 24, direction: "row", align: "center", gap: 4 }}>
           <div style={() => ({ grow: true, fontSize: 12, truncate: true, color: muted(each) ? "gray-700/40" : "gray-700" })}>
@@ -193,7 +193,7 @@ export const Returns = ({ page }: { page: Page }) => {
       </div>
       <Show when={() => memory.returnsOpen}>
         {() => (
-          <div style={() => ({ height: Math.min(returns().length, 4.5) * RETURN_ROW, scroll: "y", keep: true })}>
+          <div key="returns-list" style={() => ({ height: Math.min(returns().length, 4.5) * RETURN_ROW, scroll: "y", keep: true })}>
             <For each={returns}>{(each) => <ReturnRow page={page} each={each} />}</For>
           </div>
         )}

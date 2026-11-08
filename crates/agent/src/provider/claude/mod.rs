@@ -15,24 +15,20 @@ mod setup;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
-use std::pin::Pin;
-use std::process::Stdio;
 
 use serde_json::Value;
 use smol::channel::Receiver;
-use smol::future;
-use smol::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
-use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
-pub(super) use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
-use super::{AgentEvent, ApprovalMode, Command, ThreadOptions};
-use crate::process::ProcessTree;
+pub(super) use self::setup::{
+    SIGN_IN_CHOICES, account, ask_small_model, download, sign_in, sign_out,
+};
+use super::{AgentEvent, ApprovalMode, Command, ThreadOptions, jsonl};
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
 /// text.
@@ -120,246 +116,82 @@ fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::pr
     command
 }
 
-/// The process of one thread and what it said so far. Polling it also writes what the
-/// [`super::Thread`] sends, so the process needs no task of its own.
+/// Starts `claude` for one thread. `session_id` is the one `options.resume` names, or the new
+/// one to give the session.
+pub(super) fn start(
+    options: ThreadOptions,
+    session_id: &str,
+    commands: Receiver<Command>,
+) -> io::Result<Events> {
+    let mut command = command(&options.installed.program, &options.installed.environment);
+    command
+        .args(arguments(&options, session_id))
+        .current_dir(&options.folder)
+        // Loads the CLAUDE.md of the `--add-dir` folder, the project's.
+        .env("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1")
+        // No connection to an editor the composer has open, and no extension installed
+        // into it.
+        .env("CLAUDE_CODE_AUTO_CONNECT_IDE", "0")
+        .env("CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1");
+    let mut lines = Lines {
+        mapper: Mapper::new(options.folder),
+        requests_sent: 0,
+    };
+    let initialize = lines.request(Request::Initialize);
+    Events::start(command, lines, [initialize], commands)
+}
+
+pub(super) type Events = jsonl::Events<Lines>;
+
+/// Claude's side of [`jsonl::Protocol`]: the mapper, and the ids of our requests.
 #[derive(Debug)]
-pub(super) struct Events {
-    child: Child,
-    /// The CLI and every program it started, such as a `cargo build`: `kill_on_drop` ends
-    /// only the CLI. Ended only while the CLI is not reaped yet.
-    tree: ProcessTree,
-    /// `None` once every [`super::Thread`] is gone or the pipe broke.
-    stdin: Option<ChildStdin>,
-    /// The line being written and how much of it is written. It stays here between calls
-    /// of [`Events::next`], so a call dropped halfway loses nothing.
-    writing: Option<Writing>,
-    stdout: BufReader<ChildStdout>,
-    stdout_line: Vec<u8>,
-    /// `None` once it closed.
-    stderr: Option<BufReader<ChildStderr>>,
-    stderr_line: Vec<u8>,
-    /// The first line on stderr, which names what went wrong.
-    said: Option<String>,
-    /// `None` once every [`super::Thread`] is gone.
-    commands: Option<Receiver<Command>>,
+pub(super) struct Lines {
     mapper: Mapper,
-    outbox: VecDeque<Outgoing>,
-    events: VecDeque<AgentEvent>,
     requests_sent: u64,
-    exited: bool,
 }
 
-#[derive(Debug)]
-struct Writing {
-    message: Outgoing,
-    line: Vec<u8>,
-    written: usize,
-}
-
-impl Events {
-    /// `session_id` is the one `options.resume` names, or the new one to give the session.
-    pub(super) fn start(
-        options: ThreadOptions,
-        session_id: &str,
-        commands: Receiver<Command>,
-    ) -> io::Result<Events> {
-        let mut command = command(&options.installed.program, &options.installed.environment);
-        command
-            .args(arguments(&options, session_id))
-            .current_dir(&options.folder)
-            // Loads the CLAUDE.md of the `--add-dir` folder, the project's.
-            .env("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1")
-            // No connection to an editor the composer has open, and no extension installed
-            // into it.
-            .env("CLAUDE_CODE_AUTO_CONNECT_IDE", "0")
-            .env("CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1");
-        // Dropping the events ends the agent's own children too.
-        ProcessTree::prepare(&mut command);
-        let mut child = smol::process::Command::from(command)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
-        let tree = ProcessTree::of(&child)?;
-        let pipe = |name| io::Error::other(format!("the {name} of claude is not a pipe"));
-        let stdin = child.stdin.take().ok_or_else(|| pipe("stdin"))?;
-        let stdout = child.stdout.take().ok_or_else(|| pipe("stdout"))?;
-        let stderr = child.stderr.take().ok_or_else(|| pipe("stderr"))?;
-        let mut events = Events {
-            child,
-            tree,
-            stdin: Some(stdin),
-            writing: None,
-            stdout: BufReader::new(stdout),
-            stdout_line: Vec::new(),
-            stderr: Some(BufReader::new(stderr)),
-            stderr_line: Vec::new(),
-            said: None,
-            commands: Some(commands),
-            mapper: Mapper::new(options.folder),
-            outbox: VecDeque::new(),
-            events: VecDeque::new(),
-            requests_sent: 0,
-            exited: false,
-        };
-        events.request(Request::Initialize);
-        Ok(events)
-    }
-
-    /// Cancel-safe: dropping the future before it is ready loses no event and no part of a
-    /// message on its way to the CLI, so it can race a timer.
-    pub(super) async fn next(&mut self) -> Option<AgentEvent> {
-        loop {
-            if let Some(event) = self.events.pop_front() {
-                return Some(event);
-            }
-            if self.exited {
-                return None;
-            }
-            if self.writing.is_none()
-                && let Some(message) = self.outbox.pop_front()
-            {
-                self.prepare(message);
-                continue;
-            }
-            match self.input().await {
-                Input::Command(Some(command)) => self.command(command),
-                Input::Command(None) => {
-                    // Every handle is gone. Closing stdin ends the CLI, and its output ends.
-                    self.commands = None;
-                    self.close_stdin();
-                }
-                Input::Written(Ok(written)) => self.written(written),
-                // The CLI is gone. The end of its output says why.
-                Input::Written(Err(_)) => self.close_stdin(),
-                Input::Line(Some(line)) => self.line(&line),
-                Input::Line(None) => self.exit().await,
-                Input::Stderr(Some(line)) => self.keep_stderr(&line),
-                Input::Stderr(None) => self.stderr = None,
-            }
-        }
-    }
-
-    /// Whichever comes first. Every source keeps its progress in `self` and makes it only
-    /// when it is ready, so the ones that lose the race lose nothing. Writing races with
-    /// reading because the CLI may wait for us to read before it reads more.
-    async fn input(&mut self) -> Input {
-        let Events {
-            commands,
-            stdin,
-            writing,
-            stdout,
-            stdout_line,
-            stderr,
-            stderr_line,
-            ..
-        } = self;
-        let command = async {
-            match commands {
-                Some(commands) => Input::Command(commands.recv().await.ok()),
-                None => future::pending().await,
-            }
-        };
-        let write = async {
-            match (stdin, writing) {
-                (Some(stdin), Some(writing)) => {
-                    let rest = writing.line.get(writing.written..).unwrap_or_default();
-                    let result =
-                        future::poll_fn(|context| Pin::new(&mut *stdin).poll_write(context, rest))
-                            .await;
-                    Input::Written(result)
-                }
-                _ => future::pending().await,
-            }
-        };
-        let line = async { Input::Line(read_line(stdout, stdout_line).await) };
-        let error = async {
-            match stderr {
-                Some(stderr) => Input::Stderr(read_line(stderr, stderr_line).await),
-                None => future::pending().await,
-            }
-        };
-        future::or(command, future::or(write, future::or(line, error))).await
-    }
-
-    fn command(&mut self, command: Command) {
-        match command {
-            Command::Send(message) => self.outbox.push_back(Outgoing::user(message)),
-            Command::Interrupt => self.request(Request::Interrupt),
-            Command::Answer(approval, answer) => {
-                // An approval the turn already ended has nobody waiting for the answer.
-                if let Some(message) = self.mapper.answer(&approval, answer) {
-                    self.outbox.push_back(message);
-                }
-            }
-            Command::SetApprovalMode(mode) => self.request(Request::SetPermissionMode {
-                mode: permission_mode(mode),
-            }),
-            Command::SetModel(model) => self.request(Request::SetModel { model }),
-        }
-    }
-
-    fn request(&mut self, request: Request) {
+impl Lines {
+    fn request(&mut self, request: Request) -> Outgoing {
         self.requests_sent += 1;
-        self.outbox.push_back(Outgoing::ControlRequest {
+        Outgoing::ControlRequest {
             request_id: format!("request-{}", self.requests_sent),
             request,
-        });
-    }
-
-    /// Refuses a request of the CLI, so it does not wait for an answer forever.
-    fn refuse(&mut self, request_id: String) {
-        self.outbox.push_back(Outgoing::ControlResponse {
-            response: ControlResponse::Error {
-                request_id,
-                error: "Not supported by Sound Tools".to_string(),
-            },
-        });
-    }
-
-    fn prepare(&mut self, message: Outgoing) {
-        if self.stdin.is_none() {
-            return;
-        }
-        match serde_json::to_vec(&message) {
-            Ok(mut line) => {
-                line.push(b'\n');
-                self.writing = Some(Writing {
-                    message,
-                    line,
-                    written: 0,
-                });
-            }
-            Err(error) => self.events.push_back(AgentEvent::Error {
-                message: format!("Could not write to Claude Code: {error}"),
-            }),
         }
     }
+}
 
-    /// A pipe has no buffer of ours, so a line written whole has reached the CLI.
-    fn written(&mut self, written: usize) {
-        let Some(writing) = &mut self.writing else {
-            return;
+/// Refuses a request of the CLI, so it does not wait for an answer forever.
+fn refuse(request_id: String) -> Outgoing {
+    Outgoing::ControlResponse {
+        response: ControlResponse::Error {
+            request_id,
+            error: "Not supported by Sound Tools".to_string(),
+        },
+    }
+}
+
+impl jsonl::Protocol for Lines {
+    type Outgoing = Outgoing;
+
+    fn command(&mut self, command: Command) -> Vec<Outgoing> {
+        let message = match command {
+            Command::Send(message) => Some(Outgoing::user(message)),
+            Command::Interrupt => Some(self.request(Request::Interrupt)),
+            // An approval the turn already ended has nobody waiting for the answer.
+            Command::Answer(approval, answer) => self.mapper.answer(&approval, answer),
+            Command::SetApprovalMode(mode) => Some(self.request(Request::SetPermissionMode {
+                mode: permission_mode(mode),
+            })),
+            Command::SetModel(model) => Some(self.request(Request::SetModel { model })),
         };
-        if written == 0 {
-            self.close_stdin();
-            return;
-        }
-        writing.written += written;
-        if writing.written >= writing.line.len()
-            && let Some(writing) = self.writing.take()
-        {
-            self.events.extend(self.mapper.sent(&writing.message));
-        }
+        message.into_iter().collect()
     }
 
-    fn close_stdin(&mut self) {
-        self.stdin = None;
-        self.writing = None;
+    fn sent(&mut self, message: &Outgoing) -> Vec<AgentEvent> {
+        self.mapper.sent(message)
     }
 
-    fn line(&mut self, line: &str) {
+    fn received(&mut self, line: &str) -> (Vec<Outgoing>, Vec<AgentEvent>) {
         let message = match serde_json::from_str::<Incoming>(line) {
             Ok(message) => message,
             Err(error) => {
@@ -367,6 +199,7 @@ impl Events {
                 // it, and a broken request still gets an answer.
                 let value = serde_json::from_str::<Value>(line).unwrap_or_default();
                 let kind = value.get("type").and_then(Value::as_str);
+                let mut answers = Vec::new();
                 if kind == Some("control_request")
                     && let Some(request_id) = value.get("request_id")
                 {
@@ -375,86 +208,32 @@ impl Events {
                         Value::String(request_id) => request_id.clone(),
                         other => other.to_string(),
                     };
-                    self.refuse(request_id);
+                    answers.push(refuse(request_id));
                 }
                 let ends_turn = kind == Some("result");
                 let events = self.mapper.unreadable(ends_turn, &error.to_string());
-                self.events.extend(events);
-                return;
+                return (answers, events);
             }
         };
+        let mut answers = Vec::new();
         if let Incoming::ControlRequest {
             request_id,
             request: CliRequest::Other,
         } = &message
         {
             // Nothing we start asks anything else.
-            self.refuse(request_id.clone());
+            answers.push(refuse(request_id.clone()));
         }
-        self.events.extend(self.mapper.received(message));
+        (answers, self.mapper.received(message))
     }
 
-    fn keep_stderr(&mut self, line: &str) {
-        let line = line.trim();
-        if self.said.is_none() && !line.is_empty() {
-            self.said = Some(line.to_string());
-        }
-    }
-
-    async fn exit(&mut self) {
-        // The rest of stderr, which may say why it stopped.
-        while let Some(stderr) = &mut self.stderr {
-            match read_line(stderr, &mut self.stderr_line).await {
-                Some(line) => self.keep_stderr(&line),
-                None => self.stderr = None,
-            }
-        }
-        self.close_stdin();
-        // Before the wait: until the CLI is reaped its pid cannot name another group.
-        self.tree.end();
-        let code = match self.child.status().await {
-            Ok(status) => status.code(),
-            Err(error) => {
-                self.said.get_or_insert(error.to_string());
-                None
-            }
-        };
-        // Reaped, so from here the pid may belong to someone else.
-        self.exited = true;
-        let events = self.mapper.exited(code, self.said.as_deref());
-        self.events.extend(events);
-    }
-}
-
-impl Drop for Events {
-    fn drop(&mut self) {
-        if !self.exited {
-            self.tree.end();
+    fn unwritable(&self, error: serde_json::Error) -> AgentEvent {
+        AgentEvent::Error {
+            message: format!("Could not write to Claude Code: {error}"),
         }
     }
-}
 
-/// The next line, or `None` at the end. The bytes read so far stay in `buffer`, so a call
-/// dropped halfway loses nothing. Not UTF-8 is replaced, never an error.
-async fn read_line(
-    reader: &mut BufReader<impl AsyncRead + Unpin>,
-    buffer: &mut Vec<u8>,
-) -> Option<String> {
-    // A pipe that fails to read is as good as closed: the process is going.
-    let more = matches!(reader.read_until(b'\n', buffer).await, Ok(read) if read > 0);
-    if !more && buffer.is_empty() {
-        return None;
+    fn exited(&mut self, code: Option<i32>, said: Option<&str>) -> Vec<AgentEvent> {
+        self.mapper.exited(code, said)
     }
-    let line = String::from_utf8_lossy(buffer)
-        .trim_end_matches(['\n', '\r'])
-        .to_string();
-    buffer.clear();
-    Some(line)
-}
-
-enum Input {
-    Command(Option<Command>),
-    Written(io::Result<usize>),
-    Line(Option<String>),
-    Stderr(Option<String>),
 }

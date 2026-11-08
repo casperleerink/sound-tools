@@ -15,7 +15,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Chrome is one quiet menu on the project name, and the live input beside it.
 - Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind the expand icon of a card.
 - Text in the window is for the composer, a musician, not for a programmer: no names of languages, programs, formats or files (TypeScript, Bun, JSON, `extensions/`). Something that cannot run says why in plain words (`This project does not load plugins.`); what to edit is for the agent docs.
-- Notices are quiet lines in a corner. Nothing blocks.
+- Notices are quiet lines in the bottom right corner. Nothing blocks. Files that are not live are a sign beside the project menu, not a notice: they stay until fixed.
 - Accessible: visible focus rings for keyboard focus, labelled controls, full keyboard reach. This is a product requirement.
 
 ### One calm instrument
@@ -62,7 +62,8 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 
 ### Gestures
 
-- Every drag and every key that changes the piece is one undo step. Undo waits while a drag is going on.
+- Every drag and every key that changes the piece is one point of history. Undo and going back wait while a drag or a take is going on, and say so.
+- History is exploring, never commits or branches: every state is kept and an idea tried is a version. The History tab lists versions, not a graph: the current one open on its latest changes, each with the version it started from. Rejected: lanes and edges, which read as code. Going back is one click and makes nothing new; the next change does.
 - There is no save. Every finished edit is already in the folder.
 - Everything snaps to the grid of the timeline. Cmd during a drag ignores it. Arrow keys move things in time by one snap step.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
@@ -84,6 +85,6 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 
 ### The agent
 
-- One message at a time. Everything the agent changes for one message is one undo step, named after the message.
+- One message at a time. Everything the agent changes for one message is one point of history.
 - The sidebar keeps its last thread per project, and the agent goes on where it left off.
 - While the sidebar is closed and the agent works or asks, its icon carries a lavender dot.

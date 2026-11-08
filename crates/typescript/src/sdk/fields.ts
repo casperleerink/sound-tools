@@ -16,7 +16,6 @@ export interface NumberField {
   max: number;
   /** `min` when left out. */
   default?: number;
-  /** Only whole numbers. */
   integer?: boolean;
   /** `"hz"` turns on a log scale; `"percent"` still holds 0 to 1. */
   unit?: Unit;
@@ -68,7 +67,6 @@ export interface ObjectItem<F extends Fields = Fields> {
 export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
   kind: "list";
   item: I;
-  /** The most items it holds. */
   max?: number;
   /** `[]` when left out. `list` types it from `item`. */
   default?: unknown[];
@@ -97,7 +95,6 @@ export function number(field: Omit<NumberField, "kind">): NumberField {
   return { kind: "number", ...field };
 }
 export const boolean = (field: Omit<BooleanField, "kind">): BooleanField => ({ kind: "boolean", ...field });
-/** `default` is one of `options`, which are at least one. */
 export const choice = <const Option extends string | number>(field: {
   options: readonly [Option, ...Option[]];
   default: NoInfer<Option>;

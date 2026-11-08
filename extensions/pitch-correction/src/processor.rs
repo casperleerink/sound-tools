@@ -24,8 +24,10 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, DelayLine, EventInput, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Watch, all_held_silent, held,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Watch,
 };
+
+use sound_dsp::{all_held_silent, held};
 use sound_media::analysis::{LOWEST_HZ, Pitch, PitchTracker, SteadyPitch};
 use sound_media::{Shift, Shifter};
 use sound_notes::NoteEvent;

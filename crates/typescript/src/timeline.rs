@@ -100,6 +100,7 @@ pub(crate) fn json_tool() -> JsonTool {
         behaviour: Box::new(apply),
         asset_folders: Vec::new(),
         owns_children: false,
+        required_children: Vec::new(),
         end: Some(Box::new(|_, state| end(state))),
     }
 }

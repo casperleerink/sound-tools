@@ -114,12 +114,10 @@ export type KnobProps = ValueProps<number> & {
 };
 
 /**
- * A knob on a number, as the app's knobs look: a field of the record such as `rate`, whose drag
- * is smooth and one undo step, a number input, which nothing saves, or what code keeps, see
- * `ValueProps`. With `played`, it shows the field as it plays, so it moves with a lane. A
- * double click puts it at `default`. A `bipolar` one, such as a pan, draws its arc from the top;
- * `unit: "pan"` reads `C`, `25L`, `100R`. It shows `label`, unless `bare`, and the value under it; `size: "sm"`
- * is a 28-point dial alone.
+ * A knob, as the app's knobs look, on a field, a number input or what code keeps, see
+ * `ValueProps`. With `played` it moves with a lane. A double click puts it at `default`.
+ * `bipolar` draws its arc from the top, as a pan's; `unit: "pan"` reads `C`, `25L`, `100R`.
+ * `size: "sm"` is a 28-point dial without text.
  */
 export function Knob(props: KnobProps): UiNode {
   const { label, min, max, unit, bipolar } = props;
@@ -200,41 +198,51 @@ export type Peaks = { of: string } | { input: readonly number[] } | "device";
 
 export type FaderProps = ValueProps<number> & { key?: string; length: number; horizontal?: boolean; default?: number; label?: string; min?: number; max?: number; unit?: Unit; played?: boolean; meter?: Peaks };
 
+/** The level of `channel` of `peaks`; one channel of the input shows on both bars. */
+const levelOf = (peaks: Peaks, channel: 0 | 1): Live =>
+  peaks === "device" ? now.devicePeak(channel)
+  : "of" in peaks ? now.peak(peaks.of, channel)
+  : now.input(peaks.input[channel] ?? peaks.input[0] ?? 0);
+
+/** Places a box `size` long from `from` along a travel, and `thickness` across from `side`. */
+type Box = (from: Num, size: Num, side: number, thickness: number) => { x: Num; y: Num; width: Num; height: Num };
+
+/** Boxes along a travel of `length`: up from its foot, or `horizontal` to the right. */
+const along = (horizontal: boolean | undefined, length: number): Box => (from, size, side, thickness) => {
+  if (horizontal) return { x: from, y: side, width: size, height: thickness };
+  const end = typeof from === "number" && typeof size === "number" ? from + size : typeof from === "number" ? (size as Live).plus(from) : from.plus(size);
+  return { x: side, y: typeof end === "number" ? length - end : end.negate().plus(length), width: thickness, height: size };
+};
+
+/** The two bars of `peaks` along `length`, `thickness` thick and `gap` apart from `side`: green up to -6 dB and yellow above on the fader's scale, with a peak line that holds. */
+function levelBars(peaks: Peaks, length: number, box: Box, side: number, thickness: number, gap: number): UiNode[] {
+  const hot = positionOf({ min: 0, max: 0, scale: "fader" }, -6) * length;
+  return ([0, 1] as const).flatMap((channel) => {
+    const level = levelOf(peaks, channel);
+    const bar = faderLevel(level).fall(0.5).times(length);
+    const peak = faderLevel(level).hold(1.5).fall(0.5).times(length);
+    const at = side + channel * (thickness + gap);
+    return [
+      Rect({ ...box(0, length, at, thickness), color: "alpha/5" }),
+      Rect({ ...box(0, bar.min(hot), at, thickness), color: "green" }),
+      Rect({ ...box(hot, bar.minus(hot).max(0), at, thickness), color: "yellow" }),
+      Rect({ ...box(peak.minus(1), 1, at, thickness), color: "gray-950", opacity: peak.gt(0.01 * length) }),
+    ];
+  });
+}
+
 /**
- * A fader on a number, as the app's volumes look: a handle a drag moves along `length` points,
- * up or, `horizontal`, to the right, over two bars of `meter` when given, green up to -6 dB and
- * yellow above with a peak line that holds, on the fader's scale. What it moves is as a `Knob`'s; it
- * takes the number's range and scale unless `min` and `max` say, so a `gain_db` of a `fader`
- * moves on the fader's scale, as does what code keeps without them. A double click puts it at
- * `default`.
+ * A fader, as the app's volumes look: a handle a drag moves along `length` points, up or
+ * `horizontal`, over the level bars of `meter` when given. What it moves is as a `Knob`'s. A field
+ * keeps its own range and scale unless `min` and `max` say; what code keeps, without them, moves
+ * on the fader's scale in dB. A double click puts it at `default`.
  */
 export function Fader(props: FaderProps): UiNode {
   const { length, horizontal, meter, min, max, unit } = props;
   const travel: Travel = min !== undefined && max !== undefined ? knobTravel(min, max, unit) : { min: 0, max: 0, scale: "fader" };
   const turns = { min, max, unit, travel: length, default: props.default, label: props.label };
   const { key, fraction, drag, onPress } = turned("fader", props, travel, turns, horizontal ? "x" : "y");
-  /** A box `size` long from `from` along the travel, from its foot, and `thickness` across from `side`. */
-  const box = (from: Num, size: Num, side: number, thickness: number) => {
-    if (horizontal) return { x: from, y: side, width: size, height: thickness };
-    const end = typeof from === "number" && typeof size === "number" ? from + size : typeof from === "number" ? (size as Live).plus(from) : from.plus(size);
-    return { x: side, y: typeof end === "number" ? length - end : end.negate().plus(length), width: thickness, height: size };
-  };
-  const hot = positionOf({ min: 0, max: 0, scale: "fader" }, -6) * length;
-  const bars = meter === undefined ? [] : ([0, 1] as const).flatMap((channel) => {
-    const level =
-      meter === "device" ? now.devicePeak(channel)
-      : "of" in meter ? now.peak(meter.of, channel)
-      : now.input(meter.input[channel] ?? meter.input[0] ?? 0);
-    const bar = faderLevel(level).fall(0.5).times(length);
-    const peak = faderLevel(level).hold(1.5).fall(0.5).times(length);
-    const side = 8 + channel * 7;
-    return [
-      Rect({ ...box(0, length, side, 5), color: "alpha/5" }),
-      Rect({ ...box(0, bar.min(hot), side, 5), color: "green" }),
-      Rect({ ...box(hot, bar.minus(hot).max(0), side, 5), color: "yellow" }),
-      Rect({ ...box(peak.minus(1), 1, side, 5), color: "gray-950", opacity: peak.gt(0.01 * length) }),
-    ];
-  });
+  const bars = meter === undefined ? [] : levelBars(meter, length, along(horizontal, length), 8, 5, 2);
   const at = () => fraction().times(length).minus(3);
   const handle = horizontal
     ? Rect({ x: at, y: 0, width: 6, height: 28, radius: 3, color: "gray-950" })
@@ -558,8 +566,18 @@ export function Steps(props: StepsProps): UiNode {
   });
 }
 
-/** A bar that shows a number from 0 to 1: one named as `now.value` names it, such as a level an output sends, or any live value. */
-export function Meter(props: { value: string | Bind<Num>; label?: string }): UiNode {
+export type MeterProps =
+  | { value: string | Bind<Num>; label?: string; peaks?: never }
+  | { peaks: Peaks; horizontal?: boolean; length?: number; key?: string; value?: never };
+
+/**
+ * A bar that shows a number from 0 to 1, `value`: one named as `now.value` names it, such as a
+ * level an output sends, or any live value. Or a stereo level, `peaks`, as the window's own meters
+ * look: two bars on the fader's scale with a peak line that holds, and a red light for 3 seconds
+ * after it clips. Up the side unless `horizontal`; `length` along its bars, light included.
+ */
+export function Meter(props: MeterProps): UiNode {
+  if (props.peaks !== undefined) return levelMeter(props.peaks, props.horizontal, props.length, props.key);
   const level = () => {
     const value = read(props.value);
     return (typeof value === "string" ? now.value(value) : liveOf(value)).clamp(0, 1).times(64);
@@ -573,6 +591,23 @@ export function Meter(props: { value: string | Bind<Num>; label?: string }): UiN
     ],
   });
   return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: "gray-800", fontSize: 11 } }, props.label));
+}
+
+/** The bars of `peaks` with the light at their loud end, as `Meter` draws them. */
+function levelMeter(peaks: Peaks, horizontal: boolean | undefined, length = horizontal ? 45 : 118, key?: string): UiNode {
+  const [thickness, gap, light] = [horizontal ? 3 : 5, 2, 3];
+  const across = thickness * 2 + gap;
+  const clipped = levelOf(peaks, 0).max(levelOf(peaks, 1)).gt(1).hold(3);
+  const look = { radius: 1, color: "red", opacity: clipped } as const;
+  return Space({
+    key,
+    width: horizontal ? length : across,
+    height: horizontal ? across : length,
+    children: [
+      ...levelBars(peaks, length - light - gap, along(horizontal, length), 0, thickness, gap),
+      horizontal ? Rect({ ...look, x: length - light, y: 0, width: light, height: across }) : Rect({ ...look, x: 0, y: 0, width: across, height: light }),
+    ],
+  });
 }
 
 /** Fields or number inputs named as `now.value` names them, or what code keeps, from 0 to 1 across and up. */
@@ -613,11 +648,7 @@ export function words(name: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-/**
- * The view of a tool that has none: a knob per number and per number input, a row of steps per
- * list of numbers, a chooser per file, options side by side per choice, a switch per boolean and
- * a button per bang.
- */
+/** The view of a tool that has none. */
 export function defaultView(fields: Fields, inputs: Inputs = {}) {
   return ({ state, update, send, openFile }: Context<Record<string, unknown>>): UiNode => {
     const knobs: Child[] = [];

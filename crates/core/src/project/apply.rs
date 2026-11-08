@@ -52,11 +52,11 @@ impl Project {
             });
         }
         for change in &mut records {
-            self.history.note_committed(change, source);
+            self.open_edits.note_committed(change, source);
         }
         let mut project_file = (project_file_before != self.project_file)
             .then(|| (project_file_before, self.project_file.clone()));
-        self.history
+        self.open_edits
             .note_committed_project_file(&mut project_file, source);
         if project_file.is_some() {
             self.push_event(ProjectEvent::ProjectFileChanged);
@@ -105,17 +105,15 @@ impl Project {
                             }
                         }
                         // A file the runtime did not load may sit at this id: a record of an
-                        // unknown tool, or one with an error. Undo must not write over it
-                        // either. A file the runtime knows is its own, from before a delete
-                        // that is not written yet.
-                        let writes = matches!(source, Source::Interface | Source::History);
-                        if writes
+                        // unknown tool, or one with an error. A file the runtime knows is its
+                        // own, from before a delete that is not written yet.
+                        let taken = source == Source::Interface
                             && self.storage.observed(&id).is_none()
                             && !matches!(
                                 self.storage.read_record(&id, None)?,
                                 RecordOnDisk::Missing
-                            )
-                        {
+                            );
+                        if taken {
                             return Err(ProjectError::IdTaken(id));
                         }
                     }

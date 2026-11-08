@@ -16,19 +16,19 @@ pub mod window;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use gpui::{App, AppContext as _};
+use gpui::{App, AppContext as _, Context, Entity};
 use plugin_host::{
     Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK,
     WeakPlugins, default_search_paths,
 };
-use sound_agent::{AgentSettings, Sidebar};
+use sound_agent::{AgentSettings, Agents, AgentsPage, Sidebar};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Project,
     ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks, ToolSchema,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
-use window::{LeftPanel, LeftPanelSlot};
+use window::{LeftPanel, LeftPanelSlot, SettingsSlot, Shell};
 
 pub use templates::{TEMPLATES, Template};
 
@@ -57,8 +57,8 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
     group: "Project",
-    when: "You can run commands: check how your work sounds, read the whole piece, or render a WAV",
-    markdown: "# Inspect, measure and render from a command line
+    when: "Run commands: check how your work sounds, read the whole piece, render WAVs or save templates",
+    markdown: "# Inspect, measure, render and save from a command line
 
 Every form works while the project is open and changes no record.
 
@@ -106,6 +106,10 @@ A note starts at an attack, a syllable or a change of pitch:
 Silence is 40 dB under the loudest moment, or 10 dB over the noise of a recording. Which key and which bar the notes belong to is for you and the composer to decide.
 
 To check a vibrato or the tuning, solo the track and measure one held note with `--from` and `--to`. A mono file measures 3 dB above what a meter of one channel shows, as it plays on both. Compare runs (before and after your change, a soloed track against the whole); the composer says whether it sounds good.
+
+## Save the project as a template
+
+`sound-tools . --save-template <name>` saves a template a new project on this machine can start from: the tools, the records at the top and the children their tools require. `--with-content` after it keeps every record and asset. Ask the composer for the name and which of the two first. A template of that name is replaced only with `--replace`, once the composer said so.
 
 When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
@@ -160,6 +164,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
+    registry.keep_out_of_history(&sound_typescript::WRITTEN_BY_THE_RUNTIME);
     // First, as the map lists its groups in the order of their first doc.
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
@@ -287,34 +292,49 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     (views, devices)
 }
 
-/// The agent sidebar, in the left panel of the window. The window names no agent type, so this
-/// is where the two meet. In `support`, the support folder of the machine, the panel keeps
-/// whether it is open (see [`LeftPanelSlot`]), and the sidebar the agent it downloads, the
-/// threads of each project and the composer's approval mode and model. The settings are read
+/// The agent sidebar, in the left panel of the window, and the Agents section of the Settings
+/// page, where its agents are set up. The window names no agent type, so this is where the two
+/// meet. In `support`, the support folder of the machine, the panel keeps whether it is open
+/// (see [`LeftPanelSlot`]), and the agents the programs they download, the threads of each
+/// project and the composer's approval mode and model. The agents and the settings are made
 /// once here and shared by every window, so a change in one is a change in all.
 pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
     let remembered = support.as_deref().map(app::left_panel_file);
-    let agents = support.as_deref().map(app::agents_folder);
+    let downloads = support.as_deref().map(app::agents_folder);
     let threads = support.as_deref().map(app::threads_folder);
     let file = support.as_deref().map(app::agent_settings_file);
     let settings = cx.new(|cx| AgentSettings::new(file, cx));
     // The agent checks the types of the project's tools with the Bun that runs them.
     let bun_folder =
         sound_typescript::bundled_bun().and_then(|bun| bun.parent().map(Path::to_path_buf));
+    let agents = cx.new(|cx| Agents::new(downloads, bun_folder, settings.clone(), cx));
+    SettingsSlot::new({
+        let agents = agents.clone();
+        move |window, cx| {
+            cx.new(|cx| AgentsPage::new(agents.clone(), window, cx))
+                .into()
+        }
+    })
+    .install(cx);
     LeftPanelSlot::new(remembered, move |session, window, cx| {
         let (agents, threads, settings) = (agents.clone(), threads.clone(), settings.clone());
-        let bun_folder = bun_folder.clone();
-        let sidebar =
-            cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
-        let (composer, asks) = (sidebar.clone(), sidebar.clone());
-        LeftPanel::new(sidebar, Sidebar::is_busy, cx)
-            .with_composer(move |cx| composer.read(cx).composer().clone())
-            .with_ask(move |message, window, cx| {
-                asks.update(cx, |sidebar, cx| {
-                    sidebar.ask_from_outside(message, window, cx)
-                })
-            })
+        let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, window, cx));
+        sidebar_panel(sidebar, cx)
     })
+}
+
+/// The Agent tab of the left panel: the sidebar, with **New** beside the tabs.
+pub fn sidebar_panel(sidebar: Entity<Sidebar>, cx: &mut Context<Shell>) -> LeftPanel {
+    let (composer, asks) = (sidebar.clone(), sidebar.clone());
+    let new_button = sidebar.read(cx).new_button().clone();
+    LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+        .with_header(new_button)
+        .with_composer(move |cx| composer.read(cx).composer().clone())
+        .with_ask(move |message, window, cx| {
+            asks.update(cx, |sidebar, cx| {
+                sidebar.ask_from_outside(message, window, cx)
+            })
+        })
 }
 
 /// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin
@@ -394,8 +414,8 @@ pub const SCAN_AGAIN: &str = "plugins:scan-again";
 /// own. A host that was not told to scan on a thread scans on this one, the first time a
 /// record needs a plugin.
 ///
-/// A folder without a `project.json` becomes an empty project: 120 bpm, 4/4, every bundled
-/// extension.
+/// An empty or missing folder becomes an empty project: 120 bpm, 4/4, every bundled extension.
+/// A folder with other files and no `project.json` is refused, see [`app::check_project_folder`].
 ///
 /// With no window, it waits for what the behaviours of its own tools declare, so it plays what
 /// the records say from the start.
@@ -404,7 +424,7 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    let extensions = load_tools(folder)?;
+    let extensions = load_tools(folder, false)?;
     let mut project = open_with_loaded(folder, control, plugins, extensions)?.0;
     first(settle_behaviours(&mut project))?;
     Ok(project)
@@ -418,13 +438,20 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    open_with_loaded(folder, control, plugins, load_tools(folder)?)
+    open_with_loaded(folder, control, plugins, load_tools(folder, false)?)
 }
 
 /// The project's own tools, once the code of the template it was made from is this release's
 /// where the project never changed it, see [`templates::update`]. What waits for a merge the
-/// window asks again.
-pub(crate) fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
+/// window asks again. With `make_tools_folder`, `extensions/` is made when it is missing.
+///
+/// The first step of every open that may write: nothing is written into a folder that is not a
+/// project.
+pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<FirstLoad>> {
+    app::check_project_folder(folder)?;
+    if make_tools_folder {
+        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
+    }
     if let Err(error) = templates::update(folder) {
         eprintln!("error: {error:#}");
     }

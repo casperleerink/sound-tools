@@ -26,9 +26,11 @@ use crate::bun::EventKind;
 use crate::tree::{CardProps, CardSelect, InputProps, Props};
 use crate::window::OpenedMenu;
 
-use super::TypeScriptCard;
 use super::controls::shortcut_of;
+use super::drawing::named_node;
 use super::input::under;
+use super::placed::Placing;
+use super::{TitleBarChanged, TypeScriptCard};
 
 /// The card of another instance, as a node shows it.
 pub(super) struct Embedded {
@@ -42,11 +44,12 @@ pub(super) struct Embedded {
     sidechain: Rc<RefCell<Vec<CardSelect>>>,
     pub(super) frame: CardFrame,
     pub(super) view: Option<AnyView>,
+    /// On a page, which draws the card over itself.
+    pub(super) placing: Option<Placing>,
 }
 
-/// The picker of what keys an embedded card, as the arrangement's racks had it: a select over
-/// a select, two cells wide, each with its label under it. A pick tells the code of `card` which
-/// select and which of its options.
+/// The picker of what keys an embedded card: a select over a select, two cells wide, each with
+/// its label under it. A pick tells the code of `card` which select and which of its options.
 fn sidechain_column(
     selects: &[CardSelect],
     card: &WeakEntity<TypeScriptCard>,
@@ -173,6 +176,19 @@ impl TypeScriptCard {
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
         };
+        // What a node that has no key kept goes with it, and with the Bun that made it.
+        let generation = self.live.read(cx).generation();
+        let kept = |name: &String| {
+            named_node(name).is_none_or(|(made, node)| made == generation && table.has(node))
+        };
+        self.spaces.borrow_mut().retain(|name, _| kept(name));
+        self.indexes.borrow_mut().retain(|name, _| kept(name));
+        self.scrolls.borrow_mut().retain(|name, _| kept(name));
+        let title_bar = table.title_bar();
+        if self.title_bar != title_bar {
+            self.title_bar = title_bar;
+            cx.emit(TitleBarChanged);
+        }
         let open: Vec<u64> = (table.entries())
             .filter(|entry| matches!(entry.props, Props::Overlay(_)))
             .map(|entry| entry.id)
@@ -354,7 +370,7 @@ impl TypeScriptCard {
             .to_string();
         let on = props.on.unwrap_or(true);
         let selects = props.sidechain.clone().unwrap_or_default();
-        // Only a device that a sidechain keys has the picker, as the arrangement's racks had it.
+        // Only a device that a sidechain keys has the picker.
         let keyed = (self.session.read(cx).project())
             .input_port(&instance, SIDECHAIN_INPUT)
             .is_some();
@@ -426,6 +442,9 @@ impl TypeScriptCard {
             frame = frame.sidechain(move |_| sidechain_column(&selects.borrow(), &card, node));
         }
         let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx);
+        let placing = (view.clone())
+            .filter(|_| self.frame.is_none())
+            .map(|view| Placing::new(view, self.origin.clone(), window, cx));
         Some(Embedded {
             instance,
             tool,
@@ -434,6 +453,7 @@ impl TypeScriptCard {
             sidechain,
             frame,
             view,
+            placing,
         })
     }
 

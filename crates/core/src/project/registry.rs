@@ -50,6 +50,8 @@ pub struct JsonTool {
     pub asset_folders: Vec<&'static str>,
     /// What [`State::OWNS_CHILDREN`] is for a typed tool.
     pub owns_children: bool,
+    /// The names of the children each of its records must have. A typed tool requires none.
+    pub required_children: Vec<String>,
     /// What [`ToolRegistration::end`] is for a typed tool. It gets the project and the `state`.
     pub end: Option<Box<dyn Fn(&Project, &serde_json::Value) -> Option<Ticks>>>,
 }
@@ -167,6 +169,8 @@ pub(crate) struct ToolDefinition {
     pub behaviour: Option<ErasedBehaviour>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
+    /// See [`JsonTool::required_children`].
+    pub required_children: Vec<String>,
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
     /// again. See [`ToolRegistration::rebinds_on_assets`].
     pub asset_folders: Vec<&'static str>,
@@ -190,6 +194,8 @@ pub struct Registry {
     /// In the order they were registered, which is the order of the list in the map. The doc
     /// of `project.json` is the first, so every project has it and its name is taken.
     agent_docs: Vec<RegisteredDoc>,
+    /// See [`Self::keep_out_of_history`].
+    kept_out_of_history: Vec<&'static str>,
 }
 
 impl Default for Registry {
@@ -204,7 +210,18 @@ impl Registry {
             tools: BTreeMap::new(),
             // `project.json` is core, not an extension, so the core brings its doc itself.
             agent_docs: vec![RegisteredDoc::of(None, super::generated::PROJECT_FILE_DOC)],
+            kept_out_of_history: Vec::new(),
         }
+    }
+
+    /// Files and folders at the top of `extensions/` that the runtime writes itself, such as
+    /// the SDK of the project's tools. The history of a project leaves them out.
+    pub fn keep_out_of_history(&mut self, names: &[&'static str]) {
+        self.kept_out_of_history.extend_from_slice(names);
+    }
+
+    pub(crate) fn kept_out_of_history(&self) -> Vec<&'static str> {
+        self.kept_out_of_history.clone()
     }
 
     /// Registers the tool whose saved state is `S`, under `S::TOOL`, as part of `extension`.
@@ -222,6 +239,7 @@ impl Registry {
             behaviour: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
+            required_children: Vec::new(),
             asset_folders: Vec::new(),
             schema: None,
         });
@@ -282,6 +300,7 @@ impl Registry {
             doc,
             asset_folders,
             owns_children,
+            required_children,
             end,
         } = tool;
         let name = match self.tools.get_key_value(name.as_str()) {
@@ -345,6 +364,7 @@ impl Registry {
                     Box::new(move |project, id| end(project, project.json_state(id)?))
                 }),
                 owns_children,
+                required_children,
                 asset_folders,
                 schema: None,
             },

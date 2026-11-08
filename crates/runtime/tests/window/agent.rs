@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
-use runtime::window::{LeftPanel, LeftPanelSlot};
+use gpui::{App, AppContext, ClipboardItem, Entity, Focusable, Modifiers, TestAppContext};
+use runtime::window::{LeftPanelSlot, Section, SettingsSlot};
 use sound_agent::{
-    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Attachment, Command, Entry,
-    ExitReason, Image, ImageFormat, Installed, Message, Model, Sidebar, StepId, StepKind,
-    StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, AgentSettings, Agents, AgentsPage, ApprovalId, ApprovalMode, Attachment,
+    Command, Entry, ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, Sidebar,
+    StepId, StepKind, StepOutcome, Thread, TurnOutcome,
 };
 use tempfile::TempDir;
 
@@ -21,6 +21,10 @@ use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 /// hands the sidebar the events instead. `support` is the support folder of the machine.
 pub(crate) fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity<AgentSettings> {
     install_sidebar_with(cx, support, Some(nonexistent_claude()))
+}
+
+fn nonexistent_claude_program() -> (Provider, Installed) {
+    (Provider::Claude, nonexistent_claude())
 }
 
 fn nonexistent_claude() -> Installed {
@@ -37,24 +41,37 @@ fn install_sidebar_with(
     support: &Path,
     installed: Option<Installed>,
 ) -> Entity<AgentSettings> {
+    let programs = (installed.into_iter())
+        .map(|installed| (Provider::Claude, installed))
+        .collect();
+    install_sidebar_with_programs(cx, support, programs)
+}
+
+/// The same with each provider signed in with its program.
+fn install_sidebar_with_programs(
+    cx: &mut TestAppContext,
+    support: &Path,
+    programs: Vec<(Provider, Installed)>,
+) -> Entity<AgentSettings> {
     let remembered = runtime::app::left_panel_file(support);
     let threads = runtime::app::threads_folder(support);
     cx.update(|cx| {
         let settings = cx.new(|cx| AgentSettings::new(None, cx));
+        let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
+        SettingsSlot::new({
+            let agents = agents.clone();
+            move |window, cx| {
+                cx.new(|cx| AgentsPage::new(agents.clone(), window, cx))
+                    .into()
+            }
+        })
+        .install(cx);
         let shared = settings.clone();
         LeftPanelSlot::new(Some(remembered), move |session, window, cx| {
-            let (installed, threads) = (installed.clone(), Some(threads.clone()));
+            let (agents, threads) = (agents.clone(), Some(threads.clone()));
             let settings = shared.clone();
-            let sidebar = cx
-                .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
-            let (composer, asks) = (sidebar.clone(), sidebar.clone());
-            LeftPanel::new(sidebar, Sidebar::is_busy, cx)
-                .with_composer(move |cx| composer.read(cx).composer().clone())
-                .with_ask(move |message, window, cx| {
-                    asks.update(cx, |sidebar, cx| {
-                        sidebar.ask_from_outside(message, window, cx)
-                    })
-                })
+            let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, window, cx));
+            runtime::sidebar_panel(sidebar, cx)
         })
         .install(cx);
         settings
@@ -76,12 +93,12 @@ impl Opened<'_> {
         view.unwrap().downcast::<Sidebar>().ok().unwrap()
     }
 
-    fn panel_open(&mut self) -> bool {
+    pub(crate) fn panel_open(&mut self) -> bool {
         let shell = self.shell.clone();
         self.cx.read(|cx| shell.read(cx).left_panel_open())
     }
 
-    fn composer_focused(&mut self) -> bool {
+    pub(crate) fn composer_focused(&mut self) -> bool {
         let sidebar = self.sidebar();
         self.cx
             .update(|window, cx| sidebar.focus_handle(cx).is_focused(window))
@@ -250,7 +267,7 @@ fn try_again_sends_the_message_of_a_turn_that_failed_and_keeps_the_draft(cx: &mu
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     opened.keys("secondary-l");
     opened.cx.simulate_input("Make the drums swing");
     opened.keys("enter");
@@ -276,7 +293,10 @@ fn try_again_sends_the_message_of_a_turn_that_failed_and_keeps_the_draft(cx: &mu
     opened.keys("shift-tab");
     opened.keys("shift-tab");
     press_enter(&mut opened);
-    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+    let Ok(Command::Send(Message {
+        text, attachments, ..
+    })) = commands.try_recv()
+    else {
         panic!("the message did not go again");
     };
     assert_eq!(
@@ -311,7 +331,7 @@ fn the_keys_open_the_steps_of_a_turn(cx: &mut TestAppContext) {
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     opened.keys("secondary-l");
     opened.cx.simulate_input("Read the bass");
     opened.keys("enter");
@@ -436,20 +456,44 @@ fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext
     assert!(shell_focused(&mut opened));
 }
 
-/// The account menu sits in the composer and offers **Sign out**.
+/// With no agent set up, the sidebar's one way on is Settings, which shows in place of the
+/// piece and goes with escape, giving the keys back.
 #[gpui::test]
-fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
+fn with_no_agent_the_sidebar_opens_settings(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
-    install_sidebar(cx, machine.path());
+    install_sidebar_with(cx, machine.path(), None);
     let mut opened = support::open_new(cx);
-    assert!(opened.find("menu-sign-out").is_none());
-    let menu = opened.control("model-menu");
-    opened.click(menu);
-    assert!(opened.find("menu-sign-out").is_some());
+    assert!(opened.find("agent-composer").is_none());
+    let open = opened.control("agent-open-settings");
+    opened.click(open);
+    assert!(opened.find("settings-back").is_some());
+    assert!(opened.find("setup-set-up").is_some());
+    opened.keys("escape");
+    assert!(opened.find("settings-back").is_none());
+
+    // cmd-, and back: the keys are where they were.
+    let focused = |opened: &mut Opened<'_>| opened.cx.update(|window, cx| window.focused(cx));
+    let before = focused(&mut opened);
+    assert!(before.is_some());
+    opened.keys("secondary-,");
+    assert_ne!(focused(&mut opened), before);
+    opened.keys("escape");
+    assert_eq!(focused(&mut opened), before);
+
+    // From the way back, tab reaches the sections, and enter shows one.
+    opened.keys("secondary-,");
+    opened.keys("tab tab");
+    press_enter(&mut opened);
+    let shell = opened.shell.clone();
+    let section = opened.cx.read(|cx| {
+        let page = shell.read(cx).settings().cloned();
+        page.map(|page| page.read(cx).section())
+    });
+    assert_eq!(section, Some(Section::Audio));
 }
 
-/// Sign out ends the agent. The turn it worked on ends as stopped, and its request with it,
-/// so the sidebar is not left working.
+/// Sign out, in Settings, ends the agent. The turn it worked on ends as stopped, and its
+/// request with it, so the sidebar is not left working.
 #[gpui::test]
 fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
@@ -460,9 +504,8 @@ fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) 
     opened.receive([AgentEvent::TurnStarted]);
     write_outside(&mut opened, "state/bass.json", BASS_CLIP);
 
-    let menu = opened.control("model-menu");
-    opened.click(menu);
-    let sign_out = opened.control("menu-sign-out");
+    opened.keys("secondary-,");
+    let sign_out = opened.control("setup-sign-out");
     opened.click(sign_out);
 
     let sidebar = opened.sidebar();
@@ -581,7 +624,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
 
     opened.keys("secondary-l");
     opened.cx.simulate_input("Hello");
@@ -628,7 +671,7 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     opened.begin(MESSAGE);
     opened.receive([
         AgentEvent::TurnStarted,
@@ -672,7 +715,7 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     opened.keys("secondary-l");
     opened.cx.simulate_input("Which file was it?");
     opened.keys("enter");
@@ -720,7 +763,7 @@ fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     let outside = tempfile::tempdir().unwrap();
     let [score, take, notes] = ["Score.PNG", "Take 3.wav", "notes.pdf"].map(|name| {
         let path = outside.path().join(name);
@@ -746,7 +789,10 @@ fn pasted_and_dropped_files_go_with_the_next_message(cx: &mut TestAppContext) {
     opened.cx.simulate_input("Make the bass follow this");
     opened.keys("enter");
 
-    let Ok(Command::Send(Message { text, attachments })) = commands.try_recv() else {
+    let Ok(Command::Send(Message {
+        text, attachments, ..
+    })) = commands.try_recv()
+    else {
         panic!("no message went");
     };
     assert_eq!(text, "Make the bass follow this");
@@ -803,7 +849,7 @@ fn a_message_waits_for_a_file_still_being_read(cx: &mut TestAppContext) {
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     let outside = tempfile::tempdir().unwrap();
     let take = outside.path().join("take.wav");
     std::fs::write(&take, "").unwrap();
@@ -826,6 +872,7 @@ fn a_message_waits_for_a_file_still_being_read(cx: &mut TestAppContext) {
     let message = Message {
         text: "Tune the bass to this".to_string(),
         attachments: vec![Attachment::File(take)],
+        note: None,
     };
     assert_eq!(commands.try_recv().ok(), Some(Command::Send(message)));
 }
@@ -992,11 +1039,14 @@ fn ask(opened: &mut Opened<'_>, message: &str) -> String {
     opened.keys("secondary-l");
     opened.cx.simulate_input(message);
     opened.keys("enter");
-    let sidebar = opened.sidebar();
+    finish_turn(opened)
+}
+
+/// Gives the real process time and the sidebar its frames until `done`.
+fn wait_until(opened: &mut Opened<'_>, what: &str, done: impl Fn(&mut Opened<'_>) -> bool) {
     let started = std::time::Instant::now();
-    while opened.cx.read(|cx| sidebar.read(cx).is_busy()) {
-        assert!(started.elapsed() < Duration::from_secs(180), "no answer");
-        // The process is real: give it time, and the sidebar its frame.
+    while !done(opened) {
+        assert!(started.elapsed() < Duration::from_secs(180), "no {what}");
         std::thread::sleep(Duration::from_millis(50));
         opened
             .cx
@@ -1004,6 +1054,14 @@ fn ask(opened: &mut Opened<'_>, message: &str) -> String {
             .advance_clock(Duration::from_millis(16));
         opened.cx.run_until_parked();
     }
+}
+
+/// The text of the answer once the running turn ended, which must complete.
+fn finish_turn(opened: &mut Opened<'_>) -> String {
+    let sidebar = opened.sidebar();
+    wait_until(opened, "answer", |opened| {
+        !opened.cx.read(|cx| sidebar.read(cx).is_busy())
+    });
     opened.cx.read(
         |cx| match sidebar.read(cx).conversation().entries().last() {
             Some(Entry::Turn(turn)) => {
@@ -1058,7 +1116,7 @@ fn the_problems_of_the_last_turn_ask_the_agent_to_fix_them(cx: &mut TestAppConte
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
 
     opened.begin("Add a bass line");
     opened.receive([AgentEvent::TurnStarted]);
@@ -1076,10 +1134,10 @@ fn the_problems_of_the_last_turn_ask_the_agent_to_fix_them(cx: &mut TestAppConte
     assert!(opened.find("agent-fix").is_none());
 }
 
-/// The window's notice of files that are not live asks the agent to fix them, as the line
+/// The window's list of files that are not live asks the agent to fix them, as the line
 /// under a turn does: the thread shows, over the instructions too, and a draft stays.
 #[gpui::test]
-fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppContext) {
+fn the_list_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_new(cx);
@@ -1087,7 +1145,7 @@ fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppConte
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     opened.keys("secondary-l");
     opened.cx.simulate_input("Make the bass softer");
     for control in ["agent-new-thread-menu", "menu-instructions-project"] {
@@ -1097,6 +1155,9 @@ fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppConte
     opened.cx.run_until_parked();
     write_outside(&mut opened, "state/bass.json", "{");
 
+    assert!(opened.find("problems-ask").is_none());
+    let sign = opened.control("problems");
+    opened.click(sign);
     let ask = opened.control("problems-ask");
     opened.click(ask);
     let Ok(Command::Send(Message { text, .. })) = commands.try_recv() else {
@@ -1189,6 +1250,7 @@ fn model(id: &str) -> Model {
         name: id.to_string(),
         description: String::new(),
         short_name: id.to_string(),
+        source: None,
     }
 }
 
@@ -1216,14 +1278,14 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     let sidebar = opened.sidebar();
     opened
         .cx
-        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
     opened.receive([AgentEvent::Started {
-        account: Account::default(),
+        account: Some(Account::default()),
         models: vec![model("default"), model("haiku")],
     }]);
 
     pick(&mut opened, "menu-approval-never-ask");
-    pick(&mut opened, "menu-model-haiku");
+    pick(&mut opened, "model-picker-claude-haiku");
     let sent: Vec<Command> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
     assert_eq!(
         sent,
@@ -1253,6 +1315,92 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     );
 }
 
+/// The keys reach every provider of the model picker: shift-tab from its search goes to the
+/// rail, and enter shows that provider's models.
+#[gpui::test]
+fn the_keys_switch_providers_in_the_model_picker(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    let pi = Installed {
+        program: PathBuf::from("/nonexistent/pi"),
+        environment: HashMap::new(),
+    };
+    let programs = vec![nonexistent_claude_program(), (Provider::Pi, pi)];
+    let settings = install_sidebar_with_programs(cx, machine.path(), programs);
+    cx.update(|cx| {
+        settings.update(cx, |settings, cx| {
+            settings.set_models(Provider::Claude, vec![model("haiku")], cx);
+            settings.set_models(Provider::Pi, vec![model("openrouter/kimi")], cx);
+        });
+    });
+    let mut opened = support::open_new(cx);
+    let menu = opened.control("model-menu");
+    opened.click(menu);
+    assert!(opened.find("model-picker-claude-haiku").is_some());
+    opened.keys("shift-tab");
+    opened.keys("enter");
+    assert!(opened.find("model-picker-pi-openrouter/kimi").is_some());
+    assert!(opened.find("model-picker-claude-haiku").is_none());
+}
+
+/// Claude Code signed in with `installed` as its program, or not installed.
+fn agents(
+    installed: Option<Installed>,
+    settings: &Entity<AgentSettings>,
+    cx: &mut App,
+) -> Entity<Agents> {
+    let programs = (installed.into_iter())
+        .map(|installed| (Provider::Claude, installed))
+        .collect();
+    cx.new(|_| Agents::with_programs(programs, settings.clone()))
+}
+
+/// The real `pi`: a command it runs waits for **Allow**, then runs. Ignored: it needs `pi` on
+/// the login shell's `PATH`, signed in to a provider, and runs a real turn. A Pi of its own
+/// keeps the composer's sessions out of it:
+///
+/// ```sh
+/// PI_CODING_AGENT_DIR=/tmp/pi cargo test -p runtime --test window -- --ignored the_real_pi
+/// ```
+#[gpui::test]
+#[ignore]
+fn the_real_pi_asks_before_a_command_and_runs_it_once_allowed(cx: &mut TestAppContext) {
+    // The process wakes the sidebar's tasks from smol's own thread.
+    cx.executor().allow_parking();
+    let environment = smol::block_on(sound_agent::login_shell_environment()).unwrap();
+    let program = sound_agent::program_on_path("pi", &environment).expect("no pi");
+    let machine = tempfile::tempdir().unwrap();
+    let remembered = runtime::app::left_panel_file(machine.path());
+    cx.update(|cx| {
+        let settings = cx.new(|cx| AgentSettings::new(None, cx));
+        let installed = Installed {
+            program,
+            environment,
+        };
+        let programs = vec![(Provider::Pi, installed)];
+        let agents = cx.new(|_| Agents::with_programs(programs, settings.clone()));
+        LeftPanelSlot::new(Some(remembered), move |session, window, cx| {
+            let (agents, settings) = (agents.clone(), settings.clone());
+            let sidebar = cx.new(|cx| Sidebar::new(session, agents, None, settings, window, cx));
+            runtime::sidebar_panel(sidebar, cx)
+        })
+        .install(cx);
+    });
+    let mut opened = support::open_new(cx);
+    opened.keys("secondary-l");
+    let message = "Use the bash tool to run exactly: echo hi > marker.txt. Then reply: done.";
+    opened.cx.simulate_input(message);
+    opened.keys("enter");
+    wait_until(&mut opened, "question", |opened| {
+        opened.find("approval-allow").is_some()
+    });
+    let allow = opened.control("approval-allow");
+    opened.click(allow);
+    let answer = finish_turn(&mut opened);
+    assert!(answer.to_lowercase().contains("done"), "{answer}");
+    let folder = opened.close();
+    assert!(folder.path().join("marker.txt").is_file());
+}
+
 /// Every sidebar of the app shows one setting: a change in one goes to the agents of all.
 #[gpui::test]
 fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
@@ -1265,11 +1413,10 @@ fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
     let session = opened.session.clone();
     let shared = settings.clone();
     let other = opened.cx.update(|window, cx| {
-        sidebar.update(cx, |sidebar, _| sidebar.connect(thread));
-        let installed = Some(nonexistent_claude());
-        let other =
-            cx.new(|cx| Sidebar::with_program(session, installed, None, shared, window, cx));
-        other.update(cx, |other, _| other.connect(other_thread));
+        sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx));
+        let agents = agents(Some(nonexistent_claude()), &shared, cx);
+        let other = cx.new(|cx| Sidebar::new(session, agents, None, shared, window, cx));
+        other.update(cx, |other, cx| other.connect(other_thread, cx));
         other
     });
 
@@ -1282,4 +1429,205 @@ fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
         .read(|cx| settings.read(cx).settings().approval_mode);
     assert_eq!(approval_mode, ApprovalMode::NeverAsk);
     drop(other);
+}
+
+impl Opened<'_> {
+    fn go_to(&mut self, point: sound_core::PointId) {
+        let session = self.session.clone();
+        self.cx
+            .update(|_, cx| session.update(cx, |session, cx| session.go_to(point, cx)));
+        self.cx.run_until_parked();
+    }
+}
+
+/// Going back in the history shows where to above the composer, and the agent reads it with
+/// the next message, and only that one.
+#[gpui::test]
+fn the_message_after_going_back_tells_the_agent_where_to(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
+    let start = opened.current_point();
+    write_outside(&mut opened, "state/bass.json", BASS_CLIP);
+
+    opened.go_to(start);
+    assert!(opened.find("agent-went-back").is_some());
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Make the drums swing");
+    opened.keys("enter");
+    let Ok(Command::Send(Message { text, note, .. })) = commands.try_recv() else {
+        panic!("no message went");
+    };
+    assert_eq!(text, "Make the drums swing");
+    let note = note.expect("no note went with the message");
+    let folder = opened.path(sound_core::HISTORY_FOLDER);
+    for said in [
+        start.short(),
+        "Version 1".to_string(),
+        folder.display().to_string(),
+    ] {
+        assert!(note.contains(&said), "{said:?} is not in {note:?}");
+    }
+    assert!(opened.find("agent-went-back").is_none());
+    assert!(!entries(&mut opened).contains("went back"));
+
+    opened.receive([AgentEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+    }]);
+    opened.cx.simulate_input("And the bass");
+    opened.keys("enter");
+    assert_eq!(
+        commands.try_recv().ok(),
+        Some(Command::Send("And the bass".into()))
+    );
+}
+
+/// The × takes the line away, and no note goes.
+#[gpui::test]
+fn a_dismissed_going_back_tells_the_agent_nothing(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_new(cx);
+    let (thread, commands) = Thread::without_agent(None);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, cx| sidebar.connect(thread, cx)));
+    let start = opened.current_point();
+    write_outside(&mut opened, "state/bass.json", BASS_CLIP);
+    opened.go_to(start);
+
+    let dismiss = opened.control("agent-went-back-dismiss");
+    opened.click(dismiss);
+    assert!(opened.find("agent-went-back").is_none());
+    opened.keys("secondary-l");
+    opened.cx.simulate_input("Hello");
+    opened.keys("enter");
+    assert_eq!(
+        commands.try_recv().ok(),
+        Some(Command::Send("Hello".into()))
+    );
+}
+
+/// A stand-in for `claude` that answers every question with "Name N", N counting up from 1, and
+/// keeps question N in `<program>.asked-N`.
+#[cfg(unix)]
+fn naming_claude(machine: &Path) -> Installed {
+    use std::os::unix::fs::PermissionsExt;
+    let program = machine.join("claude");
+    let script = r#"#!/bin/sh
+count=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1))
+echo $count >"$0.count"
+cat >"$0.asked-$count"
+echo "\"Name $count.\""
+"#;
+    std::fs::write(&program, script).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Installed {
+        program,
+        environment: HashMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+    }
+}
+
+#[cfg(unix)]
+impl Opened<'_> {
+    /// A write from outside long after the last one, so it is a point of its own.
+    fn write_later(&mut self, relative: &str, contents: &str, seconds: u64) {
+        let path = self.path(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, contents).unwrap();
+        let at = std::time::Instant::now() + Duration::from_secs(seconds);
+        self.edit(|project| project.apply_outside_changes_at(std::slice::from_ref(&path), at));
+        self.settle();
+    }
+
+    /// The name of every version, in the order of the history's lines.
+    fn version_names(&mut self) -> Vec<Option<String>> {
+        self.project(|project| {
+            let lines = project.history().unwrap().lines();
+            (lines.iter().filter(|line| line.is_version()))
+                .map(|line| line.name.clone())
+                .collect()
+        })
+    }
+
+    /// Waits for the program to answer and the name to land.
+    fn wait_for_names(&mut self, names: &[Option<&str>]) {
+        let names: Vec<Option<String>> = names.iter().map(|name| name.map(String::from)).collect();
+        let started = std::time::Instant::now();
+        while self.version_names() != names {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "{:?} is not {names:?}",
+                self.version_names()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+            self.cx.run_until_parked();
+        }
+    }
+
+    fn quiet(&mut self, seconds: u64) {
+        self.cx
+            .executor()
+            .advance_clock(Duration::from_secs(seconds));
+        self.cx.run_until_parked();
+    }
+}
+
+/// The agent's small model names the versions one at a time once the history is still: the
+/// current one first, then the newest. A version is named again when it grows, but never over
+/// a name given by hand.
+#[cfg(unix)]
+#[gpui::test]
+fn the_small_model_names_versions_once_they_are_still(cx: &mut TestAppContext) {
+    // The program wakes the sidebar's tasks from smol's own thread.
+    cx.executor().allow_parking();
+    let machine = tempfile::tempdir().unwrap();
+    let installed = naming_claude(machine.path());
+    let asked = |count: usize| {
+        let file = format!("{}.asked-{count}", installed.program.display());
+        std::fs::read_to_string(file).ok()
+    };
+    install_sidebar_with(cx, machine.path(), Some(installed.clone()));
+    let mut opened = support::open_new(cx);
+    let start = opened.current_point();
+    opened.write_later("state/bass.json", BASS_CLIP, 20);
+    opened.go_to(start);
+    opened.write_later("state/lead.json", LATER_CLIP, 40);
+
+    opened.quiet(4);
+    assert_eq!(opened.version_names(), [None, None]);
+    assert!(asked(1).is_none(), "asked before the history was still");
+    opened.quiet(1);
+    opened.wait_for_names(&[None, Some("Name 1")]);
+    assert!(asked(1).unwrap().contains("state/lead.json (new)"));
+    opened.quiet(5);
+    opened.wait_for_names(&[Some("Name 2"), Some("Name 1")]);
+
+    opened.write_later("state/lead.json", BASS_CLIP, 60);
+    opened.quiet(5);
+    opened.wait_for_names(&[Some("Name 2"), Some("Name 3")]);
+    assert!(asked(3).unwrap().contains("state/lead.json (new)"));
+
+    let current = opened.project(|project| {
+        let history = project.history().unwrap();
+        history.line_of(history.current()).unwrap().unwrap().start
+    });
+    opened.edit(|project| project.rename_version(current, "My take"));
+    opened.write_later("state/lead.json", LATER_CLIP, 80);
+    opened.quiet(5);
+    opened.quiet(5);
+    // Time for a question that should not come.
+    std::thread::sleep(Duration::from_millis(300));
+    opened.cx.run_until_parked();
+    assert!(asked(4).is_none(), "asked about a version named by hand");
+    assert_eq!(
+        opened.version_names(),
+        [Some("Name 2".to_string()), Some("My take".to_string())]
+    );
 }

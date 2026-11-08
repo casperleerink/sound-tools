@@ -1,0 +1,16 @@
+---
+source: crates/agent/src/provider/pi/tests.rs
+expression: arguments
+---
+[
+    "--session-id",
+    "id",
+    "--tools",
+    "read,bash,edit,write,grep,find,ls",
+    "--sound-tools-approval",
+    "never_ask",
+    "--model",
+    "openrouter/google/gemini-2.5-flash-lite",
+    "--append-system-prompt",
+    "/tmp/instructions.md",
+]

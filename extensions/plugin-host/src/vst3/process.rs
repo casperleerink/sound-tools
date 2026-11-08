@@ -1,9 +1,8 @@
 //! The audio side of a VST 3 plugin: one block in, one block out.
 //!
-//! VST 3 takes everything of a block in one `ProcessData`: the audio buses, an event list, the
-//! parameter changes going in and the ones coming back. All of them are objects the host owns,
-//! so all of them are made once, when the plugin loads, and only filled in here. Nothing in
-//! this file allocates, locks or makes a system call.
+//! Everything a block hands the plugin in its `ProcessData` (buses, events, parameter changes
+//! both ways) is owned by the host and made once in [`Vst3Processor::new`], so a block
+//! neither allocates, locks nor makes a system call.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -26,47 +25,39 @@ use crate::processor::{
     Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
 };
 
-/// How many parameters one block may carry, in each direction. Going in, they are the pins of
-/// the record, the pedal, the wheels, the key pressure, a few other controllers and the
-/// composer's edits in the plugin's own window, and all of them fit at once: the edits take no
-/// more than [`WINDOW_EDITS`], and the rest wait for the next block.
-/// A lane moves a pin, so it shares the queue of its pin.
-/// Coming out, a plugin that reports more than this while it plays loses the rest until the
-/// next block.
+/// How many parameters one block may carry, in each direction. Going in, the pins (a lane
+/// shares its pin's queue), the controls and the window edits all fit at once. Coming out, a
+/// plugin that reports more loses the rest until the next block.
 const PARAMETER_CAPACITY: usize =
     sound_core::MAX_AUTOMATED + Control::REST.len() + OTHER_CONTROLS + WINDOW_EDITS;
 
 /// How many other MIDI controllers one block carries, each its own parameter.
 const OTHER_CONTROLS: usize = 16;
 
-/// How many parameters of the plugin's own window one block carries next to everything else.
-/// A hand moves one knob at a time, so this is for a plugin that moves many with one.
+/// How many edits of the plugin's own window one block carries; the rest wait in the ring. A
+/// hand moves one knob at a time, so this is for a plugin that moves many with one.
 const WINDOW_EDITS: usize = 64;
 
 /// How many points one parameter may have in one block.
 const POINT_CAPACITY: usize = 32;
 
 /// How many parameter changes wait for the control thread. A plugin that moves its own
-/// parameters faster than the host polls loses the oldest, and the state is saved anyway when
-/// the plugin goes.
+/// parameters faster than the host polls loses the newest; the state is saved anyway when the
+/// plugin goes.
 pub(super) const REPORT_CAPACITY: usize = 512;
 
-/// How many edits of the composer's wait for the audio thread. What does not fit stays on the
-/// host's thread, by parameter, and goes at the next poll, so no parameter ever ends on a value
-/// the composer did not leave it on. See [`crate::vst3::context::Handler`].
+/// How many edits of the composer's wait for the audio thread. What does not fit waits in the
+/// [`Handler`] for the next poll.
 pub(super) const EDIT_CAPACITY: usize = 512;
 
-/// The parameters the controls go to, one per VST 3 controller number, shared by the two sides
-/// of a plugin. The control side looks them up again when the plugin moves them
-/// (`kMidiCCAssignmentChanged`), and the audio side reads one for every move. Atomics, so
-/// neither side ever waits for the other.
+/// The parameter each VST 3 controller number is mapped to, shared by the two sides of a
+/// plugin. Atomics, so neither side ever waits for the other.
 pub(super) struct ControlTargets([AtomicU64; CONTROLLER_NUMBERS]);
 
 /// VST 3 numbers the MIDI controllers, then the key pressure and the bend.
 pub(super) const CONTROLLER_NUMBERS: usize = ControllerNumbers_::kPitchBend as usize + 1;
 
-/// What a target holds while the plugin maps its control to nothing. A parameter id is 32 bits,
-/// so no id is this.
+/// A target mapped to nothing. A parameter id is 32 bits, so no id is this.
 const NOWHERE: u64 = u64::MAX;
 
 /// The VST 3 controller number of a control.
@@ -117,24 +108,21 @@ fn normalized(control: Control) -> ParamValue {
     f64::from(control.midi_value()) / most
 }
 
-/// The control side's ends of the two rings of an audio side: what the plugin changed by
-/// itself, coming back, and what the composer changed in its window, going there.
+/// The control side's ends of an audio side's two rings.
 pub(super) struct ControlEnds {
     pub changed: rtrb::Consumer<Report>,
     pub edited: rtrb::Producer<ParameterChange>,
 }
 
 /// A parameter the plugin changed by itself in a block, and how many edits this audio side had
-/// taken by then. A report from before an edit the host sent of the same parameter is older
-/// than that edit, and the host leaves it out instead of giving it to the controller.
+/// taken by then, so the host can tell a report that is older than its latest edit.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Report {
     pub change: ParameterChange,
     pub edits_taken: u64,
 }
 
-/// What a block says it is: a run on a device, or a render. It is the mode of the
-/// `setupProcessing` the block belongs to, which is what VST 3 asks of a host.
+/// VST 3 asks that every block has the mode of the `setupProcessing` it belongs to.
 pub(super) fn process_mode(offline: bool) -> int32 {
     match offline {
         true => ProcessModes_::kOffline as int32,
@@ -142,11 +130,9 @@ pub(super) fn process_mode(offline: bool) -> int32 {
     }
 }
 
-/// A VST 3 plugin that is started, with everything one block needs.
 pub(super) struct Vst3Processor {
     processor: ComPtr<IAudioProcessor>,
-    /// Keeps the plugin's control side from being terminated while this side is alive. The
-    /// control side lets go when it is the last holder.
+    /// Keeps the control side from terminating the plugin while this side is alive.
     _live: Arc<()>,
     events: ComWrapper<HostEventList>,
     events_pointer: *mut IEventList,
@@ -156,40 +142,28 @@ pub(super) struct Vst3Processor {
     output_changes_pointer: *mut IParameterChanges,
     input_buses: Buses,
     output_buses: Buses,
-    /// The parameters the plugin maps the pedal, the wheels and the key pressure to, where it
-    /// maps them. VST 3 has no MIDI controller event: `IMidiMapping` is the way the format
-    /// intends, see `plugin.rs`.
     targets: Arc<ControlTargets>,
-    /// What the plugin changed by itself, on its way to the control thread.
     reports: rtrb::Producer<Report>,
-    /// What the composer changed in the plugin's own window, and the pins the host sends, on
-    /// their way here. The host's thread fills it; this side empties it at the start of every
-    /// block.
+    /// The window's edits and the pins the host sends.
     edits: rtrb::Consumer<ParameterChange>,
     /// How many edits this side has taken into its blocks, for [`Report::edits_taken`].
     edits_taken: u64,
-    /// Where an edit this side never played goes back to when this side goes, so that a
-    /// parameter the composer moves while the plugin is started again is not lost. Only
-    /// touched as this side is dropped, which is on the control thread.
+    /// Where an edit this side never played goes back to when this side is dropped, on the
+    /// control thread.
     handler: ComWrapper<Handler>,
-    /// Whether the plugin has been told to start processing. It is told here because this is
-    /// the thread VST 3 wants that call on.
+    /// Whether `setProcessing(1)` was called, which VST 3 wants on this thread.
     processing: bool,
-    /// What every block says it is. The same mode the plugin was set up with.
     mode: int32,
-    /// What the plugin said its latency was when it was activated.
     latency: u32,
 }
 
-// SAFETY: everything a `Vst3Processor` holds is reached from one thread at a time. The engine
-// moves a processor between the control thread and the audio thread and never runs it in two
-// places at once, which is the contract of `sound_core::Processor`. The plugin's own objects
-// are Send by the VST 3 API. The plugin is given the lists for one `process` call and no longer.
+// SAFETY: the engine moves a processor between threads but never uses it on two at once (the
+// contract of `sound_core::Processor`). The plugin is given the lists for one `process` call
+// and no longer.
 unsafe impl Send for Vst3Processor {}
 
 impl Vst3Processor {
-    /// A new audio side, and the control side's ends of its rings. Everything a block needs is
-    /// made here, so nothing allocates once a block runs.
+    /// A new audio side, and the control side's ends of its rings.
     pub(super) fn new(
         processor: ComPtr<IAudioProcessor>,
         live: Arc<()>,
@@ -242,17 +216,15 @@ impl Vst3Processor {
 impl Drop for Vst3Processor {
     /// Always on the control thread: the engine hands a processor back before it goes.
     fn drop(&mut self) {
-        // Stopped already on every way out of the engine but the engine itself going, which
-        // ends the audio thread before this runs.
+        // Stopped already, unless the engine itself went, which ends the audio thread first.
         self.stop();
         give_back(&mut self.edits, &self.handler);
     }
 }
 
-/// An edit that reached an audio side and was never played goes back to the host's side,
-/// which gives it to the next audio side: the plugin being started again, when its latency or
-/// its buses change. The ring may hold more than one edit of a parameter, and the newest of
-/// them goes back. A newer edit the host's side holds already stays.
+/// The edits an audio side never played go back to the handler for the next audio side, so a
+/// knob moved while the plugin restarts is not lost. The newest of each parameter goes back,
+/// and a newer one the handler holds already stays.
 fn give_back(edits: &mut rtrb::Consumer<ParameterChange>, handler: &Handler) {
     let mut newest = BTreeMap::new();
     while let Ok(edit) = edits.pop() {
@@ -276,12 +248,9 @@ impl Started for Vst3Processor {
         self.events.clear();
         self.input_changes.clear();
         self.output_changes.clear();
-        // What the composer changed in the plugin's own window since the last block. VST 3
-        // carries an edit to the processor in the block's input parameter changes, and this is
-        // the only place a block is built. At the start of the block, because the value was
-        // already true before this block began. Popping a ring allocates nothing and locks
-        // nothing. The edits take at most `WINDOW_EDITS` queues, so a flood of them, such as a
-        // preset load, never takes the room of a pedal coming up; the rest wait in the ring.
+        // At frame zero: the value was already true before this block began. At most
+        // `WINDOW_EDITS` queues, so a flood such as a preset load never takes the room of a
+        // pedal coming up.
         while self.input_changes.used.get() < WINDOW_EDITS
             && let Ok(edit) = self.edits.pop()
         {
@@ -299,8 +268,6 @@ impl Started for Vst3Processor {
         match event {
             PluginEvent::On { key, velocity } => self.events.push(note_on(offset, key, velocity)),
             PluginEvent::Off { key } => self.events.push(note_off(offset, key)),
-            // A VST 3 plugin has no MIDI controller event. A control goes as the parameter the
-            // plugin's own MIDI mapping names, with its value as a number from 0 to 1.
             PluginEvent::Control(control) => {
                 let Some(id) = self.targets.get(control) else {
                     return true;
@@ -323,7 +290,6 @@ impl Started for Vst3Processor {
         right: &mut [f32],
     ) -> bool {
         if !self.processing {
-            // VST 3 puts `setProcessing` on the thread that processes, which is this one.
             // SAFETY: the processor came from the plugin and is alive.
             let result = not_ours(|| unsafe { self.processor.setProcessing(1) });
             // The SDK's default answers that it is not implemented, and plays all the same.
@@ -332,12 +298,9 @@ impl Started for Vst3Processor {
             }
             self.processing = true;
         }
-        // The first bus is what this host plays into; the rest of them get silence, as every
-        // audio input of a plugin did before effects existed.
         self.input_buses.clear(frames);
         copy_in(self.input_buses.first_mut(), frames, input);
-        // A plugin may say its output is silent (`silenceFlags`) and leave the buffer as it
-        // is, so what was in it must not be what a block before wrote.
+        // A plugin may set `silenceFlags` and leave the buffer as it is.
         self.output_buses.clear(frames);
         let mut data = ProcessData {
             processMode: self.mode,
@@ -351,7 +314,7 @@ impl Started for Vst3Processor {
             outputParameterChanges: self.output_changes_pointer,
             inputEvents: self.events_pointer,
             outputEvents: std::ptr::null_mut(),
-            // No transport reaches a plugin yet. A plugin that syncs to the tempo runs free.
+            // No transport: a plugin that syncs to the tempo runs free.
             processContext: std::ptr::null_mut(),
         };
         // SAFETY: every pointer in `data` belongs to this processor and outlives the call, and
@@ -390,8 +353,7 @@ fn note_on(offset: u32, key: u8, velocity: u8) -> Event {
                 tuning: 0.0,
                 velocity: f32::from(velocity) / 127.0,
                 length: 0,
-                // VST 3 lets a host number every note so that a plugin can tell two of one
-                // pitch apart. The note contract has one note per key, so -1 says "by pitch".
+                // One note per key, so -1 says "by pitch".
                 noteId: -1,
             },
         },
@@ -418,17 +380,15 @@ fn note_off(offset: u32, key: u8) -> Event {
     }
 }
 
-/// The audio buses of one direction: the buffers, the pointers into them the plugin reads, and
-/// the `AudioBusBuffers` that names both. Made once, so a block moves no memory about.
+/// The audio buses of one direction.
 struct Buses {
-    /// One buffer per channel of every bus, in bus order. Each one is its own allocation, so
-    /// the pointers below stay where they are.
+    /// One buffer per channel of every bus, in bus order. Each is its own allocation, so the
+    /// pointers below stay valid.
     channels: Vec<Vec<f32>>,
-    /// Per bus, the pointers to its channels. The `AudioBusBuffers` below point into these,
-    /// so they are kept and never touched again.
+    /// Per bus, the pointers to its channels, which `buses` points into.
     _pointers: Vec<Vec<*mut f32>>,
     buses: Vec<AudioBusBuffers>,
-    /// The channels of the first bus, for [`Self::first`].
+    /// How many channels the first bus has.
     first: usize,
 }
 
@@ -475,26 +435,24 @@ impl Buses {
         self.buses.as_mut_ptr()
     }
 
-    /// Silence, before every block. An audio input of a plugin gets it because this host has
-    /// no audio to give one; an output gets it so that a plugin that writes nothing is silent.
+    /// Silence, before every block. Only the first input bus is given audio, and an output a
+    /// plugin does not write must be silent.
     fn clear(&mut self, frames: usize) {
         for channel in &mut self.channels {
             channel[..frames].fill(0.0);
         }
     }
 
-    /// The channels of the first bus, which is the one this host plays.
+    /// The first bus is the one this host plays.
     fn first(&self) -> &[Vec<f32>] {
         &self.channels[..self.first]
     }
 
-    /// The same, to write into: the first input bus is what the host gives the plugin.
     fn first_mut(&mut self) -> &mut [Vec<f32>] {
         &mut self.channels[..self.first]
     }
 }
 
-/// The events of one block, as VST 3 takes them.
 pub(super) struct HostEventList {
     events: Slots<Event>,
 }
@@ -538,14 +496,13 @@ impl IEventListTrait for HostEventList {
     }
 
     unsafe fn addEvent(&self, _event: *mut Event) -> tresult {
-        // Nothing reads what a plugin sends out: MIDI from a plugin is not built. Refusing
-        // here is what keeps this buffer from growing on the audio thread.
+        // Nothing reads MIDI from a plugin, and refusing keeps this list from growing on the
+        // audio thread.
         kResultFalse
     }
 }
 
-/// The parameter changes of one block, in either direction. Every queue is made once, so a
-/// plugin that adds a parameter while it plays grows nothing.
+/// The parameter changes of one block, in either direction.
 pub(super) struct HostParameterChanges {
     queues: Vec<ComWrapper<HostParameterQueue>>,
     used: Cell<usize>,
@@ -592,9 +549,8 @@ impl HostParameterChanges {
         self.queues[at].add(offset, value)
     }
 
-    /// Which queue this block uses for `id`, making one if it has none. `None` says every
-    /// queue is taken, which is a plugin with more parameters in one block than this host
-    /// keeps room for.
+    /// Which queue this block uses for `id`, taking a free one if it has none. `None` says
+    /// every queue is taken.
     fn queue_for(&self, id: ParamID) -> Option<usize> {
         let used = self.used.get();
         if let Some(at) = self.queues[..used].iter().position(|queue| queue.is(id)) {
@@ -606,8 +562,7 @@ impl HostParameterChanges {
         Some(used)
     }
 
-    /// Hands what the plugin changed to the control thread. What does not fit is dropped: the
-    /// state is saved when the plugin goes in any case.
+    /// Hands what the plugin changed to the control thread. What does not fit is dropped.
     fn report_into(&self, reports: &mut rtrb::Producer<Report>, edits_taken: u64) {
         for queue in &self.queues[..self.used.get()] {
             let Some(value) = queue.last() else {
@@ -694,15 +649,9 @@ impl HostParameterQueue {
         self.points.clear();
     }
 
-    /// Adds one point. When the block has no room left, the newest value takes the place of the
-    /// last point instead of being refused, so the value the block ends on is always the one
-    /// the composer played. Refusing it would leave a pedal that came up in a block full of
-    /// pedal moves holding for ever, `AllOff` and all: the plugin would never hear it go up.
-    /// The same for a wheel. The points in between are what is lost, which is a control that
-    /// moves in smaller steps than this block could carry.
-    ///
-    /// It never says no, so nothing above counts a control move as an event that was dropped:
-    /// the value did reach the plugin, at a frame a little later than it was played.
+    /// Adds one point. When the queue is full the newest value replaces the last point
+    /// instead of being refused: a pedal that came up in a full block would otherwise hold for
+    /// ever, `AllOff` and all. So it never says no, and no control move counts as dropped.
     fn add(&self, offset: int32, value: ParamValue) -> bool {
         if !self.points.push((offset, value)) {
             self.points.set_last((offset, value));
@@ -710,7 +659,7 @@ impl HostParameterQueue {
         true
     }
 
-    /// Where the parameter ended up in this block, which is what the controller is told.
+    /// Where the parameter ended up in this block.
     fn last(&self) -> Option<ParamValue> {
         self.points.last().map(|point| point.1)
     }
@@ -762,16 +711,15 @@ impl IParamValueQueueTrait for HostParameterQueue {
     }
 }
 
-/// A list of at most a fixed number of values, filled through `&self` as a COM object is.
-/// Reading it writes nothing, unlike a `RefCell`'s borrow count, so a plugin that reads a list
-/// from threads of its own during `process` races nothing.
+/// A fixed-capacity list filled through `&self`, as a COM object is. Reading writes nothing
+/// (unlike a `RefCell`'s borrow count), so a plugin that reads it from its own threads during
+/// `process` races nothing.
 struct Slots<T: Copy> {
     slots: Box<[Cell<T>]>,
     len: Cell<usize>,
 }
 
 impl<T: Copy> Slots<T> {
-    /// `capacity` slots, each holding `filler` until it is written.
     fn new(filler: T, capacity: usize) -> Self {
         Self {
             slots: vec![Cell::new(filler); capacity].into_boxed_slice(),
@@ -821,8 +769,6 @@ mod tests {
     use super::*;
     use sound_notes::{Amount, Bend, Pedal};
 
-    /// Two edits of one parameter wait in the ring as the audio side goes: the newer one is what
-    /// the next audio side plays. One the host's side holds is newer still and stays.
     #[test]
     fn the_newest_edit_of_a_parameter_goes_back_when_the_audio_side_goes() {
         let handler = Handler::default();
@@ -840,7 +786,6 @@ mod tests {
         assert_eq!(waiting, expected);
     }
 
-    /// Every control reaches its parameter as the whole range from 0 to 1.
     #[test]
     fn a_control_reaches_a_parameter_as_its_whole_range() {
         let pedal = |value| normalized(Control::Pedal(Pedal::new(value).unwrap()));
@@ -883,9 +828,6 @@ mod tests {
         assert_eq!(changes.used.get(), 0);
     }
 
-    /// The last value of a block is the one that was played last, whether or not the block had
-    /// room for every move in it. A pedal that came up in a full block and was refused would
-    /// hold for ever.
     #[test]
     fn the_last_value_of_a_full_block_is_the_newest_one_and_not_the_one_before_it() {
         let changes = HostParameterChanges::new();
@@ -893,7 +835,7 @@ mod tests {
             assert!(changes.add(1, point as int32, 0.5));
         }
         assert_eq!(changes.queues[0].last(), Some(0.5));
-        // The block is full and the pedal comes up. It is the value the plugin must end on.
+        // The block is full and the pedal comes up.
         assert!(changes.add(1, POINT_CAPACITY as int32, 0.0));
         assert_eq!(changes.queues[0].last(), Some(0.0));
         assert_eq!(changes.queues[0].points.len(), POINT_CAPACITY);

@@ -1,5 +1,5 @@
 //! An LFO, for a processor that moves one of its values up and down over time: the cutoff of a
-//! filter, the delay of a chorus. Next to [`Smoothed`](crate::Smoothed), a helper a processor
+//! filter, the delay of a chorus. Next to [`Smoothed`](sound_core::Smoothed), a helper a processor
 //! uses per block or per frame.
 
 use std::f32::consts::TAU;
@@ -7,7 +7,7 @@ use std::f32::consts::TAU;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::Transport;
+use sound_core::Transport;
 
 /// The wave of an LFO, from -1 to 1.
 ///

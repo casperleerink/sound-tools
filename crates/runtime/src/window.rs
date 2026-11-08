@@ -4,35 +4,41 @@
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the main instance of the project. Nor does it name the
-//! agent: the left panel is whatever
-//! the installed [`LeftPanelSlot`] makes. Its own keys are the app's: undo, the panel, opening
+//! agent: the Agent tab of the left panel is whatever the installed [`LeftPanelSlot`] makes,
+//! beside the window's own History tab. Its own keys are the app's: undo, the panel, opening
 //! and quitting. Musical keys, such as space to play, are the project's, through
 //! [`GlobalKeys`].
 
 pub mod audio_input;
+mod history;
 pub mod live_input;
 pub mod new_project;
 pub mod other_apps;
+mod problems;
 mod project_menu;
 pub mod recorders;
+mod save_template;
+mod settings;
 mod start;
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
+    AnyElement, AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
     KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
-    WindowBounds, WindowControlArea, WindowOptions, actions, div, point, prelude::*, px, size,
+    MouseDownEvent, SharedString, StyleRefinement, Subscription, Task, TitlebarOptions,
+    WeakFocusHandle, Window, WindowBounds, WindowControlArea, WindowOptions, actions, div, point,
+    prelude::*, px, size,
 };
 use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
-    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
-    StreamTiming,
+    Engine, EngineConfig, EngineControl, InstanceId, OutputDevice, OutputStream, Project,
+    ProjectEvent, StreamTiming,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -40,25 +46,29 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input::{self, TextInput};
+use sound_ui::focus::TabStop;
 use sound_ui::{
     ActiveTheme, Assets, Devices, GlobalKeys, Session, SpareKey, SpareKeys, Views, typography,
 };
 
 use audio_input::OpenInput;
+use history::HistoryPanel;
 use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
-pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, choose_new_project, open_another_project, start_again};
 use recorders::Recorders;
+pub use settings::{DeviceList, ListDevices, Section, SettingsPage};
 
 use crate::app::ChosenDevices;
-use crate::{TEMPLATES, Template, open_with_loaded, update, views};
+use crate::templates::{Choice, Saved, saved_folder};
+use crate::{TEMPLATES, open_with_loaded, update, views};
 
 actions!(
     sound_tools,
     [
         ToggleComputerKeys,
         Undo,
+        UndoKeepingVersion,
         Redo,
         FocusNext,
         FocusPrevious,
@@ -66,6 +76,7 @@ actions!(
         OpenCloseLeftPanel,
         NewProject,
         OpenProject,
+        CloseSettings,
         Quit
     ]
 );
@@ -74,7 +85,7 @@ actions!(
 /// nothing.
 const TITLE_ROW_INSET: f32 = if cfg!(target_os = "macos") { 80. } else { 8. };
 const TOP_ROW_HEIGHT: f32 = 48.;
-/// The notices sit this far in from the right of the window and below the title row.
+/// The notices sit this far in from the bottom right of the window.
 const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
@@ -87,9 +98,9 @@ const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.
 const LEFT_PANEL_WIDTH: f32 = 400.;
 
-/// What the window shows in its left panel, given by the composition root, which knows the
-/// agent: this module names no type of it. With none installed the window has no panel and
-/// no icon for it.
+/// What the window shows in the Agent tab of its left panel, given by the composition root,
+/// which knows the agent: this module names no type of it. With none installed the panel has
+/// only History, and starts closed.
 #[derive(Clone)]
 pub struct LeftPanelSlot {
     make: Rc<dyn Fn(Entity<Session>, &mut Window, &mut Context<Shell>) -> LeftPanel>,
@@ -117,9 +128,32 @@ impl LeftPanelSlot {
     }
 }
 
-/// The view in the left panel, and what the window needs to know of it.
+/// The Agents section of the window's Settings page, given by the composition root, as
+/// [`LeftPanelSlot`] is. With none installed the page has no such section.
+#[derive(Clone)]
+pub struct SettingsSlot {
+    make: Rc<dyn Fn(&mut Window, &mut Context<Shell>) -> AnyView>,
+}
+
+impl Global for SettingsSlot {}
+
+impl SettingsSlot {
+    pub fn new(make: impl Fn(&mut Window, &mut Context<Shell>) -> AnyView + 'static) -> Self {
+        Self {
+            make: Rc::new(make),
+        }
+    }
+
+    pub fn install(self, cx: &mut App) {
+        cx.set_global(self);
+    }
+}
+
+/// The view in the Agent tab, and what the window needs to know of it.
 pub struct LeftPanel {
     view: AnyView,
+    /// What the view puts at the right of the tabs, such as **New**.
+    header: Option<AnyView>,
     /// What cmd-L focuses, such as the composer of the agent. Asked each time: what the view
     /// can focus changes, as when the composer appears.
     focus: Box<dyn Fn(&App) -> FocusHandle>,
@@ -136,6 +170,11 @@ pub struct LeftPanel {
 type Asks = Box<dyn Fn(&str, &mut Window, &mut App) -> bool>;
 
 impl LeftPanel {
+    pub fn with_header(mut self, header: impl Into<AnyView>) -> Self {
+        self.header = Some(header.into());
+        self
+    }
+
     pub fn with_composer(mut self, composer: impl Fn(&App) -> Entity<TextInput> + 'static) -> Self {
         self.composer = Some(Box::new(composer));
         self
@@ -167,11 +206,19 @@ impl LeftPanel {
                 Box::new(move |cx| view.read(cx).focus_handle(cx))
             },
             view: view.into(),
+            header: None,
             composer: None,
             ask: None,
             _observing: observing,
         }
     }
+}
+
+/// What the left panel shows.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Tab {
+    Agent,
+    History,
 }
 
 /// What the window of the real runtime has of the device: its timing, for the latency and for
@@ -190,14 +237,23 @@ pub struct Shell {
     session: Entity<Session>,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
+    /// The Settings page, over the whole window while it is open.
+    settings: Option<Entity<SettingsPage>>,
+    /// Where the focus was before the page opened, where closing it gives it back.
+    settings_return: Option<WeakFocusHandle>,
     /// What the main view shows in the title bar, such as the transport of a song.
     title_bar: Option<Entity<sound_typescript::TitleBar>>,
     project_menu: Entity<ProjectMenu>,
+    /// The output device in use, for the Settings page.
+    device_name: SharedString,
+    list_devices: Option<ListDevices>,
     /// The machine's live input and the meter of the device, see [`LiveInput`].
     live: Entity<LiveInput>,
     focus_handle: FocusHandle,
     left_panel: Option<LeftPanel>,
     left_panel_open: bool,
+    tab: Tab,
+    history: Entity<HistoryPanel>,
     /// See [`LeftPanelSlot::remembered`].
     left_panel_file: Option<PathBuf>,
     /// The whole panel, to know whether the focus is in it.
@@ -214,6 +270,10 @@ pub struct Shell {
     /// A newer template's code for files the project changed, until the composer merges or
     /// dismisses it.
     template_update: Option<crate::templates::Update>,
+    /// For an empty project to start from, next to the app's.
+    saved_templates: Vec<Saved>,
+    /// Whether the list of files that are not live is open.
+    problems_open: bool,
 }
 
 impl Shell {
@@ -251,7 +311,7 @@ impl Shell {
         views.install(cx);
         devices.install(cx);
         // The click is a processor in the engine, not project state: attaching it writes
-        // nothing and adds no undo step. It starts off and silent.
+        // nothing and adds no point of history. It starts off and silent.
         session.update(cx, |session, cx| {
             match metronome::Click::attach(session.engine()) {
                 Ok(mut click) => {
@@ -292,14 +352,18 @@ impl Shell {
         let left_panel = slot
             .as_ref()
             .map(|slot| (slot.make)(session.clone(), window, cx));
-        let left_panel_file = slot.and_then(|slot| slot.remembered);
+        let left_panel_file = slot.as_ref().and_then(|slot| slot.remembered.clone());
         // One word read once before the first frame, as the last project is read before the
         // window: drawing it closed and then opening it would flash.
-        let left_panel_open = left_panel_file
-            .as_deref()
-            .is_none_or(crate::app::left_panel_was_open);
-        let project_menu =
-            cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
+        let left_panel_open = slot.is_some()
+            && (left_panel_file.as_deref()).is_none_or(crate::app::left_panel_was_open);
+        let tab = if left_panel.is_some() {
+            Tab::Agent
+        } else {
+            Tab::History
+        };
+        let history = cx.new(|cx| HistoryPanel::new(session.clone(), window, cx));
+        let project_menu = cx.new(|cx| ProjectMenu::new(session.clone(), window, cx));
         // For the notice of an update.
         cx.observe_global::<update::Ready>(|_, cx| cx.notify())
             .detach();
@@ -311,13 +375,20 @@ impl Shell {
         let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
         let mut shell = Self {
             project_menu,
+            problems_open: false,
+            device_name,
+            list_devices,
             live,
             session,
             main: None,
+            settings: None,
+            settings_return: None,
             title_bar: None,
             focus_handle,
             left_panel,
             left_panel_open,
+            tab,
+            history,
             left_panel_file,
             left_panel_area: cx.focus_handle(),
             left_panel_icon_focus: cx.focus_handle().tab_stop(true),
@@ -326,6 +397,7 @@ impl Shell {
             _other_apps: other_apps,
             recorders,
             template_update: None,
+            saved_templates: Vec::new(),
         };
         // Asked again after the open brought the rest up to date, which changes nothing more.
         let root = shell.session.read(cx).project().root().to_path_buf();
@@ -378,19 +450,26 @@ impl Shell {
         &self.recorders
     }
 
-    /// The view in the left panel, open or not.
+    /// The view in the Agent tab, open or not.
     pub fn left_panel(&self) -> Option<&AnyView> {
         self.left_panel.as_ref().map(|panel| &panel.view)
     }
 
     pub fn left_panel_open(&self) -> bool {
-        self.left_panel.is_some() && self.left_panel_open
+        self.left_panel_open
     }
 
-    /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
-    /// elsewhere, and closes it when the focus is in it.
+    pub fn history_shown(&self) -> bool {
+        self.left_panel_open && self.tab == Tab::History
+    }
+
+    /// cmd-L: opens the Agent tab and focuses it, and closes the panel when the focus is in
+    /// that tab already.
     fn toggle_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.left_panel_open && self.left_panel_area.contains_focused(window, cx) {
+        if self.left_panel_open
+            && self.tab == Tab::Agent
+            && self.left_panel_area.contains_focused(window, cx)
+        {
             self.set_left_panel_open(false, window, cx);
             self.give_focus_back(window, cx);
         } else {
@@ -398,12 +477,13 @@ impl Shell {
         }
     }
 
-    /// Opens the panel when it is closed, and focuses it.
+    /// Opens the panel on the Agent tab when it is closed, and focuses it.
     fn focus_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = &self.left_panel else {
             return;
         };
         let focus = (panel.focus)(cx);
+        self.tab = Tab::Agent;
         self.remember_focus(window, cx);
         if !self.left_panel_open {
             self.set_left_panel_open(true, window, cx);
@@ -464,9 +544,55 @@ impl Shell {
         window.focus(&back, cx);
     }
 
+    fn show_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.tab = tab;
+        cx.notify();
+    }
+
+    /// The tabs, and at their right what the Agent tab puts there.
+    fn left_panel_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().gray_700;
+        let tab = |id: &'static str, label: &'static str, tab: Tab, cx: &mut Context<Self>| {
+            let variant = if self.tab == tab {
+                ButtonVariant::Subtle
+            } else {
+                ButtonVariant::GhostColor(muted)
+            };
+            Button::new(id, label)
+                .debug_selector(move || format!("left-panel-{id}"))
+                .variant(variant)
+                .size(ButtonSize::Sm)
+                .on_click(cx.listener(move |shell, _, _, cx| shell.show_tab(tab, cx)))
+        };
+        let agent = self.left_panel.as_ref();
+        let header = agent
+            .and_then(|panel| panel.header.clone())
+            .filter(|_| self.tab == Tab::Agent);
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .h(px(56.))
+            .pl(px(16.))
+            .pr(px(16.))
+            .children(agent.map(|_| tab("agent-tab", "Agent", Tab::Agent, cx)))
+            .child(tab("history-tab", "History", Tab::History, cx))
+            .child(div().flex_1())
+            .children(header)
+    }
+
     /// The panel left of the main area, when it is open.
     fn left_panel_element(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let panel = self.left_panel.as_ref().filter(|_| self.left_panel_open)?;
+        if !self.left_panel_open {
+            return None;
+        }
+        let body = match (self.tab, &self.left_panel) {
+            (Tab::Agent, Some(panel)) => panel.view.clone(),
+            _ => self.history.clone().into(),
+        };
+        // The hairline of the window's other lines, so the edges weigh the same.
+        let hairline = cx.theme().alpha_at(0.05);
         Some(
             div()
                 .id("left-panel")
@@ -479,48 +605,130 @@ impl Shell {
                     shell.give_focus_back(window, cx)
                 }))
                 .flex_none()
+                .flex()
+                .flex_col()
                 .w(px(LEFT_PANEL_WIDTH))
                 .h_full()
-                .child(panel.view.clone()),
+                // The top edge parts it from the title row.
+                .border_t_1()
+                .border_r_1()
+                .border_color(hairline)
+                .child(self.left_panel_header(cx))
+                // Not drawn again with every frame of the window, such as of the playhead.
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(body.cached(StyleRefinement::default().size_full())),
+                ),
         )
     }
 
     /// The icon right of the traffic lights that opens and closes the panel. While the panel
-    /// is closed and busy, it carries the lavender indicator.
-    fn left_panel_icon(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let panel = self.left_panel.as_ref()?;
+    /// is closed and the agent busy, it carries the lavender indicator.
+    fn left_panel_icon(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let lavender = cx.theme().lavender;
-        let busy = panel.busy && !self.left_panel_open;
-        Some(
-            div()
-                .relative()
-                .flex_none()
-                .child(
-                    Button::icon_only("left-panel", "panel-left")
-                        .debug_selector(|| "left-panel-icon".to_string())
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Sm)
-                        .focus_handle(&self.left_panel_icon_focus)
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.open_or_close_left_panel(window, cx)
-                        })),
+        let busy =
+            self.left_panel.as_ref().is_some_and(|panel| panel.busy) && !self.left_panel_open;
+        div()
+            .relative()
+            .flex_none()
+            .child(
+                Button::icon_only("left-panel", "panel-left")
+                    .debug_selector(|| "left-panel-icon".to_string())
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Sm)
+                    .focus_handle(&self.left_panel_icon_focus)
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.open_or_close_left_panel(window, cx)
+                    })),
+            )
+            .when(busy, |icon| {
+                icon.child(
+                    div()
+                        .debug_selector(|| "left-panel-busy".to_string())
+                        .absolute()
+                        .top(px(2.))
+                        .right(px(2.))
+                        .child(
+                            Indicator::new("left-panel-busy")
+                                .size(IndicatorSize::Xs)
+                                .color(lavender)
+                                .pulse(true),
+                        ),
                 )
-                .when(busy, |icon| {
-                    icon.child(
-                        div()
-                            .debug_selector(|| "left-panel-busy".to_string())
-                            .absolute()
-                            .top(px(2.))
-                            .right(px(2.))
-                            .child(
-                                Indicator::new("left-panel-busy")
-                                    .size(IndicatorSize::Xs)
-                                    .color(lavender)
-                                    .pulse(true),
-                            ),
-                    )
-                }),
-        )
+            })
+    }
+
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.is_some() {
+            return;
+        }
+        let slot = cx.try_global::<SettingsSlot>().cloned();
+        let agents = slot.map(|slot| (slot.make)(window, cx));
+        let (session, name) = (self.session.clone(), self.device_name.clone());
+        let list = self.list_devices.clone();
+        let page = cx.new(|cx| SettingsPage::new(session, agents, name, list, cx));
+        self.settings_return = window.focused(cx).map(|focused| focused.downgrade());
+        let back = page.read(cx).back().clone();
+        window.focus(&back, cx);
+        self.settings = Some(page);
+        cx.notify();
+    }
+
+    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings = None;
+        let back = self.settings_return.take().and_then(|back| back.upgrade());
+        window.focus(back.as_ref().unwrap_or(&self.focus_handle), cx);
+        cx.notify();
+    }
+
+    /// The Settings page while it is open.
+    pub fn settings(&self) -> Option<&Entity<SettingsPage>> {
+        self.settings.as_ref()
+    }
+
+    /// The title row, then the left panel and the main view: the window when Settings is not
+    /// over it.
+    fn project_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let main = match &self.main {
+            Some((_, view)) => view.clone().into_any_element(),
+            None => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(self.empty_state(cx))
+                .into_any_element(),
+        };
+        vec![
+            // The title row: the project menu and the sign of files that are not live, then what the main view puts there, such as a
+            // song's transport, in the middle of the room right of it. The air on both sides of
+            // the pill moves the window. In a narrow window the air goes first, so the pill
+            // never covers the menu.
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(TOP_ROW_HEIGHT))
+                .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
+                .child(self.left_panel_icon(cx))
+                .child(div().flex_none().child(self.project_menu.clone()))
+                .children(self.problems_sign(cx))
+                .child(Self::drag_region().flex_1())
+                .children(self.title_bar.clone())
+                .child(Self::drag_region().flex_1())
+                .children(Self::window_controls(window))
+                .into_any_element(),
+            // The panel comes first, so tab reaches it before the main area, as it reads.
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .children(self.left_panel_element(cx))
+                .child(div().flex_1().min_w_0().h_full().child(main))
+                .into_any_element(),
+        ]
     }
 
     /// What the main area shows with no view: in an empty project, the ways to start one.
@@ -531,12 +739,16 @@ impl Shell {
                 "Nothing in this project has a view yet. Ask the agent for one.",
             );
         }
-        let templates = (TEMPLATES.iter())
+        let bundled = (TEMPLATES.iter())
             .filter(|template| !template.files.is_empty())
-            .map(|template| {
-                new_project::template_row(template, cx)
-                    .on_click(cx.listener(move |shell, _, _, cx| shell.start_from(template, cx)))
-            });
+            .map(Choice::Bundled);
+        let saved = self.saved_templates.iter().cloned().map(Choice::Saved);
+        let templates = bundled.chain(saved).enumerate().map(|(index, template)| {
+            let row = new_project::template_row(template.name(), template.description(), cx);
+            TabStop::new(("start-from", index), row).on_click(
+                cx.listener(move |shell, _, _, cx| shell.start_from(template.clone(), cx)),
+            )
+        });
         let ask = self.left_panel.as_ref().map(|_| {
             Button::new("ask-the-agent", "Ask the agent")
                 .on_click(cx.listener(|shell, _, window, cx| shell.focus_left_panel(window, cx)))
@@ -558,12 +770,12 @@ impl Shell {
 
     /// Writes `template` into this empty project, which then shows it as it would a change
     /// of the agent's.
-    fn start_from(&mut self, template: &'static Template, cx: &mut Context<Self>) {
+    fn start_from(&mut self, template: Choice, cx: &mut Context<Self>) {
         let root = self.session.read(cx).project().root().to_path_buf();
         let session = self.session.downgrade();
         cx.spawn(async move |_, cx| {
             let written = (cx.background_executor())
-                .spawn(async move { crate::templates::write(&root, template) })
+                .spawn(async move { template.write(&root) })
                 .await;
             if let Err(error) = written {
                 // The window is gone when this fails, and there is nobody left to tell.
@@ -587,8 +799,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// What is wrong, in one line each: the last error, and files that are not live. And a
-    /// render while it runs.
+    /// The last error, a render while it runs, a newer release and a newer template, in one
+    /// line each.
     fn notices(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let update = cx.try_global::<update::Ready>().map(update_notice);
         let session = self.session.read(cx);
@@ -598,37 +810,15 @@ impl Shell {
                 .progress(progress)
                 .max_w_full()
         });
-        let problems = session.project().problems().len();
-        let agent = (self.left_panel.as_ref()).is_some_and(|panel| panel.ask.is_some());
-        let files = match (problems, agent) {
-            (0, _) => None,
-            (1, true) => Some("1 file is not live.".to_string()),
-            (count, true) => Some(format!("{count} files are not live.")),
-            (1, false) => Some("1 file is not live. Ask the agent to fix it.".to_string()),
-            (count, false) => Some(format!(
-                "{count} files are not live. Ask the agent to fix them."
-            )),
-        };
-        let fix = agent.then(|| {
-            let label = if problems == 1 {
-                "Ask the agent to fix it"
-            } else {
-                "Ask the agent to fix them"
-            };
-            Button::new("problems-ask", label)
-                .debug_selector(|| "problems-ask".to_string())
-                .on_click(cx.listener(|shell, _, window, cx| shell.ask_to_fix(window, cx)))
-        });
         let error = session.notice().cloned();
-        // Top-right, under the title row: clear of the transport, and of the left panel and the
-        // left edge of the main view, where a song has its track headers. Not in the
-        // title row: there are the window buttons on Windows. A definite width, so that a
-        // message wraps at the width it gets and the box is as tall as its lines: with only a
-        // largest width the text was measured on one line and then painted on three. A notice is as wide as
-        // its text up to this width.
+        // Bottom right: clear of the title row, where the window buttons are on Windows, and of
+        // the left panel and the left edge of the main view, where a song has its track headers.
+        // A definite width, so that a message wraps at the width it gets and the box is as tall
+        // as its lines: with only a largest width the text was measured on one line and then
+        // painted on three. A notice is as wide as its text up to this width.
         div()
             .absolute()
-            .top(px(TOP_ROW_HEIGHT + NOTICE_INSET))
+            .bottom(px(NOTICE_INSET))
             .right(px(NOTICE_INSET))
             .w(px(NOTICE_WIDTH))
             .flex()
@@ -638,15 +828,6 @@ impl Shell {
             .children(rendering)
             .children(update)
             .children(self.template_notice(cx))
-            .children(files.map(|files| {
-                let notice = Notice::new("problems", files)
-                    .tone(NoticeTone::Warning)
-                    .max_w_full();
-                match fix {
-                    Some(fix) => notice.action(fix),
-                    None => notice,
-                }
-            }))
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()
@@ -721,6 +902,7 @@ impl Shell {
     /// now, the panel opens on what it is doing.
     fn ask_to_fix(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.remember_focus(window, cx);
+        self.tab = Tab::Agent;
         if !self.left_panel_open {
             self.set_left_panel_open(true, window, cx);
         }
@@ -821,17 +1003,16 @@ impl Render for Shell {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Shell, "window");
         let theme = cx.theme();
         let (background, text) = (theme.gray_100, theme.gray_950);
-        let main = match &self.main {
-            Some((_, view)) => view.clone().into_any_element(),
-            None => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(self.empty_state(cx))
-                .into_any_element(),
+        let screen = match &self.settings {
+            Some(settings) => vec![
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(settings.clone())
+                    .into_any_element(),
+            ],
+            None => self.project_screen(window, cx),
         };
-
         div()
             .id("shell")
             .key_context(KEY_CONTEXT)
@@ -876,6 +1057,9 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|shell, _: &Undo, _, cx| shell.session.update(cx, Session::undo)),
             )
+            .on_action(cx.listener(|shell, _: &UndoKeepingVersion, _, cx| {
+                shell.session.update(cx, Session::undo_keeping_version)
+            }))
             .on_action(
                 cx.listener(|shell, _: &Redo, _, cx| shell.session.update(cx, Session::redo)),
             )
@@ -891,6 +1075,16 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &OpenProject, _, cx| {
                 shell.session.update(cx, |_, cx| open_another_project(cx))
             }))
+            .on_action(
+                cx.listener(|shell, _: &sound_ui::OpenSettings, window, cx| {
+                    shell.open_settings(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|shell, _: &CloseSettings, window, cx| {
+                    shell.close_settings(window, cx)
+                }),
+            )
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()
@@ -901,38 +1095,14 @@ impl Render for Shell {
             .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
-            // The title row: the project menu, then what the main view puts there, such as a
-            // song's transport, in the middle of the room right of it. The air on both sides of the pill moves the window. In a narrow
-            // window the air goes first, so the pill never covers the menu.
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(TOP_ROW_HEIGHT))
-                    .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
-                    .children(self.left_panel_icon(cx))
-                    .child(div().flex_none().child(self.project_menu.clone()))
-                    .child(Self::drag_region().flex_1())
-                    .children(self.title_bar.clone())
-                    .child(Self::drag_region().flex_1())
-                    .children(Self::window_controls(window)),
-            )
-            // The panel comes first, so tab reaches it before the main area, as it reads.
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .children(self.left_panel_element(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(main)),
-            )
+            .children(screen)
             .child(self.notices(cx))
     }
 }
 
 /// The key context of the window root. Every binding of the window names it.
 const KEY_CONTEXT: &str = "Shell";
+const SETTINGS_CONTEXT: &str = "Settings";
 
 /// Outside a text field, where keys are characters and cmd-z is not an undo of the project.
 fn outside_text() -> String {
@@ -962,13 +1132,18 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-z", Undo, outside_text),
+        KeyBinding::new("alt-secondary-z", UndoKeepingVersion, outside_text),
         KeyBinding::new("shift-secondary-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
+        KeyBinding::new("tab", FocusNext, Some(new_project::SMALL_WINDOW)),
+        KeyBinding::new("shift-tab", FocusPrevious, Some(new_project::SMALL_WINDOW)),
         KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-o", OpenProject, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-,", sound_ui::OpenSettings, Some(KEY_CONTEXT)),
+        KeyBinding::new("escape", CloseSettings, Some(SETTINGS_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -991,19 +1166,29 @@ fn widen_for_left_panel(window: &mut Window, cx: &App) {
     }
 }
 
-/// Gives the project menu of the app's window the recent projects. Off the UI thread: each is
-/// a look at a folder, which a network drive that went away can hold up. A test window never
-/// gets them, so a snapshot does not show what this machine opened.
-fn show_recent_projects(window: gpui::WindowHandle<Shell>, cx: &mut App) {
+/// Gives the app's window the recent projects and the saved templates. Off the UI thread: each
+/// is a look at a folder, which a network drive that went away can hold up. A test window never
+/// gets them, so a snapshot does not show what this machine keeps.
+fn show_what_this_machine_keeps(window: gpui::WindowHandle<Shell>, cx: &mut App) {
     cx.spawn(async move |cx| {
-        let recent = cx
-            .background_spawn(async { crate::app::recent_projects() })
+        let (recent, saved) = cx
+            .background_spawn(async {
+                let saved = saved_folder().and_then(|folder| crate::templates::saved_in(&folder));
+                (crate::app::recent_projects(), saved)
+            })
             .await;
         // Fails only when the window is gone.
         window
             .update(cx, |shell, _, cx| {
                 let menu = shell.project_menu().clone();
                 menu.update(cx, |menu, cx| menu.set_recent_projects(recent, cx));
+                match saved {
+                    Ok(saved) => shell.saved_templates = saved,
+                    Err(error) => shell
+                        .session
+                        .update(cx, |session, cx| session.report(error, cx)),
+                }
+                cx.notify();
             })
             .ok();
     })
@@ -1016,10 +1201,10 @@ fn drop_in_background(stream: impl Send + 'static, cx: &App) {
     cx.background_spawn(async move { drop(stream) }).detach();
 }
 
-/// The audio devices of this machine for the device menus of the app's window. A test window
+/// The audio devices of this machine for the Settings page of the app's window. A test window
 /// lists none, so a snapshot does not show this machine's devices.
 fn list_devices(chosen: ChosenDevices) -> ListDevices {
-    Arc::new(move || DeviceMenu {
+    Arc::new(move || DeviceList {
         // A failure leaves a list empty, and the menu offers the default.
         outputs: sound_core::output_devices().unwrap_or_default(),
         inputs: sound_core::input_devices().unwrap_or_default(),
@@ -1042,13 +1227,14 @@ fn print_device_report(stream: &OutputStream) {
 pub fn run(folder: &Path) -> Result<()> {
     // A window must not wait while a Sampler reads hundreds of samples, also not to open.
     sound_media::load_in_background();
-    let opened = Opened::open(folder, Opened::load_tools(folder)?)?;
-    gpui_platform::application()
-        .with_assets(Assets)
-        .run(move |cx: &mut App| {
-            init(cx);
-            opened.show(cx);
-        });
+    let starting = Starting::new(folder.to_path_buf());
+    let application = gpui_platform::application().with_assets(Assets);
+    let (tools, output) = starting.wait()?;
+    let opened = Opened::open(folder, tools, output)?;
+    application.run(move |cx: &mut App| {
+        init(cx);
+        opened.show(cx);
+    });
     Ok(())
 }
 
@@ -1056,12 +1242,13 @@ pub fn run(folder: &Path) -> Result<()> {
 /// when there is none. See [`start`].
 pub fn run_app() {
     sound_media::load_in_background();
+    let starting = crate::app::last_project().map(Starting::new);
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
             init(cx);
-            match crate::app::last_project() {
-                Some(folder) => start::open_or_explain(folder, cx),
+            match starting {
+                Some(starting) => start::open_starting(starting, cx),
                 None => start::choose_project(cx),
             }
         });
@@ -1084,6 +1271,68 @@ fn init(cx: &mut App) {
     crate::agent_panel(support, cx).install(cx);
 }
 
+/// What opening a project waits for, each on a thread of its own from the start, so that they
+/// wait together and while the application starts: the project's tools wait for Bun, the
+/// output device for Core Audio.
+struct Starting {
+    folder: PathBuf,
+    tools: JoinHandle<Result<Option<FirstLoad>>>,
+    output: JoinHandle<Result<Output>>,
+}
+
+impl Starting {
+    fn new(folder: PathBuf) -> Self {
+        let tools = std::thread::spawn({
+            let folder = folder.clone();
+            // An experiment: every project the window opens can have tools of its own, written
+            // while it runs, so the folder for them is always there.
+            move || crate::load_tools(&folder, true)
+        });
+        Self {
+            folder,
+            tools,
+            output: std::thread::spawn(Output::start),
+        }
+    }
+
+    /// Waits for both, so that nothing of a failed open still runs. The tools fail first: what
+    /// is wrong with the folder is what to say.
+    fn wait(self) -> Result<(Option<FirstLoad>, Output)> {
+        let (tools, output) = (joined(self.tools), joined(self.output));
+        Ok((tools?, output?))
+    }
+}
+
+fn joined<T>(thread: JoinHandle<T>) -> T {
+    thread
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// The chosen output device, playing an engine that has no project yet.
+struct Output {
+    control: EngineControl,
+    stream: OutputStream,
+    device_name: String,
+    chosen: ChosenDevices,
+}
+
+impl Output {
+    fn start() -> Result<Self> {
+        let chosen = ChosenDevices::read();
+        let device = OutputDevice::open(chosen.output.as_deref())?;
+        let device_name = device.name()?;
+        let config = EngineConfig::new(device.sample_rate(), device.channels());
+        let (control, engine) = Engine::new(config);
+        Ok(Self {
+            control,
+            stream: device.start(engine)?,
+            device_name,
+            chosen,
+        })
+    }
+}
+
 /// A project that is open and plays on the chosen output, ready for its window.
 struct Opened {
     project: Project,
@@ -1096,21 +1345,14 @@ struct Opened {
 }
 
 impl Opened {
-    /// The project's own tools, for [`Opened::open`]. Waits for Bun: not on the thread that
-    /// draws.
-    fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
-        // An experiment: every project the window opens can have tools of its own, written
-        // while it runs, so the folder for them is always there.
-        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
-        crate::load_tools(folder)
-    }
-
-    fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {
-        let chosen = ChosenDevices::read();
-        let device = OutputDevice::open(chosen.output.as_deref())?;
-        let device_name = device.name()?;
-        let config = EngineConfig::new(device.sample_rate(), device.channels());
-        let (control, engine) = Engine::new(config);
+    /// Opens the project on this thread, the one that draws: plugins load on it.
+    fn open(folder: &Path, tools: Option<FirstLoad>, output: Output) -> Result<Self> {
+        let Output {
+            control,
+            stream,
+            device_name,
+            chosen,
+        } = output;
         // The scan of this machine runs on a thread of its own from here, so no plugin is ever
         // looked at on the thread that draws. A project that names a plugin the scan has not
         // reached yet opens and plays everything else, and the plugin comes in when it turns
@@ -1119,13 +1361,12 @@ impl Opened {
         plugins.start_scanning();
         let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools)?;
         project.watch()?;
+        println!("device: {device_name}, {} Hz", project.sample_rate());
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the
         // application keeps this until it quits.
         let weak_plugins = plugins.downgrade();
         drop(plugins);
-        let stream = device.start(engine)?;
-        println!("device: {device_name}, {} Hz", config.sample_rate);
         // What the Finder opens next time. Not being able to remember it costs nothing now.
         if let Err(error) = crate::app::remember_project(project.root()) {
             eprintln!("error: {error:#}");
@@ -1160,7 +1401,7 @@ impl Opened {
         let timing = stream.timing().clone();
         let session = cx.new(|cx| Session::new(project, cx));
         // A turn of a pinned knob in a plugin's window that is still open when the project
-        // closes is written as one undo step, as the headless loop does with `Plugins::close`.
+        // closes is written as one point of history, as the headless loop does with `Plugins::close`.
         // The release of the session is the last moment the project is at hand.
         cx.observe_release(&session, {
             let plugins = weak_plugins.clone();
@@ -1281,7 +1522,7 @@ impl Opened {
         let shell = match opened {
             Ok(window) => {
                 cx.activate(true);
-                show_recent_projects(window, cx);
+                show_what_this_machine_keeps(window, cx);
                 window
             }
             Err(error) => {
@@ -1315,7 +1556,11 @@ impl Opened {
                                 }
                             }
                             Err(error) => {
+                                let stop = matches!(error, midi::PortError::Unavailable(_));
                                 session.update(cx, |session, cx| session.report(error, cx));
+                                if stop {
+                                    break;
+                                }
                             }
                         }
                         drop(session);

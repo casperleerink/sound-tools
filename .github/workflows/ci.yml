@@ -22,12 +22,12 @@ env:
 # full set on every platform, and a release is tagged only on a commit that passed it.
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           # True when any changed file is outside docs/.
@@ -41,7 +41,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the pinned toolchain
         run: rustup toolchain install
       # Warnings fail CI only. The parent folder config merges with .cargo/config.toml for every cargo command.
@@ -66,7 +66,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - name: Deny warnings
@@ -84,20 +84,20 @@ jobs:
           bun-version: 1.4.3
       # With the realtime sanitizer on: any test that allocates, locks or makes a system call
       # inside Engine::process_block aborts.
-      - run: cargo nextest run --workspace --locked
+      - run: cargo nextest run --workspace --locked --profile ci
         env:
           RTSAN_ENABLE: 1
       # The window rendered offscreen, which nextest leaves out: it has no test harness.
       - run: cargo test -p runtime --test snapshots --locked
 
-  # Linux builds and runs the tests.
+  # Linux builds and runs the tests, on the oldest Ubuntu the Linux release supports (README).
   linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the system libraries
         run: |
           sudo apt-get update
@@ -119,7 +119,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
-      - run: cargo nextest run --workspace --locked
+      - run: cargo nextest run --workspace --locked --profile ci
 
   # Windows lints, and on main builds and runs the tests. Nobody here has a Windows computer, so
   # this job is how Windows-only failures show up. Its tests take about 15 minutes, too slow for
@@ -133,7 +133,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - name: Deny warnings
@@ -150,4 +150,4 @@ jobs:
         with:
           bun-version: 1.4.3
       - if: github.event_name == 'push'
-        run: cargo nextest run --workspace --locked --no-fail-fast
+        run: cargo nextest run --workspace --locked --profile ci --no-fail-fast

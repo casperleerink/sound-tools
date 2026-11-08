@@ -209,7 +209,7 @@ fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
         sound_typescript::has_bun(),
         "these tests run tools in Bun: see tooling/fetch-bun.sh"
     );
-    let folder = tempfile::tempdir().unwrap();
+    let folder = crate::support::project_folder();
     crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
     crate::support::write(folder.path(), "extensions/stuck.ts", "while (true) {}\n");
     crate::support::write(
@@ -247,7 +247,7 @@ tool({
   sound: () => input,
 });
 "#;
-    let folder = tempfile::tempdir().unwrap();
+    let folder = crate::support::project_folder();
     crate::support::write(folder.path(), "extensions/steps.ts", steps);
     let harness = Harness::open(folder);
     let problems = harness.project.problems();
@@ -283,7 +283,7 @@ tool({{
 "#
         )
     };
-    let folder = tempfile::tempdir().unwrap();
+    let folder = crate::support::project_folder();
     let voices = tool(
         "voices",
         4,
@@ -322,7 +322,7 @@ fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
         "these tests run tools in Bun: see tooling/fetch-bun.sh"
     );
     let old = LEVEL.replace("sound:", "onMidi: () => {},\n  sound:");
-    let folder = tempfile::tempdir().unwrap();
+    let folder = crate::support::project_folder();
     crate::support::write(folder.path(), "extensions/level.ts", &old);
     let harness = Harness::open(folder);
     let problems = harness.project.problems();
@@ -348,7 +348,7 @@ fn a_key_the_app_keeps_is_a_problem_of_the_tool_that_takes_it() {
         "sound:",
         "globalKeys: [\"space\", \"cmd-z\"],\n  onKey: () => {},\n  sound:",
     );
-    let folder = tempfile::tempdir().unwrap();
+    let folder = crate::support::project_folder();
     crate::support::write(folder.path(), "extensions/level.ts", &greedy);
     let harness = Harness::open(folder);
     let problems = harness.project.problems();

@@ -1,9 +1,5 @@
-//! The scan on a thread of its own, and the cache of this machine.
-//!
-//! The window must never look at a plugin on the thread that draws: a bundle that hangs costs
-//! a minute, and this machine's real folders cost seconds even when nothing hangs. So the
-//! window starts the scan on a thread and opens the project at once, and a record whose plugin
-//! the scan has not reached yet is reported and played as soon as it turns up.
+//! The scan on a thread of its own, and the cache of this machine. The thread that draws must
+//! never wait for a bundle: one that hangs costs a minute.
 
 use std::time::{Duration, Instant};
 
@@ -13,20 +9,17 @@ use crate::support::{
     Harness, Played, id, no_cache, plugin_folder, plugin_folder_of, plugin_id, record, scanner,
 };
 
-/// How long a bundle may take in the test of a bundle that hangs. It is the only bundle there,
-/// so no bundle that answers can miss it.
+/// Short, as the bundle that hangs is the only one: no bundle that answers can miss it.
 const DEADLINE: Duration = Duration::from_millis(300);
 
-/// A scanner where the bundle of one format never answers.
 fn one_bundle_hangs(format: PluginFormat) -> ScanCommand {
     scanner()
         .with_environment(test_plugin_support::HANG_VARIABLE, format.as_str())
         .with_timeout(DEADLINE)
 }
 
-/// A scanner whose bundles all wait at `gate` until [`open_the_gate`]. Nothing is given up on:
-/// the deadline is the usual one and is never meant to be reached, so a busy machine only
-/// makes the test slower and never makes it fail.
+/// Bundles wait at `gate` until [`open_the_gate`], with the usual deadline, so a busy machine
+/// only makes a test slower and never makes it fail.
 fn waiting_at(gate: &std::path::Path) -> ScanCommand {
     let path = gate.to_str().expect("a temporary folder of this test");
     scanner().with_environment(test_plugin_support::GATE_VARIABLE, path)
@@ -37,14 +30,6 @@ fn open_the_gate(gate: &std::path::Path) {
     std::fs::write(open, []).expect("the gate opens");
 }
 
-/// What the composer's thread does while the scan runs: it draws, which means it asks the host
-/// what it knows. None of that may wait for a bundle.
-///
-/// The scan is held at a gate this test opens itself, so it is still running for as long as
-/// the test asks, however busy the machine is. An answer that waited for it would take until
-/// the gate opens, which it does not while the test asks. With a bundle that hangs and a two
-/// second deadline instead, the bundle that was meant to answer was killed on that deadline
-/// when the machine was busy.
 #[test]
 fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
     let folder = tempfile::tempdir().unwrap();
@@ -54,7 +39,7 @@ fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
 
     let started = Instant::now();
     plugins.start_scanning();
-    // Everything the window asks while it draws, over and over, while every bundle waits.
+    // Everything the window asks while it draws.
     let mut slowest = Duration::ZERO;
     while started.elapsed() < Duration::from_millis(200) {
         let asked = Instant::now();
@@ -63,7 +48,7 @@ fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
         plugins.scan_is_running();
         slowest = slowest.max(asked.elapsed());
     }
-    // A generous bound: an answer that waited for the scan would wait for the gate.
+    // Generous: an answer that waited for the scan would wait for the gate.
     assert!(
         slowest < Duration::from_secs(1),
         "the picker waited {slowest:?} for the scan"
@@ -75,7 +60,6 @@ fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
         "a bundle answered through the gate"
     );
 
-    // And when it ends, the picker has what answered.
     open_the_gate(&gate);
     plugins.wait_for_scan();
     let scan = plugins.scan();
@@ -88,8 +72,6 @@ fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
     assert_eq!(plugins.instruments().len(), 2);
 }
 
-/// A bundle that hangs in a scan in the background is given up on and reported, and the scan
-/// ends. It is the only bundle, so a busy machine cannot make another one miss the deadline.
 #[test]
 fn a_bundle_that_hangs_in_a_scan_in_the_background_is_reported() {
     let folder = tempfile::tempdir().unwrap();
@@ -105,13 +87,11 @@ fn a_bundle_that_hangs_in_a_scan_in_the_background_is_reported() {
     assert_eq!(plugins.instruments(), []);
 }
 
-/// A bundle that takes long to list, as Kontakt does on its first load on Windows, holds back
-/// only itself: the plugin of the bundle after it turns up while it still runs.
+/// As Kontakt does on its first load on Windows.
 #[test]
 fn a_slow_bundle_does_not_hold_back_the_others() {
     let folder = tempfile::tempdir().unwrap();
     let search = vec![plugin_folder(folder.path())];
-    // The CLAP bundle comes first and waits at the gate until the VST 3 plugin is found.
     let gate = folder.path().join("scan-gate");
     let scanner = waiting_at(&gate).with_environment(
         test_plugin_support::GATE_FORMAT_VARIABLE,
@@ -135,16 +115,9 @@ fn a_slow_bundle_does_not_hold_back_the_others() {
     assert_eq!(scan.plugins.len(), 2);
 }
 
-/// A project that names a plugin the scan has not reached yet opens, says so, and plays the
-/// plugin as soon as it turns up. Nothing of the composer's is needed in between.
-///
-/// The scan is held at a gate this test opens itself, so what it checks does not depend on how
-/// busy the machine is. With a bundle that hangs and a short deadline instead, the bundle that
-/// answers was killed on its own deadline when ten tests ran at once.
 #[test]
 fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up() {
     let folder = tempfile::tempdir().unwrap();
-    // Every bundle waits at the gate, so no plugin of this project is found while it is shut.
     let gate = folder.path().join("scan-gate");
     let search = vec![plugin_folder(folder.path())];
     let plugins = Plugins::new(search, waiting_at(&gate), no_cache());
@@ -160,7 +133,6 @@ fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up(
         .collect();
     harness.add_track(record(PluginFormat::Vst3, "piano"), played);
 
-    // The project is open and everything else in it plays. The track is silent and says why.
     let problems = harness.problems();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(
@@ -169,7 +141,6 @@ fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up(
     );
     assert_eq!(harness.play(2048).first_sound(), None);
 
-    // The gate opens, the scan ends, the host asks for the record to be run again, and it plays.
     open_the_gate(&gate);
     harness.plugins.wait_for_scan();
     let scan = harness.plugins.scan();
@@ -185,8 +156,7 @@ fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up(
     assert!(harness.render(2048).first_sound().is_some());
 }
 
-/// The cache of this machine. Without it every start pays for every bundle, which on the
-/// machine this was written on is seconds.
+/// Without the cache every start pays seconds for every bundle.
 #[test]
 fn a_bundle_that_has_not_changed_is_not_looked_at_again() {
     let folder = tempfile::tempdir().unwrap();
@@ -196,16 +166,15 @@ fn a_bundle_that_has_not_changed_is_not_looked_at_again() {
     let plugins = Plugins::new(search.clone(), scanner(), cache.clone());
     assert_eq!(plugins.scan().plugins.len(), 2);
 
-    // A scanner that cannot start at all. Everything is still found, so no child process ran.
+    // A scanner that cannot start at all, so a bundle looked at again fails.
     let broken = ScanCommand::new("/definitely/not/a/program", []);
     let plugins = Plugins::new(search.clone(), broken.clone(), cache.clone());
     let scan = plugins.scan();
     assert_eq!(scan.failures, [], "a bundle was looked at again");
     assert_eq!(scan.plugins.len(), 2);
 
-    // The binary of one bundle changes, so that bundle is looked at again and this one fails.
-    // A new file replaces it, as an installer does: the installed one is a link to the built
-    // library, which other tests load, so nothing writes into it.
+    // A new file replaces the binary, as an installer does: the installed one is a link to the
+    // built library, which other tests load.
     let binary = folder.path().join("plugins/test-tone.clap");
     let mut bytes = std::fs::read(&binary).unwrap();
     bytes.push(0);
@@ -219,8 +188,7 @@ fn a_bundle_that_has_not_changed_is_not_looked_at_again() {
     assert_eq!(scan.plugins.len(), 1);
 }
 
-/// A plugin that crashed or hung is not tried again on every start: it would cost its deadline
-/// every time the composer opened a project. `runtime --plugins` looks at everything again.
+/// Else it would cost its deadline every time the composer opened a project.
 #[test]
 fn a_bundle_that_crashed_is_remembered_and_not_tried_again() {
     let folder = tempfile::tempdir().unwrap();
@@ -231,7 +199,6 @@ fn a_bundle_that_crashed_is_remembered_and_not_tried_again() {
     let plugins = Plugins::new(search.clone(), crashing, cache.clone());
     assert_eq!(plugins.scan().failures.len(), 1);
 
-    // A scanner that works. The bundle is not looked at again, so it is still a failure.
     let plugins = Plugins::new(search.clone(), scanner(), cache.clone());
     let scan = plugins.scan();
     assert_eq!(scan.plugins, [], "the bundle was tried again");
@@ -244,12 +211,8 @@ fn a_bundle_that_crashed_is_remembered_and_not_tried_again() {
     assert_eq!(scan.plugins.len(), 1);
 }
 
-/// A plugin installed while the app runs is found without a restart, when a picker asks what
-/// there is: the window's host looks at the plugin folders again then. A look that finds
-/// nothing new changes nothing, so the picker it fills again does not make it look for ever.
-///
-/// The loops below ask until the plugin turns up, so the test does not depend on when the
-/// thread that looks again runs.
+/// A look that finds nothing new changes nothing, so the picker it fills again does not make it
+/// look for ever.
 #[test]
 fn a_plugin_installed_while_the_app_runs_is_in_the_next_picker() {
     let folder = tempfile::tempdir().unwrap();
@@ -278,9 +241,8 @@ fn a_plugin_installed_while_the_app_runs_is_in_the_next_picker() {
     assert_eq!(plugins.instruments().len(), 2);
 }
 
-/// A record that names a plugin this machine does not have plays once the composer installs
-/// it, with no picker open and no restart: the host looks again while a record waits. The loop
-/// is what the window's poll does.
+/// With no picker open: the host looks again while a record waits. The loop is the window's
+/// poll.
 #[test]
 fn a_record_whose_plugin_is_installed_while_the_app_runs_plays() {
     let folder = tempfile::tempdir().unwrap();
@@ -318,9 +280,7 @@ fn a_record_whose_plugin_is_installed_while_the_app_runs_plays() {
     assert!(harness.play(2048).first_sound().is_some());
 }
 
-/// A cache that cannot be written costs the next start a scan and nothing else, and the
-/// composer is told, as every other error of work in the background is. Unix only: a folder
-/// on Windows has no mode that keeps files from being made in it.
+/// Unix only: a folder on Windows has no mode that keeps files from being made in it.
 #[cfg(unix)]
 #[test]
 fn a_cache_that_cannot_be_written_is_told() {

@@ -4,8 +4,8 @@ use plugin_host::PluginFormat;
 
 use crate::support::{FORMATS, Harness, Played, id, plugin_id, record};
 
-/// Two notes, one in each half of the render. Engine time never goes back, so a test that
-/// changes something between two renders needs a note on each side of the change.
+/// Engine time never goes back, so a test that changes something between two renders needs a
+/// note on each side of the change.
 fn played() -> Vec<Played> {
     vec![
         Played::On {
@@ -36,8 +36,8 @@ fn plugin_json(format: PluginFormat, plugin_id: &str) -> String {
     )
 }
 
-/// An id no machine has, in the form each format asks for. A VST 3 id that is not thirty-two
-/// hex digits would be refused by the record itself, which is another test.
+/// In the form each format asks for: a VST 3 id that is not thirty-two hex digits is refused by
+/// the record itself.
 fn not_installed(format: PluginFormat) -> String {
     match format {
         PluginFormat::Clap => "com.example.not-installed".to_string(),
@@ -69,7 +69,6 @@ fn a_missing_plugin_is_a_problem(format: PluginFormat) {
     );
     assert!(problems[0].contains(&not_installed(format)), "{problems:?}");
 
-    // The record is live and untouched, and the track is silent.
     let state = harness
         .project
         .resolve::<plugin_host::PluginRecord>(&id("track/instrument"))
@@ -79,7 +78,6 @@ fn a_missing_plugin_is_a_problem(format: PluginFormat) {
     assert_eq!(render.first_sound(), None);
 }
 
-/// No restart, no reinstall: the file is corrected and the plugin plays.
 #[test]
 fn correcting_the_id_in_the_file_makes_the_plugin_play_live() {
     for format in FORMATS {
@@ -94,7 +92,6 @@ fn correcting_the_id_plays_live(format: PluginFormat) {
     harness.add_track(missing, played());
     assert_eq!(harness.play(512).first_sound(), None);
 
-    // Nothing is installed and nothing restarts: only the file is corrected.
     let changed = harness.write_and_apply(
         "state/track/instrument.json",
         &plugin_json(format, plugin_id(format)),
@@ -127,11 +124,8 @@ fn an_unknown_id_goes_silent(format: PluginFormat) {
     assert_eq!(harness.render(512).first_sound(), None);
 }
 
-/// A `state_asset` is a name the agent chooses, and two records may name one file: they then
-/// share it, as two copies of one plugin sharing a preset. Nothing refuses either of them. A
-/// rule about another record could not be taken back when that other record goes, because the
-/// project runs only the behaviour of the record that was edited, and a warning that cannot go
-/// away is worse than the mistake.
+/// Nothing refuses either: a rule about another record could not be taken back when that record
+/// goes, as the project runs only the behaviour of the record that was edited.
 #[test]
 fn two_records_that_name_one_state_asset_both_load_and_share_it() {
     for format in FORMATS {
@@ -149,7 +143,6 @@ fn two_records_share_one_asset(format: PluginFormat) {
     assert_eq!(harness.problems(), Vec::<String>::new());
     assert!(harness.play(2048).first_sound().is_some());
 
-    // Taking the second one away leaves nothing behind, because nothing was reported.
     let mut changes = sound_core::Changes::new();
     changes.delete(&id("track/second"));
     harness
@@ -170,8 +163,7 @@ fn a_record_with_an_unknown_field_or_format_does_not_load() {
         "state/two.json",
         r#"{"tool": "plugin", "state": {"format": "clap", "plugin_id": "a.b", "state_asset": "x", "gain": 1}}"#,
     );
-    // A VST 3 id is the class id, so anything else is refused by the record and not by a scan
-    // that does not find it.
+    // A VST 3 id that is not a class id is refused by the record, not by the scan.
     harness.write_and_apply(
         "state/three.json",
         r#"{"tool": "plugin", "state": {"format": "vst3", "plugin_id": "a.b", "state_asset": "x"}}"#,

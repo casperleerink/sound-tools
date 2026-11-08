@@ -26,13 +26,13 @@ use crate::tree::{
 };
 
 use super::TypeScriptCard;
-use super::drawing::{Drawing, element_name, typing};
+use super::drawing::{Drawing, typing};
 use super::input::{Carried, Hears, placed, press_of};
 
-impl Drawing<'_, '_> {
+impl Drawing<'_> {
     /// A slider of the app, which turns its field or input as a knob's drag does.
-    pub(super) fn slider(&mut self, props: &SliderProps, index: &[usize]) -> AnyElement {
-        let name = element_name("slider", props.key.as_deref(), index);
+    pub(super) fn slider(&mut self, id: u64, props: &SliderProps) -> AnyElement {
+        let name = self.element_name("slider", props.key.as_deref(), id);
         let (min, max) = (props.min.unwrap_or(0.0), props.max.unwrap_or(1.0));
         let value = (props.value.as_ref()).map_or(min, |value| self.sources().number(value) as f32);
         let slider = Slider::new(ElementId::Name(name.into()), props.width.unwrap_or(120.0))
@@ -50,7 +50,7 @@ impl Drawing<'_, '_> {
             default: props.default,
             label: props.label.clone(),
         });
-        let card = self.cx.entity().downgrade();
+        let card = self.card.clone();
         let slider = slider.when_some(turns, |slider, turns| {
             slider.on_change(move |change, _, cx| {
                 (card.update(cx, |view, cx| view.turn(&turns, change, cx))).ok();
@@ -61,13 +61,8 @@ impl Drawing<'_, '_> {
     }
 
     /// One of a few options side by side, which tells its code the place of a pick.
-    pub(super) fn segmented(
-        &mut self,
-        id: u64,
-        props: &SegmentedProps,
-        index: &[usize],
-    ) -> AnyElement {
-        let name = element_name("segmented", props.key.as_deref(), index);
+    pub(super) fn segmented(&mut self, id: u64, props: &SegmentedProps) -> AnyElement {
+        let name = self.element_name("segmented", props.key.as_deref(), id);
         let options = (props.options.iter().flatten().enumerate())
             .map(|(place, label)| (SharedString::from(place.to_string()), label.clone()));
         let chosen = props.chosen.unwrap_or(-1).to_string();
@@ -76,7 +71,7 @@ impl Drawing<'_, '_> {
             .options(options)
             .disabled(props.disabled == Some(true))
             .when(props.on_change == Some(true), |control| {
-                let card = self.cx.entity().downgrade();
+                let card = self.card.clone();
                 control.on_change(move |place, _, cx| {
                     let Ok(place) = place.parse::<usize>() else {
                         return;
@@ -93,14 +88,14 @@ impl Drawing<'_, '_> {
     }
 
     /// A quiet line of the app, whose button tells a click and whose close button a close.
-    pub(super) fn notice(&mut self, id: u64, props: &NoticeProps, index: &[usize]) -> AnyElement {
-        let name = element_name("notice", props.key.as_deref(), index);
+    pub(super) fn notice(&mut self, id: u64, props: &NoticeProps) -> AnyElement {
+        let name = self.element_name("notice", props.key.as_deref(), id);
         let tone = match props.tone {
             Some(NoticeToned::Error) | None => NoticeTone::Error,
             Some(NoticeToned::Warning) => NoticeTone::Warning,
             Some(NoticeToned::Info) => NoticeTone::Info,
         };
-        let card = self.cx.entity().downgrade();
+        let card = self.card.clone();
         let tell = move |kind: EventKind, payload: Value| {
             let card = card.clone();
             move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
@@ -140,7 +135,6 @@ impl Drawing<'_, '_> {
         id: u64,
         props: &OverlayProps,
         children: &[usize],
-        index: &[usize],
     ) -> AnyElement {
         let table = self.table;
         let content: Vec<AnyElement> = (children.iter())
@@ -150,10 +144,9 @@ impl Drawing<'_, '_> {
                     Some(Props::Marker)
                 )
             })
-            .enumerate()
-            .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
+            .map(|child| self.draw(*child))
             .collect();
-        let card = self.cx.entity().downgrade();
+        let card = self.card.clone();
         let close = move |cx: &mut App| {
             (card.update(cx, |view, cx| {
                 view.event(id, EventKind::Close, json!({}), cx)
@@ -216,8 +209,8 @@ impl Drawing<'_, '_> {
     }
 
     /// A switch of the app, which tells the pointer as a div does: its code turns it.
-    pub(super) fn toggle(&mut self, id: u64, props: &ToggleProps, index: &[usize]) -> AnyElement {
-        let name: SharedString = element_name("toggle", props.key.as_deref(), index).into();
+    pub(super) fn toggle(&mut self, id: u64, props: &ToggleProps) -> AnyElement {
+        let name: SharedString = self.element_name("toggle", props.key.as_deref(), id).into();
         let on = props.on == Some(true);
         let toggle = match (&props.icon, props.dot == Some(true)) {
             (Some(icon), _) => Toggle::icon(name, icon.clone(), on)
@@ -247,8 +240,8 @@ impl Drawing<'_, '_> {
     }
 
     /// A button of the app, which tells the pointer as a div does.
-    pub(super) fn button(&mut self, id: u64, props: &ButtonProps, index: &[usize]) -> AnyElement {
-        let name = element_name("button", props.key.as_deref(), index);
+    pub(super) fn button(&mut self, id: u64, props: &ButtonProps) -> AnyElement {
+        let name = self.element_name("button", props.key.as_deref(), id);
         let accent = props.color.map(|color| color.0);
         let variant = match (props.variant, accent) {
             (Some(ButtonLook::Subtle), Some(accent)) => ButtonVariant::SubtleColor(accent),
@@ -330,7 +323,7 @@ impl Drawing<'_, '_> {
             });
         let wrap = match control.menu {
             Some(hears) => {
-                wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+                wrap.on_key_down(self.listener(move |view, event: &KeyDownEvent, _, cx| {
                     let keys = &event.keystroke;
                     let opens = keys.key == "menu" || (keys.key == "f10" && keys.modifiers.shift);
                     if opens && !event.is_held {
@@ -352,7 +345,7 @@ impl Drawing<'_, '_> {
             Keys::Press => press_keys(wrap),
             Keys::Own => wrap,
             Keys::Turn(turns) => {
-                wrap.on_key_down(self.cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+                wrap.on_key_down(self.listener(move |view, event: &KeyDownEvent, _, cx| {
                     if let Some(key) = ValueKey::of(&event.keystroke)
                         && view.turn_by_key(&turns, key, cx)
                     {
@@ -370,7 +363,7 @@ impl Drawing<'_, '_> {
         id: u64,
         keys: Vec<String>,
     ) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
-        (self.cx).listener(move |view, event: &KeyDownEvent, window, cx| {
+        self.listener(move |view, event: &KeyDownEvent, window, cx| {
             let stroke = &event.keystroke;
             if typing(window) || !keys.contains(&sound_ui::global_keys::chord_name(stroke)) {
                 return;
@@ -391,7 +384,7 @@ impl Drawing<'_, '_> {
         &mut self,
         id: u64,
     ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-        (self.cx).listener(
+        self.listener(
             move |view, event: &ClickEvent, _, cx| match event.is_keyboard() {
                 true => {
                     let press = press_of((0.0, 0.0), MouseButton::Left, 1, event.modifiers());
@@ -411,7 +404,7 @@ impl Drawing<'_, '_> {
         hears: Hears,
     ) -> E {
         let down = |button| {
-            (self.cx).listener(
+            self.listener(
                 move |view: &mut TypeScriptCard, event: &MouseDownEvent, _, cx| {
                     let press = press_of((0.0, 0.0), button, event.click_count, event.modifiers);
                     match button {
@@ -431,8 +424,7 @@ impl Drawing<'_, '_> {
                 },
             )
         };
-        let up =
-            (self.cx).listener(move |view, _: &MouseUpEvent, _, cx| view.released_over(id, cx));
+        let up = self.listener(move |view, _: &MouseUpEvent, _, cx| view.released_over(id, cx));
         element
             .when(hears.any(), |element| {
                 element.on_mouse_down(MouseButton::Left, down(MouseButton::Left))
@@ -471,14 +463,11 @@ impl Drawing<'_, '_> {
         element
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
             .drag_over::<Carried>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
-            .on_drop(
-                (self.cx).listener(move |view, paths: &ExternalPaths, _, cx| {
-                    view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
-                }),
-            )
-            .on_drop((self.cx).listener(move |view, carried: &Carried, _, cx| {
-                let dropped =
-                    json!({ "files": [], "timelines": [], "carried": carried.0, "x": 0, "y": 0 });
+            .on_drop(self.listener(move |view, paths: &ExternalPaths, _, cx| {
+                view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
+            }))
+            .on_drop(self.listener(move |view, carried: &Carried, _, cx| {
+                let dropped = json!({ "files": [], "timelines": [], "carried": carried.0, "x": 0, "y": 0 });
                 view.event(id, EventKind::Drop, dropped, cx);
             }))
     }

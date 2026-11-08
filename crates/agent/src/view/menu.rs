@@ -1,14 +1,14 @@
-//! The sidebar's menus. In the composer: the model, with the account and **Sign out** under it,
-//! and how much the agent may do without asking, both settings of the machine (see
+//! The sidebar's menus. In the composer: how much the agent may do without asking, a setting
+//! of the machine (see
 //! `crate::settings`). In the header: **New**, the recent threads, and the instructions.
 
-use gpui::{Hsla, SharedString, rgb};
+use gpui::SharedString;
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 
 use super::instructions::Scope;
+use crate::ApprovalMode;
 use crate::settings::Settings;
 use crate::store::RecentThread;
-use crate::{Account, ApprovalMode, Model, Provider};
 
 /// In the order the menu lists them, from the most careful.
 const APPROVAL_MODES: [ApprovalMode; 3] = [
@@ -27,9 +27,6 @@ pub(super) const MAX_HEIGHT: f32 = 480.;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Choice {
     ApprovalMode(ApprovalMode),
-    /// One of the provider's models, or `None` for its default.
-    Model(Option<String>),
-    SignOut,
     NewThread,
     /// A recent thread of the project, by id.
     OpenThread(String),
@@ -42,9 +39,6 @@ impl Choice {
     pub(super) fn value(&self) -> SharedString {
         match self {
             Choice::ApprovalMode(mode) => format!("approval-{}", approval_text(*mode).0).into(),
-            Choice::Model(Some(id)) => format!("model-{id}").into(),
-            Choice::Model(None) => "model".into(),
-            Choice::SignOut => "sign-out".into(),
             Choice::NewThread => "new-thread".into(),
             Choice::OpenThread(id) => format!("thread-{id}").into(),
             Choice::Instructions(Scope::Project) => "instructions-project".into(),
@@ -54,15 +48,10 @@ impl Choice {
 
     pub(super) fn of(value: &str) -> Option<Choice> {
         match value {
-            "sign-out" => return Some(Choice::SignOut),
-            "model" => return Some(Choice::Model(None)),
             "new-thread" => return Some(Choice::NewThread),
             "instructions-project" => return Some(Choice::Instructions(Scope::Project)),
             "instructions-all-projects" => return Some(Choice::Instructions(Scope::AllProjects)),
             _ => {}
-        }
-        if let Some(id) = value.strip_prefix("model-") {
-            return Some(Choice::Model(Some(id.to_string())));
         }
         if let Some(id) = value.strip_prefix("thread-") {
             return Some(Choice::OpenThread(id.to_string()));
@@ -102,13 +91,6 @@ fn approval_icon(mode: ApprovalMode) -> &'static str {
         ApprovalMode::AskForEverything => "shield",
         ApprovalMode::AskBeforeCommands => "lock",
         ApprovalMode::NeverAsk => "lock-open",
-    }
-}
-
-/// The provider's logo and its brand color, before the model.
-pub(super) fn logo(provider: Provider) -> (&'static str, Hsla) {
-    match provider {
-        Provider::Claude => ("claude", rgb(0xd97757).into()),
     }
 }
 
@@ -165,65 +147,6 @@ pub(super) fn new_entries(recent: &[RecentThread], all_projects: bool) -> Vec<Me
     ]
 }
 
-/// What the trigger says: the model the agent runs. Until the provider lists its models, the
-/// id that is picked, or "Default".
-pub(super) fn label(settings: &Settings, models: &[Model]) -> String {
-    let picked = match &settings.model {
-        Some(id) => models.iter().find(|model| model.id == *id),
-        None => models.first(),
-    };
-    match (picked, &settings.model) {
-        (Some(model), _) => model.short_name.clone(),
-        (None, Some(id)) => id.clone(),
-        (None, None) => "Default".to_string(),
-    }
-}
-
-/// The provider's models under its name, then the account and **Sign out**. `models` are the
-/// provider's, its default first, or none until it listed them.
-pub(super) fn model_entries(
-    provider: Provider,
-    account: &Account,
-    settings: &Settings,
-    models: &[Model],
-) -> Vec<MenuEntry> {
-    let picked = settings.model.as_deref();
-    let models: Vec<MenuItem> = if models.is_empty() {
-        // The provider lists its models once signed in. Until then only the pick shows.
-        vec![row(
-            Choice::Model(picked.map(str::to_string)),
-            picked.unwrap_or("Default"),
-            true,
-        )]
-    } else {
-        models
-            .iter()
-            .enumerate()
-            .map(|(index, model)| {
-                let checked = picked.map_or(index == 0, |picked| picked == model.id);
-                row(Choice::Model(Some(model.id.clone())), &model.name, checked)
-                    .description(model.description.clone())
-            })
-            .collect()
-    };
-    let who: Vec<&str> = [&account.email, &account.plan]
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let account = MenuGroup::new().item(row(Choice::SignOut, "Sign out", false));
-    let account = if who.is_empty() {
-        account
-    } else {
-        account.label(who.join(" · "))
-    };
-    vec![
-        MenuEntry::Group(MenuGroup::new().label(provider.name()).items(models)),
-        MenuEntry::Separator,
-        MenuEntry::Group(account),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,9 +154,6 @@ mod tests {
     #[test]
     fn every_row_reads_back_as_its_choice() {
         let choices = APPROVAL_MODES.map(Choice::ApprovalMode).into_iter().chain([
-            Choice::Model(None),
-            Choice::Model(Some("claude-opus-5-5".to_string())),
-            Choice::SignOut,
             Choice::NewThread,
             Choice::OpenThread("5f0c7a1e-0000-4000-8000-000000000000".to_string()),
             Choice::Instructions(Scope::Project),
@@ -243,25 +163,5 @@ mod tests {
             assert_eq!(Choice::of(&choice.value()), Some(choice));
         }
         assert_eq!(Choice::of("approval-sometimes"), None);
-    }
-
-    #[test]
-    fn the_button_says_the_model_it_runs() {
-        let model = |id: &str, short_name: &str| Model {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: String::new(),
-            short_name: short_name.to_string(),
-        };
-        let models = [model("default", "Opus 5.5"), model("haiku", "Haiku 4.5")];
-        let picked = |model: Option<&str>| Settings {
-            model: model.map(str::to_string),
-            ..Settings::default()
-        };
-        assert_eq!(label(&picked(None), &models), "Opus 5.5");
-        assert_eq!(label(&picked(Some("haiku")), &models), "Haiku 4.5");
-        // Before the provider lists its models.
-        assert_eq!(label(&picked(None), &[]), "Default");
-        assert_eq!(label(&picked(Some("haiku")), &[]), "haiku");
     }
 }

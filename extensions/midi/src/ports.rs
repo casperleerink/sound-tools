@@ -14,7 +14,9 @@ const CLIENT: &str = "Sound Tools";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PortError {
-    #[error("MIDI is not available on this machine: {0}")]
+    /// The system's MIDI did not start. It does not start later in the same run (macOS keeps
+    /// its broken connection), so stop calling [`Ports::refresh`].
+    #[error("MIDI did not start, so a keyboard cannot play. Quit and open Sound Tools again.")]
     Unavailable(#[from] midir::InitError),
     #[error("the MIDI port {name:?} did not open: {message}")]
     NotOpened { name: String, message: String },
@@ -27,6 +29,8 @@ pub enum PortError {
 /// later works without a restart.
 pub struct Ports {
     input: Input,
+    /// Made once: the system keeps every MIDI client a process makes until it quits.
+    lister: Option<MidiInput>,
     /// By the stable id the system gives a port.
     open: BTreeMap<String, MidiInputConnection<Input>>,
     /// Ports that did not open. They are not tried again until they come back, so one broken
@@ -38,6 +42,7 @@ impl Ports {
     pub fn new(input: Input) -> Self {
         Self {
             input,
+            lister: None,
             open: BTreeMap::new(),
             failed: BTreeSet::new(),
         }
@@ -46,8 +51,10 @@ impl Ports {
     /// Opens ports that appeared and drops ones that went away. Gives the names that opened
     /// now, and the first port that would not open.
     pub fn refresh(&mut self) -> Result<Vec<String>, PortError> {
-        let lister = MidiInput::new(CLIENT)?;
-        let ports = lister.ports();
+        let ports = match &self.lister {
+            Some(lister) => lister.ports(),
+            None => self.lister.insert(MidiInput::new(CLIENT)?).ports(),
+        };
         let present: BTreeSet<String> = ports.iter().map(midir::MidiInputPort::id).collect();
         let open_before = self.open.len();
         self.open.retain(|id, _| present.contains(id));

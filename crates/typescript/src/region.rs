@@ -11,6 +11,7 @@ use sound_core::{
     Assets, BehaviourContext, BehaviourError, InstanceId, JsonTool, JsonToolDoc, Project, State,
     Ticks, ToolSchema,
 };
+use sound_dsp::amplitude;
 use sound_media::{
     AUDIO_FOLDER, Audio, AudioAsset, Keep, Loader, Periods, Region, Stamp, WarpPoint,
 };
@@ -71,6 +72,7 @@ pub(crate) fn json_tool() -> JsonTool {
         // A file that arrives plays a region that waited for it.
         asset_folders: vec![AUDIO_FOLDER],
         owns_children: false,
+        required_children: Vec::new(),
         end: Some(Box::new(end)),
     }
 }
@@ -164,7 +166,7 @@ fn end(project: &Project, state: &Value) -> Option<Ticks> {
 pub(crate) fn region(record: &Record) -> Region {
     let gain = match record.gain_db <= SILENT_DB {
         true => 0.0,
-        false => 10_f32.powf(record.gain_db / 20.0),
+        false => amplitude(record.gain_db),
     };
     Region {
         asset: record.asset.clone(),

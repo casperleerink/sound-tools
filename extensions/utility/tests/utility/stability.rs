@@ -4,7 +4,7 @@
 use std::f32::consts::SQRT_2;
 
 use proptest::prelude::*;
-use sound_core::amplitude;
+use sound_dsp::amplitude;
 use utility::{Channels, UtilityState, matrix};
 
 use crate::support::{Rig, SAMPLE_RATE, Signal, noise, peak, sine};

@@ -1,17 +1,19 @@
-//! The sidebar: the header with **New**, the onboarding until the agent is set up, then the
-//! thread in a gpui `list` and the composer.
+//! The sidebar: the thread in a gpui `list` and the composer, once an agent is set up (see
+//! `super::agents`), else a way to Settings, where it is. Its **New** button goes in the
+//! window's header above it.
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **New**, or
 //! when a recent thread opens from its menu. Every message is one request of the session, so
-//! the agent's file writes for it are one undo step. The thread is saved on the machine as it
-//! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
-//! also opens the composer's instructions to the agent in place of the thread
+//! the agent's file writes for it are one point of history. The thread is saved on the machine
+//! as it goes (`crate::store`), and the sidebar opens on the project's last one. The menu of
+//! **New** also opens the composer's instructions to the agent in place of the thread
 //! (`super::instructions`).
 
 mod attachments;
-mod setup;
+mod naming;
 mod threads;
 mod turn;
+mod went_back;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -23,24 +25,28 @@ use gpui::{
     div, hsla, list, point, prelude::*, px,
 };
 use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
-use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
+use sound_ui::{ActiveTheme, OpenSettings};
 
 use self::attachments::Attached;
+use self::naming::Namer;
+use self::went_back::WentBack;
+use super::agents::{Agents, AgentsEvent};
 use super::entry;
 use super::history::History;
 use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
 use super::markdown::{self, Markdown, MarkdownText};
 use super::menu::{self, Choice};
-use super::onboarding::{Onboarding, Setup, SetupAction};
+use super::model_picker::{ModelPicked, ModelPicker, Offered, Shown};
+use super::onboarding::{self, Setup};
 use crate::conversation::{Approval, Conversation, Entry, Turn, TurnEnd};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
-use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread, TurnOutcome};
+use crate::{ApprovalAnswer, Installed, Provider, Thread, TurnOutcome};
 
 actions!(agent_sidebar, [Stop]);
 
@@ -69,6 +75,7 @@ fn install_bindings(cx: &mut App) {
 
 /// The process of the thread, from the first send until **New** or until it ends.
 struct Agent {
+    provider: Provider,
     thread: Thread,
     /// Reads the process on the background executor. Dropping it ends the process.
     _reading: Task<()>,
@@ -78,22 +85,14 @@ struct Agent {
 
 pub struct Sidebar {
     session: Entity<sound_ui::Session>,
-    provider: Provider,
-    /// Where downloaded programs are kept, `agents/` in the support folder. `None` when the
-    /// machine has no support folder; a program named in the environment still runs.
-    agents: Option<PathBuf>,
-    setup: Setup,
-    /// The program and its environment, once the login shell answered. The program may not be
-    /// downloaded yet.
-    installed: Option<Installed>,
-    /// The way in of the running sign-in, which **Open the page again** starts again.
-    signing_in: Option<SignInChoice>,
-    /// The download, the sign-in or a question to the program. Dropping it cancels it.
-    setup_task: Option<Task<()>>,
+    /// The app's agents, which the Settings page sets up.
+    agents: Entity<Agents>,
+    /// Whether the thread's provider was signed in at the last change of the agents.
+    ready: bool,
     /// **New**, with the recent threads and the instructions in its menu.
     new_button: Entity<SplitButton>,
-    /// The model, and the account with **Sign out**, in the composer.
-    model_menu: Entity<DropdownMenu>,
+    /// The model of each provider that is set up, in the composer.
+    model_picker: Entity<ModelPicker>,
     /// The approval mode, beside the model.
     access_menu: Entity<DropdownMenu>,
     /// What the menus' selects say, the same for every sidebar of the app.
@@ -120,6 +119,10 @@ pub struct Sidebar {
     attachments_reading: usize,
     /// Where up and down in the composer are among the earlier messages.
     history: History,
+    /// Where the composer went back to in the project history, until the next message.
+    went_back: Option<WentBack>,
+    went_back_dismiss: FocusHandle,
+    namer: Namer,
     /// The sidebar itself, for when it has no composer.
     focus_handle: FocusHandle,
     send_focus: FocusHandle,
@@ -149,56 +152,23 @@ pub struct Sidebar {
 }
 
 impl Sidebar {
-    /// Finds the program in the background, see [`Self::find_program`]. The threads of the
-    /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
-    /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
+    /// A sidebar whose thread runs on one of `agents`. The threads of the project are kept in
+    /// `threads`, `agent/threads` in the support folder of the machine; with `None` nothing is
+    /// saved. `settings` are the app's, shared by every sidebar.
     pub fn new(
         session: Entity<sound_ui::Session>,
-        agents: Option<PathBuf>,
-        threads: Option<PathBuf>,
-        settings: Entity<AgentSettings>,
-        first_on_path: Option<PathBuf>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut sidebar = Self::with(
-            session,
-            agents,
-            Setup::Checking,
-            threads,
-            settings,
-            window,
-            cx,
-        );
-        sidebar.find_program(first_on_path, cx);
-        sidebar
-    }
-
-    /// For a test or a snapshot: set up and signed in with `installed` as the program, or not
-    /// installed with `None`. Nothing runs in the background.
-    pub fn with_program(
-        session: Entity<sound_ui::Session>,
-        installed: Option<Installed>,
+        agents: Entity<Agents>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let setup = match installed {
-            Some(_) => Setup::Ready {
-                account: Account::default(),
-            },
-            None => Setup::NotInstalled,
-        };
-        let mut sidebar = Self::with(session, None, setup, threads, settings, window, cx);
-        sidebar.installed = installed;
-        sidebar
+        Self::with(session, agents, threads, settings, window, cx)
     }
 
     fn with(
         session: Entity<sound_ui::Session>,
-        agents: Option<PathBuf>,
-        setup: Setup,
+        agents: Entity<Agents>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
         window: &mut Window,
@@ -251,7 +221,7 @@ impl Sidebar {
                     .max_height(menu::MAX_HEIGHT)
             })
         };
-        let model_menu = new_menu("model-menu", cx);
+        let model_picker = cx.new(ModelPicker::new);
         let access_menu = new_menu("access-menu", cx);
         let new_button = cx.new(|cx| {
             let choices = SplitChoices {
@@ -266,8 +236,11 @@ impl Sidebar {
                 .align_end(cx)
         });
         let subscriptions = vec![
-            cx.subscribe_in(&model_menu, window, |sidebar, _, picked, window, cx| {
-                sidebar.picked(picked, window, cx);
+            cx.subscribe(&model_picker, |sidebar, _, picked: &ModelPicked, cx| {
+                let ModelPicked(provider, model) = picked.clone();
+                (sidebar.settings).update(cx, |settings, cx| {
+                    settings.set_model(provider, Some(model), cx);
+                });
             }),
             cx.subscribe_in(&access_menu, window, |sidebar, _, picked, window, cx| {
                 sidebar.picked(picked, window, cx);
@@ -275,16 +248,24 @@ impl Sidebar {
             cx.subscribe_in(&new_button, window, |sidebar, _, picked, window, cx| {
                 sidebar.picked(picked, window, cx);
             }),
-            cx.observe(&settings, |sidebar, _, cx| {
-                sidebar.update_menu(cx);
-                cx.notify();
-            }),
-            cx.subscribe(&settings, Self::settings_event),
-            cx.subscribe(&session, |sidebar, _, event: &ProjectEvent, cx| {
-                if matches!(event, ProjectEvent::ProblemsChanged) {
-                    sidebar.problems_changed(cx);
+            cx.observe(&settings, |sidebar, _, cx| sidebar.follow(cx)),
+            cx.observe(&agents, Self::agents_changed),
+            cx.subscribe(&agents, |sidebar, _, event: &AgentsEvent, cx| match event {
+                AgentsEvent::Notice(notice) => {
+                    sidebar.conversation.notice(notice.clone());
+                    sidebar.show(None, cx);
                 }
             }),
+            cx.subscribe(&settings, Self::settings_event),
+            cx.subscribe(
+                &session,
+                |sidebar, _, event: &ProjectEvent, cx| match event {
+                    ProjectEvent::ProblemsChanged => sidebar.problems_changed(cx),
+                    ProjectEvent::WentBack(point) => sidebar.went_back(*point, cx),
+                    _ => {}
+                },
+            ),
+            cx.observe(&session, |sidebar, _, cx| sidebar.naming_heard(cx)),
             cx.observe(&input, |_, _, cx| cx.notify()),
         ];
         let mut conversation = Conversation::default();
@@ -294,14 +275,10 @@ impl Sidebar {
         }
         let mut sidebar = Self {
             session,
-            provider: Provider::Claude,
+            ready: false,
             agents,
-            setup,
-            installed: None,
-            signing_in: None,
-            setup_task: None,
             new_button,
-            model_menu,
+            model_picker,
             access_menu,
             settings,
             conversation,
@@ -316,6 +293,9 @@ impl Sidebar {
             attachments: Vec::new(),
             attachments_reading: 0,
             history: History::default(),
+            went_back: None,
+            went_back_dismiss: cx.focus_handle().tab_stop(true),
+            namer: Namer::default(),
             focus_handle: cx.focus_handle(),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
@@ -331,8 +311,10 @@ impl Sidebar {
             saves: save_instructions(cx),
             _subscriptions: subscriptions,
         };
+        sidebar.ready = sidebar.ready_program(cx).is_some();
         sidebar.update_menu(cx);
         sidebar.update_new_menu(cx);
+        sidebar.wait_for_quiet(cx);
         sidebar
     }
 
@@ -373,9 +355,8 @@ impl Sidebar {
                 .agent
                 .as_ref()
                 .map(|agent| agent.thread.set_approval_mode(*mode)),
-            AgentSettingsEvent::ModelChanged(model) => self
-                .agent
-                .as_ref()
+            AgentSettingsEvent::ModelChanged(provider, model) => (self.agent.as_ref())
+                .filter(|agent| agent.provider == *provider)
                 .map(|agent| agent.thread.set_model(model.clone())),
         };
         if let Some(Err(error)) = sent {
@@ -392,10 +373,6 @@ impl Sidebar {
             Choice::ApprovalMode(mode) => self
                 .settings
                 .update(cx, |settings, cx| settings.set_approval_mode(mode, cx)),
-            Choice::Model(model) => self
-                .settings
-                .update(cx, |settings, cx| settings.set_model(model, cx)),
-            Choice::SignOut => self.sign_out(cx),
             Choice::NewThread => self.new_thread(window, cx),
             Choice::OpenThread(id) => self.open_thread(id, window, cx),
             Choice::Instructions(scope) => self.open_instructions(scope, window, cx),
@@ -409,23 +386,80 @@ impl Sidebar {
         menu.update(cx, |menu, cx| menu.set_entries(entries, cx));
     }
 
+    /// The provider the thread runs on: the one its agent started on, else the composer's
+    /// pick while it is signed in, else the first that is.
+    fn provider(&self, cx: &App) -> Provider {
+        if let Some(provider) = self.thread_provider() {
+            return provider;
+        }
+        let picked = self.settings.read(cx).settings().provider;
+        let agents = self.agents.read(cx);
+        if agents.ready(picked).is_some() {
+            return picked;
+        }
+        (agents.programs().iter())
+            .find(|program| program.is_ready())
+            .map_or(picked, |program| program.provider)
+    }
+
+    /// The provider whose session the thread is, once its agent started: a thread keeps it.
+    fn thread_provider(&self) -> Option<Provider> {
+        if let Some(agent) = &self.agent {
+            return Some(agent.provider);
+        }
+        let saved = self.saved.as_ref()?;
+        saved.session_id.as_ref().map(|_| saved.provider)
+    }
+
+    /// The thread's provider and its program, once it is signed in.
+    fn ready_program(&self, cx: &App) -> Option<(Provider, Installed)> {
+        let provider = self.provider(cx);
+        Some((provider, self.agents.read(cx).ready(provider)?))
+    }
+
+    /// A change of the app's agents: one signed in, or out. Signed out, the thread's agent
+    /// ends; the thread shows again once it is signed in.
+    fn agents_changed(&mut self, _: Entity<Agents>, cx: &mut Context<Self>) {
+        self.follow(cx);
+    }
+
+    /// Follows the thread's provider, after a change of the agents, the settings or the
+    /// thread: its agent ends once it is signed out, naming starts once it is signed in, and
+    /// the picker shows it.
+    fn follow(&mut self, cx: &mut Context<Self>) {
+        let ready = self.ready_program(cx).is_some();
+        if self.ready && !ready {
+            self.end_agent(cx);
+        }
+        // Naming waits for an agent to name with.
+        if ready && !self.ready {
+            self.wait_for_quiet(cx);
+        }
+        self.ready = ready;
+        self.update_menu(cx);
+        cx.notify();
+    }
+
     fn update_menu(&mut self, cx: &mut Context<Self>) {
-        let account = match &self.setup {
-            Setup::Ready { account } => account.clone(),
-            _ => Account::default(),
-        };
+        let (current, locked) = (self.provider(cx), self.thread_provider());
         let shared = self.settings.read(cx);
-        let (settings, models) = (shared.settings(), shared.models());
-        let label = menu::label(settings, models);
-        let entries = menu::model_entries(self.provider, &account, settings, models);
+        let settings = shared.settings();
+        let offered = (self.agents.read(cx).programs().iter())
+            .filter(|program| program.is_ready())
+            .map(|program| Offered {
+                provider: program.provider,
+                models: shared.models(program.provider).to_vec(),
+                picked: settings.model(program.provider).map(str::to_string),
+            })
+            .collect();
+        let shown = Shown {
+            offered,
+            current: Some(current),
+            locked,
+        };
         let (access_icon, access_label) = menu::access_label(settings);
         let access_entries = menu::access_entries(settings);
-        let (logo, brand) = menu::logo(self.provider);
-        self.model_menu.update(cx, |menu, cx| {
-            menu.set_icon(logo, Some(brand), cx);
-            menu.set_label(label, cx);
-            menu.set_entries(entries, cx);
-        });
+        (self.model_picker).update(cx, |picker, cx| picker.set_shown(shown, cx));
         self.access_menu.update(cx, |menu, cx| {
             menu.set_icon(access_icon, None, cx);
             menu.set_label(access_label, cx);
@@ -442,14 +476,20 @@ impl Sidebar {
         &self.input
     }
 
-    /// The composer's model menu, with the account, for a snapshot that shows it open.
-    pub fn model_menu(&self) -> &Entity<DropdownMenu> {
-        &self.model_menu
+    /// Opens the composer's model picker, for a snapshot that shows it open.
+    pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        (self.model_picker).update(cx, |picker, cx| picker.open(window, cx));
     }
 
     /// The composer's menu of approval modes, for a snapshot that shows it open or picks in it.
     pub fn access_menu(&self) -> &Entity<DropdownMenu> {
         &self.access_menu
+    }
+
+    /// **New**, with the recent threads and the instructions in its menu, for the header the
+    /// window draws over the sidebar.
+    pub fn new_button(&self) -> &Entity<SplitButton> {
+        &self.new_button
     }
 
     /// The menu of **New**, for a snapshot that shows it open.
@@ -741,29 +781,10 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// The title, and **New** at the right. Over the instructions: their title, and the way
-    /// back at the left.
-    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let editing = self.instructions.is_some();
-        // On the left edge of the thread under it.
-        let title = div()
-            .flex_1()
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
-            .child(if editing { "Instructions" } else { "Agent" });
-        let header = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(4.))
-            .h(px(56.))
-            .pr(px(16.));
-        if !editing {
-            return header
-                .pl(px(24.))
-                .child(title)
-                .child(self.new_button.clone());
-        }
+    /// Over the instructions: their title, and the way back at the left. The window draws
+    /// the title of the panel, with [`Self::new_button`].
+    fn instructions_header(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        self.instructions.as_ref()?;
         let back = Button::icon_only("instructions-back", "arrow-left")
             .debug_selector(|| "agent-instructions-back".to_string())
             .variant(ButtonVariant::Ghost)
@@ -771,7 +792,57 @@ impl Sidebar {
             .on_click(cx.listener(|sidebar, _, window, cx| {
                 sidebar.close_instructions(window, cx);
             }));
-        header.pl(px(16.)).child(back).child(title)
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(4.))
+                .h(px(40.))
+                .pl(px(16.))
+                .pr(px(16.))
+                .child(back)
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Instructions"),
+                ),
+        )
+    }
+
+    /// In place of the thread while no agent is signed in: the way to Settings, where the
+    /// agents are set up.
+    fn no_agent(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let provider = self.provider(cx);
+        let stopped = (self.agents.read(cx).program(provider))
+            .is_some_and(|program| matches!(program.setup, Setup::Stopped { .. }));
+        let sentence = match (stopped, self.thread_provider()) {
+            (true, _) => "The agent did not start. Settings says why.".to_string(),
+            // A thread keeps its provider: **New** starts one on another.
+            (false, Some(provider)) => format!(
+                "This thread runs on {}, which is not signed in.",
+                provider.name()
+            ),
+            (false, None) => "Set up an agent to start.".to_string(),
+        };
+        let open = Button::new("open-settings", "Open Settings")
+            .debug_selector(|| "agent-open-settings".to_string())
+            .variant(ButtonVariant::Primary)
+            .size(ButtonSize::Md)
+            .focus_handle(&self.send_focus)
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(16.))
+            .px(px(40.))
+            .text_center()
+            .child(sentence)
+            .child(div().w_full().max_w(px(280.)).child(open.w_full()))
     }
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -797,58 +868,68 @@ impl Sidebar {
                 .disabled(true)
         };
         // The access pill always says the mode, so it is never a surprise.
-        div().flex_none().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
-            div()
-                .id("agent-composer")
-                .debug_selector(|| "agent-composer".to_string())
-                // Before the field's own paste, which takes only text.
-                .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
-                    if sidebar.paste_attachments(cx) {
-                        cx.stop_propagation();
-                    }
-                }))
-                .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
-                .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
-                    sidebar.attach_files(paths.paths().to_vec(), cx);
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .pt(px(14.))
-                .px(px(14.))
-                .pb(px(10.))
-                .rounded(px(20.))
-                .border_1()
-                .border_color(border)
-                .bg(fill)
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.4),
-                    offset: point(px(0.), px(8.)),
-                    blur_radius: px(24.),
-                    spread_radius: px(-8.),
-                    inset: false,
-                }])
-                .children(self.attachment_chips(cx))
-                .child(div().min_h(px(44.)).child(self.input.clone()))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        // The pills sit their wash, not their words, on the box's edge.
-                        .ml(px(-6.))
-                        .child(self.model_menu.clone())
-                        .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
-                        .child(self.access_menu.clone())
-                        .child(div().flex_1())
-                        .child(
-                            button
-                                .size(ButtonSize::Md)
-                                .rounded(true)
-                                .focus_handle(&self.send_focus),
-                        ),
-                ),
-        )
+        let went_back = self.went_back_line(cx);
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(12.))
+            .pb(px(12.))
+            .pt(px(8.))
+            .children(went_back)
+            .child(
+                div()
+                    .id("agent-composer")
+                    .debug_selector(|| "agent-composer".to_string())
+                    // Before the field's own paste, which takes only text.
+                    .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
+                        if sidebar.paste_attachments(cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(lavender))
+                    .on_drop(cx.listener(|sidebar, paths: &ExternalPaths, _, cx| {
+                        sidebar.attach_files(paths.paths().to_vec(), cx);
+                    }))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(14.))
+                    .px(px(14.))
+                    .pb(px(10.))
+                    .rounded(px(20.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(fill)
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.4),
+                        offset: point(px(0.), px(8.)),
+                        blur_radius: px(24.),
+                        spread_radius: px(-8.),
+                        inset: false,
+                    }])
+                    .children(self.attachment_chips(cx))
+                    .child(div().min_h(px(44.)).child(self.input.clone()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            // The pills sit their wash, not their words, on the box's edge.
+                            .ml(px(-6.))
+                            .child(self.model_picker.clone())
+                            .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
+                            .child(self.access_menu.clone())
+                            .child(div().flex_1())
+                            .child(
+                                button
+                                    .size(ButtonSize::Md)
+                                    .rounded(true)
+                                    .focus_handle(&self.send_focus),
+                            ),
+                    ),
+            )
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
@@ -914,9 +995,10 @@ impl Focusable for Sidebar {
         if let Some((editor, _)) = &self.instructions {
             return editor.focus_handle(cx);
         }
-        match self.setup {
-            Setup::Ready { .. } if self.conversation.can_continue() => self.input.focus_handle(cx),
-            _ => self.focus_handle.clone(),
+        if self.ready_program(cx).is_some() && self.conversation.can_continue() {
+            self.input.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
         }
     }
 }
@@ -924,26 +1006,13 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
-        let theme = cx.theme();
-        // The hairline of the window's other lines, so the edges weigh the same.
-        let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);
-        let body = match (&self.instructions, &self.setup) {
-            (Some((editor, _)), _) => editor.clone().into_any_element(),
-            (
-                None,
-                setup @ (Setup::Checking
-                | Setup::NotInstalled
-                | Setup::Downloading { .. }
-                | Setup::DownloadFailed { .. }
-                | Setup::SignedOut { .. }
-                | Setup::SigningIn
-                | Setup::Stopped { .. }),
-            ) => Onboarding::new(self.provider, setup.clone())
-                .on_action(
-                    cx.listener(|sidebar, action: &SetupAction, _, cx| sidebar.act(*action, cx)),
-                )
-                .into_any_element(),
-            (None, Setup::Ready { .. }) => div()
+        let text = cx.theme().gray_950;
+        let ready = self.ready_program(cx).is_some();
+        let body = match &self.instructions {
+            Some((editor, _)) => editor.clone().into_any_element(),
+            None if !ready && self.agents.read(cx).is_checking() => onboarding::skeleton(cx),
+            None if !ready => self.no_agent(cx).into_any_element(),
+            None => div()
                 .flex_1()
                 .min_h_0()
                 .flex()
@@ -970,12 +1039,8 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
-            // On the background of the window; the top edge parts it from the title row.
-            .border_t_1()
-            .border_r_1()
-            .border_color(hairline)
             .text_color(text)
-            .child(self.header(cx))
+            .children(self.instructions_header(cx))
             .child(body)
     }
 }

@@ -1,27 +1,15 @@
 //! One VST 3 bundle, loaded: its binary and the factory that lists what is in it.
 //!
-//! A VST 3 plugin on macOS is a bundle, and the format says the host loads it through
-//! `CFBundle` and calls `bundleEntry` with the `CFBundleRef`. Plugins use that reference to
-//! find their own resources, so a null one is not good enough. The three symbols a bundle
-//! exports are `bundleEntry`, `GetPluginFactory` and `bundleExit`.
+//! - macOS: loaded through `CFBundle`, and `bundleEntry` gets the `CFBundleRef`. Plugins use it
+//!   to find their resources, so a null one is not good enough.
+//! - Linux: `Contents/<arch>-linux/<name>.so` through `dlopen`, and `ModuleEntry` gets the
+//!   handle.
+//! - Windows: `Contents/<arch>-win/<name>.vst3`, or that DLL alone, and `InitDll`, which a
+//!   plugin need not have.
 //!
-//! On Linux a bundle is a plain folder with one `.so` per architecture, such as
-//! `Contents/x86_64-linux/piano.so`. The host loads it with `dlopen` and calls `ModuleEntry`
-//! with the handle; the last symbol is `ModuleExit`.
-//!
-//! On Windows a bundle is the same kind of folder with a DLL named like the bundle, such as
-//! `Contents/x86_64-win/piano.vst3`, or, from before bundles, that DLL alone as `piano.vst3`.
-//! The host loads it with `LoadLibraryExW` and calls `InitDll`, which takes nothing and which a
-//! plugin need not have; the last symbol is `ExitDll`.
-//!
-//! The `platform` modules at the end hold the three ways, and are all of this backend that
-//! differs between them.
-//!
-//! A bundle is loaded once per process and never unloaded. Unloading runs the plugin's static
-//! destructors and unregisters its Objective-C classes while views, timers and audio threads of
-//! that plugin may still exist; every host this was written against keeps them. So
-//! [`Module::load`] keeps what it loaded in a table of this thread and hands out the same
-//! module again. That also makes a second plugin from one bundle free.
+//! A bundle is loaded once per process and never unloaded: unloading runs the plugin's static
+//! destructors and unregisters its Objective-C classes while its views, timers and threads may
+//! still exist. Every host this was written against keeps them too.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -35,25 +23,18 @@ use vst3::Steinberg::{
     PClassInfo2, TUID,
 };
 
-/// What every VST 3 binary exports, whatever the platform. Each platform's entry function is in
-/// its `platform` module.
 type GetPluginFactory = unsafe extern "C" fn() -> *mut IPluginFactory;
 
-/// The class category of a plugin that makes sound. Everything else in a bundle, such as a
-/// controller class, is not a plugin a project can name.
+/// The class category of a plugin. Anything else, such as a controller class, is not one.
 const AUDIO_MODULE_CLASS: &str = "Audio Module Class";
 
-/// One loaded bundle. Dropping it releases our reference to the factory and leaves the binary
-/// where it is, see the module documentation.
 pub(super) struct Module {
     factory: ComPtr<IPluginFactory>,
 }
 
 impl Module {
-    /// Loads `bundle`, or gives back the one this process already loaded from that path.
-    ///
-    /// Loading runs the plugin's own code: its static initializers and `bundleEntry`. That is
-    /// why a scan does this in a child process.
+    /// Loads `bundle`, or gives back the one this thread already loaded from that path. Runs the
+    /// plugin's own code.
     pub(super) fn load(bundle: &Path) -> Result<Rc<Self>, String> {
         thread_local! {
             static LOADED: RefCell<BTreeMap<PathBuf, Rc<Module>>> = const {
@@ -83,14 +64,12 @@ impl Module {
         &self.factory
     }
 
-    /// Every plugin class in this bundle: its id, what its maker calls it and what it says it
-    /// is. Classes that are not audio modules, such as a plugin's controller, are left out.
+    /// Every audio module class in this bundle.
     pub(super) fn classes(&self) -> Vec<ClassInfo> {
         let factory2 = self.factory.cast::<IPluginFactory2>();
         let mut classes = Vec::new();
-        // SAFETY: the factory came from the plugin and is alive. Every `info` is written by the
-        // plugin before it is read, and a call that fails leaves it untouched, which is why it
-        // starts zeroed.
+        // SAFETY: the factory came from the plugin and is alive, and every `info` starts
+        // zeroed in case a failed call leaves it untouched.
         unsafe {
             let count = self.factory.countClasses();
             for index in 0..count {
@@ -117,13 +96,12 @@ impl Module {
     }
 }
 
-/// What a bundle says about one of its classes.
 pub(super) struct ClassInfo {
     pub id: TUID,
     pub category: String,
     pub name: String,
     pub vendor: String,
-    /// What the class says it is, such as `Instrument|Synth`. VST 3 calls these subcategories.
+    /// Such as `Instrument` and `Synth`, from `Instrument|Synth`.
     pub subcategories: Vec<String>,
 }
 
@@ -163,7 +141,6 @@ fn text(field: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
-/// macOS: the bundle through `CFBundle`, and `bundleEntry`.
 #[cfg(target_os = "macos")]
 mod platform {
     use std::ffi::{CStr, CString, c_char, c_void};
@@ -174,8 +151,7 @@ mod platform {
     /// `bundleEntry` takes the `CFBundleRef` of the bundle it is in.
     type BundleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
 
-    /// Loads the binary of `bundle` and starts it. It stays loaded when it turns out not to be
-    /// a plugin: see the module documentation on unloading.
+    /// Loads the binary of `bundle` and starts it. It stays loaded even when it is no plugin.
     ///
     /// # Safety
     ///
@@ -211,8 +187,7 @@ mod platform {
             let (Some(entry), Some(get_factory)) = (entry, get_factory) else {
                 return Err("the binary is not a VST 3 plugin");
             };
-            // The bundle stays: the plugin holds it from here on. Nothing releases it, because
-            // nothing unloads a plugin.
+            // Never released: nothing unloads a plugin.
             if !entry(handle) {
                 return Err("the plugin refused to start");
             }
@@ -240,7 +215,6 @@ mod platform {
 
     const UTF8: u32 = 0x0800_0100;
 
-    // The few CoreFoundation calls a bundle needs, declared here instead of taking a dependency.
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
         fn CFRelease(value: *const c_void);
@@ -262,8 +236,6 @@ mod platform {
     }
 }
 
-/// Linux: the `.so` of this machine's architecture in the bundle, through `dlopen`, and
-/// `ModuleEntry` with the handle `dlopen` gave.
 #[cfg(all(unix, not(target_os = "macos")))]
 mod platform {
     use std::ffi::{CString, c_char, c_int, c_void};
@@ -274,8 +246,7 @@ mod platform {
     /// `ModuleEntry` takes the `dlopen` handle of the library it is in.
     type ModuleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
 
-    /// Loads the binary of `bundle` and starts it. It stays loaded when it turns out not to be
-    /// a plugin: see the module documentation on unloading.
+    /// Loads the binary of `bundle` and starts it. It stays loaded even when it is no plugin.
     ///
     /// # Safety
     ///
@@ -303,8 +274,7 @@ mod platform {
             let (Some(entry), Some(get_factory)) = (entry, get_factory) else {
                 return Err("the binary is not a VST 3 plugin");
             };
-            // The handle stays: the plugin holds it from here on. Nothing closes it, because
-            // nothing unloads a plugin.
+            // Never closed: nothing unloads a plugin.
             if !entry(handle) {
                 return Err("the plugin refused to start");
             }
@@ -315,16 +285,12 @@ mod platform {
     const RTLD_NOW: c_int = 2;
     const RTLD_LOCAL: c_int = 0;
 
-    // From the C library, which every Rust program on Linux links already.
     unsafe extern "C" {
         fn dlopen(file: *const c_char, mode: c_int) -> *mut c_void;
         fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
     }
 }
 
-/// Windows: the DLL of this machine's architecture in the bundle, or the bundle itself when it
-/// is the older single file, loaded with its own folder in the DLL search (see `library.rs`),
-/// and `InitDll` when the DLL has one.
 #[cfg(target_os = "windows")]
 mod platform {
     use std::path::Path;
@@ -335,8 +301,7 @@ mod platform {
     /// `InitDll` takes nothing. Steinberg's own module loader calls it only when it is there.
     type InitDll = unsafe extern "C" fn() -> bool;
 
-    /// Loads the binary of `bundle` and starts it. It stays loaded when it turns out not to be
-    /// a plugin: see the module documentation on unloading.
+    /// Loads the binary of `bundle` and starts it. It stays loaded even when it is no plugin.
     ///
     /// # Safety
     ///

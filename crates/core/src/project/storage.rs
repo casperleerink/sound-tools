@@ -34,6 +34,8 @@ pub(crate) enum Form {
 }
 
 impl Form {
+    pub(super) const BOTH: [Self; 2] = [Self::File, Self::Folder];
+
     pub(super) fn of(record: &Record) -> Self {
         if record.owns_children {
             Self::Folder
@@ -181,6 +183,10 @@ pub(crate) struct Storage {
     /// Held for as long as the project is open. `None` for a read-only project.
     _lock: Option<fs::File>,
     records: BTreeMap<InstanceId, OnDisk>,
+    /// The bytes of record files that did not load, at ids that are not live, by path. A
+    /// record of an extension that is off may have no other copy, so undo of its delete
+    /// writes these back.
+    unloaded: BTreeMap<PathBuf, Vec<u8>>,
     project_file: Option<u64>,
 }
 
@@ -262,6 +268,7 @@ impl Storage {
             root,
             _lock: lock,
             records: BTreeMap::new(),
+            unloaded: BTreeMap::new(),
             project_file: None,
         }
     }
@@ -307,6 +314,37 @@ impl Storage {
 
     pub(super) fn forget(&mut self, id: &InstanceId) {
         self.records.remove(id);
+    }
+
+    pub(super) fn unloaded(&self, path: &Path) -> Option<&[u8]> {
+        self.unloaded.get(path).map(Vec::as_slice)
+    }
+
+    /// Notes the bytes at `path` of a record file that did not load, or that there is none.
+    pub(super) fn set_unloaded(&mut self, path: PathBuf, bytes: Option<Vec<u8>>) {
+        match bytes {
+            Some(bytes) => _ = self.unloaded.insert(path, bytes),
+            None => _ = self.unloaded.remove(&path),
+        }
+    }
+
+    /// The ids inside `parent` that have a record file that did not load. `None` is all of
+    /// `state/`.
+    pub(super) fn unloaded_inside(&self, parent: Option<&InstanceId>) -> Vec<InstanceId> {
+        let folder = match parent {
+            Some(parent) => self.instance_folder(parent),
+            None => self.state_folder(),
+        };
+        let inside = (self.unloaded.range(folder.clone()..))
+            .map(|(path, _)| path)
+            .take_while(|path| path.starts_with(&folder));
+        let ids = inside.filter_map(|path| match self.target_of(path) {
+            PathTarget::Record(id) => Some(id),
+            _ => None,
+        });
+        // The folder of `parent` also holds its own record.
+        ids.filter(|id| parent.is_none_or(|parent| id.is_inside(parent)))
+            .collect()
     }
 
     pub(super) fn project_file_fingerprint(&self) -> Option<u64> {
@@ -792,11 +830,12 @@ mod tests {
 pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     fs::create_dir_all(folder)?;
-    // The name does not end in `.json` and is not a valid instance name, so neither the scan
-    // nor the watcher takes it for a record.
-    let mut temporary = path.as_os_str().to_owned();
+    // Hidden, so it is never a record, a tool's code or a file history keeps.
+    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    let mut temporary = std::ffi::OsString::from(".");
+    temporary.push(name);
     temporary.push(".tmp");
-    let temporary = PathBuf::from(temporary);
+    let temporary = folder.join(temporary);
     let result = fs::File::create(&temporary).and_then(|mut file| {
         file.write_all(bytes)?;
         drop(file);

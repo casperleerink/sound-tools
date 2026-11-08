@@ -25,8 +25,7 @@ impl Opened<'_> {
         let session = self.session.clone();
         self.cx
             .update(|_, cx| session.update(cx, |session, cx| session.undo(cx)));
-        self.cx
-            .read(|cx| session.read(cx).project().redo_label().map(String::from))
+        self.cx.read(|cx| session.read(cx).project().redo_label())
     }
 
     pub(super) fn middle(&mut self) -> gpui::Point<gpui::Pixels> {

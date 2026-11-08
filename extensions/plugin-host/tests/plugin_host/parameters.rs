@@ -5,7 +5,6 @@ use plugin_host::{ParameterValue, PluginFormat};
 
 use crate::support::{FORMATS, Harness, id, record};
 
-/// The list parameter of each test plugin, `Wave`, which starts on its first step.
 #[test]
 fn a_loaded_plugin_says_what_a_parameter_is_now_in_its_own_words() {
     for format in FORMATS {
@@ -25,7 +24,6 @@ fn a_loaded_plugin_says_what_a_parameter_is_now_in_its_own_words() {
             Some(first),
             "{format:?}"
         );
-        // A record with no plugin loaded has nothing to say.
         assert_eq!(harness.plugins.parameter_value(&id("track"), wave), None);
     }
 }

@@ -1,10 +1,9 @@
 //! What the host is, from the plugin's side: the application it runs in, the messages its two
 //! halves send each other, and the handler its controller reports changes to.
 //!
-//! A VST 3 plugin is often two objects, a component and a controller, that talk through
-//! `IConnectionPoint` with `IMessage` objects the host makes. A plugin asks for one through
-//! `IHostApplication::createInstance`, so a host that answers `kNotImplemented` there breaks
-//! every plugin whose halves talk. These are the smallest objects that answer.
+//! The two halves talk with `IMessage` objects the plugin asks the host to make through
+//! `IHostApplication::createInstance`, so a host that cannot make one breaks every plugin whose
+//! halves talk.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CStr, CString, c_void};
@@ -25,7 +24,7 @@ use vst3::{Class, ComPtr, ComWrapper};
 use crate::backend::{Hand, ParameterChange};
 use crate::host::HOST_NAME;
 
-/// The application the plugin runs in. A plugin gets it as the context of `initialize`.
+/// The context a plugin gets in `initialize`.
 pub(super) struct HostContext;
 
 impl Class for HostContext {
@@ -79,7 +78,6 @@ impl IHostApplicationTrait for HostContext {
     }
 }
 
-/// The interface pointer of the host context, for `initialize`.
 pub(super) fn as_unknown(context: &ComWrapper<HostContext>) -> Option<ComPtr<FUnknown>> {
     context.to_com_ptr()
 }
@@ -92,13 +90,11 @@ enum Attribute {
     Bytes(Vec<u8>),
 }
 
-/// A message the two halves of a plugin pass each other. Nothing here is read by the host: it
-/// only has to hold what was put in it and give it back.
+/// A message between a plugin's two halves. The host only holds what is put in it.
 ///
-/// The two halves of a plugin are wired to each other, so `notify` arrives on whatever thread
-/// the half that sent it was on, and a message may be kept and read on another. Hence a lock
-/// and not a cell: nothing of this is on the audio thread, and a cell that was borrowed twice
-/// would end the process from inside a call of the plugin's.
+/// `notify` arrives on whatever thread the sender was on, and a message may be read on another,
+/// so this locks: a cell borrowed twice would end the process from inside a plugin's call.
+/// Nothing of this is on the audio thread.
 pub(super) struct HostMessage {
     identifier: Mutex<Option<CString>>,
     attributes: ComWrapper<HostAttributes>,
@@ -129,8 +125,8 @@ impl Class for HostAttributes {
 
 impl IMessageTrait for HostMessage {
     unsafe fn getMessageID(&self) -> *const std::ffi::c_char {
-        // The plugin reads this until it sets another id or the message goes, and the message
-        // owns the string, so the pointer stays valid for exactly as long as it may be read.
+        // The message owns the string, so the pointer is valid until another id is set or the
+        // message goes, which is as long as the plugin may read it.
         match self.identifier.lock() {
             Ok(held) => match &*held {
                 Some(identifier) => identifier.as_ptr(),
@@ -292,43 +288,28 @@ impl IAttributeListTrait for HostAttributes {
     }
 }
 
-/// What the plugin's controller tells the host: a parameter the composer changed in the
-/// plugin's own window, where the composer's hand is on it, and what `restartComponent` asks
-/// for.
+/// What the plugin's controller tells the host: edits in its own window, where the composer's
+/// hand is, and what `restartComponent` asks for.
 ///
-/// `ivsteditcontroller.h` says what this interface is for: "Allow transfer of parameter editing
-/// to component (processor) via host and support automation." So an edit is two things here. It
-/// marks the state to be saved, because VST 3 has no `mark_dirty`. And it has to reach the
-/// plugin's processor, because the controller only knows the value and the processor is what
-/// makes the sound: a plugin whose composer turns a knob in its own window hears nothing until
-/// the host carries the edit across. See `plugin.rs` for the way over and `process.rs` for the
-/// block that carries it.
+/// `ivsteditcontroller.h`: "Allow transfer of parameter editing to component (processor) via
+/// host". So an edit marks the state to be saved (VST 3 has no `mark_dirty`), and the host
+/// carries it to the processor, which otherwise never hears a knob turned in the window.
 ///
-/// Every call here is `[UI-thread]` by the format, which is the thread the host lives on. The
-/// lock is for a plugin that does not keep to that: nothing of this is on the audio thread, and
-/// a cell borrowed twice would end the process from inside a call of the plugin's.
+/// Every call is `[UI-thread]` by the format. The locks are for a plugin that does not keep to
+/// that, for the reason [`HostMessage`] gives.
 #[derive(Default)]
 pub(super) struct Handler {
     state_is_dirty: AtomicBool,
-    /// The plugin asked to be deactivated and activated again: its latency or its buses changed.
     restart_wanted: AtomicBool,
-    /// The plugin asked to be unloaded and loaded again.
     reload_wanted: AtomicBool,
-    /// The plugin changed the values of its parameters as a whole, as a preset it loaded itself
-    /// does, so the processor may no longer hold what the controller shows.
     values_changed: AtomicBool,
-    /// The plugin moved its MIDI controller mapping, which is where the pedal and the wheels go.
     midi_mapping_changed: AtomicBool,
-    /// The plugin changed which parameters it has, so the host lists them again.
     ids_changed: AtomicBool,
-    /// The plugin renamed its parameters, so the host reads their names again.
     titles_changed: AtomicBool,
-    /// The newest value of every parameter the controller has edited and the processor has not
-    /// been given yet. By parameter, so the value a composer left a knob on is never the one
-    /// that is dropped: a knob drag is hundreds of edits of one parameter and only the last of
-    /// them is the sound.
+    /// The newest value of every edit the processor has not been given yet. By parameter: a
+    /// knob drag is hundreds of edits and only the last is the sound.
     edits: Mutex<BTreeMap<ParamID, ParamValue>>,
-    /// The parameters the composer's hand is on: a `beginEdit` without its `endEdit` yet.
+    /// The parameters with a `beginEdit` and no `endEdit` yet.
     held: Mutex<BTreeSet<ParamID>>,
     /// An `endEdit` came since the host last asked.
     let_go: AtomicBool,
@@ -339,49 +320,39 @@ impl Class for Handler {
 }
 
 impl Handler {
-    /// Whether a parameter changed since the last call.
     pub(super) fn take_state_is_dirty(&self) -> bool {
         self.state_is_dirty.swap(false, Ordering::AcqRel)
     }
 
-    /// The state changed for another reason than an edit of the plugin's own window, such as a
-    /// parameter the plugin itself moved while it played.
     pub(super) fn mark_dirty(&self) {
         self.state_is_dirty.store(true, Ordering::Release);
     }
 
-    /// Whether the plugin asked to be deactivated and activated again since the last call.
     pub(super) fn take_restart_wanted(&self) -> bool {
         self.restart_wanted.swap(false, Ordering::AcqRel)
     }
 
-    /// Whether the plugin asked to be unloaded and loaded again since the last call.
     pub(super) fn take_reload_wanted(&self) -> bool {
         self.reload_wanted.swap(false, Ordering::AcqRel)
     }
 
-    /// Whether the plugin said its parameter values changed as a whole since the last call.
     pub(super) fn take_values_changed(&self) -> bool {
         self.values_changed.swap(false, Ordering::AcqRel)
     }
 
-    /// Whether the plugin has moved its MIDI controller mapping since the last call.
     pub(super) fn take_midi_mapping_changed(&self) -> bool {
         self.midi_mapping_changed.swap(false, Ordering::AcqRel)
     }
 
-    /// Whether the plugin has changed which parameters it has since the last call.
     pub(super) fn take_ids_changed(&self) -> bool {
         self.ids_changed.swap(false, Ordering::AcqRel)
     }
 
-    /// Whether the plugin has renamed its parameters since the last call.
     pub(super) fn take_titles_changed(&self) -> bool {
         self.titles_changed.swap(false, Ordering::AcqRel)
     }
 
-    /// Where the composer's hand is: on a knob while any `beginEdit` waits for its `endEdit`,
-    /// and let go once the last one came since the last call.
+    /// Held while any `beginEdit` waits for its `endEdit`, then let go once.
     pub(super) fn take_hand(&self) -> Hand {
         let held = self.held.lock().unwrap_or_else(|held| held.into_inner());
         if !held.is_empty() {
@@ -393,17 +364,14 @@ impl Handler {
         }
     }
 
-    /// Forgets a restart or a reload the plugin asked for so far. The host calls it once it has
-    /// just loaded or started the plugin: whatever the plugin asked while that went on, its
-    /// latency and buses are read after it, and a plugin that asks every time it is set up
-    /// would otherwise be started again for ever.
+    /// Forgets the restarts and reloads asked for so far, once the plugin was just set up and
+    /// read: a plugin that asks every time it is set up would otherwise restart for ever.
     pub(super) fn forget_restarts(&self) {
         self.restart_wanted.store(false, Ordering::Release);
         self.reload_wanted.store(false, Ordering::Release);
     }
 
-    /// Every parameter edit that is waiting for the processor, newest value each, and nothing
-    /// left behind. The caller is on the host's thread and gives back what would not fit.
+    /// Every edit waiting for the processor. The caller gives back what does not fit.
     pub(super) fn take_edits(&self) -> Vec<ParameterChange> {
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         std::mem::take(&mut *held)
@@ -412,41 +380,30 @@ impl Handler {
             .collect()
     }
 
-    /// Whether an edit of `id` waits for the processor.
     pub(super) fn waits(&self, id: ParamID) -> bool {
         let held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         held.contains_key(&id)
     }
 
-    /// A value the host sends to the processor, in place of any edit of the same parameter that
-    /// waits: it is newer than all of them.
+    /// A value the host sends, in place of any waiting edit of the same parameter.
     pub(super) fn put_edit(&self, change: ParameterChange) {
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         held.insert(change.id, change.value);
     }
 
-    /// Puts an edit back because the processor had no room for it, or never played it. A
-    /// newer edit of the same parameter, which the plugin may have made in between, is left as
-    /// it is: it is the one the composer means.
+    /// Puts back an edit the processor had no room for or never played. A newer edit of the
+    /// same parameter, made in between, stays.
     pub(super) fn keep_edit(&self, change: ParameterChange) {
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         held.entry(change.id).or_insert(change.value);
     }
 }
 
-/// The `restartComponent` flags whose text in `ivsteditcontroller.h` asks the host to
-/// deactivate the plugin, read what changed and activate it again. The host does exactly
-/// that, and makes the audio side again from what the plugin says afterwards.
-///
-/// - `kLatencyChanged`: "The host has to deactivate and reactivate the plug-in, then
-///   afterwards the host could ask for the current latency".
-/// - `kIoChanged`: "The host has to deactivate the plug-in, asks the plug-in for its wanted
-///   new bus configurations, adapts its processing graph and reactivate the plug-in."
+/// The `restartComponent` flags that ask the host to deactivate and reactivate the plugin.
 const RESTART: RestartFlags = RestartFlags_::kLatencyChanged | RestartFlags_::kIoChanged;
 
 impl IComponentHandlerTrait for Handler {
-    /// A hand on a knob of the plugin's own window. What it changes of a pin until `endEdit` is
-    /// one undo step.
+    /// What a hand changes of a pin until `endEdit` is one undo step.
     unsafe fn beginEdit(&self, id: ParamID) -> tresult {
         let mut held = self.held.lock().unwrap_or_else(|held| held.into_inner());
         held.insert(id);
@@ -454,11 +411,8 @@ impl IComponentHandlerTrait for Handler {
     }
 
     unsafe fn performEdit(&self, id: ParamID, value_normalized: ParamValue) -> tresult {
-        // The parameter belongs to the plugin, not to the project: it is saved in the plugin's
-        // own state asset and is never an undo step.
+        // Saved in the plugin's own state asset, never an undo step of the project.
         self.state_is_dirty.store(true, Ordering::Release);
-        // And it has to reach the processor, which is the half that makes the sound. The host
-        // carries it in the parameter changes of the next block, see the type documentation.
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         held.insert(id, value_normalized);
         kResultOk
@@ -471,29 +425,11 @@ impl IComponentHandlerTrait for Handler {
         kResultOk
     }
 
-    /// Every flag of `ivsteditcontroller.h` is noted here and acted on at the next poll, on
-    /// the host's thread. What each one gets:
-    ///
-    /// - [`RESTART`]: deactivate, read the latency and the buses again, activate.
-    /// - `kReloadComponent`, "The host has to unload completely the plug-in (controller/
-    ///   processor) and reload it": the plugin is saved and its record is loaded again.
-    /// - `kParamValuesChanged`, "The host invalidates all caches of parameter values and asks
-    ///   the edit controller for the current values": the values the host last gave the
-    ///   processor are compared with the controller's, and what differs is sent. The state is
-    ///   saved as well, because it changed.
-    /// - `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter
-    ///   mapping": the parameters of the pedal and the wheels are looked up again.
-    /// - `kParamIDMappingChanged`: the host lists the parameters again, so the values it
-    ///   compares for `kParamValuesChanged` are the plugin's parameters as they are now, and
-    ///   the pins of the record are checked against the new list.
-    /// - `kParamTitlesChanged`: the host reads the list again for the new names. Splice
-    ///   INSTRUMENT sends it while a composer opens its window, which costs one read.
-    /// - Nothing for the rest. `kPrefetchableSupportChanged` asks for a deactivate so that the
-    ///   host can read `getPrefetchableSupport`, and this host never processes in prefetch mode.
-    ///   `kNoteExpressionChanged`, `kIoTitlesChanged`, `kRoutingInfoChanged` and
-    ///   `kKeyswitchChanged` are each about a cache a host with a note expression display, bus
-    ///   titles, a routing view or a key switch display would drop. This host keeps none of
-    ///   those.
+    /// Notes the flags for the next poll. `kParamValuesChanged` also marks the state dirty.
+    /// `kParamTitlesChanged` costs one read of the list; Splice INSTRUMENT sends it while its
+    /// window opens. The rest are ignored: `kPrefetchableSupportChanged` matters only to a host
+    /// that processes in prefetch mode, and the others drop caches (note expression, bus
+    /// titles, routing, key switches) this host does not keep.
     unsafe fn restartComponent(&self, flags: int32) -> tresult {
         let asks = |flag: RestartFlags| flags & flag != 0;
         if asks(RestartFlags_::kParamValuesChanged) {
@@ -519,7 +455,6 @@ impl IComponentHandlerTrait for Handler {
     }
 }
 
-/// The interface pointer of the handler, for `setComponentHandler`.
 pub(super) fn as_handler(handler: &ComWrapper<Handler>) -> Option<ComPtr<IComponentHandler>> {
     handler.to_com_ptr()
 }
@@ -563,8 +498,6 @@ unsafe fn read_utf16(string: *const TChar) -> Vec<TChar> {
 mod tests {
     use super::*;
 
-    /// A knob drag is hundreds of edits of one parameter and only the last of them is the
-    /// sound the composer left behind, so that is the one the processor is given.
     #[test]
     fn many_edits_of_one_parameter_come_out_as_the_last_value() {
         let handler = Handler::default();
@@ -576,12 +509,9 @@ mod tests {
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].id, 7);
         assert!((edits[0].value - 0.25).abs() < f64::EPSILON);
-        // And nothing is left behind for the next poll.
         assert!(handler.take_edits().is_empty());
     }
 
-    /// An edit the processor had no room for comes back, and waits. A newer edit of the same
-    /// parameter, made while it was away, is the one the composer means and stays.
     #[test]
     fn an_edit_the_processor_had_no_room_for_waits_and_never_overwrites_a_newer_one() {
         let handler = Handler::default();
@@ -610,8 +540,6 @@ mod tests {
         assert!((waiting[0].value - 0.25).abs() < f64::EPSILON);
     }
 
-    /// Two values the host sends while the processor has no room: the second is the one that
-    /// waits. One that comes back from the processor is older and does not take its place.
     #[test]
     fn a_value_the_host_sends_replaces_one_that_waits_and_one_coming_back_does_not() {
         let handler = Handler::default();
@@ -622,9 +550,8 @@ mod tests {
         assert_eq!(waiting, [ParameterChange { id: 7, value: 0.75 }]);
     }
 
-    /// What the handler noted for one call of `restartComponent`, taken the way a poll takes
-    /// it: restart, reload, values changed, state to be saved, pedal mapping moved, parameters
-    /// listed again, names read again.
+    /// Restart, reload, values changed, state dirty, MIDI mapping moved, ids changed, titles
+    /// changed.
     fn taken(handler: &Handler) -> [bool; 7] {
         [
             handler.take_restart_wanted(),
@@ -637,8 +564,7 @@ mod tests {
         ]
     }
 
-    /// What Splice INSTRUMENT really sends: the values changed, the titles and the id mapping,
-    /// and a `restartComponent(0)` that asks for nothing. The values and the list are acted on.
+    /// What Splice INSTRUMENT really sends, including a `restartComponent(0)`.
     #[test]
     fn the_flags_splice_instrument_sends_ask_for_the_values_and_the_list_again() {
         let handler = Handler::default();
@@ -656,13 +582,9 @@ mod tests {
         );
     }
 
-    /// Every flag of the format, each with what `restartComponent` says this host does about it.
-    /// Nothing is left out: the twelve below are the whole `RestartFlags` enum of
-    /// `ivsteditcontroller.h`.
+    /// The twelve below are the whole `RestartFlags` enum of `ivsteditcontroller.h`.
     #[test]
     fn every_restart_flag_is_noted_as_the_table_says() {
-        // Restart, reload, values changed, state to be saved, pedal mapping moved, listed again,
-        // names read again.
         let nothing = [false; 7];
         let flags: [(RestartFlags, [bool; 7]); 12] = [
             (
@@ -712,8 +634,6 @@ mod tests {
         assert_eq!(seen, (1 << 12) - 1);
     }
 
-    /// What a plugin asks for while it is being set up is forgotten once it is: the host reads
-    /// what changed after that anyway.
     #[test]
     fn a_restart_asked_for_during_the_set_up_is_forgotten() {
         let handler = Handler::default();
@@ -732,7 +652,6 @@ mod tests {
         );
     }
 
-    /// One flag of a combination is enough, whichever it is.
     #[test]
     fn a_combination_is_read_flag_by_flag() {
         let handler = Handler::default();
@@ -748,8 +667,6 @@ mod tests {
         );
     }
 
-    /// A hand stays on the knob until its last `endEdit`, and the host hears that it let go
-    /// once, which is where an undo step of the plugin's own window ends.
     #[test]
     fn a_hand_is_held_until_its_last_end_edit_and_let_go_once() {
         let handler = Handler::default();

@@ -1,7 +1,7 @@
-//! `sdk/records.ts`, the part of the SDK the runtime writes: the record of each built-in tool as a TypeScript
-//! type, made from the JSON Schema of its Rust type, and the `Tools` that names them. Each
-//! object type is written once, as a named type. What
-//! [`RecordSchema::field`] says of a field is its TSDoc, as the agent docs say it too.
+//! `sdk/records.ts`, the part of the SDK the runtime writes: the record of each built-in tool
+//! as a TypeScript type, made from the JSON Schema of its Rust type, and the `Tools` that names
+//! them. Each object type is written once, as a named type. What [`RecordSchema::field`] says
+//! of a field is its TSDoc, as the agent docs say it too.
 
 use serde_json::Value;
 use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};

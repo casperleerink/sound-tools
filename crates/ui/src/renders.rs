@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 pub enum Part {
     /// The tree of a card or a page of a tool of the project.
     Body,
-    /// The layer over a page, which draws the spaces that show the playhead.
+    /// The layer over a page, which draws the spaces that move every frame.
     Over,
     /// What a page shows in the window's title bar.
     TitleBar,

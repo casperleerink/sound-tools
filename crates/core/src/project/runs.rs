@@ -8,8 +8,8 @@ use super::editing::{Changes, Edit};
 use super::instance::InstanceId;
 use super::{Project, ProjectError};
 
-/// A run ends when its editor has been quiet this long: one undo step, and one write of its
-/// files, for a burst of edits that comes 30 times a second.
+/// A run ends when its editor has been quiet this long: one point, and one write of its files,
+/// for a burst of edits that comes 30 times a second.
 pub const RUN_QUIET: Duration = Duration::from_secs(1);
 
 /// A run that goes on ends this long after it began, so the files, which an agent reads, are
@@ -27,7 +27,7 @@ pub(super) struct Run {
 
 impl Project {
     /// Publishes `changes` as an edit of `by` named `label`, into its open run of that label: a
-    /// run is one undo step, written once when it finishes. The poll finishes a run once it is
+    /// run is one point, written once when it finishes. The poll finishes a run once it is
     /// quiet for [`RUN_QUIET`] or older than [`RUN_LONGEST`] (see
     /// [`Self::finish_quiet_runs_at`]); so do an undo and a redo, so undo takes back what the
     /// composer just saw happen, the first publish of another edit, and a run of another label
@@ -51,8 +51,8 @@ impl Project {
     ) -> Result<(), ProjectError> {
         let open = (self.runs.iter()).position(|run| run.by == *by && run.label == label);
         if open.is_none() {
-            // Another label of the same editor ends its run first, so each is its own undo
-            // step, in order, even when both change one record.
+            // Another label of the same editor ends its run first, so each is its own point,
+            // in order, even when both change one record.
             self.finish_runs_where(|run| run.by == *by)?;
         }
         let mut run = match open {
@@ -92,15 +92,15 @@ impl Project {
     }
 
     /// Finishes each run `done` picks that no other open edit, such as a drag, holds a record
-    /// of: its step would hold the middle of that edit.
+    /// of: its point would hold the middle of that edit.
     fn finish_runs_where(&mut self, done: impl Fn(&Run) -> bool) -> Result<(), ProjectError> {
         let runs = std::mem::take(&mut self.runs);
         let held_by_others = |run: &Run| {
-            run.edit.records().any(|id| {
+            run.edit.records.keys().any(|id| {
                 let by_runs = runs
                     .iter()
-                    .filter(|run| run.edit.records().any(|held| held == id));
-                self.history.holders(id) > by_runs.count()
+                    .filter(|run| run.edit.records.keys().any(|held| held == id));
+                self.open_edits.holders(id) > by_runs.count()
             })
         };
         let ends: Vec<bool> = (runs.iter())
@@ -118,7 +118,7 @@ impl Project {
         let mut result = Ok(());
         for run in runs {
             match run.edit.is_empty() {
-                // A run whose first publish was refused: no step, which would end the grouping
+                // A run whose first publish was refused: no point, which would end the grouping
                 // of outside changes.
                 true => self.abandon(run.edit),
                 false => result = result.and(self.finish(run.edit)),

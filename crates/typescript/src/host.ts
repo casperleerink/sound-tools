@@ -49,7 +49,7 @@ type Request =
   | { type: "watches"; instance: string; watches: Watches }
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
-  /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
+  /** What happened on a node, such as a press or the end of a drag, with what its handler hears. */
   | { type: "event"; card: number; node: number; kind: Parameters<typeof sdk.host.nodeEvent>[1]; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
@@ -330,7 +330,6 @@ function noting<T extends object>(source: T, into: { fields: Set<string> | null 
   });
 }
 
-/** The children as a behaviour reads them: every child's state notes the fields it reads. */
 /** `children` as a behaviour reads them, at any depth: the fields of the state it reads are what the runtime compares of each. */
 function notingChildren(children: OwnedChild[], into: { fields: Set<string> | null }): OwnedChild[] {
   return children.map((child) => {
@@ -923,6 +922,7 @@ function doers(instance: string, spec: Spec) {
     update: updater(instance),
     select: selector(instance),
     addOffer: offerAdder(instance),
+    openWindow: (path: string) => say({ type: "open_window", instance, path }),
     now: sdk.now as Context<State>["now"],
     ...askers(instance),
     ...performer(instance),
@@ -1221,7 +1221,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {} };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };

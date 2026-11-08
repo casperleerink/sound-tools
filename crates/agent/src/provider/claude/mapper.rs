@@ -11,9 +11,10 @@ use super::protocol::{
     Outgoing, PermissionResult, Request, ResultKind, StreamEvent, System, TerminalReason,
     TurnResult,
 };
+use crate::provider::action::{Action, relative, shorten};
 use crate::provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepKind,
-    StepOutcome, TurnOutcome,
+    Account, AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepOutcome,
+    TurnOutcome,
 };
 
 /// What the CLI says when `--resume` names a session it does not have.
@@ -24,9 +25,6 @@ const OVERLOADED: &str = "overloaded";
 
 /// The model the CLI picks itself, in its list of models.
 const DEFAULT_MODEL: &str = "default";
-
-/// The longest pattern a title shows, in characters.
-const TITLE_DETAIL_CHARACTERS: usize = 60;
 
 #[derive(Debug)]
 pub(super) struct Mapper {
@@ -248,16 +246,8 @@ impl Mapper {
                 (!text.is_empty()).then_some(AgentEvent::TextDone { text })
             }
             Block::ToolUse { id, name, input } => {
-                let action = Action::of(&name, &input, &self.folder);
                 self.open_steps.push(id.clone());
-                Some(AgentEvent::StepStarted {
-                    id: StepId(id),
-                    title: action.done_title(),
-                    running_title: action.running_title(),
-                    request_title: action.request_title(),
-                    command: action.command(),
-                    kind: action.kind(),
-                })
+                Some(action(&name, &input, &self.folder).started(StepId(id)))
             }
             Block::ToolResult { .. } | Block::Other => None,
         }
@@ -375,13 +365,15 @@ impl Mapper {
         let initialized = serde_json::from_value::<Initialized>(response.unwrap_or(Value::Null));
         match initialized {
             Ok(initialized) => AgentEvent::Started {
-                account: initialized
-                    .account
-                    .map(|account| Account {
-                        email: account.email,
-                        plan: account.subscription_type,
-                    })
-                    .unwrap_or_default(),
+                account: Some(
+                    initialized
+                        .account
+                        .map(|account| Account {
+                            email: account.email,
+                            plan: account.subscription_type,
+                        })
+                        .unwrap_or_default(),
+                ),
                 models: models(initialized.models),
             },
             Err(error) => AgentEvent::Error {
@@ -446,6 +438,7 @@ fn models(models: Vec<InitializedModel>) -> Vec<Model> {
                 id: model.value,
                 name: model.display_name,
                 description: model.description,
+                source: None,
                 short_name,
             }
         })
@@ -485,85 +478,21 @@ fn plain(error: &str) -> String {
     }
 }
 
-/// What a tool use does, for its title.
-enum Action {
-    /// A command, whole, and what the agent says it does, when it says.
-    Run(String, Option<String>),
-    Read(String),
-    Edit(String),
-    Write(String),
-    Search(String),
-    Use(String),
-}
-
-impl Action {
-    fn of(tool: &str, input: &Value, folder: &Path) -> Action {
-        let text = |key: &str| input.get(key).and_then(Value::as_str);
-        let path = || text("file_path").map(|path| relative(path, folder));
-        let action = match tool {
-            "Bash" | "PowerShell" => text("command")
-                .map(|command| Action::Run(command.trim().to_string(), described(input))),
-            "Read" => path().map(Action::Read),
-            "Edit" => path().map(Action::Edit),
-            "Write" => path().map(Action::Write),
-            "Glob" | "Grep" => text("pattern").map(|pattern| Action::Search(shorten(pattern))),
-            _ => None,
-        };
-        action.unwrap_or_else(|| Action::Use(tool.to_string()))
-    }
-
-    fn command(&self) -> Option<String> {
-        match self {
-            Action::Run(command, _) => Some(command.clone()),
-            _ => None,
+/// What a tool use of Claude does.
+fn action(tool: &str, input: &Value, folder: &Path) -> Action {
+    let text = |key: &str| input.get(key).and_then(Value::as_str);
+    let path = || text("file_path").map(|path| relative(path, folder));
+    let action = match tool {
+        "Bash" | "PowerShell" => {
+            text("command").map(|command| Action::Run(command.trim().to_string(), described(input)))
         }
-    }
-
-    fn kind(&self) -> StepKind {
-        match self {
-            Action::Run(..) => StepKind::Run,
-            Action::Read(path) => StepKind::Read { path: path.clone() },
-            Action::Edit(path) | Action::Write(path) => StepKind::Change { path: path.clone() },
-            Action::Search(_) => StepKind::Search,
-            Action::Use(_) => StepKind::Other,
-        }
-    }
-
-    fn done_title(&self) -> String {
-        match self {
-            Action::Run(_, Some(description)) => description.clone(),
-            Action::Run(_, None) => "Ran a command".to_string(),
-            Action::Read(path) => format!("Read {path}"),
-            Action::Edit(path) => format!("Edited {path}"),
-            Action::Write(path) => format!("Wrote {path}"),
-            Action::Search(pattern) => format!("Searched for {}", code(pattern)),
-            Action::Use(tool) => format!("Used {tool}"),
-        }
-    }
-
-    fn running_title(&self) -> String {
-        match self {
-            Action::Run(_, Some(description)) => description.clone(),
-            Action::Run(_, None) => "Running a command".to_string(),
-            Action::Read(path) => format!("Reading {path}"),
-            Action::Edit(path) => format!("Editing {path}"),
-            Action::Write(path) => format!("Writing {path}"),
-            Action::Search(pattern) => format!("Searching for {}", code(pattern)),
-            Action::Use(tool) => format!("Using {tool}"),
-        }
-    }
-
-    fn request_title(&self) -> String {
-        match self {
-            Action::Run(_, Some(description)) => description.clone(),
-            Action::Run(_, None) => "Run a command".to_string(),
-            Action::Read(path) => format!("Read {path}"),
-            Action::Edit(path) => format!("Edit {path}"),
-            Action::Write(path) => format!("Write {path}"),
-            Action::Search(pattern) => format!("Search for {}", code(pattern)),
-            Action::Use(tool) => format!("Use {tool}"),
-        }
-    }
+        "Read" => path().map(Action::Read),
+        "Edit" => path().map(Action::Edit),
+        "Write" => path().map(Action::Write),
+        "Glob" | "Grep" => text("pattern").map(|pattern| Action::Search(shorten(pattern))),
+        _ => None,
+    };
+    action.unwrap_or_else(|| Action::Use(tool.to_string()))
 }
 
 /// What an approval asks: the request's title, and for a command the whole command apart, as
@@ -574,7 +503,7 @@ fn question(tool: &str, input: &Value, folder: &Path) -> (String, Option<String>
             let title = described(input).unwrap_or_else(|| "Run".to_string());
             (title, Some(command.trim().to_string()))
         }
-        _ => (Action::of(tool, input, folder).request_title(), None),
+        _ => (action(tool, input, folder).request_title(), None),
     }
 }
 
@@ -585,49 +514,11 @@ fn described(input: &Value) -> Option<String> {
     (!description.is_empty()).then(|| description.to_string())
 }
 
-/// A path inside the project as the composer knows it, from the project folder.
-fn relative(path: &str, folder: &Path) -> String {
-    Path::new(path)
-        .strip_prefix(folder)
-        .map(|inside| inside.display().to_string())
-        .unwrap_or_else(|_| path.to_string())
-}
-
-/// The first line, cut to fit one line of the sidebar.
-fn shorten(text: &str) -> String {
-    // Trimmed first, so a pattern that starts with a blank line is not shown empty.
-    let mut lines = text.trim().lines();
-    let line = lines.next().unwrap_or_default().trim();
-    let more = lines.next().is_some();
-    if line.chars().count() <= TITLE_DETAIL_CHARACTERS && !more {
-        return line.to_string();
-    }
-    let cut: String = line.chars().take(TITLE_DETAIL_CHARACTERS).collect();
-    format!("{}…", cut.trim_end())
-}
-
-/// A pattern in backticks, which the sidebar shows as code. One that has a backtick of its own
-/// is left bare: its backtick would close ours early, and the line would show the wrong part
-/// as code.
-fn code(text: &str) -> String {
-    if text.contains('`') {
-        text.to_string()
-    } else {
-        format!("`{text}`")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{plain, question, shorten};
-
-    #[test]
-    fn a_pattern_that_starts_with_a_blank_line_shows_its_first_line() {
-        assert_eq!(shorten("\n  *.json\n"), "*.json");
-        assert_eq!(shorten("\n*.json\n*.tsx"), "*.json…");
-    }
+    use super::{plain, question};
 
     #[test]
     fn an_approval_asks_with_the_whole_command() {
