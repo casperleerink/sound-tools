@@ -38,7 +38,7 @@ export function songKey(tool: Song, key: Key) {
         const draft = owner?.tool === "track" ? owner.children.find((child) => child.name === key2.split("/")[1]) : undefined;
         if (draft?.tool === "timeline") change(draft.state);
       });
-    const forNotes = memory.notes.size > 0 || (key.cmd && (key.key === "a" || (key.key === "v" && memory.copied !== null)));
+    const forNotes = memory.notes.size > 0 || (key.cmd && (key.key === "a" || (key.key === "v" && memory.copied !== null))) || (key.key === "q" && !key.cmd);
     const state = clip?.tool === "timeline" ? clip.state : undefined;
     if (forNotes && editorKey(key, state, clock.tick, memory, edit)) return;
   }

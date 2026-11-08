@@ -209,12 +209,19 @@ impl<'a> Writer<'a> {
     fn object(&self, schema: &'a Value, depth: usize) -> String {
         let properties = schema.get("properties").and_then(Value::as_object);
         let Some(properties) = properties.filter(|properties| !properties.is_empty()) else {
-            return match schema.get("additionalProperties") {
-                Some(values) if values.is_object() => {
+            // A map whose keys are numbers, such as controllers, names them by a pattern.
+            let patterned = (schema.get("patternProperties").and_then(Value::as_object))
+                .and_then(|patterns| patterns.values().next());
+            return match schema
+                .get("additionalProperties")
+                .filter(|values| values.is_object())
+                .or(patterned)
+            {
+                Some(values) => {
                     let values = self.object_or_type(values, depth);
                     format!("Record<string, {values}>")
                 }
-                _ => "Record<string, never>".to_string(),
+                None => "Record<string, never>".to_string(),
             };
         };
         let required: Vec<&str> = (schema.get("required").and_then(Value::as_array))

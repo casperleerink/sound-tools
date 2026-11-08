@@ -12,6 +12,10 @@ export type {
   AudioPort, BangInput, BooleanField, ChoiceField, Field, Fields, FileField, Inputs, ListField,
   Note, NumberField, ObjectItem, Outputs, SoundOf, StateOf, TextField, Unit, ValuesOf
 } from "./sdk/fields";
+// edits of notes, as a piano roll makes them
+export {
+  humanize, legato, quantize
+} from "./sdk/notes";
 // signals: what a sound is made of
 export {
   abs, adsr, allpass, bandpass, beat, bpm, Buffer, buffer, change, channel, clamp, cos, db, delay,

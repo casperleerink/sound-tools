@@ -480,6 +480,12 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    */
   render(path: string, options: { from: number; to: number; tail?: boolean; name?: string }): Promise<string | null>;
   /**
+   * Asks the composer where to save the notes of the `timeline` child at `path`, such as
+   * `"bass/verse"`, and writes them there as a MIDI file named `name` (`path` when left out),
+   * with the tempo and time signature where it starts: whether it was written.
+   */
+  exportNotes(path: string, options?: { name?: string }): Promise<boolean>;
+  /**
    * Tells the window what the composer works on: the child at `path`, such as `"bass"` or
    * `"bass/verse"`, or nothing with `null`. The MIDI keyboard and the computer keys play the
    * `notes` of the nearest of it and its parents that has them; `span`, in ticks, is what Export

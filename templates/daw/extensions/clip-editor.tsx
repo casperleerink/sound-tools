@@ -1,4 +1,4 @@
-import { blend, Button, For, Fragment, h, Label, Line, memo, now, Rect, Select, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, memo, now, quantize, Rect, Select, selector, signal, Space, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
@@ -26,9 +26,23 @@ export const snapsOf = (bar: number) => [
   { label: "1/32", ticks: BEAT / 8 },
 ];
 const LANES = ["velocity", "pedal", "bend", "mod_wheel", "pressure"] as const;
-const LANE_NAMES: Record<Lane, string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod wheel", pressure: "Pressure" };
+const LANE_NAMES: Record<(typeof LANES)[number], string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod wheel", pressure: "Pressure" };
+/** The MIDI controllers a lane may move: every one but the mod wheel (1) and the pedal (64), which have lanes of their own. */
+const CONTROLLERS = Array.from({ length: 120 }, (_, number) => number).filter((number) => number !== 1 && number !== 64);
+/** What MIDI calls the controllers that have a name. */
+const CONTROLLER_NAMES: Record<number, string> = {
+  2: "Breath", 4: "Foot", 5: "Portamento time", 7: "Volume", 8: "Balance", 10: "Pan", 11: "Expression", 65: "Portamento", 66: "Sostenuto",
+  67: "Soft pedal", 71: "Resonance", 72: "Release", 73: "Attack", 74: "Brightness", 91: "Reverb", 93: "Chorus",
+};
+const controllerOption = (number: number) => {
+  const name = CONTROLLER_NAMES[number];
+  return name ? { value: number, label: name, detail: `Controller ${number}` } : { value: number, label: `Controller ${number}` };
+};
+// How far Humanize moves a start and a velocity, either way.
+const HUMANIZE = { timing: 20, velocity: 10 };
 
-export type Lane = (typeof LANES)[number];
+/** A lane the editor shows: the velocities, the pedal, an expression lane, or a MIDI controller by number. */
+export type Lane = (typeof LANES)[number] | number;
 export type Clip = FilledStateOfTool<"timeline">;
 /** What the editor keeps in the song's memory: the chosen notes by `noteKey`, the grid, the lane shown, the last note's length and the copied notes, from 0. */
 export interface EditorMemory {
@@ -37,6 +51,11 @@ export interface EditorMemory {
   lane: Lane;
   length: number;
   copied: Note[] | null;
+  /** How far Quantize moves a note, 0 to 1, and how much it swings, 0 to 1. */
+  strength: number;
+  swing: number;
+  /** How many times Humanize ran, its seed. */
+  humanized: number;
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -63,19 +82,30 @@ export const lengthOf = (clip: Frozen<Clip>) => clip.length ?? Math.max(1, ...cl
 
 /** A point of a lane as the record holds it: the pedal counts from `start`, the others from `tick`. */
 type Point = { at: number; value: number };
-const LIMITS: Record<Exclude<Lane, "velocity">, [number, number]> = { pedal: [0, 127], bend: [-8192, 8191], mod_wheel: [0, 127], pressure: [0, 127] };
-function pointsOf(clip: Frozen<Clip>, lane: Exclude<Lane, "velocity">): Point[] {
-  return lane === "pedal" ? clip.pedal.map(({ start, value }) => ({ at: start, value })) : clip[lane].map(({ tick, value }) => ({ at: tick, value }));
+type PointLane = Exclude<Lane, "velocity">;
+const limitsOf = (lane: PointLane): [number, number] => (lane === "bend" ? [-8192, 8191] : [0, 127]);
+function pointsOf(clip: Frozen<Clip>, lane: PointLane): Point[] {
+  const points = lane === "pedal" ? clip.pedal.map(({ start, value }) => ({ tick: start, value })) : typeof lane === "number" ? (clip.controllers[lane] ?? []) : clip[lane];
+  return points.map(({ tick, value }) => ({ at: tick, value }));
 }
-function setPoints(clip: Clip, lane: Exclude<Lane, "velocity">, points: Point[]) {
+function setPoints(clip: Clip, lane: PointLane, points: Point[]) {
   // One point per tick, in order, as the record needs them.
   const sorted = [...new Map(points.map((point) => [point.at, point])).values()].sort((a, b) => a.at - b.at);
-  if (lane === "pedal") clip.pedal = sorted.map(({ at, value }) => ({ start: at, value: Math.round(value) }));
-  else clip[lane] = sorted.map(({ at, value }) => ({ tick: at, value: Math.round(value) }));
+  const ticked = sorted.map(({ at, value }) => ({ tick: at, value: Math.round(value) }));
+  if (lane === "pedal") clip.pedal = ticked.map(({ tick, value }) => ({ start: tick, value }));
+  else if (typeof lane !== "number") clip[lane] = ticked;
+  else if (ticked.length > 0) clip.controllers = { ...clip.controllers, [lane]: ticked };
+  else clip.controllers = Object.fromEntries(Object.entries(clip.controllers).filter(([number]) => Number(number) !== lane));
 }
 /** Where a value sits up a lane, 0 to 1, and back. */
-const upOf = (lane: Exclude<Lane, "velocity">, value: number) => (value - LIMITS[lane][0]) / (LIMITS[lane][1] - LIMITS[lane][0]);
-const valueAt = (lane: Exclude<Lane, "velocity">, up: number) => LIMITS[lane][0] + clamp(up, 0, 1) * (LIMITS[lane][1] - LIMITS[lane][0]);
+const upOf = (lane: PointLane, value: number) => {
+  const [low, high] = limitsOf(lane);
+  return (value - low) / (high - low);
+};
+const valueAt = (lane: PointLane, up: number) => {
+  const [low, high] = limitsOf(lane);
+  return low + clamp(up, 0, 1) * (high - low);
+};
 
 /** `notes` with `chosen` moved by `ticks` and `pitches`, or copied there: the notes, and which are chosen after. */
 function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks: number, pitches: number, copy: boolean) {
@@ -104,6 +134,44 @@ function changer(memory: Memory<EditorMemory>, edit: EditorProps["edit"]) {
     });
 }
 
+/** What the note menu and Q do: to the chosen notes, or to all of them while none is. */
+export type Operation = "quantize" | "humanize" | "legato";
+const OPERATION_LABELS: Record<Operation, string> = { quantize: "Quantize notes", humanize: "Humanize notes", legato: "Legato" };
+
+/**
+ * Quantizes the notes the editor works on to its snap (1/16 while it is off) at its strength and
+ * swing, humanizes or makes them legato, as one undo step. They stay chosen and inside the clip.
+ */
+export function operate(operation: Operation, clip: Frozen<Clip>, memory: Memory<EditorMemory>, edit: EditorProps["edit"]) {
+  const seed = operation === "humanize" ? ++memory.humanized : 0;
+  const last = (clip.length ?? Infinity) - 1;
+  changer(memory, edit)(OPERATION_LABELS[operation], (notes, chosen) => {
+    const places = chosen.size > 0 ? [...chosen] : notes.map((_, index) => index);
+    const picked = places.map((index) => notes[index]!);
+    const done = operation === "quantize" ? quantize(picked, { grid: memory.snap || BEAT / 4, strength: memory.strength, swing: memory.swing })
+      : operation === "humanize" ? humanize(picked, { seed, ...HUMANIZE }) : legato(picked);
+    const next = [...notes];
+    places.forEach((index, at) => (next[index] = { ...done[at]!, start: Math.min(done[at]!.start, last) }));
+    return { notes: next, chosen };
+  });
+}
+
+const STRENGTHS = [1, 0.75, 0.5];
+const SWINGS = [{ label: "No swing", swing: 0 }, { label: "Light", swing: 1 / 3 }, { label: "Medium", swing: 2 / 3 }, { label: "Full", swing: 1 }];
+
+/** The menu of the notes: Quantize with its strength and swing, Humanize and Legato. */
+async function noteMenu(clip: Frozen<Clip>, memory: Memory<EditorMemory>, edit: EditorProps["edit"], openMenu: Context<unknown>["openMenu"]) {
+  const items = [
+    { label: "Quantize", shortcut: "q" as const, run: () => operate("quantize", clip, memory, edit) },
+    ...STRENGTHS.map((strength) => ({ label: `${strength * 100}%`, group: "Strength", checked: memory.strength === strength, run: () => (memory.strength = strength) })),
+    ...SWINGS.map(({ label, swing }) => ({ label, group: "Swing", checked: memory.swing === swing, run: () => (memory.swing = swing) })),
+    { label: "Humanize", separator: true, run: () => operate("humanize", clip, memory, edit) },
+    { label: "Legato", run: () => operate("legato", clip, memory, edit) },
+  ];
+  const picked = await openMenu(items.map(({ run: _, ...item }) => item), { width: 200 });
+  if (picked !== null) items[picked]?.run();
+}
+
 export interface EditorProps {
   clip: Accessor<Frozen<Clip> | undefined>;
   /** Where the bars of the song start, in ticks from the clip's start. */
@@ -122,6 +190,9 @@ export interface EditorProps {
   seek: (tick: number) => void;
   onClose: () => void;
   height: number;
+  openMenu: Context<unknown>["openMenu"];
+  /** Whether what plays the track hears any MIDI controller, as a plugin does: the lane picker offers them all then. */
+  hearsControllers: Accessor<boolean>;
 }
 
 /** From the earliest start of `notes` to their latest end, and their earliest start. */
@@ -149,6 +220,8 @@ export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: nu
     const at = inside ? playhead - clip.start : chosen.size > 0 ? (({ start, span }) => start + span)(spanOf(picked())) : 0;
     const pasted = memory.copied.map((note) => ({ ...note, start: note.start + at }));
     change("Paste notes", (notes) => ({ notes: [...notes, ...pasted], chosen: new Set(pasted.map((_, index) => notes.length + index)) }));
+  } else if (key.key === "q" && !key.cmd) {
+    operate("quantize", clip, memory, edit);
   } else if (chosen.size === 0) {
     return false;
   } else if (key.key === "delete" || key.key === "backspace") {
@@ -177,7 +250,7 @@ export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: nu
 }
 
 /** The editor: a header with the track and the ruler, the notes, and the lane under them. */
-export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview, seek, onClose, height }: EditorProps) {
+export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview, seek, onClose, height, openMenu, hearsControllers }: EditorProps) {
   const isPicked = selector(() => memory.notes);
   const notes = () => clip()?.notes ?? [];
   const length = () => {
@@ -237,7 +310,16 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       memory.notes = new Set([...(shift || cmd ? memory.notes : []), ...inside]);
     },
   };
-  const pressNote = (note: Note) => ({ shift, cmd }: Press) => {
+  const openNoteMenu = () => {
+    const shown = clip();
+    if (shown) void noteMenu(shown, memory, edit, openMenu);
+  };
+  const pressNote = (note: Note) => ({ shift, cmd, button }: Press) => {
+    if (button === "right") {
+      if (!memory.notes.has(noteKey(note))) memory.notes = new Set([noteKey(note)]);
+      openNoteMenu();
+      return;
+    }
     preview(note.pitch);
     const key = noteKey(note);
     if (shift || cmd) {
@@ -248,8 +330,10 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       memory.notes = new Set([key]);
     }
   };
-  const pressEmpty = ({ clicks, shift, cmd, x, y }: Press) => {
-    if (clicks === 2) {
+  const pressEmpty = ({ clicks, shift, cmd, x, y, button }: Press) => {
+    if (button === "right") {
+      openNoteMenu();
+    } else if (clicks === 2) {
       const note = { start: snapped(x, memory.snap), length: memory.length, pitch: clamp(127 - Math.floor(y), 0, 127), velocity: 100 };
       preview(note.pitch);
       change("Add a note", (all) => ({ notes: [...all, note], chosen: new Set([all.length]) }));
@@ -350,6 +434,14 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     edit("Add a point", (draft) => setPoints(draft, lane, [...pointsOf(draft, lane), { at: Math.max(snapped(x, memory.snap), 0), value: valueAt(lane, 1 - y) }]));
   };
 
+  // The lanes, then the clip's own controllers, then every other one where the track hears them.
+  const laneOptions = () => {
+    const own = Object.keys(clip()?.controllers ?? {}).map(Number);
+    const shown = typeof memory.lane === "number" ? [memory.lane] : [];
+    const listed = hearsControllers() ? CONTROLLERS : [...new Set([...own, ...shown])].sort((a, b) => a - b);
+    const first = listed.filter((number) => own.includes(number));
+    return [...LANES.map((lane) => ({ value: lane as Lane, label: LANE_NAMES[lane] })), ...[...first, ...listed.filter((number) => !own.includes(number))].map(controllerOption)];
+  };
   const pitches = Array.from({ length: 128 }, (_, row) => 127 - row);
   const lines = () => bars().filter((tick) => tick >= -BEAT && tick <= end());
   const beats = () => {
@@ -366,6 +458,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
           <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
+          <Button key="note-menu" icon="ellipsis" variant="ghost" size="xs" opacity={0.6} tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
           <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="escape" onClick={onClose} />
         </div>
         <Rule />
@@ -413,7 +506,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       <div style={{ height: 1, background: "alpha/5", keep: true }} />
       <div style={{ height: LANE, direction: "row", keep: true }}>
         <div style={{ width: HEADER - 1, paddingLeft: 16, justify: "center", align: "start", keep: true }}>
-          <Select key="editor-lane-pick" size="md" title="Lane" value={() => memory.lane} options={LANES.map((lane) => ({ value: lane, label: LANE_NAMES[lane] }))}
+          <Select<Lane> key="editor-lane-pick" size="md" title="Lane" value={() => memory.lane} options={laneOptions} search menuWidth={220}
             onChange={(lane) => (memory.lane = lane)} />
         </div>
         <Rule />

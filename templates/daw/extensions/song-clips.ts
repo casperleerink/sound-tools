@@ -21,12 +21,40 @@ export function startMoved(clip: FilledStateOfTool<"timeline">, dx: number, unit
   const pedal = clip.pedal.filter((change) => change.start >= by).map((change) => ({ ...change, start: change.start - by }));
   const held = pedal[0]?.start === 0 ? undefined : clip.pedal.filter((change) => change.start < by).at(-1);
   clip.pedal = held ? [{ ...held, start: 0 }, ...pedal] : pedal;
-  for (const lane of ["bend", "mod_wheel", "pressure"] as const) {
-    const points = clip[lane];
-    const kept = points.filter((point) => point.tick >= by).map((point) => ({ ...point, tick: point.tick - by }));
-    const cut = points.some((point) => point.tick < by) && kept[0]?.tick !== 0;
-    clip[lane] = cut ? [{ tick: 0, value: Math.round(laneAt(points, by, "linear")) }, ...kept] : kept;
-  }
+  cutLanes(clip, Math.max(by, 0), length);
+  if (by < 0) shiftLanes(clip, -by);
+}
+
+/** A clip that ends at `length`: what starts at or past it is cut, as a timeline plays nothing there, and a lane keeps the value it had at the new end. */
+export function endMoved(clip: FilledStateOfTool<"timeline">, length: number) {
+  clip.length = length;
+  clip.notes = clip.notes.filter((note) => note.start < length);
+  clip.pedal = clip.pedal.filter((change) => change.start < length);
+  cutLanes(clip, 0, length);
+}
+
+/**
+ * The lanes of a clip from `from` to `to`, from `from`: where points are cut away, a point on
+ * the edge keeps the value the lane had there, as a timeline cuts them. A controller lane plays
+ * from its first point, so one that starts at or after `to` is gone.
+ */
+function cutLanes(clip: FilledStateOfTool<"timeline">, from: number, to: number) {
+  const cut = (points: readonly LanePoint[]): LanePoint[] => {
+    const kept = points.filter(({ tick }) => tick >= from && tick < to).map(({ tick, value }) => ({ tick: tick - from, value }));
+    const edge = (tick: number) => ({ tick: tick - from, value: Math.round(laneAt(points, tick, "linear")) });
+    const before = points.some(({ tick }) => tick < from) && kept[0]?.tick !== 0 ? [edge(from)] : [];
+    const after = points.some(({ tick }) => tick >= to) && kept.at(-1)?.tick !== to - 1 - from ? [edge(to - 1)] : [];
+    return [...before, ...kept, ...after];
+  };
+  for (const lane of ["bend", "mod_wheel", "pressure"] as const) clip[lane] = cut(clip[lane]);
+  clip.controllers = Object.fromEntries(Object.entries(clip.controllers).flatMap(([number, points]) => ((points[0]?.tick ?? to) < to ? [[number, cut(points)]] : [])));
+}
+
+/** Every lane point of a clip `by` ticks later. */
+function shiftLanes(clip: FilledStateOfTool<"timeline">, by: number) {
+  const shift = (points: readonly LanePoint[]) => points.map(({ tick, value }) => ({ tick: tick + by, value }));
+  for (const lane of ["bend", "mod_wheel", "pressure"] as const) clip[lane] = shift(clip[lane]);
+  clip.controllers = Object.fromEntries(Object.entries(clip.controllers).map(([number, points]) => [number, shift(points)]));
 }
 
 export type LanePoint = { tick: number; value: number };

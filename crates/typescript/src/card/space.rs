@@ -260,7 +260,7 @@ impl Drawing<'_, '_> {
             .on_drop(
                 (self.cx).listener(move |view, carried: &Carried, window, cx| {
                     let (x, y) = units(window);
-                    let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
+                    let dropped = json!({ "files": [], "timelines": [], "carried": carried.0, "x": x, "y": y });
                     view.event(id, EventKind::Drop, dropped, cx);
                 }),
             )

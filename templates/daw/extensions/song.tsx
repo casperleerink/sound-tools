@@ -69,9 +69,9 @@ export const song = tool({
   memory: (): Memory => ({
     selected: new Set(), below: null, armed: new Set(), recording: null, track: null, hovered: null, renaming: null, renamingClip: null,
     clipboard: null, tempoLane: false, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {},
-    notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
+    notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
   }),
-  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r", "enter", "cmd-down", "t"],
+  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r", "enter", "cmd-down", "t", "q"],
   globalKeys: ["space"],
   onKey: songKey,
   behaviour: ({ state, children }): Declaration<typeof parts> => {
@@ -155,6 +155,11 @@ export const song = tool({
           seek={(tick) => clock.jump((open()?.state.start ?? 0) + tick)}
           onClose={() => (memory.below = { kind: "track", name: trackName ?? "" })}
           height={EDITOR}
+          openMenu={page.openMenu}
+          hearsControllers={() => {
+            const row = rows().find((each) => each.name === trackName);
+            return row?.tool === "track" && row.children.some((child) => child.name === "synth" && String(child.tool) === "plugin");
+          }}
         />
       );
     };

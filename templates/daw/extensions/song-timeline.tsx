@@ -1,10 +1,10 @@
 import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Color, type Drag, type Dropped, type FilledStateOfTool, type KeyName, type Live, type Press } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
-import { itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
-import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, type Child, type Page } from "./song-page";
+import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
+import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, nameFrom, regionsOf, ROW, type Child, type Page } from "./song-page";
 import { Shades } from "./song-ruler";
-import { notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
+import { addInstrumentTrack, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./transport";
 
@@ -14,7 +14,7 @@ import { secondsBetween, ticksAcross } from "./transport";
 const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
 
 export const Timeline = ({ page }: { page: Page }) => {
-  const { state, children, memory, update, clock, outputs, openMenu, rows, layout, tops, topOf, rowAt, starts, barOf, end, choose, itemAt, lengthAt, editClips, timeline, playhead, handle } = page;
+  const { state, children, memory, update, clock, outputs, openMenu, exportNotes, rows, layout, tops, topOf, rowAt, starts, barOf, end, choose, clipAt, itemAt, lengthAt, editClips, timeline, playhead, handle } = page;
   const isPicked = selector(() => memory.selected);
   const openClip = (key: string) => {
     memory.below = { kind: "editor", clip: key };
@@ -62,16 +62,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     axis: "x",
     snap: { x: snap || 1, grid: snap > 0 },
     onEnd: ({ dx }) =>
-      editClips("Resize clips", memory.selected, (clip) => {
-        const length = Math.max(lengthOf(clip) + Math.round(dx), snap || BEAT / 4);
-        // What starts at or past its new end is cut: a timeline plays nothing there.
-        clip.length = length;
-        clip.notes = clip.notes.filter((note) => note.start < length);
-        clip.pedal = clip.pedal.filter((change) => change.start < length);
-        clip.bend = clip.bend.filter((point) => point.tick < length);
-        clip.mod_wheel = clip.mod_wheel.filter((point) => point.tick < length);
-        clip.pressure = clip.pressure.filter((point) => point.tick < length);
-      }),
+      editClips("Resize clips", memory.selected, (clip) => endMoved(clip, Math.max(lengthOf(clip) + Math.round(dx), snap || BEAT / 4))),
   });
   const resizeStartDrag = (snap: number): Drag => ({
     id: "resize-start",
@@ -81,9 +72,9 @@ export const Timeline = ({ page }: { page: Page }) => {
   });
 
   // As the arrangement's: what the keys do, and a clip's name.
-  const CLIP_MENU: { label: string; command?: ClipCommand; tail?: boolean; shortcut?: KeyName; separator?: true }[] = [
+  const CLIP_MENU: { label: string; command?: ClipCommand; tail?: boolean; exports?: true; shortcut?: KeyName; separator?: true }[] = [
     { label: "Cut", command: "cut", shortcut: "cmd-x" }, { label: "Copy", command: "copy", shortcut: "cmd-c" }, { label: "Duplicate", command: "duplicate", shortcut: "cmd-d" },
-    { label: "Rename", separator: true }, ...RENDER_ITEMS, { label: "Delete", command: "delete", shortcut: "backspace", separator: true },
+    { label: "Rename", separator: true }, { label: "Export notes…", exports: true }, ...RENDER_ITEMS, { label: "Delete", command: "delete", shortcut: "backspace", separator: true },
   ];
   const itemMenu = async (key: string) => {
     if (!memory.selected.has(key)) choose(new Set([key]));
@@ -93,6 +84,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     const row = key.split("/")[0]!;
     if (item?.command) itemCommand(item.command, state.order, page);
     else if (item?.tail !== undefined) renderToTrack(page, row, [...memory.selected].filter((each) => each.startsWith(`${row}/`)), item.tail);
+    else if (item?.exports) void exportNotes(key, { name: nameFrom(clipAt(key)?.state.title || key.replace("/", " ")) });
     else if (item) memory.renamingClip = key;
   };
   /** A press on a clip or a region: a double click opens a clip's notes, and a region chosen alone shows its card in its track's panel. */
@@ -131,8 +123,9 @@ export const Timeline = ({ page }: { page: Page }) => {
     });
     if (added) choose(new Set([added]));
   };
-  const dropOnTimeline = ({ files, x, y }: Dropped) => {
+  const dropOnTimeline = ({ files, timelines, x, y }: Dropped) => {
     const row = layout()[rowAt(y)]?.each;
+    if (timelines.length > 0) dropNotes(timelines, row, Math.max(memory.snap > 0 ? Math.floor(Math.round(x) / memory.snap) * memory.snap : Math.round(x), 0));
     const owner = row?.tool === "tape" ? row : rows().find((each) => each.tool === "tape");
     if (!owner || files.length === 0) return;
     const start = Math.max(Math.round(x / BEAT) * BEAT, 0);
@@ -144,6 +137,23 @@ export const Timeline = ({ page }: { page: Page }) => {
         tape.children = [...tape.children, { name, tool: "region", state: { asset: file, start } }];
       }
     });
+  };
+
+  /** The parts of a MIDI file at `start`: one onto the instrument track `row`, else each onto a new instrument track named after it. */
+  const dropNotes = (timelines: Dropped["timelines"], row: Child | undefined, start: number) => {
+    let added: string[] = [];
+    update("Import notes", (part) => {
+      const owner = part.children.find((child) => child.name === row?.name);
+      const [only] = timelines;
+      if (owner?.tool === "track" && only && timelines.length === 1) {
+        const name = freeName(owner.children.map((child) => child.name), "clip");
+        owner.children.push({ name, tool: "timeline", state: { ...only, start } });
+        added = [`${owner.name}/${name}`];
+      } else {
+        added = timelines.map((timeline) => `${addInstrumentTrack(part, timeline.title ?? "Notes", [{ name: "clip", state: { ...timeline, start } }])}/clip`);
+      }
+    });
+    choose(new Set(added));
   };
 
   /** A clip of a track on row `row`: its notes, its title, a handle to resize it. */
