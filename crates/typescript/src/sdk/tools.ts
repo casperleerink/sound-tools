@@ -41,17 +41,15 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
   /**
    * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they and
-   * its own ports connect. It runs in Bun when what it read changes, and what it declares plays a
-   * moment later; the sound plays on meanwhile. Its own `sound` hears what it connects to its
-   * own `{ port: "audio" }` as `input`, and is its `audio` output.
+   * its own ports connect. Its own `sound` hears what it connects to its own `{ port: "audio" }`
+   * as `input`, and is its `audio` output.
    */
   behaviour?: (parent: Parent<S, K>) => Declaration<K>;
   /**
    * The children it has, by name, and the tool of each: `{ bass: "timeline", lead: drone }`,
    * where `drone` is what `tool` returned for a tool of this project. TypeScript then checks
-   * every connection, `send` and edit of them against their tools, and a child of another tool,
-   * a missing one or one it does not name is a problem. Leave it out for children whose names a
-   * record decides.
+   * every connection, `send` and edit of them, and a child of another tool, a missing one or one
+   * it does not name is a problem. Leave it out for children whose names a record decides.
    */
   children?: K & LiteralTools<K>;
   /**
@@ -109,7 +107,7 @@ export type Take = { recorder: string; name: string } & (
   | { tool: "region"; state: StateOfTool<"region"> }
 );
 
-/** A record and the records of its children: what a behaviour gets, and what `update` changes. */
+/** A record and the records of its children, as `update` changes them. */
 export interface Part<State, K extends ChildTools = ChildTools> {
   state: State;
   /** The records next to its own, in name order, each with its own children. */
@@ -196,7 +194,6 @@ type LiteralTools<K extends ChildTools> = {
 /** A name as a child has it: any that starts as a pattern such as `"ret-*"` does. */
 type ChildNamed<Name extends string> = Name extends `${infer Prefix}*` ? `${Prefix}${string}` : Name;
 
-/** The names of its children. */
 type ChildName<K extends ChildTools> = ChildNamed<keyof K & string>;
 
 /** A child of a parent: its record. */
@@ -207,7 +204,6 @@ export type OwnedChild<K extends ChildTools = ChildTools, Edit extends boolean =
      * record, which never changes: keep a title in a field.
      */
     readonly name: ChildNamed<Name>;
-    /** Its `tool`, such as `"instrument.synth"`. */
     tool: ToolOf<K[Name]>;
     /** Its `state`, with every field that has a default at it, as `state` of the parent. */
     state: FilledStateOfTool<K[Name]>;
@@ -276,7 +272,6 @@ type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } 
 
 /** What a sound gives out: a `Signal`, or a `Stereo` pair. */
 type Sound = Operand | Stereo;
-/** `T` for each of `Names`. */
 type Each<Names extends PropertyKey, T> = { [Name in Names]: T };
 
 /** The sound ports a child of tool `T` has, its inputs or with `Out` its outputs: any where its entry says none. */
@@ -427,7 +422,7 @@ export interface Performer<I extends Inputs, K extends ChildTools = ChildTools> 
    * Plays an input: `send("rate", 2)` moves the number input `rate`, `send("hit")` sends the bang
    * `hit`, `send("notes", { type: "noteOn", pitch: 60, velocity: 0.8 })` plays the tool's voices,
    * and `{ child, number }`, `{ child, bang }` or `{ child, notes }` plays a child's, or one
-   * deeper by its path, `"voice/rec"`. At most 256 wait for their `at`: past that a `noteOn` is
+   * deeper by its path, `"voice/rec"`. When too many wait for their `at`, a `noteOn` or a bang is
    * dropped, and anything else plays at once.
    */
   send<P extends SendTo<I, K>>(input: P, ...value: SendArgs<P, I>): void;

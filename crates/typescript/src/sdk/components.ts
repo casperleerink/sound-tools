@@ -114,12 +114,10 @@ export type KnobProps = ValueProps<number> & {
 };
 
 /**
- * A knob on a number, as the app's knobs look: a field of the record such as `rate`, whose drag
- * is smooth and one undo step, a number input, which nothing saves, or what code keeps, see
- * `ValueProps`. With `played`, it shows the field as it plays, so it moves with a lane. A
- * double click puts it at `default`. A `bipolar` one, such as a pan, draws its arc from the top;
- * `unit: "pan"` reads `C`, `25L`, `100R`. It shows `label`, unless `bare`, and the value under it; `size: "sm"`
- * is a 28-point dial alone.
+ * A knob, as the app's knobs look, on a field, a number input or what code keeps, see
+ * `ValueProps`. With `played` it moves with a lane. A double click puts it at `default`.
+ * `bipolar` draws its arc from the top, as a pan's; `unit: "pan"` reads `C`, `25L`, `100R`.
+ * `size: "sm"` is a 28-point dial without text.
  */
 export function Knob(props: KnobProps): UiNode {
   const { label, min, max, unit, bipolar } = props;
@@ -234,12 +232,10 @@ function levelBars(peaks: Peaks, length: number, box: Box, side: number, thickne
 }
 
 /**
- * A fader on a number, as the app's volumes look: a handle a drag moves along `length` points,
- * up or, `horizontal`, to the right, over two bars of `meter` when given, green up to -6 dB and
- * yellow above with a peak line that holds, on the fader's scale. What it moves is as a `Knob`'s; it
- * takes the number's range and scale unless `min` and `max` say, so a `gain_db` of a `fader`
- * moves on the fader's scale, as does what code keeps without them. A double click puts it at
- * `default`.
+ * A fader, as the app's volumes look: a handle a drag moves along `length` points, up or
+ * `horizontal`, over the level bars of `meter` when given. What it moves is as a `Knob`'s. A field
+ * keeps its own range and scale unless `min` and `max` say; what code keeps, without them, moves
+ * on the fader's scale in dB. A double click puts it at `default`.
  */
 export function Fader(props: FaderProps): UiNode {
   const { length, horizontal, meter, min, max, unit } = props;
@@ -650,11 +646,7 @@ export function words(name: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-/**
- * The view of a tool that has none: a knob per number and per number input, a row of steps per
- * list of numbers, a chooser per file, options side by side per choice, a switch per boolean and
- * a button per bang.
- */
+/** The view of a tool that has none. */
 export function defaultView(fields: Fields, inputs: Inputs = {}) {
   return ({ state, update, send, openFile }: Context<Record<string, unknown>>): UiNode => {
     const knobs: Child[] = [];

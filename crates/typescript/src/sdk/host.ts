@@ -56,7 +56,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
  */
 const releases = new Map<string, { release: (press: Press) => void; scope: Owner }>();
 
-/** The pointer, the end of a drag, a drop, a field's text, a card's icon or a control's new value, on the node `id`. */
+/** An event of the window on the node `id`. */
 function nodeEvent(id: number, kind: "press" | "release" | "click" | "hover" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change" | "key", payload: never) {
   if (kind === "release") {
     const pressed = `${id} ${(payload as Press).button}`;

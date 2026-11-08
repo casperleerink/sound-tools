@@ -1,8 +1,7 @@
-// The SDK of the project's own tools. Sound Tools writes this file and the folder `sdk/` when
-// the project opens, so an edit there is lost. Read `agent-docs/extensions.md` first.
+// The SDK of the project's own tools. Sound Tools writes this file and `sdk/` when the project
+// opens, so an edit there is lost. Read `agent-docs/extensions.md` first.
 //
-// A tool is a `.ts` or `.tsx` file next to this one that calls `tool` and imports from `./sdk`.
-// Below is every name it may import, by the module of `sdk/` that declares it with its doc.
+// Below is every name a tool may import, by the module of `sdk/` that declares it with its doc.
 
 // the fields of a record and the inputs of a tool
 export {

@@ -1,7 +1,6 @@
 // The sound graph: a sound is a `Signal`, built from the functions below. The SDK sends the graph
 // to the runtime, which plays it sample by sample.
 
-/** A signal, or a plain number. */
 export type Operand = Signal | number;
 
 /** What a sound reads from outside: what comes in, the transport, the note of the voice. */
@@ -130,7 +129,6 @@ export class Table {
   at(index: Operand): Signal {
     return new Signal({ op: "at", table: readable(this.ref), index });
   }
-  /** How many values it holds. */
   get length(): Signal {
     return new Signal({ op: "length", table: readable(this.ref) });
   }
@@ -145,11 +143,9 @@ export class Sample extends Table {
   constructor(private readonly name: string) {
     super({ list: name });
   }
-  /** Its left channel only. */
   get left(): Table {
     return new Table({ left: this.name });
   }
-  /** Its right channel only. */
   get right(): Table {
     return new Table({ right: this.name });
   }
@@ -237,7 +233,7 @@ export interface Stereo {
   left: Operand;
   right: Operand;
 }
-/** 0 on the left channel, 1 on the right. */
+/** 0 on the left channel, 1 on the right; 0 in a sound that returns `{ left, right }`. */
 export const channel: Signal = new Named({ op: "channel" });
 export const sampleRate: Signal = new Named({ op: "sampleRate" });
 /** Quarter notes since the start of the piece, while it plays; it stands still while stopped. */
@@ -593,7 +589,6 @@ function layout(own: number, capture?: (outer: Signal) => GraphNode) {
   return { nodes, prepare, use };
 }
 
-/** What `feedback` is set to. */
 function set(feedback: Feedback): Operand {
   if (feedback.value === undefined) {
     throw new Error("a feedback is never set: call .set(value) on it");
