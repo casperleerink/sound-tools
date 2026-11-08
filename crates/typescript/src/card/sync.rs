@@ -48,9 +48,8 @@ pub(super) struct Embedded {
     pub(super) placing: Option<Placing>,
 }
 
-/// The picker of what keys an embedded card, as the arrangement's racks had it: a select over
-/// a select, two cells wide, each with its label under it. A pick tells the code of `card` which
-/// select and which of its options.
+/// The picker of what keys an embedded card: a select over a select, two cells wide, each with
+/// its label under it. A pick tells the code of `card` which select and which of its options.
 fn sidechain_column(
     selects: &[CardSelect],
     card: &WeakEntity<TypeScriptCard>,
@@ -371,7 +370,7 @@ impl TypeScriptCard {
             .to_string();
         let on = props.on.unwrap_or(true);
         let selects = props.sidechain.clone().unwrap_or_default();
-        // Only a device that a sidechain keys has the picker, as the arrangement's racks had it.
+        // Only a device that a sidechain keys has the picker.
         let keyed = (self.session.read(cx).project())
             .input_port(&instance, SIDECHAIN_INPUT)
             .is_some();

@@ -261,7 +261,7 @@ impl Held {
                 false => live::snap(moved, step),
             }
         };
-        // Cmd held is off the grid in time, as the arrangement's drags were.
+        // Cmd held is off the grid in time.
         let free = self.modifiers.platform;
         DragNumbers {
             start_x: self.start_units.0,
@@ -428,7 +428,6 @@ impl TypeScriptCard {
         }
     }
 
-    /// Moves a live control.
     fn control(&mut self, name: &str, value: f32, cx: &mut Context<Self>) {
         let id = self.id.clone();
         let controlled = (self.live).update(cx, |live, cx| {

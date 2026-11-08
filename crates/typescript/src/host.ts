@@ -49,7 +49,7 @@ type Request =
   | { type: "watches"; instance: string; watches: Watches }
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
-  /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
+  /** What happened on a node, such as a press or the end of a drag, with what its handler hears. */
   | { type: "event"; card: number; node: number; kind: Parameters<typeof sdk.host.nodeEvent>[1]; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
@@ -330,7 +330,6 @@ function noting<T extends object>(source: T, into: { fields: Set<string> | null 
   });
 }
 
-/** The children as a behaviour reads them: every child's state notes the fields it reads. */
 /** `children` as a behaviour reads them, at any depth: the fields of the state it reads are what the runtime compares of each. */
 function notingChildren(children: OwnedChild[], into: { fields: Set<string> | null }): OwnedChild[] {
   return children.map((child) => {

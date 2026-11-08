@@ -22,8 +22,6 @@ pub(crate) fn played_name(child_number: &str) -> String {
     format!("played:{child_number}")
 }
 
-/// What live values last read, for tests: `peak:<name>`, the louder channel, `played:<name>`,
-/// and `input:<channel>`.
 #[cfg(feature = "test-support")]
 static SHOWN: std::sync::Mutex<std::collections::BTreeMap<String, f32>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
