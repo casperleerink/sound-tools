@@ -958,6 +958,29 @@ impl Live {
         }
     }
 
+    /// Opens the window of its own of the child `path` of `instance`. A path or a device with no
+    /// window is a mistake of the code; a window that does not open is the device's.
+    fn open_window(&mut self, instance: &InstanceId, path: &str, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let child = path
+            .split('/')
+            .try_fold(instance.clone(), |id, name| id.child(name));
+        let refused = match child {
+            Err(error) => error.to_string(),
+            Ok(child) => match Devices::open_window(&session, &child, cx) {
+                Some(Ok(())) => return,
+                Some(Err(error)) => {
+                    return session.update(cx, |session, cx| session.report(error, cx));
+                }
+                None => "it has no window of its own".to_string(),
+            },
+        };
+        let problem = format!("its openWindow({path:?}) was refused: {refused}");
+        self.tool_problem(instance, problem, cx);
+    }
+
     /// How many presses and drags of the card its code answered.
     pub(crate) fn events_answered(&self, card: u64) -> u64 {
         self.cards
@@ -1716,6 +1739,7 @@ impl Live {
                     answer: Answer::Numbers(numbers),
                 });
             }
+            Event::OpenWindow { instance, path } => self.open_window(&instance, &path, cx),
             Event::Transport { op } => self.transport(op, cx),
             Event::Select {
                 instance,

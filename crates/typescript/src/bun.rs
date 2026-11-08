@@ -507,6 +507,8 @@ pub(crate) enum Event {
         key: String,
         label: String,
     },
+    /// The code of `instance` opens the window of its own of its child at `path`.
+    OpenWindow { instance: InstanceId, path: String },
     /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
     Select {
         instance: InstanceId,

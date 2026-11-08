@@ -8,7 +8,7 @@ Read `agent-docs/extensions.md` first. Elements and their props are in `extensio
 - A div's `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`.
 - `onRelease` hears the button go up wherever the pointer went: a note off. A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.
 
-All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`): `state` and `children` with their defaults filled in, `outputs`, `time`, `clock`, `memory`, `now`, `update`, `send` and `play`, and what reaches the window: `openFile`, `render` (a child's sound into a file), `openMenu`, `confirm`, `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
+All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`): `state` and `children` with their defaults filled in, `outputs`, `time`, `clock`, `memory`, `now`, `update`, `send` and `play`, and what reaches the window: `openFile`, `render` (a child's sound into a file), `openMenu`, `confirm`, `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move), `openWindow` (a child's own window, such as a plugin's).
 
 ## Values that change
 
