@@ -22,8 +22,7 @@ const QUARTER: u64 = 960;
 
 /// Controllers whose meaning is in the order of their messages: bank select, and the parameter
 /// numbers with their data. A lane sends one value a block, so they are not imported.
-const IN_ORDER: [u8; 8] = [0, 32, 6, 38, 96, 97, 98, 99];
-const PARAMETER_NUMBERS: [u8; 2] = [100, 101];
+const IN_ORDER: [u8; 10] = [0, 32, 6, 38, 96, 97, 98, 99, 100, 101];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MidiFileError {
@@ -141,7 +140,7 @@ impl Part {
                         .push((tick, Pedal::nearest(i64::from(value.as_int()))));
                 }
                 Controller::MOD_WHEEL => self.mod_wheel.push((tick, amount(value))),
-                number if IN_ORDER.contains(&number) || PARAMETER_NUMBERS.contains(&number) => {}
+                number if IN_ORDER.contains(&number) => {}
                 number => {
                     if let Ok(controller) = Controller::new(number) {
                         let lane = self.controllers.entry(controller).or_default();
@@ -198,11 +197,11 @@ impl Part {
         self.pedal
             .retain(|(tick, value)| *tick < end || value.is_down());
         let pedal = pedal_moves(&self.pedal);
-        let bend = lane(&self.bend, true);
-        let mod_wheel = lane(&self.mod_wheel, true);
-        let pressure = lane(&self.pressure, true);
+        let bend = lane(&self.bend, Some(end));
+        let mod_wheel = lane(&self.mod_wheel, Some(end));
+        let pressure = lane(&self.pressure, Some(end));
         let controllers: BTreeMap<_, _> = (self.controllers.iter())
-            .map(|(controller, steps)| (*controller, lane(steps, false)))
+            .map(|(controller, steps)| (*controller, lane(steps, None)))
             .collect();
         let last_tick = [
             self.notes.iter().map(Note::end).max(),
@@ -240,12 +239,19 @@ fn pedal_moves(steps: &[(Ticks, Pedal)]) -> Vec<PedalChange> {
 }
 
 /// The points of a lane from the steps a file sends, the last of each tick: each step holds
-/// its value until the tick before the next one, then thinned to the lines it follows. With
-/// `rests_before`, a lane that starts later starts at rest at tick 0, as a lane that holds its
-/// first value from the start of its clip must.
-fn lane<V: ExpressionValue>(steps: &[(Ticks, V)], rests_before: bool) -> Vec<Point<V>> {
+/// its value until the tick before the next one, then thinned to the lines it follows.
+///
+/// An expression lane, which holds its first value from the start of its clip and rests after
+/// its `end`, starts at rest at tick 0 when it moves later, and a rest from its end on adds
+/// nothing.
+fn lane<V: ExpressionValue>(steps: &[(Ticks, V)], end: Option<Ticks>) -> Vec<Point<V>> {
     let mut values: Vec<Point<V>> = Vec::new();
-    for &(tick, value) in steps {
+    let resting_after =
+        |tick: Ticks, value: V| end.is_some_and(|end| tick >= end && value == V::REST);
+    for &(tick, value) in steps
+        .iter()
+        .filter(|(tick, value)| !resting_after(*tick, *value))
+    {
         if values.last().is_some_and(|last| last.tick == tick) {
             values.pop();
         }
@@ -253,7 +259,7 @@ fn lane<V: ExpressionValue>(steps: &[(Ticks, V)], rests_before: bool) -> Vec<Poi
             values.push(Point { tick, value });
         }
     }
-    if rests_before
+    if end.is_some()
         && let Some(first) = values.first()
         && first.tick > Ticks(0)
         && first.value != V::REST
@@ -404,16 +410,17 @@ pub fn write(clip: &Clip, title: &str, bpm: f64, (beats, beat): (u8, u8)) -> Vec
 }
 
 /// A lane as steps for a file: its value at each tick where it moved by a step, and at its
-/// points. With `held_before` it holds its first value from tick 0, as bend does.
+/// points. An `expression` lane holds its first value from tick 0 and rests at `length`, as bend
+/// plays.
 fn steps<V: ExpressionValue>(
     points: &[Point<V>],
     length: Ticks,
-    held_before: bool,
+    expression: bool,
 ) -> Vec<(Ticks, V)> {
     let Some(first) = points.first() else {
         return Vec::new();
     };
-    let from = if held_before { Ticks(0) } else { first.tick };
+    let from = if expression { Ticks(0) } else { first.tick };
     let last = points
         .last()
         .map_or(from, |point| point.tick)
@@ -434,6 +441,9 @@ fn steps<V: ExpressionValue>(
         if changed && (moved || on_point) {
             sent.push((tick, value));
         }
+    }
+    if expression && sent.last().is_some_and(|(_, last)| *last != V::REST) {
+        sent.push((length, V::REST));
     }
     sent
 }

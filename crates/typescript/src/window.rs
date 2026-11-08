@@ -2093,7 +2093,6 @@ impl Live {
         let signature = tempo_map.time_signatures().bar_at(clip.start).signature;
         let beats = |number: u32| u8::try_from(number).unwrap_or(u8::MAX);
         let signature = (beats(signature.numerator()), beats(signature.denominator()));
-        let bytes = sound_notes::midi_file::write(&clip, &title, bpm, signature);
         // Next to the project folder and not in it, as an exported sound.
         let folder = project.root().to_path_buf();
         let directory = folder.parent().unwrap_or(&folder).to_path_buf();
@@ -2101,7 +2100,10 @@ impl Live {
         cx.spawn(async move |live, cx| {
             let written = match picked.await {
                 Ok(Ok(Some(file))) => cx
-                    .background_spawn(async move { std::fs::write(&file, bytes) })
+                    .background_spawn(async move {
+                        let bytes = sound_notes::midi_file::write(&clip, &title, bpm, signature);
+                        std::fs::write(&file, bytes)
+                    })
                     .await
                     .map(|()| true)
                     .map_err(|error| format!("The notes were not exported: {error}")),

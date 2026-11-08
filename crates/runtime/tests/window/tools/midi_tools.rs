@@ -83,7 +83,7 @@ fn quantize_takes_its_strength_and_swing_and_legato_closes_the_gaps(cx: &mut Tes
         lengths == [160, 480, 100]
     });
     window.after_the_runs();
-    assert_eq!(window.undo_label().as_deref(), Some("Legato"));
+    assert_eq!(window.undo_label().as_deref(), Some("Make notes legato"));
     assert_eq!(window.problems(), []);
 }
 

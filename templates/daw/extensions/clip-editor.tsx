@@ -27,6 +27,7 @@ export const snapsOf = (bar: number) => [
 ];
 const LANES = ["velocity", "pedal", "bend", "mod_wheel", "pressure"] as const;
 const LANE_NAMES: Record<(typeof LANES)[number], string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod wheel", pressure: "Pressure" };
+const LANE_OPTIONS = LANES.map((lane) => ({ value: lane as Lane, label: LANE_NAMES[lane] }));
 /** The MIDI controllers a lane may move: every one but the mod wheel (1) and the pedal (64), which have lanes of their own. */
 const CONTROLLERS = Array.from({ length: 120 }, (_, number) => number).filter((number) => number !== 1 && number !== 64);
 /** What MIDI calls the controllers that have a name. */
@@ -136,7 +137,7 @@ function changer(memory: Memory<EditorMemory>, edit: EditorProps["edit"]) {
 
 /** What the note menu and Q do: to the chosen notes, or to all of them while none is. */
 export type Operation = "quantize" | "humanize" | "legato";
-const OPERATION_LABELS: Record<Operation, string> = { quantize: "Quantize notes", humanize: "Humanize notes", legato: "Legato" };
+const OPERATION_LABELS: Record<Operation, string> = { quantize: "Quantize notes", humanize: "Humanize notes", legato: "Make notes legato" };
 
 /**
  * Quantizes the notes the editor works on to its snap (1/16 while it is off) at its strength and
@@ -436,11 +437,9 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
 
   // The lanes, then the clip's own controllers, then every other one where the track hears them.
   const laneOptions = () => {
-    const own = Object.keys(clip()?.controllers ?? {}).map(Number);
-    const shown = typeof memory.lane === "number" ? [memory.lane] : [];
-    const listed = hearsControllers() ? CONTROLLERS : [...new Set([...own, ...shown])].sort((a, b) => a - b);
-    const first = listed.filter((number) => own.includes(number));
-    return [...LANES.map((lane) => ({ value: lane as Lane, label: LANE_NAMES[lane] })), ...[...first, ...listed.filter((number) => !own.includes(number))].map(controllerOption)];
+    const own = Object.keys(clip()?.controllers ?? {}).map(Number).sort((a, b) => a - b);
+    const others = hearsControllers() ? CONTROLLERS : typeof memory.lane === "number" ? [memory.lane] : [];
+    return [...LANE_OPTIONS, ...[...own, ...others.filter((number) => !own.includes(number))].map(controllerOption)];
   };
   const pitches = Array.from({ length: 128 }, (_, row) => 127 - row);
   const lines = () => bars().filter((tick) => tick >= -BEAT && tick <= end());

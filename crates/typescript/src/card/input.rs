@@ -365,7 +365,7 @@ impl TypeScriptCard {
                     }
                 }
                 if !files.is_empty() || !timelines.is_empty() {
-                    let dropped = json!({ "files": files, "timelines": timelines, "carried": null, "x": x, "y": y });
+                    let dropped = dropped(&files, &timelines, None, (x, y));
                     view.event(node, EventKind::Drop, dropped, cx);
                 }
             })
@@ -995,4 +995,14 @@ fn timelines_in(path: &std::path::Path) -> Option<Result<Vec<Value>, String>> {
             .map(|(title, clip)| crate::timeline_state(clip, title))
             .collect()
     }))
+}
+
+/// What the code of a node that hears drops is told: see `Dropped` in `sdk/live.ts`.
+pub(super) fn dropped(
+    files: &[String],
+    timelines: &[Value],
+    carried: Option<&str>,
+    (x, y): (f64, f64),
+) -> Value {
+    json!({ "files": files, "timelines": timelines, "carried": carried, "x": x, "y": y })
 }

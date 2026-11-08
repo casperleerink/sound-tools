@@ -1,6 +1,7 @@
 //! The notes, the pedal and the lanes of clips at their place on the timeline, as a
 //! [`NotePlayer`](crate::NotePlayer) plays them.
 
+use std::collections::BTreeSet;
 use std::iter::once;
 use std::ops::Range;
 
@@ -39,16 +40,13 @@ impl NoteTimeline {
         let bend = PlayedLane::new(&clips, |clip| &clip.bend, true);
         let mod_wheel = PlayedLane::new(&clips, |clip| &clip.mod_wheel, true);
         let pressure = PlayedLane::new(&clips, |clip| &clip.pressure, true);
-        let mut numbers: Vec<Controller> = (clips.iter())
+        let numbers: BTreeSet<Controller> = (clips.iter())
             .flat_map(|clip| clip.controllers.keys().copied())
             .collect();
-        numbers.sort_unstable();
-        numbers.dedup();
         let controllers = (numbers.into_iter())
             .map(|controller| {
-                let points = |clip: &'a Clip| match clip.controllers.get(&controller) {
-                    Some(points) => points.as_slice(),
-                    None => &[],
+                let points = |clip: &'a Clip| {
+                    (clip.controllers.get(&controller)).map_or(&[][..], Vec::as_slice)
                 };
                 (controller, PlayedLane::new(&clips, points, false))
             })

@@ -302,13 +302,33 @@ fn a_clip_is_written_as_it_sounds() {
         start: Ticks(0),
         value: Pedal::new(127).unwrap(),
     }];
-    let parts = read(&write(&clip, "", 120.0, (4, 4)), "cut").unwrap();
+    clip.bend = vec![point(0, Bend::new(8191).unwrap())];
+    let bytes = write(&clip, "", 120.0, (4, 4));
+    // The bend rests where the clip ends, as it plays, for whatever plays the file.
+    let smf = midly::Smf::parse(&bytes).unwrap();
+    let mut at = 0;
+    let bends: Vec<(u32, i16)> = (smf.tracks[0].iter())
+        .filter_map(|event| {
+            at += event.delta.as_int();
+            match event.kind {
+                midly::TrackEventKind::Midi {
+                    message: midly::MidiMessage::PitchBend { bend },
+                    ..
+                } => Some((at, bend.as_int())),
+                _ => None,
+            }
+        })
+        .collect();
+    assert_eq!(bends, [(0, 8191), (960, 0)]);
+    let parts = read(&bytes, "cut").unwrap();
     let [(title, back)] = &parts[..] else {
         panic!("one part");
     };
     assert_eq!(title, "cut");
     assert_eq!(back.start, Ticks(0));
     assert_eq!(back.notes, [note(480, 480, 60, 100)]);
+    // And reads back without the rest, which the clip's end plays.
+    assert_eq!(back.bend, clip.bend);
     assert_eq!(
         back.pedal,
         [

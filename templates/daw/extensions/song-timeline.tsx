@@ -2,7 +2,7 @@ import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, 
 import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
 import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
-import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, nameFrom, regionsOf, ROW, type Child, type Page } from "./song-page";
+import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
 import { Shades } from "./song-ruler";
 import { addInstrumentTrack, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
@@ -96,7 +96,10 @@ export const Timeline = ({ page }: { page: Page }) => {
     const row = key.split("/")[0]!;
     if (item?.command) itemCommand(item.command, state.order, page);
     else if (item?.tail !== undefined) renderToTrack(page, row, [...memory.selected].filter((each) => each.startsWith(`${row}/`)), item.tail);
-    else if (item?.exports) void exportNotes(key, { name: nameFrom(clipAt(key)?.state.title || key.replace("/", " ")) });
+    else if (item?.exports) {
+      const track = rows().find((each) => each.name === row);
+      void exportNotes(key, { name: clipAt(key)?.state.title || (track ? titleOf(track) : row) });
+    }
     else if (item) memory.renamingClip = key;
   };
   /** A press on a clip or a region: a double click opens a clip's notes, and a region chosen alone shows its card in its track's panel. */
@@ -115,6 +118,8 @@ export const Timeline = ({ page }: { page: Page }) => {
     }
     if (region && memory.selected.size === 1 && memory.selected.has(key)) memory.below = { kind: "track", name: key.split("/")[0]! };
   };
+  /** The start of the cell of the snap's grid at `x`, or the tick there while it is off. */
+  const cellAt = (x: number) => Math.max(memory.snap > 0 ? Math.floor(Math.round(x) / memory.snap) * memory.snap : Math.round(x), 0);
   const pressTimeline = ({ clicks, x, y }: Press) => {
     const row = layout()[rowAt(y)];
     if (clicks !== 2 || row?.add || row?.each.tool !== "track") {
@@ -122,7 +127,7 @@ export const Timeline = ({ page }: { page: Page }) => {
       return;
     }
     // A bar long, in the cell of the grid under the pointer.
-    const start = Math.max(memory.snap > 0 ? Math.floor(Math.round(x) / memory.snap) * memory.snap : Math.round(x), 0);
+    const start = cellAt(x);
     const bar = barOf(start);
     const length = (starts()[bar] ?? 0) - (starts()[bar - 1] ?? 0) || 4 * BEAT;
     let added: string | undefined;
@@ -137,7 +142,7 @@ export const Timeline = ({ page }: { page: Page }) => {
   };
   const dropOnTimeline = ({ files, timelines, x, y }: Dropped) => {
     const row = layout()[rowAt(y)]?.each;
-    if (timelines.length > 0) dropNotes(timelines, row, Math.max(memory.snap > 0 ? Math.floor(Math.round(x) / memory.snap) * memory.snap : Math.round(x), 0));
+    if (timelines.length > 0) dropNotes(timelines, row, cellAt(x));
     const owner = row?.tool === "tape" ? row : rows().find((each) => each.tool === "tape");
     if (!owner || files.length === 0) return;
     const start = Math.max(Math.round(x / BEAT) * BEAT, 0);

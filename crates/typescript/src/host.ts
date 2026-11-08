@@ -961,7 +961,7 @@ function askers(instance: string) {
     render: (path: string, { from, to, tail = true, name = path }: { from: number; to: number; tail?: boolean; name?: string }) =>
       ask<string | null>({ type: "render", instance, path, span: [wholeTick(from, "render from"), wholeTick(to, "render to")], tail, name }),
     confirm: ({ message, detail, confirm }: { message: string; detail?: string; confirm: string }) => ask<boolean>({ type: "confirm", message, detail, confirm }),
-    exportNotes: (path: string, { name = path }: { name?: string } = {}) => ask<boolean>({ type: "export_notes", instance, path, name }),
+    exportNotes: (path: string, { name }: { name: string }) => ask<boolean>({ type: "export_notes", instance, path, name }),
   };
 }
 
