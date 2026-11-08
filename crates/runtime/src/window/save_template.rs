@@ -80,7 +80,14 @@ impl SaveTemplate {
             return;
         }
         let session = self.session.clone();
-        let project = session.read(cx).project().root().to_path_buf();
+        let project = session.read(cx).project();
+        // Before asking to replace, so a refusal comes first; the save works them out again.
+        if !everything && let Err(error) = Keep::tools_of(project) {
+            self.message = Some(format!("{error:#}").into());
+            cx.notify();
+            return;
+        }
+        let project = project.root().to_path_buf();
         self.saving = true;
         self.message = None;
         cx.notify();
