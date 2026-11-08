@@ -14,6 +14,7 @@ mod history;
 pub mod live_input;
 pub mod new_project;
 pub mod other_apps;
+mod problems;
 mod project_menu;
 pub mod recorders;
 mod save_template;
@@ -84,7 +85,7 @@ actions!(
 /// nothing.
 const TITLE_ROW_INSET: f32 = if cfg!(target_os = "macos") { 80. } else { 8. };
 const TOP_ROW_HEIGHT: f32 = 48.;
-/// The notices sit this far in from the right of the window and below the title row.
+/// The notices sit this far in from the bottom right of the window.
 const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
@@ -271,6 +272,8 @@ pub struct Shell {
     template_update: Option<crate::templates::Update>,
     /// For an empty project to start from, next to the app's.
     saved_templates: Vec<Saved>,
+    /// Whether the list of files that are not live is open.
+    problems_open: bool,
 }
 
 impl Shell {
@@ -372,6 +375,7 @@ impl Shell {
         let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
         let mut shell = Self {
             project_menu,
+            problems_open: false,
             device_name,
             list_devices,
             live,
@@ -698,7 +702,7 @@ impl Shell {
                 .into_any_element(),
         };
         vec![
-            // The title row: the project menu, then what the main view puts there, such as a
+            // The title row: the project menu and the sign of files that are not live, then what the main view puts there, such as a
             // song's transport, in the middle of the room right of it. The air on both sides of
             // the pill moves the window. In a narrow window the air goes first, so the pill
             // never covers the menu.
@@ -710,6 +714,7 @@ impl Shell {
                 .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
                 .child(self.left_panel_icon(cx))
                 .child(div().flex_none().child(self.project_menu.clone()))
+                .children(self.problems_sign(cx))
                 .child(Self::drag_region().flex_1())
                 .children(self.title_bar.clone())
                 .child(Self::drag_region().flex_1())
@@ -794,8 +799,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// What is wrong, in one line each: the last error, and files that are not live. And a
-    /// render while it runs.
+    /// The last error, a render while it runs, a newer release and a newer template, in one
+    /// line each.
     fn notices(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let update = cx.try_global::<update::Ready>().map(update_notice);
         let session = self.session.read(cx);
@@ -805,37 +810,15 @@ impl Shell {
                 .progress(progress)
                 .max_w_full()
         });
-        let problems = session.project().problems().len();
-        let agent = (self.left_panel.as_ref()).is_some_and(|panel| panel.ask.is_some());
-        let files = match (problems, agent) {
-            (0, _) => None,
-            (1, true) => Some("1 file is not live.".to_string()),
-            (count, true) => Some(format!("{count} files are not live.")),
-            (1, false) => Some("1 file is not live. Ask the agent to fix it.".to_string()),
-            (count, false) => Some(format!(
-                "{count} files are not live. Ask the agent to fix them."
-            )),
-        };
-        let fix = agent.then(|| {
-            let label = if problems == 1 {
-                "Ask the agent to fix it"
-            } else {
-                "Ask the agent to fix them"
-            };
-            Button::new("problems-ask", label)
-                .debug_selector(|| "problems-ask".to_string())
-                .on_click(cx.listener(|shell, _, window, cx| shell.ask_to_fix(window, cx)))
-        });
         let error = session.notice().cloned();
-        // Top-right, under the title row: clear of the transport, and of the left panel and the
-        // left edge of the main view, where a song has its track headers. Not in the
-        // title row: there are the window buttons on Windows. A definite width, so that a
-        // message wraps at the width it gets and the box is as tall as its lines: with only a
-        // largest width the text was measured on one line and then painted on three. A notice is as wide as
-        // its text up to this width.
+        // Bottom right: clear of the title row, where the window buttons are on Windows, and of
+        // the left panel and the left edge of the main view, where a song has its track headers.
+        // A definite width, so that a message wraps at the width it gets and the box is as tall
+        // as its lines: with only a largest width the text was measured on one line and then
+        // painted on three. A notice is as wide as its text up to this width.
         div()
             .absolute()
-            .top(px(TOP_ROW_HEIGHT + NOTICE_INSET))
+            .bottom(px(NOTICE_INSET))
             .right(px(NOTICE_INSET))
             .w(px(NOTICE_WIDTH))
             .flex()
@@ -845,15 +828,6 @@ impl Shell {
             .children(rendering)
             .children(update)
             .children(self.template_notice(cx))
-            .children(files.map(|files| {
-                let notice = Notice::new("problems", files)
-                    .tone(NoticeTone::Warning)
-                    .max_w_full();
-                match fix {
-                    Some(fix) => notice.action(fix),
-                    None => notice,
-                }
-            }))
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()

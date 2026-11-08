@@ -5,8 +5,8 @@
 //!
 //! - `default.png`: a new, empty project, with the ways to start one.
 //! - `new-project.png`: the templates a new project starts from.
-//! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
-//!   top-right.
+//! - `notices.png`: an error from an edit and an update that is ready, bottom right, and the
+//!   sign of a file that is not live beside the project menu.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `settings-audio.png`: the Audio section of Settings, with simulated devices.
 //! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
@@ -321,8 +321,8 @@ fn templates(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     Ok(())
 }
 
-/// The notices, top-right: an edit that failed, a file that is not live, here the record of a
-/// plugin this machine does not have, and an update that is ready.
+/// The notices, bottom right: an edit that failed and an update that is ready. And the sign of a
+/// file that is not live, here the record of a plugin this machine does not have.
 fn notices(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     let missing = r#"{"tool": "plugin", "state": {"format": "clap", "plugin_id": "com.example.nowhere", "state_asset": "bass"}}"#;
     let files = rack::rack_files(&[("instrument", missing)]);

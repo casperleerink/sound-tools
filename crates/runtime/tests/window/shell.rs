@@ -22,9 +22,6 @@ use sound_ui::{Devices, Session, Views};
 use crate::plugin_hosts::open_or_create;
 use crate::support::{self, Opened};
 
-/// The height of the row with the project menu, above the main area.
-const TOP_ROW: f32 = 48.;
-
 fn reverb_id() -> InstanceId {
     InstanceId::new("room").unwrap()
 }
@@ -137,7 +134,7 @@ fn a_focused_text_field_gets_cmd_z_before_the_window(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
+fn a_long_error_fits_bottom_right_in_three_lines_at_most(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let session = opened.session.clone();
     let long = "a problem that goes on and on, ".repeat(20);
@@ -146,9 +143,9 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
         .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
     let notice = opened.bounds("notice-error").unwrap();
     let window = opened.cx.update(|window, _| window.viewport_size());
-    // 24 pt in from the right and under the title row, and 400 pt wide at most.
+    // 24 pt in from the bottom right, and 400 pt wide at most.
     assert_eq!(notice.right(), window.width - px(24.), "{notice:?}");
-    assert_eq!(notice.top(), px(TOP_ROW + 24.));
+    assert_eq!(notice.bottom(), window.height - px(24.), "{notice:?}");
     assert!(notice.size.width <= px(400.), "{notice:?}");
     // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it.
     assert!(

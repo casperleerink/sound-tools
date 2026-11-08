@@ -1134,10 +1134,10 @@ fn the_problems_of_the_last_turn_ask_the_agent_to_fix_them(cx: &mut TestAppConte
     assert!(opened.find("agent-fix").is_none());
 }
 
-/// The window's notice of files that are not live asks the agent to fix them, as the line
+/// The window's list of files that are not live asks the agent to fix them, as the line
 /// under a turn does: the thread shows, over the instructions too, and a draft stays.
 #[gpui::test]
-fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppContext) {
+fn the_list_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_new(cx);
@@ -1155,6 +1155,9 @@ fn the_notice_of_files_not_live_asks_the_agent_to_fix_them(cx: &mut TestAppConte
     opened.cx.run_until_parked();
     write_outside(&mut opened, "state/bass.json", "{");
 
+    assert!(opened.find("problems-ask").is_none());
+    let sign = opened.control("problems");
+    opened.click(sign);
     let ask = opened.control("problems-ask");
     opened.click(ask);
     let Ok(Command::Send(Message { text, .. })) = commands.try_recv() else {
