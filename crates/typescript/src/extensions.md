@@ -65,7 +65,7 @@ Whatever reads a field follows it: a sound that reads a number glides to it at o
 | `file({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound in stereo, up to 3 minutes |
 | `list(item, { max?, default?, label? })` | a list of `item`: a field, or an object of fields such as `{ name: text(), notes: notes() }` | a list of numbers is a table: `.at(index)` |
 
-`pattern({ length, min, max, default })` is a list of `length` numbers, such as the steps of a sequence. `notes()` is a list of `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter). A knob in `unit: "hz"` turns on a log scale; one in `"percent"` still holds 0 to 1. A sound reads at most 32 numbers and booleans.
+`pattern({ length, min, max, default })` is a list of `length` numbers, such as the steps of a sequence. `notes()` is a list of `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter); `quantize`, `humanize` and `legato` edit one as a piano roll does. A knob in `unit: "hz"` turns on a log scale; one in `"percent"` still holds 0 to 1. A sound reads at most 32 numbers and booleans.
 
 ## Inputs
 

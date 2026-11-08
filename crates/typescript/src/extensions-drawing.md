@@ -37,7 +37,7 @@ view: ({ state, memory, update, now }) => {
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. On a `div`, `follow: { y: "timeline" }` scrolls its children with it: the heads of the rows of a timeline.
 - `<>...</>` gives several children where one goes, such as a component that gives two shapes; import `Fragment` with `h`.
 - A drag can also turn a number as it goes, with no code, as a knob does: `{ y: { value: "cutoff" } }`; for a field the whole drag is one undo step.
-- A `Space` hears dropped audio files too, in its units.
+- A `Space` hears dropped audio and MIDI files too, in its units.
 
 ## Levels, sounds and the clock
 

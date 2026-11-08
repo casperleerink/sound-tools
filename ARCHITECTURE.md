@@ -179,7 +179,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **An owner's behaviour runs in Bun and lands as a service.** Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
 - **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for the SDK and the agent docs. Rejected: hand-written types, which drift; generating types for a tool of the project, which needs a second load.
-- **A built-in device is a child, never part of a sound.** One road to a reverb. Rejected: devices called inside a sound, which cut it into stages: a second road that needed its own types, checks and engine ports.
+- **A built-in device is a child, never part of a sound.** One road to a reverb. Rejected: devices called inside a sound, which cut it into stages and needed their own types, checks and engine ports.
 - **Fast things never cross to Bun.** Knobs, choices, live controls, triggers and live values on screen (`now`) work without it; code hears a drag once, at its end. Rejected: `onMove`, every pointer move through Bun.
 - **Few concepts:** a tool (record, memory, tick), children, typed ports and connections, signal, view, update, clock. What can be a child (`fader`, `lane`, `region`) or a component is one; a new concept needs a reason a child cannot give.
 - **No compiled code in a project.** Rejected: Rust a project adds (rebuilding the app, wasm, dylibs), which needs the Xcode tools or MSVC and a build when a project opens. A TS tool runs unchanged on any OS.
@@ -192,6 +192,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **A cable carries sound or events: notes, a number or a bang.** Each end names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new.
 - **Notes in time are a `timeline` child**, launched on the audio thread; its record says where it plays, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which ends what a removed or moved sender held; a new Bun ends only what the old one held. Rejected: a reset in the core, for every instrument to declare; releasing the whole child, which cuts its clips at every save.
+- **A dropped MIDI file becomes timelines, one per part** (a channel of a track), and is not kept: the records hold all it plays. Rejected: a copy in `assets/` that nothing reads; one merged timeline, which plays the drums of a song on its piano.
 - **Regions into one place play through one player of their parent.** Rejected: a player per region, which dips at a join and sums an overlap.
 - **A tool sends and hears the note events a cable carries**, its `notes` to the sample, whatever plays them. Rejected: tapping the MIDI device thread, deaf to clips and cables.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

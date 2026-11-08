@@ -5,7 +5,7 @@ Read `agent-docs/extensions.md` first. Elements and their props are in `extensio
 - A control's `field` names a field as `now.value` does, and turns it with no code. Or `value` and `onChange` are what code keeps, such as `memory`, which hears a drag only at its end: to draw along with a drag, turn a number input and draw from `now.value`. A `Slider` takes only a `field`.
 - `<Input>` is a text field, or with `rows` a text area; keys typed there play nothing. A dialog's OK reads what `onChange` kept: its click leaves the field the keys, so nothing commits.
 - `<DeviceCard path>` shows the card of a child, or a deeper one: a built-in device's own card, a plugin's, or a tool's view.
-- A div's `onDrop` hears a dragged div's `carry`, to reorder rows, and audio files from the system, copied into `assets/audio/`.
+- A div's `onDrop` hears a dragged div's `carry`, to reorder rows, audio files from the system, copied into `assets/audio/`, and MIDI files as `timelines`.
 - A div, `Button`, `Toggle`, `Space` or shape hears `onPress` as a button goes down, `onRelease` as it goes up wherever the pointer went (a note off), and `onClick` after a left press and release on it with no drag, on the innermost node that hears it.
 
 All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`): `state` and `children` with their defaults filled in, `outputs`, `time`, `clock`, `memory`, `now`, `update`, `send` and `play`, and what reaches the window: `openFile`, `render` (a child's sound into a file), `openMenu`, `confirm`, `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).

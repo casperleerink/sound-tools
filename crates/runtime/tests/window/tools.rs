@@ -19,6 +19,7 @@ use crate::support::{Opened, id, open_files, open_folder, peak};
 
 mod edits;
 mod gestures;
+mod midi_tools;
 mod mixer;
 mod nested;
 mod parts;
