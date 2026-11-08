@@ -922,6 +922,7 @@ function doers(instance: string, spec: Spec) {
     update: updater(instance),
     select: selector(instance),
     addOffer: offerAdder(instance),
+    openWindow: (path: string) => say({ type: "open_window", instance, path }),
     now: sdk.now as Context<State>["now"],
     ...askers(instance),
     ...performer(instance),
@@ -1219,7 +1220,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {} };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };

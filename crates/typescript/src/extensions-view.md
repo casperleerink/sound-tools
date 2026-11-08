@@ -1,6 +1,6 @@
 # The view and the control loop of a tool
 
-Read `agent-docs/extensions.md` first. The elements and their props are in `extensions/sdk/drawing.ts` and `extensions/sdk/components.ts`. All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`), which also asks the window things: `openMenu`, `confirm`, `openFile`, `render`.
+Read `agent-docs/extensions.md` first. The elements and their props are in `extensions/sdk/drawing.ts` and `extensions/sdk/components.ts`. All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`), which also asks the window things: `openMenu`, `confirm`, `openFile`, `render`, `openWindow` (a child's own window, such as a plugin's).
 
 - A control's `field` turns a field with no code. `value` and `onChange` are what code keeps instead, such as `memory`, which hears a drag only at its end: to draw along with a drag, turn a number input and draw from `now.value`.
 - A dialog's OK reads what an `<Input>`'s `onChange` kept: a click on a button leaves the field the keys, so nothing commits.
