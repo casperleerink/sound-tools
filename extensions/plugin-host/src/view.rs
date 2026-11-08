@@ -65,6 +65,11 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
             name: installed.map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
         }
     });
+    let for_window = plugins.clone();
+    devices.window::<PluginRecord>(move |id, cx| match for_window.upgrade() {
+        Some(plugins) => Ok(plugins.open_window(id, cx)?),
+        None => Ok(()),
+    });
     devices.numbers::<PluginRecord>(PluginNumbers(plugins));
 }
 

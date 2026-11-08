@@ -203,6 +203,7 @@ type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
 type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
 type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
+type OpenWindow = Rc<dyn Fn(&InstanceId, &mut App) -> anyhow::Result<()>>;
 
 /// What the lanes of a track need to know of the numbers of a device whose numbers are known
 /// only as it runs, such as a plugin, where the name of a number in the record says nothing to
@@ -267,6 +268,7 @@ pub struct Devices {
     /// See [`Self::describe_others`].
     describe_others: Option<DescribeInstance>,
     numbers: BTreeMap<&'static str, Rc<dyn ToolNumbers>>,
+    windows: BTreeMap<&'static str, OpenWindow>,
 }
 
 impl Global for Devices {}
@@ -331,6 +333,15 @@ impl Devices {
     pub fn numbers<S: State>(&mut self, numbers: impl Numbers<S> + 'static) {
         let typed = Typed(numbers, std::marker::PhantomData);
         self.numbers.insert(S::TOOL, Rc::new(typed));
+    }
+
+    /// Registers that an instance of the tool with state `S` has a window of its own, such as a
+    /// plugin's, and how to open it or bring it forward.
+    pub fn window<S: State>(
+        &mut self,
+        open: impl Fn(&InstanceId, &mut App) -> anyhow::Result<()> + 'static,
+    ) {
+        self.windows.insert(S::TOOL, Rc::new(open));
     }
 
     /// Registers a built-in device with state `S`: what a rack calls it, and its offer, which
@@ -424,6 +435,17 @@ impl Devices {
     /// [`Numbers::lane_numbers`]. `None` when it does not, and its behaviour names them.
     pub fn lane_numbers(project: &Project, id: &InstanceId, cx: &App) -> Option<Vec<LaneNumber>> {
         Some(Self::numbers_of(project, id, cx)?.lane_numbers(project, id))
+    }
+
+    /// Opens the window of its own of `id`, or brings it forward. `None` when its tool has none.
+    pub fn open_window(
+        session: &Entity<Session>,
+        id: &InstanceId,
+        cx: &mut App,
+    ) -> Option<anyhow::Result<()>> {
+        let tool = session.read(cx).project().tool_of(id)?;
+        let open = cx.try_global::<Self>()?.windows.get(tool)?.clone();
+        Some(open(id, cx))
     }
 }
 

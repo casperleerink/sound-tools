@@ -502,6 +502,8 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   numbers(path: string): Promise<MovedNumber[]>;
   /** Puts the device of the offer `key` at the child `path`, at its defaults and in place of what is there, as one undo step `label`. */
   addOffer(key: string, path: string, label: string): void;
+  /** Opens the window of its own of the child at `path`, such as a plugin's, or brings it forward. A child with none is a problem in `problems.txt`. */
+  openWindow(path: string): void;
   /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
   memory: Memory<M>;
   /**
