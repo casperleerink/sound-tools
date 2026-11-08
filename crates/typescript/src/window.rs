@@ -56,7 +56,6 @@ const CARD_ROOM: PageSize = PageSize {
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
-    /// The `extensions/` folder of the project.
     folder: PathBuf,
     session: WeakEntity<Session>,
     host: Host,
@@ -91,11 +90,9 @@ pub(crate) struct Live {
     /// Where the code of the running Bun played: an instance's own voices and controls, or the
     /// feed of a child of it. A new Bun knows nothing of them, so each place hears it is gone.
     performed_on: HashSet<(InstanceId, Option<String>)>,
-    /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// Hears the changes in `extensions/`.
     watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
     watch_problem: Option<Problem>,
@@ -107,14 +104,12 @@ pub(crate) struct Live {
     asked: Option<Asked>,
 }
 
-/// The Bun of the window.
 enum Host {
     Running {
         bun: Arc<Bun>,
         /// A step of the control loops is out. One at a time, so a slow loop does not pile
         /// steps up.
         ticking: bool,
-        /// Hears what Bun says, until it ends.
         _hearing: Task<()>,
     },
     /// A new Bun starts and loads on a thread of its own. `again`: `extensions/` changed
@@ -504,7 +499,6 @@ impl Live {
         idle(&self.host)
     }
 
-    /// `bun` as the Bun of the window, heard until it ends.
     fn running(bun: Arc<Bun>, cx: &mut Context<Self>) -> Host {
         let events = bun.events();
         let hearing = cx.spawn(async move |live, cx| {
@@ -522,7 +516,6 @@ impl Live {
     }
 }
 
-/// The tool named `name`, as it last loaded.
 fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
     tools.iter().find(|info| info.name == name)
 }
@@ -531,7 +524,6 @@ fn key(tool: &str) -> String {
     format!("{FOLDER}/{tool}")
 }
 
-/// The `state` of the record of `id`.
 pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json::Value> {
     serde_json::from_str(&project.state_json(id)?).ok()
 }
@@ -646,7 +638,6 @@ impl Live {
         counts
     }
 
-    /// The nodes of a card. `None` until its first ops came.
     pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<NodeTable>, String>> {
         self.cards.get(&card)?.tree.as_ref()
     }
@@ -658,17 +649,15 @@ impl Live {
             .any(|card| matches!(&card.tree, Some(Ok(table)) if table.shows_dialog()))
     }
 
-    /// The watches the live values of a card read.
     pub(crate) fn watches(&self, card: u64) -> Option<&BTreeMap<String, f32>> {
         self.cards.get(&card).map(|card| &card.watches)
     }
 
-    /// The tool of a card, as it last loaded.
-    /// Goes up each time the tools load.
     pub(crate) fn generation(&self) -> u64 {
         self.generation.get()
     }
 
+    /// The tool of a card, as it last loaded.
     pub(crate) fn info(&self, card: u64) -> Option<Rc<ToolInfo>> {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
@@ -981,7 +970,6 @@ impl Live {
         self.tool_problem(instance, problem, cx);
     }
 
-    /// How many presses and drags of the card its code answered.
     pub(crate) fn events_answered(&self, card: u64) -> u64 {
         self.cards
             .get(&card)
@@ -996,12 +984,10 @@ impl Live {
         }
     }
 
-    /// Where each live control of the instance was put last.
     pub(crate) fn played_of(&self, id: &InstanceId) -> Option<&BTreeMap<String, f32>> {
         self.played.get(id)
     }
 
-    /// Tells the cards of the instance `id` that they changed.
     fn cards_of(&self, id: &InstanceId, cx: &mut Context<Self>) {
         for (card, _) in self.cards.iter().filter(|(_, entry)| entry.id == *id) {
             cx.emit(CardsChanged::One(*card));
@@ -1958,10 +1944,10 @@ impl Live {
         .detach();
     }
 
-    /// Renders the child `path` of `instance` over `span`, see [`sound_ui::render`], into a new
-    /// file of `assets/audio/` named after `name`, and answers the `render` `question` of Bun
-    /// with its name there, or with none. What the render left out, such as a plugin that did
-    /// not load, is a notice.
+    /// Renders the child `path` of `instance` from `from` to `to`, see [`sound_ui::render`], into
+    /// a new file of `assets/audio/` named after `name`, and answers the `render` `question` of
+    /// Bun with its name there, or with none. What the render left out, such as a plugin that
+    /// did not load, is a notice.
     #[expect(clippy::too_many_arguments, reason = "the fields of one event")]
     fn render(
         &mut self,
@@ -2530,7 +2516,6 @@ fn offered(takes: Takes, session: Option<Entity<Session>>, cx: &App) -> Vec<Offe
         .collect()
 }
 
-/// A menu the code of a card opened, which the card shows when it draws next.
 /// A yes-or-no question of code, with the system's question: the first card that draws asks it
 /// in its window, which is the project's.
 pub(crate) struct Asked {
@@ -2541,6 +2526,7 @@ pub(crate) struct Asked {
     pub confirm: String,
 }
 
+/// A menu the code of a card opened, which the card shows when it draws next.
 pub(crate) struct OpenedMenu {
     pub question: u64,
     pub items: Vec<MenuItemSpec>,

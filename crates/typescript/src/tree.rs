@@ -509,18 +509,17 @@ pub(crate) struct Uses {
     /// What moves with the engine's levels, a take, what a lane or a cable plays or as it eases
     /// draws again only when that changed, see `Feeds::changed`.
     pub animates: bool,
-    /// The peaks it reads, by name, and whether it reads the device output.
+    /// The peaks it reads, by name.
     pub peaks: BTreeSet<String>,
+    /// It reads the peak of what the device plays.
     pub output: bool,
     /// It reads the level of the audio input.
     pub input: bool,
     /// The numbers it reads as they play.
     pub played: BTreeSet<String>,
-    /// The scopes it draws.
     pub scopes: BTreeSet<String>,
     /// The fields of instances inside it it reads, as `path.field`.
     pub inside: BTreeSet<String>,
-    /// The audio files whose waveforms it draws.
     pub files: BTreeSet<String>,
     /// The recorders whose takes it draws as they grow.
     pub takes: BTreeSet<String>,
@@ -685,7 +684,6 @@ impl NodeTable {
         self.root
     }
 
-    /// Whether the node `id` is still there.
     pub(crate) fn has(&self, id: u64) -> bool {
         self.ids.contains_key(&id)
     }
@@ -710,7 +708,6 @@ impl NodeTable {
         self.slots.get(slot)?.as_ref()
     }
 
-    /// Whether it shows a dialog.
     pub(crate) fn shows_dialog(&self) -> bool {
         (self.entries()).any(
             |entry| matches!(&entry.props, Props::Overlay(overlay) if overlay.modal == Some(true)),
@@ -792,7 +789,6 @@ impl NodeTable {
         false
     }
 
-    /// The slot and the id of every space.
     pub(crate) fn spaces(&self) -> Vec<(usize, u64)> {
         (self.slots.iter().enumerate())
             .filter_map(|(slot, entry)| entry.as_ref().map(|entry| (slot, entry)))
@@ -2051,12 +2047,10 @@ impl Style {
         lines.apply(element, false)
     }
 
-    /// Whether its text is cut off with "…" where it does not fit.
     pub(crate) fn truncates(&self) -> bool {
         self.truncate
     }
 
-    /// The axis its children scroll along, if any.
     pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
         self.scroll
     }
@@ -2177,7 +2171,6 @@ impl Style {
         }
     }
 
-    /// The room above its first child.
     pub(crate) fn padding_top(&self) -> f32 {
         (self.padding_top.or(self.padding_y).or(self.padding)).unwrap_or(0.0)
     }
@@ -2301,7 +2294,6 @@ impl Style {
     }
 }
 
-/// Sets the field `name` of a record.
 pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_json::Value) {
     if let Some(fields) = state.as_object_mut() {
         fields.insert(name.to_string(), value);

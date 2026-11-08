@@ -2,7 +2,7 @@
 
 Read `agent-docs/extensions.md` first. The types of children and connections are in `extensions/sdk/tools.ts`, the records of the built-in tools in `extensions/sdk/records.ts`.
 
-A tool with a `behaviour` is a parent. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth`, `delay` or a `plugin` (enable its extension in `project.json`: `plugin-host` for a plugin), a tool of this project, or one with only `state`: data. The behaviour is a pure function of the record and the children that says how they connect. A parent has one voice.
+A tool with a `behaviour` is a parent. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child: a built-in device such as `instrument.synth`, `delay` or a `plugin` (enable its extension in `project.json`: `plugin-host` for a plugin), a tool of this project, or one with only `state`: data. The behaviour is a pure function of the record and the children that says how they connect. A parent has one voice.
 
 ```ts
 import { list, text, tool, type Connection, type Declaration } from "./sdk";
@@ -25,26 +25,25 @@ tool({
 });
 ```
 
-- It gets `state` and `children`, each `{ name, tool, state }`. Give it the return type `Declaration`: without it TypeScript lets a misspelled key through and blames the whole behaviour.
-- A parent whose children are fixed names them and their tools in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `play`, `send` and child `state`. For a tool of this project, name what `tool` returns: `export const drone = tool({ ... })` in its file, then `import { drone } from "./drone"` and `{ lead: drone, fx: "utility" }`; what its `output` sends is not checked. `takes("notes")` in place of a tool is any tool that takes notes, as `offers("notes")` lists them; `addOffer` puts the one picked in its place. A child it does not name is a problem of the parent's record; `children: {}` allows none.
-- A child may be a parent too, at `state/<name>/<child>/instance.json`. Each child's `children` holds its own, at any depth, and `update` edits, adds (with their `children`) and takes out records at any depth; one taken out takes all it holds. A name in `children` that ends in `*` stands for every other name that starts as it does: `{ "ret-*": bus, "*": track }`.
-- A child's `name` is the id of its record and stays: keep a title in a field. Without typed `children`, cast a child's state: `children.find((child) => child.name === "bass")!.state as TimelineState`.
-- The behaviour runs in Bun when what it reads changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
-- A missing child or port is a problem of the parent's record, and the rest plays. A behaviour that throws is one too, and the parent plays what it declared last.
+- Give the behaviour the return type `Declaration`: without it TypeScript lets a misspelled key through and blames the whole behaviour.
+- A parent whose children are fixed names them in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `play`, `send` and child `state`. For a tool of this project, export what `tool` returns (`export const drone = tool({ ... })`), import it and name it: `{ lead: drone, fx: "utility" }`. `takes("notes")` is a slot for any tool that takes notes. `children: {}` allows none.
+- A child may be a parent too, at `state/<name>/<child>/instance.json`, at any depth; `update` edits, adds and takes out records at any depth, and one taken out takes all it holds. A name in `children` that ends in `*` stands for every name that starts as it does: `{ "ret-*": bus, "*": track }`.
+- Without typed `children`, cast a child's state: `children.find((child) => child.name === "bass")!.state as TimelineState`.
+- The behaviour runs in Bun when what it reads changes, and its answer plays a moment later. `--render` and `--analyze` wait for it. A missing child or port, or a behaviour that throws, is a problem of the parent's record; the rest plays, and a parent whose behaviour throws plays what it declared last.
 
 ## Connections
 
-- A sound port of a child is `audio` when left out, else one its tool has: `{ child: "duck", port: "sidechain" }`, `{ child: "split", port: "low" }`. `{ child: "bass/mix" }` is a port of a child of a child, so a parent wires across its children, such as a send of one track into another (write such a path `as const`).
-- Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects.
+- A sound port of a child is `audio` when left out: `{ child: "duck", port: "sidechain" }`. `{ child: "bass/mix" }` is a port of a child of a child, so a parent wires across its children, such as a send of one track into another (write such a path `as const`).
+- Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes its audio input, from `{ notes: "notes" }` its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects.
 - Events connect by the key of their kind at both ends, to the sample:
-  - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }`: the number `lfo` sends with `output` turns `cutoff_hz` of `filter`, in its units: a number field of a tool of this project, or any number a lane can automate. Nothing is saved; without the connection the field glides back. To a number input, it moves that input.
-  - `{ from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } }` sends a bang input.
-  - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument. `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays it from the keyboard.
-- A parent plays its children by name: `play(pitch, { child: "synth" })` and `send({ child: "synth", notes: "notes" }, event)` reach its `notes`; `send({ child: "lfo", number: "rate" }, 2)` and `send({ child: "drop", bang: "hit" })` its inputs.
+  - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }`: the number `lfo` sends with `output` turns `cutoff_hz` of `filter`, in its units. Nothing is saved; without the connection the field glides back to its record.
+  - `{ from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } }` sends a bang.
+  - `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays an instrument from the keyboard.
+- A parent plays its children by name: `play(pitch, { child: "synth" })`, `send({ child: "lfo", number: "rate" }, 2)`.
 
 ## Blocks
 
-The built-in children a parent plays with each have a doc, listed in `AGENTS.md`: `timeline` (notes in time, once or round after round), `lane` (automation), `region` (an audio file), `recorder` (takes), `fader` and `meter`. A parent's view reads the outputs of each child as `<child>.<name>`: a looping timeline's `playing` is 1 while it plays.
+The built-in children a parent plays with each have a doc, listed in `AGENTS.md`: `timeline` (notes in time, once or round after round), `lane` (automation), `region` (an audio file), `recorder` (takes), `fader` and `meter`. A parent's view reads the outputs of each child as `outputs["<child>.<name>"]`.
 
 A clip launcher, with two looping timelines `low` and `high`, an instrument `synth` and a utility `fx` as its children:
 
@@ -87,4 +86,4 @@ tool({
 });
 ```
 
-Its timelines, `state/loops/low.json` and `state/loops/high.json`, loop a bar each, such as `{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [...]}}`: `"plays": false` waits for a launch.
+Its timelines, `state/loops/low.json` and `state/loops/high.json`, loop a bar each: `{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [...]}}`.

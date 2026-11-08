@@ -125,7 +125,6 @@ pub(crate) struct TypeScriptCard {
     /// Whether a mouse button is down in the window. A card out of view is drawn then too, so
     /// a knob dragged while the rack scrolls hears its mouse up.
     button_down: Rc<Cell<bool>>,
-    /// Itself, for what its draws hand the window to call back.
     handle: WeakEntity<Self>,
     _polling: Task<()>,
 }
@@ -541,7 +540,6 @@ impl TypeScriptCard {
         }
     }
 
-    /// The record as last read.
     fn read_state(&self) -> Option<Rc<Value>> {
         self.state.as_ref().map(|(_, state)| state.clone())
     }

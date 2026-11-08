@@ -217,7 +217,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-sound",
         group: WRITING,
-        when: "A tool's sound needs feedback, buffers, files, stereo, voices, outputs or its spectrum",
+        when: "A tool's sound needs feedback, files, stereo, a sidechain, voices, outputs or its spectrum",
         markdown: include_str!("extensions-sound.md"),
     },
     AgentDoc {
@@ -247,7 +247,6 @@ const PROJECT_TOOLS: &str = "Tools of this project";
 
 /// The tools of a project, from their first load.
 pub struct Extensions {
-    /// The `extensions/` folder of the project.
     folder: PathBuf,
     /// Bun after its first load, for the window. `None` when the folder has no tool file, or
     /// Bun did not start.
@@ -580,12 +579,12 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
 /// Registers the cards of the blocks of this crate that have one: a region's.
 pub fn register_views(views: &mut sound_ui::Views) {
     region_card::register(views);
 }
 
+/// Whether this machine has a Bun to run the tools with.
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }

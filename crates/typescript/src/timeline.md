@@ -1,6 +1,6 @@
 # Timeline
 
-Plays notes in time, to the sample, out of its output `notes`: once at their place in the song, such as the clips of a track, one record each; or round after round, such as the patterns of a launcher.
+Plays notes in time out of its output `notes`: once at their place in the song, such as the clips of a track, one record each; or round after round, such as the patterns of a launcher.
 
 ```json state/song/piano/verse.json
 {
@@ -16,19 +16,19 @@ Plays notes in time, to the sample, out of its output `notes`: once at their pla
 | Field | Values | Default |
 | --- | --- | --- |
 | `start` | where its notes count from in the song, in ticks: 3840 is a bar of 4/4 | `0` |
-| `length` | one round, in ticks from `start`: a note that is longer ends there, and none may start at or after it. A loop needs one | as long as its notes |
+| `length` | one round, in ticks from `start`: a longer note ends there, and none may start at or after it. A loop needs one | as long as its notes |
 | `notes` | notes, in ticks from `start` | `[]` |
-| `loop` | `true` plays round after round from `start`, `false` once | `false` |
+| `loop` | `true` plays round after round from `start` | `false` |
 | `plays` | whether it plays from `start` before any launch, so a render plays it | `true` |
 | `quantize` | where a launch lands while the piece plays: `"bar"`, `"beat"` or `"now"`. While it is stopped, at once | `"bar"` |
 | `pedal` | the sustain pedal: `{"start": 0, "value": 127}` moves in ticks from `start`, down from 64. It goes up where the timeline ends | `[]` |
-| `bend`, `mod_wheel`, `pressure` | expression lanes: `{"tick": 0, "value": 8191}` points in ticks from `start`, a straight line between them, held to the end. Bend is -8192 to 8191 (a full bend is two semitones on a sound of this project), the others 0 to 127. Only a timeline that plays once, at its place in the song | `[]` |
-| `title` | what a view calls it; nothing plays it | `""` |
+| `bend`, `mod_wheel`, `pressure` | `{"tick": 0, "value": 8191}` points in ticks from `start`, a straight line between them. Bend is -8192 to 8191 (a full bend is two semitones on a sound of this project), the others 0 to 127 | `[]` |
+| `title` | what a view calls it | `""` |
 
-The piece ends where the last timeline that plays once, or the last region, stops: a render and an export play to there, and the transport shows that length. A loop and one with `"plays": false` add nothing.
+`pedal`, `bend`, `mod_wheel` and `pressure` need a timeline that plays once: one that loops or waits for a launch plays notes only.
 
-Its parent connects it to what plays it: `{ from: { child: "verse", notes: "notes" }, to: { child: "piano", notes: "notes" } }`.
+The piece ends where the last timeline that plays once, or the last region, stops: a render and an export play to there. A loop and one with `"plays": false` do not count.
 
-A number into its input `launch` starts it at its next `quantize` point: above 0 starts it, 0 or below stops it. `send({ child: "bass", number: "launch" }, 1)` is not saved and a render does not hear it; a number cable to `{ child: "bass", number: "launch" }` starts it as its number goes above 0 and stops it as it goes back, in a render too. A clip launcher is a set of looping timelines with `"plays": false`: start one and stop the others at the same bar.
+Its number input `launch` starts it at the next `quantize` point when above 0, and stops it there at 0 or below. `send({ child: "bass", number: "launch" }, 1)` is not saved and a render does not hear it; a number cable into `launch` is heard in a render too. A clip launcher is a set of looping timelines with `"plays": false`: start one and stop the others at the same bar.
 
-A looping timeline shows what it plays to its parent's view: `outputs["bass.playing"]` is 1 while it plays, `queued` is 1 for a start and -1 for a stop that waits, and `phase` goes from 0 to 1 over a round.
+A looping timeline shows its parent's view `outputs["bass.playing"]`, 1 while it plays; `queued`, 1 for a start and -1 for a stop that waits; and `phase`, 0 to 1 over a round.
