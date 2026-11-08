@@ -7,7 +7,8 @@ use std::ops::Range;
 use sound_core::Ticks;
 
 use crate::{
-    Amount, Bend, Clip, Expression, ExpressionValue, Pedal, Pitch, PlacedNote, PlacedPedal, Point,
+    Amount, Bend, Clip, Controller, Expression, ExpressionValue, Pedal, Pitch, PlacedNote,
+    PlacedPedal, Point,
 };
 
 /// Every note of the clips at their place on the timeline, sorted by start and then pitch, so a
@@ -20,6 +21,8 @@ pub struct NoteTimeline {
     bend: PlayedLane<Bend>,
     mod_wheel: PlayedLane<Amount>,
     pressure: PlayedLane<Amount>,
+    /// By controller. They play only from their first point, see [`Clip`].
+    controllers: Vec<(Controller, PlayedLane<Amount>)>,
     /// From the first clip's start to just past the last clip's end, where the pedal goes up:
     /// outside it nothing plays, the pedal is up and the lanes are at rest.
     span: Option<Range<Ticks>>,
@@ -33,9 +36,23 @@ impl NoteTimeline {
         let first = clips.iter().map(|clip| clip.start).min();
         let last = clips.iter().map(|clip| clip.end()).max();
         let span = first.zip(last).map(|(first, last)| first..last + Ticks(1));
-        let bend = PlayedLane::new(&clips, |clip| &clip.bend);
-        let mod_wheel = PlayedLane::new(&clips, |clip| &clip.mod_wheel);
-        let pressure = PlayedLane::new(&clips, |clip| &clip.pressure);
+        let bend = PlayedLane::new(&clips, |clip| &clip.bend, true);
+        let mod_wheel = PlayedLane::new(&clips, |clip| &clip.mod_wheel, true);
+        let pressure = PlayedLane::new(&clips, |clip| &clip.pressure, true);
+        let mut numbers: Vec<Controller> = (clips.iter())
+            .flat_map(|clip| clip.controllers.keys().copied())
+            .collect();
+        numbers.sort_unstable();
+        numbers.dedup();
+        let controllers = (numbers.into_iter())
+            .map(|controller| {
+                let points = |clip: &'a Clip| match clip.controllers.get(&controller) {
+                    Some(points) => points.as_slice(),
+                    None => &[],
+                };
+                (controller, PlayedLane::new(&clips, points, false))
+            })
+            .collect();
         let mut notes = Vec::new();
         let mut pedal = Vec::new();
         let mut own = Vec::new();
@@ -64,6 +81,7 @@ impl NoteTimeline {
             bend,
             mod_wheel,
             pressure,
+            controllers,
             span,
         }
     }
@@ -122,6 +140,12 @@ impl NoteTimeline {
         }
     }
 
+    /// Where each controller lane that plays at `tick` stands there.
+    pub(crate) fn controllers_at(&self, tick: Ticks) -> impl Iterator<Item = (Controller, Amount)> {
+        (self.controllers.iter())
+            .filter_map(move |(controller, lane)| Some((*controller, lane.playing_at(tick)?)))
+    }
+
     pub(crate) fn end_of(&self, start: Ticks, pitch: Pitch) -> Option<Ticks> {
         end_of(&self.notes, start, pitch)
     }
@@ -162,8 +186,16 @@ struct Piece<V> {
 impl<V: ExpressionValue> PlayedLane<V> {
     /// The lane `points` of `clips`. Where clips with points in it overlap, the one that
     /// started last owns the lane, and of two that start together the later one in `clips`. A
-    /// clip without points owns nothing.
-    fn new(clips: &[&Clip], points: fn(&Clip) -> &Vec<Point<V>>) -> Self {
+    /// clip without points owns nothing. With `held_before`, a clip's lane holds its first value
+    /// from the start of the clip; without it, the lane starts at its first point.
+    fn new<'a>(
+        clips: &[&'a Clip],
+        points: impl Fn(&'a Clip) -> &'a [Point<V>],
+        held_before: bool,
+    ) -> Self
+    where
+        V: 'a,
+    {
         let clips: Vec<_> = clips
             .iter()
             .map(|clip| (clip.start, clip.end(), points(clip)))
@@ -199,7 +231,8 @@ impl<V: ExpressionValue> PlayedLane<V> {
                 [before, after] => Some([placed(before), placed(after)]),
                 _ => None,
             });
-            let lines = once((Ticks(0), [first, first]))
+            let held_from = if held_before { Ticks(0) } else { first.tick };
+            let lines = once((held_from, [first, first]))
                 .chain(between.map(|line| (line[0].tick, line)))
                 .chain(once((last.tick, [last, last])));
             let mut lines = lines.peekable();
@@ -216,9 +249,14 @@ impl<V: ExpressionValue> PlayedLane<V> {
 
     /// Where the lane stands at `tick`.
     fn at(&self, tick: Ticks) -> V {
+        self.playing_at(tick).unwrap_or(V::REST)
+    }
+
+    /// Where the lane stands at `tick`, or `None` where no clip moves it.
+    fn playing_at(&self, tick: Ticks) -> Option<V> {
         let index = self.pieces.partition_point(|piece| piece.to <= tick);
-        let piece = self.pieces.get(index).filter(|piece| piece.from <= tick);
-        piece.map_or(V::REST, |piece| piece.line[0].towards(piece.line[1], tick))
+        let piece = self.pieces.get(index).filter(|piece| piece.from <= tick)?;
+        Some(piece.line[0].towards(piece.line[1], tick))
     }
 }
 

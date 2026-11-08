@@ -33,12 +33,15 @@ mod expression;
 mod feed;
 mod held;
 mod lane;
+pub mod midi_file;
 mod pattern;
 mod player;
 mod schedule;
 mod take;
 mod timeline;
 mod voices;
+
+use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,8 +51,8 @@ pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use feed::{NoteFeed, NoteFeedUpdate};
 pub use lane::{
-    ExpressionValue, LaneValue, MAX_PIECES, Point, check_order, cut, pieces, thinned, value_at,
-    value_at_frame,
+    ExpressionValue, LaneValue, MAX_PIECES, Point, check_order, cut, cut_controllers, pieces,
+    thinned, value_at, value_at_frame,
 };
 pub use pattern::{Launch, Pattern, PatternError, Placing, Quantize};
 pub use player::{
@@ -384,7 +387,12 @@ impl From<Amount> for u8 {
 
 /// A MIDI controller other than the mod wheel (1) and the sustain pedal (64), which have events
 /// of their own: 0 to 119. From 120 on MIDI's numbers are channel mode messages, not controls.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// It loads from any JSON integer, and from a JSON key such as `"74"`, through [`Self::new`].
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(try_from = "i64", into = "u8")]
 pub struct Controller(u8);
 
 impl Controller {
@@ -404,6 +412,24 @@ impl Controller {
         self.0
     }
 }
+
+impl TryFrom<i64> for Controller {
+    type Error = NoteError;
+
+    fn try_from(number: i64) -> Result<Self, NoteError> {
+        let small = u8::try_from(number).map_err(|_| NoteError::Controller(number))?;
+        Self::new(small)
+    }
+}
+
+impl From<Controller> for u8 {
+    fn from(controller: Controller) -> u8 {
+        controller.0
+    }
+}
+
+/// The lanes of the controllers of a clip, by controller.
+pub type Controllers = BTreeMap<Controller, Vec<Point<Amount>>>;
 
 /// How long a note or a clip is: 1 tick or more.
 ///
@@ -509,6 +535,10 @@ pub struct PlacedPedal {
 /// - `bend`, `mod_wheel` and `pressure` are the expression lanes: points inside the clip, in
 ///   tick order, one per tick, read with [`value_at`]. An empty lane is left out of the file
 ///   and moves nothing; a lane with points holds for the whole clip, and ends with it.
+/// - `controllers` are lanes of other MIDI controllers, by number, with the same points. No
+///   controller has a value that is safe to rest at (0 on a volume mutes), so such a lane plays
+///   from its first point to the end of the clip and sends nothing outside: the instrument
+///   keeps what it was sent last.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clip {
@@ -528,6 +558,9 @@ pub struct Clip {
     /// The key pressure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pressure: Vec<Point<Amount>>,
+    /// The other controllers.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub controllers: Controllers,
 }
 
 impl Clip {
@@ -541,6 +574,7 @@ impl Clip {
             bend: Vec::new(),
             mod_wheel: Vec::new(),
             pressure: Vec::new(),
+            controllers: BTreeMap::new(),
         }
     }
 
@@ -576,7 +610,8 @@ impl Clip {
         self.pedal.retain(|change| change.start < length.ticks());
         self.bend = cut(&self.bend, inside.clone());
         self.mod_wheel = cut(&self.mod_wheel, inside.clone());
-        self.pressure = cut(&self.pressure, inside);
+        self.pressure = cut(&self.pressure, inside.clone());
+        self.controllers = cut_controllers(&self.controllers, inside);
     }
     /// Whether it follows the rules above, with a message that names the field when not.
     pub fn validate(&self) -> Result<(), String> {
@@ -597,7 +632,20 @@ impl Clip {
         }
         lane::check("bend", &self.bend, length)?;
         lane::check("mod_wheel", &self.mod_wheel, length)?;
-        lane::check("pressure", &self.pressure, length)
+        lane::check("pressure", &self.pressure, length)?;
+        for (controller, points) in &self.controllers {
+            lane::check(&format!("controllers.{}", controller.0), points, length)?;
+        }
+        Ok(())
+    }
+
+    /// Whether it has a pedal move or a point in any lane.
+    pub fn has_lanes(&self) -> bool {
+        !(self.pedal.is_empty()
+            && self.bend.is_empty()
+            && self.mod_wheel.is_empty()
+            && self.pressure.is_empty()
+            && self.controllers.is_empty())
     }
 }
 

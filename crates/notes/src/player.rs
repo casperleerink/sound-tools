@@ -18,7 +18,7 @@ use sound_core::{
 };
 
 use crate::{
-    Expression, Launch, NoteEvent, NoteTimeline, Pattern, Pedal, Pitch, Placing, Velocity,
+    Amount, Expression, Launch, NoteEvent, NoteTimeline, Pattern, Pedal, Pitch, Placing, Velocity,
 };
 
 /// How long a preview note sounds. Its off comes from the processor after this time, so no
@@ -173,6 +173,10 @@ pub struct NotePlayer {
     /// Where this player last put the wheels and the pressure, compared with the lanes of
     /// the snapshot every block as the pedal is.
     sent_expression: Expression,
+    /// What this player last sent each controller, by number, since the last jump or stop:
+    /// forgotten there, so a play from inside a lane sends its value. Left out of
+    /// [`Self::quiet`]: a controller has no rest, and a lane only plays inside the timeline.
+    sent_controllers: [Option<Amount>; 120],
     /// See [`Processor::rests_until`].
     rests_until: Option<Ticks>,
 }
@@ -216,6 +220,7 @@ impl Default for NotePlayer {
             preview_frames: 0,
             sent_pedal: Pedal::UP,
             sent_expression: Expression::REST,
+            sent_controllers: [None; 120],
             rests_until: None,
         }
     }
@@ -333,6 +338,7 @@ impl NotePlayer {
             preview_frames,
             sent_pedal,
             sent_expression,
+            sent_controllers,
             rests_until: _,
         } = self;
         let mut sender = Sender {
@@ -349,6 +355,7 @@ impl NotePlayer {
             // `AllOff` puts the pedal of the instrument up and its lanes at rest as well.
             *sent_pedal = Pedal::UP;
             *sent_expression = Expression::REST;
+            *sent_controllers = [None; 120];
             // A seek while stopped moves where play starts, so a launch there moves with it. A
             // pause keeps the anchor, so play from the same spot keeps the phase.
             if transport.jumped
@@ -382,10 +389,20 @@ impl NotePlayer {
         // the middle of a clip and the end of a clip need no case of their own, as for the
         // pedal. Only while playing, for the same reason as the pedal.
         if transport.playing && range.start < range.end {
-            let wanted = timeline.expression_at(Ticks(range.end.0 - 1));
+            let last = Ticks(range.end.0 - 1);
+            let wanted = timeline.expression_at(last);
             for event in sent_expression.moves_to(wanted) {
                 if sender.send(0, event) {
                     sent_expression.follow(event);
+                }
+            }
+            for (controller, value) in timeline.controllers_at(last) {
+                let Some(sent) = sent_controllers.get_mut(usize::from(controller.number())) else {
+                    continue;
+                };
+                if *sent != Some(value) && sender.send(0, NoteEvent::Control { controller, value })
+                {
+                    *sent = Some(value);
                 }
             }
         }
