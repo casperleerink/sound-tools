@@ -37,7 +37,7 @@ use sound_ui::{
 };
 
 use crate::parameters::lane_of_pin;
-use crate::{Parameter, Pin, PluginRecord, Plugins, Steps, WeakPlugins};
+use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlugins};
 
 /// The room at the left of the body, where the plain card has all of it.
 const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
@@ -66,9 +66,12 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
         }
     });
     let for_window = plugins.clone();
-    devices.window::<PluginRecord>(move |id, cx| match for_window.upgrade() {
-        Some(plugins) => Ok(plugins.open_window(id, cx)?),
-        None => Ok(()),
+    devices.window::<PluginRecord>(move |id, cx| {
+        let plugins = for_window.upgrade()?;
+        match plugins.open_window(id, cx) {
+            Err(PluginProblem::NoWindow { .. }) => None,
+            opened => Some(opened.map_err(Into::into)),
+        }
     });
     devices.numbers::<PluginRecord>(PluginNumbers(plugins));
 }

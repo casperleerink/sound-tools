@@ -1915,10 +1915,8 @@ tool({
 });
 "#;
 
-#[gpui::test]
-fn code_opens_the_window_of_a_plugin_child_and_a_child_with_none_is_a_problem(
-    cx: &mut TestAppContext,
-) {
+/// The opener with its plugin `piano` and its drone, once the plugin has loaded.
+fn open_opener(cx: &mut TestAppContext) -> Opened<'_> {
     let plugin = crate::support::test_plugin_record(plugin_host::PluginFormat::Clap, "piano");
     let files = [
         (
@@ -1941,6 +1939,18 @@ fn code_opens_the_window_of_a_plugin_child_and_a_child_with_none_is_a_problem(
     ];
     let mut window = open_with_test_plugins(cx, &files);
     window.until("the plugin", |window| window.problems().is_empty());
+    window
+}
+
+fn refused_for_no_window(window: &mut Opened<'_>) -> bool {
+    (window.problems().iter()).any(|problem| problem.message.contains("no window of its own"))
+}
+
+#[gpui::test]
+fn code_opens_the_window_of_a_plugin_child_and_a_child_with_none_is_a_problem(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_opener(cx);
     let piano = id("opener/piano");
     let is_open = |window: &Opened<'_>| {
         let plugins = window.plugins.upgrade().expect("the plugin host");
@@ -1952,7 +1962,16 @@ fn code_opens_the_window_of_a_plugin_child_and_a_child_with_none_is_a_problem(
     window.until("the plugin's window", |window| is_open(window));
 
     window.cx.simulate_keystrokes("x");
-    window.until("the refusal", |window| {
-        (window.problems().iter()).any(|problem| problem.message.contains("no window of its own"))
-    });
+    window.until("the refusal", refused_for_no_window);
+}
+
+#[gpui::test]
+fn a_plugin_with_no_window_of_its_own_is_a_problem_of_the_code_that_opens_it(
+    cx: &mut TestAppContext,
+) {
+    // SAFETY: nextest runs one test per process and no other thread reads the environment yet.
+    unsafe { std::env::set_var(test_plugin_support::NO_WINDOW_VARIABLE, "1") };
+    let mut window = open_opener(cx);
+    window.cx.simulate_keystrokes("w");
+    window.until("the refusal", refused_for_no_window);
 }
