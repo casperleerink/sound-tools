@@ -101,8 +101,8 @@ export function Transport({ clock, record }: { clock: Clock; record: TransportRe
         <Button key="stop" icon="square" variant="ghost" size="sm" rounded tooltip="Stop" onClick={() => clock.stop()} />
         <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded tooltip="Record" shortcut="r" onClick={record.press} />
       </div>
-      {clockText("transport-position", 28, "position")}
-      {clockText("transport-time", 34, "time", "gray-700")}
+      {clockText("transport-position", 44, "position")}
+      {clockText("transport-time", 40, "time", "gray-700")}
       <div style={{ direction: "row", align: "center" }}>
         <NumberBox key="transport-tempo" width={32} per={2} min={10} max={1000}
           value={() => clock.bpm} onChange={setTempo} show={now.bpm.round()} />
