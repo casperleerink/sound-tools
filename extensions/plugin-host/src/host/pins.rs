@@ -142,7 +142,7 @@ impl Hosted {
     /// The generation of the pins a lane holds, and each with the value it plays, as the
     /// audio side wrote them last. `None` when blocks kept writing while it was read.
     fn held(&self) -> Option<(u64, BTreeMap<u32, f64>)> {
-        let (generation, held) = self.laned.read()?;
+        let (generation, held) = self.laned.laned().read()?;
         Some((generation, held.into_iter().collect()))
     }
 

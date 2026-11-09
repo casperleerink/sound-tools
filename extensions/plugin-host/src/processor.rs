@@ -378,25 +378,75 @@ impl LanedPins {
     }
 }
 
-/// A started plugin and what its audio side tells the main thread of its lanes.
-pub(crate) struct Playing {
-    pub started: Box<dyn Started>,
-    pub laned: Arc<LanedPins>,
+/// Where the table of [`LanedPins`] of a plugin lives: in this process, or in the memory a
+/// plugin's own process shares with this one.
+pub(crate) trait LanedTable: Send + Sync {
+    fn laned(&self) -> &LanedPins;
 }
 
-/// The processor an instance of the plugin tool keeps. It is silent until the control side
-/// sends it a plugin, and silent again when it is sent `None`.
-pub(crate) struct HostedPlugin {
-    plugin: Option<Playing>,
-    /// Whether the plugin's own `run` failed. It is left silent instead of called again.
-    failed: bool,
-    /// The keys this processor has sent a note on for and no note off yet, so an `AllOff` ends
+impl LanedTable for LanedPins {
+    fn laned(&self) -> &LanedPins {
+        self
+    }
+}
+
+/// The table the audio side of a plugin writes and the main thread reads.
+pub(crate) type Laned = Arc<dyn LanedTable>;
+
+/// A table in this process.
+pub(crate) fn laned_here() -> Laned {
+    Arc::new(LanedPins::new())
+}
+
+/// One sub-block for a plugin's audio side, cut nowhere yet.
+pub(crate) struct Block<'a> {
+    pub events: &'a [Timed<NoteEvent>],
+    pub lanes: &'a [Timed<Automation>],
+    pub input: [&'a [f32]; CHANNELS],
+    pub left: &'a mut [f32],
+    pub right: &'a mut [f32],
+}
+
+/// What a sub-block did: whether the plugin played it, and how many events did not fit.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Played {
+    pub played: bool,
+    pub dropped: u64,
+}
+
+/// The audio side of a plugin, seen from the engine: a [`Player`] around a plugin in this
+/// process, or the bridge to one in a process of its own.
+///
+/// Nothing here may allocate, lock or make a system call of ours; the bridge's calls on its
+/// socket are the call into the plugin, under [`not_ours`].
+pub(crate) trait PluginAudio: Send {
+    /// How many frames late the plugin plays, as it said when it was activated.
+    fn latency(&self) -> u32;
+
+    /// The plugin starts playing for this processor: a new one, or one started again. What a
+    /// plugin before it had down of the keys and of the pins is gone.
+    fn begin(&mut self, pins: AutomatedPins);
+
+    /// The pins of the record, for the plugin that plays: its record changed only its pins.
+    fn pins(&mut self, pins: AutomatedPins);
+
+    /// Plays one sub-block. `controls` is where each control stands as the plugin last heard
+    /// it, which the processor keeps across plugins. A plugin that fails passes the rest of
+    /// the block through and says so.
+    fn play(&mut self, block: Block<'_>, controls: &mut [Control; 4]) -> Played;
+
+    /// Stops the plugin's processing, on the audio thread. Calling it again does nothing.
+    fn stop(&mut self);
+}
+
+/// A plugin in this process: its [`Started`] audio side, and what the note contract and the
+/// lanes need remembered between blocks.
+pub(crate) struct Player {
+    started: Box<dyn Started>,
+    laned: Laned,
+    /// The keys this player has sent a note on for and no note off yet, so an `AllOff` ends
     /// exactly those. A plugin need not understand a note off that matches every key.
     keys_down: [bool; 128],
-    /// Where each control stands as the plugin last heard it, by [`Control::index`], so an
-    /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps
-    /// what it heard, and telling a new one "at rest" once more costs nothing.
-    controls: [Control; 4],
     /// The pins of the record.
     pins: AutomatedPins,
     /// The pins whose value in the plugin is a lane's, with that value. Each goes back to its
@@ -404,11 +454,144 @@ pub(crate) struct HostedPlugin {
     held: PinValues,
 }
 
+impl Player {
+    pub(crate) fn new(started: Box<dyn Started>, laned: Laned) -> Self {
+        Self {
+            started,
+            laned,
+            keys_down: [false; 128],
+            pins: AutomatedPins::NONE,
+            held: PinValues::NONE,
+        }
+    }
+
+    /// One piece: `events` with offsets from `start`, and the lanes that arrive on its first
+    /// frame. Gives whether the plugin played it, and how many events did not fit.
+    fn piece(
+        &mut self,
+        events: &[Timed<NoteEvent>],
+        start: usize,
+        lanes: &[Timed<Automation>],
+        input: [&[f32]; CHANNELS],
+        [left, right]: [&mut [f32]; CHANNELS],
+        controls: &mut [Control; 4],
+    ) -> (bool, u64) {
+        let frames = left.len();
+        let keys_down = &mut self.keys_down;
+        let mut dropped = 0;
+        let played = with_lanes(
+            &mut *self.started,
+            lanes,
+            &self.pins,
+            &mut self.held,
+            self.laned.laned(),
+            |plugin| {
+                // More events in one block than the plugin's buffer holds. Counted, never
+                // allocated.
+                dropped = translate(plugin, events, start, keys_down, controls);
+                plugin.run(frames, input, left, right)
+            },
+        );
+        (played, dropped)
+    }
+}
+
+impl PluginAudio for Player {
+    fn latency(&self) -> u32 {
+        self.started.latency()
+    }
+
+    fn begin(&mut self, pins: AutomatedPins) {
+        self.keys_down = [false; 128];
+        self.pins = pins;
+        // A new plugin starts at the values of its record, which the host sends it first, and
+        // the main thread hears that no lane holds a pin of it.
+        self.held = PinValues::NONE;
+        self.laned.laned().write(&self.held);
+    }
+
+    fn pins(&mut self, pins: AutomatedPins) {
+        self.pins = pins;
+    }
+
+    /// The sub-block in the pieces the engine would cut where a lane bends, each one call of
+    /// the plugin, as the engine calls a processor with an automation input. The cutting is
+    /// here so that a plugin in a process of its own plays a whole sub-block in one round trip.
+    fn play(&mut self, block: Block<'_>, controls: &mut [Control; 4]) -> Played {
+        let Block {
+            events,
+            lanes,
+            input,
+            left,
+            right,
+        } = block;
+        let mut result = Played {
+            played: true,
+            dropped: 0,
+        };
+        for piece in sound_core::automation_pieces(lanes, left.len()) {
+            let input = input.map(|channel| channel.get(piece.clone()).unwrap_or_default());
+            let (Some(left), Some(right)) =
+                (left.get_mut(piece.clone()), right.get_mut(piece.clone()))
+            else {
+                continue;
+            };
+            if !result.played {
+                pass_through(input, left, right, piece.len());
+                continue;
+            }
+            let events = within(events, piece.clone());
+            let lanes = within(lanes, piece.clone());
+            let (played, dropped) = self.piece(
+                events,
+                piece.start,
+                lanes,
+                input,
+                [&mut *left, &mut *right],
+                controls,
+            );
+            result.dropped += dropped;
+            if !played {
+                // The piece a plugin fails on is the first one it does not play, so it passes
+                // through from here and not from the next block. A backend writes nothing into
+                // the output when it fails, so whatever it left there is the silence the engine
+                // gave it, which would be a gap in the chain.
+                result.played = false;
+                pass_through(input, left, right, piece.len());
+            }
+        }
+        result
+    }
+
+    fn stop(&mut self) {
+        self.started.stop();
+    }
+}
+
+/// The events of a block that fall in one piece of it. Both are sorted by offset.
+fn within<E>(events: &[Timed<E>], piece: Range<usize>) -> &[Timed<E>] {
+    let start = events.partition_point(|timed| timed.offset < piece.start);
+    let end = events.partition_point(|timed| timed.offset < piece.end);
+    events.get(start..end).unwrap_or_default()
+}
+
+/// The processor an instance of the plugin tool keeps. It is silent until the control side
+/// sends it a plugin, and silent again when it is sent `None`.
+pub(crate) struct HostedPlugin {
+    audio: Option<Box<dyn PluginAudio>>,
+    /// Whether the plugin failed. It is left silent instead of called again.
+    failed: bool,
+    /// Where each control stands as the plugin last heard it, by [`Control::index`], so an
+    /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps
+    /// what it heard, and telling a new one "at rest" once more costs nothing.
+    controls: [Control; 4],
+}
+
 /// What the control side sends.
 pub(crate) enum HostedUpdate {
     /// The plugin to play, or nothing, and the pins of its record. The plugin that was there
     /// rides back to the control thread inside the update and is dropped there.
-    Plugin(Option<Playing>, AutomatedPins),
+    Plugin(Option<Box<dyn PluginAudio>>, AutomatedPins),
     /// The pins of the record, for the plugin that plays: its record changed only its pins.
     Pins(AutomatedPins),
 }
@@ -422,12 +605,9 @@ impl HostedPlugin {
     /// A processor with no plugin. It makes no sound.
     pub(crate) fn silent() -> Self {
         Self {
-            plugin: None,
+            audio: None,
             failed: false,
-            keys_down: [false; 128],
             controls: Control::REST,
-            pins: AutomatedPins::NONE,
-            held: PinValues::NONE,
         }
     }
 }
@@ -446,36 +626,33 @@ impl Processor for HostedPlugin {
     fn prepare(&mut self, _config: &PrepareConfig) {}
 
     fn update(&mut self, update: &mut HostedUpdate) {
-        let (plugin, pins) = match update {
-            HostedUpdate::Plugin(plugin, pins) => (plugin, pins),
+        let (audio, pins) = match update {
+            HostedUpdate::Plugin(audio, pins) => (audio, *pins),
             HostedUpdate::Pins(pins) => {
-                self.pins = *pins;
+                if let Some(audio) = &mut self.audio {
+                    audio.pins(*pins);
+                }
                 return;
             }
         };
         // The plugin that was here goes back inside the update and is dropped on the control
         // thread. It stops here, while this is still the audio thread. Nothing heap-allocated
         // is dropped here.
-        if let Some(leaving) = &mut self.plugin {
-            leaving.started.stop();
+        if let Some(leaving) = &mut self.audio {
+            leaving.stop();
         }
-        std::mem::swap(&mut self.plugin, plugin);
-        self.keys_down = [false; 128];
+        std::mem::swap(&mut self.audio, audio);
         self.failed = false;
-        self.pins = *pins;
-        // A new plugin starts at the values of its record, which the host sends it first, and
-        // the main thread hears that no lane holds a pin of it.
-        self.held = PinValues::NONE;
-        if let Some(playing) = &self.plugin {
-            playing.laned.write(&self.held);
+        if let Some(audio) = &mut self.audio {
+            audio.begin(pins);
         }
     }
 
     /// The engine is handing this processor back. The plugin stops here, on the audio thread,
     /// so that the control thread only ever deactivates one that is already stopped.
     fn leaving(&mut self) {
-        if let Some(plugin) = &mut self.plugin {
-            plugin.started.stop();
+        if let Some(audio) = &mut self.audio {
+            audio.stop();
         }
     }
 
@@ -483,91 +660,34 @@ impl Processor for HostedPlugin {
     /// A plugin that is started again after its latency changed arrives in an update, which is
     /// when the engine reads this.
     fn latency(&self) -> u32 {
-        self.plugin
-            .as_ref()
-            .map_or(0, |plugin| plugin.started.latency())
+        self.audio.as_ref().map_or(0, |audio| audio.latency())
     }
 
-    /// The sub-block in the pieces the engine would cut where a lane bends, each one call of the
-    /// plugin, as the engine calls a processor with an automation input. The cutting is here so
-    /// that a plugin in a process of its own can play a whole sub-block in one round trip.
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
         let lanes = context.event_inputs.get(Self::AUTOMATION);
         let input = context.audio_inputs.get(Self::INPUT);
         let [left, right] = context.audio_outputs.get(Self::AUDIO);
         let frames = context.frames;
-        let mut dropped = 0;
-        for piece in sound_core::automation_pieces(lanes, frames) {
-            let input = input.map(|channel| channel.get(piece.clone()).unwrap_or_default());
-            let (Some(left), Some(right)) =
-                (left.get_mut(piece.clone()), right.get_mut(piece.clone()))
-            else {
-                continue;
-            };
-            let events = within(events, piece.clone());
-            let lanes = within(lanes, piece.clone());
-            dropped += self.play(events, piece.start, lanes, input, left, right);
-        }
-        for _ in 0..dropped {
-            context.event_outputs.count_dropped();
-        }
-    }
-}
-
-/// The events of a block that fall in one piece of it. Both are sorted by offset.
-fn within<E>(events: &[Timed<E>], piece: Range<usize>) -> &[Timed<E>] {
-    let start = events.partition_point(|timed| timed.offset < piece.start);
-    let end = events.partition_point(|timed| timed.offset < piece.end);
-    events.get(start..end).unwrap_or_default()
-}
-
-impl HostedPlugin {
-    /// One piece: `events` with offsets from `start`, and the lanes that arrive on its first
-    /// frame. Gives how many events did not fit.
-    fn play(
-        &mut self,
-        events: &[Timed<NoteEvent>],
-        start: usize,
-        lanes: &[Timed<Automation>],
-        input: [&[f32]; CHANNELS],
-        left: &mut [f32],
-        right: &mut [f32],
-    ) -> u64 {
-        let frames = left.len();
-        let playing = self.plugin.as_mut().filter(|_| !self.failed);
-        let Some(Playing { started, laned }) = playing else {
+        let audio = self.audio.as_mut().filter(|_| !self.failed);
+        let Some(audio) = audio else {
             // No plugin, or one that failed in an earlier block: the slot passes what it is
             // given through. For an instrument that is the silence of an input nothing
             // reaches, and for an effect it is the track playing on through a slot whose
             // plugin is missing.
             pass_through(input, left, right, frames);
-            return 0;
+            return;
         };
-        let (keys_down, controls) = (&mut self.keys_down, &mut self.controls);
-        let mut dropped = 0;
-        let played = with_lanes(
-            &mut **started,
+        let block = Block {
+            events,
             lanes,
-            &self.pins,
-            &mut self.held,
-            laned,
-            |plugin| {
-                // More events in one block than the plugin's buffer holds. Counted, never
-                // allocated.
-                dropped = translate(plugin, events, start, keys_down, controls);
-                plugin.run(frames, input, left, right)
-            },
-        );
-        if !played {
-            // The block a plugin fails on is the first one it does not play, so the slot
-            // passes it through here and not from the next block. A backend writes nothing
-            // into the output when it fails, so whatever it left there is the silence the
-            // engine gave it, which would be a gap of one block in the chain.
-            self.failed = true;
-            pass_through(input, left, right, frames);
-        }
-        dropped
+            input,
+            left: &mut left[..frames],
+            right: &mut right[..frames],
+        };
+        let played = audio.play(block, &mut self.controls);
+        self.failed = !played.played;
+        context.event_outputs.count_dropped_many(played.dropped);
     }
 }
 

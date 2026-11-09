@@ -13,7 +13,7 @@ use sound_core::PrepareConfig;
 
 use crate::PluginProblem;
 use crate::parameters::Parameter;
-use crate::processor::Started;
+use crate::processor::{Laned, PluginAudio, Started};
 use crate::window::WindowSize;
 
 /// One plugin that is loaded, seen from the thread the project lives on.
@@ -80,7 +80,8 @@ pub(crate) trait LoadedPlugin {
         &mut self,
         config: PrepareConfig,
         pins: &[ParameterChange],
-    ) -> Option<Result<Box<dyn Started>, PluginProblem>>;
+        laned: &Laned,
+    ) -> Option<Result<Box<dyn PluginAudio>, PluginProblem>>;
 }
 
 /// What a plugin asked for since the last poll. All of it may be asked for from another

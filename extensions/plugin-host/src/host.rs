@@ -44,7 +44,7 @@ use crate::backend::LoadedPlugin;
 use crate::parameters::{Parameter, ParameterValue, by_id, pin_problem};
 use crate::placements::{PlacementStore, Placements};
 use crate::processor::{
-    AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate, LanedPins, Playing,
+    AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate, Laned, Player, PluginAudio, laned_here,
 };
 use crate::scan::{ScanCache, ScanCommand};
 use crate::window::{PluginFrame, PluginWindow};
@@ -136,7 +136,7 @@ pub(crate) enum ForEngine {
     Same,
     /// The audio side of a plugin that was just loaded, or `None` from a host that loads none
     /// ([`Plugins::listing`]), which is a slot that plays nothing and reports nothing.
-    Play(Option<Playing>),
+    Play(Option<Box<dyn PluginAudio>>),
 }
 
 /// One plugin this project holds, with the record it came from.
@@ -181,7 +181,7 @@ struct Hosted {
     /// plugin.
     pins: BTreeMap<u32, PinState>,
     /// The pins the audio side says a lane holds, see [`Hosted::follow_lanes`].
-    laned: Arc<LanedPins>,
+    laned: Laned,
     /// The pins of the record as the behaviour last ran, which the lane players were given
     /// with them. A plugin started again gets these, so the index of a lane means the same
     /// pin to both until the next run, whatever the plugin says of its parameters meanwhile.
@@ -618,7 +618,7 @@ impl Plugins {
             notes,
             parameters: None,
             pins: BTreeMap::new(),
-            laned: Arc::new(LanedPins::new()),
+            laned: laned_here(),
             lanes: AutomatedPins::NONE,
             shown: BTreeMap::new(),
         };
@@ -628,10 +628,10 @@ impl Plugins {
         hosted.send_pins(record);
         let notes = hosted.notes(record);
         let lanes = hosted.automated(record);
-        let laned = hosted.laned.clone();
+        let audio = Box::new(Player::new(started, hosted.laned.clone()));
         self.0.table.borrow_mut().loaded.insert(id.clone(), hosted);
         Ok(Opened {
-            engine: ForEngine::Play(Some(Playing { started, laned })),
+            engine: ForEngine::Play(Some(audio)),
             notes,
             lanes,
         })
@@ -758,13 +758,14 @@ impl Plugins {
                     let none = HostedUpdate::Plugin(None, AutomatedPins::NONE);
                     updates.push((id.clone(), hosted.plugin_id.clone(), none));
                 }
-                Restart::Waiting => match hosted
-                    .plugin
-                    .restart(hosted.config, &pins_of(hosted, project, id))
-                {
+                Restart::Waiting => match hosted.plugin.restart(
+                    hosted.config,
+                    &pins_of(hosted, project, id),
+                    &hosted.laned,
+                ) {
                     // The engine has not given it back yet.
                     None => {}
-                    Some(Ok(started)) => {
+                    Some(Ok(audio)) => {
                         hosted.restart = Restart::Idle;
                         // What was on its way to the old audio side went with it, and the
                         // record may have changed meanwhile: every pin goes again, as the
@@ -773,9 +774,7 @@ impl Plugins {
                         if let Some(record) = record_of(project, id) {
                             hosted.send_pins(record);
                         }
-                        let laned = hosted.laned.clone();
-                        let playing = Playing { started, laned };
-                        let update = HostedUpdate::Plugin(Some(playing), hosted.lanes);
+                        let update = HostedUpdate::Plugin(Some(audio), hosted.lanes);
                         updates.push((id.clone(), hosted.plugin_id.clone(), update));
                     }
                     Some(Err(problem)) => {

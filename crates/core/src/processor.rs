@@ -646,7 +646,12 @@ impl EventOutputs<'_> {
     /// full, for example its list of held notes. It shows up in
     /// `EngineStatus::event_overflows`, like an event that a full buffer dropped.
     pub fn count_dropped(&mut self) {
-        self.dropped.set(self.dropped.get() + 1);
+        self.count_dropped_many(1);
+    }
+
+    /// [`Self::count_dropped`] for `count` events at once.
+    pub fn count_dropped_many(&mut self, count: u64) {
+        self.dropped.set(self.dropped.get().saturating_add(count));
     }
 }
 
