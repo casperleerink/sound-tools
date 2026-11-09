@@ -1,7 +1,7 @@
 import { Circle, For, Fragment, h, Knob, Label, Line, memo, now, Path, positionOf, Rect, Select, Show, signal, Space, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Num, type Press } from "./sdk";
 import { bent, type AutomationPoint } from "./song-clips";
 import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
-import { envelope, lfo, RATES, SHAPES } from "./lfo";
+import { ENVELOPE, envelope, lfo, RATES, SHAPES } from "./lfo";
 import { freeName, splitTarget, type Mover } from "./track";
 
 // The automation of a track: the lanes under it, each a line of points that moves a number of
@@ -137,9 +137,8 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
         if (mover() === "envelope")
           return (
             <div style={{ direction: "row", gap: 4 }}>
-              {ENVELOPE.map(([field, label, max]) => (
-                <Knob key={`env-${field}-${path}`} field={`${path}.${field}`} label={label} size="sm" bare min={field === "sustain" ? 0 : 1} max={max} default={field === "sustain" ? 0.5 : 100}
-                  unit={field === "sustain" ? "percent" : "ms"} />
+              {Object.entries(ENVELOPE).map(([field, { label, min, max, default: fallback, unit }]) => (
+                <Knob key={`env-${field}-${path}`} field={`${path}.${field}`} label={label} size="sm" bare min={min} max={max} default={fallback ?? min} unit={unit} />
               ))}
             </div>
           );
@@ -158,8 +157,6 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
 
 /** What can move the number of a lane, as its menu names it: an envelope on a track only, which has notes. */
 const MOVED_BY: readonly (readonly [Mover, string])[] = [["lane", "Points"], ["lfo", "LFO"], ["envelope", "Envelope"]];
-/** The knobs of an envelope: its field, its name, and its top. */
-const ENVELOPE = [["attack_ms", "Attack", 5_000], ["decay_ms", "Decay", 5_000], ["sustain", "Sustain", 1], ["release_ms", "Release", 10_000]] as const;
 /** The first letters of each child name, as a lane child is called after what moves it. */
 const PREFIX: Record<Mover, string> = { lane: "lane", lfo: "lfo", envelope: "env" };
 

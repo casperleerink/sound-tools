@@ -20,6 +20,14 @@ function along(low: Signal, high: Signal, amount: Signal, scale: "linear" | "log
   return exp(from.plus(to.minus(from).times(amount)));
 }
 
+/** How an envelope moves: its times and its sustain, each with the name its knob shows. */
+export const ENVELOPE = {
+  attack_ms: number({ min: 1, max: 5_000, default: 10, unit: "ms", label: "Attack" }),
+  decay_ms: number({ min: 1, max: 5_000, default: 200, unit: "ms", label: "Decay" }),
+  sustain: number({ min: 0, max: 1, default: 0.5, unit: "percent", label: "Sustain" }),
+  release_ms: number({ min: 1, max: 10_000, default: 300, unit: "ms", label: "Release" }),
+};
+
 export const lfo = tool({
   name: "lfo",
   title: "LFO",
@@ -44,13 +52,7 @@ export const envelope = tool({
   title: "Envelope",
   when: "A number of a track should rise with each note it plays and fall after",
   doc: "Sends `value`, which is `low` with no note, rises to `high` over `attack_ms` when a note starts, falls to `sustain` (0 to 1 of the way) over `decay_ms` while it is held, and back to `low` over `release_ms` after it. It follows the newest note of the track. `low` and `high` are in the units of the number it moves; `scale` `log` moves by equal ratios, for a frequency.",
-  state: {
-    attack_ms: number({ min: 1, max: 5_000, default: 10, unit: "ms" }),
-    decay_ms: number({ min: 1, max: 5_000, default: 200, unit: "ms" }),
-    sustain: number({ min: 0, max: 1, default: 0.5 }),
-    release_ms: number({ min: 1, max: 10_000, default: 300, unit: "ms" }),
-    ...between,
-  },
+  state: { ...ENVELOPE, ...between },
   sound: ({ attack_ms, decay_ms, sustain, release_ms, low, high, scale }) => {
     output("value", along(low, high, adsr(note.gate, attack_ms, decay_ms, sustain, release_ms), scale));
     return 0;
