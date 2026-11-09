@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
     BehaviourContext, BehaviourError, EventOutput, FADER_TOP_DB, JsonTool, JsonToolDoc,
-    OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, ToolSchema,
+    OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, Ticks, ToolSchema,
 };
 use sound_notes::{Point, check_order};
 use sound_signals::Number;
@@ -27,12 +27,29 @@ struct Record {
     /// Points in ticks from the start of the song, in tick order, one per tick, at least one,
     /// in the units of the number it moves. Before the first point it holds the first value,
     /// after the last the last.
-    points: Vec<Point<f32>>,
+    points: Vec<LanePoint>,
     /// How the number moves between two points: `"linear"` in a straight line, `"log"` by equal
     /// ratios in equal times, as a frequency or a time sounds even, `"fader"` along a fader's
     /// travel, as a volume in decibels moves. A log lane's values are above 0.
     #[serde(default)]
     scale: Scale,
+}
+
+/// One point of a lane, and how the line bends from it to the next.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "Point")]
+struct LanePoint {
+    tick: Ticks,
+    value: f32,
+    /// How the line bends from this point to the next, -1 to 1: 0 is straight, above 0 starts
+    /// slow and ends fast, below 0 starts fast and ends slow.
+    #[serde(default, skip_serializing_if = "is_straight")]
+    curve: f32,
+}
+
+fn is_straight(curve: &f32) -> bool {
+    *curve == 0.0
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -104,7 +121,14 @@ fn record(state: &Value) -> Result<Record, String> {
     if record.points.is_empty() {
         return Err("state.points must hold at least one point".to_string());
     }
-    check_order("state.points", &record.points)?;
+    check_order("state.points", &line(&record.points))?;
+    let mut curves = record.points.iter().enumerate();
+    if let Some((index, point)) = curves.find(|(_, point)| !(-1.0..=1.0).contains(&point.curve)) {
+        return Err(format!(
+            "state.points[{index}].curve must be from -1 to 1, not {}",
+            point.curve
+        ));
+    }
     let lowest = match record.scale {
         Scale::Linear | Scale::Fader => f32::NEG_INFINITY,
         Scale::Log => 0.0,
@@ -125,20 +149,35 @@ fn record(state: &Value) -> Result<Record, String> {
     Ok(record)
 }
 
+/// The points without their curves.
+fn line(points: &[LanePoint]) -> Vec<Point<f32>> {
+    let point = |point: &LanePoint| Point {
+        tick: point.tick,
+        value: point.value,
+    };
+    points.iter().map(point).collect()
+}
+
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let record = record(state).map_err(BehaviourError::Other)?;
     let node = context.processor(PROCESSOR, LanePlayer::default)?;
-    let points: Vec<Point<f32>> = (record.points.iter())
-        .map(|point| Point {
-            tick: point.tick,
-            value: record.scale.position(point.value),
-        })
-        .collect();
-    let bits: Vec<(u64, u32)> = (points.iter())
-        .map(|point| (point.tick.0, point.value.to_bits()))
+    let mut points = line(&record.points);
+    for point in &mut points {
+        point.value = record.scale.position(point.value);
+    }
+    let curves: Vec<f32> = record.points.iter().map(|point| point.curve).collect();
+    let bits: Vec<(u64, u32, u32)> = (points.iter().zip(&record.points))
+        .map(|(point, saved)| (point.tick.0, point.value.to_bits(), saved.curve.to_bits()))
         .collect();
     if context.changed("line", key(&(record.scale, bits))) {
-        context.update(node, Arc::new((record.scale, points)))?;
+        context.update(
+            node,
+            Arc::new(Line {
+                scale: record.scale,
+                points,
+                curves,
+            }),
+        )?;
     }
     context.output(VALUE, OutputEndpoint::new(node, LanePlayer::OUTPUT));
     Ok(())
@@ -150,7 +189,15 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 /// only when it moved: a number that hears nothing goes back to its record.
 #[derive(Default)]
 pub(crate) struct LanePlayer {
-    line: Arc<(Scale, Vec<Point<f32>>)>,
+    line: Arc<Line>,
+}
+
+/// What a lane plays: its points as places on its scale, and the curve out of each.
+#[derive(Default)]
+pub(crate) struct Line {
+    scale: Scale,
+    points: Vec<Point<f32>>,
+    curves: Vec<f32>,
 }
 
 impl LanePlayer {
@@ -158,7 +205,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Arc<(Scale, Vec<Point<f32>>)>;
+    type Update = Arc<Line>;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -172,11 +219,15 @@ impl Processor for LanePlayer {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let (scale, points) = &*self.line;
+        let Line {
+            scale,
+            points,
+            curves,
+        } = &*self.line;
         let (pieces, count) = sound_notes::pieces([points.as_slice()], &context.transport);
         let clock = context.transport.clock;
         for (offset, frame) in pieces.into_iter().take(count) {
-            if let Some(position) = sound_notes::value_at_frame(points, frame, clock) {
+            if let Some(position) = sound_notes::value_at_frame(points, curves, frame, clock) {
                 let value = Number(scale.value(position));
                 context.event_outputs.push(Self::OUTPUT, offset, value);
             }

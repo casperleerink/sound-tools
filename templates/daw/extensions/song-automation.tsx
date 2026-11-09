@@ -1,5 +1,5 @@
-import { Circle, For, Fragment, h, Label, Line, now, positionOf, Rect, signal, Space, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Press } from "./sdk";
-import type { LanePoint } from "./song-clips";
+import { Circle, For, Fragment, h, Label, Line, memo, now, Path, positionOf, Rect, Show, signal, Space, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Num, type Press } from "./sdk";
+import { bent, type AutomationPoint } from "./song-clips";
 import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
 import { freeName, splitTarget } from "./track";
 
@@ -75,7 +75,7 @@ const removeLane = ({ update }: Page, track: string, lane: string) =>
     if (at >= 0) owner.children.splice(at, 1);
   });
 /** Changes the points of the lane `lane` of `track`, sorted, one a tick; with none left, the lane goes. */
-export const editPoints = ({ update }: Pick<Page, "update">, label: string, track: string, lane: string, change: (points: LanePoint[]) => LanePoint[]) =>
+export const editPoints = ({ update }: Pick<Page, "update">, label: string, track: string, lane: string, change: (points: AutomationPoint[]) => AutomationPoint[]) =>
   update(label, ({ children }) => {
     const owner = children.find((child) => child.name === track);
     if (owner?.tool !== "track" && owner?.tool !== "tape") return;
@@ -88,7 +88,7 @@ export const editPoints = ({ update }: Pick<Page, "update">, label: string, trac
       owner.state.automation = owner.state.automation.filter((each) => each.lane !== lane);
     }
   });
-const rangeOf = ({ memory }: Page, track: string, target: string, points: readonly LanePoint[]): MovedNumber =>
+const rangeOf = ({ memory }: Page, track: string, target: string, points: readonly AutomationPoint[]): MovedNumber =>
   memory.ranges[`${track}/${target}`] ?? { name: target, label: words(target), value: null, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
 /**
  * What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number,
@@ -127,6 +127,16 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
     </div>
   );
 };
+/** The line from `from` to `to`, bent by `curve` as the lane plays it, in short straight pieces. */
+function bentLine(from: readonly [Num, Num], to: readonly [Num, Num], curve: number) {
+  const along = (a: Num, b: Num, part: number): Num => {
+    if (typeof a === "number") return typeof b === "number" ? a + (b - a) * part : b.times(part).plus(a * (1 - part));
+    return a.times(1 - part).plus(typeof b === "number" ? b * part : b.times(part));
+  };
+  const pieces = Array.from({ length: 16 }, (_, index) => (index + 1) / 16);
+  return [from, ...pieces.map((part) => [along(from[0], to[0], part), along(from[1], to[1], bent(part, curve))] as const)] as const;
+}
+
 /** The room of what a lane plays, in its head. */
 const READOUT = 96;
 
@@ -139,7 +149,7 @@ function readoutOf(range: MovedNumber): { unit?: "hz" | "db" | "ms" | "pan" | "p
  * The points of a lane on row `row`: lines between them, and a dot per point, bigger under the
  * pointer, with its value beside it. A press in the lane adds a point, on the snap unless cmd is
  * held, and a drag goes on to move it; a drag of a dot moves it between its neighbours; alt-drag
- * erases the points it covers.
+ * erases the points it covers; the dot in the middle of a line bends it, a double-click straightens it.
  */
 export const LaneRow = ({ page, track, lane, row, colour, snap }: { page: Page; track: string; lane: { lane: string; target: string }; row: Accessor<number>; colour: Accessor<Color>; snap: number }) => {
   const { memory, rows, topOf, end, timeline } = page;
@@ -179,9 +189,29 @@ export const LaneRow = ({ page, track, lane, row, colour, snap }: { page: Page; 
       const tick = clamp(point.tick + Math.round(dx), earliest, latest);
       const value = laneValue(range(), positionOf(range(), point.value) - dy / 0.8);
       // Added and moved in one press, it is one undo step.
-      editPoints(page, added() ? "Add a point" : "Move a point", track, lane.lane, (all) => all.map((each, at) => (at === index ? { tick, value } : each)));
+      editPoints(page, added() ? "Add a point" : "Move a point", track, lane.lane, (all) => all.map((each, at) => (at === index ? { ...each, tick, value } : each)));
       press(tick);
       choose(tick);
+    },
+  };
+  // The line a handle bends, by the tick of the point it starts at.
+  const [bending, bendFrom] = signal<number | null>(null);
+  const bendId = `bend-${track}-${lane.lane}`;
+  const bend = now.drag(bendId);
+  const bendDrag: Drag = {
+    id: bendId,
+    onEnd: ({ dy }) => {
+      const tick = bending();
+      bendFrom(null);
+      const index = points().findIndex((point) => point.tick === tick);
+      const [point, after] = [points()[index], points()[index + 1]];
+      if (!point || !after) return;
+      // The curve whose middle is where the handle was let go.
+      const [from, to] = [positionOf(range(), point.value), positionOf(range(), after.value)];
+      const middle = from + (to - from) * bent(0.5, point.curve ?? 0) - dy / 0.8;
+      const done = clamp((middle - from) / (to - from), 0.01, 0.99);
+      const curve = clamp(Math.log(Math.log(done) / Math.log(0.5)) / Math.log(4), -1, 1);
+      editPoints(page, "Bend a line", track, lane.lane, (all) => all.map((each) => (each.tick === point.tick ? { ...each, curve } : each)));
     },
   };
   /** Where the point at `index` is drawn, live while it is dragged: inside its lane, between its neighbours. */
@@ -215,8 +245,39 @@ export const LaneRow = ({ page, track, lane, row, colour, snap }: { page: Page; 
           return [
             // Flat before the first point and after the last.
             <Line from={() => [index() === 0 ? 0 : point.tick, at(index())[1]] as const} to={() => at(index())} color={colour} width={1.5} />,
-            <Line from={() => at(index())} to={() => (last() ? ([end(), at(index())[1]] as const) : at(index() + 1))} color={colour} width={1.5} />,
+            () => (!point.curve || last()
+              ? <Line from={() => at(index())} to={() => (last() ? ([end(), at(index())[1]] as const) : at(index() + 1))} color={colour} width={1.5} />
+              : <Path points={() => bentLine(at(index()), at(index() + 1), point.curve ?? 0)} color={colour} width={1.5} />),
           ];
+        }}
+      </For>
+      <For each={points}>
+        {(point, index) => {
+          // The handle that bends the line to the next point, at its middle: none on a flat line, which no curve bends.
+          const key = () => `${bendId}-${point.tick}`;
+          const bends = memo(() => {
+            const after = points()[index() + 1];
+            return after !== undefined && after.value !== point.value;
+          });
+          const middle = () => {
+            const after = points()[index() + 1] ?? point;
+            const [from, to] = [positionOf(range(), point.value), positionOf(range(), after.value)];
+            return { x: (point.tick + after.tick) / 2, y: top() + 0.1 + (1 - (from + (to - from) * bent(0.5, point.curve ?? 0))) * 0.8 };
+          };
+          const shown = () => (erasing() ? 0 : now.hover(key()).max(bend.active.times(bending() === point.tick ? 1 : 0)).max(0.35));
+          return (
+            <Show when={bends}>
+              {() => (
+                <Circle key={key} x={() => middle().x} y={() => (bending() === point.tick ? bend.dy.plus(middle().y) : middle().y)} radius={4} color={colour} opacity={shown}
+                  cursor="ns-resize" drag={bendDrag}
+                  onPress={({ button, clicks }) => {
+                    if (button !== "left") return;
+                    if (clicks === 2) return editPoints(page, "Straighten a line", track, lane.lane, (all) => all.map((each) => (each.tick === point.tick ? { tick: each.tick, value: each.value } : each)));
+                    bendFrom(point.tick);
+                  }} />
+              )}
+            </Show>
+          );
         }}
       </For>
       <For each={points}>

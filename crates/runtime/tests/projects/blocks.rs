@@ -6,7 +6,7 @@ use crate::support::{BAR, Harness, difference, write, write_samples};
 
 const BAR_TICKS: u64 = 3840;
 
-const TOOLS: &str = r#"import { note, sine, tool, type Declaration } from "./sdk";
+const TOOLS: &str = r#"import { note, number, sine, tool, type Declaration } from "./sdk";
 
 const parts = { synth: "instrument.synth", gain: "utility", filter: "filter", level: "lane", chord: "timeline" } as const;
 
@@ -68,6 +68,32 @@ export const bender = tool({
     connections: [
       { from: { child: "line", notes: "notes" }, to: { child: "voice", notes: "notes" } },
       { from: { child: "voice" }, to: { port: "audio" } },
+    ],
+  }),
+});
+
+export const steady = tool({
+  name: "steady",
+  title: "Steady",
+  when: "Never",
+  doc: "Plays its level as it is, on every frame.",
+  state: { level: number({ min: 0, max: 1, default: 0 }) },
+  sound: ({ level }) => level,
+});
+
+const moved = { dc: steady, line: "lane" } as const;
+
+export const mover = tool({
+  name: "mover",
+  title: "Mover",
+  when: "Never",
+  doc: "Plays its steady level, which its lane moves.",
+  state: {},
+  children: moved,
+  behaviour: (): Declaration<typeof moved> => ({
+    connections: [
+      { from: { child: "line", number: "value" }, to: { child: "dc", number: "level" } },
+      { from: { child: "dc" }, to: { port: "audio" } },
     ],
   }),
 });
@@ -207,7 +233,34 @@ fn a_timeline_bends_its_notes_as_its_lane_says_and_a_loop_has_no_lanes() {
     );
 }
 
-/// A lane checks its record: points in tick order, and a log lane above 0.
+/// The level a mover plays a bar in, with its lane from 0 at the start to 1 at two bars, whose
+/// line bends by `curve`.
+fn halfway(curve: &str) -> f32 {
+    let lane = format!(
+        r#"{{"tool": "lane", "state": {{"points": [{{"tick": 0, "value": 0{curve}}}, {{"tick": {}, "value": 1}}]}}}}"#,
+        2 * BAR_TICKS
+    );
+    let dc = r#"{"tool": "steady", "state": {}}"#.to_string();
+    let mut harness = project("mover", &[("line.json", lane), ("dc.json", dc)]);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.play_from_the_start(BAR + 64);
+    played[2 * BAR]
+}
+
+/// A lane goes straight from point to point, or along its curve: one of 1 is a quarter of the
+/// way, 0.5 to the 4th power, halfway along its line, and one of -1 the 4th root of 0.5.
+#[test]
+fn a_lane_plays_its_line_as_its_curve_bends_it() {
+    let straight = halfway("");
+    assert!((straight - 0.5).abs() < 1e-3, "{straight}");
+    assert_eq!(halfway(r#", "curve": 0"#), straight);
+    let late = halfway(r#", "curve": 1"#);
+    assert!((late - 0.0625).abs() < 1e-3, "{late}");
+    let early = halfway(r#", "curve": -1"#);
+    assert!((early - 0.5f32.powf(0.25)).abs() < 1e-3, "{early}");
+}
+
+/// A lane checks its record: points in tick order, a log lane above 0, and a curve from -1 to 1.
 #[test]
 fn a_lane_whose_points_are_out_of_order_or_below_zero_on_a_log_scale_is_a_problem() {
     let mut harness = keys(r#"[{"tick": 0, "value": 0}]"#);
@@ -232,6 +285,17 @@ fn a_lane_whose_points_are_out_of_order_or_below_zero_on_a_log_scale_is_a_proble
         problems
             .iter()
             .any(|problem| problem.message.contains("above 0")),
+        "{problems:?}"
+    );
+    harness.write_and_apply(
+        "state/keys/level.json",
+        &lane(r#"{"points": [{"tick": 0, "value": 0, "curve": 2}]}"#),
+    );
+    let problems = harness.project.problems();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("from -1 to 1")),
         "{problems:?}"
     );
 }

@@ -57,46 +57,56 @@ function shiftLanes(clip: FilledStateOfTool<"timeline">, by: number) {
   clip.controllers = Object.fromEntries(Object.entries(clip.controllers).map(([number, points]) => [number, shift(points)]));
 }
 
-export type LanePoint = { tick: number; value: number };
+/** A point of an automation lane. */
+export type AutomationPoint = FilledStateOfTool<"lane">["points"][number];
 type Scale = FilledStateOfTool<"lane">["scale"];
 
-/** The value of a lane at `tick`, as it plays: straight between its points along its travel, whose ends change nothing of that. */
-function laneAt(points: readonly LanePoint[], tick: number, scale: Scale): number {
+/** How far along a line bent by `curve` the place `done` of the way is, as the lane plays it. */
+export const bent = (done: number, curve: number) => (curve === 0 ? done : done ** (4 ** curve));
+
+/** The value of a lane at `tick`, as it plays: along its travel between its points, bent by the curve of the one before, whose ends change nothing of that. */
+function laneAt(points: readonly { tick: number; value: number; curve?: number }[], tick: number, scale: Scale): number {
   const after = points.findIndex((point) => point.tick >= tick);
   if (after <= 0) return (after === 0 ? points[0] : points[points.length - 1])?.value ?? 0;
   const [a, b] = [points[after - 1]!, points[after]!];
   const travel = { min: 1, max: 2, scale };
-  const part = b.tick === a.tick ? 1 : (tick - a.tick) / (b.tick - a.tick);
+  const part = b.tick === a.tick ? 1 : bent((tick - a.tick) / (b.tick - a.tick), a.curve ?? 0);
   const [from, to] = [positionOf(travel, a.value), positionOf(travel, b.value)];
   return valueAt(travel, from + (to - from) * part);
 }
 
 /** Sorted, one a tick: the last given wins. */
-const tidy = (points: readonly LanePoint[]) => [...new Map(points.map((point) => [point.tick, point])).values()].sort((a, b) => a.tick - b.tick);
+const tidy = (points: readonly AutomationPoint[]) => [...new Map(points.map((point) => [point.tick, point])).values()].sort((a, b) => a.tick - b.tick);
+
+/** A point at `tick` on the line of `sorted`, which goes on with the curve of where it lands: a cut line keeps about its shape. */
+function pointAt(sorted: readonly AutomationPoint[], scale: Scale, tick: number): AutomationPoint {
+  const curve = sorted.findLast((point) => point.tick <= tick)?.curve;
+  return { tick, value: laneAt(sorted, tick, scale), ...(curve ? { curve } : {}) };
+}
 
 /**
  * The line of a lane from `start` to `end`, from `start`, with a point on each edge so it is whole
  * wherever it lands. `null` without a point inside: the lane is not the item's there, and a line
  * held elsewhere would move a value nobody put under it.
  */
-function lift(points: readonly LanePoint[], scale: Scale, start: number, end: number): LanePoint[] | null {
+function lift(points: readonly AutomationPoint[], scale: Scale, start: number, end: number): AutomationPoint[] | null {
   const sorted = tidy(points);
   if (!sorted.some(({ tick }) => tick >= start && tick < end)) return null;
-  const at = (tick: number) => ({ tick, value: laneAt(sorted, tick, scale) });
-  return [at(start), ...sorted.filter(({ tick }) => tick > start && tick < end - 1), at(end - 1)].map(({ tick, value }) => ({ tick: tick - start, value }));
+  const at = (tick: number) => pointAt(sorted, scale, tick);
+  return [at(start), ...sorted.filter(({ tick }) => tick > start && tick < end - 1), at(end - 1)].map((point) => ({ ...point, tick: point.tick - start }));
 }
 
 /** A lane with nothing from `start` to `end` but a straight line between what plays just outside, by a point on each edge. */
-function emptied(points: readonly LanePoint[], scale: Scale, start: number, end: number): LanePoint[] {
+function emptied(points: readonly AutomationPoint[], scale: Scale, start: number, end: number): AutomationPoint[] {
   const sorted = tidy(points);
-  const at = (tick: number) => ({ tick, value: laneAt(sorted, tick, scale) });
-  return tidy([...sorted.filter(({ tick }) => tick < start || tick >= end), ...(start > 0 ? [at(start - 1)] : []), at(end)]);
+  const before = start > 0 ? [{ tick: start - 1, value: laneAt(sorted, start - 1, scale) }] : [];
+  return tidy([...sorted.filter(({ tick }) => tick < start || tick >= end), ...before, pointAt(sorted, scale, end)]);
 }
 
 /** A lane with `line` put down from `at` over what it had there. */
-function laid(points: readonly LanePoint[], scale: Scale, line: readonly LanePoint[], at: number): LanePoint[] {
+function laid(points: readonly AutomationPoint[], scale: Scale, line: readonly AutomationPoint[], at: number): AutomationPoint[] {
   const length = (line.at(-1)?.tick ?? 0) + 1;
-  return tidy([...emptied(points, scale, at, at + length), ...line.map(({ tick, value }) => ({ tick: tick + at, value }))]);
+  return tidy([...emptied(points, scale, at, at + length), ...line.map((point) => ({ ...point, tick: point.tick + at }))]);
 }
 
 /** A copy of a record to change, from a view's or a key's. */
@@ -112,7 +122,7 @@ type Taken = {
   name: string;
   item: { tool: "timeline"; state: FilledStateOfTool<"timeline"> } | { tool: "region"; state: FilledStateOfTool<"region"> };
   length: number;
-  lines: { target: string; scale: Scale; points: LanePoint[] }[];
+  lines: { target: string; scale: Scale; points: AutomationPoint[] }[];
 };
 /** What cut and copy keep: the clips and the regions, their starts from the earliest and their rows from the top. */
 export type Clipboard = Taken[];

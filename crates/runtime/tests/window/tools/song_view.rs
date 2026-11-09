@@ -549,6 +549,60 @@ fn a_press_in_a_lane_adds_a_point_its_drag_moves_and_an_alt_drag_erases(cx: &mut
     assert_eq!(window.problems(), []);
 }
 
+/// The handle in the middle of a line bends it as one undo step; the bend stays when the point
+/// at its end moves, and a double-click on the handle straightens it.
+#[gpui::test]
+fn a_line_of_a_lane_bends_by_its_handle_and_a_double_click_straightens_it(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.show_toggles("t00");
+    let lanes = window.until_found("toggle-lanes-t00");
+    window.click(lanes);
+    window.until_found("div-lane-name-t00-lane-cutoff");
+    let curve = |window: &mut Opened<'_>| {
+        window.record("song/t00/lane-cutoff")["points"][0]["curve"].as_f64()
+    };
+    // A point at the foot of the row at bar 4, 20 Hz: the line from 6 kHz falls to it.
+    let foot = point(px(0.), px(0.4 * crate::song::ROW));
+    let [four, five] = [4, 5].map(|bar| window.on_lane(bar * BAR, 1) + foot);
+    window.click(four);
+    window.until("a point added", |window| {
+        window.record("song/t00/lane-cutoff")["points"][1]["tick"] == 4 * BAR
+    });
+    window.after_the_runs();
+    // The handle is at bar 2, halfway along the line on the cutoff's log travel.
+    let middle = (6_000f32 / 20.).ln() / 1_000f32.ln() / 2.;
+    let handle = window.on_lane(2 * BAR, 1)
+        + point(
+            px(0.),
+            px((0.1 + (1. - middle) * 0.8 - 0.5) * crate::song::ROW),
+        );
+    let before = crate::support::mark(&mut window);
+    let pulled = point(px(0.), px(0.1 * crate::song::ROW));
+    window.drag(handle, handle + pulled);
+    window.until("the line bent", |window| curve(window).is_some());
+    window.after_the_runs();
+    crate::support::one_undo_step(&mut window, "Bend a line", &before);
+    // Pulled down, the falling line drops early.
+    let bent = curve(&mut window).unwrap_or_default();
+    assert!((-0.45..-0.25).contains(&bent), "{bent}");
+
+    window.drag(four, five);
+    window.until("the point moved", |window| {
+        window.record("song/t00/lane-cutoff")["points"][1]["tick"] == 5 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(curve(&mut window), Some(bent));
+
+    // The handle stays where it was let go, at the middle of the longer line.
+    let moved = window.on_lane(5 * BAR / 2, 1) + (handle - window.on_lane(2 * BAR, 1)) + pulled;
+    window.double_click(moved);
+    window.until("the line straight", |window| curve(window).is_none());
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Straighten a line"));
+    assert_eq!(window.problems(), []);
+}
+
 /// An audio track has lanes as a track has, as the arrangement's had: its volume plays from one.
 #[gpui::test]
 fn an_audio_track_has_a_lane_for_its_volume(cx: &mut TestAppContext) {
