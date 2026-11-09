@@ -210,10 +210,8 @@ fn a_plugin_after_the_program_was_replaced_asks_for_a_restart() {
     assert!(peak(&harness.play(1024).left()) > 0.1, "it plays");
 
     let later = std::time::SystemTime::now() + Duration::from_secs(60);
-    let file = std::fs::File::options()
-        .write(true)
-        .open(&program)
-        .expect("the program");
+    // Read only: Linux refuses to open a program that runs for writing.
+    let file = std::fs::File::open(&program).expect("the program");
     file.set_modified(later).expect("a new time");
     harness.add_effect(record(PluginFormat::Clap, "effect"));
     let problems = harness.problems();

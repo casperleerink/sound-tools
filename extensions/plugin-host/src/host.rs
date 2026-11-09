@@ -110,6 +110,7 @@ pub enum PluginProblem {
 
 /// How a host runs its plugins in processes of their own.
 #[derive(Clone, Debug)]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub struct Isolation {
     /// Whether the plugin's process keeps quiet: what it writes to standard error goes nowhere.
     /// A headless host's own output is what its caller reads.
