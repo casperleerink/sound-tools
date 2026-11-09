@@ -306,6 +306,16 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
 }
 /** A clip's and a track's menu: with the tail, what reverbs and releases sound after the end, or without. */
 export const RENDER_ITEMS = [{ label: "Render to audio track", tail: true, separator: true }, { label: "Render to audio track, no tail", tail: false }] as const;
+/**
+ * Why `each` cannot render onto an audio track, or `undefined` when it can: an envelope that
+ * moves its volume or a send hears its notes, which the audio track would not have.
+ */
+export function cannotRender(each: Child | undefined): string | undefined {
+  if (each?.tool !== "track") return undefined;
+  const enveloped = each.state.automation.some(({ lane, target }) =>
+    (target.startsWith("mix.") || target.startsWith("send-")) && each.children.some((child) => child.name === lane && child.tool === "envelope"));
+  return enveloped ? "An envelope moves its volume or a send" : undefined;
+}
 /** Renders the clips and regions `keys` of the track `name`, from the first to the last, after its effects and before its fader, onto a new audio track under it that takes its fader, sends, their automation, its solo and what it keys after its fader, and mutes `name`: the song sounds as before. */
 export async function renderToTrack({ update, render, rows, itemAt, lengthAt }: Page, name: string, keys: readonly string[], tail: boolean) {
   const source = rows().find((each) => each.name === name);
@@ -345,7 +355,8 @@ async function trackMenu(page: Page, each: Child) {
   const { memory, update, openMenu } = page;
   const lanesShown = memory.lanes.has(each.name);
   const keys = each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.tool === "timeline" || child.tool === "region").map((child) => `${each.name}/${child.name}`) : [];
-  const renders = each.tool === "bus" ? [] : RENDER_ITEMS.map((item) => ({ ...item, disabled: keys.length === 0 }));
+  const why = cannotRender(each);
+  const renders = each.tool === "bus" ? [] : RENDER_ITEMS.map((item) => ({ ...item, disabled: keys.length === 0 || why !== undefined, detail: why }));
   const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation" },
     { label: "Add automation…" }, ...renders, { label: "Delete", shortcut: "song.delete_track" as const, separator: renders.length > 0 }];
   const picked = await openMenu(items);
