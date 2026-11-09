@@ -139,7 +139,7 @@ pub fn timeline_state(clip: &Clip, title: &str) -> Result<Value, String> {
 }
 
 /// What the timeline `state` plays as a clip, one round of a loop, and its title.
-pub fn timeline_clip(state: &Value) -> Result<(Clip, String), String> {
+pub(crate) fn timeline_clip(state: &Value) -> Result<(Clip, String), String> {
     let record = record(state)?;
     let round = round(&record)?;
     let clip = Clip {

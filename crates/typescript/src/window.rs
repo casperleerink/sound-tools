@@ -2079,7 +2079,7 @@ impl Live {
             self.tool_problem(instance, problem, cx);
             return answer(self, false);
         };
-        let (clip, title) = match crate::timeline_clip(&state) {
+        let (clip, title) = match crate::timeline::timeline_clip(&state) {
             Ok(clip) => clip,
             Err(error) => {
                 let problem =

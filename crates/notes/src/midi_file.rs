@@ -248,14 +248,11 @@ fn lane<V: ExpressionValue>(steps: &[(Ticks, V)], end: Option<Ticks>) -> Vec<Poi
     let mut values: Vec<Point<V>> = Vec::new();
     let resting_after =
         |tick: Ticks, value: V| end.is_some_and(|end| tick >= end && value == V::REST);
-    for &(tick, value) in steps
-        .iter()
-        .filter(|(tick, value)| !resting_after(*tick, *value))
-    {
+    for &(tick, value) in steps {
         if values.last().is_some_and(|last| last.tick == tick) {
             values.pop();
         }
-        if values.last().is_none_or(|last| last.value != value) {
+        if !resting_after(tick, value) && values.last().is_none_or(|last| last.value != value) {
             values.push(Point { tick, value });
         }
     }

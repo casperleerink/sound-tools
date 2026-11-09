@@ -343,3 +343,23 @@ fn a_clip_is_written_as_it_sounds() {
         ]
     );
 }
+
+/// Of a bend and its rest on the tick its track ends, the rest wins, and the clip rests there
+/// by itself.
+#[test]
+fn a_bend_that_rests_where_its_track_ends_adds_nothing() {
+    let events = track(&[
+        (0, b"\xE0\x00\x50"),
+        (0, b"\x90\x3C\x64"),
+        (480, b"\xE0\x00\x60"),
+        (0, b"\xE0\x00\x40"),
+        (0, b"\x80\x3C\x00"),
+        (0, b"\xFF\x2F\x00"),
+    ]);
+    let parts = read(&file(0, 480, &[events]), "rest").unwrap();
+    let [(_, clip)] = &parts[..] else {
+        panic!("one part");
+    };
+    assert_eq!(clip.length.ticks(), Ticks(960));
+    assert_eq!(clip.bend, [point(0, Bend::new(2048).unwrap())]);
+}

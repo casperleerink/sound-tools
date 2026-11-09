@@ -52,7 +52,7 @@ pub use card::{node_counts, page_has_text, page_ready};
 #[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
-pub use timeline::{timeline_clip, timeline_state};
+pub use timeline::timeline_state;
 pub use tools::forget_gone;
 pub use window::start_window;
 #[cfg(feature = "test-support")]
