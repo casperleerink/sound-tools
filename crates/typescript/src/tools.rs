@@ -31,7 +31,7 @@ use sound_ui::shortcuts;
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
 use crate::feeds::played_name;
-use crate::{FOLDER, region, samples};
+use crate::{FOLDER, lane, region, samples};
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -1572,7 +1572,10 @@ fn wire(
                     Some(into) => {
                         // What it plays, for a view that shows the number as it plays.
                         let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
-                        let source = from_child.and_then(|from| context.id().child(from).ok());
+                        // Only a lane takes what a hand plays into the number.
+                        let lane =
+                            from_child.filter(|from| context.child_tool(from) == Some(lane::NAME));
+                        let source = lane.and_then(|from| context.id().child(from).ok());
                         played.entry(child).or_default().push(CabledNumber {
                             number: to_name.into(),
                             watch: shown.clone(),
@@ -1710,8 +1713,8 @@ fn region_players(
 /// value, not a line in time, so every tick shows the last one, and none while it plays nothing.
 struct Played(Vec<CabledNumber>);
 
-/// One number a cable plays into: its name, what the cable last played, and the child it comes
-/// from.
+/// One number a cable plays into: its name, what the cable last played, and the lane it comes
+/// from, which a hand on the number writes into.
 struct CabledNumber {
     number: Arc<str>,
     watch: Watch,

@@ -158,8 +158,8 @@ const RETURN: Ticks = Ticks(120);
 /// The lane of `state` with what a hand played written into it: `runs` of samples of rising
 /// ticks, each in the units of the number, spliced in turn into the line as the runs before
 /// left it. Each run keeps the line up to the tick before it, holds its last value, and goes
-/// back to the line that was there within [`RETURN`]. `travel` is the travel of the number, on which a
-/// sample goes that the line passes close to.
+/// back to the line that was there within [`RETURN`]. Samples the line passes close to on
+/// `travel`, the travel of the number, are dropped.
 pub(crate) fn written(
     state: &Value,
     runs: &[Vec<(Ticks, f32)>],

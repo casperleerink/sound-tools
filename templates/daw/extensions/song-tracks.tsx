@@ -2,6 +2,7 @@ import { Button, For, Fragment, h, Icon, Input, Label, Meter, now, onCleanup, Se
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
+import { lfo } from "./lfo";
 import type { Song } from "./song";
 import { addLane, LaneHead, learnName, showLanes } from "./song-automation";
 import { copyOf } from "./song-clips";
@@ -318,12 +319,16 @@ export async function renderToTrack({ update, render, rows, itemAt, lengthAt }: 
     const owner = part.children.find((child) => child.name === name);
     if (owner?.tool !== "track" && owner?.tool !== "tape") return;
     const audio = freeName(part.children.map((child) => child.name), "audio-1") as `audio-${string}`;
-    const automation = owner.state.automation.filter(({ target }) => target.startsWith("mix.") || target.startsWith("send-"));
+    // The lanes and LFOs of its faders go along; an envelope hears notes, which an audio track has none of.
+    const automation = owner.state.automation.filter(({ target, lane }) =>
+      (target.startsWith("mix.") || target.startsWith("send-")) && owner.children.some((child) => child.name === lane && (child.tool === "lane" || child.tool === "lfo")));
     const faders = owner.children.flatMap((child) => (child.name === "mix" || child.name.startsWith("send-")) && child.tool === "fader" ? [{ name: child.name as "mix" | `send-${string}`, tool: "fader" as const, state: { ...child.state } }] : []);
-    const lanes = owner.children.flatMap((child) => automation.some(({ lane }) => lane === child.name) && child.tool === "lane" ? [{ name: child.name as `lane-${string}`, tool: "lane" as const, state: copyOf(child.state) }] : []);
+    const moved = (name: string) => automation.some(({ lane }) => lane === name);
+    const lanes = owner.children.flatMap((child) => (moved(child.name) && child.tool === "lane" ? [{ name: child.name as `lane-${string}`, tool: "lane" as const, state: copyOf(child.state) }] : []));
+    const lfos = owner.children.flatMap((child) => (moved(child.name) && child.tool === "lfo" ? [{ name: child.name as `lfo-${string}`, tool: lfo, state: copyOf(child.state) }] : []));
     part.children.push({
       name: audio, tool: tape, state: { colour: owner.state.colour, title: `${title} (audio)`, automation: copyOf(automation) },
-      children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, ...faders, ...lanes, { name: "render", tool: "region", state: { asset, start: from } }],
+      children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, ...faders, ...lanes, ...lfos, { name: "render", tool: "region", state: { asset, start: from } }],
     });
     const order = rows().map((each) => each.name);
     order.splice(order.indexOf(name) + 1, 0, audio);

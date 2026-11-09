@@ -48,13 +48,14 @@ pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), Gra
 /// Follows the open gesture of a session, such as automation that writes what a hand plays.
 /// The window attaches one; the session calls it, so it sees every drag of every view.
 pub trait GestureFollower {
-    /// After each publish into the open gesture and on each poll while it is open. `writes` is
-    /// whether automation is written ([`Session::writes_automation`]).
+    /// After each publish into the open gesture (`published`) and on each poll while it is open.
+    /// `writes` is whether automation is written ([`Session::writes_automation`]).
     fn follow(
         &mut self,
         project: &mut Project,
         gesture: &ProjectEdit,
         playhead: Playhead,
+        published: bool,
         writes: bool,
     ) -> Result<(), ProjectError>;
 
@@ -355,17 +356,18 @@ impl Session {
         let result = self.edit(cx, |project| publish(project, &mut edit));
         self.gesture = Some(edit);
         if result.is_some() {
-            self.follow_gesture(cx);
+            self.follow_gesture(true, cx);
         }
         result
     }
 
-    fn follow_gesture(&mut self, cx: &mut Context<Self>) {
+    fn follow_gesture(&mut self, published: bool, cx: &mut Context<Self>) {
         let (Some(follower), Some(edit)) = (self.follower.as_mut(), self.gesture.as_ref()) else {
             return;
         };
         let playhead = *self.playhead.read(cx);
-        let followed = follower.follow(&mut self.project, edit, playhead, self.writes_automation);
+        let writes = self.writes_automation;
+        let followed = follower.follow(&mut self.project, edit, playhead, published, writes);
         if let Err(error) = followed {
             self.report(error, cx);
         }
@@ -393,10 +395,9 @@ impl Session {
         };
         let mut follower = self.follower.take();
         self.edit(cx, |project| {
-            project.cancel(edit)?;
-            follower
-                .as_mut()
-                .map_or(Ok(()), |follower| follower.cancel(project))
+            let cancelled = project.cancel(edit);
+            let followed = (follower.as_mut()).map_or(Ok(()), |follower| follower.cancel(project));
+            cancelled.and(followed)
         });
         self.follower = follower;
     }
@@ -544,7 +545,7 @@ impl Session {
         if let Err(error) = self.project.poll() {
             self.report(error, cx);
         }
-        self.follow_gesture(cx);
+        self.follow_gesture(false, cx);
         if self.emit_events(cx) {
             cx.notify();
         }

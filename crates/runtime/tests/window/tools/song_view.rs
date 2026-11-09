@@ -1588,6 +1588,21 @@ fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mu
     assert_eq!(window.record("song/t00/mix"), record);
     crate::support::one_undo_step(&mut window, "Write automation", &before);
     assert_eq!(window.problems(), []);
+
+    // Pulled to the bottom, silence, it writes -100 dB, as a lane holds no -inf.
+    window.press(fader);
+    window.drag_to(fader + point(px(0.), px(400.)));
+    for _ in 0..5 {
+        window.play_and_draw(4_800);
+    }
+    window.release(fader + point(px(0.), px(400.)));
+    window.wait_for_bun();
+    let points = window.record("song/t00/lane-volume")["points"].clone();
+    let quietest = (points.as_array().unwrap().iter())
+        .filter_map(|point| point["value"].as_f64())
+        .fold(f64::MAX, f64::min);
+    assert_eq!(quietest, -100., "{points}");
+    assert_eq!(window.problems(), []);
 }
 
 /// A lane's menu moves its number with an LFO instead of points, as one undo step: the LFO

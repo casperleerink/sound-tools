@@ -8,6 +8,8 @@
 //! end of the drag the samples go into the lane, and the number goes back to its record from
 //! before the drag, so the drag is one undo step that changes only the lane.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 use sound_core::{InstanceId, Project, ProjectEdit, ProjectError, Ticks};
 use sound_ui::{GestureFollower, Playhead};
@@ -18,6 +20,8 @@ use crate::lane::{self, LanePlayer, LaneUpdate};
 #[derive(Default)]
 pub(crate) struct Writer {
     touches: Vec<Touch>,
+    /// The records the drag moved, as they were before it, read once.
+    before: BTreeMap<InstanceId, Option<Value>>,
 }
 
 /// One number a hand holds, and what it played.
@@ -29,8 +33,9 @@ struct Touch {
     before: Option<Value>,
     /// What the hand played, in runs of rising ticks: a stop or a jump ends one.
     runs: Vec<Vec<(Ticks, f32)>>,
-    /// The jumps of the playhead and whether it played, at the last sample.
+    /// The jumps of the playhead at the last sample.
     jumps: u64,
+    /// Whether the piece played at the last sample.
     playing: bool,
 }
 
@@ -40,9 +45,10 @@ impl GestureFollower for Writer {
         project: &mut Project,
         gesture: &ProjectEdit,
         playhead: Playhead,
+        published: bool,
         writes: bool,
     ) -> Result<(), ProjectError> {
-        if writes && playhead.playing {
+        if published && writes && playhead.playing {
             self.take_over(project, gesture, playhead)?;
         }
         for touch in &mut self.touches {
@@ -62,6 +68,7 @@ impl GestureFollower for Writer {
         // The lane plays its new line before the number goes back to its record, so no block
         // plays the record between the two.
         let written = (self.touches.iter()).try_for_each(|touch| touch.write(project, gesture));
+        self.before.clear();
         let touches = std::mem::take(&mut self.touches);
         let released = self.let_go(project, &touches);
         let restored = (touches.iter()).try_for_each(|touch| touch.restore(project, gesture));
@@ -69,6 +76,7 @@ impl GestureFollower for Writer {
     }
 
     fn cancel(&mut self, project: &mut Project) -> Result<(), ProjectError> {
+        self.before.clear();
         let touches = std::mem::take(&mut self.touches);
         self.let_go(project, &touches)
     }
@@ -83,15 +91,18 @@ impl Writer {
         playhead: Playhead,
     ) -> Result<(), ProjectError> {
         let mut taken = Vec::new();
-        for (instance, before) in gesture.before_json() {
+        for instance in gesture.published() {
             let (Some(lanes), Some(now)) = (project.lanes(instance), project.state_json(instance))
             else {
                 continue;
             };
-            let before: Option<Value> = before.and_then(|json| serde_json::from_str(&json).ok());
             let Ok(now) = serde_json::from_str::<Value>(&now) else {
                 continue;
             };
+            let before = (self.before.entry(instance.clone())).or_insert_with(|| {
+                let json = gesture.before_json(instance)?;
+                serde_json::from_str(&json).ok()
+            });
             let mut played = Vec::new();
             lanes.values_at(playhead.tick, &mut played);
             for (number, _) in played {
@@ -101,10 +112,7 @@ impl Writer {
                 let Some(lane) = lanes.source(&number) else {
                     continue;
                 };
-                if held
-                    || was == at_path(&now, &number)
-                    || project.tool_of(lane) != Some(lane::NAME)
-                {
+                if held || was == at_path(&now, &number) {
                     continue;
                 }
                 taken.push(Touch {
@@ -149,13 +157,18 @@ impl Touch {
             return;
         }
         let number = project.automation(&self.instance, &self.number);
-        // A lane holds no -inf: a volume's bottom is -100 dB.
-        let Some(value) = number
-            .and_then(|number| number.record)
-            .map(|value| value.max(-100.0))
-        else {
+        let Some(value) = number.and_then(|number| number.record) else {
             return;
         };
+        // A lane holds no -inf: a volume's bottom is -100 dB.
+        let value = if value == f32::NEG_INFINITY {
+            -100.0
+        } else {
+            value
+        };
+        if !value.is_finite() {
+            return;
+        }
         if !went_on || self.runs.is_empty() {
             self.runs.push(Vec::new());
         }

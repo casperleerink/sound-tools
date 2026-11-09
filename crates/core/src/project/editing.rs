@@ -135,18 +135,16 @@ impl Edit {
         self.label = label.to_string();
     }
 
-    /// Each record it published over, with its `state` as JSON from before the edit: `None` for
-    /// one the edit made.
-    pub fn before_json(&self) -> impl Iterator<Item = (&InstanceId, Option<String>)> {
-        let records = self.records.iter();
-        records.map(|(id, before)| {
-            (
-                id,
-                before
-                    .as_ref()
-                    .and_then(|record| record.state.to_json().ok()),
-            )
-        })
+    /// The records it published over.
+    pub fn published(&self) -> impl Iterator<Item = &InstanceId> {
+        self.records.keys()
+    }
+
+    /// The `state` of `id` as JSON from before the edit: `None` when the edit made it or did not
+    /// touch it.
+    pub fn before_json(&self, id: &InstanceId) -> Option<String> {
+        let before = self.records.get(id)?.as_ref()?;
+        before.state.to_json().ok()
     }
 }
 

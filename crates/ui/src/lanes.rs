@@ -1,8 +1,9 @@
 //! What the automation lanes of a track play into the numbers of one device, for its view.
 //!
 //! The knob of an automated number shows the value that plays, with a mark, and does not drag: the
-//! lane decides that value, not the composer. While automation is written and the project plays,
-//! it drags, from the value that plays, and the hand writes into the lane. The view keeps a [`Lanes`] of its instance, with the
+//! lane decides that value, not the composer. While automation is written and the project
+//! plays, the knob of a number a lane moves drags, from the value that plays, and the hand
+//! writes into the lane. The view keeps a [`Lanes`] of its instance, with the
 //! numbers the device takes automation for. It works the values out at the playhead from the lanes
 //! the owner of the instance shows ([`Project::lanes`]), with the math of the player, once per
 //! poll and when the lanes change, and tells the view only when one of them changed. A value a
@@ -29,8 +30,10 @@ pub struct Lanes<S: 'static> {
     values: Vec<(Arc<str>, f32)>,
     /// Where the next look puts the values, so that it allocates nothing.
     next: Vec<(Arc<str>, f32)>,
-    /// Whether automation is written as the project plays: no number is held then.
-    writing: bool,
+    /// The numbers a hand may drag and write into their lane: while automation is written and
+    /// the project plays, those a lane moves.
+    writable: Vec<Arc<str>>,
+    next_writable: Vec<Arc<str>>,
     _polling: Task<()>,
 }
 
@@ -73,7 +76,8 @@ impl<S: 'static> Lanes<S> {
                 parameters,
                 values: Vec::new(),
                 next: Vec::new(),
-                writing: false,
+                writable: Vec::new(),
+                next_writable: Vec::new(),
                 _polling: every_poll(cx, Self::refresh),
             };
             lanes.refresh(cx);
@@ -92,27 +96,33 @@ impl<S: 'static> Lanes<S> {
 
     /// Whether a lane moves the number `field` and holds its knob.
     pub fn is_automated(&self, field: &str) -> bool {
-        !self.writing && self.value(field).is_some()
+        self.value(field).is_some() && !self.writable.iter().any(|name| **name == *field)
     }
 
     /// Whether a lane moves the number `field` of an object of a nested record, which a lane
     /// names by the path of the object, a dot and the field: `bands[0].gain_db`, `pads.36.pan`,
     /// `osc_1.position`. An empty `object` is the record itself. See [`object_of`].
     pub fn is_automated_in(&self, object: &str, field: &str) -> bool {
+        let held = |lane: &Arc<str>| !self.writable.contains(lane);
         let mut names = self.values.iter();
-        !self.writing && names.any(|(lane, _)| is_number_of(lane, object, field))
+        names.any(|(lane, _)| is_number_of(lane, object, field) && held(lane))
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.next.clear();
         let session = self.session.read(cx);
+        self.next_writable.clear();
         let playhead = *session.playhead().read(cx);
         if let Some(lanes) = session.project().lanes(&self.instance) {
             lanes.values_at(playhead.tick, &mut self.next);
+            if session.writes_automation() && playhead.playing {
+                let names = self.next.iter().map(|(name, _)| name);
+                let writable = names.filter(|name| lanes.source(name).is_some());
+                self.next_writable.extend(writable.cloned());
+            }
         }
-        let writing = session.writes_automation() && playhead.playing;
-        if self.next != self.values || writing != self.writing {
-            self.writing = writing;
+        if self.next != self.values || self.next_writable != self.writable {
+            std::mem::swap(&mut self.next_writable, &mut self.writable);
             std::mem::swap(&mut self.next, &mut self.values);
             cx.notify();
         }

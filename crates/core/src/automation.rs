@@ -69,8 +69,8 @@ pub trait PlayedLanes: Send + Sync {
     /// project plays, so it gives the list to fill, and a name is shared, not copied.
     fn values_at(&self, tick: Ticks, values: &mut Vec<(Arc<str>, f32)>);
 
-    /// The instance whose output moves the number `name`, when the owner knows it: for code
-    /// that follows a hand on that number, such as automation that records it.
+    /// The instance a hand on the number `name` writes into, such as the lane that moves it, when
+    /// there is one: for code that records the hand.
     fn source(&self, _name: &str) -> Option<&InstanceId> {
         None
     }

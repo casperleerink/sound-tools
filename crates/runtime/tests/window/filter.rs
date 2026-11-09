@@ -298,3 +298,41 @@ fn escape_during_a_drag_that_writes_automation_leaves_the_lane_as_it_was(cx: &mu
     play_on(&mut opened, 4_800);
     assert!(opened.find("automated-cutoff_hz").is_some());
 }
+
+/// A hand that holds the cutoff while the loop goes back writes each pass on its own: the
+/// second pass writes from the loop's start, where the first had not been.
+#[gpui::test]
+fn a_drag_held_over_the_end_of_a_loop_writes_each_pass(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    automate(&mut opened, &[(0, 1_000.), (64 * support::BAR, 1_000.)]);
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.set_writes_automation(true, cx);
+            let range = Ticks(0)..Ticks(support::BAR);
+            session.set_loop(sound_ui::Loop { range, on: true }, cx);
+            session.engine().play();
+        });
+    });
+    // Half a second into the bar of two seconds, then on past its end.
+    play_on(&mut opened, 24_000);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.press(knob);
+    opened.drag_to(point(knob.x, knob.y - px(20.)));
+    for _ in 0..20 {
+        play_on(&mut opened, 4_800);
+    }
+    let held = shown_cutoff(&mut opened);
+    opened.release(point(knob.x, knob.y - px(20.)));
+    opened.settle();
+    let written = points(&mut opened);
+    // The line holds what the hand held over `tick`.
+    let holds = |tick: u64| {
+        let around = written
+            .windows(2)
+            .find(|pair| pair[0].0 <= tick && tick < pair[1].0);
+        around.is_some_and(|pair| pair[0].1 == held && pair[1].1 == held)
+    };
+    // The hand took it a quarter of the way into the first pass, and held it into the second.
+    assert!(holds(500) && holds(2_500), "{written:?}");
+}

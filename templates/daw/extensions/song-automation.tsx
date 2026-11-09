@@ -183,7 +183,7 @@ function moveWith({ update, memory }: Page, track: string, lane: { lane: string;
     if (owner?.tool !== "track" && owner?.tool !== "tape") return;
     const at = owner.children.findIndex((child) => child.name === lane.lane);
     const old = owner.children[at];
-    if (!old || old.tool === tool) return;
+    if (!old || old.tool === tool || (tool === "envelope" && owner.tool !== "track")) return;
     const held = old.tool === "lane" ? (old.state.points[0]?.value ?? low) : old.tool === "lfo" || old.tool === "envelope" ? old.state.low : low;
     owner.children.splice(at, 1);
     const name = freeName(owner.children.map((child) => child.name), `${PREFIX[tool]}-${nameFrom(lane.target)}`);
