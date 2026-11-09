@@ -66,7 +66,7 @@ pub trait GestureFollower {
         gesture: &mut ProjectEdit,
     ) -> Result<(), ProjectError>;
 
-    /// After the gesture was cancelled: the state before it is back.
+    /// Right before the gesture is cancelled, which puts the state before it back.
     fn cancel(&mut self, project: &mut Project) -> Result<(), ProjectError>;
 }
 
@@ -394,9 +394,11 @@ impl Session {
             return;
         };
         let mut follower = self.follower.take();
+        // The follower goes first, so what it held lets go before the state before the
+        // gesture plays.
         self.edit(cx, |project| {
-            let cancelled = project.cancel(edit);
             let followed = (follower.as_mut()).map_or(Ok(()), |follower| follower.cancel(project));
+            let cancelled = project.cancel(edit);
             cancelled.and(followed)
         });
         self.follower = follower;
