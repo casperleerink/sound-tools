@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use plugin_host::PluginFormat;
-use sound_core::Changes;
+use sound_core::{Changes, MAX_BLOCK};
 
 use crate::pins::{
     is_near, level, one_note, pin, pinned, pinned_value, plugin_value, written_value,
@@ -27,7 +27,7 @@ fn wave(format: PluginFormat) -> u32 {
 fn set_lanes(harness: &mut Harness, label: &str, lanes: Vec<(String, f32)>) {
     let rack = harness.project.resolve::<Rack>(&id("track")).unwrap();
     let mut changes = Changes::new();
-    changes.set(&rack, Rack { lanes });
+    changes.set(&rack, Rack { lanes, bend: None });
     harness.project.commit(label, changes).unwrap();
 }
 
@@ -43,6 +43,38 @@ fn poll(harness: &mut Harness, now: Instant) {
     harness.plugins.poll_at(&harness.project, now);
     let errors = harness.plugins.follow_pins_at(&mut harness.project, now);
     assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// A lane that bends inside a sub-block moves its pin from that frame on, not from the next
+/// block: the plugin plays the sub-block in pieces cut where the lane bends.
+#[test]
+fn a_lane_that_bends_inside_a_sub_block_moves_its_pin_on_that_frame() {
+    const BEND: usize = 24;
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let left = |bend| {
+            let mut harness = track(format);
+            harness.play(1024);
+            let rack = harness.project.resolve::<Rack>(&id("track")).unwrap();
+            let lanes = vec![(level_lane(format), 1.0)];
+            let mut changes = Changes::new();
+            changes.set(&rack, Rack { lanes, bend });
+            harness.project.commit("Automate", changes).unwrap();
+            harness.render(1024).left()
+        };
+        let steady = left(None);
+        let bent = left(Some((BEND, 0.25)));
+        for frame in 512..1024 {
+            let level = if frame % MAX_BLOCK < BEND { 1.0 } else { 0.25 };
+            let expected = steady[frame] * level;
+            assert!(
+                (bent[frame] - expected).abs() < 1e-6,
+                "{format:?} frame {frame}: {} and not {expected}",
+                bent[frame]
+            );
+        }
+        assert!(peak(&steady[512..]) > 0.1, "{format:?}: the note plays");
+    }
 }
 
 /// A stepped pin takes no lane. The poll never writes a lane's value, also once any turn of a

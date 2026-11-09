@@ -469,6 +469,7 @@ impl Graph {
                 automation_inputs: (node.ports.event_inputs.iter().enumerate())
                     .filter(|(_, event_type)| event_type.is::<Automation>())
                     .map(|(index, _)| index)
+                    .filter(|index| !node.ports.cut_by_processor.contains(index))
                     .collect(),
             });
         }
