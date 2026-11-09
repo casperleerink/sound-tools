@@ -34,9 +34,15 @@ pub const PLAY_ARGUMENT: &str = "--play-plugin";
 #[derive(Debug, Serialize, Deserialize)]
 struct Hello {
     token: String,
-    channel: String,
+    channel: Channel,
     /// Whether the child is the build that started it, see [`Identity`].
     same_build: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum Channel {
+    Control,
+    Audio,
 }
 
 /// Which file a program is, as the file system tells: an update or a rebuild that replaces it

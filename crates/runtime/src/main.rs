@@ -802,8 +802,8 @@ fn main() -> Result<()> {
             .first()
             .is_some_and(|first| first == plugin_host::PLAY_ARGUMENT)
         {
-            plugin_host::serve_plugin(&arguments[1..]).map_err(anyhow::Error::msg)?;
-            return Ok(());
+            let Err(message) = plugin_host::serve_plugin(arguments.get(1..).unwrap_or_default());
+            bail!(message);
         }
         plugin_host::remember_this_program();
     }

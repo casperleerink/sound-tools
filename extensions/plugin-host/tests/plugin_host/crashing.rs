@@ -12,7 +12,8 @@ use plugin_host::{Isolation, PluginFormat};
 use test_plugin_support::{CRASH_KEY, CRASH_STATE, HANG_KEY, HANG_SAVE_VARIABLE};
 
 use crate::support::{
-    FORMATS, Harness, Played, id, peak, record, state_asset, tell_the_plugin, vst3_state,
+    FORMATS, Harness, Played, id, isolation, lifecycle, no_cache, peak, plugin_folder, record,
+    state_asset, tell_the_plugin, vst3_state,
 };
 
 /// The offset of the effect, in hundredths, and as a sample.
@@ -158,7 +159,14 @@ fn a_plugin_whose_main_thread_hangs_is_stopped_after_its_time() {
 #[test]
 fn a_plugin_that_crashes_as_it_loads_is_one_problem_until_it_is_started_again() {
     for format in FORMATS {
-        tell_the_plugin(None, None);
+        let log = tempfile::NamedTempFile::new().expect("a log");
+        tell_the_plugin(Some(log.path()), None);
+        let loads = || {
+            let calls = lifecycle(log.path()).into_iter();
+            calls
+                .filter(|logged| logged.call == "crash_as_it_loads")
+                .count()
+        };
         let mut harness = Harness::new();
         let bytes = match format {
             PluginFormat::Clap => CRASH_STATE.to_vec(),
@@ -175,12 +183,41 @@ fn a_plugin_that_crashes_as_it_loads_is_one_problem_until_it_is_started_again() 
         let problems = instrument_problems(&harness);
         assert_eq!(problems.len(), 1, "{format:?}: {problems:?}");
         assert!(problems[0].contains("stopped working"), "{problems:?}");
-        let before = Instant::now();
+        assert_eq!(loads(), 1, "{format:?}");
         harness.project.rebind(&id).expect("the record runs again");
-        assert!(
-            before.elapsed() < Duration::from_millis(100),
-            "{format:?}: no second load"
-        );
+        assert_eq!(loads(), 1, "{format:?}: no second load by itself");
         assert_eq!(instrument_problems(&harness).len(), 1, "{format:?}");
+        harness.plugins.start_again(&id);
+        harness.rebind_retries();
+        assert_eq!(loads(), 2, "{format:?}: Start again tries once more");
     }
+}
+
+/// The program the plugins play in was replaced while the host ran, as an update does: a plugin
+/// that loads after that is a problem that asks for a restart, not a crash, and starts nothing.
+#[test]
+fn a_plugin_after_the_program_was_replaced_asks_for_a_restart() {
+    tell_the_plugin(None, None);
+    let programs = tempfile::tempdir().expect("a folder");
+    let program = programs.path().join("plugin-scan");
+    std::fs::copy(env!("CARGO_BIN_EXE_plugin-scan"), &program).expect("a copy of the program");
+    let folder = tempfile::tempdir().expect("a temporary folder");
+    let search = vec![plugin_folder(folder.path())];
+    let scanner = plugin_host::ScanCommand::new(&program, []);
+    let plugins = plugin_host::Plugins::isolated(search, scanner, no_cache(), isolation());
+    let mut harness = Harness::with_plugins(folder, plugins);
+    harness.add_track(record(PluginFormat::Clap, "piano"), vec![on(0, 60)]);
+    assert!(peak(&harness.play(1024).left()) > 0.1, "it plays");
+
+    let later = std::time::SystemTime::now() + Duration::from_secs(60);
+    let file = std::fs::File::options()
+        .write(true)
+        .open(&program)
+        .expect("the program");
+    file.set_modified(later).expect("a new time");
+    harness.add_effect(record(PluginFormat::Clap, "effect"));
+    let problems = harness.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("restarted"), "{problems:?}");
+    assert!(!harness.plugins.has_stopped(&id("track/effect")));
 }

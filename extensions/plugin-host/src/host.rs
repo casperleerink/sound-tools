@@ -64,7 +64,7 @@ pub enum PluginProblem {
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
     #[error(
-        "{name} stopped working and was closed. The rest plays on. Choose Start again on its card to bring it back as last saved"
+        "{name} stopped working and was closed. The rest plays on. Choose Start again on its card, or open the project again, to bring it back as last saved"
     )]
     Crashed { plugin_id: String, name: String },
     #[error(
@@ -113,13 +113,13 @@ pub enum PluginProblem {
 pub struct Isolation {
     /// Whether the plugin's process keeps quiet: what it writes to standard error goes nowhere.
     /// A headless host's own output is what its caller reads.
-    pub quiet: bool,
+    pub(crate) quiet: bool,
     /// How long one block may take before the plugin counts as hung. A block of 64 frames is
     /// about a millisecond of sound.
-    pub block_timeout: Duration,
+    pub(crate) block_timeout: Duration,
     /// How long the plugin's main thread may stop before it counts as hung, also while it
     /// loads: as long as the scan gives a bundle.
-    pub hung_after: Duration,
+    pub(crate) hung_after: Duration,
 }
 
 impl Isolation {

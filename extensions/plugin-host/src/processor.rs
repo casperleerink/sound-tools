@@ -437,7 +437,7 @@ impl Player {
         input: [&[f32]; CHANNELS],
         [left, right]: [&mut [f32]; CHANNELS],
         controls: &mut [Control; 4],
-    ) -> (bool, u64) {
+    ) -> Played {
         let frames = left.len();
         let keys_down = &mut self.keys_down;
         let mut dropped = 0;
@@ -452,7 +452,7 @@ impl Player {
                 plugin.run(frames, input, left, right)
             },
         );
-        (played, dropped)
+        Played { played, dropped }
     }
 }
 
@@ -502,7 +502,7 @@ impl PluginAudio for Player {
             }
             let events = within(events, piece.clone());
             let lanes = within(lanes, piece.clone());
-            let (played, dropped) = self.piece(
+            let Played { played, dropped } = self.piece(
                 events,
                 piece.start,
                 lanes,
@@ -535,11 +535,11 @@ fn within<E>(events: &[Timed<E>], piece: Range<usize>) -> &[Timed<E>] {
     events.get(start..end).unwrap_or_default()
 }
 
-/// The processor an instance of the plugin tool keeps. It is silent until the control side
-/// sends it a plugin, and silent again when it is sent `None`.
+/// The processor of the plugin tool. It passes its input through until the control side sends
+/// it a plugin, and again when it is sent `None`.
 pub(crate) struct HostedPlugin {
     audio: Option<Box<dyn PluginAudio>>,
-    /// Whether the plugin failed. It is left silent instead of called again.
+    /// The plugin failed. It passes its input through instead of being called again.
     failed: bool,
     /// Where each control stands as the plugin last heard it, by [`Control::index`], so an
     /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps

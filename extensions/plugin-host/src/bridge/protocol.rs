@@ -80,6 +80,8 @@ pub(crate) enum Answer {
     Restarted(Option<Result<u32, PluginProblem>>),
     Released(bool),
     Quit,
+    /// A request for a plugin this process does not have.
+    NotLoaded,
 }
 
 /// Why a frame could not be read.

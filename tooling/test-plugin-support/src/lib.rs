@@ -864,6 +864,7 @@ pub fn save_state(state: SavedState) -> Vec<u8> {
 /// shorter than this one writes keeps the defaults for what it does not carry.
 pub fn load_state(bytes: &[u8]) -> Option<SavedState> {
     if bytes == CRASH_STATE {
+        log("crash_as_it_loads", 0, 0);
         std::process::abort();
     }
     let rest = bytes.strip_prefix(&STATE_MAGIC)?;

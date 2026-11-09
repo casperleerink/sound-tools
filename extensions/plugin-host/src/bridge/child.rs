@@ -19,7 +19,7 @@ use sound_core::{CHANNELS, PrepareConfig};
 
 use super::protocol::{self, Answer, Broken, Message, Request};
 use super::shared::{MAX_DROPPED, Mapping, RELEASE, RUN, STOP};
-use super::{Hello, Identity, PLAY_ARGUMENT};
+use super::{Channel, Hello, Identity, PLAY_ARGUMENT};
 use crate::PluginFormat;
 use crate::backend::{LoadedPlugin, Opening};
 use crate::parameters::{by_id, playable};
@@ -33,7 +33,7 @@ const PARENT_CHECK: Duration = Duration::from_secs(1);
 
 /// Serves one plugin for the host that started this process with [`PLAY_ARGUMENT`] and these
 /// `arguments` after it. Returns only when it could not start; otherwise the process ends here.
-pub fn serve(arguments: &[OsString]) -> Result<(), String> {
+pub fn serve(arguments: &[OsString]) -> Result<std::convert::Infallible, String> {
     let [socket, token, shm, parent, identity] = arguments else {
         return Err(format!(
             "usage: {PLAY_ARGUMENT} <socket> <token> <memory> <parent> <identity>"
@@ -46,23 +46,23 @@ pub fn serve(arguments: &[OsString]) -> Result<(), String> {
     let socket = PathBuf::from(socket);
     let token = text(token);
     let same_build = Identity::of_this_program().is_some_and(|own| own.text() == text(identity));
-    let connect = |channel: &str| {
+    let connect = |channel: Channel| {
         let mut stream = UnixStream::connect(&socket).map_err(|error| error.to_string())?;
         let hello = Hello {
             token: token.clone(),
-            channel: channel.to_string(),
+            channel,
             same_build,
         };
         protocol::write_message(&mut stream, &hello).map_err(|error| error.to_string())?;
         Ok::<_, String>(stream)
     };
-    let control = connect("control")?;
+    let control = connect(Channel::Control)?;
     if !same_build {
         return Err("this program is another build than the host that started it".into());
     }
     // Before the second hello: the host removes the name once it has both.
     let mapping = Arc::new(Mapping::open(&text(shm)).map_err(|error| error.to_string())?);
-    let audio = connect("audio")?;
+    let audio = connect(Channel::Audio)?;
     mapping.shared().heartbeat.fetch_add(1, Ordering::Relaxed);
 
     let requests = start_reader(control.try_clone().map_err(|e| e.to_string())?, parent)?;
@@ -211,12 +211,17 @@ impl Server {
                     Err(problem) => Answer::DidNotLoad(problem),
                 }
             }
+            Request::Quit => self.quit(),
             request => {
                 let Some(plugin) = self.plugin.as_mut() else {
+                    // Every request is answered, so the host never waits on one.
+                    if protocol::write_message(&mut self.control, &Answer::NotLoaded).is_err() {
+                        end_now();
+                    }
                     return;
                 };
                 match request {
-                    Request::Load { .. } => return,
+                    Request::Load { .. } | Request::Quit => Answer::NotLoaded,
                     Request::Poll => Answer::Polled(plugin.poll()),
                     Request::ReadPins(ids) => Answer::Pins {
                         values: plugin.read_pins(&ids),
@@ -280,7 +285,6 @@ impl Server {
                         let released = self.plugin.as_mut().is_some_and(|plugin| plugin.released());
                         Answer::Released(released)
                     }
-                    Request::Quit => self.quit(),
                 }
             }
         };

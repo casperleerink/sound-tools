@@ -1,10 +1,10 @@
 //! The host's side of a plugin in a process of its own: [`Bridged`] for the table, and
 //! [`BridgeAudio`] for the engine.
 //!
-//! Every control call waits for its answer. A child is hung only when its main thread stopped
-//! turning its loop for [`Isolation::hung_after`]; a plugin's own dialog keeps it turning. A
-//! crash, a hang, or an answer that is no answer of ours makes the plugin crashed, and from
-//! then on every call answers at once with nothing.
+//! Every control call waits for its answer. A child is hung only when its main thread has not
+//! come back to its loop for [`Isolation::hung_after`]. A crash, a hang, or an answer that is
+//! no answer of ours makes the plugin crashed, and from then on every call answers at once with
+//! nothing.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -20,7 +20,7 @@ use sound_core::{CHANNELS, PrepareConfig};
 
 use super::protocol::{self, Answer, Broken, Message, Request};
 use super::shared::{MAX_DROPPED, Mapping, RELEASE, RUN, STOP};
-use super::{Hello, Identity, Isolation, PLAY_ARGUMENT};
+use super::{Channel, Hello, Identity, Isolation, PLAY_ARGUMENT};
 use crate::backend::{Hand, LoadedPlugin, ParameterChange, PluginGui, Requests};
 use crate::parameters::Parameter;
 use crate::processor::{
@@ -678,15 +678,14 @@ fn connect(listener: &UnixListener, child: &mut Child, token: &str) -> Result<Co
         if !hello.same_build {
             return Ok(Connected::OtherBuild);
         }
-        match hello.channel.as_str() {
-            "control" => control = Some(stream),
-            "audio" => {
+        match hello.channel {
+            Channel::Control => control = Some(stream),
+            Channel::Audio => {
                 stream
                     .set_read_timeout(None)
                     .map_err(|error| error.to_string())?;
                 audio = Some(stream);
             }
-            _ => {}
         }
     }
     match (control, audio) {
@@ -707,7 +706,6 @@ fn remove_file(path: &Path) {
 fn random() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(Instant::now().elapsed().as_nanos());
     hasher.write_u32(std::process::id());
     hasher.finish()
 }
