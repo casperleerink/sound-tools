@@ -117,6 +117,8 @@ export function Transport({ clock, record }: { clock: Clock; record: TransportRe
       </div>
       <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded tooltip="Play notes with the computer keys" shortcut="app.computer_keys"
         onClick={() => clock.setComputerKeys(!clock.computerKeys)} />
+      <Button key="write-automation" icon="automation" {...toggle(() => clock.writeAutomation)} size="sm" rounded tooltip="Write automation: while it plays, moving a knob or a fader that has a lane records into the lane"
+        onClick={() => clock.setWriteAutomation(!clock.writeAutomation)} />
       <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="sm" rounded tooltip="Metronome" onClick={() => clock.setClick(!clock.click)} />
       <Meter key="transport-meter" peaks="device" horizontal />
     </div>

@@ -52,7 +52,7 @@ pub use expression::{Expression, Wheels};
 pub use feed::{NoteFeed, NoteFeedUpdate};
 pub use lane::{
     ExpressionValue, LaneValue, MAX_PIECES, Point, bent, check_order, cut, cut_controllers, pieces,
-    thinned, value_at, value_at_frame,
+    thinned, thinned_within, value_at, value_at_frame,
 };
 pub use pattern::{Launch, Pattern, PatternError, Placing, Quantize};
 pub use player::{

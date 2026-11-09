@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::clock::Ticks;
 use crate::parameter::Parameter;
 use crate::processor::{EventInput, ProcessContext, Timed};
+use crate::project::InstanceId;
 
 /// The value one number of a device reaches at the end of this block, in the units of its
 /// record (Hz, dB, 0 to 1). `parameter` is the place of the number in the list the device
@@ -67,6 +68,12 @@ pub trait PlayedLanes: Send + Sync {
     /// the units of the record, after what `values` holds. A view asks every frame while the
     /// project plays, so it gives the list to fill, and a name is shared, not copied.
     fn values_at(&self, tick: Ticks, values: &mut Vec<(Arc<str>, f32)>);
+
+    /// The instance whose output moves the number `name`, when the owner knows it: for code
+    /// that follows a hand on that number, such as automation that records it.
+    fn source(&self, _name: &str) -> Option<&InstanceId> {
+        None
+    }
 }
 
 /// The most numbers one device takes automation for. A lane player sends one event per number

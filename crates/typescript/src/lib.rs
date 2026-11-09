@@ -33,6 +33,7 @@ mod region_card;
 mod samples;
 mod timeline;
 mod tools;
+mod touch;
 mod tree;
 mod window;
 

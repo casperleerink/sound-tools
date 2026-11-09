@@ -1532,3 +1532,60 @@ fn delete_asks_before_it_deletes_the_track_whose_panel_shows(cx: &mut TestAppCon
     assert_eq!(window.undo_label().as_deref(), Some("Delete a track"));
     assert_eq!(window.problems(), []);
 }
+
+/// With Write automation on in the transport, a drag of a track's fader in the mixer while the
+/// song plays writes into the lane of its volume, from the volume the lane plays and not the
+/// fader's own: one undo step, and the fader keeps its volume.
+#[gpui::test]
+fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mut TestAppContext) {
+    let mut files = song_files(2, 2);
+    for (path, text) in &mut files {
+        if path == "state/song/t00/instance.json" {
+            let mut record: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+            let lane = serde_json::json!({ "lane": "lane-volume", "target": "mix.gain_db" });
+            (record["state"]["automation"].as_array_mut().unwrap()).push(lane);
+            *text = record.to_string();
+        }
+    }
+    let lane =
+        r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -12}], "scale": "fader"}}"#;
+    files.push(("state/song/t00/lane-volume.json".into(), lane.into()));
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = super::open(cx, &files);
+    window.wait_for_bun();
+    let toggle = window.until_found("button-mixer-toggle");
+    window.click(toggle);
+    let write = window.until_found("button-write-automation");
+    window.click(write);
+    let session = window.session.clone();
+    window.until("automation written", |window| {
+        window.cx.read(|cx| session.read(cx).writes_automation())
+    });
+    let fader = window.space_at("fader-t00/mix.gain_db") + point(px(14.), px(40.));
+    (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
+    window.play_and_draw(4_800);
+    let (before, record) = (
+        crate::support::mark(&mut window),
+        window.record("song/t00/mix"),
+    );
+    window.press(fader);
+    window.drag_to(fader - point(px(0.), px(2.)));
+    window.drag_to(fader - point(px(0.), px(4.)));
+    for _ in 0..10 {
+        window.play_and_draw(4_800);
+    }
+    window.release(fader - point(px(0.), px(4.)));
+    window.wait_for_bun();
+    let points = window.record("song/t00/lane-volume")["points"].clone();
+    let values: Vec<f64> = (points.as_array().unwrap().iter())
+        .filter_map(|point| point["value"].as_f64())
+        .collect();
+    // A few points up from -12 dB, not from the fader's own 0 dB.
+    let loudest = values.iter().copied().fold(f64::MIN, f64::max);
+    assert!(loudest > -12. && loudest < -6., "{values:?}");
+    assert_eq!(window.record("song/t00/mix"), record);
+    crate::support::one_undo_step(&mut window, "Write automation", &before);
+    assert_eq!(window.problems(), []);
+}

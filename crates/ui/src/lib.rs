@@ -44,7 +44,7 @@ pub use lanes::Lanes;
 pub use metering::{Metering, PeaksReader, SharedPeaks, every_poll, on_every_poll};
 pub use recording::{FinishedTake, LiveNote, LiveNotes, LiveSound, LiveTake, Recording};
 pub use render::{RenderProgram, Rendered, render};
-pub use session::{ClickSwitch, Loop, POLL_INTERVAL, Playhead, Session, SpanOf};
+pub use session::{ClickSwitch, GestureFollower, Loop, POLL_INTERVAL, Playhead, Session, SpanOf};
 pub use shortcuts::Shortcuts;
 pub use spare_keys::{SpareKey, SpareKeys};
 pub use theme::{ActiveTheme, Theme};

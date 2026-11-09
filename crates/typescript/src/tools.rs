@@ -1490,7 +1490,7 @@ fn wire(
     // By its processor too, so a sender made again is another sender; not by its port, which
     // new code of the same sender may move.
     let mut fed: BTreeMap<&str, BTreeSet<(&End, NodeId)>> = BTreeMap::new();
-    let mut played: BTreeMap<&str, Vec<(Arc<str>, Watch)>> = BTreeMap::new();
+    let mut played: BTreeMap<&str, Vec<CabledNumber>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
         let (Some((from_key, from_name)), Some((to_key, to_name))) =
@@ -1572,10 +1572,12 @@ fn wire(
                     Some(into) => {
                         // What it plays, for a view that shows the number as it plays.
                         let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
-                        played
-                            .entry(child)
-                            .or_default()
-                            .push((to_name.into(), shown.clone()));
+                        let source = from_child.and_then(|from| context.id().child(from).ok());
+                        played.entry(child).or_default().push(CabledNumber {
+                            number: to_name.into(),
+                            watch: shown.clone(),
+                            source,
+                        });
                         (cable::<Number, Automation>(
                             name,
                             into,
@@ -1704,18 +1706,32 @@ fn region_players(
     Ok(players)
 }
 
-/// What cables play into the numbers of one child, by the name of each number: what a card's
-/// knob shows. A cable plays a value, not a line in time, so every tick shows the last one.
-struct Played(Vec<(Arc<str>, Watch)>);
+/// What cables play into the numbers of one child: what a card's knob shows. A cable plays a
+/// value, not a line in time, so every tick shows the last one, and none while it plays nothing.
+struct Played(Vec<CabledNumber>);
+
+/// One number a cable plays into: its name, what the cable last played, and the child it comes
+/// from.
+struct CabledNumber {
+    number: Arc<str>,
+    watch: Watch,
+    source: Option<InstanceId>,
+}
 
 impl PlayedLanes for Played {
     fn values_at(&self, _: Ticks, values: &mut Vec<(Arc<str>, f32)>) {
-        for (name, watch) in &self.0 {
+        for CabledNumber { number, watch, .. } in &self.0 {
             let value = watch.get();
             if !value.is_nan() {
-                values.push((name.clone(), value));
+                values.push((number.clone(), value));
             }
         }
+    }
+
+    fn source(&self, name: &str) -> Option<&InstanceId> {
+        let mut shown = self.0.iter();
+        let found = shown.find(|shown| *shown.number == *name);
+        found.and_then(|shown| shown.source.as_ref())
     }
 }
 

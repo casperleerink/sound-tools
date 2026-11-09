@@ -3,9 +3,9 @@ import { list, takes, text, tool, type ChildTools, type Connection, type Declara
 
 const parts = { synth: takes("notes"), chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "*": "timeline" } as const;
 
-/** `"mix.gain_db"` or `"chain/verb.mix"`: the path of the child and the name of its number. */
+/** `"mix.gain_db"`, `"chain/eq.bands[0].gain_db"` or `"synth.parameters.12.value"`: the path of the child and the name of its number. */
 export function splitTarget(target: string): [child: string, number: string] {
-  const dot = target.lastIndexOf(".");
+  const dot = target.indexOf(".");
   return [target.slice(0, dot), target.slice(dot + 1)];
 }
 

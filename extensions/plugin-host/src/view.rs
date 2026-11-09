@@ -290,7 +290,7 @@ impl PluginView {
         let lanes = self.device.lanes.read(cx);
         let pins = record.parameters.keys();
         let laned: BTreeSet<u32> = pins
-            .filter(|pin| lanes.is_automated(&lane_of_pin(**pin)))
+            .filter(|pin| lanes.value(&lane_of_pin(**pin)).is_some())
             .copied()
             .collect();
         if !changed && laned == self.laned {
@@ -470,12 +470,9 @@ impl PluginView {
         let name = SharedString::from(parameter.name.clone());
         let label = format!("Change {name}");
         let out_of_range = !parameter.takes(pin.value);
-        let lane = self
-            .device
-            .lanes
-            .read(cx)
-            .value(&lane_of_pin(id))
-            .map(f64::from);
+        let lanes = self.device.lanes.read(cx);
+        let held = lanes.is_automated(&lane_of_pin(id));
+        let lane = lanes.value(&lane_of_pin(id)).map(f64::from);
         let value = lane.unwrap_or(pin.value);
         // The text of what a lane plays may be a few frames old.
         let readout = self
@@ -537,7 +534,7 @@ impl PluginView {
                 let knob = Knob::new(element_id)
                     .label(name)
                     .readout(readout)
-                    .automated(lane.is_some());
+                    .automated(held);
                 let knob = match control {
                     // A parameter may have millions of steps, so they are not listed.
                     Control::Stepped(steps) => {

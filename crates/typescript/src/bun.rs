@@ -311,6 +311,8 @@ pub(crate) struct Transport {
     pub click: bool,
     /// Whether the computer keys play notes.
     pub keys: bool,
+    /// Whether a hand on a number a lane moves writes into the lane while the song plays.
+    pub automation: bool,
 }
 
 /// Stopped at the start, at 120 bpm.
@@ -325,14 +327,21 @@ impl Default for Transport {
             repeat: None,
             click: false,
             keys: false,
+            automation: false,
         }
     }
 }
 
 impl Transport {
     /// What bindings follow: not the playhead, which moves on every frame.
-    pub(crate) fn followed(&self) -> (bool, Option<[u64; 2]>, bool, bool) {
-        (self.playing, self.repeat, self.click, self.keys)
+    pub(crate) fn followed(&self) -> (bool, Option<[u64; 2]>, bool, bool, bool) {
+        (
+            self.playing,
+            self.repeat,
+            self.click,
+            self.keys,
+            self.automation,
+        )
     }
 }
 
@@ -356,6 +365,9 @@ pub(crate) enum TransportOp {
         on: bool,
     },
     Keys {
+        on: bool,
+    },
+    Automation {
         on: bool,
     },
 }

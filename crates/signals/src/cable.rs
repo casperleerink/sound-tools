@@ -66,7 +66,7 @@ impl Placed<Bang> for Control {
 /// The update is the place of the number there, so the sender needs no place of its own.
 pub struct Cable<From, To> {
     place: u16,
-    /// Where a view reads the last value it delivered.
+    /// Where a view reads the last value it delivered, NaN after a block it delivered none.
     shown: Option<Watch>,
     events: PhantomData<fn(From) -> To>,
 }
@@ -110,7 +110,13 @@ impl<From: Event + Shown, To: Placed<From>> Processor for Cable<From, To> {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        for timed in context.event_inputs.get(Self::INPUT) {
+        let events = context.event_inputs.get(Self::INPUT);
+        // A sender that went quiet, such as a lane a hand holds, plays nothing: the view shows
+        // the record then.
+        if let (Some(watch), true) = (&self.shown, events.is_empty()) {
+            watch.set(f32::NAN);
+        }
+        for timed in events {
             if let (Some(watch), Some(value)) = (&self.shown, timed.event.shown()) {
                 watch.set(value);
             }

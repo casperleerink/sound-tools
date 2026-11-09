@@ -721,6 +721,10 @@ impl TypeScriptCard {
                 child: Some(child),
                 name,
             } => {
+                // What plays, a lane's value when one moves it, so a drag does not jump.
+                if let Some((played, _)) = self.feeds.played.get(&format!("{child}.{name}")) {
+                    return Some(*played);
+                }
                 let child = self.id.child(child).ok()?;
                 let record = state_of(self.session.read(cx).project(), &child)?;
                 let value = record.get(name).and_then(tree::number_of);

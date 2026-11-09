@@ -227,8 +227,20 @@ pub fn bent(done: f64, curve: f32) -> f64 {
 /// end of a line, and the point before it is kept. A minute of pressure is thinned as fast as
 /// it is read.
 pub fn thinned<V: ExpressionValue>(points: &[Point<V>]) -> Vec<Point<V>> {
-    let number = |value: V| f64::from(value.number());
-    let step = f64::from(V::STEP);
+    thin(
+        points,
+        |value| f64::from(value.number()),
+        f64::from(V::STEP),
+    )
+}
+
+/// [`thinned`] for a lane of numbers, such as a recorded knob: a point goes that the line
+/// passes within `tolerance` of.
+pub fn thinned_within(points: &[Point<f32>], tolerance: f32) -> Vec<Point<f32>> {
+    thin(points, f64::from, f64::from(tolerance))
+}
+
+fn thin<V: Copy>(points: &[Point<V>], number: impl Fn(V) -> f64, step: f64) -> Vec<Point<V>> {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };
