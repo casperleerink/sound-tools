@@ -41,6 +41,7 @@ mod watch;
 pub use apps::{AppSound, app_processes};
 pub use automation::{
     Automated, Automation, AutomationInput, Lane, MAX_AUTOMATED, PlayedLanes, Targets,
+    automation_pieces,
 };
 pub use clock::{
     Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun,

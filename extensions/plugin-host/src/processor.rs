@@ -32,6 +32,7 @@
 //! processor back. The backend's own `Drop` is the last resort, for the engine itself being
 //! torn down, when there is no audio thread left to do it on.
 
+use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
@@ -438,7 +439,7 @@ impl Processor for HostedPlugin {
         Ports::new()
             .audio_input(Self::INPUT)
             .event_input(Self::NOTES)
-            .event_input(Self::AUTOMATION)
+            .automation_input_cut_by_processor(Self::AUTOMATION)
             .audio_output(Self::AUDIO)
     }
 
@@ -487,12 +488,53 @@ impl Processor for HostedPlugin {
             .map_or(0, |plugin| plugin.started.latency())
     }
 
+    /// The sub-block in the pieces the engine would cut where a lane bends, each one call of the
+    /// plugin, as the engine calls a processor with an automation input. The cutting is here so
+    /// that a plugin in a process of its own can play a whole sub-block in one round trip.
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
         let lanes = context.event_inputs.get(Self::AUTOMATION);
         let input = context.audio_inputs.get(Self::INPUT);
         let [left, right] = context.audio_outputs.get(Self::AUDIO);
         let frames = context.frames;
+        let mut dropped = 0;
+        for piece in sound_core::automation_pieces(lanes, frames) {
+            let input = input.map(|channel| channel.get(piece.clone()).unwrap_or_default());
+            let (Some(left), Some(right)) =
+                (left.get_mut(piece.clone()), right.get_mut(piece.clone()))
+            else {
+                continue;
+            };
+            let events = within(events, piece.clone());
+            let lanes = within(lanes, piece.clone());
+            dropped += self.play(events, piece.start, lanes, input, left, right);
+        }
+        for _ in 0..dropped {
+            context.event_outputs.count_dropped();
+        }
+    }
+}
+
+/// The events of a block that fall in one piece of it. Both are sorted by offset.
+fn within<E>(events: &[Timed<E>], piece: Range<usize>) -> &[Timed<E>] {
+    let start = events.partition_point(|timed| timed.offset < piece.start);
+    let end = events.partition_point(|timed| timed.offset < piece.end);
+    events.get(start..end).unwrap_or_default()
+}
+
+impl HostedPlugin {
+    /// One piece: `events` with offsets from `start`, and the lanes that arrive on its first
+    /// frame. Gives how many events did not fit.
+    fn play(
+        &mut self,
+        events: &[Timed<NoteEvent>],
+        start: usize,
+        lanes: &[Timed<Automation>],
+        input: [&[f32]; CHANNELS],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> u64 {
+        let frames = left.len();
         let playing = self.plugin.as_mut().filter(|_| !self.failed);
         let Some(Playing { started, laned }) = playing else {
             // No plugin, or one that failed in an earlier block: the slot passes what it is
@@ -500,7 +542,7 @@ impl Processor for HostedPlugin {
             // reaches, and for an effect it is the track playing on through a slot whose
             // plugin is missing.
             pass_through(input, left, right, frames);
-            return;
+            return 0;
         };
         let (keys_down, controls) = (&mut self.keys_down, &mut self.controls);
         let mut dropped = 0;
@@ -513,13 +555,10 @@ impl Processor for HostedPlugin {
             |plugin| {
                 // More events in one block than the plugin's buffer holds. Counted, never
                 // allocated.
-                dropped = translate(plugin, events, keys_down, controls);
-                plugin.run(frames, input, &mut left[..frames], &mut right[..frames])
+                dropped = translate(plugin, events, start, keys_down, controls);
+                plugin.run(frames, input, left, right)
             },
         );
-        for _ in 0..dropped {
-            context.event_outputs.count_dropped();
-        }
         if !played {
             // The block a plugin fails on is the first one it does not play, so the slot
             // passes it through here and not from the next block. A backend writes nothing
@@ -528,6 +567,7 @@ impl Processor for HostedPlugin {
             self.failed = true;
             pass_through(input, left, right, frames);
         }
+        dropped
     }
 }
 
@@ -606,12 +646,13 @@ fn automate(
 fn translate(
     plugin: &mut dyn Started,
     events: &[Timed<NoteEvent>],
+    start: usize,
     keys_down: &mut [bool; 128],
     controls: &mut [Control; 4],
 ) -> u64 {
     let mut dropped = 0;
     for timed in events {
-        let time = timed.offset as u32;
+        let time = timed.offset.saturating_sub(start) as u32;
         let mut control = |control: Control| {
             if !send_control(plugin, time, control, controls) {
                 dropped += 1;
@@ -784,6 +825,7 @@ mod tests {
             translate(
                 &mut self.plugin,
                 &events,
+                0,
                 &mut self.keys_down,
                 &mut self.controls,
             )
