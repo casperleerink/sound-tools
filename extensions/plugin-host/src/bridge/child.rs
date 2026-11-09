@@ -60,8 +60,9 @@ pub fn serve(arguments: &[OsString]) -> Result<(), String> {
     if !same_build {
         return Err("this program is another build than the host that started it".into());
     }
-    let audio = connect("audio")?;
+    // Before the second hello: the host removes the name once it has both.
     let mapping = Arc::new(Mapping::open(&text(shm)).map_err(|error| error.to_string())?);
+    let audio = connect("audio")?;
     mapping.shared().heartbeat.fetch_add(1, Ordering::Relaxed);
 
     let requests = start_reader(control.try_clone().map_err(|e| e.to_string())?, parent)?;

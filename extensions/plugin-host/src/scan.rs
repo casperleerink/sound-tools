@@ -163,10 +163,12 @@ impl ScanCommand {
     }
 
     /// The program, which also plays a plugin in a process of its own, see `bridge`.
+    #[cfg(unix)]
     pub(crate) fn program(&self) -> &Path {
         &self.program
     }
 
+    #[cfg(unix)]
     pub(crate) fn environment(&self) -> &[(OsString, OsString)] {
         &self.environment
     }

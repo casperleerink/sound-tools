@@ -423,9 +423,10 @@ impl LoadedPlugin for Bridged {
     }
 }
 
-/// Letting go: a plugin that still works quits, which runs its own teardown, and a reaper
-/// thread waits for it and kills it when it takes too long. Its sockets stay open until then:
-/// end of file would end it in the middle of its teardown.
+/// Letting go: a plugin that still works quits, which runs its own teardown. Its sockets stay
+/// open until it has: end of file would end it in the middle of it. While the host plays on, a
+/// reaper thread waits for it and kills it when it takes too long. When the host closes, the
+/// wait is here, until the closing deadline: a thread would end with this process.
 impl Drop for Bridged {
     fn drop(&mut self) {
         let Some(mut child) = self.child.take() else {
@@ -440,19 +441,29 @@ impl Drop for Bridged {
                 self.crash();
             }
         }
-        let crashed = self.crashed();
+        let until = match self.crashed() {
+            true => Instant::now(),
+            false => self.deadline.unwrap_or_else(|| Instant::now() + QUIT),
+        };
+        if self.deadline.is_some() {
+            reap(&mut child, until);
+            return;
+        }
         let control = self.control.try_clone();
         let reaped = std::thread::Builder::new()
             .name("plugin-reaper".into())
-            .spawn(move || reap(&mut child, crashed, control));
+            .spawn(move || {
+                reap(&mut child, until);
+                drop(control);
+            });
         if let Err(error) = reaped {
             eprintln!("error: nothing waits for a plugin's process: {error}");
         }
     }
 }
 
-fn reap(child: &mut Child, crashed: bool, _control: std::io::Result<UnixStream>) {
-    let until = Instant::now() + if crashed { Duration::ZERO } else { QUIT };
+/// Waits for `child` until `until`, then ends it.
+fn reap(child: &mut Child, until: Instant) {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return,
@@ -536,15 +547,11 @@ pub(crate) fn open(
         match connect(&listener, &mut child, &token) {
             Ok(Connected::Both { control, audio }) => Ok((child, control, audio, mapping)),
             Ok(Connected::OtherBuild) => {
-                reap(&mut child, true, Err(std::io::Error::other("other build")));
+                reap(&mut child, Instant::now());
                 Err(updated())
             }
             Err(message) => {
-                reap(
-                    &mut child,
-                    true,
-                    Err(std::io::Error::other("did not start")),
-                );
+                reap(&mut child, Instant::now());
                 Err(crashed_with(found, &name, message))
             }
         }

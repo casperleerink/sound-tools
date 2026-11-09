@@ -695,6 +695,7 @@ impl Harness {
 
     /// Each plugin in a process of its own, with these timeouts, for a test of a plugin that
     /// hangs.
+    #[cfg(unix)]
     pub(crate) fn isolated_with(isolation: plugin_host::Isolation) -> Self {
         let folder = tempfile::tempdir().expect("a temporary folder");
         let search = vec![plugin_folder(folder.path())];
@@ -703,6 +704,7 @@ impl Harness {
     }
 
     /// Runs the behaviour of every record the host asked to, as whoever polls does.
+    #[cfg(unix)]
     pub(crate) fn rebind_retries(&mut self) {
         for instance in self.plugins.take_retries() {
             self.project
