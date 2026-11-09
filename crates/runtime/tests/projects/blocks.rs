@@ -98,6 +98,41 @@ export const mover = tool({
   }),
 });
 
+const wobbled = { dc: steady, wobble: "lfo" } as const;
+
+export const wobbler = tool({
+  name: "wobbler",
+  title: "Wobbler",
+  when: "Never",
+  doc: "Plays its steady level, which its LFO moves.",
+  state: {},
+  children: wobbled,
+  behaviour: (): Declaration<typeof wobbled> => ({
+    connections: [
+      { from: { child: "wobble", number: "value" }, to: { child: "dc", number: "level" } },
+      { from: { child: "dc" }, to: { port: "audio" } },
+    ],
+  }),
+});
+
+const shaped = { dc: steady, shape: "envelope", line: "timeline" } as const;
+
+export const shaper = tool({
+  name: "shaper",
+  title: "Shaper",
+  when: "Never",
+  doc: "Plays its steady level, which its envelope moves with the notes of its timeline.",
+  state: {},
+  children: shaped,
+  behaviour: (): Declaration<typeof shaped> => ({
+    connections: [
+      { from: { child: "line", notes: "notes" }, to: { child: "shape", notes: "notes" } },
+      { from: { child: "shape", number: "value" }, to: { child: "dc", number: "level" } },
+      { from: { child: "dc" }, to: { port: "audio" } },
+    ],
+  }),
+});
+
 const takes = { "*": "region" } as const;
 
 export const tape = tool({
@@ -128,6 +163,12 @@ fn project(name: &str, records: &[(&str, String)]) -> Harness {
     );
     write(root, "project.json", &project);
     write(root, "extensions/tools.ts", TOOLS);
+    // The LFO and the envelope of the DAW template.
+    write(
+        root,
+        "extensions/lfo.ts",
+        include_str!("../../../../templates/daw/extensions/lfo.ts"),
+    );
     write(
         root,
         &format!("state/{name}/instance.json"),
@@ -258,6 +299,56 @@ fn a_lane_plays_its_line_as_its_curve_bends_it() {
     assert!((late - 0.0625).abs() < 1e-3, "{late}");
     let early = halfway(r#", "curve": -1"#);
     assert!((early - 0.5f32.powf(0.25)).abs() < 1e-3, "{early}");
+}
+
+/// The LFO of the DAW in time with the piece: a sine from 0.2 to 0.8 a quarter note long is at
+/// 0.2 on each beat, halfway a quarter of the way through, and at 0.8 halfway. A square is
+/// 0.2 for the first half of each beat and 0.8 for the second.
+#[test]
+fn an_lfo_moves_a_number_from_low_to_high_on_the_beat() {
+    let played = |shape: &str| {
+        let wobble = format!(
+            r#"{{"tool": "lfo", "state": {{"shape": "{shape}", "low": 0.2, "high": 0.8}}}}"#
+        );
+        let dc = r#"{"tool": "steady", "state": {}}"#.to_string();
+        let mut harness = project("wobbler", &[("wobble.json", wobble), ("dc.json", dc)]);
+        assert_eq!(harness.project.problems(), []);
+        harness.play_from_the_start(BAR)
+    };
+    // A beat is 24,000 frames at 120 bpm; the LFO sends its value once per 64 frames.
+    let beat = BAR / 4;
+    let at = |samples: &[f32], frame: usize| samples[2 * frame];
+    let sine = played("sine");
+    for (frame, expected) in [(beat, 0.2), (beat + beat / 4, 0.5), (beat + beat / 2, 0.8)] {
+        let value = at(&sine, frame + 64);
+        assert!((value - expected).abs() < 0.01, "{frame}: {value}");
+    }
+    let square = played("square");
+    assert!((at(&square, beat + beat / 4) - 0.2).abs() < 1e-3);
+    assert!((at(&square, beat + 3 * beat / 4) - 0.8).abs() < 1e-3);
+}
+
+/// The envelope of the DAW: `low` before a note, `sustain` of the way to `high` while it is
+/// held, and `low` again after its release.
+#[test]
+fn an_envelope_moves_a_number_with_the_notes_it_hears() {
+    let shape = r#"{"tool": "envelope", "state": {"attack_ms": 5, "decay_ms": 5, "sustain": 0.5, "release_ms": 5, "low": 0.1, "high": 0.9}}"#;
+    // A note from half a bar in, for a quarter of a bar.
+    let line = r#"{"tool": "timeline", "state": {"length": 3840, "notes": [{"start": 1920, "length": 960, "pitch": 60, "velocity": 100}]}}"#;
+    let dc = r#"{"tool": "steady", "state": {}}"#.to_string();
+    let records = [
+        ("shape.json", shape.to_string()),
+        ("line.json", line.to_string()),
+        ("dc.json", dc),
+    ];
+    let mut harness = project("shaper", &records);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.play_from_the_start(BAR);
+    let at = |frame: usize| played[2 * frame];
+    let (before, held, after) = (at(BAR / 4), at(BAR / 2 + BAR / 8), at(BAR - 1_000));
+    assert!((before - 0.1).abs() < 1e-3, "{before}");
+    assert!((held - 0.5).abs() < 1e-2, "{held}");
+    assert!((after - 0.1).abs() < 1e-3, "{after}");
 }
 
 /// A lane checks its record: points in tick order, a log lane above 0, and a curve from -1 to 1.

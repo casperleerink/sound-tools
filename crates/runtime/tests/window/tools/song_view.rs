@@ -1589,3 +1589,49 @@ fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mu
     crate::support::one_undo_step(&mut window, "Write automation", &before);
     assert_eq!(window.problems(), []);
 }
+
+/// A lane's menu moves its number with an LFO instead of points, as one undo step: the LFO
+/// sweeps between a quarter and three quarters of the cutoff's travel, which the filter plays,
+/// and its rate is a select under the lane's name. Points again bring a lane back.
+#[gpui::test]
+fn a_lanes_menu_moves_its_number_with_an_lfo(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.show_toggles("t00");
+    let lanes = window.until_found("toggle-lanes-t00");
+    window.click(lanes);
+    let name = window.until_found("div-lane-name-t00-lane-cutoff");
+    let before = crate::support::mark(&mut window);
+    window.click_with(name, MouseButton::Right);
+    window.pick("menu-1");
+    window.until("the LFO", |window| {
+        window.record("song/t00")["automation"][0]["lane"] == "lfo-chain-filter-cutoff-hz"
+    });
+    window.after_the_runs();
+    crate::support::one_undo_step(&mut window, "Move with an LFO", &before);
+    let lfo = window.record("song/t00/lfo-chain-filter-cutoff-hz");
+    let (low, high) = (lfo["low"].as_f64().unwrap(), lfo["high"].as_f64().unwrap());
+    // A quarter and three quarters of 20 Hz to 20 kHz on its log travel.
+    assert!(
+        (low - 112.).abs() < 2. && (high - 3_557.).abs() < 40.,
+        "{lfo}"
+    );
+    assert_eq!(lfo["scale"], "log");
+    let session = window.session.clone();
+    let filter = crate::support::id("song/t00/chain/filter");
+    window.until("the filter plays the LFO", |window| {
+        window.render(4_800);
+        (window.cx).read(|cx| session.read(cx).project().lanes(&filter).is_some())
+    });
+    window.until_found("div-lfo-rate-t00/lfo-chain-filter-cutoff-hz");
+    assert_eq!(window.problems(), []);
+
+    let name = window.until_found("div-lane-name-t00-lfo-chain-filter-cutoff-hz");
+    window.click_with(name, MouseButton::Right);
+    window.pick("menu-0");
+    window.until("points again", |window| {
+        window.record("song/t00")["automation"][0]["lane"] == "lane-chain-filter-cutoff-hz"
+    });
+    window.wait_for_bun();
+    assert_eq!(window.problems(), []);
+}
