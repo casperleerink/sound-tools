@@ -168,7 +168,7 @@ fn run(folder: &Path) -> Result<()> {
     );
     let (control, engine) = Engine::new(config);
     // Headless may block on the scan: it has no window to keep answering.
-    let plugins = runtime::plugins(false)?;
+    let plugins = runtime::playing_plugins(false)?;
     let mut project = open_or_create_with(folder, control, plugins.clone())?;
     for notice in plugins.take_notices() {
         println!("plugin scan: {notice}");
@@ -387,7 +387,7 @@ impl Options {
 
 /// Opens the project read-only, with `--only` heard alone, in memory.
 fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine, Plugins)> {
-    let plugins = runtime::plugins(true)?;
+    let plugins = runtime::read_only_plugins()?;
     let (mut project, engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
     if let Some(only) = &options.only {
@@ -638,7 +638,7 @@ fn list_plugin_parameters(format: &str, plugin_id: &str) -> Result<()> {
     let Some(format) = PluginFormat::of_str(format) else {
         bail!("{format:?} is not a plugin format: clap or vst3");
     };
-    let plugins = runtime::plugins(true)?;
+    let plugins = runtime::read_only_plugins()?;
     println!(
         "{}",
         runtime::plugin_parameters(&plugins, format, plugin_id)?
@@ -691,6 +691,19 @@ fn start_window_process() -> bool {
 fn main() -> Result<()> {
     #[cfg(windows)]
     print_to_the_terminal();
+    // A plugin in a process of its own, before anything of the app: no log, no update.
+    #[cfg(unix)]
+    {
+        let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+        if arguments
+            .first()
+            .is_some_and(|first| first == plugin_host::PLAY_ARGUMENT)
+        {
+            plugin_host::serve_plugin(&arguments[1..]).map_err(anyhow::Error::msg)?;
+            return Ok(());
+        }
+        plugin_host::remember_this_program();
+    }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     let (arguments, progress) = match arguments.as_slice() {

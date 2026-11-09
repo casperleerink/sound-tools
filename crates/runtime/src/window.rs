@@ -1115,7 +1115,7 @@ impl Opened {
         // looked at on the thread that draws. A project that names a plugin the scan has not
         // reached yet opens and plays everything else, and the plugin comes in when it turns
         // up: the tick below runs its behaviour again.
-        let plugins = crate::plugins(false)?;
+        let plugins = crate::playing_plugins(true)?;
         plugins.start_scanning();
         let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools)?;
         project.watch()?;

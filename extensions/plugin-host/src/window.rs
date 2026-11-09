@@ -41,7 +41,7 @@ use crate::host::WeakPlugins;
 
 /// How big a plugin's window is, in the plugin's own pixels: logical on macOS, physical on
 /// Windows. The formats each have a type of their own for this and they say the same thing.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowSize {
     pub width: u32,
     pub height: u32,

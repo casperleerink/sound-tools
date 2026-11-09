@@ -47,6 +47,9 @@ utility = { path = "extensions/utility" }
 vocoder = { path = "extensions/vocoder" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
+# Real-time priority for the audio thread of a plugin in a process of its own: what cpal uses
+# for its own thread, at the version it pulls in. MPL-2.0.
+audio_thread_priority = { version = "0.35.1", default-features = false }
 # For the window's measurements, at gpui's rev: Zed's allocation counter, which counts through
 # `criterion`'s measurement trait, and the macOS text system, which `gpui_platform` makes only on
 # the main thread.

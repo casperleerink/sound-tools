@@ -19,7 +19,7 @@ pub const MAX_NAMED_STEPS: u32 = 128;
 
 /// One parameter a host may set. A read-only one, such as a meter, is the plugin's to set and
 /// is never listed.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Parameter {
     /// The plugin's own id of it, which stays the same across versions of the plugin.
     pub id: u32,
@@ -60,7 +60,7 @@ impl Parameter {
 }
 
 /// A parameter that takes only some values, evenly spaced from its minimum to its maximum.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Steps {
     /// How many values it takes, the minimum and the maximum among them.
     pub count: u32,
@@ -74,7 +74,7 @@ pub struct Steps {
     pub names: Vec<StepName>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StepName {
     pub value: f64,
     pub name: String,

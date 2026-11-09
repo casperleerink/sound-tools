@@ -147,7 +147,7 @@ fn run_with(
     tell_the_plugin(Some(&log), None);
     // Only this format's test plugin is in the folder, so the log holds one plugin's life.
     let search = vec![plugin_folder_of(folder.path(), format)];
-    let mut harness = Harness::open_with_paths(folder, search, true);
+    let mut harness = Harness::open_in_process_with_paths(folder, search);
     harness.add_track(record(format, "piano"), played);
     if with_effect {
         harness.add_effect(record(format, "trim"));
@@ -344,7 +344,7 @@ fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
     let log = log_folder.path().join("lifecycle.log");
     tell_the_plugin(Some(&log), None);
     let search = vec![plugin_folder_of(folder.path(), PluginFormat::Vst3)];
-    let mut harness = Harness::open_with_paths(folder, search, true);
+    let mut harness = Harness::open_in_process_with_paths(folder, search);
 
     // A state file the plugin refuses, so the load fails after `initialize` and before the
     // plugin is activated. This is what a stale or wrong state asset does.

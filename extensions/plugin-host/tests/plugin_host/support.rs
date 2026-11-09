@@ -657,6 +657,16 @@ pub(crate) fn scanner() -> ScanCommand {
     ScanCommand::new(env!("CARGO_BIN_EXE_plugin-scan"), [])
 }
 
+/// How the tests run a plugin in a process of its own: it writes what goes wrong where the test
+/// shows it, and a block may take long on a busy machine without counting as hung.
+pub(crate) fn isolation() -> plugin_host::Isolation {
+    let (block, hung_after) = (
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
+    );
+    plugin_host::Isolation::new(false).with_timeouts(block, hung_after)
+}
+
 /// No test ever reads or writes the cache of this machine.
 pub(crate) fn no_cache() -> ScanCache {
     ScanCache::none()
@@ -744,8 +754,43 @@ pub(crate) struct Harness {
 }
 
 impl Harness {
+    /// Each plugin in a process of its own, as a project that plays has them.
     pub(crate) fn new() -> Self {
         Self::open(tempfile::tempdir().expect("a temporary folder"), true)
+    }
+
+    /// Each plugin in a process of its own, with these timeouts, for a test of a plugin that
+    /// hangs.
+    pub(crate) fn isolated_with(isolation: plugin_host::Isolation) -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let search = vec![plugin_folder(folder.path())];
+        let plugins = Plugins::isolated(search, scanner(), no_cache(), isolation);
+        Self::with_plugins(folder, plugins)
+    }
+
+    /// Runs the behaviour of every record the host asked to, as whoever polls does.
+    pub(crate) fn rebind_retries(&mut self) {
+        for instance in self.plugins.take_retries() {
+            self.project
+                .rebind(&instance)
+                .expect("the record runs again");
+        }
+    }
+
+    /// Each plugin in this process, as Windows has them, for a test of what only a plugin in
+    /// this process shows: its window, and the threads and instances its log counts.
+    pub(crate) fn in_process() -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let search = vec![plugin_folder(folder.path())];
+        Self::open_in_process_with_paths(folder, search)
+    }
+
+    pub(crate) fn open_in_process_with_paths(
+        folder: tempfile::TempDir,
+        search_paths: Vec<PathBuf>,
+    ) -> Self {
+        let plugins = Plugins::new(search_paths, scanner(), no_cache());
+        Self::with_plugins(folder, plugins)
     }
 
     /// A project whose engine renders instead of playing on a device, which is what `--render`
@@ -781,7 +826,7 @@ impl Harness {
         writes_state: bool,
     ) -> Self {
         let plugins = if writes_state {
-            Plugins::new(search_paths, scanner(), no_cache())
+            Plugins::isolated(search_paths, scanner(), no_cache(), isolation())
         } else {
             Plugins::read_only(search_paths, scanner(), no_cache())
         };

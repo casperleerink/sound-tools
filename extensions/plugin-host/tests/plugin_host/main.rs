@@ -11,6 +11,8 @@ static ALLOCATOR: support::CountingAllocator = support::CountingAllocator;
 
 mod background;
 mod consistency;
+#[cfg(unix)]
+mod crashing;
 mod editing;
 mod effects;
 mod lanes;

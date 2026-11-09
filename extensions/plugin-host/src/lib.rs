@@ -27,7 +27,8 @@
 //! - A plugin's state is opaque bytes in an asset, not project state. It is never an undo step,
 //!   and nothing replaces it with a guess: a state the plugin could not give leaves the asset as
 //!   it was.
-//! - Loading a plugin runs its code, so the scan runs one child process per bundle. A scan of a
+//! - Loading a plugin runs its code, so the scan runs one child process per bundle, and a host
+//!   that plays runs each plugin in a process of its own (`bridge`). A scan of a
 //!   real machine takes seconds, most of it VST 3 bundles loading and checking their licence,
 //!   so it runs off the thread that draws and a cache of this machine remembers each bundle.
 //! - A render tells the plugin it is offline, so a streaming sampler waits for its samples
@@ -37,6 +38,8 @@
 //! `agent-doc.md` is what an agent reads.
 
 mod backend;
+#[cfg(unix)]
+mod bridge;
 mod clap;
 mod host;
 #[cfg(target_os = "windows")]
@@ -62,7 +65,9 @@ use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 use crate::parameters::lane_of_pin;
 use crate::processor::{AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate};
 
-pub use host::{PluginProblem, Plugins, WeakPlugins};
+#[cfg(unix)]
+pub use bridge::{PLAY_ARGUMENT, remember_this_program, serve as serve_plugin};
+pub use host::{Isolation, PluginProblem, Plugins, WeakPlugins};
 pub use parameters::{
     MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, read_parameters,
 };

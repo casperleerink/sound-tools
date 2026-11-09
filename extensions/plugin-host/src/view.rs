@@ -739,6 +739,29 @@ impl Render for PluginView {
         let detail = line(installed.detail());
 
         let id = self.device.instance.id();
+        // The plugin crashed or hung in its own process, and waits for the composer.
+        if plugins.has_stopped(id) {
+            let button = Button::new("plugin-start-again", "Start again")
+                .debug_selector(|| "plugin-start-again".to_string())
+                .variant(ButtonVariant::Subtle)
+                .size(ButtonSize::Sm)
+                .focus_handle(&self.window_focus)
+                .on_click(cx.listener(|view, _, _, cx| {
+                    if let Some(plugins) = view.plugins.upgrade() {
+                        plugins.start_again(view.device.instance.id());
+                    }
+                    cx.notify();
+                }));
+            let text = format!("{} stopped working.", installed.name);
+            let top = div()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap(px(4.))
+                .child(button)
+                .child(line(text));
+            return plain.child(left(top, Some(detail))).into_any_element();
+        }
         // `None`: this machine has the plugin but it did not load, which is reported already.
         let Some(has_window) = plugins.window_offered(id) else {
             let text = "This plugin did not load, so there is nothing to open.";

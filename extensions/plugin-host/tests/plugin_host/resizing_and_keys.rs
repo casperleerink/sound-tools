@@ -45,7 +45,7 @@ fn window_calls(log: &Path) -> Vec<String> {
 /// A project with the test plugin of `format` on a track, its window open.
 fn open(format: PluginFormat, log: &Path, cx: &mut TestAppContext) -> (Harness, AnyWindowHandle) {
     tell_the_plugin(Some(log), None);
-    let mut harness = Harness::new();
+    let mut harness = Harness::in_process();
     harness.add_track(record(format, "piano"), Vec::new());
     harness.play(512);
     cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))

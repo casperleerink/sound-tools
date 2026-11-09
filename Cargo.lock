@@ -5010,10 +5010,14 @@ name = "plugin-host"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "audio_thread_priority",
  "clack-extensions",
  "clack-host",
  "dunce",
  "gpui",
+ "libc",
+ "memmap2",
+ "no_denormals",
  "raw-window-handle",
  "rtrb",
  "rtsan-standalone",

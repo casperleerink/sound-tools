@@ -57,6 +57,29 @@ pub(crate) trait LoadedPlugin {
     /// is read.
     fn sent_values_played(&mut self) -> bool;
 
+    /// The value of each of `ids` now, once every value sent has been played (see
+    /// [`Self::sent_values_played`]), and `None` before. One call, so a plugin in another
+    /// process answers it from one moment.
+    fn read_pins(&mut self, ids: &[u32]) -> Option<Vec<(u32, f64)>> {
+        if !self.sent_values_played() {
+            return None;
+        }
+        Some(
+            ids.iter()
+                .filter_map(|id| Some((*id, self.value(*id)?)))
+                .collect(),
+        )
+    }
+
+    /// Whether the plugin stopped working: its process crashed or hung. Only a plugin in a
+    /// process of its own can, and from then on it answers nothing.
+    fn crashed(&self) -> bool {
+        false
+    }
+
+    /// The host is closing: no call waits past `deadline`.
+    fn closing(&mut self, _deadline: std::time::Instant) {}
+
     /// Where the composer's hand is in the plugin's own window, since the last call.
     fn hand(&mut self) -> Hand;
 
@@ -86,7 +109,7 @@ pub(crate) trait LoadedPlugin {
 
 /// What a plugin asked for since the last poll. All of it may be asked for from another
 /// thread, so a backend only notes it and the poll on the main thread acts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Requests {
     /// The plugin asked to be deactivated and activated again, which this host does, and then
     /// reads its latency and its buses again: CLAP's `request_restart`, and VST 3's
@@ -114,7 +137,7 @@ pub(crate) struct Requests {
 
 /// One value of one parameter, on its way into a plugin's processor or out of it, in the
 /// format's own units.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ParameterChange {
     pub id: u32,
     pub value: f64,
@@ -124,7 +147,7 @@ pub(crate) struct ParameterChange {
 ///
 /// One for the whole plugin, asked once a poll, though VST 3 says it per parameter: a hand that
 /// lets go and takes a knob again between two polls is one turn, and so one undo step.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Hand {
     /// On a knob: VST 3's `beginEdit` without its `endEdit` yet.
     Held,

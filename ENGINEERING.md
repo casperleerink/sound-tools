@@ -66,7 +66,7 @@ How the engine keeps to that:
 
 - The CI job `test` in `.github/workflows/ci.yml` runs the whole test suite with the sanitizer on, on main.
 - A test in `crates/core/tests/engine.rs` starts a child that allocates inside `process` and expects the abort, so a sanitizer that is silently off fails CI.
-- `HostedPlugin` wraps each call into a third-party plugin in a `ScopedDisabler`: what a plugin does inside itself is not ours to check. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
+- Each call into a plugin is in a `ScopedDisabler`; for a plugin in its own process that is the socket write, poll and read of a block. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
 
 `no_denormals` wraps the body of `process_block`, so offline renders and the device compute the same.
 

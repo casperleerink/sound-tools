@@ -158,7 +158,12 @@ pub(crate) fn not_ours<T>(call: impl FnOnce() -> T) -> T {
 
 /// What a slot plays when no plugin plays it: what it was given, unchanged. Nothing here
 /// allocates.
-fn pass_through(input: [&[f32]; CHANNELS], left: &mut [f32], right: &mut [f32], frames: usize) {
+pub(crate) fn pass_through(
+    input: [&[f32]; CHANNELS],
+    left: &mut [f32],
+    right: &mut [f32],
+    frames: usize,
+) {
     left[..frames].copy_from_slice(&input[0][..frames]);
     right[..frames].copy_from_slice(&input[1][..frames]);
 }

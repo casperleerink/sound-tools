@@ -191,6 +191,15 @@ impl ScanCommand {
         Ok(Self::new(program, [OsString::from(SCAN_ARGUMENT)]))
     }
 
+    /// The program, which also plays a plugin in a process of its own, see `bridge`.
+    pub(crate) fn program(&self) -> &Path {
+        &self.program
+    }
+
+    pub(crate) fn environment(&self) -> &[(OsString, OsString)] {
+        &self.environment
+    }
+
     pub fn with_environment(mut self, name: &str, value: &str) -> Self {
         self.environment
             .push((OsString::from(name), OsString::from(value)));
