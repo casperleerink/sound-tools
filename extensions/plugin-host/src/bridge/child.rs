@@ -19,7 +19,7 @@ use sound_core::{CHANNELS, PrepareConfig};
 
 use super::protocol::{self, Answer, Broken, Message, Request};
 use super::shared::{MAX_DROPPED, Mapping, RELEASE, RUN, STOP};
-use super::{Channel, Hello, Identity, PLAY_ARGUMENT};
+use super::{Channel, Hello, Identity, PLAIN, PLAY_ARGUMENT, WINDOWS};
 use crate::PluginFormat;
 use crate::backend::{LoadedPlugin, Opening};
 use crate::parameters::{by_id, playable};
@@ -33,10 +33,16 @@ const PARENT_CHECK: Duration = Duration::from_secs(1);
 
 /// Serves one plugin for the host that started this process with [`PLAY_ARGUMENT`] and these
 /// `arguments` after it. Returns only when it could not start; otherwise the process ends here.
-pub fn serve(arguments: &[OsString]) -> Result<std::convert::Infallible, String> {
-    let [socket, token, shm, parent, identity] = arguments else {
+///
+/// `windows` makes the application a plugin's window opens in, where the host asks for one:
+/// the runtime has one, this crate's tests do not.
+pub fn serve(
+    arguments: &[OsString],
+    windows: Option<fn() -> gpui::Application>,
+) -> Result<std::convert::Infallible, String> {
+    let [socket, token, shm, parent, identity, mode] = arguments else {
         return Err(format!(
-            "usage: {PLAY_ARGUMENT} <socket> <token> <memory> <parent> <identity>"
+            "usage: {PLAY_ARGUMENT} <socket> <token> <memory> <parent> <identity> <{WINDOWS}|{PLAIN}>"
         ));
     };
     let text = |value: &OsString| value.to_string_lossy().into_owned();
@@ -65,7 +71,7 @@ pub fn serve(arguments: &[OsString]) -> Result<std::convert::Infallible, String>
     let audio = connect(Channel::Audio)?;
     mapping.shared().heartbeat.fetch_add(1, Ordering::Relaxed);
 
-    let requests = start_reader(control.try_clone().map_err(|e| e.to_string())?, parent)?;
+    let reading = control.try_clone().map_err(|e| e.to_string())?;
     let (install, installed) = rtrb::RingBuffer::<Box<dyn PluginAudio>>::new(2);
     let (given_back, returned) = rtrb::RingBuffer::<Box<dyn PluginAudio>>::new(4);
     let audio_thread = {
@@ -85,6 +91,20 @@ pub fn serve(arguments: &[OsString]) -> Result<std::convert::Infallible, String>
         returned,
         audio_thread: Some(audio_thread),
     };
+    #[cfg(target_os = "macos")]
+    if let (Some(application), true) = (windows, *mode == *WINDOWS) {
+        let (sender, requests) = smol::channel::unbounded();
+        start_reader(reading, parent, move |received| {
+            sender.send_blocking(received).is_ok()
+        })?;
+        super::windows::serve(server, requests, application(), parent);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _plain = (windows, mode);
+    let (sender, requests) = mpsc::channel();
+    start_reader(reading, parent, move |received| {
+        sender.send(received).is_ok()
+    })?;
     loop {
         server
             .mapping
@@ -92,7 +112,10 @@ pub fn serve(arguments: &[OsString]) -> Result<std::convert::Infallible, String>
             .heartbeat
             .fetch_add(1, Ordering::Relaxed);
         match requests.recv_timeout(HEARTBEAT) {
-            Ok((message, bytes)) => server.serve(message, bytes),
+            Ok((message, bytes)) => {
+                let reply = server.serve(message, bytes);
+                server.send(reply);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => end_now(),
         }
@@ -100,21 +123,30 @@ pub fn serve(arguments: &[OsString]) -> Result<std::convert::Infallible, String>
 }
 
 /// Ends the process without its plugin's teardown: the host is gone, nobody waits for it.
-fn end_now() -> ! {
+pub(super) fn end_now() -> ! {
     // SAFETY: ends the process; nothing after it runs.
     unsafe { libc::_exit(0) }
 }
 
-type Received = (Message, Option<Vec<u8>>);
+pub(super) type Received = (Message, Option<Vec<u8>>);
+
+/// What the main thread answers a request with: a message, and for a state its bytes.
+pub(super) enum Reply {
+    Answer(Answer),
+    WithBytes(Answer, Vec<u8>),
+}
 
 /// The thread that reads the requests. It ends the process at end of file, and when its parent
 /// is no longer the host that started it, which covers a socket end some other process
 /// inherited.
-fn start_reader(mut control: UnixStream, parent: u32) -> Result<mpsc::Receiver<Received>, String> {
+fn start_reader(
+    mut control: UnixStream,
+    parent: u32,
+    send: impl Fn(Received) -> bool + Send + 'static,
+) -> Result<(), String> {
     control
         .set_read_timeout(Some(PARENT_CHECK))
         .map_err(|error| error.to_string())?;
-    let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("plugin-requests".into())
         .spawn(move || {
@@ -136,20 +168,20 @@ fn start_reader(mut control: UnixStream, parent: u32) -> Result<mpsc::Receiver<R
                     }
                     _ => None,
                 };
-                if sender.send((message, bytes)).is_err() {
+                if !send((message, bytes)) {
                     end_now();
                 }
             }
         })
         .map_err(|error| error.to_string())?;
-    Ok(receiver)
+    Ok(())
 }
 
-struct Server {
+pub(super) struct Server {
     control: UnixStream,
     audio: UnixStream,
-    mapping: Arc<Mapping>,
-    plugin: Option<Box<dyn LoadedPlugin>>,
+    pub(super) mapping: Arc<Mapping>,
+    pub(super) plugin: Option<Box<dyn LoadedPlugin>>,
     install: rtrb::Producer<Box<dyn PluginAudio>>,
     returned: rtrb::Consumer<Box<dyn PluginAudio>>,
     audio_thread: Option<std::thread::JoinHandle<()>>,
@@ -160,7 +192,9 @@ impl Server {
         self.mapping.clone()
     }
 
-    fn serve(&mut self, message: Message, bytes: Option<Vec<u8>>) {
+    /// Answers one request. Writing the answer is the caller's, so the windows of a plugin can
+    /// add what they have to tell to the answer of a poll.
+    pub(super) fn serve(&mut self, message: Message, bytes: Option<Vec<u8>>) -> Reply {
         if let Some(plugin) = &mut self.plugin {
             for change in message.sends {
                 plugin.send(change);
@@ -206,23 +240,27 @@ impl Server {
                         let audio = Box::new(Player::new(started, self.laned()));
                         let latency = audio.latency();
                         self.give_to_audio(audio, sample_rate);
-                        Answer::Loaded { latency, notes }
+                        Answer::Loaded {
+                            latency,
+                            notes,
+                            has_window: self.has_window(),
+                        }
                     }
                     Err(problem) => Answer::DidNotLoad(problem),
                 }
             }
             Request::Quit => self.quit(),
             request => {
+                // Every request is answered, so the host never waits on one.
                 let Some(plugin) = self.plugin.as_mut() else {
-                    // Every request is answered, so the host never waits on one.
-                    if protocol::write_message(&mut self.control, &Answer::NotLoaded).is_err() {
-                        end_now();
-                    }
-                    return;
+                    return Reply::Answer(Answer::NotLoaded);
                 };
                 match request {
-                    Request::Load { .. } | Request::Quit => Answer::NotLoaded,
-                    Request::Poll => Answer::Polled(plugin.poll()),
+                    Request::Load { .. }
+                    | Request::Quit
+                    | Request::OpenWindow { .. }
+                    | Request::CloseWindow => Answer::NotLoaded,
+                    Request::Poll => Answer::Polled(plugin.poll(), Vec::new()),
                     Request::ReadPins(ids) => Answer::Pins {
                         values: plugin.read_pins(&ids),
                         hand: plugin.hand(),
@@ -238,17 +276,10 @@ impl Server {
                                 false => Err("the plugin's state is too large to keep".into()),
                             }
                         });
-                        let answer =
-                            Answer::State(saved.as_ref().map(|_| ()).map_err(Clone::clone));
-                        if protocol::write_message(&mut self.control, &answer).is_err() {
-                            end_now();
-                        }
-                        if let Ok(bytes) = saved
-                            && protocol::write_bytes(&mut self.control, &bytes).is_err()
-                        {
-                            end_now();
-                        }
-                        return;
+                        return match saved {
+                            Ok(bytes) => Reply::WithBytes(Answer::State(Ok(())), bytes),
+                            Err(message) => Reply::Answer(Answer::State(Err(message))),
+                        };
                     }
                     Request::Restart {
                         sample_rate,
@@ -262,7 +293,7 @@ impl Server {
                         };
                         let laned = self.laned();
                         let Some(plugin) = self.plugin.as_mut() else {
-                            return;
+                            return Reply::Answer(Answer::NotLoaded);
                         };
                         let restarted = match plugin.restart(config, &pins, &laned) {
                             None => None,
@@ -288,9 +319,32 @@ impl Server {
                 }
             }
         };
-        if protocol::write_message(&mut self.control, &answer).is_err() {
+        Reply::Answer(answer)
+    }
+
+    pub(super) fn send(&mut self, reply: Reply) {
+        let (answer, bytes) = match reply {
+            Reply::Answer(answer) => (answer, None),
+            Reply::WithBytes(answer, bytes) => (answer, Some(bytes)),
+        };
+        let written =
+            protocol::write_message(&mut self.control, &answer).and_then(|()| match bytes {
+                Some(bytes) => protocol::write_bytes(&mut self.control, &bytes),
+                None => Ok(()),
+            });
+        if written.is_err() {
             end_now();
         }
+    }
+
+    /// Whether the plugin offers a window this process can show.
+    fn has_window(&mut self) -> bool {
+        cfg!(target_os = "macos")
+            && self
+                .plugin
+                .as_mut()
+                .and_then(|plugin| plugin.gui())
+                .is_some_and(|gui| gui.is_offered())
     }
 
     fn give_to_audio(&mut self, audio: Box<dyn PluginAudio>, sample_rate: u32) {
@@ -312,7 +366,7 @@ impl Server {
 
     /// The quit order: no more audio, the audio side stopped on its thread and dropped, then
     /// the plugin, which runs its own teardown. Then the process ends.
-    fn quit(&mut self) -> ! {
+    pub(super) fn quit(&mut self) -> ! {
         // Wakes the audio thread out of its read, and every later block of the host sees the
         // end at once and passes its input through.
         // A host that let go of the plugin closed its end already, which is no error.

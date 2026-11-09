@@ -120,6 +120,7 @@ pub struct Isolation {
     /// How long the plugin's main thread may stop before it counts as hung, also while it
     /// loads: as long as the scan gives a bundle.
     pub(crate) hung_after: Duration,
+    pub(crate) windows: bool,
 }
 
 impl Isolation {
@@ -128,7 +129,14 @@ impl Isolation {
             quiet,
             block_timeout: Duration::from_secs(1),
             hung_after: crate::scan::SCAN_TIMEOUT,
+            windows: false,
         }
+    }
+
+    /// The plugin's process opens the plugin's window, in a window session on macOS.
+    pub fn with_windows(mut self) -> Self {
+        self.windows = cfg!(target_os = "macos");
+        self
     }
 
     pub fn with_timeouts(mut self, block: Duration, hung_after: Duration) -> Self {
@@ -261,6 +269,16 @@ impl Hosted {
         notes
     }
 
+    /// Frees what the plugin holds for its window, wherever that is, and gives back a window of
+    /// this process to take down.
+    #[must_use]
+    fn give_up_window(&mut self) -> Option<WindowHandle<PluginFrame>> {
+        if let Some(remote) = self.plugin.remote_window() {
+            remote.close();
+        }
+        self.window.give_up(self.plugin.gui())
+    }
+
     fn matches(&self, project: &Project, id: &InstanceId) -> bool {
         record_of(project, id).is_some_and(|record| self.holds(record))
     }
@@ -342,7 +360,7 @@ impl Drop for Inner {
         }
         for hosted in table.loaded.values_mut().chain(&mut table.retired) {
             // The window cannot be taken down from here; it goes with the application.
-            let _window = hosted.window.give_up(hosted.plugin.gui());
+            let _window = hosted.give_up_window();
             if let Some(Some(assets)) = &assets
                 && let Err(problem) = save(hosted, assets)
             {
@@ -611,7 +629,8 @@ impl Plugins {
                 (plugin, audio, laned, notes)
             }
         };
-        let has_window = plugin.gui().is_some_and(|gui| gui.is_offered());
+        let has_window =
+            plugin.gui().is_some_and(|gui| gui.is_offered()) || plugin.remote_window().is_some();
         let mut hosted = Hosted {
             format: record.format,
             plugin_id: record.plugin_id.clone(),
@@ -719,7 +738,7 @@ impl Plugins {
         }
         for hosted in loaded.values_mut().chain(&mut *retired) {
             // The placements still say which were open.
-            if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
+            if let Some(handle) = hosted.give_up_window() {
                 finished_windows.push(handle);
                 *card_changed = true;
             }
@@ -821,6 +840,8 @@ impl Plugins {
         let assets = self.0.writes_state.then(|| project.assets());
         // Noted after the loop, which has the table in pieces.
         let mut closed_for_good = Vec::new();
+        // Where windows in plugins' own processes moved, noted after the loop too.
+        let mut moved = Vec::new();
 
         // Includes an edit the project rolled back after this host had loaded it.
         let stale: Vec<InstanceId> = loaded
@@ -830,7 +851,7 @@ impl Plugins {
             .collect();
         for id in stale {
             if let Some(mut hosted) = loaded.remove(&id) {
-                if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
+                if let Some(handle) = hosted.give_up_window() {
                     finished_windows.push(handle);
                     *card_changed = true;
                 }
@@ -852,14 +873,17 @@ impl Plugins {
             if let Some(wanted) = requests.window_size {
                 hosted.window.wants_size(wanted);
             }
-            if requests.window_closed
-                && let Some(handle) = hosted.window.give_up(hosted.plugin.gui())
-            {
-                finished_windows.push(handle);
+            if requests.window_closed && hosted.window.is_open() {
+                if let Some(handle) = hosted.give_up_window() {
+                    finished_windows.push(handle);
+                }
                 *card_changed = true;
                 if let Some(id) = id {
                     closed_for_good.push(id.clone());
                 }
+            }
+            if let (Some(id), Some(placement)) = (id, requests.placement) {
+                moved.push((id.clone(), placement));
             }
             // Only loaded plugins are started again.
             if requests.restart && hosted.restart == Restart::Idle {
@@ -915,7 +939,7 @@ impl Plugins {
             .collect();
         for id in crashed {
             if let Some(mut hosted) = loaded.remove(&id) {
-                if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
+                if let Some(handle) = hosted.give_up_window() {
                     finished_windows.push(handle);
                 }
                 *card_changed = true;
@@ -935,6 +959,9 @@ impl Plugins {
         retired.retain_mut(|hosted| !hosted.plugin.released());
         for id in closed_for_good {
             table.keep_open(&id, false);
+        }
+        for (id, placement) in moved {
+            table.place(&id, placement);
         }
 
         let due = table
@@ -956,7 +983,7 @@ impl Plugins {
 }
 
 fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
-    if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
+    if let Some(handle) = hosted.give_up_window() {
         table.finished_windows.push(handle);
         table.card_changed = true;
     }

@@ -14,6 +14,8 @@ mod child;
 mod parent;
 mod protocol;
 mod shared;
+#[cfg(target_os = "macos")]
+mod windows;
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt;
@@ -29,6 +31,11 @@ use crate::Isolation;
 
 /// The argument the host starts a plugin's process with.
 pub const PLAY_ARGUMENT: &str = "--play-plugin";
+
+/// The last argument: whether the plugin's process opens the plugin's window, which needs an
+/// application, or serves it in a plain loop.
+const WINDOWS: &str = "windows";
+const PLAIN: &str = "plain";
 
 /// What a child says first on each of its sockets.
 #[derive(Debug, Serialize, Deserialize)]

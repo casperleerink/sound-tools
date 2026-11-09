@@ -11,6 +11,7 @@
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 use gpui::{
     App, Bounds, Context, DisplayId, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke,
@@ -74,13 +75,10 @@ pub(crate) struct PluginFrame {
 impl PluginFrame {
     fn new(owner: WindowOwner, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let bounds = cx.observe_window_bounds(window, |frame, window, cx| {
-            let Some(plugins) = frame.owner.plugins.upgrade() else {
-                return;
-            };
             let (placement, content) = (placement_of(window, cx), content_of(window));
             // GPUI's own handle, not the one `HasWindowHandle` gives.
             let id = Window::window_handle(window).window_id();
-            plugins.window_bounds_changed(&frame.owner.instance, id, placement, content);
+            frame.owner.bounds_changed(id, placement, content);
         });
         // A key held here comes up in whatever has the keyboard now.
         let activation = cx.observe_window_activation(window, |_, window, cx| {
@@ -99,12 +97,9 @@ impl PluginFrame {
 
     /// `true` when the plugin used the key.
     fn key(&self, window: &Window, keystroke: &Keystroke, direction: KeyDirection) -> bool {
-        let Some(plugins) = self.owner.plugins.upgrade() else {
-            return false;
-        };
         // GPUI's own handle, not the one `HasWindowHandle` gives.
         let id = Window::window_handle(window).window_id();
-        plugins.key(&self.owner.instance, id, keystroke, direction)
+        self.owner.key(id, keystroke, direction)
     }
 }
 
@@ -137,10 +132,44 @@ impl Render for PluginFrame {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct WindowOwner {
+/// Whoever holds the plugin of a window: the table in this process, or the plugin's own
+/// process. Each call names the window, as one that went may still report on its way out.
+pub(crate) trait FrameOwner {
+    fn bounds_changed(&self, window: WindowId, placement: Placement, content: WindowSize);
+
+    /// A key the plugin's own view did not have. `true` says the plugin used it.
+    fn key(&self, window: WindowId, keystroke: &Keystroke, direction: KeyDirection) -> bool;
+
+    /// The window is going, whatever took it down, while it still holds the plugin's view.
+    fn closed(&self, window: WindowId);
+}
+
+pub(crate) type WindowOwner = Rc<dyn FrameOwner>;
+
+/// The table of this process holds the plugin of the window.
+pub(crate) struct InTable {
     pub instance: InstanceId,
     pub plugins: WeakPlugins,
+}
+
+impl FrameOwner for InTable {
+    fn bounds_changed(&self, window: WindowId, placement: Placement, content: WindowSize) {
+        if let Some(plugins) = self.plugins.upgrade() {
+            plugins.window_bounds_changed(&self.instance, window, placement, content);
+        }
+    }
+
+    fn key(&self, window: WindowId, keystroke: &Keystroke, direction: KeyDirection) -> bool {
+        self.plugins
+            .upgrade()
+            .is_some_and(|plugins| plugins.key(&self.instance, window, keystroke, direction))
+    }
+
+    fn closed(&self, _window: WindowId) {
+        if let Some(plugins) = self.plugins.upgrade() {
+            plugins.window_was_closed(&self.instance);
+        }
+    }
 }
 
 pub(crate) enum Prepared {
@@ -156,6 +185,9 @@ pub(crate) struct WindowRequest<'a> {
     /// A window that comes back by itself, as the project opens or its plugin reloads, leaves
     /// the keyboard where it was.
     pub focus: bool,
+    /// In the plugin's own process: a panel that takes the keyboard without making that process
+    /// the active app, so Sound Tools keeps its menu bar.
+    pub own_process: bool,
 }
 
 /// The plugin's window, from the host's side. What the plugin makes and frees for it is the
@@ -163,6 +195,8 @@ pub(crate) struct WindowRequest<'a> {
 #[derive(Default)]
 pub(crate) struct PluginWindow {
     open: Option<WindowHandle<PluginFrame>>,
+    /// Open in the plugin's own process.
+    open_there: bool,
     /// Frees the plugin's view when the window goes, whatever took it down. See [`open_window`].
     closed: Option<Subscription>,
     /// A size the plugin asked for, until whoever polls gives the window it.
@@ -175,7 +209,12 @@ pub(crate) struct PluginWindow {
 
 impl PluginWindow {
     pub(crate) fn is_open(&self) -> bool {
-        self.open.is_some()
+        self.open.is_some() || self.open_there
+    }
+
+    /// Its plugin's own process opened it.
+    pub(crate) fn opened_there(&mut self) {
+        self.open_there = true;
     }
 
     /// Whether `id` is this window. A window that went may still report a move on its way.
@@ -282,6 +321,7 @@ impl PluginWindow {
         self.wanted_size = None;
         self.size = None;
         self.closed = None;
+        self.open_there = false;
         if let Some(gui) = gui {
             gui.destroy();
         }
@@ -343,7 +383,7 @@ pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: WindowSize, cx: 
 }
 
 pub(crate) struct ParentView {
-    view: NonNull<c_void>,
+    pub view: NonNull<c_void>,
     /// See [`physical_scale`].
     physical_scale: Option<f32>,
 }
@@ -384,7 +424,10 @@ pub(crate) fn open_window(
             title: Some(request.title.to_string().into()),
             ..Default::default()
         }),
-        kind: WindowKind::Floating,
+        kind: match request.own_process {
+            true => WindowKind::PopUp,
+            false => WindowKind::Floating,
+        },
         focus: request.focus,
         is_resizable: request.resizable,
         display_id,
@@ -409,16 +452,10 @@ pub(crate) fn open_window(
     if let (Some(parent), Some(main_window)) = (&view, main_window) {
         win32::float_above(parent.view, main_window);
     }
-    let (instance, plugins, id) = (
-        owner.instance.clone(),
-        owner.plugins.clone(),
-        handle.window_id(),
-    );
+    let (owner, id) = (owner.clone(), handle.window_id());
     let closed = cx.on_window_closed(move |_, closed| {
-        if closed == id
-            && let Some(plugins) = plugins.upgrade()
-        {
-            plugins.window_was_closed(&instance);
+        if closed == id {
+            owner.closed(closed);
         }
     });
     Ok((handle, view, closed))

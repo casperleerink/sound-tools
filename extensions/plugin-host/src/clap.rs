@@ -513,6 +513,7 @@ impl LoadedPlugin for ClapPlugin {
             // CLAP sends the pedal as MIDI, so there is no mapping that can move.
             pedal_unmapped: false,
             window_closed,
+            placement: None,
             window_size: (size != 0).then(|| {
                 let size = GuiSize::unpack_from_u64(size);
                 WindowSize {

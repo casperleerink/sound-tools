@@ -802,7 +802,9 @@ fn main() -> Result<()> {
             .first()
             .is_some_and(|first| first == plugin_host::PLAY_ARGUMENT)
         {
-            let Err(message) = plugin_host::serve_plugin(arguments.get(1..).unwrap_or_default());
+            let windows: fn() -> gpui::Application = gpui_platform::application;
+            let arguments = arguments.get(1..).unwrap_or_default();
+            let Err(message) = plugin_host::serve_plugin(arguments, Some(windows));
             bail!(message);
         }
         plugin_host::remember_this_program();

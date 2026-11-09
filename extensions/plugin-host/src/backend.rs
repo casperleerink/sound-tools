@@ -9,7 +9,7 @@ use sound_core::PrepareConfig;
 use crate::PluginProblem;
 use crate::parameters::Parameter;
 use crate::processor::{Laned, PluginAudio, Started};
-use crate::window::WindowSize;
+use crate::window::{Placement, WindowSize};
 
 /// One loaded plugin, seen from the main thread.
 pub(crate) trait LoadedPlugin {
@@ -19,6 +19,11 @@ pub(crate) trait LoadedPlugin {
 
     /// `None` for a plugin that can have no window at all.
     fn gui(&mut self) -> Option<&mut dyn PluginGui>;
+
+    /// The plugin's own window in its own process, for a plugin that plays in one.
+    fn remote_window(&mut self) -> Option<&mut dyn RemoteWindow> {
+        None
+    }
 
     /// `None` when the plugin cannot say, as a CLAP plugin for an id it does not have.
     fn value(&mut self, id: u32) -> Option<f64>;
@@ -99,6 +104,9 @@ pub(crate) struct Requests {
     /// CLAP only: in VST 3 the host owns the window and the plugin only fills it.
     pub window_closed: bool,
     pub window_size: Option<WindowSize>,
+    /// Where its window is now, when it moved. Only a window in the plugin's own process: one
+    /// in this process tells the table itself.
+    pub placement: Option<Placement>,
     /// CLAP's `rescan`, VST 3's `kParamIDMappingChanged` and `kParamTitlesChanged`.
     pub parameters_changed: bool,
 }
@@ -121,6 +129,23 @@ pub(crate) enum Hand {
     LetGo,
     /// The plugin does not say: CLAP, and a plugin moving a parameter itself.
     Unknown,
+}
+
+/// A plugin's own window that its own process opens and fills: the table only says when, and
+/// hears back where it is with each poll.
+pub(crate) trait RemoteWindow {
+    /// Opens it where `placement` says, or brings it forward. Gives where it opened.
+    fn open(
+        &mut self,
+        title: &str,
+        placement: Option<Placement>,
+        focus: bool,
+    ) -> Result<Option<Placement>, PluginProblem>;
+
+    fn close(&mut self);
+
+    /// The keys the window did not use since the last call, to the computer keys of this app.
+    fn pass_spare_keys(&mut self, cx: &mut gpui::App);
 }
 
 pub(crate) trait PluginGui {

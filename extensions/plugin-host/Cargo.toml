@@ -45,6 +45,11 @@ libc.workspace = true
 memmap2.workspace = true
 no_denormals.workspace = true
 
+# The plugin's own window in its own process, see src/bridge/windows.rs.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+smol.workspace = true
+
 # Real-time priority through rtkit, as cpal gets it, see crates/core/Cargo.toml.
 [target.'cfg(target_os = "linux")'.dependencies]
 audio_thread_priority = { workspace = true, features = ["with_dbus"] }

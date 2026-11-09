@@ -432,6 +432,7 @@ impl LoadedPlugin for Vst3Plugin {
             state_is_dirty: self.joined.handler.take_state_is_dirty(),
             pedal_unmapped,
             window_closed: false,
+            placement: None,
             window_size: self.gui.as_ref().and_then(Vst3Gui::take_wanted_size),
             parameters_changed: ids_changed | self.joined.handler.take_titles_changed(),
         }

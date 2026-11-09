@@ -18,16 +18,19 @@ use std::time::{Duration, Instant};
 
 use sound_core::{CHANNELS, PrepareConfig};
 
-use super::protocol::{self, Answer, Broken, Message, Request};
+use super::protocol::{self, Answer, Broken, Message, Request, SpareKey};
 use super::shared::{MAX_DROPPED, Mapping, RELEASE, RUN, STOP};
 use super::{Channel, Hello, Identity, Isolation, PLAY_ARGUMENT};
-use crate::backend::{Hand, LoadedPlugin, ParameterChange, PluginGui, Requests};
+use crate::backend::{Hand, LoadedPlugin, ParameterChange, PluginGui, RemoteWindow, Requests};
 use crate::parameters::Parameter;
 use crate::processor::{
     AutomatedPins, Block, Control, Laned, Played, PluginAudio, not_ours, pass_through,
 };
 use crate::scan::{ScanCommand, ScannedPlugin};
+use crate::window::Placement;
 use crate::{Pin, PluginProblem};
+use gpui::{KeyDownEvent, KeyUpEvent, Keystroke};
+use sound_ui::SpareKeys;
 
 /// How long a child has to start and connect, before any plugin code runs.
 const START: Duration = Duration::from_secs(10);
@@ -178,9 +181,15 @@ pub(crate) struct Bridged {
     /// The hand the last read of the pins brought along.
     hand: Option<Hand>,
     crashed: bool,
+    plugin_id: String,
     hung_after: Duration,
     /// No call waits past this, once the host closes.
     deadline: Option<Instant>,
+    /// Whether the plugin has a window its process can open, and whether it is open.
+    has_window: bool,
+    window_open: bool,
+    /// The keys its window did not use, from the last poll.
+    spare_keys: Vec<SpareKey>,
 }
 
 impl Bridged {
@@ -304,7 +313,13 @@ fn waiting<'a>(
 impl LoadedPlugin for Bridged {
     fn poll(&mut self) -> Requests {
         match self.call(Request::Poll) {
-            Some(Answer::Polled(requests)) => requests,
+            Some(Answer::Polled(requests, spare_keys)) => {
+                if requests.window_closed {
+                    self.window_open = false;
+                }
+                self.spare_keys.extend(spare_keys);
+                requests
+            }
             _ => Requests::default(),
         }
     }
@@ -321,6 +336,13 @@ impl LoadedPlugin for Bridged {
 
     fn gui(&mut self) -> Option<&mut dyn PluginGui> {
         None
+    }
+
+    fn remote_window(&mut self) -> Option<&mut dyn RemoteWindow> {
+        match self.has_window && !self.crashed() {
+            true => Some(self),
+            false => None,
+        }
     }
 
     fn value(&mut self, id: u32) -> Option<f64> {
@@ -420,6 +442,68 @@ impl LoadedPlugin for Bridged {
 
     fn closing(&mut self, deadline: Instant) {
         self.deadline = Some(deadline);
+    }
+}
+
+impl RemoteWindow for Bridged {
+    fn open(
+        &mut self,
+        title: &str,
+        placement: Option<Placement>,
+        focus: bool,
+    ) -> Result<Option<Placement>, PluginProblem> {
+        let request = Request::OpenWindow {
+            title: title.to_string(),
+            placement,
+            focus,
+        };
+        match self.call(request) {
+            Some(Answer::WindowOpened(Ok(placed))) => {
+                self.window_open = true;
+                Ok(placed)
+            }
+            Some(Answer::WindowOpened(Err(problem))) => {
+                if matches!(problem, PluginProblem::NoWindow { .. }) {
+                    self.has_window = false;
+                }
+                Err(problem)
+            }
+            _ => Err(PluginProblem::WindowDidNotOpen {
+                plugin_id: self.plugin_id.clone(),
+                message: "the plugin stopped working".into(),
+            }),
+        }
+    }
+
+    fn close(&mut self) {
+        if self.window_open {
+            self.window_open = false;
+            self.call(Request::CloseWindow);
+        }
+    }
+
+    fn pass_spare_keys(&mut self, cx: &mut gpui::App) {
+        for key in std::mem::take(&mut self.spare_keys) {
+            match key {
+                SpareKey::Down { keystroke, held } => {
+                    if let Ok(keystroke) = Keystroke::parse(&keystroke) {
+                        let event = KeyDownEvent {
+                            keystroke,
+                            is_held: held,
+                            prefer_character_input: false,
+                        };
+                        SpareKeys::pass(sound_ui::SpareKey::Down(&event), cx);
+                    }
+                }
+                SpareKey::Up { keystroke } => {
+                    if let Ok(keystroke) = Keystroke::parse(&keystroke) {
+                        let event = KeyUpEvent { keystroke };
+                        SpareKeys::pass(sound_ui::SpareKey::Up(&event), cx);
+                    }
+                }
+                SpareKey::LetGo => SpareKeys::pass(sound_ui::SpareKey::LetGo, cx),
+            }
+        }
     }
 }
 
@@ -532,6 +616,10 @@ pub(crate) fn open(
             .arg(&shm)
             .arg(std::process::id().to_string())
             .arg(identity.text())
+            .arg(match isolation.windows {
+                true => super::WINDOWS,
+                false => super::PLAIN,
+            })
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(match isolation.quiet {
@@ -580,6 +668,10 @@ pub(crate) fn open(
         crashed: false,
         hung_after: isolation.hung_after,
         deadline: None,
+        has_window: false,
+        window_open: false,
+        spare_keys: Vec::new(),
+        plugin_id: found.id.clone(),
     };
     let request = Request::Load {
         found: found.clone(),
@@ -601,7 +693,12 @@ pub(crate) fn open(
         return Err(crashed());
     }
     match bridged.answer() {
-        Some(Answer::Loaded { latency, notes }) => {
+        Some(Answer::Loaded {
+            latency,
+            notes,
+            has_window,
+        }) => {
+            bridged.has_window = has_window;
             let audio = Box::new(BridgeAudio {
                 link,
                 _held: bridged.held.clone(),

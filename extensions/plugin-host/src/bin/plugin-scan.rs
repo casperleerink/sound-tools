@@ -13,7 +13,8 @@ fn main() -> std::process::ExitCode {
             .first()
             .is_some_and(|first| first == plugin_host::PLAY_ARGUMENT)
         {
-            let Err(message) = plugin_host::serve_plugin(arguments.get(1..).unwrap_or_default());
+            let Err(message) =
+                plugin_host::serve_plugin(arguments.get(1..).unwrap_or_default(), None);
             eprintln!("{message}");
             return std::process::ExitCode::FAILURE;
         }

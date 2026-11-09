@@ -116,16 +116,19 @@ When `sound-tools` is not on your `PATH`, ask the composer to pick **Install com
 
 /// The plugin host of one session that plays: it scans this machine, keeps the plugins a
 /// project loads and saves their state. Each plugin plays in a process of its own, so one that
-/// crashes costs its own slot; on macOS not yet in a window session, whose plugin windows
-/// still need the plugin in this process.
+/// crashes costs its own slot.
 ///
 /// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
 /// per bundle, so a plugin that crashes while it is looked at costs one bundle.
 pub fn playing_plugins(in_window: bool) -> Result<Plugins> {
     // Headless: what the plugin's process writes goes nowhere, as this process's own output
     // is what its caller reads.
-    let isolated = !(in_window && cfg!(target_os = "macos"));
-    let loading = Loading::AndSaving(isolated.then(|| Isolation::new(!in_window)));
+    let isolation = Isolation::new(!in_window);
+    let isolation = match in_window {
+        true => isolation.with_windows(),
+        false => isolation,
+    };
+    let loading = Loading::AndSaving(Some(isolation));
     with_cache(loading, ScanCache::of_this_machine())
 }
 

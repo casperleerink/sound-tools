@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::{Hand, ParameterChange, Requests};
 use crate::parameters::Parameter;
 use crate::scan::ScannedPlugin;
+use crate::window::Placement;
 use crate::{Pin, PluginProblem};
 
 /// The most a message may be. Nothing the host asks or a plugin answers comes near it.
@@ -57,6 +58,13 @@ pub(crate) enum Request {
     },
     Released,
     Quit,
+    /// The plugin's own window, in this process's own window, where `placement` says.
+    OpenWindow {
+        title: String,
+        placement: Option<Placement>,
+        focus: bool,
+    },
+    CloseWindow,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,9 +72,12 @@ pub(crate) enum Answer {
     Loaded {
         latency: u32,
         notes: Vec<PluginProblem>,
+        /// Whether the plugin has a window this process can open.
+        has_window: bool,
     },
     DidNotLoad(PluginProblem),
-    Polled(Requests),
+    /// What the plugin asked for, and the keys its window did not use.
+    Polled(Requests, Vec<SpareKey>),
     Pins {
         values: Option<Vec<(u32, f64)>>,
         hand: Hand,
@@ -82,6 +93,18 @@ pub(crate) enum Answer {
     Quit,
     /// A request for a plugin this process does not have.
     NotLoaded,
+    /// Where the window opened, or why it did not.
+    WindowOpened(Result<Option<Placement>, PluginProblem>),
+    WindowClosed,
+}
+
+/// A key the plugin's window did not use, for the computer keys of the host, as a keystroke's
+/// text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum SpareKey {
+    Down { keystroke: String, held: bool },
+    Up { keystroke: String },
+    LetGo,
 }
 
 /// Why a frame could not be read.

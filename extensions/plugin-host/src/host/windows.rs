@@ -10,7 +10,9 @@ use super::{Hosted, PluginProblem, Plugins, Table};
 use crate::PluginRecord;
 use crate::backend::KeyDirection;
 use crate::placements::PlacementStore;
-use crate::window::{Placement, PluginFrame, Prepared, WindowOwner, WindowRequest, WindowSize};
+use crate::window::{
+    InTable, Placement, PluginFrame, Prepared, WindowOwner, WindowRequest, WindowSize,
+};
 
 impl Table {
     /// Whether the window of `id` is to be open the next time it can be. Only the composer
@@ -25,7 +27,7 @@ impl Table {
         }
     }
 
-    fn place(&mut self, id: &InstanceId, placement: Placement) {
+    pub(super) fn place(&mut self, id: &InstanceId, placement: Placement) {
         if self.placements.get(id) != Some(&placement) {
             self.placements.insert(id.clone(), placement);
             self.placements_changed = true;
@@ -85,6 +87,20 @@ impl Plugins {
                 has_window,
                 ..
             } = hosted;
+            // A plugin in its own process opens its window there, or brings it forward.
+            if let Some(remote) = plugin.remote_window() {
+                let opened = remote.open(&title, placement, focus);
+                match &opened {
+                    Ok(_) => window.opened_there(),
+                    Err(PluginProblem::NoWindow { .. }) => *has_window = false,
+                    Err(_) => {}
+                }
+                table.card_changed = true;
+                if let Ok(Some(placed)) = opened {
+                    table.place(id, placed);
+                }
+                return opened.map(|_| ());
+            }
             let prepared = match plugin.gui() {
                 Some(gui) => window.prepare(gui),
                 None => Err(no_window()),
@@ -111,16 +127,17 @@ impl Plugins {
             }
             Prepared::Wanted(size) => size,
         };
-        let owner = WindowOwner {
+        let owner: WindowOwner = std::rc::Rc::new(InTable {
             instance: id.clone(),
             plugins: self.downgrade(),
-        };
+        });
         let request = WindowRequest {
             title: &title,
             size,
             resizable,
             placement,
             focus,
+            own_process: false,
         };
         let opened = crate::window::open_window(&owner, request, cx);
         let (handle, parent, closed) = match opened {
@@ -243,7 +260,7 @@ impl Plugins {
     fn give_up_window(&self, id: &InstanceId) -> Option<WindowHandle<PluginFrame>> {
         let mut table = self.0.table.borrow_mut();
         let hosted = table.loaded.get_mut(id)?;
-        let finished = hosted.window.give_up(hosted.plugin.gui());
+        let finished = hosted.give_up_window();
         table.card_changed = true;
         finished
     }
@@ -254,7 +271,7 @@ impl Plugins {
     pub(crate) fn window_was_closed(&self, id: &InstanceId) {
         let mut table = self.0.table.borrow_mut();
         if let Some(hosted) = table.loaded.get_mut(id)
-            && hosted.window.give_up(hosted.plugin.gui()).is_some()
+            && hosted.give_up_window().is_some()
         {
             table.card_changed = true;
             table.keep_open(id, false);
@@ -292,6 +309,15 @@ impl Plugins {
         };
         for (handle, wanted) in resize {
             crate::window::resize(handle, wanted, cx);
+        }
+        // The keys windows in plugins' own processes did not use play the computer keys here.
+        {
+            let mut table = self.0.table.borrow_mut();
+            for hosted in table.loaded.values_mut() {
+                if let Some(remote) = hosted.plugin.remote_window() {
+                    remote.pass_spare_keys(cx);
+                }
+            }
         }
         for handle in finished {
             crate::window::remove(handle, cx);
