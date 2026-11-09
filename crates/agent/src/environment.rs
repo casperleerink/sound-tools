@@ -84,12 +84,16 @@ fn path_key(environment: &HashMap<OsString, OsString>) -> Option<&OsString> {
 }
 
 /// Where `name` is on the `PATH` of `environment`, as a shell would find it. On Windows that
-/// is `<name>.exe`.
+/// is `<name>.exe`, or the `<name>.cmd` that npm installs.
 pub fn program_on_path(name: &str, environment: &HashMap<OsString, OsString>) -> Option<PathBuf> {
     let path = environment.get(path_key(environment)?)?;
-    let file = format!("{name}{}", env::consts::EXE_SUFFIX);
+    let files: &[String] = &if cfg!(windows) {
+        vec![format!("{name}.exe"), format!("{name}.cmd")]
+    } else {
+        vec![name.to_string()]
+    };
     env::split_paths(path)
-        .map(|folder| folder.join(&file))
+        .flat_map(|folder| files.iter().map(move |file| folder.join(file)))
         .find(|program| {
             program
                 .metadata()

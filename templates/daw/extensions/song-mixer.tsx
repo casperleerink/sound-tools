@@ -89,7 +89,7 @@ export const Mixer = ({ page }: { page: Page }) => {
       <div style={{ ...GROUP, paddingRight: 0 }}>
         <Names />
       </div>
-      <div style={{ grow: true, direction: "row", scroll: "x" }}>
+      <div key="strips" style={{ grow: true, direction: "row", scroll: "x" }}>
         <div style={GROUP}>
           <For each={rows}>{(each) => <Strip each={each} />}</For>
         </div>

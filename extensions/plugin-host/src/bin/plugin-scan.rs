@@ -1,9 +1,6 @@
-//! Lists one plugin bundle and prints one line of JSON per plugin in it, or plays one plugin in
-//! a process of its own when it is started with `plugin_host::PLAY_ARGUMENT`.
-//!
-//! Loading a plugin runs its code, so the scan never happens in the application's own process.
-//! The runtime does this with its own executable and `--scan-plugin`; this program is the same
-//! thing for the tests of this crate, which have no runtime.
+//! The scan's child process for the tests of this crate, which have no runtime: lists one
+//! bundle, one line of JSON per plugin. The runtime uses its own executable instead. Started
+//! with `plugin_host::PLAY_ARGUMENT`, it plays one plugin in a process of its own.
 
 use std::path::PathBuf;
 

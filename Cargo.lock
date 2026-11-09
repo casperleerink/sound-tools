@@ -194,6 +194,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -1230,6 +1231,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -1687,6 +1689,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -1844,6 +1847,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -1962,6 +1966,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -2099,6 +2104,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -2387,7 +2393,7 @@ dependencies = [
  "gpui_platform",
  "image",
  "sound-agent",
- "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-ui",
 ]
@@ -2400,6 +2406,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -3288,6 +3295,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
  "tempfile",
@@ -3634,6 +3642,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -3953,6 +3962,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -4966,6 +4976,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -5246,9 +5257,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
 dependencies = [
  "bitflags 2.13.2",
  "memchr",
@@ -5673,6 +5684,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -5775,6 +5787,7 @@ dependencies = [
  "smol",
  "sound-agent",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-typescript",
@@ -5906,6 +5919,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-ui",
@@ -5923,6 +5937,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -6341,6 +6356,7 @@ version = "0.0.0"
 dependencies = [
  "cpal",
  "dunce",
+ "flate2",
  "libc",
  "no_denormals",
  "notify",
@@ -6349,17 +6365,28 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "proptest",
- "realfft",
  "rtrb",
  "rtsan-standalone",
  "schemars",
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "sha1_smol",
  "tempfile",
  "thiserror 2.0.20",
  "triple_buffer",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sound-dsp"
+version = "0.0.0"
+dependencies = [
+ "no_denormals",
+ "realfft",
+ "schemars",
+ "serde",
+ "sound-core",
 ]
 
 [[package]]
@@ -6375,6 +6402,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -6388,6 +6416,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "thiserror 2.0.20",
 ]
 
@@ -6398,6 +6427,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "thiserror 2.0.20",
 ]
@@ -6416,6 +6446,7 @@ dependencies = [
  "serde_path_to_error",
  "smol",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "sound-notes",
  "sound-signals",
@@ -6433,6 +6464,7 @@ dependencies = [
  "serde_json",
  "smol",
  "sound-core",
+ "sound-dsp",
  "sound-media",
  "tempfile",
  "unicode-segmentation",
@@ -6976,6 +7008,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "tempfile",
 ]
 
@@ -7182,6 +7215,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -7238,6 +7272,7 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
 ]
@@ -7387,6 +7422,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-dsp",
  "sound-notes",
  "sound-ui",
  "tempfile",

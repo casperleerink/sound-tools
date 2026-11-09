@@ -18,7 +18,7 @@
 
 use std::sync::LazyLock;
 
-use sound_core::bessel_i0;
+use sound_dsp::bessel_i0;
 
 use crate::file::Audio;
 use crate::resample::{SincTable, kaiser, sinc};

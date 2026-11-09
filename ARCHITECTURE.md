@@ -11,7 +11,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 | Tool | A composer-facing capability an extension defines. In code, a tool is its saved state type. |
 | Tool of the project | A tool a project defines in TypeScript under `extensions/`, with no build. |
 | Block | A tool written in Rust that tools of the project use as a child: `timeline`, `fader`, a reverb, the plugin host. |
-| Template | The files a new project starts from, a folder of `templates/`. |
+| Template | The files a new project starts from: a folder of `templates/`, or one the composer saved. |
 | Instance | One use of a tool in a project, with its own record. |
 | Record | The saved JSON state of one instance, one file in `state/`. |
 | Behaviour | A function from the state of an instance to what it needs in the engine: processors, updates, connections, ports. |
@@ -46,7 +46,7 @@ This is the main rule of the codebase.
 - A parent's behaviour reads the state of its children and runs again when anything below it changes.
 - Refusing is for invalid state. State that is valid but cannot be live now (a missing plugin or file) is a problem, and the rest plays.
 - References are saved ids that keep nothing alive. A reference may arrive before its target; data of a missing extension stays intact.
-- A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no undo step (`runtime::tick`).
+- A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no point (`runtime::tick`).
 
 ## Project storage
 
@@ -73,7 +73,7 @@ my-piece/
 - No schema versions and no migration framework. Old records must load unchanged: a new field is optional with a default that sounds as before, and the runtime does not rewrite a file that did not change.
 - Only an invalid `project.json` stops a project from opening. A change of `extensions` applies on reopen.
 - What belongs to one machine stays out of the folder (plugin scan cache, window positions, audio devices, agent threads and settings), so a project in git does not change because it was opened on another laptop.
-- Recordings and imported files are never written over, never deleted by the runtime and never part of undo, so an edit cannot lose one.
+- Recordings and imported files are never written over, never deleted by the runtime and never part of history, so an edit cannot lose one.
 - Files are written to a temporary file and renamed into place. No `fsync`: it made undo of a large delete block for most of a second. Power loss is left to git.
 - One runtime per project holds `.sound-tools.lock`. Inspect and render open read-only without the lock, so they work next to a running window.
 
@@ -84,8 +84,21 @@ my-piece/
 - There is one state application. Window edits, file changes, loading, undo, redo and cancel all apply a group of changes, whole or not at all. Loading is applying from empty.
 - The watcher only says which paths changed; the runtime reads them again and applies the difference, so edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
-- An agent request is one undo step (`Project::begin_request`). Rejected: adding writes that come after a composer's edit to the older step: undo would go out of order.
-- Undo history lives only in the session. The folder is the truth; versions come from git.
+- An agent request is one point of history (`Project::begin_request`). Rejected: adding writes that come after a composer's edit to the older point: undo would go out of order.
+
+## Project history
+
+`crates/core/src/project/history.rs`.
+
+- **One system.** Undo, redo and the History tab are moves through the same points; there is no undo stack. Only files are history: playback, arming and selection are not.
+- **A git repository of its own** in `.sound-tools/history`, written by hand (loose objects, refs, a detached `HEAD`), so plain `git --git-dir … log --all --graph` reads it. Rejected: the folder's own `.git`, which an agent's git commands rewrite; jj; a git library, heavier than the three object types we write. Packs are not read: nothing here makes one.
+- **Kept:** `project.json`, `state/` and the project's tool code in `extensions/`, without what the runtime writes there. Assets are never written over, so they need no history.
+- **Same state is the same bytes.** A rewrite in another layout is a change. Undo writes a point's files back byte for byte and the project follows them as it follows an agent's write: a file that does not load comes back as it was, and the sound plays the last good version. Rejected: applying in-memory records, which rewrote an agent's file in our layout.
+- **A point** is a finished edit, a run of a tool once quiet, or outside changes. Outside groups within 15 s or of one request replace the point before, and one that takes back what it wrote leaves none. A drag in memory never reached disk, so it is no point. Before any move, what the folder holds that history has not seen is saved first, so nothing is lost.
+- **Going somewhere is never a point.** The next change after it starts a version. After undo, it does only when the undone work was big (10 points or 2 minutes); small undone work is marked undone, kept in git and findable. alt-cmd-Z undoes as going back does.
+- **Lines are explicit** in `lines.json` next to the repository: each version or undone run with its start and tip, number and name. A point's line follows from its children while reading newest first, so pages of 300 need no older point. A lost or broken file is built again from the refs, without names. Rejected: working out lines from "first child" order, which needs the whole history and moves lanes when undone work is kept.
+- **Commit times are milliseconds** in the message and always after the parents', so newest first never shows a parent before its child.
+- **Merge is per file**, a point with two parents. Rejected: merging inside a JSON record, a sync problem (see above).
 
 ## Agent context
 
@@ -119,6 +132,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - A project keeps its own copy of the template's code. Rejected: the template loaded from the app, which updates by itself but makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which leave a merge nothing to merge from.
 - The DAW is only a template of tools of the project. Rejected: keeping the Rust arrangement next to it, two DAWs to maintain.
+- A saved template is a folder in the support folder, laid out as one of `templates/`, so it can later be shared as it is. "Tools only" keeps the records at the top and the children their tools require by name, such as a song's master and no track, and no sections or later tempo: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: there is no newer version to update from.
 
 ## Audio files and the Sampler
 
@@ -150,7 +164,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `extensions/plugin-host`.
 
-- Nothing a plugin sends out is read, so a plugin cannot make our audio thread allocate. What its own process sends back is read only as numbers held to a bound.
+- What a plugin sends out is dropped or read into fixed-size queues, so a plugin cannot make our audio thread allocate. What its own process sends back is read only as numbers held to a bound.
 - Inspect loads no plugin. Printing a project must not run third-party code.
 - A session that plays runs every plugin in a process of its own (the same program), so a crash or a hang costs its slot: silent (an effect lets the sound through), a problem, back only by Start again, never by itself. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
 - The audio thread waits for each sub-block of a plugin's process, one round trip of about 10 µs. Rejected: playing a block behind, a block of latency per plugin in a chain.
@@ -163,17 +177,22 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/ui` and `crates/runtime/src/window`.
 
 - Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
+- What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. A level is shapes in a space. Rejected: a meter node of the window, which drew the whole page as it moved; cached parts of the page, not needed yet.
 - "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
+- Settings covers the whole window (cmd-, or the project menu), its sections listed on the left: Agents, Audio. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 
 ## The agent sidebar
 
 `crates/agent`.
 
-- The sidebar runs the `claude` CLI. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is how more agents come later.
-- Claude Code is not bundled: 215 MB more per download, and a release per version.
+- The sidebar runs a coding agent CLI: `claude`, or `pi --mode rpc` with an extension of ours, which asks the approvals and runs Pi's own sign-in. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol; ACP, which adds layers and removes none.
+- The composer's own program comes first. Only Claude Code downloads when there is none (not bundled: 215 MB); Pi links to its site. A thread keeps the provider it started on.
+- Agents are set up on the Settings page, once for the app; the sidebar only links there while none is ready. Pi lists each of its services with its own sign-in and sign-out; credentials stay in Pi's store.
 - New problems after a turn show to the composer, not the agent: its docs tell it to read `problems.txt`.
-- A picture goes as a picture, any other file as its path; nothing is copied in. Saved threads keep only their names.
+- A picture goes as a picture, any other file as its path; nothing is copied in.
+- Versions are named by the agent's own program with its small model (Pi's default model), from a capped diff, one call at a time once the history is still for 5 s. Without a signed-in agent they stay "Version N". A name given by hand is never replaced.
+- Going back in History tells the agent once, before its next message, in a block the thread does not show: the point, the version, and where the history repository is. The agent cannot move through history itself yet.
 
 ## Tools of the project
 

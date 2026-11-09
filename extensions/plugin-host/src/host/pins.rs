@@ -1,13 +1,9 @@
-//! The pins of a record, both ways, in one place: [`Plugins::follow_pins`].
+//! The pins of a record, both ways: [`Plugins::follow_pins`].
 //!
-//! A pin the record changed is sent to the plugin. A pin the plugin changed itself is written to
-//! the record, as one undo step per turn of a knob. The host remembers what it last sent and read
-//! of each pin, so a value on its way to the plugin is not taken for a change of the plugin's,
-//! and a value the plugin rounds as it takes it is not written back. A pin an automation lane
-//! moves is not read at all: the lane plays into the plugin on the audio thread, and what it
-//! plays is never the composer's edit. Which pins a lane holds the audio side says itself
-//! ([`crate::processor::LanedPins`]), before the plugin hears the lane and until it has played
-//! the record value again, so a lane value is never taken for the plugin's own change.
+//! The host remembers what it last sent and read of each pin, so a value on its way to the
+//! plugin is not taken for a change of the plugin's, and a value the plugin rounds as it takes
+//! it is not written back. A pin a lane holds is not read at all: what a lane plays is never the
+//! composer's edit.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -21,33 +17,26 @@ use crate::parameters::playable;
 use crate::processor::{AutomatedPin, AutomatedPins};
 
 /// How long the pins of a plugin that says nothing of a hand must be quiet before what it
-/// changed is one undo step: CLAP, whose gesture events come out of a block this host does not
-/// read, and a plugin that moves a parameter itself. Long enough for the pauses of a slow hand,
-/// short enough that two turns are two steps.
+/// changed is one undo step. CLAP's gesture events come out of a block this host does not read.
 const QUIET: Duration = Duration::from_millis(500);
 
-/// The same for a VST 3 hand that never lets go: a plugin that sends `beginEdit` without its
-/// `endEdit` still gets its turn written.
+/// The same for a VST 3 plugin that sends `beginEdit` without its `endEdit`.
 const HELD_QUIET: Duration = Duration::from_secs(5);
 
-/// A lane value the plugin's own window was shown, and the value it showed then. `None` where
-/// the host shows the window nothing, as for CLAP.
+/// A lane value the plugin's own window was shown.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Shown {
     sent: f64,
+    /// What the window showed then. `None` where the host shows it nothing, as for CLAP.
     seen: Option<f64>,
 }
 
-/// A pin, as the host last sent it or read it.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct PinState {
-    /// The value of the record the plugin was sent, or the plugin's own value the record was
-    /// given. A record that holds another one was changed by someone else, and that is sent.
+    /// The record value last sent to the plugin or written from it.
     record: f64,
-    /// What the plugin said it was the last time it was asked. `None` from a send until the
-    /// plugin has played it: the first value read then is the plugin taking it, perhaps
-    /// rounded, and not a change of its own. A hand on the same knob in that moment is taken
-    /// for the plugin taking the value, and is not written.
+    /// `None` from a send until the plugin has played it: the first value read then is the
+    /// plugin taking it, perhaps rounded, not a change of its own.
     plugin: Option<f64>,
 }
 
@@ -59,8 +48,7 @@ impl PinState {
         }
     }
 
-    /// What the plugin says now. `Some` when it moved the parameter itself, to a value the
-    /// record does not hold yet: that goes into the record.
+    /// `Some` when the plugin moved the parameter itself, to a value the record does not hold.
     fn read(&mut self, now: f64) -> Option<f64> {
         let before = self.plugin.replace(now);
         let moved = before.is_some_and(|before| !same(before, now)) && !same(now, self.record);
@@ -71,38 +59,32 @@ impl PinState {
     }
 }
 
-/// Two values bit for bit, so a value that is not a number counts as one value and not as a
-/// change at every poll.
+/// Bit for bit, so NaN is not a change at every poll.
 fn same(one: f64, other: f64) -> bool {
     one.to_bits() == other.to_bits()
 }
 
-/// What one plugin changed of its pins itself since the last poll, and where the hand is.
 struct PinsMoved {
     changes: Vec<ParameterChange>,
     hand: Hand,
 }
 
-/// What the plugin of one record changed of its pins, as one undo step that is still open.
+/// A turn of a knob in the plugin's window: one undo step that is still open.
 pub(super) struct PinGesture {
     edit: Edit,
-    /// When the plugin last changed one, for [`QUIET`].
     changed: Instant,
-    /// The record as the turn last wrote it. A record that is not this any more was written
-    /// by someone else since: deleted, given another plugin, an undo, or another pin. That
-    /// write is the last, and its step already starts from before the turn, so the turn ends
-    /// with no step of its own: finishing it would be a second step for the same change, and
-    /// cancelling it would undo the newer write.
+    /// The record as the turn last wrote it. When someone else wrote it since, that step
+    /// already starts from before the turn, so the turn ends with no step of its own: finishing
+    /// it would be a second step for the same change, and cancelling it would undo the newer
+    /// write.
     written: Option<PluginRecord>,
 }
 
 impl PinGesture {
-    /// Whether someone else wrote the record since the turn last did.
     fn overtaken(&self, project: &Project, id: &InstanceId) -> bool {
         record_of(project, id) != self.written.as_ref()
     }
 
-    /// Whether the turn is over, by what the plugin says of the hand, or else by time.
     fn is_over(&self, hand: Hand, now: Instant) -> bool {
         let quiet = now.saturating_duration_since(self.changed);
         match hand {
@@ -114,9 +96,7 @@ impl PinGesture {
 }
 
 impl Hosted {
-    /// The pins of `record` whose value the plugin takes, in the order of their ids, and kept
-    /// as the pins the next start of the plugin gets. An automation lane may move those whose
-    /// parameter [`crate::parameters::Parameter::takes_lane`].
+    /// The pins of `record` the plugin takes, kept for the plugin's next start.
     pub(super) fn automated(&mut self, record: &PluginRecord) -> Vec<AutomatedPin> {
         let mut pins = Vec::new();
         if !record.parameters.is_empty() {
@@ -139,17 +119,16 @@ impl Hosted {
         pins
     }
 
-    /// The generation of the pins a lane holds, and each with the value it plays, as the
-    /// audio side wrote them last. `None` when blocks kept writing while it was read.
+    /// The pins a lane holds, with the value each plays, and their generation. `None` when
+    /// blocks kept writing while it was read.
     fn held(&self) -> Option<(u64, BTreeMap<u32, f64>)> {
         let (generation, held) = self.laned.laned().read()?;
         Some((generation, held.into_iter().collect()))
     }
 
-    /// Where the format needs the host for it, shows the plugin's own window the value each
-    /// pin in `held` plays, and the record value again once its lane lets go. A window that
-    /// shows something else by then was turned by the composer since: it is left as it is, and
-    /// the next read of the pin takes that as an edit.
+    /// Shows the plugin's own window the value each pin in `held` plays, and the record value
+    /// again once its lane lets go. A window that shows something else by then was turned by
+    /// the composer: it is left, and the next read takes that as an edit.
     fn follow_lanes(&mut self, held: &BTreeMap<u32, f64>) {
         let mut shown = BTreeMap::new();
         for (id, value) in held {
@@ -190,9 +169,8 @@ impl Hosted {
         self.shown = shown;
     }
 
-    /// The record to the plugin: every pin that is new, or whose value is not the one the host
-    /// last sent or wrote, was changed by someone else and is sent. A pin that moves nothing is
-    /// not sent and not followed; the behaviour reports it.
+    /// The record to the plugin: every pin whose value is not the one the host last sent or
+    /// wrote. A pin that moves nothing is not sent; the behaviour reports it.
     pub(super) fn send_pins(&mut self, record: &PluginRecord) {
         if record.parameters.is_empty() {
             self.pins.clear();
@@ -221,15 +199,12 @@ impl Hosted {
         }
     }
 
-    /// The plugin to the record: what the plugin changed of its pins itself since the last
-    /// read, once every value sent is in what it says.
+    /// The plugin to the record: what it changed of its pins itself since the last read.
     ///
-    /// A pin a lane holds is not read, and its first read once the lane is gone is the plugin
-    /// taking its record value again, not a change of its own. The audio side writes a pin held
-    /// before the plugin hears its lane, and free only after the plugin played its record value
-    /// again, so a pin held in the table as read before or after the plugin's values is left
-    /// out. A lane that came or went in between moves the generation of the table, and then
-    /// nothing is written this round: the next poll reads again.
+    /// The audio side marks a pin held before the plugin hears its lane, and frees it only
+    /// after the plugin played its record value again. So the held table is read before and
+    /// after the plugin's values, and a pin held in either is left out. A lane that came or
+    /// went in between moves the generation, and nothing is written this round.
     fn read_pins(&mut self) -> Vec<ParameterChange> {
         let before = self.held();
         let mut values = Vec::new();
@@ -277,7 +252,6 @@ impl Hosted {
     }
 }
 
-/// The pins of the record of `id` that the plugin of `hosted` takes, as its record has them now.
 pub(super) fn pins_of(hosted: &Hosted, project: &Project, id: &InstanceId) -> Vec<ParameterChange> {
     let (Some(record), Some(parameters)) = (record_of(project, id), &hosted.parameters) else {
         return Vec::new();
@@ -294,9 +268,9 @@ fn turn_label(record: Option<&PluginRecord>, pin: u32) -> String {
     format!("Change {}", name.unwrap_or("plugin"))
 }
 
-/// What a host that loads no plugin says a pin takes a lane for: every pin, with any value. It
-/// cannot ask the plugin, and it reports no problem of a pin either, so `--inspect` does not
-/// report a lane on a pin that plays. A range this wide still works out a place on it.
+/// A host that loads no plugin cannot ask it, so every pin takes a lane with any value and
+/// `--inspect` reports no lane on a pin that plays. A range this wide still works out a place
+/// on it.
 pub(super) fn listed_lanes(record: &PluginRecord) -> Vec<AutomatedPin> {
     let widest = f64::from(f32::MAX / 2.0);
     let pins = record.parameters.iter();
@@ -311,25 +285,20 @@ pub(super) fn listed_lanes(record: &PluginRecord) -> Vec<AutomatedPin> {
 }
 
 impl Plugins {
-    /// The pins of every plugin, both ways: what a record changed goes to its plugin, and what
-    /// a plugin changed itself goes to its record, one undo step for each turn of a knob. Call
-    /// it after [`Self::poll`], as often. It needs the project mutably for the second way only,
-    /// which is an edit like one of the window; a host of a project open read-only does
-    /// nothing of that.
+    /// What a record changed goes to its plugin, and what a plugin changed itself goes to its
+    /// record, one undo step for each turn of a knob. Call it after [`Self::poll`].
     pub fn follow_pins(&self, project: &mut Project) -> Vec<ProjectError> {
         self.follow_pins_at(project, Instant::now())
     }
 
     /// [`Self::follow_pins`] with the time given, so a test can move it past [`QUIET`].
     pub fn follow_pins_at(&self, project: &mut Project, now: Instant) -> Vec<ProjectError> {
-        // One: with the table borrowed, every pin a record changed goes to its plugin, and
-        // what each plugin changed itself is read. No record is written here: a write runs the
+        // One, with the table borrowed: no record is written here, because a write runs the
         // behaviour of the record, which asks this table.
         let mut moved = Vec::new();
         {
             let mut table = self.0.table.borrow_mut();
             for (id, hosted) in &mut table.loaded {
-                // An entry whose record is gone or names another plugin is the poll's to let go.
                 let Some(record) = record_of(project, id).filter(|record| hosted.holds(record))
                 else {
                     continue;
@@ -337,16 +306,14 @@ impl Plugins {
                 hosted.send_pins(record);
                 let changes = match self.0.writes_state {
                     true => hosted.read_pins(),
-                    // A project open read-only writes nothing, so its host reads nothing.
                     false => Vec::new(),
                 };
                 let hand = hosted.plugin.hand();
                 moved.push((id.clone(), PinsMoved { changes, hand }));
             }
         }
-        // Two: what the plugins changed goes into their records, and a turn of a knob that is
-        // over ends its undo step. Gestures are taken out while records are written, because a
-        // write runs a behaviour, and put back after.
+        // Two: records are written. Gestures are taken out meanwhile, because a write runs a
+        // behaviour.
         let gestures = std::mem::take(&mut *self.0.gestures.borrow_mut());
         let (overtaken, mut gestures): (BTreeMap<_, _>, BTreeMap<_, _>) = gestures
             .into_iter()
@@ -378,8 +345,8 @@ impl Plugins {
             gesture.written = record_of(project, id).cloned();
             errors.extend(written.err());
         }
-        // A turn ends when the plugin says the hand let go, or else by time. One whose plugin
-        // went with its record unchanged, as a load that failed, ends as it stands.
+        // A turn whose plugin went with its record unchanged, as a load that failed, ends as it
+        // stands.
         let hands: BTreeMap<&InstanceId, Hand> =
             moved.iter().map(|(id, moved)| (id, moved.hand)).collect();
         let mut open = BTreeMap::new();
@@ -395,9 +362,7 @@ impl Plugins {
         errors
     }
 
-    /// Ends every turn of a knob that is still open, as one undo step each, and writes its
-    /// record. For a project that closes: the headless loop calls it through [`Self::close`],
-    /// and the window as its session goes.
+    /// Ends every open turn of a knob, as one undo step each. For a project that closes.
     pub fn end_turns(&self, project: &mut Project) -> Vec<ProjectError> {
         let gestures = std::mem::take(&mut *self.0.gestures.borrow_mut());
         let mut errors = Vec::new();

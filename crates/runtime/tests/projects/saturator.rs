@@ -59,8 +59,7 @@ fn an_outside_edit_of_the_saturator_while_it_plays_is_heard_and_undone_in_one_st
     // One undo takes the agent's edit back, file and sound.
     assert!(harness.project.undo().unwrap().is_some());
     let file = std::fs::read_to_string(harness.path(SATURATOR_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["mix"], 1.0);
+    assert_eq!(file, hot);
     let after_undo = harness.play(BAR / 4);
     assert!(
         difference(

@@ -21,6 +21,7 @@ serde_json.workspace = true
 serde_path_to_error.workspace = true
 smol.workspace = true
 sound-core.workspace = true
+sound-dsp.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
 sound-signals.workspace = true

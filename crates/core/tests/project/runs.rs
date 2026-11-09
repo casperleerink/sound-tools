@@ -69,7 +69,7 @@ fn edits_each_frame_are_one_undo_step_written_once_when_they_stop() {
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Follow"));
     assert_eq!(harness.level(), 0.0);
     assert_eq!(harness.read("state/dc.json"), saved);
-    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Add dc"));
 }
 
 /// A device put in the place of another, as a picker does: one publish deletes the record and
@@ -90,7 +90,7 @@ fn a_run_that_replaces_a_record_is_written_once_quiet() {
         .finish_quiet_runs_at(start + RUN_QUIET)
         .unwrap();
     assert!(harness.read("state/dc.json").contains("0.5"));
-    assert_eq!(harness.project.undo_label(), Some("Replace"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("Replace"));
 }
 
 #[test]

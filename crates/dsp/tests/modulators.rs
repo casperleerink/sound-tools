@@ -4,10 +4,11 @@
 #![allow(clippy::unwrap_used)]
 
 use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, Envelope, EnvelopeCurves, EnvelopeStage,
-    EnvelopeState, Lfo, LfoShape, Ports, PrepareConfig, ProcessContext, Processor, Tempo,
-    TempoChange, TempoMap, Ticks, TimeSignature,
+    AudioOutput, Connection, Engine, EngineConfig, Ports, PrepareConfig, ProcessContext, Processor,
+    Tempo, TempoChange, TempoMap, Ticks, TimeSignature,
 };
+
+use sound_dsp::{Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState, Lfo, LfoShape};
 
 const RATE: f32 = 48_000.0;
 

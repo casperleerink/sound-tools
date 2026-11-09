@@ -1,5 +1,4 @@
-//! The scan: what it finds, what it says about a plugin that is not an instrument, and what
-//! happens when the plugin crashes while it is being looked at.
+//! The scan, and what happens when a plugin crashes, hangs or prints while it is looked at.
 
 use std::time::{Duration, Instant};
 
@@ -12,8 +11,7 @@ fn the_scan_finds_the_test_plugin_of_every_format_and_says_it_is_an_instrument()
     let folder = tempfile::tempdir().unwrap();
     let plugins = Plugins::new(vec![plugin_folder(folder.path())], scanner(), no_cache());
     let scan = plugins.scan();
-    // One bundle per format, found by the extension of the bundle: one list of folders covers
-    // every format this build hosts.
+    // One list of folders covers every format.
     assert_eq!(scan.bundles, FORMATS.len());
     assert_eq!(scan.failures, []);
     for format in FORMATS {
@@ -69,7 +67,6 @@ fn a_crash_while_scanned(format: PluginFormat) {
     assert!(notices[0].contains("could not be scanned"), "{notices:?}");
     assert_eq!(plugins.take_notices(), Vec::<String>::new());
 
-    // This process is still here, and a scanner that works still finds the plugin.
     let plugins = Plugins::new(search, scanner(), no_cache());
     assert!(
         plugins.scan().find(format, plugin_id(format)).is_some(),
@@ -77,7 +74,7 @@ fn a_crash_while_scanned(format: PluginFormat) {
     );
 }
 
-/// Real plugins print while they load. The scan reads its own lines and leaves theirs alone.
+/// Real plugins print while they load.
 #[test]
 fn a_plugin_that_prints_while_it_is_scanned_is_still_found() {
     let folder = tempfile::tempdir().unwrap();
@@ -90,11 +87,8 @@ fn a_plugin_that_prints_while_it_is_scanned_is_still_found() {
     }
 }
 
-/// A plugin that leaves a helper process behind, as a licensing one does. The helper inherits
-/// the pipe the scan reads, so the pipe does not end when the child does: a scan that waited
-/// for the end of that pipe would wait for the helper, past every deadline, and the project
-/// would never open. The deadline covers the readers, so the bundle is read and the scan goes
-/// on. Unix only: the test plugin's helper is a shell script.
+/// As a licensing plugin does. The helper inherits the pipe the scan reads, so the pipe does not
+/// end when the child does. Unix only: the test plugin's helper is a shell script.
 #[cfg(unix)]
 #[test]
 fn a_plugin_that_leaves_a_helper_holding_the_pipe_does_not_hold_up_the_scan() {
@@ -106,7 +100,6 @@ fn a_plugin_that_leaves_a_helper_holding_the_pipe_does_not_hold_up_the_scan() {
 #[cfg(unix)]
 fn a_helper_that_outlives_the_child(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
-    // The helper holds the pipe until this test lets it go, and says when it has gone.
     let helper = folder.path().join("helper");
     let (stop, done) = (with_suffix(&helper, ".stop"), with_suffix(&helper, ".done"));
     let with_helper = scanner()
@@ -122,8 +115,6 @@ fn a_helper_that_outlives_the_child(format: PluginFormat) {
     let scan = plugins.scan();
     let took = started.elapsed();
 
-    // It came back with the plugin the child printed, while the helper still held the pipe:
-    // nothing has told the helper to go yet.
     assert!(took < Duration::from_secs(10), "the scan waited {took:?}");
     assert!(!done.exists(), "{format:?}: the scan waited for the helper");
     assert_eq!(scan.bundles, 1, "{format:?}");
@@ -133,7 +124,6 @@ fn a_helper_that_outlives_the_child(format: PluginFormat) {
         "{format:?}: {scan:?}"
     );
 
-    // Nothing of this test is left running: the helper is told to go and waited for.
     std::fs::write(&stop, b"").unwrap();
     let waited = Instant::now();
     while !done.exists() {
@@ -167,10 +157,7 @@ fn a_scanner_that_does_not_exist_is_a_failure_per_bundle_and_not_a_panic() {
     );
 }
 
-/// A plugin that never answers while it is listed. Licensed plugins do this when they cannot
-/// reach their server, and the scan runs while a project opens, so waiting for it would hold
-/// the project open for ever. The child is stopped and the bundle is reported like one that
-/// crashed.
+/// Licensed plugins do this when they cannot reach their server.
 #[test]
 fn a_plugin_that_hangs_while_it_is_scanned_is_given_up_on_and_reported() {
     for format in FORMATS {
@@ -190,7 +177,7 @@ fn a_hang_while_scanned(format: PluginFormat) {
     let scan = plugins.scan();
     let took = started.elapsed();
 
-    // The plugin sleeps for ten minutes. This came back in a fraction of a second.
+    // The plugin sleeps for ten minutes.
     assert!(took < Duration::from_secs(10), "the scan waited {took:?}");
     assert_eq!(scan.plugins, [], "{format:?}");
     assert_eq!(scan.failures.len(), 1, "{:?}", scan.failures);
@@ -200,7 +187,6 @@ fn a_hang_while_scanned(format: PluginFormat) {
         scan.failures
     );
 
-    // It is one line for a person, like any other bundle that could not be read.
     let notices = plugins.take_notices();
     assert_eq!(notices.len(), 1, "{notices:?}");
     assert!(notices[0].contains("could not be scanned"), "{notices:?}");

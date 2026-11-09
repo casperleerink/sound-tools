@@ -51,11 +51,15 @@ pub(crate) enum Scenario {
     AbsoluteDiv,
     /// A clip dragged a bar on: one Bun op batch.
     MovedClip,
+    /// A scroll of the list of `list_folder`.
+    LongList,
 }
 
 /// What a scenario cost, over its measured updates only.
 pub(crate) struct Measured {
     pub renders: Renders,
+    /// The nodes of tools of the project drawn in all.
+    pub nodes_drawn: u64,
     #[cfg(feature = "perf")]
     pub cost: measure::Cost,
 }
@@ -65,6 +69,38 @@ pub(crate) fn song_folder() -> TempDir {
     let folder = tempfile::tempdir().unwrap();
     for (path, text) in song_files(TRACKS, CLIPS) {
         super::write(folder.path(), &path, &text);
+    }
+    folder
+}
+
+/// A project whose page is a list of a thousand rows of one height, in a div that scrolls.
+pub(crate) fn list_folder() -> TempDir {
+    let rows = 1_000;
+    let folder = tempfile::tempdir().unwrap();
+    let list = format!(
+        r#"import {{ For, h, tool }} from "./sdk";
+
+tool({{
+  name: "list",
+  title: "List",
+  when: "Never",
+  doc: "A long list.",
+  state: {{}},
+  view: () =>
+    h("div", {{ style: {{ scroll: "y", grow: true }} }},
+      h(For, {{ each: () => Array.from({{ length: {rows} }}, (_, row) => row) }}, (row: number) =>
+        h("div", {{ style: {{ height: 24 }} }}, `Row ${{row}}`)),
+    ),
+}});
+"#
+    );
+    let files = [
+        super::ONLY_THE_TOOL[0],
+        ("state/list.json", r#"{"tool": "list", "state": {}}"#),
+        ("extensions/list.ts", &list),
+    ];
+    for (path, text) in files {
+        super::write(folder.path(), path, text);
     }
     folder
 }
@@ -96,6 +132,7 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
             let toggle = window.until_found("button-mixer-toggle");
             window.click(toggle);
             window.until_found("div-mixer");
+            window.away_from_tooltips();
             window.start_playing();
             window.measure(POLLS, |_, _| {})
         }
@@ -108,6 +145,7 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
             });
             window.press_found("button-record");
             window.until("the song plays", Opened::playing);
+            window.away_from_tooltips();
             window.measure(POLLS, |window, _| {
                 input.write_until(window.engine.frames(), |_| [0.5, 0.25]);
             })
@@ -124,7 +162,7 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
             window.release(knob);
             measured
         }
-        Scenario::Scroll => {
+        Scenario::Scroll | Scenario::LongList => {
             let at = match window.find("space-timeline") {
                 Some(timeline) => timeline,
                 None => window.middle(),
@@ -185,6 +223,11 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
 }
 
 impl Opened<'_> {
+    /// The pointer leaves what it pressed: a tooltip that shows later draws the page.
+    fn away_from_tooltips(&mut self) {
+        self.hover(point(px(1.), px(1.)));
+    }
+
     /// One poll of the engine, with its timers and the frame it asked for, as the app does.
     pub(super) fn poll(&mut self) {
         let frames = sound_ui::POLL_INTERVAL.as_millis() as usize
@@ -209,6 +252,7 @@ impl Opened<'_> {
     fn measure(&mut self, updates: usize, mut update: impl FnMut(&mut Self, usize)) -> Measured {
         self.renders_in(WARM_UP);
         let before = sound_ui::renders::renders();
+        let nodes_before = sound_typescript::drawn_nodes();
         #[cfg(feature = "perf")]
         let mut cost = measure::Cost::start(self);
         for step in 0..updates {
@@ -221,6 +265,7 @@ impl Opened<'_> {
         }
         Measured {
             renders: sound_ui::renders::renders().since(&before),
+            nodes_drawn: sound_typescript::drawn_nodes() - nodes_before,
             #[cfg(feature = "perf")]
             cost: cost.end(self),
         }
@@ -273,18 +318,12 @@ fn add_absolute_div(folder: &Path) {
     std::fs::write(&path, song.replace(anchor, &format!("{anchor}{badge}"))).unwrap();
 }
 
-/// A budget that holds: the test fails when it is broken, with the rule it breaks.
+/// A budget: the test fails when it is broken, with the rule it breaks.
 fn holds(rule: &str, rendered: u64, budget: u64) {
     assert!(
         rendered <= budget,
         "{rule}: {rendered} renders, the budget is {budget}"
     );
-}
-
-/// A budget that does not hold yet: the test says how far off it is, and passes. The change
-/// that fixes the cause makes it [`holds`].
-fn not_yet(rule: &str, rendered: u64, budget: u64) {
-    println!("not held yet, {rule}: {rendered} renders, the budget is {budget}");
 }
 
 const STILL: &str = "a still window renders nothing";
@@ -295,6 +334,7 @@ const LEVELS: &str = "a level that moves draws on the layer over the page, not t
 const TAKE: &str = "a take that grows draws on the layer over the page, not the page";
 const KNOB: &str = "a knob on one card draws no other card";
 const ABSOLUTE: &str = "one absolute div leaves the playhead on the layer over the page";
+const LIST: &str = "a list of rows of one height draws the rows on screen, not all";
 
 fn run_on_the_song(scenario: Scenario, cx: &mut TestAppContext) -> Renders {
     let song = song_folder();
@@ -318,32 +358,42 @@ fn playing_renders_the_layer_over_the_page_and_not_the_page(cx: &mut TestAppCont
     let renders = run_on_the_song(Scenario::Playing, cx);
     holds(PLAYHEAD, renders.of(Part::Body, "song"), 0);
     holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
-    not_yet(SIDEBAR, renders.of(Part::Sidebar, "agent"), 0);
+    holds(SIDEBAR, renders.of(Part::Sidebar, "agent"), 0);
 }
 
 #[gpui::test]
 fn playing_with_the_mixer_renders_only_the_layer_over_the_page(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::PlayingWithTheMixer, cx);
-    not_yet(LEVELS, renders.of(Part::Body, "song"), 0);
-    not_yet(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
+    holds(LEVELS, renders.of(Part::Body, "song"), 0);
+    holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
 }
 
 #[gpui::test]
 fn recording_renders_only_the_layer_over_the_page(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::Recording, cx);
-    not_yet(TAKE, renders.of(Part::Body, "song"), 0);
-    not_yet(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
+    holds(TAKE, renders.of(Part::Body, "song"), 0);
+    holds(ONCE_A_POLL, renders.of(Part::Shell, "window"), POLLS as u64);
 }
 
 #[gpui::test]
 fn a_knob_drag_on_one_card_renders_no_other_card(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::KnobDrag, cx);
-    not_yet(KNOB, renders.of(Part::Card, "song/t00/chain/filter"), 0);
-    not_yet(KNOB, renders.of(Part::Body, "song"), 0);
+    holds(KNOB, renders.of(Part::Card, "song/t00/chain/filter"), 0);
+    holds(KNOB, renders.of(Part::Body, "song"), 0);
 }
 
 #[gpui::test]
 fn an_absolute_div_keeps_the_page_still_while_it_plays(cx: &mut TestAppContext) {
     let renders = run_on_the_song(Scenario::AbsoluteDiv, cx);
-    not_yet(ABSOLUTE, renders.of(Part::Body, "song"), 0);
+    holds(ABSOLUTE, renders.of(Part::Body, "song"), 0);
+}
+
+#[gpui::test]
+fn a_long_list_draws_what_shows_as_it_scrolls(cx: &mut TestAppContext) {
+    let list = list_folder();
+    let measured = run(Scenario::LongList, cx, list.path());
+    let renders = measured.renders.of(Part::Body, "list");
+    assert!(renders > 0, "the list does not draw as it scrolls");
+    // A row is a div and its text: 37 rows of 24 points fill the window.
+    holds(LIST, measured.nodes_drawn / renders, 100);
 }

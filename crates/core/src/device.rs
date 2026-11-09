@@ -232,10 +232,14 @@ impl OutputDevice {
                 let counters = counters.clone();
                 // cpal calls this from a thread of its own, not from the audio callback.
                 move |error: cpal::Error| {
-                    if error.kind() == cpal::ErrorKind::Xrun {
-                        counters.xruns.fetch_add(1, Ordering::Relaxed);
-                    } else if error_sender.send(error).is_err() {
-                        // The stream owner is gone, so nobody is left to tell.
+                    match error.kind() {
+                        cpal::ErrorKind::Xrun => {
+                            counters.xruns.fetch_add(1, Ordering::Relaxed);
+                        }
+                        // The stream followed the new default device and plays on.
+                        cpal::ErrorKind::DeviceChanged => {}
+                        // Fails only when the stream owner is gone, and nobody is left to tell.
+                        _ => drop(error_sender.send(error)),
                     }
                 }
             },

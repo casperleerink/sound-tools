@@ -11,13 +11,9 @@ use std::os::windows::ffi::OsStrExt as _;
 use std::path::Path;
 use std::ptr::NonNull;
 
-/// A DLL this process loaded. Dropping it lets go of this load; [`Self::keep`] keeps the DLL
-/// for the rest of the process.
 pub(crate) struct Library(NonNull<c_void>);
 
 impl Library {
-    /// Loads `binary`, looking for the DLLs it imports in its own folder as well.
-    ///
     /// # Safety
     ///
     /// This runs the DLL's initializers, which are the plugin's own code.
@@ -37,20 +33,18 @@ impl Library {
                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
             )
         };
-        // The system says why, such as a DLL the plugin imports that is not there.
         NonNull::new(module)
             .map(Self)
             .ok_or_else(|| std::io::Error::last_os_error().to_string())
     }
 
-    /// The address of `name` in the DLL. Null when the DLL does not export it.
+    /// Null when the DLL does not export it.
     pub(crate) fn symbol(&self, name: &CStr) -> *mut c_void {
         // SAFETY: the module is loaded for as long as `self` lives, and `name` is a C string.
         unsafe { GetProcAddress(self.0.as_ptr(), name.as_ptr()) }
     }
 
-    /// Keeps the DLL loaded until the process ends, which is what nothing unloading a plugin
-    /// means.
+    /// Keeps the DLL loaded until the process ends.
     pub(crate) fn keep(self) {
         std::mem::forget(self);
     }
@@ -58,8 +52,8 @@ impl Library {
 
 impl Drop for Library {
     fn drop(&mut self) {
-        // SAFETY: the module came from `LoadLibraryExW` and this is its one release. One that
-        // fails leaves the DLL loaded, which costs nothing but memory.
+        // SAFETY: the module came from `LoadLibraryExW` and this is its one release. A failure
+        // leaves the DLL loaded, which costs only memory.
         unsafe { FreeLibrary(self.0.as_ptr()) };
     }
 }

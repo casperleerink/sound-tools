@@ -422,7 +422,6 @@ impl Named<Field> {
 }
 
 impl ToolInfo {
-    /// What the `Signals` processor of this tool is.
     /// What the tool is to a track: an effect when it has one voice whose sound reads what
     /// comes in, as a parent's does; else an instrument.
     pub(crate) fn tool_kind(&self) -> ToolKind {
@@ -821,7 +820,6 @@ impl Sounds {
         self.sounds.values().filter_map(|code| code.as_ref().err())
     }
 
-    /// The tool for the core.
     pub(crate) fn json_tool(self) -> JsonTool {
         let info = self.info.clone();
         JsonTool {
@@ -839,6 +837,10 @@ impl Sounds {
             // A sample its record names may come after the record, as an audio clip's may.
             asset_folders: vec![sound_media::AUDIO_FOLDER],
             owns_children: info.behaviour,
+            required_children: (info.children.iter().flat_map(|named| &named.0))
+                .map(|(name, _)| name.clone())
+                .filter(|name| !name.ends_with(ANY_NAME))
+                .collect(),
             end: None,
         }
     }
@@ -865,7 +867,6 @@ impl Sounds {
         })
     }
 
-    /// The compiled sound for the choices of `state`.
     fn code(&self, state: &Value) -> Result<Arc<Code>, String> {
         let key = self.info.sound_key(state);
         // A checked record has one of the options of each choice, and Bun sent each combination.
@@ -1579,10 +1580,9 @@ fn is_region(name: &str, port: &str, context: &BehaviourContext<'_>) -> bool {
     port == AUDIO_OUTPUT && context.child_tool(name) == Some(region::NAME)
 }
 
-/// One player for the regions that play into each place, by that place, as main's arrangement
-/// played the clips of an audio track: where one ends and the next starts they crossfade, and
-/// where they overlap the last by name is heard. A region whose file is not read yet is left
-/// out: it runs again when it is, and so does this.
+/// One player for the regions that play into each place, by that place: where one ends and the
+/// next starts they crossfade, and where they overlap the last by name is heard. A region whose
+/// file is not read yet is left out: it runs again when it is, and so does this.
 fn region_players(
     declaration: &Declaration,
     context: &mut BehaviourContext<'_>,

@@ -2,9 +2,11 @@
 //! of the master. The two channels share one gain, so the stereo image does not move.
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, PeakLimiter, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, all_held_silent, amplitude, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{PeakLimiter, all_held_silent, amplitude, held};
 
 use crate::{GAIN, LimiterState, Lookahead, RELEASE};
 

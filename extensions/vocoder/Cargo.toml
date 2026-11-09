@@ -12,5 +12,6 @@ gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
 sound-core.workspace = true
+sound-dsp.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true

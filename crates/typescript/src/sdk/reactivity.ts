@@ -199,15 +199,19 @@ export function untrack<T>(read: () => T): T {
   return runIn(owner, read);
 }
 
+/** The shortest wait of a timer: each run of one redraws its card. */
+const SHORTEST_TIMER_MS = 100;
+
 /**
- * Runs `run` once after `ms`, unless what made it goes first, as `onCleanup` tells: a delayed
- * hide. Made in a view, a component, or a node's handler or drag. Gives what stops it sooner.
+ * Runs `run` once after `ms` (100 or more), unless what made it goes first, as `onCleanup`
+ * tells: a delayed hide. Made in a view, a component, or a node's handler or drag. Gives what
+ * stops it sooner.
  */
 export function timeout(run: () => void, ms: number): () => void {
   return timer(run, ms, false);
 }
 
-/** Runs `run` every `ms` until what made it goes, as `timeout`: a button held to repeat. Gives what stops it sooner. */
+/** Runs `run` every `ms` (100 or more) until what made it goes, as `timeout`: a button held to repeat. Gives what stops it sooner. */
 export function interval(run: () => void, ms: number): () => void {
   return timer(run, ms, true);
 }
@@ -215,6 +219,9 @@ export function interval(run: () => void, ms: number): () => void {
 function timer(run: () => void, ms: number, repeats: boolean): () => void {
   const scope = owner;
   if (!scope) throw new Error("a timer is made in a view, a component, or a node's handler or drag");
+  if (!(ms >= SHORTEST_TIMER_MS)) {
+    throw new Error(`a timer waits ${SHORTEST_TIMER_MS} ms or more, not ${ms}: for something that moves every frame, give a shape a live value from \`now\``);
+  }
   if (scope.disposed) return () => {};
   const fire = () => {
     if (!repeats) stop();

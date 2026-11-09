@@ -61,8 +61,7 @@ fn an_outside_edit_of_the_sampler_while_it_plays_is_heard_with_its_glide_and_und
     // One undo takes the agent's edit back, file and sound.
     assert!(harness.project.undo().unwrap().is_some());
     let file = std::fs::read_to_string(harness.path(SAMPLER_FILE)).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&file).unwrap();
-    assert_eq!(state["state"]["gain_db"], 0.0);
+    assert_eq!(file, record(r#"{"sample": "steady.wav"}"#));
     let back = left(&harness.play(BAR / 4));
     assert!((back[BAR / 8] - before).abs() < 1e-5, "{}", back[BAR / 8]);
 }

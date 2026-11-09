@@ -1,4 +1,4 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Color, type Drag, type Dropped, type FilledStateOfTool, type KeyName, type Live, type Press } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Child as Shapes, type Color, type Drag, type Dropped, type FilledStateOfTool, type KeyName, type Live, type Num, type Press } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
 import { itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
@@ -36,6 +36,18 @@ export const Timeline = ({ page }: { page: Page }) => {
     onEnd: ({ dx, dy, alt }) =>
       choose(moveItems(page, state.order, memory.selected, Math.round(dx), (row) => rowMoved(row, Math.round(dy)), alt)),
   });
+  const copying = now.drag("move").alt;
+  /** A chosen clip or region where it was, while a drag with alt copies it: the original stays. */
+  const Original = ({ x, row, width, picked, dim = () => 1, contents }: { x: Accessor<number>; row: Accessor<number>; width: Accessor<number>; picked: Accessor<boolean>; dim?: Accessor<number>; contents: (opacity: Live) => Shapes }) => (
+    <Show when={picked}>
+      {() => (
+        <Group x={x} y={() => topOf(row())} clip={() => ({ width: width(), height: 1 })}>
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border="alpha/10" borderWidth={1} opacity={() => copying.times(dim())} />
+          {contents(copying)}
+        </Group>
+      )}
+    </Show>
+  );
   /** A click on one of several chosen chooses it alone. */
   const clickItem = (key: string) => ({ shift, cmd }: Press) => !shift && !cmd && memory.selected.size > 1 && choose(new Set([key]));
   const marquee = now.drag("clip-marquee");
@@ -165,25 +177,31 @@ export const Timeline = ({ page }: { page: Page }) => {
       return { lowest, step, height, bottom };
     });
     const dim = () => (muted(each) ? 0.4 : 1);
+    const notes = (opacity: () => Num) => (
+      <For each={() => clip.state.notes}>
+        {(note) => (
+          <Rect x={() => note.start} y={() => { const m = miniature(); return (m.bottom - (note.pitch - m.lowest + 0.5) * m.step - m.height / 2) / ROW; }}
+            width={() => timeline.pointX.negate().plus(note.length).max(timeline.pointX)} height={() => miniature().height / ROW} color={() => colourOf(each)} opacity={opacity} />
+        )}
+      </For>
+    );
     // The clip and its notes move together, and its notes end at its end.
     return (
-      <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
-        moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
-        <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
-          color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
-          grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
-        <For each={() => clip.state.notes}>
-          {(note) => (
-            <Rect x={() => note.start} y={() => { const m = miniature(); return (m.bottom - (note.pitch - m.lowest + 0.5) * m.step - m.height / 2) / ROW; }}
-              width={() => timeline.pointX.negate().plus(note.length).max(timeline.pointX)} height={() => miniature().height / ROW} color={() => colourOf(each)} opacity={dim} />
-          )}
-        </For>
-        <Rect x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
-          anchor={() => ({ x: length() })} moves={resizes}
-          drag={resizeDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
-        <Rect x={0} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
-          moves={startMoves} drag={resizeStartDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
-      </Group>
+      <>
+        <Original x={() => clip.state.start} row={row} width={length} picked={picked} dim={dim} contents={(shown) => notes(() => shown.times(dim()))} />
+        <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
+          moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
+          <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
+            color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
+            grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
+          {notes(dim)}
+          <Rect x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
+            anchor={() => ({ x: length() })} moves={resizes}
+            drag={resizeDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
+          <Rect x={0} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
+            moves={startMoves} drag={resizeStartDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
+        </Group>
+      </>
     );
   };
 
@@ -284,6 +302,10 @@ export const Timeline = ({ page }: { page: Page }) => {
       }
       return [[0, into > 0 ? 0 : gain], [into, gain], [across - out, gain], [across, out > 0 ? 0 : gain]];
     };
+    const wave = (opacity: Num = 1) => (
+      <Wave x={0} y={() => louder().times(-22 / ROW).plus(0.5)} width={width} height={() => louder().times(44 / ROW)} list={sound} band low={-1} high={1} level={level}
+        color={() => `${colourOf(each)}/85` as Color} opacity={opacity} />
+    );
     const editRegion = (label: string, change: (state: FilledStateOfTool<"region">) => void) =>
       update(label, ({ children }) => {
         const owner = children.find((child) => child.name === each.name);
@@ -318,16 +340,19 @@ export const Timeline = ({ page }: { page: Page }) => {
         }),
     };
     return (
-      <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? MOVES : undefined)}>
-        <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
-          drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
-        <Wave x={0} y={() => louder().times(-22 / ROW).plus(0.5)} width={width} height={() => louder().times(44 / ROW)} list={sound} band low={-1} high={1} level={level} color={() => `${colourOf(each)}/85` as Color} />
-        <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={pressItem(key)} cursor="ew-resize"
-          moves={() => (alone() ? ["trim"] : undefined)} />
-        <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={pressItem(key)} cursor="ew-resize"
-          moves={() => (alone() ? ["end"] : undefined)} />
-        <Show when={alone}>{() => <RegionHandles region={region} width={width} plays={() => outputs[`${key}.seconds`] ?? 0} edit={editRegion} />}</Show>
-      </Group>
+      <>
+        <Original x={() => region.state.start} row={row} width={width} picked={chosen} contents={wave} />
+        <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? MOVES : undefined)}>
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
+            drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
+          {wave()}
+          <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={pressItem(key)} cursor="ew-resize"
+            moves={() => (alone() ? ["trim"] : undefined)} />
+          <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={pressItem(key)} cursor="ew-resize"
+            moves={() => (alone() ? ["end"] : undefined)} />
+          <Show when={alone}>{() => <RegionHandles region={region} width={width} plays={() => outputs[`${key}.seconds`] ?? 0} edit={editRegion} />}</Show>
+        </Group>
+      </>
     );
   };
 

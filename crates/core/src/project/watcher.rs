@@ -5,49 +5,53 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
+use notify::RecursiveMode;
 
 use super::storage::PROJECT_FILE;
 use super::{Project, ProjectError};
 
-/// File changes with less than this between them apply together, as one undo step. The group
-/// applies once the folder has been quiet for this long, so it is also the delay before an
-/// outside change is heard.
+/// File changes with less than this between them apply together. The group applies once the
+/// folder has been quiet for this long, so it is also the delay before an outside change is
+/// heard.
 pub const GROUPING_WINDOW: Duration = Duration::from_millis(100);
 
 pub(crate) struct Watcher {
     /// Dropping it stops the watcher thread.
-    watcher: RecommendedWatcher,
-    /// What it watches: `project.json` in the project folder, `state/` and `assets/`.
+    watcher: Box<dyn notify::Watcher + Send>,
+    /// What it watches: `project.json` in the project folder, `state/`, and `assets/` and
+    /// `extensions/`.
     project_file: PathBuf,
     state: PathBuf,
-    assets: PathBuf,
-    /// Whether `assets/` is watched. It is watched from when it exists, which may be after the
-    /// project opened: a tool may wait for a file there, see
+    /// `assets/` and `extensions/`, and whether each is watched. They are watched from when
+    /// they exist, which may be after the project opened: a tool may wait for a file in
+    /// `assets/`, see
     /// [`ToolRegistration::rebinds_on_assets`](super::ToolRegistration::rebinds_on_assets).
-    assets_watched: bool,
+    later: [(PathBuf, bool); 2],
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeSet<PathBuf>,
-    /// When the last path of `pending` was heard. The group counts from then for undo, not
+    /// When the last path of `pending` was heard. The group counts from then for history, not
     /// from when it applies a grouping window later, so a write heard just after a request
     /// ended joins it.
     last_event: Instant,
 }
 
 impl Watcher {
-    /// Starts watching `project.json` in `root`, `state` and, once it exists, `assets`.
-    /// Events wait in a channel until [`Self::take_group`].
-    fn new(root: &Path, state: PathBuf, assets: PathBuf) -> notify::Result<Self> {
-        let (sender, events) = channel();
-        let mut watcher = notify::recommended_watcher(sender)?;
+    /// Starts `watcher` on `project.json` in `root`, `state` and, once they exist, the folders
+    /// of `later`. Its events wait in `events` until [`Self::take_group`].
+    fn new(
+        mut watcher: Box<dyn notify::Watcher + Send>,
+        events: Receiver<notify::Result<notify::Event>>,
+        root: &Path,
+        state: PathBuf,
+        later: [PathBuf; 2],
+    ) -> notify::Result<Self> {
         watcher.watch(root, RecursiveMode::NonRecursive)?;
         watcher.watch(&state, RecursiveMode::Recursive)?;
         Ok(Self {
             watcher,
             project_file: root.join(PROJECT_FILE),
             state,
-            assets,
-            assets_watched: false,
+            later: later.map(|folder| (folder, false)),
             events,
             pending: BTreeSet::new(),
             last_event: Instant::now(),
@@ -58,13 +62,16 @@ impl Watcher {
     /// [`GROUPING_WINDOW`], returns those paths as one group, with the time its last path was
     /// heard.
     fn take_group(&mut self) -> Result<Option<(Vec<PathBuf>, Instant)>, ProjectError> {
-        // `assets/` from the moment it exists. What is in it by then counts as changed, since
-        // no event said so.
-        if !self.assets_watched && self.assets.is_dir() {
-            // Tried once: a watch that fails is reported and not tried on every poll.
-            self.assets_watched = true;
-            self.watcher.watch(&self.assets, RecursiveMode::Recursive)?;
-            self.hear([self.assets.clone()]);
+        // From the moment it exists. What is in it by then counts as changed, since no event
+        // said so.
+        for (folder, watched) in &mut self.later {
+            if !*watched && folder.is_dir() {
+                // Tried once: a watch that fails is reported and not tried on every poll.
+                *watched = true;
+                self.watcher.watch(folder, RecursiveMode::Recursive)?;
+                self.pending.insert(folder.clone());
+                self.last_event = Instant::now();
+            }
         }
         let mut rescan = false;
         loop {
@@ -85,11 +92,14 @@ impl Watcher {
         // The system dropped events, such as in the burst of a branch switch, so any file may
         // have changed. Reading them all again finds the ones that did.
         if rescan {
-            let paths = [&self.project_file, &self.state, &self.assets];
+            let [(assets, _), (extensions, _)] = &self.later;
+            let paths = [&self.project_file, &self.state, assets, extensions];
             self.hear(paths.map(PathBuf::clone));
-            watch_again(&mut self.watcher, &self.state)?;
-            if self.assets_watched {
-                watch_again(&mut self.watcher, &self.assets)?;
+            watch_again(self.watcher.as_mut(), &self.state)?;
+            for (folder, watched) in &self.later {
+                if *watched {
+                    watch_again(self.watcher.as_mut(), folder)?;
+                }
             }
         }
         if self.pending.is_empty() || self.last_event.elapsed() < GROUPING_WINDOW {
@@ -107,18 +117,30 @@ impl Watcher {
 
 /// Watches a folder from scratch. inotify watches every folder on its own, so a folder made
 /// while the system dropped events is not watched until then.
-fn watch_again(watcher: &mut RecommendedWatcher, folder: &Path) -> notify::Result<()> {
+fn watch_again(watcher: &mut dyn notify::Watcher, folder: &Path) -> notify::Result<()> {
     watcher.unwatch(folder)?;
     watcher.watch(folder, RecursiveMode::Recursive)
 }
 
 impl Project {
-    /// Starts watching `project.json`, `state/` and `assets/`. Events wait in a channel until
-    /// `poll`.
+    /// Starts watching `project.json`, `state/`, `assets/` and `extensions/`. Events wait in a
+    /// channel until `poll`.
     pub fn watch(&mut self) -> Result<(), ProjectError> {
+        let (sender, events) = channel();
+        self.watch_with(Box::new(notify::recommended_watcher(sender)?), events)
+    }
+
+    /// [`Self::watch`] with `watcher`, whose events come on `events`.
+    fn watch_with(
+        &mut self,
+        watcher: Box<dyn notify::Watcher + Send>,
+        events: Receiver<notify::Result<notify::Event>>,
+    ) -> Result<(), ProjectError> {
         let state = self.storage.state_folder();
         let assets = self.assets.path_of_folder();
-        self.watcher = Some(Watcher::new(self.storage.root(), state, assets)?);
+        let root = self.storage.root();
+        let later = [assets, root.join(super::history::EXTENSIONS_FOLDER)];
+        self.watcher = Some(Watcher::new(watcher, events, root, state, later)?);
         Ok(())
     }
 
@@ -163,6 +185,7 @@ mod tests {
 
     use std::sync::mpsc::channel;
 
+    use notify::NullWatcher;
     use notify::event::{Event, EventKind, Flag};
     use serde::{Deserialize, Serialize};
 
@@ -185,10 +208,9 @@ mod tests {
         registry.tool::<Note>("test").unwrap();
         let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
         let mut project = Project::open(folder.path(), registry, control).unwrap();
-        project.watch().unwrap();
-        // From here only the test speaks for the system, which drops the event of the write.
+        // The test speaks for the system, which drops the event of the write.
         let (system, events) = channel();
-        project.watcher.as_mut().unwrap().events = events;
+        project.watch_with(Box::new(NullWatcher), events).unwrap();
 
         let record = r#"{"tool": "test.note", "state": {"pitch": 60}}"#;
         std::fs::write(project.root().join("state/note.json"), record).unwrap();
@@ -204,9 +226,10 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
         let mut project = Project::open(folder.path(), Registry::new(), control).unwrap();
-        project.watch().unwrap();
         // The system's end of the channel is gone, as when notify's thread ends.
-        project.watcher.as_mut().unwrap().events = channel().1;
+        project
+            .watch_with(Box::new(NullWatcher), channel().1)
+            .unwrap();
 
         assert!(matches!(project.poll(), Err(ProjectError::WatcherStopped)));
         assert_eq!(project.poll().unwrap(), 0);

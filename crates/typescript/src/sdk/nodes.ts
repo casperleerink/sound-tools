@@ -22,7 +22,7 @@ export interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "slider" | "segmented" | "notice" | "overlay" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "toggle" | "slider" | "segmented" | "notice" | "overlay" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 

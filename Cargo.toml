@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/dsp", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -37,6 +37,7 @@ test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
 sound-agent = { path = "crates/agent" }
 sound-core = { path = "crates/core" }
+sound-dsp = { path = "crates/dsp" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
 sound-signals = { path = "crates/signals" }
@@ -78,6 +79,10 @@ embed-resource = "3.0.11"
 # `canonicalize` without the `\\?\` prefix Windows adds, which cmd, Explorer and people do not
 # read. The same as std elsewhere.
 dunce = "1.0.5"
+# The objects of the project history, a git repository written by hand: zlib streams named by
+# their SHA-1. The versions gpui uses. MIT OR Apache-2.0, BSD-3-Clause.
+flate2 = "1.1"
+sha1_smol = "1.0.1"
 hound = "3.5"
 memmap2 = "0.9.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -196,6 +201,7 @@ runtime = { opt-level = 3 }
 sampler = { opt-level = 3 }
 saturator = { opt-level = 3 }
 sound-core = { opt-level = 3 }
+sound-dsp = { opt-level = 3 }
 sound-media = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
 sound-signals = { opt-level = 3 }

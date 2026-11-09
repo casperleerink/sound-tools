@@ -26,7 +26,7 @@ Extensions are trusted user code. The project provides clear contracts, document
 
 ## Where it stands
 
-The DAW comes first: a composer can make a short piece with the bundled tools and reopen it later. The agent sidebar runs Claude Code in the project folder. The app downloads it and signs in through Claude Code's own browser flow, and each message is one undo step. A coding agent in a terminal still works the same way, since both only edit the project files.
+The DAW comes first: a composer can make a short piece with the bundled tools and reopen it later. The agent sidebar runs Claude Code in the project folder. The app downloads it and signs in through Claude Code's own browser flow, and each message is one point of history. A coding agent in a terminal still works the same way, since both only edit the project files.
 
 A composer can also ask for a tool that does not exist: the agent writes it in TypeScript in the project folder, and it plays at once, with no build.
 

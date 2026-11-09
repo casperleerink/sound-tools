@@ -8,22 +8,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, Render, TestAppContext,
-    VisualTestContext, Window, div, prelude::*, px,
+    AppContext, Context, Entity, Focusable, IntoElement, Render, TestAppContext, VisualTestContext,
+    Window, div, prelude::*, px,
 };
 use reverb::ReverbState;
 use runtime::OFFLINE;
 use runtime::window::new_project::TemplatePicker;
-use runtime::window::{DeviceMenu, ListDevices, Shell, bind_keys};
+use runtime::window::{DeviceList, ListDevices, Shell, bind_keys};
 use sound_core::{Changes, DeviceChoice, Engine, Instance, InstanceId, Project};
 use sound_ui::components::text_input::TextInput;
 use sound_ui::{Devices, Session, Views};
 
 use crate::plugin_hosts::open_or_create;
 use crate::support::{self, Opened};
-
-/// The height of the row with the project menu, above the main area.
-const TOP_ROW: f32 = 48.;
 
 fn reverb_id() -> InstanceId {
     InstanceId::new("room").unwrap()
@@ -115,9 +112,8 @@ fn a_focused_text_field_gets_cmd_z_before_the_window(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     let field = field.borrow().clone().unwrap();
-    let undo_label = |cx: &mut VisualTestContext| {
-        cx.read(|cx| session.read(cx).project().undo_label().map(str::to_string))
-    };
+    let undo_label =
+        |cx: &mut VisualTestContext| cx.read(|cx| session.read(cx).project().undo_label());
 
     field.update_in(cx, |field, window, cx| {
         window.focus(&field.focus_handle(cx), cx)
@@ -138,7 +134,7 @@ fn a_focused_text_field_gets_cmd_z_before_the_window(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
+fn a_long_error_fits_bottom_right_in_three_lines_at_most(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let session = opened.session.clone();
     let long = "a problem that goes on and on, ".repeat(20);
@@ -147,9 +143,9 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
         .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
     let notice = opened.bounds("notice-error").unwrap();
     let window = opened.cx.update(|window, _| window.viewport_size());
-    // 24 pt in from the right and under the title row, and 400 pt wide at most.
+    // 24 pt in from the bottom right, and 400 pt wide at most.
     assert_eq!(notice.right(), window.width - px(24.), "{notice:?}");
-    assert_eq!(notice.top(), px(TOP_ROW + 24.));
+    assert_eq!(notice.bottom(), window.height - px(24.), "{notice:?}");
     assert!(notice.size.width <= px(400.), "{notice:?}");
     // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it.
     assert!(
@@ -169,11 +165,11 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
     assert!(notice.size.height < px(40.), "{notice:?}");
 }
 
-/// The device menus list the devices of the machine when the window opens and each time the
-/// project menu opens, so an interface plugged in since is offered. Never on a timer: listing
-/// can take a while, and on Linux it opens each device.
+/// Settings lists the devices of the machine each time it opens, so an interface plugged in
+/// since is offered. Never on a timer: listing can take a while, and on Linux it opens each
+/// device.
 #[gpui::test]
-fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext) {
+fn settings_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext) {
     let device = |id: &str, name: &str| DeviceChoice {
         id: id.to_string(),
         name: name.to_string(),
@@ -185,24 +181,33 @@ fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext
         move || {
             listed.fetch_add(1, Ordering::Relaxed);
             let outputs = outputs.lock().unwrap().clone();
-            DeviceMenu {
+            DeviceList {
                 outputs,
-                ..DeviceMenu::default()
+                ..DeviceList::default()
             }
         }
     });
     let mut opened = support::open_with_devices(cx, list);
-    let menu = opened.cx.read(|cx| {
-        let shell = opened.shell.read(cx);
-        shell.project_menu().read(cx).menu().clone()
-    });
-    let offers = |opened: &mut Opened<'_>, id: &str| {
-        let value = format!("output-device:{id}");
-        opened.cx.read(|cx| menu.read(cx).item(&value).is_some())
+    let offered = |opened: &mut Opened<'_>| {
+        let shell = opened.shell.clone();
+        opened.cx.read(|cx| {
+            let page = shell.read(cx).settings().cloned();
+            let devices = page.and_then(|page| page.read(cx).devices().cloned());
+            devices
+                .map(|devices| devices.outputs.into_iter().map(|output| output.name))
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+        })
     };
-    assert_eq!(listed.load(Ordering::Relaxed), 1);
-    assert!(offers(&mut opened, "coreaudio:speakers"));
+    opened.cx.run_until_parked();
+    assert_eq!(listed.load(Ordering::Relaxed), 0);
 
+    opened.keys("secondary-,");
+    assert_eq!(listed.load(Ordering::Relaxed), 1);
+    assert_eq!(offered(&mut opened), ["Speakers"]);
+
+    opened.keys("escape");
     outputs
         .lock()
         .unwrap()
@@ -210,12 +215,10 @@ fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext
     opened.cx.executor().advance_clock(Duration::from_secs(10));
     opened.cx.run_until_parked();
     assert_eq!(listed.load(Ordering::Relaxed), 1);
-    assert!(!offers(&mut opened, "coreaudio:interface"));
 
-    let trigger = opened.control("project-menu");
-    opened.click(trigger);
+    opened.keys("secondary-,");
     assert_eq!(listed.load(Ordering::Relaxed), 2);
-    assert!(offers(&mut opened, "coreaudio:interface"));
+    assert_eq!(offered(&mut opened), ["Speakers", "Interface"]);
 }
 
 #[gpui::test]
@@ -234,8 +237,8 @@ fn cmd_z_waits_for_an_open_gesture(cx: &mut TestAppContext) {
     assert!(!has_reverb(&session, opened.cx));
 }
 
-/// "New project…" opens the templates, one row each; picking one closes them and asks where the
-/// project goes. A cancel there makes nothing.
+/// "New project…" opens the templates, one row each; picking one, with the keys, closes them and
+/// asks where the project goes. A cancel there makes nothing.
 #[gpui::test]
 fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAppContext) {
     let mut opened = open(cx);
@@ -256,8 +259,10 @@ fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAp
         .collect();
     assert_eq!(rows, ["Bare", "DAW"]);
 
-    let daw = picker.debug_bounds("template-DAW").unwrap().center();
-    picker.simulate_click(daw, Modifiers::default());
+    // The keys reach them: the second row is the DAW, and enter clicks it as it goes up.
+    picker.simulate_keystrokes("tab tab enter");
+    let enter = gpui::Keystroke::parse("enter").unwrap();
+    picker.simulate_event(gpui::KeyUpEvent { keystroke: enter });
     opened.cx.run_until_parked();
     assert!(opened.cx.did_prompt_for_new_path());
     let windows = opened.cx.update(|_, cx| cx.windows().len());

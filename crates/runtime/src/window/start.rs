@@ -17,7 +17,7 @@ use sound_ui::components::button::Button;
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::{ActiveTheme, typography};
 
-use super::Opened;
+use super::{Opened, Starting};
 use crate::app::check_project_folder;
 
 const START_WIDTH: f32 = 520.;
@@ -43,19 +43,23 @@ fn opening(cx: &App) -> bool {
     cx.try_global::<Opening>().is_some_and(|opening| opening.0)
 }
 
-/// Opens the project in `folder` in its window, or says why it did not open. Its tools load on
-/// the background executor first. Does nothing while another project opens.
+/// Opens the project in `folder` in its window, or says why it did not open. Does nothing
+/// while another project opens.
 pub(super) fn open_or_explain(folder: PathBuf, cx: &mut App) {
-    if opening(cx) {
-        return;
+    if !opening(cx) {
+        open_starting(Starting::new(folder), cx);
     }
+}
+
+/// Opens the project of `starting` in its window once it is ready, or says why it did not open.
+pub(super) fn open_starting(starting: Starting, cx: &mut App) {
     cx.set_global(Opening(true));
-    let tools = cx.background_spawn({
-        let folder = folder.clone();
-        async move { Opened::load_tools(&folder) }
-    });
+    let folder = starting.folder.clone();
+    let ready = cx.background_spawn(async move { starting.wait() });
     cx.spawn(async move |cx| {
-        let opened = tools.await.and_then(|tools| Opened::open(&folder, tools));
+        let opened = ready
+            .await
+            .and_then(|(tools, output)| Opened::open(&folder, tools, output));
         cx.update(|cx| {
             cx.set_global(Opening(false));
             match opened {
@@ -103,7 +107,7 @@ pub(super) fn choose_project(cx: &mut App) {
 
 /// Asks where a new project goes, writes `template` there and opens it. Does nothing while a
 /// project opens.
-fn new_project(template: &'static crate::Template, cx: &mut App) {
+fn new_project(template: crate::templates::Choice, cx: &mut App) {
     if opening(cx) {
         return;
     }
@@ -121,7 +125,7 @@ fn new_project(template: &'static crate::Template, cx: &mut App) {
         let written = cx
             .background_spawn({
                 let folder = folder.clone();
-                async move { crate::templates::write(&folder, template) }
+                async move { template.write(&folder) }
             })
             .await;
         cx.update(|cx| match written {

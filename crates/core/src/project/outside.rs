@@ -10,12 +10,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use super::editing::{Applied, Change};
+use super::history::Origin;
 use super::instance::{FOLDER_RECORD, InstanceId};
 use super::storage::{self, Form, OnDisk, PROJECT_FILE, PathTarget, RecordOnDisk, STATE_FOLDER};
 use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
 
-/// The undo label of a group of outside changes.
-const OUTSIDE_LABEL: &str = "File change";
+/// The label of a point of outside changes.
+pub(crate) const OUTSIDE_LABEL: &str = "File change";
 
 /// What a rejected group would have changed. The next group that touches any of it takes all
 /// of it along, so fixing the file that failed applies the rest.
@@ -32,8 +33,8 @@ impl NotApplied {
 }
 
 impl Project {
-    /// Applies what changed at `paths` as one group and one undo step. This is what the
-    /// watcher calls. Paths may be files or folders, inside the project folder, and may no
+    /// Applies what changed at `paths` as one group, and saves the folder as a point. This is
+    /// what the watcher calls. Paths may be files or folders, inside the project folder, and may no
     /// longer exist. Returns how many records and project files changed.
     ///
     /// A file that does not load leaves the live state as it is, stays on disk, and is listed
@@ -44,30 +45,37 @@ impl Project {
     /// records as not applied. It applies again with the next group that touches one of them.
     ///
     /// Groups of one request (see [`Project::begin_request`]), or groups that follow each
-    /// other within [`OUTSIDE_UNDO_WINDOW`] when no request is open, are one undo step, as
-    /// long as no interface edit, undo or redo comes in between.
+    /// other within [`OUTSIDE_POINT_WINDOW`] when no request is open, are one point, as long
+    /// as no interface edit, undo or redo comes in between. A group the project refuses is a
+    /// point all the same: the folder holds it.
     ///
-    /// [`OUTSIDE_UNDO_WINDOW`]: super::OUTSIDE_UNDO_WINDOW
+    /// [`OUTSIDE_POINT_WINDOW`]: super::OUTSIDE_POINT_WINDOW
     pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
         self.apply_outside_changes_at(paths, Instant::now())
     }
 
     /// [`Self::apply_outside_changes`] with the time the change was heard given. The watcher
-    /// gives the time it heard the last path of the group. Tests of the undo grouping give
-    /// their own.
+    /// gives the time it heard the last path of the group. Tests of the grouping into points
+    /// give their own.
     pub fn apply_outside_changes_at(
         &mut self,
         paths: &[PathBuf],
         at: Instant,
     ) -> Result<usize, ProjectError> {
-        self.apply_paths(paths, Source::Outside, at)
+        let applied = self.apply_paths(paths, Source::Outside);
+        let kept = (self.history.as_ref())
+            .is_some_and(|history| paths.iter().any(|path| history.keeps(path)));
+        let saved = match kept {
+            true => self.save_point(Origin::Outside(at), OUTSIDE_LABEL),
+            false => Ok(()),
+        };
+        applied.and_then(|count| saved.map(|()| count))
     }
 
     pub(crate) fn apply_paths(
         &mut self,
         paths: &[PathBuf],
         source: Source,
-        at: Instant,
     ) -> Result<usize, ProjectError> {
         // Ids to look at, with the one form a folder scan saw for it, if any.
         let mut queue = BTreeMap::new();
@@ -122,19 +130,25 @@ impl Project {
         let mut created: BTreeMap<InstanceId, (&'static str, bool)> = BTreeMap::new();
         // Deleted instances of this group, with the path of their record.
         let mut deleted = BTreeMap::new();
+        // What is at both record paths of each id read, for the files that do not load.
+        let mut found = Vec::new();
         while let Some((id, seen)) = queue.pop_first() {
             self.clear_record_problems(&id);
+            let live_form = self.instances.get(&id).map(Form::of);
+            let is_live = live_form.is_some();
             if id
                 .ancestors()
                 .any(|ancestor| deleted.contains_key(&ancestor))
             {
+                if !is_live {
+                    self.read_both_forms(&id, &mut found);
+                }
                 continue;
             }
-            let live_form = self.instances.get(&id).map(Form::of);
-            let is_live = live_form.is_some();
             let (form, bytes) = match self.storage.read_record(&id, seen) {
                 Ok(RecordOnDisk::One(form, bytes)) => (form, bytes),
                 Ok(RecordOnDisk::Missing) => {
+                    found.extend(Form::BOTH.map(|form| (id.clone(), form, None)));
                     if let Some(form) = live_form {
                         changes.push(Change::Delete(id.clone()));
                         let path = self.storage.record_path(&id, form);
@@ -149,6 +163,7 @@ impl Project {
                     continue;
                 }
                 Ok(RecordOnDisk::Both) => {
+                    self.read_both_forms(&id, &mut found);
                     let file = self.storage.record_path(&id, Form::File);
                     let folder = self.storage.record_path(&id, Form::Folder);
                     let message = format!(
@@ -170,6 +185,10 @@ impl Project {
             if is_live && self.storage.observed(&id) == Some(on_disk) {
                 continue;
             }
+            // The scan or the read saw no file of the other form.
+            found.extend(
+                Form::BOTH.map(|other| (id.clone(), other, (other == form).then(|| bytes.clone()))),
+            );
             let path = self.storage.record_path(&id, form);
             let path = self.storage.display_path(&path);
             let mut owner_tool = None;
@@ -245,6 +264,9 @@ impl Project {
                     self.report_problem(path, message.clone());
                     not_applied.records.insert(id);
                 }
+                not_applied
+                    .records
+                    .extend(found.into_iter().map(|(id, ..)| id));
                 if outside_project_file.is_some() {
                     self.report_problem(PROJECT_FILE.to_string(), message);
                     not_applied.project_file = true;
@@ -253,6 +275,7 @@ impl Project {
                 return Err(error);
             }
         };
+        self.note_unloaded(found, source);
         let observed = observed
             .into_iter()
             .filter(|(id, ..)| self.instances.contains_key(id));
@@ -282,11 +305,45 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
-            self.history.push_outside(OUTSIDE_LABEL, applied, at);
             self.write([].iter(), write_project_file)?;
         }
         self.rebind_waiting_for(&asset_folders)?;
         Ok(count)
+    }
+
+    /// Notes the bytes of each record file in `found` that does not load, and that the others
+    /// are gone or loaded.
+    fn note_unloaded(&mut self, found: Vec<(InstanceId, Form, Option<Vec<u8>>)>, source: Source) {
+        for (id, form, bytes) in found {
+            let path = self.storage.record_path(&id, form);
+            let loaded = (self.instances.get(&id)).is_some_and(|record| Form::of(record) == form);
+            let now = bytes.filter(|_| !loaded);
+            let known = self.storage.unloaded(&path);
+            if known == now.as_deref() {
+                continue;
+            }
+            // A reload of tools may read a change the watcher has not delivered yet. Its
+            // delivery tells the rest of the project.
+            if source == Source::Load && !loaded && known.is_some() {
+                continue;
+            }
+            self.storage.set_unloaded(path, now);
+        }
+    }
+
+    /// Reads both record paths of `id` into `found`.
+    fn read_both_forms(
+        &mut self,
+        id: &InstanceId,
+        found: &mut Vec<(InstanceId, Form, Option<Vec<u8>>)>,
+    ) {
+        for form in Form::BOTH {
+            match self.storage.read_record(id, Some(form)) {
+                Ok(RecordOnDisk::One(_, bytes)) => found.push((id.clone(), form, Some(bytes))),
+                Ok(_) => found.push((id.clone(), form, None)),
+                Err(error) => self.report_storage_error(&error),
+            }
+        }
     }
 
     /// Runs the behaviour again of every instance with a problem whose tool waits for files in
@@ -394,6 +451,8 @@ impl Project {
             None => self.instances.keys().cloned().collect(),
         };
         queue.extend(live.into_iter().map(|id| (id, None)));
+        let unloaded = self.storage.unloaded_inside(id);
+        queue.extend(unloaded.into_iter().map(|id| (id, None)));
         queue.extend(found);
     }
 

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde::Deserialize;
-use sound_core::SvfShape;
+use sound_dsp::SvfShape;
 
 use crate::code::{
     ArraySpec, BinValue, Binary, Code, DEFAULT_DELAY_MS, MAX_ARRAY_LENGTH, MAX_LIVES,

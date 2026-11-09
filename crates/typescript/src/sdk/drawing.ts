@@ -37,11 +37,7 @@ interface Pointed extends PointerEvents {
   opacity?: Bind<Num>;
   /** The point a drag with `snap.grid` puts on the grid: its own `x` and `y` when left out, such as the end of a note for its resize handle. */
   anchor?: Bind<{ x?: number; y?: number }>;
-  /**
-   * The drags it moves with, by their `id`: while one goes on, it is `dx` across and `dy` down
-   * from its place, in the window, until its code answers the end. The selected notes of a piano
-   * roll: `moves={() => (picked() ? ["move"] : undefined)}`, one small change as the selection does.
-   */
+  /** The drags, by `id`, that move it `dx` across and `dy` down while they go on, until its code answers the end: the selected notes of a piano roll. */
   moves?: Bind<readonly string[] | undefined>;
   /** The drags that make it `dx` wider and `dy` taller while they go on, as `moves`: notes being resized. */
   grows?: Bind<readonly string[] | undefined>;
@@ -132,7 +128,7 @@ export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?:
  * shows. Without `unit`, a unit is a point. It hears the pointer where no shape that hears it is.
  */
 export interface SpaceProps extends PointerEvents {
-  /** Names it for `now.space(key)`, and keeps its scroll and zoom. */
+  /** Names it for `now.space(key)`, and keeps its scroll and zoom when the code changes. One space of a view has it. */
   key?: string;
   /** Its size in points; `grow` takes the room left in its parent. */
   width?: Bind<number>;
@@ -166,7 +162,6 @@ export interface SpaceProps extends PointerEvents {
   children?: Child;
 }
 
-/** A space, see `SpaceProps`. */
 export const Space = ({ children, ...props }: SpaceProps): UiNode => element("space", props, [children]);
 
 /**
@@ -191,7 +186,6 @@ export interface InputProps {
   onChange?: (text: string) => void;
 }
 
-/** A text field, see `InputProps`. */
 export const Input = (props: InputProps): UiNode => element("input", { ...props }, []);
 
 /**
@@ -207,11 +201,7 @@ export interface DeviceCardProps {
   onClose?: () => void;
   /** Its title is a menu: a chevron after it, and a press calls this, such as to put another device in its place. */
   onTitle?: () => void;
-  /**
-   * What keys a device with a sidechain input, such as a compressor or a gate: one or two
-   * selects behind its expand, as the window's cards had them. A device without the input
-   * shows none.
-   */
+  /** What keys a device with a sidechain input, such as a compressor: one or two selects behind its expand. A device without the input shows none. */
   sidechain?: Bind<readonly CardSelect[]>;
 }
 
@@ -223,7 +213,6 @@ export interface CardSelect<T = unknown> {
   onChange(value: T): void;
 }
 
-/** The card of an instance, see `DeviceCardProps`. */
 export const DeviceCard = ({ path, sidechain, ...props }: DeviceCardProps): UiNode => {
   if (sidechain === undefined) return element("card", { instance: path, ...props }, []);
   const selects = () => (typeof sidechain === "function" ? sidechain() : sidechain);
@@ -242,7 +231,6 @@ export const DeviceCard = ({ path, sidechain, ...props }: DeviceCardProps): UiNo
   return element("card", { instance: path, ...props, sidechain: shown, onSidechain }, []);
 };
 
-/** An icon of the app, by its name. */
 export type IconName =
   | "arrow-left" | "arrow-right" | "arrow-up" | "audio-lines" | "automation" | "bot" | "check"
   | "chevron-down" | "chevron-left" | "chevron-right" | "chevron-up" | "circle" | "circle-alert"
@@ -259,15 +247,6 @@ export type IconName =
 
 /** An icon of the app, 16 points when `size` is left out, in the text's colour unless `color` says. */
 export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<Color> }): UiNode => element("icon", { ...props }, []);
-
-/**
- * A stereo meter as the window draws its own: bars that fall, a peak line that holds, a clip light
- * a click clears. Of the peaks `of` names as `now.peak` does, of the channels of the audio input
- * `input` names (one shows on both bars), or of what the device plays. Up the side unless
- * `horizontal`; `length` along its bars, in points.
- */
-export const PeakMeter = (props: { key?: string; of?: string; input?: readonly number[]; horizontal?: boolean; length?: number }): UiNode =>
-  element("meter", { ...props }, []);
 
 /** The tooltip of a button or a toggle, and the keys that do it too, drawn in it. */
 type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: KeyName };
@@ -287,7 +266,6 @@ export type ToggleProps = (
   disabled?: Bind<boolean>;
 };
 
-/** A switch, see `ToggleProps`. */
 export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
 
 /** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
@@ -307,7 +285,6 @@ export type ButtonProps = PointerEvents & Tip & {
   opacity?: number;
 };
 
-/** A button, see `ButtonProps`. */
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
 
 /**
@@ -381,6 +358,7 @@ type LookKey = "background" | "color" | "borderColor" | "opacity";
 export type Look = Pick<Style, LookKey> & { [Key in Exclude<keyof Style, LookKey>]?: never };
 
 interface DivProps extends PointerEvents {
+  /** Names it for tests, `div-<key>`, and keeps its scroll when the code changes. One div of a view has it: a row's comes from its item. */
   key?: string;
   style?: Bind<Style>;
   /** It hears no press, release, click, drag or drop and shows its `disabled` look; its children still hear theirs, and it still scrolls. */

@@ -10,6 +10,7 @@ use runtime::window::DeviceAccess;
 use serde_json::Value;
 use sound_core::InstanceId;
 use sound_notes::{Amount, Bend};
+use sound_ui::renders::Part;
 use std::sync::atomic::Ordering;
 
 use super::{Opened, write};
@@ -18,7 +19,7 @@ use crate::song::song_files;
 use crate::support::SimulatedInput;
 use crate::support::open_folder_with;
 
-const STUDIO: &str = r#"import { h, PeakMeter, tool, type Declaration } from "./sdk";
+const STUDIO: &str = r#"import { h, Meter, tool, type Declaration } from "./sdk";
 
 tool({
   name: "studio",
@@ -40,7 +41,7 @@ tool({
       h("div", { key: "done", onClick: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
       h("div", { key: "arm-2", onClick: () => send({ child: "rec-2", number: "record" }, 1) }, "Arm 2"),
       h("div", { key: "done-2", onClick: () => send({ child: "rec-2", number: "record" }, 0) }, "Done 2"),
-      h(PeakMeter, { key: "input", input: [1] }),
+      h(Meter, { key: "input", peaks: { input: [1] } }),
     ),
   onTake: ({ update }, take) =>
     update("Record", ({ children }) => {
@@ -55,11 +56,15 @@ fn tone(_: u64) -> [f32; 2] {
 }
 
 fn open_studio(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedInput) {
-    open_studio_of(cx, &[])
+    open_studio_of(cx, STUDIO, &[])
 }
 
-/// The studio with more recorders: `rec-2` and on, of the right channel.
-fn open_studio_of<'a>(cx: &'a mut TestAppContext, more: &[&str]) -> (Opened<'a>, SimulatedInput) {
+/// The studio of `code`, with more recorders: `rec-2` and on, of the right channel.
+fn open_studio_of<'a>(
+    cx: &'a mut TestAppContext,
+    code: &str,
+    more: &[&str],
+) -> (Opened<'a>, SimulatedInput) {
     let folder = tempfile::tempdir().unwrap();
     for name in more {
         write(
@@ -72,7 +77,7 @@ fn open_studio_of<'a>(cx: &'a mut TestAppContext, more: &[&str]) -> (Opened<'a>,
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": [{"from": {"instance": "studio", "port": "audio"}, "to": {"device_output": 0}}]}"#;
     write(folder.path(), "project.json", project);
-    write(folder.path(), "extensions/studio.ts", STUDIO);
+    write(folder.path(), "extensions/studio.ts", code);
     write(
         folder.path(),
         "state/studio/instance.json",
@@ -126,6 +131,36 @@ impl Opened<'_> {
             self.settle();
         }
     }
+}
+
+/// A take of the keyboard alone draws as it grows, in a space that shows nothing else.
+#[gpui::test]
+fn a_take_of_notes_draws_as_it_grows(cx: &mut TestAppContext) {
+    let code = STUDIO
+        .replace("{ h, Meter, tool,", "{ h, Notes, now, Space, tool,")
+        .replace(
+            r#"h(Meter, { key: "input", peaks: { input: [1] } }),"#,
+            r#"h(Space, { key: "take", width: 200, height: 40 }, h(Notes, { x: 0, y: 0, width: 200, height: 40, list: now.take("rec"), color: "green" })),"#,
+        );
+    let (mut window, _) = open_studio_of(cx, &code, &[]);
+    window.press_found("div-arm");
+    window.start_playing();
+    window.renders_in(10);
+    let before = sound_ui::renders::renders();
+    window.play_midi(60);
+    let recorder = crate::support::id("studio/rec");
+    window.until("the held key in the take", |window| {
+        let session = window.session.clone();
+        window.cx.read(|cx| {
+            let recording = session.read(cx).recording().read(cx);
+            recording
+                .notes_of(&recorder)
+                .is_some_and(|take| !take.notes.is_empty())
+        })
+    });
+    window.renders_in(2);
+    let drawn = sound_ui::renders::renders().since(&before);
+    assert!(drawn.all_of(Part::Over) + drawn.all_of(Part::Body) > 0);
 }
 
 #[gpui::test]
@@ -346,7 +381,7 @@ fn a_recorder_deleted_while_it_takes_lets_go_of_the_input(cx: &mut TestAppContex
 /// from where it started.
 #[gpui::test]
 fn a_recorder_that_starts_while_another_records_keeps_its_own_take(cx: &mut TestAppContext) {
-    let (mut window, input) = open_studio_of(cx, &["rec-2"]);
+    let (mut window, input) = open_studio_of(cx, STUDIO, &["rec-2"]);
     window.press_found("div-arm");
     window.start_playing();
     window.record_for(&input, 24_000);

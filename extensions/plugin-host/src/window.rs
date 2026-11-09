@@ -1,25 +1,13 @@
-//! The plugin's own window: a window of the application with the plugin's own view inside it.
-//!
-//! One GPUI window per open plugin, beside the main one, with an empty root view, as big as
-//! the plugin asked for. The plugin's view is a child of that window's view and draws over it:
-//! of its `NSView` on macOS, of its `HWND` on Windows. It floats: it stays above the main
-//! window and never above another application's windows, see [`open_window`]. Where it sat and
-//! whether it was open are kept in this machine's store, see `placements.rs`; neither is part
-//! of the piece.
+//! The plugin's own window: one GPUI window per open plugin, with an empty root view. The
+//! plugin's view is a child of its `NSView` on macOS, of its `HWND` on Windows, and draws over
+//! it. Nothing here knows a plugin format; that is [`crate::backend::PluginGui`].
 //!
 //! A plugin in a Win32 window counts its size in physical pixels, as both formats say for
-//! Win32; Cocoa and GPUI count logical ones. A [`WindowSize`] is in the plugin's pixels, and
-//! this file turns it into GPUI's and back where the two meet.
+//! Win32; Cocoa and GPUI count logical ones. A [`WindowSize`] is in the plugin's pixels.
 //!
-//! Nothing here knows a plugin format. What a plugin has to do for a window is
-//! [`crate::backend::PluginGui`], which both backends fill in: `clap.rs` with the GUI
-//! extension, `vst3/view.rs` with `IPlugView` and an `IPlugFrame`. Neither format needed
-//! anything of this file.
-//!
-//! Every call of a plugin's window belongs to the main thread, which is where [`crate::Plugins`]
-//! lives, and both formats say so. The one callback that does not is CLAP's
-//! `clap_host_gui.closed`, which a plugin may make from any thread; it only sets a flag that
-//! the next poll reads.
+//! Both formats call a plugin's window on the main thread only, except CLAP's
+//! `clap_host_gui.closed`, which may come from any thread and only sets a flag the next poll
+//! reads.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -39,16 +27,14 @@ use crate::PluginProblem;
 use crate::backend::{KeyDirection, PluginGui};
 use crate::host::WeakPlugins;
 
-/// How big a plugin's window is, in the plugin's own pixels: logical on macOS, physical on
-/// Windows. The formats each have a type of their own for this and they say the same thing.
+/// In the plugin's own pixels: logical on macOS, physical on Windows.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowSize {
     pub width: u32,
     pub height: u32,
 }
 
-/// How big a plugin's window is when the plugin does not say. Every plugin with a window
-/// answers when it is asked; this is only so that a window is never zero-sized.
+/// Only so that a window is never zero-sized: every plugin with a window says its size.
 const DEFAULT_SIZE: WindowSize = WindowSize {
     width: 600,
     height: 400,
@@ -56,10 +42,8 @@ const DEFAULT_SIZE: WindowSize = WindowSize {
 
 /// Where a plugin's window was and whether it was open, as this machine keeps it.
 ///
-/// `x` and `y` are the top left corner of the window, title bar included, in logical pixels
-/// from the top left of the display it was on; `display` is that display's id, when it had one.
-/// A window that comes back where it was is as big as its plugin says then: a plugin keeps its
-/// own size in its own state, and a second size here could only disagree with it.
+/// `x` and `y` are the top left corner, title bar included, in logical pixels on its display.
+/// No size: a plugin keeps its own in its state, and a second one here could only disagree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Placement {
     pub open: bool,
@@ -70,31 +54,25 @@ pub(crate) struct Placement {
 }
 
 /// How much of a window has to be on its display for it to come back there: enough to take it
-/// by its title bar. A window saved on a display that is not there any more, or that is smaller
-/// now, is put in the middle of the main one instead.
+/// by its title bar.
 const VISIBLE: i32 = 40;
 
-/// Whether a window whose corner is at `x`, `y` on a display of `width` by `height` can be
-/// reached there.
 fn reachable(x: i32, y: i32, width: f32, height: f32) -> bool {
     let (width, height) = (width as i32, height as i32);
     (0..=width - VISIBLE).contains(&x) && (0..=height - VISIBLE).contains(&y)
 }
 
-/// The root view of a plugin's window. It draws nothing: the plugin's own view is in the same
-/// window and covers it. It is what hears the window move and resize, and what gets a key while
-/// the plugin's own view does not have the keyboard.
+/// The root view of a plugin's window. It draws nothing, and hears the window move and resize
+/// and the keys the plugin's own view does not take.
 pub(crate) struct PluginFrame {
     owner: WindowOwner,
-    /// The window's own focus, which nothing else in it takes. GPUI gives a key to what has
-    /// the focus and to what is around it, so this is what makes the frame hear keys.
+    /// GPUI gives keys only to what has the focus and what is around it.
     focus: FocusHandle,
     _subscriptions: [Subscription; 2],
 }
 
 impl PluginFrame {
     fn new(owner: WindowOwner, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // A move and a resize both land here, from the composer or from us.
         let bounds = cx.observe_window_bounds(window, |frame, window, cx| {
             let Some(plugins) = frame.owner.plugins.upgrade() else {
                 return;
@@ -104,7 +82,7 @@ impl PluginFrame {
             let id = Window::window_handle(window).window_id();
             plugins.window_bounds_changed(&frame.owner.instance, id, placement, content);
         });
-        // A key held here comes up in the app that has the keys now.
+        // A key held here comes up in whatever has the keyboard now.
         let activation = cx.observe_window_activation(window, |_, window, cx| {
             if !window.is_window_active() {
                 SpareKeys::pass(SpareKey::LetGo, cx);
@@ -119,7 +97,7 @@ impl PluginFrame {
         }
     }
 
-    /// Gives a key to the plugin. `true` says it used it, and then nothing else gets it.
+    /// `true` when the plugin used the key.
     fn key(&self, window: &Window, keystroke: &Keystroke, direction: KeyDirection) -> bool {
         let Some(plugins) = self.owner.plugins.upgrade() else {
             return false;
@@ -142,7 +120,7 @@ impl Render for PluginFrame {
                     false => SpareKeys::pass(SpareKey::Down(event), cx),
                 }
             }))
-            // Every key up, also of a key the plugin took: the computer keys end only a note
+            // Every key up, also of one the plugin took: the computer keys end only a note
             // they started.
             .on_key_up(cx.listener(|frame, event: &KeyUpEvent, window, cx| {
                 SpareKeys::pass(SpareKey::Up(event), cx);
@@ -159,48 +137,39 @@ impl Render for PluginFrame {
     }
 }
 
-/// Who a window belongs to: what the frame needs to tell the host about it.
 #[derive(Clone)]
 pub(crate) struct WindowOwner {
     pub instance: InstanceId,
     pub plugins: WeakPlugins,
 }
 
-/// What [`PluginWindow::prepare`] found: a window that is already open, or how big a new one
-/// has to be.
 pub(crate) enum Prepared {
     AlreadyOpen(WindowHandle<PluginFrame>),
     Wanted(WindowSize),
 }
 
-/// What a new window needs to be opened.
 pub(crate) struct WindowRequest<'a> {
     pub title: &'a str,
     pub size: WindowSize,
-    /// Whether the composer may drag its edge, which the plugin decides.
     pub resizable: bool,
-    /// Where it was, when it was somewhere before.
     pub placement: Option<Placement>,
-    /// Whether it takes the keyboard. A window the composer opens does; one that comes back by
-    /// itself, as the project opens or its plugin reloads, leaves the keyboard where it was.
+    /// A window that comes back by itself, as the project opens or its plugin reloads, leaves
+    /// the keyboard where it was.
     pub focus: bool,
 }
 
-/// The plugin's window, from the host's side. The plugin's own part of it, what it makes and
-/// frees, is the backend's; this is the window it goes in.
+/// The plugin's window, from the host's side. What the plugin makes and frees for it is the
+/// backend's.
 #[derive(Default)]
 pub(crate) struct PluginWindow {
     open: Option<WindowHandle<PluginFrame>>,
-    /// Frees the plugin's view when the window goes, whatever took it down. See
-    /// [`open_window`] for why this is what keeps the plugin's view inside its parent's life.
+    /// Frees the plugin's view when the window goes, whatever took it down. See [`open_window`].
     closed: Option<Subscription>,
     /// A size the plugin asked for, until whoever polls gives the window it.
     wanted_size: Option<WindowSize>,
-    /// How big the plugin's view is, as far as the host knows: what it said as it opened, what
-    /// it asked for since and what a drag of the edge left it at. A window whose content has
-    /// this size has nothing to tell the plugin.
+    /// How big the plugin's view is, as far as the host knows. A window whose content has this
+    /// size has nothing to tell the plugin.
     size: Option<WindowSize>,
-    /// Whether the composer may drag the window's edge, which the plugin said as it opened.
     resizable: bool,
 }
 
@@ -214,18 +183,15 @@ impl PluginWindow {
         self.open.is_some_and(|handle| handle.window_id() == id)
     }
 
-    /// The plugin asked its window to be this big. Plugins do it as they open, and again when
-    /// their own interface changes. Nothing of ours has to follow: the window holds the plugin
-    /// and nothing else.
+    /// The plugin asked its window to be this big, as it opens or when its interface changes.
     pub(crate) fn wants_size(&mut self, wanted: WindowSize) {
         self.wanted_size = Some(wanted);
         self.size = Some(wanted);
     }
 
-    /// The window's content is `content` now. For a window the composer may resize that is a
-    /// drag of its edge: the plugin makes a size it takes of it, takes it, and the window is
-    /// given that size at the next poll. Anything else is the window taking a size this host
-    /// gave it, and there is nothing to tell the plugin.
+    /// The window's content is `content` now. In a resizable window that is the composer
+    /// dragging its edge: the plugin settles on a size near it, which the window takes at the
+    /// next poll. Anything else is the window taking a size this host gave it.
     pub(crate) fn resized(&mut self, gui: &mut dyn PluginGui, content: WindowSize) {
         if !self.resizable || self.size == Some(content) {
             return;
@@ -244,19 +210,17 @@ impl PluginWindow {
         Some((handle, self.wanted_size.take()?))
     }
 
-    /// The first half of opening a window: everything the plugin has to say, with nothing of
-    /// GPUI running. See [`crate::Plugins::open_window`] for why the two halves are apart.
+    /// The first step of opening a window: everything the plugin has to say, before GPUI opens
+    /// the window. [`Self::attach`] is the last.
     ///
-    /// The order for an embedded window: create, ask how big, put the view in a window, show.
-    /// The scale is left alone here: both formats say so for Cocoa, where sizes are already
-    /// logical, and on Windows it is not known until the window is on its display, see
-    /// [`Self::attach`].
+    /// Both formats ask this order for an embedded window: create, ask how big, set the parent,
+    /// show. The scale is not set here: both formats say not to on Cocoa, where sizes are
+    /// already logical, and on Windows it is not known until the window is on its display.
     pub(crate) fn prepare(&mut self, gui: &mut dyn PluginGui) -> Result<Prepared, PluginProblem> {
         if let Some(handle) = self.open {
             return Ok(Prepared::AlreadyOpen(handle));
         }
-        // From here the plugin holds resources for a window, and `give_up` frees them. It is
-        // never made twice: an attempt whose window did not open leaves them and comes back.
+        // From here the plugin holds resources for a window, until `give_up` frees them.
         gui.create()?;
         let size = gui.size().unwrap_or(DEFAULT_SIZE);
         self.size = Some(size);
@@ -264,18 +228,15 @@ impl PluginWindow {
         Ok(Prepared::Wanted(size))
     }
 
-    /// Whether the composer may drag the edge of the window [`Self::prepare`] made ready.
     pub(crate) fn resizable(&self) -> bool {
         self.resizable
     }
 
-    /// The second half: the plugin fills the window that was made for it. On a failure the
-    /// window comes back, for the caller to take down once nothing is borrowed.
+    /// The plugin fills the window that was made for it. On a failure the window comes back,
+    /// for the caller to take down once nothing is borrowed.
     ///
-    /// On Windows the plugin is told the scale of the window first, as both formats ask of a
-    /// host there, and the window takes the size the plugin has at that scale at the next poll.
-    /// Its sizes stay physical pixels whether it took the scale or reads it from the system
-    /// itself, so turning them into GPUI's is the same either way.
+    /// On Windows the plugin is told the window's scale first, as both formats ask there. Its
+    /// sizes stay physical pixels whether it takes the scale or reads it from the system.
     pub(crate) fn attach(
         &mut self,
         gui: &mut dyn PluginGui,
@@ -285,9 +246,8 @@ impl PluginWindow {
     ) -> Result<(), (PluginProblem, WindowHandle<PluginFrame>)> {
         self.open = Some(handle);
         self.closed = Some(closed);
-        // A window with no view of its own is the one GPUI makes without a platform behind it,
-        // which is what a test has. The plugin is then shown with nothing to draw in, so the
-        // rest of its life can be checked without a display. See `tests/plugin_host/window.rs`.
+        // No parent is GPUI's test platform: the plugin is shown with nothing to draw in, so
+        // tests can check the rest of its life without a display.
         let attached = match parent {
             Some(parent) => {
                 if let Some(scale) = parent.physical_scale {
@@ -299,25 +259,21 @@ impl PluginWindow {
                         self.wanted_size = Some(scaled);
                     }
                 }
-                // SAFETY: the view belongs to the window that was just opened. Every way that
-                // window can go frees the plugin's resources for it first: `give_up`, and the
-                // `closed` subscription, which runs while the window still holds the view, see
-                // `open_window`. The application ends before a window it still has.
+                // SAFETY: the view belongs to the window just opened. Every way that window
+                // goes frees the plugin's resources for it first: `give_up`, or the `closed`
+                // subscription, which runs while the window still holds the view.
                 unsafe { gui.set_parent(parent.view) }
             }
             None => Ok(()),
         };
         match attached.and_then(|()| gui.show()) {
             Ok(()) => Ok(()),
-            // `give_up` gives back the handle kept above, which is `handle`.
             Err(problem) => Err((problem, self.give_up(Some(gui)).unwrap_or(handle))),
         }
     }
 
-    /// Frees whatever the plugin holds for a window and gives back the window it was in, for
-    /// the caller to take down once nothing is borrowed. `None` says there is no window to
-    /// take down, which includes an attempt whose window never opened. Nothing of the plugin's
-    /// sound or state is touched: a plugin goes on playing with no window.
+    /// Frees whatever the plugin holds for a window and gives back the window, for the caller
+    /// to take down once nothing is borrowed. The plugin goes on playing.
     #[must_use]
     pub(crate) fn give_up(
         &mut self,
@@ -333,14 +289,13 @@ impl PluginWindow {
     }
 }
 
-/// Takes a window down. An error says only that the window was already gone.
+/// An error says only that the window was already gone.
 pub(crate) fn remove(handle: WindowHandle<PluginFrame>, cx: &mut App) {
     handle
         .update(cx, |_, window, _| window.remove_window())
         .ok();
 }
 
-/// Where an open window is now.
 pub(crate) fn placement_of(window: &Window, cx: &App) -> Placement {
     let corner = window.bounds().origin;
     Placement {
@@ -351,7 +306,7 @@ pub(crate) fn placement_of(window: &Window, cx: &App) -> Placement {
     }
 }
 
-/// How big the content of a window is, which is the plugin's view, in the plugin's pixels.
+/// The size of the plugin's view, in the plugin's pixels.
 fn content_of(window: &Window) -> WindowSize {
     let scale = physical_scale(window).unwrap_or(1.0);
     let content = window.viewport_size();
@@ -370,9 +325,8 @@ fn points(plugin_size: WindowSize, window: &Window) -> Size<Pixels> {
     )
 }
 
-/// How many physical pixels make one of GPUI's in `window`, when its plugin counts physical
-/// pixels, which a plugin in a Win32 window does. `None` for one that counts as GPUI does: a
-/// Cocoa one, and one in a window of the test platform, which never has a plugin's view in it.
+/// How many physical pixels make one of GPUI's, for a plugin in a Win32 window. `None` where
+/// the plugin counts as GPUI does.
 fn physical_scale(window: &Window) -> Option<f32> {
     // The trait's method, not `Window::window_handle`, which is the GPUI handle of the window.
     match HasWindowHandle::window_handle(window).ok()?.as_raw() {
@@ -381,45 +335,32 @@ fn physical_scale(window: &Window) -> Option<f32> {
     }
 }
 
-/// Gives a window the size its plugin asked for. An error says only that the window was
-/// already gone, and then there is nothing to size.
+/// An error says only that the window was already gone.
 pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: WindowSize, cx: &mut App) {
     handle
         .update(cx, |_, window, _| window.resize(points(wanted, window)))
         .ok();
 }
 
-/// The view of a window that a plugin's view goes in.
 pub(crate) struct ParentView {
     view: NonNull<c_void>,
-    /// How many physical pixels make one of GPUI's, for a plugin that counts physical pixels:
-    /// see [`physical_scale`].
+    /// See [`physical_scale`].
     physical_scale: Option<f32>,
 }
 
 /// Opens one window for a plugin and gives back its handle, the view the plugin fills and the
 /// subscription that frees that view when the window goes.
 ///
-/// The subscription is what keeps the plugin's view inside the life of the view it is in.
-/// GPUI takes a window down in `App::update_window`: it removes the window from the
-/// application, tells the observers of `on_window_closed`, and only then drops the `Window`
-/// it is still holding, which is what releases the `NSWindow` and its view. So an observer
-/// runs while the parent is still there, whatever took the window down: the window's own
-/// close control, [`remove`], or anything else. Read from the pinned GPUI, `App::update_window`
-/// and `SubscriberSet::retain`, which takes its subscribers out before it calls one, so this
-/// may drop its own subscription from inside the call.
+/// The subscription keeps the plugin's view inside the life of its parent. GPUI's
+/// `App::update_window` tells the `on_window_closed` observers before it drops the `Window`,
+/// which releases the native view, whatever took the window down. `SubscriberSet::retain`
+/// takes a subscriber out before calling it, so it may drop its own subscription.
 ///
-/// The window is GPUI's `Floating` kind, which on macOS is an `NSPanel` at the floating window
-/// level: above every normal window of this application, the main one included. A panel hides
-/// while another application is active, which AppKit does by default for every `NSPanel`
-/// (`hidesOnDeactivate`), so it is never above another application's windows.
-///
-/// GPUI makes no such window on Windows, so there the main window becomes its owner, which is
-/// what Windows has for this: an owned window stays above its owner, is minimized with it and
-/// is not above another application's windows. The owner also takes it down when it goes
-/// itself; the window then goes the way a closed one does, through the observer above, before
-/// the plugin's view inside it. And GPUI draws its windows through DirectComposition, on top of
-/// any child window, so this one is transparent: it draws nothing, and the plugin's view shows.
+/// The window floats above the main one and never above another application's windows. On
+/// macOS GPUI's `Floating` kind is an `NSPanel`, which hides while another application is
+/// active (`hidesOnDeactivate`). On Windows the main window becomes its owner, which does the
+/// same; the owner also takes it down, through the observer above. GPUI draws through
+/// DirectComposition, over any child window, so there the window is transparent.
 pub(crate) fn open_window(
     owner: &WindowOwner,
     request: WindowRequest<'_>,
@@ -458,8 +399,7 @@ pub(crate) fn open_window(
             view,
             physical_scale,
         });
-        // The window opened with the plugin's pixels as GPUI's. Only now that it is on its
-        // display can it tell physical pixels from GPUI's.
+        // Only now that it is on its display can it turn physical pixels into GPUI's.
         if physical_scale.is_some() {
             window.resize(points(request.size, window));
         }
@@ -484,8 +424,8 @@ pub(crate) fn open_window(
     Ok((handle, view, closed))
 }
 
-/// Where a window opens: where it was, when that display is still there and the window can be
-/// reached on it, and else in the middle of the main display.
+/// Where it was, when that display is still there and the window can be reached on it, else
+/// in the middle of the main display.
 fn where_to_open(
     placement: Option<Placement>,
     content: Size<Pixels>,
@@ -511,7 +451,6 @@ fn where_to_open(
     restored.unwrap_or_else(|| (Bounds::centered(None, content, cx), None))
 }
 
-/// The view a plugin's view goes in: the `NSView` of a window on macOS, its `HWND` on Windows.
 fn native_view(window: &Window) -> Option<NonNull<c_void>> {
     // The trait's method, not `Window::window_handle`, which is the GPUI handle of the window.
     match HasWindowHandle::window_handle(window).ok()?.as_raw() {
@@ -521,26 +460,22 @@ fn native_view(window: &Window) -> Option<NonNull<c_void>> {
     }
 }
 
-/// The few Win32 calls that keep a plugin's window above the main one, declared here instead
-/// of taking a dependency.
+/// Declared here instead of taking a dependency.
 #[cfg(target_os = "windows")]
 mod win32 {
     use std::ffi::c_void;
     use std::ptr::NonNull;
 
-    /// The window that is active now, or the one that owns it: the main window, whether the
-    /// composer is in it or in one of its plugin windows. `None` while the application is not
-    /// active, and then a window opens on its own.
+    /// The root owner of the active window: the main window, also while a plugin window is
+    /// active. `None` while the application is not active.
     pub(super) fn main_window() -> Option<NonNull<c_void>> {
         // SAFETY: both take and give window handles and nothing else; a null one is no window.
         unsafe { NonNull::new(GetAncestor(GetActiveWindow(), GA_ROOTOWNER)) }
     }
 
-    /// Makes `owner` the owner of `window`, which keeps `window` above it.
     pub(super) fn float_above(window: NonNull<c_void>, owner: NonNull<c_void>) {
-        // SAFETY: both are windows of this thread that are open. For a window that is not a
-        // child, `GWLP_HWNDPARENT` sets its owner. A window that keeps no owner is a plain
-        // window beside the main one, which is all a failure costs.
+        // SAFETY: both are open windows of this thread. For a window that is not a child,
+        // `GWLP_HWNDPARENT` sets its owner; a failure leaves a plain window beside the main one.
         unsafe { SetWindowLongPtrW(window.as_ptr(), GWLP_HWNDPARENT, owner.as_ptr() as isize) };
     }
 
@@ -567,7 +502,6 @@ mod tests {
         assert!(!reachable(100, 861, 1440.0, 900.0));
         assert!(!reachable(-1, 100, 1440.0, 900.0));
         assert!(!reachable(100, -1, 1440.0, 900.0));
-        // Saved on a larger display than the one there is now.
         assert!(!reachable(2400, 100, 1440.0, 900.0));
     }
 

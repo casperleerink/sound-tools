@@ -50,7 +50,7 @@ pub(crate) struct Harness {
     pub plugins: Plugins,
     /// The time of the last outside change. Each one comes a minute after the one before, so
     /// it is an undo step of its own, as for changes made by hand. Without this, outside
-    /// changes that a test makes within milliseconds would join (`OUTSIDE_UNDO_WINDOW`).
+    /// changes that a test makes within milliseconds would join (`OUTSIDE_POINT_WINDOW`).
     now: Instant,
     pub folder: tempfile::TempDir,
 }
@@ -277,6 +277,12 @@ pub(crate) fn saved_offset(format: PluginFormat, bytes: &[u8]) -> i32 {
     test_plugin_support::load_state(own)
         .expect("a Test Tone state")
         .offset
+}
+
+/// A new project, as the app makes one in an empty folder, for a test to add files to before
+/// it opens: files without a `project.json` are not a project.
+pub(crate) fn project_folder() -> tempfile::TempDir {
+    Harness::new().folder
 }
 
 pub(crate) fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {

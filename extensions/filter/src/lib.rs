@@ -40,14 +40,14 @@ use sound_core::{
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
 pub use processor::{Filter, LATENCY, response};
-pub use sound_core::SVF_MAX_Q as MAX_Q;
+pub use sound_dsp::SVF_MAX_Q as MAX_Q;
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "filter";
 
 /// The type and the slope are those of the state variable filter of the SDK, which the
 /// Wavetable synth plays too. `Slope` is the name this record has always used.
-pub use sound_core::{FilterCharacter, FilterSlope as Slope, FilterType};
+pub use sound_dsp::{FilterCharacter, FilterSlope as Slope, FilterType};
 
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets. The
 /// filter's memory and the phase of its LFO are runtime state and are not saved.

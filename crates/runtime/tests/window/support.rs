@@ -17,11 +17,13 @@ use runtime::window::other_apps::AppSounds;
 use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
+use sound_typescript::CodeChanges;
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
 
 use crate::plugin_hosts::{scanner, test_plugin_host};
 use crate::rack::rack_files;
+pub(crate) use sound_dsp::testing::peak;
 
 pub(crate) const BAR: u64 = 3840;
 /// How long a test waits for Bun, which answers in real time: a Windows runner with tests side
@@ -39,6 +41,8 @@ pub(crate) struct Opened<'a> {
     /// What the scan had found the last time a poll asked for a frame, as the window's own
     /// poll keeps it.
     scanned: u64,
+    /// How the test tells the window it changed code: `None` when the window watches.
+    code_changes: Option<CodeChanges>,
     pub cx: &'a mut VisualTestContext,
 }
 
@@ -103,6 +107,14 @@ fn no_plugins(_: &Path) -> Plugins {
     Plugins::new(Vec::new(), scanner(), ScanCache::none())
 }
 
+/// A new project, as the app makes one in an empty folder.
+pub(crate) fn new_project() -> TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, _engine) = Engine::new(OFFLINE);
+    runtime::open_or_create_with(folder.path(), control, no_plugins(folder.path())).unwrap();
+    folder
+}
+
 /// Opens the window on a project of `files` with the plugin host `host` makes for its folder,
 /// and what the window may open of the machine.
 pub(crate) fn open_with<'a>(
@@ -125,11 +137,27 @@ pub(crate) fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_
     open_folder_with(cx, folder, no_plugins, DeviceAccess::default())
 }
 
+/// The window does not watch `extensions/`: the test saves code with [`Opened::save_code`].
 pub(crate) fn open_folder_with<'a>(
     cx: &'a mut TestAppContext,
     folder: TempDir,
     host: impl FnOnce(&Path) -> Plugins,
     device: DeviceAccess,
+) -> Opened<'a> {
+    open_window(cx, folder, host, device, false)
+}
+
+/// [`open_folder`], watching `extensions/` as the app does.
+pub(crate) fn open_folder_watched(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_> {
+    open_window(cx, folder, no_plugins, DeviceAccess::default(), true)
+}
+
+fn open_window<'a>(
+    cx: &'a mut TestAppContext,
+    folder: TempDir,
+    host: impl FnOnce(&Path) -> Plugins,
+    device: DeviceAccess,
+    watched: bool,
 ) -> Opened<'a> {
     assert!(
         sound_typescript::has_bun(),
@@ -145,12 +173,24 @@ pub(crate) fn open_folder_with<'a>(
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let plugins = plugins.downgrade();
+    let mut code_changes = None;
     let (shell, cx) = cx.add_window_view({
         let (session, plugins) = (session.clone(), plugins.clone());
+        let code_changes = &mut code_changes;
         move |window, cx| {
             let (mut views, mut devices) = views(plugins);
-            if let Some(extensions) = extensions {
-                sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
+            match extensions {
+                Some(extensions) if watched => {
+                    let (views, devices) = (&mut views, &mut devices);
+                    sound_typescript::start_window(extensions, &session, views, devices, cx);
+                }
+                Some(extensions) => {
+                    let (views, devices) = (&mut views, &mut devices);
+                    *code_changes = Some(sound_typescript::start_window_unwatched(
+                        extensions, &session, views, devices, cx,
+                    ));
+                }
+                None => {}
             }
             let name = "Test device".into();
             Shell::with_device(session, (views, devices), name, device, window, cx)
@@ -164,6 +204,7 @@ pub(crate) fn open_folder_with<'a>(
         session,
         shell,
         scanned: 0,
+        code_changes,
         cx,
     }
 }
@@ -337,6 +378,22 @@ pub(crate) fn open_with_devices(cx: &mut TestAppContext, list: ListDevices) -> O
 }
 
 impl Opened<'_> {
+    /// Writes code of the project's tools from outside and tells the window, as its watcher
+    /// does.
+    pub(crate) fn save_code(&mut self, relative: &str, contents: &str) {
+        let path = self.folder.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+        self.code_changed();
+    }
+
+    /// Tells the window that code of the project's tools changed, as its watcher does.
+    pub(crate) fn code_changed(&mut self) {
+        (self.code_changes.as_ref())
+            .expect("a window that watches hears the change itself")
+            .tell();
+    }
+
     /// Lets the engine take what was sent to it, the poll timer see the result, and what Bun
     /// answered land.
     pub(crate) fn settle(&mut self) {
@@ -395,7 +452,7 @@ impl Opened<'_> {
             let mut changes = sound_core::Changes::new();
             changes.create(instance.clone(), state);
             project.commit("Add", changes)?;
-            project.clear_history();
+            project.clear_history()?;
             Ok(())
         });
         self.settle();
@@ -439,6 +496,11 @@ impl Opened<'_> {
         self.cx.read(|cx| read(session.read(cx).project()))
     }
 
+    /// The point of history the files are at.
+    pub(crate) fn current_point(&mut self) -> sound_core::PointId {
+        self.project(|project| project.history().unwrap().current())
+    }
+
     /// Runs a project operation through the session, as the watcher or another view would.
     pub(crate) fn edit<R>(
         &mut self,
@@ -453,7 +515,7 @@ impl Opened<'_> {
     }
 
     pub(crate) fn undo_label(&mut self) -> Option<String> {
-        self.project(|project| project.undo_label().map(str::to_string))
+        self.project(|project| project.undo_label())
     }
 
     pub(crate) fn gesture_open(&mut self) -> bool {
@@ -578,6 +640,7 @@ impl Opened<'_> {
             session,
             shell,
             scanned: _,
+            code_changes: _,
             cx,
         } = self;
         drop(plugins);
@@ -625,13 +688,6 @@ pub(crate) fn test_plugin_record(format: plugin_host::PluginFormat, state_asset:
         r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{id}", "state_asset": "{state_asset}"}}}}"#,
         format.as_str()
     )
-}
-
-/// The loudest sample.
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
 /// Every record file under `state/` and `project.json`, by relative path, with what it holds. A

@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use sound_core::{Changes, GROUPING_WINDOW, OUTSIDE_UNDO_WINDOW};
+use sound_core::{Changes, GROUPING_WINDOW, OUTSIDE_POINT_WINDOW};
 
 use crate::tools::{BANK_RECORD, Dc, Harness, dc_record, id, level_record};
 
@@ -65,15 +65,12 @@ fn the_window_runs_from_the_last_group_and_keeps_the_oldest_before_side() {
     harness.project.undo().unwrap();
     let dc = harness.project.resolve::<Dc>(&id("dc")).unwrap();
     assert_eq!(harness.project.state(&dc).unwrap().value, 0.1);
-    assert_eq!(
-        harness.read("state/dc.json"),
-        "{\n  \"tool\": \"test.dc\",\n  \"state\": {\"value\": 0.1}\n}\n"
-    );
+    assert_eq!(harness.read("state/dc.json"), dc_record(0.1));
 }
 
 #[test]
 fn groups_twenty_seconds_apart_are_separate_undo_steps() {
-    assert!(OUTSIDE_UNDO_WINDOW < Duration::from_secs(20));
+    assert!(OUTSIDE_POINT_WINDOW < Duration::from_secs(20));
     let mut harness = Harness::new();
     write_bank(&mut harness, Instant::now(), Duration::from_secs(20));
     harness.project.undo().unwrap();
@@ -144,7 +141,7 @@ fn a_cleared_history_has_nothing_to_undo() {
     let mut changes = Changes::new();
     changes.create(id("dc"), Dc { value: 0.2 });
     harness.project.commit("Add", changes).unwrap();
-    harness.project.clear_history();
+    harness.project.clear_history().unwrap();
     assert_eq!(harness.project.undo_label(), None);
     assert_eq!(harness.project.undo().unwrap(), None);
     assert_eq!(harness.project.instances().count(), 1);
@@ -258,7 +255,7 @@ fn an_undo_in_a_request_leaves_its_later_writes_a_new_step_with_its_label() {
         .project
         .end_request_at(start + Duration::from_secs(2));
 
-    assert_eq!(harness.project.undo_label(), Some(REQUEST));
+    assert_eq!(harness.project.undo_label().as_deref(), Some(REQUEST));
     assert_eq!(harness.project.redo_label(), None);
     harness.project.undo().unwrap();
     assert_eq!(harness.project.instances().count(), 0);
@@ -342,11 +339,8 @@ fn undo_of_a_request_brings_back_every_file_it_touched() {
         .end_request_at(begin + Duration::from_secs(60));
 
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some(REQUEST));
-    assert_eq!(
-        harness.read("state/dc.json"),
-        "{\n  \"tool\": \"test.dc\",\n  \"state\": {\"value\": 0.1}\n}\n"
-    );
+    assert_eq!(harness.read("state/dc.json"), dc_record(0.1));
     assert!(!harness.path("state/bank").exists());
     assert_eq!(harness.project.instances().count(), 1);
-    assert_eq!(harness.project.undo_label(), Some("File change"));
+    assert_eq!(harness.project.undo_label().as_deref(), Some("File change"));
 }

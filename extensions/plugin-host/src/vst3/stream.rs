@@ -1,22 +1,8 @@
-//! An `IBStream` over bytes in memory: how a plugin's state is read and written.
+//! An `IBStream` over bytes in memory, for a plugin's state.
 //!
-//! VST 3 gives and takes state through a stream the host provides. Ours is a growing buffer,
-//! so reading a state asset and writing one are the same object.
-//!
-//! What every call does is Steinberg's own `MemoryStream`
-//! (`vst3_public_sdk/source/common/memorystream.cpp`), which is the stream plugins are written
-//! against, and this file follows it call for call:
-//!
-//! - `seek` may go past the end. The SDK only clamps a stream over memory it does not own, and
-//!   ours always owns its bytes. A plugin that leaves room for a header, writes its payload and
-//!   then seeks back to fill the header in is doing something the format allows, and a stream
-//!   that clamped the seek would put its payload at byte zero for the header to overwrite.
-//! - `write` past the end grows the buffer, so the gap a seek left is really there. The SDK
-//!   leaves those bytes as whatever the allocation held; ours are zeros, which is the same
-//!   thing for a plugin that fills them in and a better one for a plugin that does not.
-//! - `read` past the end gives nothing and leaves the position at the end, as the SDK does.
-//! - All four answer `kResultTrue`, and a null pointer where the SDK would dereference one is
-//!   `kInvalidArgument` instead, which is what the SDK itself does where it checks at all.
+//! It follows Steinberg's own `MemoryStream` (`vst3_public_sdk/source/common/memorystream.cpp`)
+//! call for call, because that is the stream plugins are written against. Where the SDK would
+//! dereference a null pointer, this answers `kInvalidArgument`.
 
 use std::cell::RefCell;
 
@@ -28,7 +14,6 @@ use vst3::{Class, ComPtr, ComWrapper};
 
 use super::MAX_STATE;
 
-/// A stream of bytes a plugin reads from or writes into.
 pub(super) struct MemoryStream {
     inner: RefCell<Inner>,
 }
@@ -63,8 +48,7 @@ impl MemoryStream {
         self.inner.borrow().bytes.clone()
     }
 
-    /// Back to the first byte, for a second reader. The component's state also goes to the
-    /// controller, which reads the same bytes from the start.
+    /// Back to the first byte, for a second reader.
     pub(super) fn rewind(&self) {
         self.inner.borrow_mut().position = 0;
     }
@@ -88,7 +72,7 @@ impl IBStreamTrait for MemoryStream {
         let mut inner = self.inner.borrow_mut();
         let left = inner.bytes.len().saturating_sub(inner.position);
         let taken = left.min(num_bytes as usize);
-        // A position past the end comes back to it, as the SDK's own stream does.
+        // A position past the end comes back to it, as in the SDK.
         inner.position = inner.position.min(inner.bytes.len());
         // SAFETY: the caller says `buffer` holds `num_bytes` bytes, and `taken` is no more.
         unsafe {
@@ -117,10 +101,9 @@ impl IBStreamTrait for MemoryStream {
         }
         let count = num_bytes as usize;
         let mut inner = self.inner.borrow_mut();
-        // A write after a seek past the end grows the buffer, with zeros where the seek left a
-        // gap. Nothing this host writes or reads is anywhere near [`MAX_STATE`], so a length
-        // above it is a plugin that asked for more than a state can be, and the SDK's own
-        // answer to an allocation it cannot make is what it gets.
+        // Past the end grows the buffer, with zeros in the gap a seek left (the SDK leaves
+        // whatever the allocation held). Above [`MAX_STATE`] gets the SDK's answer to an
+        // allocation it cannot make.
         let Some(end) = inner
             .position
             .checked_add(count)
@@ -151,18 +134,16 @@ impl IBStreamTrait for MemoryStream {
     unsafe fn seek(&self, pos: int64, mode: int32, result: *mut int64) -> tresult {
         let mut inner = self.inner.borrow_mut();
         let length = inner.bytes.len() as int64;
-        // The modes are a C enum, which the bindings make unsigned on macOS and Linux and
-        // signed on Windows, so they are compared as the `int32` the call takes.
+        // The bindings make this C enum unsigned on macOS and Linux and signed on Windows.
         let from = match mode {
             mode if mode == IStreamSeekMode_::kIBSeekSet as int32 => 0,
             mode if mode == IStreamSeekMode_::kIBSeekCur as int32 => inner.position as int64,
             mode if mode == IStreamSeekMode_::kIBSeekEnd as int32 => length,
             _ => return kInvalidArgument,
         };
-        // Past the end is allowed and a later write fills the gap, which is what the SDK's own
-        // stream does and what a plugin that writes its header last needs. Before the first
-        // byte is not: the SDK reads such a position back out of its own buffer, which is
-        // nothing a host may do, and no plugin asks for it.
+        // Past the end is allowed, as in the SDK: a plugin may leave room for a header, write
+        // its payload and seek back. Before the start is refused; the SDK would read outside
+        // its buffer.
         let wanted = from.saturating_add(pos);
         if wanted < 0 {
             return kInvalidArgument;
@@ -189,8 +170,6 @@ impl IBStreamTrait for MemoryStream {
 mod tests {
     use super::*;
 
-    /// The calls as a plugin makes them. Each one is `unsafe` in the API and safe here: every
-    /// pointer is to something on this stack that outlives the call.
     fn write(stream: &MemoryStream, bytes: &[u8]) -> tresult {
         let mut written = 0;
         // SAFETY: the buffer holds the bytes the call is told it holds.
@@ -229,10 +208,8 @@ mod tests {
         bytes
     }
 
-    /// What a plugin that leaves room for a header does: seek past the end, write the payload,
-    /// come back and fill the header in. A stream that clamped the seek would write the payload
-    /// at byte zero and then overwrite it with the header, which is a state that is not the
-    /// plugin's.
+    /// A stream that clamped the seek would write the payload at byte zero and then overwrite
+    /// it with the header.
     #[test]
     fn a_plugin_may_write_its_header_after_the_payload_it_left_room_for() {
         let held = MemoryStream::writing();
@@ -244,7 +221,6 @@ mod tests {
         assert_eq!(stream.written(), b"HEADpayload");
     }
 
-    /// The gap a seek leaves is really there, and it is zeros.
     #[test]
     fn a_write_past_the_end_grows_the_stream_and_leaves_zeros_behind_it() {
         let held = MemoryStream::writing();
@@ -254,15 +230,12 @@ mod tests {
         assert_eq!(stream.written(), b"\0\0\0x");
     }
 
-    /// Reading past the end gives nothing and comes back to the end, as Steinberg's own stream
-    /// does. Before the first byte is refused instead of read out of somebody else's memory.
     #[test]
     fn reading_past_the_end_gives_nothing_and_a_seek_before_the_start_is_refused() {
         let held = MemoryStream::reading(b"abc");
         let stream = &*held;
         assert_eq!(seek(stream, 8), 8);
         assert_eq!(read(stream, 4), b"");
-        // The position came back to the end, so the next read is from there.
         let mut at = -1;
         // SAFETY: `at` is a place for the position.
         unsafe { IBStreamTrait::tell(stream, &mut at) };
@@ -280,8 +253,6 @@ mod tests {
         assert_eq!(result, kInvalidArgument);
     }
 
-    /// A plugin that asks for more than a state can be gets the answer the format has for an
-    /// allocation a host cannot make, and this process allocates nothing.
     #[test]
     fn a_write_of_more_than_a_state_can_hold_is_refused_and_allocates_nothing() {
         let held = MemoryStream::writing();

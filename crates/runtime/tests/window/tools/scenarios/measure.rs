@@ -16,13 +16,13 @@ use gpui::profiler::journal::{
 use serde_json::{Map, Value, json};
 use sound_ui::renders::{Part, Renders};
 
-use super::{Measured, Opened, Scenario, run, song_folder};
+use super::{Measured, Opened, Scenario, list_folder, run, song_folder};
 
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator::new(std::alloc::System);
 
 impl Scenario {
-    const ALL: [Scenario; 9] = [
+    const ALL: [Scenario; 10] = [
         Scenario::Idle,
         Scenario::Playing,
         Scenario::Scroll,
@@ -32,6 +32,7 @@ impl Scenario {
         Scenario::KnobDrag,
         Scenario::AbsoluteDiv,
         Scenario::MovedClip,
+        Scenario::LongList,
     ];
 
     fn name(self) -> &'static str {
@@ -45,13 +46,18 @@ impl Scenario {
             Scenario::KnobDrag => "knob drag",
             Scenario::AbsoluteDiv => "absolute div while playing",
             Scenario::MovedClip => "moved clip",
+            Scenario::LongList => "scroll of a long list",
         }
     }
 
     fn needs_the_song(self) -> bool {
         !matches!(
             self,
-            Scenario::Idle | Scenario::Playing | Scenario::Scroll | Scenario::Resize
+            Scenario::Idle
+                | Scenario::Playing
+                | Scenario::Scroll
+                | Scenario::Resize
+                | Scenario::LongList
         )
     }
 }
@@ -196,7 +202,11 @@ fn renders_json(renders: &Renders) -> (Value, Value) {
 }
 
 fn to_json(measured: Measured) -> Value {
-    let Measured { renders, cost } = measured;
+    let Measured {
+        renders,
+        nodes_drawn,
+        cost,
+    } = measured;
     let (renders, render_ms) = renders_json(&renders);
     let mut views = Map::new();
     for ((view, phase), time) in &cost.views {
@@ -214,6 +224,7 @@ fn to_json(measured: Measured) -> Value {
         "own render ms": render_ms,
         "view self ms": views,
         "nodes": cost.nodes,
+        "nodes drawn per update": nodes_drawn as f64 / cost.updates.len().max(1) as f64,
         "bytes to Bun": cost.bytes.0,
         "bytes from Bun": cost.bytes.1,
     })
@@ -254,12 +265,17 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 #[ignore = "tooling/perf/ui.py runs it"]
 fn measure_the_window() {
     let out = PathBuf::from(std::env::var_os("UI_PERF_OUT").expect("UI_PERF_OUT: where to write"));
-    let song = song_folder();
+    let (song, list) = (song_folder(), list_folder());
     let project = std::env::var_os("UI_PERF_PROJECT").map(PathBuf::from);
     let folder = project.as_deref().unwrap_or(song.path());
     let mut scenarios = Map::new();
     for scenario in Scenario::ALL {
         eprintln!("measuring {}", scenario.name());
+        // A long list is the same on any project: its own.
+        let folder = match scenario {
+            Scenario::LongList => list.path(),
+            _ => folder,
+        };
         let result = if scenario.needs_the_song() && !is_song(folder) {
             json!({ "skipped": "needs the song of the DAW template" })
         } else {

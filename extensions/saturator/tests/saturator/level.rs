@@ -3,7 +3,7 @@
 //! 2.1 dB that a square wave's first harmonic has over its peak.
 
 use saturator::{Curve, DRIVE, SaturatorState};
-use sound_core::testing::amplitude_at;
+use sound_dsp::testing::amplitude_at;
 
 use crate::support::{Rig, SAMPLE_RATE, peak, sine};
 

@@ -95,7 +95,7 @@ Casper asked for the DAW template to look almost exactly like main's arrangement
 
 SDK additions, each generic, none a new concept (all are view elements or style):
 - `TitleBar`: a div of the main view that the window shows in its title row. The transport is project code, so the title row needs a slot for it; any page can use it.
-- `Button`, `Toggle`, `Icon`, `PeakMeter`: the app's own controls and meter, drawn by `crates/ui`. Shapes could imitate them, but not exactly, and every tool should look like the app.
+- `Button`, `Toggle`, `Icon`: the app's own controls, drawn by `crates/ui`. A meter was one too (`PeakMeter`) until it became shapes in a space: each move of a level redrew the whole view. Shapes could imitate them, but not exactly, and every tool should look like the app.
 - Theme colours by name (`"gray-700"`, `"alpha/10"`), side paddings, `font: "tabular"`, `weight`, `hover`, `keep`, `truncate` on `Style`; `beats` and `note` readouts.
 - `clock.computerKeys` / `setComputerKeys`: the computer keys are a switch of the session, as the click is, so a tool's transport shows and turns them. The live input keeps no view of its own; cmd-K still turns them.
 - A page has no 24-point padding; its view decides.
@@ -118,7 +118,7 @@ Round 16c adds the audio scene of main (Voice and Guitar, the second voice regio
 Still different: main's pill showed no position strip until the first change after opening; the template's shows it whenever the song has an end. Main's limiter on the master had no lookahead select; the limiter's card has one, a feature of the device. Text and lines differ by a fraction of a point in places.
 
 Round 16d adds the armed and recording scenes of main (`look-armed`, `look-recording`) and closes the rest:
-- `now.input(channel)` and `<PeakMeter input={[0]} />` read the level of the audio input, natively: the window keeps it at every poll while the input is open. An armed track shows it in its header and on its strip, as main did. Why: "the composer sees the level" was promised by the recorder and no view could show it.
+- `now.input(channel)` and `<Meter peaks={{ input: [0] }} />` read the level of the audio input, natively: the window keeps it at every poll while the input is open. An armed track shows it in its header and on its strip, as main did. Why: "the composer sees the level" was promised by the recorder and no view could show it.
 - A `Path` shape fills between its points. Why: main shaded outside a fade, which no rect or line can draw. A wave's `level` scales it along its width, so a region's waveform shows its gain and fades as main's did; a band is one smooth shape, not a quad per column. A filled path ends its layer, as GPUI draws the paths of one layer over each other's boxes.
 - A button's `opacity` (main's quiet close buttons) and a div's `lineHeight` (a card's two-line note).
 - A take while it records is drawn as a region: over what it covers, with a red border and its sound so far.

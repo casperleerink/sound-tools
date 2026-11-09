@@ -14,8 +14,8 @@ use gpui::{
 use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT};
 use crate::components::knob::{KnobRange, short};
 use crate::components::meter::GainReduction;
-use crate::metering::decibels;
 use crate::theme::ActiveTheme;
+use sound_dsp::decibels;
 
 /// The width of the display. With two columns of cells its card is 352 pt.
 pub const WIDTH: f32 = 200.;

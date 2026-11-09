@@ -5,17 +5,19 @@
 //!
 //! - `default.png`: a new, empty project, with the ways to start one.
 //! - `new-project.png`: the templates a new project starts from.
-//! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
-//!   top-right.
-//! - `menu.png`, `menu-devices.png`: the project menu, open, after one edit.
+//! - `notices.png`: an error from an edit and an update that is ready, bottom right, and the
+//!   sign of a file that is not live beside the project menu.
+//! - `menu.png`: the project menu, open, after one edit.
+//! - `settings-audio.png`: the Audio section of Settings, with simulated devices.
 //! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
 //! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
+//! - `history*.png`: the History tab, see `snapshots/history.rs`.
 //! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
 //! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
 //!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
 //!
-//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=typescript`, `=look` or `=timeline` renders the default
+//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=history`, `=typescript`, `=look` or `=timeline` renders the default
 //! project and those alone.
 
 // The shared helpers of the tests unwrap, as the other test crates allow.
@@ -33,7 +35,7 @@ use gpui::{
 use plugin_host::{PluginFormat, WeakPlugins};
 use runtime::app::ChosenDevices;
 use runtime::window::new_project::{TemplatePicker, choose_template};
-use runtime::window::{DeviceAccess, DeviceMenu, Shell};
+use runtime::window::{DeviceAccess, DeviceList, Section, Shell};
 use runtime::{OFFLINE, views};
 use sound_core::{DeviceChoice, Engine, InstanceId, Ticks};
 use sound_ui::{Assets, Session};
@@ -45,6 +47,8 @@ use plugin_hosts::test_plugin_host;
 mod agent;
 #[path = "snapshots/cards.rs"]
 mod cards;
+#[path = "snapshots/history.rs"]
+mod history;
 #[path = "snapshots/look.rs"]
 mod look;
 #[allow(dead_code)]
@@ -108,9 +112,10 @@ impl Opened {
         prepare(&root)?;
         cx.allow_parking();
         let (control, engine) = Engine::new(OFFLINE);
-        // A plugin host that looks only in a folder of this project, with the repository's own
-        // test plugin in it, so that the pickers hold the same plugins everywhere.
-        let plugins = test_plugin_host(&root);
+        // A plugin host that looks only in a folder next to this project, with the repository's
+        // own test plugin in it, so that the pickers hold the same plugins everywhere. Not in
+        // the project: a folder with files in it is no new project.
+        let plugins = test_plugin_host(folder.path());
         let (project, extensions) = runtime::open_with_extensions(&root, control, plugins.clone())?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
@@ -277,6 +282,9 @@ fn main() -> Result<()> {
     if runs("agent") {
         agent::snapshots(&mut cx, &save)?;
     }
+    if runs("history") {
+        history::snapshots(&mut cx, &save)?;
+    }
     if runs("typescript") {
         typescript::snapshots(&mut cx, &save)?;
     }
@@ -313,8 +321,8 @@ fn templates(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     Ok(())
 }
 
-/// The notices, top-right: an edit that failed, a file that is not live, here the record of a
-/// plugin this machine does not have, and an update that is ready.
+/// The notices, bottom right: an edit that failed and an update that is ready. And the sign of a
+/// file that is not live, here the record of a plugin this machine does not have.
 fn notices(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     let missing = r#"{"tool": "plugin", "state": {"format": "clap", "plugin_id": "com.example.nowhere", "state_asset": "bass"}}"#;
     let files = rack::rack_files(&[("instrument", missing)]);
@@ -348,8 +356,8 @@ fn notices(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     Ok(())
 }
 
-/// The project menu after an edit, so that undo has something to name, with recent projects and
-/// the devices of a machine.
+/// The project menu after an edit, so that undo has something to name, with recent projects;
+/// then the Audio section of Settings with the devices of a machine.
 fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> {
     cx.update(|cx| {
         opened.session.update(cx, |session, cx| {
@@ -369,25 +377,6 @@ fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> 
                 "/Users/someone/Sketches/Piano",
             ];
             project_menu.set_recent_projects(recent.map(PathBuf::from).to_vec(), cx);
-            let device = |id: &str, name: &str| DeviceChoice {
-                id: id.to_string(),
-                name: name.to_string(),
-            };
-            let devices = DeviceMenu {
-                outputs: vec![
-                    device("coreaudio:speakers", "MacBook Pro Speakers"),
-                    device("coreaudio:blackhole", "BlackHole 2ch"),
-                ],
-                inputs: vec![
-                    device("coreaudio:microphone", "MacBook Pro Microphone"),
-                    device("coreaudio:blackhole", "BlackHole 2ch"),
-                ],
-                chosen: ChosenDevices {
-                    output: Some("coreaudio:blackhole".to_string()),
-                    input: None,
-                },
-            };
-            project_menu.set_devices(devices, cx);
         });
         anyhow::Ok(project_menu.read(cx).menu().clone())
     })?;
@@ -400,11 +389,40 @@ fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> 
         opened.key(key, cx)?;
     }
     save(cx, opened.window.into(), "menu")?;
-    // On up to the output device, which opens the devices of the machine.
-    for key in ["left", "up", "up", "up", "up", "right"] {
-        opened.key(key, cx)?;
-    }
-    save(cx, opened.window.into(), "menu-devices")?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        menu.update(cx, |menu, cx| menu.close(window, cx));
+    })?;
+
+    opened.key("cmd-,", cx)?;
+    cx.update(|cx| {
+        let shell = opened.window.read(cx)?;
+        let page = shell.settings().context("Settings did not open")?.clone();
+        let device = |id: &str, name: &str| DeviceChoice {
+            id: id.to_string(),
+            name: name.to_string(),
+        };
+        let devices = DeviceList {
+            outputs: vec![
+                device("coreaudio:speakers", "MacBook Pro Speakers"),
+                device("coreaudio:blackhole", "BlackHole 2ch"),
+            ],
+            inputs: vec![
+                device("coreaudio:microphone", "MacBook Pro Microphone"),
+                device("coreaudio:blackhole", "BlackHole 2ch"),
+            ],
+            chosen: ChosenDevices {
+                output: Some("coreaudio:blackhole".to_string()),
+                input: None,
+            },
+        };
+        page.update(cx, |page, cx| {
+            page.show(Section::Audio, cx);
+            page.set_devices(devices, cx);
+        });
+        anyhow::Ok(())
+    })?;
+    cx.run_until_parked();
+    save(cx, opened.window.into(), "settings-audio")?;
     Ok(())
 }
 

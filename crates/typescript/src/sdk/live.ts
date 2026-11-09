@@ -8,9 +8,9 @@ import { ChildTools, Context, Frozen } from "./tools";
 
 /**
  * The clock of the project, one for all tools: where the piece plays and how fast. A binding
- * that reads `playing`, `repeat`, `click`, `tempo_map` or `sections` runs again when it changes.
- * `tick`, `bar`, `beat` and `bpm` move on every frame: read them in a handler, `tick` or
- * `onKey`, and show them with `now.tick` and `now.bpm`, which move without code.
+ * that reads `playing`, `repeat`, `click`, `computerKeys`, `tempo_map` or `sections` runs
+ * again when it changes. `tick`, `bar`, `beat` and `bpm` move on every frame: read them in a
+ * handler, `tick` or `onKey`, and show them with `now.tick` and `now.bpm`.
  */
 export interface Clock {
   readonly playing: boolean;
@@ -102,10 +102,9 @@ function liveKey(value: unknown): string {
 }
 
 /**
- * A number the window works out again on every frame, without running code: where the
- * playhead is, a field as a drag turns it, an output of the sound, how far a drag went. Combine them with the
- * methods, which take a live value or a number. Code cannot read one: it is no number, so
- * `if (now.tick > 960)` is a type error.
+ * A number the window works out on every frame, without running code. Combine it with the
+ * methods, which take a live value or a number. Code cannot read one: `if (now.tick > 960)` is a
+ * type error.
  */
 export class Live {
   constructor(readonly node: LiveNode) {}
@@ -142,7 +141,7 @@ export class Live {
   smooth(ms: number): Live { return this.ease({ kind: "smooth", ms }); }
   /** Rises with it at once and falls at most `perSecond` a second: a meter's bar. */
   fall(perSecond: number): Live { return this.ease({ kind: "fall", per_second: perSecond }); }
-  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.3)`. */
+  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.5)`. */
   hold(seconds: number): Live { return this.ease({ kind: "hold", seconds }); }
   private ease(ease: EaseNode): Live { return new Live({ op: "ease", x: this, ease, key: liveKey([this, ease]) }); }
 }
@@ -163,6 +162,8 @@ export interface DragValues {
   y: Live;
   /** 1 while the pointer holds it, and until its code answered the end. */
   active: Live;
+  /** 1 while it is held with alt. */
+  alt: Live;
 }
 
 /** What the window shows of a space, in its units. */
@@ -261,7 +262,7 @@ function sources(): Now<Record<string, number>> {
     file: (asset, options) => ({ source: "file", asset, ...options }),
     take: (name) => ({ source: "take", name }),
     drag: (id) =>
-      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
+      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active", "alt"]),
     space: (key) =>
       part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
     hover: (key) => new Live({ op: "hover", key }),
@@ -270,7 +271,6 @@ function sources(): Now<Record<string, number>> {
 
 /** The sources of live values, for components of a view, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
-
 
 /** The keys of the computer keyboard, as the window names them. */
 export const PLAIN_KEYS = [
@@ -326,7 +326,6 @@ export interface Offers {
   here: string | null;
 }
 
-/** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
 /** How a menu of `openMenu` shows. */
 export interface MenuOptions {
   /** Quiet lines under the items. */
@@ -339,6 +338,7 @@ export interface MenuOptions {
   search?: boolean;
 }
 
+/** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
 export interface MovedNumber {
   name: string;
   /** What a person reads for it: as its device names it, such as a plugin's parameter, or its name in plain words, `Osc 1 position`. */

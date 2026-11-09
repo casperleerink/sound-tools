@@ -1,18 +1,11 @@
 //! Loading one VST 3 plugin and keeping it: the control side of the backend.
 //!
-//! A VST 3 plugin is up to two objects. The component makes the sound and owns the state; the
-//! controller is the interface side and knows the parameters. They may be one object or two,
-//! and when they are two the host joins them with `IConnectionPoint` and passes the messages.
-//!
 //! The order of the calls is the format's: create, `initialize`, state, bus arrangements,
-//! `setupProcessing`, `setActive(true)`. `setProcessing` and `process` are the audio thread's
-//! and live in `process.rs`.
+//! `setupProcessing`, `setActive(true)`.
 //!
-//! How the host learns that a plugin changed its own state, which VST 3 has no `mark_dirty`
-//! for: the controller tells `IComponentHandler::performEdit` when the composer moves
-//! something in the plugin's window, and the component reports what it changed by itself in
-//! the block's output parameter changes. Both mark the state to be saved, and the second is
-//! also given to the controller, which is how the two halves stay in step.
+//! VST 3 has no `mark_dirty`. The state is marked to be saved when the controller calls
+//! `performEdit`, and when the component reports a change in a block's output parameter
+//! changes, which also goes to the controller so the two halves stay in step.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -46,25 +39,22 @@ use crate::{Pin, PluginProblem, processor::not_ours};
 use sound_core::PrepareConfig;
 use sound_notes::Pedal;
 
-/// What a state asset of a VST 3 plugin holds. VST 3 keeps two states, the component's and the
-/// controller's, and a preset file holds both, so this file holds both as well.
+/// The start of a state asset, which holds both the component's and the controller's state,
+/// as a VST 3 preset file does.
 const MAGIC: [u8; 4] = *b"SVT3";
 
-/// Every parameter a host may set of the plugin `found` names, read once it is initialized and
-/// before anything is prepared for audio, which a list of parameters never plays.
+/// Every parameter a host may set of the plugin `found` names, without preparing it for audio.
 pub(crate) fn read_parameters(found: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
     let initialized = initialize(found)?;
     Ok(match &initialized.joined.controller {
         // SAFETY: the controller came from the plugin and is alive until `initialized` goes.
         Some(controller) => unsafe { parameters::of_controller(controller) },
-        // A plugin with no edit controller has no parameters a host can see.
         None => Vec::new(),
     })
 }
 
-/// A plugin that is made and initialized, with its controller joined to it, and what it needs
-/// to stay alive. The plugin is let go of first when this is dropped, before its context and
-/// its bundle, which is the order of the fields.
+/// A plugin that is made and initialized, with what it needs to stay alive. The field order is
+/// the drop order: the plugin goes before its context and its bundle.
 struct Initialized {
     joined: Joined,
     context: ComWrapper<HostContext>,
@@ -85,9 +75,8 @@ fn initialize(found: &ScannedPlugin) -> Result<Initialized, PluginProblem> {
     let context = ComWrapper::new(HostContext);
     let host = as_unknown(&context).ok_or_else(|| fail("the host context".to_string()))?;
 
-    // SAFETY: every call below goes to the plugin the factory made, in the order VST 3 gives,
-    // and every pointer either comes from the plugin or outlives the call. A failure after
-    // `initialize` is undone by `Joined`, so no plugin is left half-set-up.
+    // SAFETY: every call goes to the plugin the factory made, in the order VST 3 gives, and
+    // every pointer comes from the plugin or outlives the call. `Joined` undoes a failure.
     unsafe {
         let component: ComPtr<IComponent> = create(module.factory(), &class, &IComponent_iid)
             .ok_or_else(|| {
@@ -133,7 +122,6 @@ fn initialize(found: &ScannedPlugin) -> Result<Initialized, PluginProblem> {
             controller.setComponentHandler(pointer.as_ptr());
         }
 
-        // Two objects talk through their connection points, with messages this host makes.
         joined.connection = joined.separate.as_ref().and_then(|controller| {
             let from = component.cast::<IConnectionPoint>()?;
             let to = controller.cast::<IConnectionPoint>()?;
@@ -161,7 +149,6 @@ pub(crate) fn load(
         plugin_id: plugin_id.clone(),
         message,
     };
-    // A failure below drops what is initialized, which undoes it.
     let initialized = initialize(found)?;
     let component = initialized.joined.component.clone();
     let controller = initialized.joined.controller.clone();
@@ -171,11 +158,9 @@ pub(crate) fn load(
         if let Some(bytes) = saved {
             read_state(&plugin_id, bytes, &component, controller.as_ref())?;
         }
-        // The pins of the record before the plugin is activated. VST 3 has no call that gives
-        // the processor a value outside a block, so the controller is told: a plugin whose two
-        // halves share their values, as most that are one object do, sets up its smoothing from
-        // them as it is activated. The processor of one that keeps its own hears them in its
-        // first block, at its first frame, as the host sends them below.
+        // VST 3 has no call that gives the processor a value outside a block, so the pins go to
+        // the controller before activation: a plugin whose halves share values sets up its
+        // smoothing from them. One that keeps its own hears them in its first block.
         if let Some(controller) = controller.as_ref().filter(|_| !pins.is_empty()) {
             let parameters = by_id(parameters::of_controller(controller));
             for change in playable(&parameters, pins) {
@@ -191,9 +176,7 @@ pub(crate) fn load(
         }
         let buses = prepare_buses(&component, &processor);
 
-        // A render is told to the plugin here and carried in every block below, which is what
-        // VST 3 asks: the mode of a `ProcessData` is the mode of the `setupProcessing` it
-        // belongs to. A streaming sampler may wait for its samples in an offline render.
+        // A streaming sampler may wait for its samples in an offline render.
         let mode = process_mode(config.offline);
         let mut setup = ProcessSetup {
             processMode: mode,
@@ -209,19 +192,17 @@ pub(crate) fn load(
         if result != kResultOk {
             return Err(refused(&plugin_id, "setActive", result));
         }
-        // After `setActive`, which is when a plugin's latency is settled.
+        // Only settled after `setActive`.
         let latency = not_ours(|| processor.getLatencySamples());
 
         let targets = ControlTargets::new(|number| mapped_parameter(controller.as_ref(), number));
         let targets = Arc::new(targets);
-        // What the processor holds now, as far as the host can know: the values the controller
-        // shows once the state is read. `kParamValuesChanged` is answered against these.
+        // What the processor holds as far as the host knows; `kParamValuesChanged` is answered
+        // against these.
         let values = controller
             .as_ref()
             .map(|controller| parameter_values(controller, &BTreeMap::new()))
             .unwrap_or_default();
-        // The window side, made here so that nothing but a load ever asks the plugin for a
-        // view. A plugin with no edit controller has no window at all.
         let gui = Vst3Gui::new(controller.as_ref(), &plugin_id);
         let live = Arc::new(());
         let (started, ends) = Vst3Processor::new(
@@ -234,18 +215,13 @@ pub(crate) fn load(
             mode,
             latency,
         );
-        // The pedal is only missing from a plugin that has somewhere to take notes. A plugin
-        // with no event input bus, which is what an ordinary effect is, has no pedal to miss,
-        // and this host cannot ask what a record is for.
+        // Only a plugin that takes notes misses a pedal; an effect has no event input.
         let notes = match (buses.takes_notes, targets.get(Control::Pedal(Pedal::UP))) {
             (true, None) => vec![PluginProblem::NoPedal {
                 plugin_id: plugin_id.clone(),
             }],
             _ => Vec::new(),
         };
-        // A plugin may ask for a restart or a reload while its state is read or while it is
-        // activated. It has just been set up and everything is read after that, so asking
-        // again would only start it again, for ever if it asks every time.
         initialized.joined.handler.forget_restarts();
         Opening {
             started: Box::new(started),
@@ -272,46 +248,38 @@ pub(crate) fn load(
     Ok(plugin)
 }
 
-/// A plugin that is initialized, with its two halves joined and the host's handler in it.
-///
-/// It undoes all of that when it is dropped without [`Self::kept`], so a load that fails part
-/// of the way through leaves no plugin half-set-up, and [`Vst3Plugin::let_go`] is the same
-/// four calls in the same order.
+/// A plugin that is initialized, with its two halves joined and the host's handler in it. A
+/// load that fails part of the way through drops it, which undoes all of that.
 struct Joined {
     component: ComPtr<IComponent>,
-    /// The interface side. The component itself when the plugin is one object.
+    /// The component itself when the plugin is one object.
     controller: Option<ComPtr<IEditController>>,
-    /// The controller when it is a second object, which is the one that has to be terminated
-    /// and disconnected of its own.
+    /// The controller when it is a second object, which must be terminated on its own.
     separate: Option<ComPtr<IEditController>>,
     connection: Option<(ComPtr<IConnectionPoint>, ComPtr<IConnectionPoint>)>,
-    /// What the plugin's controller reports to. The plugin holds a pointer to it until the
-    /// handler is taken back below, so it must outlive that call.
+    /// The plugin holds a pointer to this until `let_go` takes it back.
     handler: ComWrapper<Handler>,
-    /// Whether there is still something to undo. It is set once `initialize` has been
-    /// answered and taken by [`Self::let_go`], and a [`Vst3Plugin`] whose audio side the
-    /// engine still holds clears it instead, because then nothing may be terminated at all.
+    /// Whether there is still something to undo. A [`Vst3Plugin`] whose audio side the engine
+    /// still holds clears it, because then nothing may be terminated.
     kept: bool,
 }
 
 impl Joined {
-    /// Everything VST 3 asks a host to do when it is done with a plugin, in that order.
-    /// Calling it again does nothing.
+    /// What VST 3 asks a host to do when it is done with a plugin, in order. Calling it again
+    /// does nothing.
     fn let_go(&mut self) {
         if !std::mem::take(&mut self.kept) {
             return;
         }
-        // SAFETY: every object came from the plugin and is alive, and nothing else holds the
-        // audio side: `Vst3Plugin::released` checks that before this runs, and a load that
-        // failed never made one.
+        // SAFETY: every object came from the plugin and is alive, and nothing holds the audio
+        // side: `Vst3Plugin::released` checks that, and a failed load never made one.
         unsafe {
             not_ours(|| self.component.setActive(0));
             if let Some((from, to)) = self.connection.take() {
                 from.disconnect(to.as_ptr());
                 to.disconnect(from.as_ptr());
             }
-            // The plugin lets go of the host's handler before the handler can go, whether the
-            // controller is a second object or the component itself.
+            // The plugin lets go of the handler before the handler can go.
             if let Some(controller) = self.controller.take() {
                 controller.setComponentHandler(std::ptr::null_mut());
             }
@@ -325,8 +293,6 @@ impl Joined {
 
 impl Drop for Joined {
     fn drop(&mut self) {
-        // Only a load that failed between `initialize` and the plugin being made. A plugin
-        // that was made has already been let go of, or is one the engine still holds.
         self.let_go();
     }
 }
@@ -334,52 +300,41 @@ impl Drop for Joined {
 /// One loaded VST 3 plugin, from the control thread.
 pub(super) struct Vst3Plugin {
     plugin_id: String,
-    /// The bundle this plugin came out of. Nothing unloads one, but a plugin owning its module
-    /// says so rather than leaving it to a table somewhere else.
     _module: Rc<Module>,
-    /// The plugin's own window. Declared before [`Self::joined`], so that a plugin being
-    /// dropped releases its view before anything terminates the object that made it.
+    /// Declared before [`Self::joined`], so a plugin being dropped releases its view before
+    /// anything terminates the object that made it.
     gui: Option<Vst3Gui>,
     joined: Joined,
-    /// The plugin holds this for as long as it lives, so it must outlive the plugin.
+    /// The plugin holds this for as long as it lives.
     _context: ComWrapper<HostContext>,
-    /// What the plugin changed by itself while it played.
     changed: rtrb::Consumer<Report>,
-    /// What the composer changed in the plugin's own window, and the pins the host sends, on
-    /// their way to the processor.
     edited: rtrb::Producer<ParameterChange>,
     /// How many edits went into `edited`, and for each parameter how many had by its latest
     /// one. A report the processor made before it took that many is older than the edit.
     edits_pushed: u64,
     pushed_at: BTreeMap<ParamID, u64>,
     /// The audio side holds a second one of these. While it does, this plugin may not be
-    /// deactivated: the two ends would be in different hands.
+    /// deactivated.
     live: Arc<()>,
-    /// What a new audio side is made of when the plugin is started again: the plugin's
-    /// processor interface, the parameters the controls go to and the process mode. The buses
-    /// are read again then, because a change of them is one reason to start again.
     processor: ComPtr<IAudioProcessor>,
     targets: Arc<ControlTargets>,
     /// Whether the plugin has an event input, so that a pedal it no longer maps is worth saying.
     takes_notes: bool,
     /// The value of every parameter the processor was last given or reported, as far as the
-    /// host knows: read off the controller when the plugin loaded, and kept up with every edit
-    /// and report since. Read-only parameters are left out, because a host never sends one.
+    /// host knows. Read-only parameters are left out, because a host never sends one.
     values: BTreeMap<ParamID, ParamValue>,
     mode: int32,
 }
 
 impl Vst3Plugin {
-    /// What the plugin changed by itself goes to its controller, which is how the two halves
-    /// of a plugin stay in step, and says that the state is to be saved.
+    /// What the plugin changed by itself goes to its controller and marks the state dirty.
     fn take_reports(&mut self) {
         let mut changed = false;
         while let Ok(report) = self.changed.pop() {
             changed = true;
             let change = report.change;
-            // A report from before the processor took the latest edit of the parameter, or one
-            // of a parameter whose edit still waits for room: the edit is what the processor
-            // plays once it has it, and the controller already shows it.
+            // Skip a report older than the parameter's latest edit, or one whose edit still
+            // waits: the controller already shows the edit.
             let edited = self.pushed_at.get(&change.id);
             let older = edited.is_some_and(|edited| report.edits_taken < *edited);
             if older || self.joined.handler.waits(change.id) {
@@ -396,9 +351,8 @@ impl Vst3Plugin {
         }
     }
 
-    /// Every edit that waits goes to the processor, as far as the ring has room; the rest goes
-    /// back and waits for the next poll. An audio side that has gone takes nothing: the plugin
-    /// is being started again, and the edits wait for the next one.
+    /// Every waiting edit goes to the processor as far as the ring has room; the rest waits for
+    /// the next poll. An audio side that has gone takes nothing: the plugin is restarting.
     fn push_edits(&mut self) {
         if self.edited.is_abandoned() {
             return;
@@ -416,12 +370,10 @@ impl Vst3Plugin {
     }
 
     /// `kParamValuesChanged`: "The host invalidates all caches of parameter values and asks the
-    /// edit controller for the current values." What the host holds is what the processor was
-    /// given, so every parameter whose value the controller now shows differently is sent to
-    /// the processor, the way an edit is. That is what keeps the half that makes the sound on
-    /// what the controller shows after it changed its values by itself, such as a preset it
-    /// loaded. A parameter nobody changed is not sent again, so a plugin that says this after
-    /// its state is read, which most do, is sent nothing.
+    /// edit controller for the current values." Every parameter the controller now shows
+    /// differently from what the processor was given is sent as an edit, such as after a preset
+    /// the plugin loaded itself. Most plugins say this after their state is read, and then
+    /// nothing is sent.
     fn follow_the_controller(&mut self) {
         let Some(controller) = &self.joined.controller else {
             return;
@@ -437,8 +389,8 @@ impl Vst3Plugin {
 impl LoadedPlugin for Vst3Plugin {
     fn poll(&mut self) -> Requests {
         self.take_reports();
-        // `kParamIDMappingChanged`: the plugin has other parameters now. They are listed again
-        // before any values are compared, so a parameter that is new is compared from here on.
+        // `kParamIDMappingChanged`: listed again before any values are compared, so a new
+        // parameter is compared from here on.
         let ids_changed = self.joined.handler.take_ids_changed();
         if ids_changed && let Some(controller) = &self.joined.controller {
             self.values = parameter_values(controller, &self.values);
@@ -447,8 +399,7 @@ impl LoadedPlugin for Vst3Plugin {
             self.follow_the_controller();
         }
         // `kMidiCCAssignmentChanged`: "The host has to rebuild the MIDI-CC => parameter
-        // mapping". The audio side reads a control's parameter for every move, so from the
-        // next block each control goes where the plugin says now.
+        // mapping". The audio side follows from the next block.
         let mut pedal_unmapped = false;
         if self.joined.handler.take_midi_mapping_changed() {
             let pedal = controller_number(Control::Pedal(Pedal::UP));
@@ -458,14 +409,12 @@ impl LoadedPlugin for Vst3Plugin {
                 let before = self.targets.of_number(number);
                 self.targets.set(number, now);
                 if number != pedal {
-                    // A wheel or another controller leaves its old parameter where it put it, as a knob a MIDI learn
-                    // moved stays where it was left. Putting it back at rest would move a
-                    // parameter the wheel may never have touched.
+                    // Another control leaves its old parameter where it put it, as a knob a
+                    // MIDI learn moved stays where it was left.
                     continue;
                 }
                 pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
-                // A pedal held on the parameter it leaves would stay down there for good, so
-                // that parameter is let go of, the way an edit is.
+                // A pedal held on the parameter it leaves would stay down there for good.
                 if let Some(before) = before
                     && now != Some(before)
                 {
@@ -476,19 +425,12 @@ impl LoadedPlugin for Vst3Plugin {
                 }
             }
         }
-        // The other way: what the composer changed in the plugin's own window goes to the
-        // processor, which is the half that makes the sound. `ivsteditcontroller.h` says that
-        // is what `IComponentHandler` is for. What the ring has no room for goes back and is
-        // sent at the next poll, so a parameter never ends on a value the composer left behind.
         self.push_edits();
         Requests {
             restart: self.joined.handler.take_restart_wanted(),
             reload: self.joined.handler.take_reload_wanted(),
             state_is_dirty: self.joined.handler.take_state_is_dirty(),
             pedal_unmapped,
-            // VST 3 has no way for a plugin to close the window it is in: the host owns that
-            // window and the plugin only fills it. CLAP's `clap_host_gui.closed` has no
-            // counterpart here, so this is always false.
             window_closed: false,
             window_size: self.gui.as_ref().and_then(Vst3Gui::take_wanted_size),
             parameters_changed: ids_changed | self.joined.handler.take_titles_changed(),
@@ -496,17 +438,16 @@ impl LoadedPlugin for Vst3Plugin {
     }
 
     fn save_state(&mut self) -> Result<Vec<u8>, String> {
-        // SAFETY: both objects came from the plugin and are alive, and each stream outlives the
-        // call it is given to.
+        // SAFETY: both objects came from the plugin and are alive, and each stream outlives its
+        // call.
         let component = unsafe {
             asked_for_state("the plugin", |stream| {
                 self.joined.component.getState(stream)
             })
         }?;
-        // Whatever object the controller is. One object that implements both interfaces does
-        // not promise that its two states are the same bytes, and the load gives this part back
-        // through `IEditController::setState` whatever the object identity, so the save asks
-        // the same way. Only `initialize` and `terminate` depend on the two being separate.
+        // Asked even when the controller is the component: one object does not promise its two
+        // states are the same bytes, and the load gives this part back through
+        // `IEditController::setState` either way.
         let controller = match &self.joined.controller {
             // SAFETY: as above.
             Some(controller) => unsafe {
@@ -516,8 +457,7 @@ impl LoadedPlugin for Vst3Plugin {
             }?,
             None => None,
         };
-        // A plugin that keeps no state of its own is not written at all, so nothing replaces
-        // what is in the asset with a file that says "this plugin holds nothing".
+        // A plugin that keeps no state writes nothing over the asset.
         let Some(component) = component else {
             return Ok(Vec::new());
         };
@@ -525,7 +465,6 @@ impl LoadedPlugin for Vst3Plugin {
     }
 
     fn gui(&mut self) -> Option<&mut dyn PluginGui> {
-        // `None` for a plugin with no edit controller: nothing can make a view then.
         let gui = self.gui.as_mut()?;
         Some(gui)
     }
@@ -552,22 +491,20 @@ impl LoadedPlugin for Vst3Plugin {
         }
     }
 
-    /// The way an edit of the plugin's own window goes, from the other end: the controller is
-    /// told at once, so the two halves agree and what the controller says is the value as the
-    /// plugin took it, and the processor gets it in the parameter changes of a block.
+    /// The controller is told at once, so what it says is the value as the plugin took it, and
+    /// the processor gets it in a block, as a window edit does.
     fn send(&mut self, change: ParameterChange) {
         if let Some(controller) = &self.joined.controller {
             // SAFETY: the controller came from the plugin and is alive.
             unsafe { controller.setParamNormalized(change.id, change.value) };
         }
-        // With the edits that wait, in place of one of the same parameter, so it neither
-        // overtakes an older one nor is overtaken by it.
+        // In place of a waiting edit of the same parameter, so neither overtakes the other.
         self.joined.handler.put_edit(change);
         self.push_edits();
     }
 
-    /// The controller is told, and so is what the host knows the processor plays, so a change
-    /// of the controller's values does not send it to the processor as an edit.
+    /// The known value is updated too, so `kParamValuesChanged` does not send it to the
+    /// processor as an edit.
     fn show(&mut self, change: ParameterChange) -> bool {
         let Some(controller) = &self.joined.controller else {
             return false;
@@ -591,8 +528,7 @@ impl LoadedPlugin for Vst3Plugin {
         if Arc::get_mut(&mut self.live).is_none() {
             return false;
         }
-        // Whatever the plugin still holds for a window goes before it is terminated. Every path
-        // that lets a plugin go has already closed its window; this is the one that decides.
+        // The view goes before the plugin is terminated.
         if let Some(gui) = &mut self.gui {
             gui.destroy();
         }
@@ -603,9 +539,8 @@ impl LoadedPlugin for Vst3Plugin {
     /// `kLatencyChanged`: "The host has to deactivate and reactivate the plug-in, then
     /// afterwards the host could ask for the current latency." `kIoChanged`: "The host has to
     /// deactivate the plug-in, asks the plug-in for its wanted new bus configurations, adapts
-    /// its processing graph and reactivate the plug-in." One way for both: the buses are asked
-    /// for and read again while the plugin is inactive, which changes nothing when only the
-    /// latency changed, and the new audio side is made from what the plugin says afterwards.
+    /// its processing graph and reactivate the plug-in." One way for both: the buses are read
+    /// again while the plugin is inactive, and a new audio side is made from what it says.
     fn restart(
         &mut self,
         _config: PrepareConfig,
@@ -613,8 +548,7 @@ impl LoadedPlugin for Vst3Plugin {
         laned: &Laned,
     ) -> Option<Result<Box<dyn PluginAudio>, PluginProblem>> {
         Arc::get_mut(&mut self.live)?;
-        // Whatever the old audio side reported last reaches the controller before its ring
-        // goes.
+        // The old audio side's last reports reach the controller before its ring goes.
         self.take_reports();
         let did_not_restart = |call: &str, result: int32| PluginProblem::DidNotRestart {
             plugin_id: self.plugin_id.clone(),
@@ -639,11 +573,9 @@ impl LoadedPlugin for Vst3Plugin {
         self.takes_notes = buses.takes_notes;
         // SAFETY: as above.
         let latency = unsafe { not_ours(|| self.processor.getLatencySamples()) };
-        // What the plugin asked for while it was started again, as after a load.
         self.joined.handler.forget_restarts();
-        // New rings: their other ends went with the audio side that came back. An edit that
-        // was on its way there went back to the handler as that side was dropped, and goes to
-        // this one at the next poll.
+        // New rings: the old ones went with the old audio side, which gave its unplayed edits
+        // back to the handler.
         let (started, ends) = Vst3Processor::new(
             self.processor.clone(),
             self.live.clone(),
@@ -656,7 +588,6 @@ impl LoadedPlugin for Vst3Plugin {
         );
         self.changed = ends.changed;
         self.edited = ends.edited;
-        // The new side counts what it takes from nothing.
         self.edits_pushed = 0;
         self.pushed_at.clear();
         Some(Ok(Box::new(Player::new(Box::new(started), laned.clone()))))
@@ -665,18 +596,14 @@ impl LoadedPlugin for Vst3Plugin {
 
 impl Drop for Vst3Plugin {
     fn drop(&mut self) {
-        // The project is being torn down. A plugin whose audio side is still in an engine that
-        // is going is left as it is, exactly as the CLAP backend leaves one: terminating it
-        // while another thread may still be in `process` would be worse than not terminating.
-        // `Joined::let_go` does nothing once `kept` is taken, so this decides.
+        // The project is being torn down. A plugin whose audio side is still in the engine is
+        // left as it is: terminating it while another thread may be in `process` is worse.
         if Arc::get_mut(&mut self.live).is_none() {
             self.joined.kept = false;
         }
     }
 }
 
-/// Makes one object of a class from the factory.
-///
 /// # Safety
 ///
 /// The factory must be alive.
@@ -699,17 +626,16 @@ unsafe fn create<I: vst3::Interface>(
     }
 }
 
-/// What this host plays of a plugin's buses: the channels of every audio bus each way, and
-/// whether it has an event input for the notes.
+/// The channels of every audio bus each way, and whether there is an event input.
 struct Buses {
     inputs: Vec<usize>,
     outputs: Vec<usize>,
     takes_notes: bool,
 }
 
-/// Asks the plugin for stereo on its first audio input and output, reads what it has
-/// afterwards, and activates the buses this host plays. VST 3 allows all of it only while the
-/// plugin is inactive: when it loads, and when it is started again because its buses changed.
+/// Asks for stereo on the first audio input and output, reads what the plugin has afterwards,
+/// and activates the buses this host plays. VST 3 allows this only while the plugin is
+/// inactive.
 ///
 /// # Safety
 ///
@@ -722,22 +648,20 @@ unsafe fn prepare_buses(
     unsafe {
         let inputs = bus_channels(component, BusDirections_::kInput as int32);
         let outputs = bus_channels(component, BusDirections_::kOutput as int32);
-        // A plugin may change its buses while it answers the arrangement, in either
-        // direction, so what it has is read again and the buffers are made from that.
+        // A plugin may change its buses while it answers the arrangement, so they are read
+        // again.
         arrange(processor, &inputs, &outputs);
         let inputs = bus_channels(component, BusDirections_::kInput as int32);
         let outputs = bus_channels(component, BusDirections_::kOutput as int32);
 
-        // The first event input is the one that gets the notes, and there is no more than one.
+        // Notes go to the first event input only.
         component.activateBus(
             MediaTypes_::kEvent as int32,
             BusDirections_::kInput as int32,
             0,
             1,
         );
-        // The first audio input is the one an effect is played into. A bus that is not active
-        // is one the plugin may ignore, so an effect would be silent without this. An
-        // instrument with an audio input gets the silence it always got.
+        // A plugin may ignore an inactive bus, so an effect would be silent without this.
         if !inputs.is_empty() {
             component.activateBus(
                 MediaTypes_::kAudio as int32,
@@ -764,18 +688,15 @@ unsafe fn prepare_buses(
     }
 }
 
-/// Every parameter a host may send, with the value the processor holds as far as the host
-/// knows: the one in `known` for a parameter the host already knew, and the one the controller
-/// shows for a parameter it did not. A read-only parameter, such as a meter, is the plugin's to
-/// set and never the host's.
+/// Every parameter a host may send (read-only ones are the plugin's to set), with its value
+/// from `known`, or from the controller for a parameter not in `known`.
 fn parameter_values(
     controller: &ComPtr<IEditController>,
     known: &BTreeMap<ParamID, ParamValue>,
 ) -> BTreeMap<ParamID, ParamValue> {
     let mut values = BTreeMap::new();
-    // SAFETY: the controller came from the plugin and is alive. `info` is written by the plugin
-    // before it is read, and a call that fails leaves it untouched, which is why it starts
-    // zeroed.
+    // SAFETY: the controller came from the plugin and is alive, and `info` starts zeroed in
+    // case a failed call leaves it untouched.
     unsafe {
         for index in 0..controller.getParameterCount() {
             let mut info: ParameterInfo = std::mem::zeroed();
@@ -796,8 +717,7 @@ fn parameter_values(
 }
 
 /// Every parameter whose value `now` gives differently from `known`, as an edit, with `known`
-/// brought up to date. Compared bit for bit, so a value that is not a number, which never
-/// equals itself, is sent once and not every time.
+/// brought up to date. Compared bit for bit, so a NaN is sent once and not every time.
 fn differences(
     known: &mut BTreeMap<ParamID, ParamValue>,
     now: impl Fn(ParamID) -> ParamValue,
@@ -822,8 +742,8 @@ fn differences(
 ///
 /// The component must be alive.
 unsafe fn bus_channels(component: &ComPtr<IComponent>, direction: int32) -> Vec<usize> {
-    // SAFETY: the caller keeps the contract, and `info` is written by the plugin before it is
-    // read, which is why it starts zeroed.
+    // SAFETY: the caller keeps the contract, and `info` starts zeroed in case a failed call
+    // leaves it untouched.
     unsafe {
         let count = component.getBusCount(MediaTypes_::kAudio as int32, direction);
         (0..count)
@@ -840,9 +760,8 @@ unsafe fn bus_channels(component: &ComPtr<IComponent>, direction: int32) -> Vec<
     }
 }
 
-/// Tells the plugin what this host gives each bus. The first input and the first output are
-/// asked for in stereo, which is what the engine carries. Whatever the plugin answers, what it
-/// really has is what its buses say afterwards, which the caller reads again.
+/// Asks for stereo, which the engine carries, on the first input and output, and for the
+/// channels each other bus has now.
 ///
 /// # Safety
 ///
@@ -871,9 +790,8 @@ unsafe fn arrange(processor: &ComPtr<IAudioProcessor>, inputs: &[usize], outputs
     }
 }
 
-/// The speaker arrangement of a channel count. Anything this host does not know by name is
-/// asked for as the count of low bits, which is what the VST 3 arrangements are. A bus wider
-/// than the 64 bits an arrangement has is asked for as all of them.
+/// The speaker arrangement of a channel count: an arrangement is a bit per speaker, so an
+/// unnamed count is that many low bits, at most 64.
 fn speakers(channels: usize) -> SpeakerArrangement {
     match channels {
         0 => 0,
@@ -883,8 +801,7 @@ fn speakers(channels: usize) -> SpeakerArrangement {
     }
 }
 
-/// The parameter the plugin maps a control to. VST 3 has no MIDI controller event:
-/// `IMidiMapping` is how the format says a host sends one, as a parameter change.
+/// The parameter the plugin maps a VST 3 controller number to, through `IMidiMapping`.
 ///
 /// # Safety
 ///
@@ -901,12 +818,9 @@ unsafe fn mapped_parameter(
     (result == kResultOk).then_some(id)
 }
 
-/// One half of a plugin's state, out of the plugin.
-///
-/// `Ok(None)` is "this plugin keeps no such state", which VST 3 says with `kNotImplemented` or
-/// `kResultFalse` and which a one-object plugin usually says of its controller half. Every
-/// other failure code is an error, so a plugin that could not give its state does not have an
-/// empty one written over the good file that is already there.
+/// One half of a plugin's state. `Ok(None)` is "no such state" (`kNotImplemented` or
+/// `kResultFalse`, which a one-object plugin often says of its controller). Any other failure
+/// is an error, so an empty state is never written over a good file.
 ///
 /// # Safety
 ///
@@ -922,18 +836,15 @@ unsafe fn asked_for_state(
     if result == kResultOk {
         return Ok(Some(written.written()));
     }
-    // The two ways VST 3 has of saying "not mine". Everything else is a failure.
     if result == kNotImplemented || result == kResultFalse {
         return Ok(None);
     }
     Err(format!("{whose} answered {result} to getState"))
 }
 
-/// A state asset: the component's state and the controller's, in one file.
-///
-/// A state that could not be read back is not written: the lengths are four bytes each, so a
-/// part above [`MAX_STATE`] would be written with a length that is not its own and the file
-/// would be unreadable. The asset that is there is left alone and the composer is told.
+/// A state asset: the component's state and the controller's, each after a four-byte length.
+/// A part above [`MAX_STATE`] could not be read back, so it is refused and the asset that is
+/// there is left alone.
 fn write_state(component: &[u8], controller: &[u8]) -> Result<Vec<u8>, String> {
     let too_big = |what: &str, length: usize| {
         format!(
@@ -955,7 +866,7 @@ fn write_state(component: &[u8], controller: &[u8]) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// The two states in a state asset. An error says the file is not one this host wrote.
+/// The two states in a state asset.
 fn read_parts(bytes: &[u8]) -> Result<(&[u8], &[u8]), String> {
     let rest = bytes
         .strip_prefix(&MAGIC)
@@ -965,7 +876,6 @@ fn read_parts(bytes: &[u8]) -> Result<(&[u8], &[u8]), String> {
     Ok((component, controller))
 }
 
-/// One length-prefixed part of a state asset, and what follows it.
 fn take_part(rest: &[u8]) -> Result<(&[u8], &[u8]), String> {
     let (length, rest) = rest
         .split_at_checked(4)
@@ -997,10 +907,8 @@ unsafe fn read_state(
     let (component_bytes, controller_bytes) = read_parts(bytes).map_err(not_read)?;
     let saved = MemoryStream::reading(component_bytes);
     let stream = as_stream(&saved).ok_or_else(|| not_read("the state stream".to_string()))?;
-    // A plugin that says it does not take a state is not a failure: a one-object plugin says
-    // exactly that of `setComponentState`, because the state is already where it belongs. Any
-    // other failure code is one, and the plugin does not load: a plugin that came up with half
-    // of its state would write that half over the good file at the next save.
+    // "Not mine" is fine: a one-object plugin says it of `setComponentState`. Any other failure
+    // stops the load, or the next save would write half a state over the good file.
     let took = |whose: &str, call: &str, result: int32| {
         let answered = result == kResultOk;
         let not_mine = result == kNotImplemented || result == kResultFalse;
@@ -1018,8 +926,7 @@ unsafe fn read_state(
             )));
         }
         if let Some(controller) = controller {
-            // The controller is given the component's state as well, which is how it shows
-            // what the component really holds.
+            // The controller reads the component's state too, to show what it holds.
             saved.rewind();
             let result = not_ours(|| controller.setComponentState(stream.as_ptr()));
             took("the plugin's controller", "setComponentState", result)?;
@@ -1065,13 +972,9 @@ mod tests {
         assert!(read_parts(b"SVT3\x08\x00\x00\x00ab").is_err());
     }
 
-    /// A state longer than the four bytes its length is written in would be read back as
-    /// another state, or as nothing. It is refused before the asset is touched, so what the
-    /// plugin saved last is still there.
     #[test]
     fn a_state_too_long_to_be_read_back_is_refused_instead_of_written() {
-        // Half a gigabyte of zeros, which the system gives as pages it never has to fill in
-        // because nothing here writes into them. The length is what is checked.
+        // Zeroed pages the system never has to fill in, because nothing writes into them.
         let long = vec![0_u8; MAX_STATE + 1];
         let error = write_state(&long, b"").expect_err("a state this long is refused");
         assert!(error.contains("left as it is"), "{error}");
@@ -1079,8 +982,6 @@ mod tests {
         assert!(error.contains("controller"), "{error}");
     }
 
-    /// A value that is not a number never equals itself. Compared as a number it would be sent
-    /// at every `kParamValuesChanged`; it is sent once.
     #[test]
     fn a_value_that_is_not_a_number_is_sent_once() {
         let mut known = BTreeMap::from([(1, 0.5), (2, 0.25)]);

@@ -46,7 +46,7 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
-pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
+pub use card::{TitleBar, drawn_nodes, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
 pub use card::{node_counts, page_has_text, page_ready};
 #[cfg(feature = "test-support")]
@@ -54,6 +54,8 @@ pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use tools::forget_gone;
 pub use window::start_window;
+#[cfg(feature = "test-support")]
+pub use window::{CodeChanges, start_window_unwatched};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};
@@ -184,6 +186,9 @@ pub const HOST_TYPES: &str = include_str!("node.d.ts");
 const BUN_TYPES: &str = include_str!("bun.d.ts");
 /// What the runtime writes in `extensions/` and owns there: files, and the folder `sdk`.
 const OWNED: [&str; 4] = ["sdk.ts", "sdk", "tsconfig.json", "bun.d.ts"];
+/// What the runtime writes in `extensions/`, which the project history leaves out.
+pub const WRITTEN_BY_THE_RUNTIME: [&str; 5] =
+    [OWNED[0], OWNED[1], OWNED[2], OWNED[3], bun::LOG_FILE];
 /// The sounds of a tool that do not build that its problem names; it counts the others.
 const SHOWN_FAILURES: usize = 3;
 /// JSX makes the nodes of `sdk.ts`. Also what `bun check -p extensions` checks with.
@@ -212,7 +217,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-sound",
         group: WRITING,
-        when: "A tool's sound needs feedback, buffers, files, stereo, voices, outputs or its spectrum",
+        when: "A tool's sound needs feedback, files, stereo, a sidechain, voices, outputs or its spectrum",
         markdown: include_str!("extensions-sound.md"),
     },
     AgentDoc {
@@ -242,7 +247,6 @@ const PROJECT_TOOLS: &str = "Tools of this project";
 
 /// The tools of a project, from their first load.
 pub struct Extensions {
-    /// The `extensions/` folder of the project.
     folder: PathBuf,
     /// Bun after its first load, for the window. `None` when the folder has no tool file, or
     /// Bun did not start.
@@ -575,12 +579,12 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
 /// Registers the cards of the blocks of this crate that have one: a region's.
 pub fn register_views(views: &mut sound_ui::Views) {
     region_card::register(views);
 }
 
+/// Whether this machine has a Bun to run the tools with.
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }

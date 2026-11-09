@@ -272,7 +272,7 @@ impl RenderOnce for Button {
         let ring = if border == cx.theme().lavender {
             cx.theme().gray_950
         } else {
-            cx.theme().lavender
+            cx.theme().lavender.opacity(0.4)
         };
         let size = self.size;
         let disabled = self.disabled;
