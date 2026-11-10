@@ -59,6 +59,16 @@ pub(crate) enum Request {
     Quit,
 }
 
+impl Request {
+    /// Whether the plugin may keep its main thread long for it.
+    pub(crate) fn is_loading(&self) -> bool {
+        matches!(
+            self,
+            Self::Load { .. } | Self::Restart { .. } | Self::SaveState
+        )
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Answer {
     Loaded {

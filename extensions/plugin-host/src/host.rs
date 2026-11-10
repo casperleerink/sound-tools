@@ -118,23 +118,33 @@ pub struct Isolation {
     /// How long one block may take before the plugin counts as hung. A block of 64 frames is
     /// about a millisecond of sound.
     pub(crate) block_timeout: Duration,
-    /// How long the plugin's main thread may stop before it counts as hung, also while it
-    /// loads: as long as the scan gives a bundle.
+    /// How long the plugin's main thread may stop before it counts as hung. The app waits that
+    /// long, so it is short.
     pub(crate) hung_after: Duration,
+    /// The same while the plugin loads or saves, which may take long: as long as the scan gives
+    /// a bundle.
+    pub(crate) hung_loading_after: Duration,
 }
 
 impl Isolation {
     pub fn new(quiet: bool) -> Self {
         Self {
             quiet,
-            block_timeout: Duration::from_secs(1),
-            hung_after: crate::scan::SCAN_TIMEOUT,
+            block_timeout: Duration::from_millis(250),
+            hung_after: Duration::from_secs(10),
+            hung_loading_after: crate::scan::SCAN_TIMEOUT,
         }
     }
 
-    pub fn with_timeouts(mut self, block: Duration, hung_after: Duration) -> Self {
+    pub fn with_timeouts(
+        mut self,
+        block: Duration,
+        hung_after: Duration,
+        hung_loading_after: Duration,
+    ) -> Self {
         self.block_timeout = block;
         self.hung_after = hung_after;
+        self.hung_loading_after = hung_loading_after;
         self
     }
 }
