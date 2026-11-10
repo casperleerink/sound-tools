@@ -28,7 +28,7 @@ use crate::backend::LoadedPlugin;
 use crate::parameters::{Parameter, ParameterValue, by_id, pin_problem};
 use crate::placements::{PlacementStore, Placements};
 use crate::processor::{
-    AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate, LanedPins, Playing,
+    AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate, Laned, Player, PluginAudio, laned_here,
 };
 use crate::scan::{ScanCache, ScanCommand};
 use crate::window::{PluginFrame, PluginWindow};
@@ -39,6 +39,10 @@ use crate::{PluginFormat, PluginRecord};
 /// so a crash loses at most a second, and whatever a plugin changed without saying so.
 const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How long closing may wait for plugins in processes of their own, all of them together: one
+/// that does not answer by then is killed.
+const CLOSING: Duration = Duration::from_secs(10);
+
 /// What the host tells a plugin about itself.
 pub(crate) const HOST_NAME: &str = "Sound Tools";
 pub(crate) const HOST_VENDOR: &str = "Sound Tools";
@@ -47,7 +51,7 @@ pub(crate) const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Each becomes one line in `problems.txt`. A message speaks of the plugin, never of a track:
 /// this host does not know where the record sits.
-#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error, serde::Serialize, serde::Deserialize)]
 pub enum PluginProblem {
     #[error(
         "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and nothing plays through it: a missing instrument is silent, a missing effect lets the sound through unchanged. Install the plugin, or correct `plugin_id`"
@@ -59,6 +63,14 @@ pub enum PluginProblem {
     StillScanning { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
+    #[error(
+        "{name} stopped working and was closed. The rest plays on. Choose Start again on its card, or open the project again, to bring it back as last saved"
+    )]
+    Crashed { plugin_id: String, name: String },
+    #[error(
+        "{name} cannot load until Sound Tools is restarted: Sound Tools was updated while it ran"
+    )]
+    Updated { name: String },
     #[error(
         "the plugin {plugin_id:?} asked to be started again, because its latency or its buses changed, and did not start: {message}. Nothing plays through it until its record changes"
     )]
@@ -96,6 +108,79 @@ pub enum PluginProblem {
     },
 }
 
+/// How a host runs its plugins in processes of their own.
+#[derive(Clone, Debug)]
+#[cfg_attr(not(unix), allow(dead_code))]
+pub struct Isolation {
+    /// Whether the plugin's process keeps quiet: what it writes to standard error goes nowhere.
+    /// A headless host's own output is what its caller reads.
+    pub(crate) quiet: bool,
+    /// How long one block may take before the plugin counts as hung. A block of 64 frames is
+    /// about a millisecond of sound.
+    pub(crate) block_timeout: Duration,
+    /// How long the plugin's main thread may stop before it counts as hung. The app waits that
+    /// long, so it is short.
+    pub(crate) hung_after: Duration,
+    /// The same while the plugin loads or saves, which may take long: as long as the scan gives
+    /// a bundle.
+    pub(crate) hung_loading_after: Duration,
+}
+
+impl Isolation {
+    pub fn new(quiet: bool) -> Self {
+        Self {
+            quiet,
+            block_timeout: Duration::from_millis(250),
+            hung_after: Duration::from_secs(10),
+            hung_loading_after: crate::scan::SCAN_TIMEOUT,
+        }
+    }
+
+    pub fn with_timeouts(
+        mut self,
+        block: Duration,
+        hung_after: Duration,
+        hung_loading_after: Duration,
+    ) -> Self {
+        self.block_timeout = block;
+        self.hung_after = hung_after;
+        self.hung_loading_after = hung_loading_after;
+        self
+    }
+}
+
+/// What a record held when its plugin stopped working, see `Inner::stopped`.
+struct Stopped {
+    format: PluginFormat,
+    plugin_id: String,
+    asset: AssetName,
+    name: String,
+}
+
+impl Stopped {
+    fn of(record: &PluginRecord, name: String) -> Self {
+        Self {
+            format: record.format,
+            plugin_id: record.plugin_id.clone(),
+            asset: record.asset(),
+            name,
+        }
+    }
+
+    fn holds(&self, record: &PluginRecord) -> bool {
+        record.format == self.format
+            && record.plugin_id == self.plugin_id
+            && record.asset() == self.asset
+    }
+
+    fn problem(&self) -> PluginProblem {
+        PluginProblem::Crashed {
+            plugin_id: self.plugin_id.clone(),
+            name: self.name.clone(),
+        }
+    }
+}
+
 /// What [`Plugins::open`] gives back.
 pub(crate) struct Opened {
     pub engine: ForEngine,
@@ -108,7 +193,7 @@ pub(crate) enum ForEngine {
     /// The engine plays on with the plugin it has. Only pins changed, and the poll sends those.
     Same,
     /// `None` from a host that loads nothing ([`Plugins::listing`]).
-    Play(Option<Playing>),
+    Play(Option<Box<dyn PluginAudio>>),
 }
 
 /// One plugin this project holds. It is `loaded` while a record names it and `retired` once it
@@ -137,7 +222,7 @@ struct Hosted {
     /// plugin with thousands of parameters without a copy per frame.
     parameters: Option<Rc<BTreeMap<u32, Parameter>>>,
     pins: BTreeMap<u32, PinState>,
-    laned: Arc<LanedPins>,
+    laned: Laned,
     /// The pins as the behaviour last ran. A plugin started again gets these, so the index of a
     /// lane means the same pin to both until the next run.
     lanes: AutomatedPins,
@@ -237,6 +322,13 @@ struct Inner {
     writes_state: bool,
     /// `false` for [`Plugins::listing`].
     loads: bool,
+    /// Whether each plugin plays in a process of its own, see `bridge`.
+    isolation: Option<Isolation>,
+    /// Records whose plugin stopped working, with what they held then. Each stays silent and
+    /// reported until [`Plugins::start_again`], or until its record names another plugin or
+    /// state file: never loaded again by itself, so a plugin that crashes as it loads does not
+    /// crash on every run of its behaviour.
+    stopped: RefCell<BTreeMap<InstanceId, Stopped>>,
     /// Kept so that dropping the host can still save.
     assets: RefCell<Option<Assets>>,
     /// The project folder, from the first poll. Window placements are kept by it.
@@ -255,6 +347,10 @@ impl Drop for Inner {
         self.stop.store(true, Ordering::Release);
         let assets = self.writes_state.then(|| self.assets.get_mut().clone());
         let table = self.table.get_mut();
+        let deadline = Instant::now() + CLOSING;
+        for hosted in table.loaded.values_mut().chain(&mut table.retired) {
+            hosted.plugin.closing(deadline);
+        }
         for hosted in table.loaded.values_mut().chain(&mut table.retired) {
             // The window cannot be taken down from here; it goes with the application.
             let _window = hosted.window.give_up(hosted.plugin.gui());
@@ -299,7 +395,20 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with(search_paths, scanner, cache, true, true)
+        Self::with(search_paths, scanner, cache, true, true, None)
+    }
+
+    /// A host that saves plugin state into the project and plays every plugin in a process of
+    /// its own, the scanner's program, so a plugin that crashes costs its own slot. Where the
+    /// system cannot (Windows, for now), it is [`Self::new`].
+    pub fn isolated(
+        search_paths: Vec<std::path::PathBuf>,
+        scanner: ScanCommand,
+        cache: ScanCache,
+        isolation: Isolation,
+    ) -> Self {
+        let isolation = cfg!(unix).then_some(isolation);
+        Self::with(search_paths, scanner, cache, true, true, isolation)
     }
 
     /// Loads plugins and never writes.
@@ -308,7 +417,7 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with(search_paths, scanner, cache, false, true)
+        Self::with(search_paths, scanner, cache, false, true, None)
     }
 
     /// Looks a plugin up and reads its state file, and never loads it: a plugin that only loads
@@ -319,7 +428,7 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with(search_paths, scanner, cache, false, false)
+        Self::with(search_paths, scanner, cache, false, false, None)
     }
 
     fn with(
@@ -328,6 +437,7 @@ impl Plugins {
         cache: ScanCache,
         writes_state: bool,
         loads: bool,
+        isolation: Option<Isolation>,
     ) -> Self {
         let placement_store = cache.placement_store();
         Self(Rc::new(Inner {
@@ -344,6 +454,8 @@ impl Plugins {
             retries: RefCell::new(Vec::new()),
             writes_state,
             loads,
+            isolation,
+            stopped: RefCell::new(BTreeMap::new()),
             assets: RefCell::new(None),
             root: RefCell::new(None),
             placement_store,
@@ -394,6 +506,16 @@ impl Plugins {
         *self.0.assets.borrow_mut() = Some(assets.clone());
         self.0.waiting.borrow_mut().remove(id);
         {
+            let mut stopped = self.0.stopped.borrow_mut();
+            match stopped.get(id) {
+                Some(stopped) if stopped.holds(record) => return Err(stopped.problem()),
+                Some(_) => {
+                    stopped.remove(id);
+                }
+                None => {}
+            }
+        }
+        {
             let mut table = self.0.table.borrow_mut();
             if let Some(hosted) = table.loaded.get_mut(id)
                 && processor_kept
@@ -423,6 +545,10 @@ impl Plugins {
                     PluginProblem::StillScanning { .. } | PluginProblem::NotInstalled { .. }
                 ) {
                     self.0.waiting.borrow_mut().insert(id.clone());
+                }
+                if let PluginProblem::Crashed { name, .. } = &problem {
+                    let stopped = Stopped::of(record, name.clone());
+                    self.0.stopped.borrow_mut().insert(id.clone(), stopped);
                 }
                 Err(problem)
             }
@@ -470,15 +596,32 @@ impl Plugins {
             });
         }
         let pins = &record.parameters;
-        let opening = match record.format {
-            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config, pins),
-            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config, pins),
-        }?;
-        let crate::backend::Opening {
-            mut plugin,
-            started,
-            notes,
-        } = opening;
+        let (mut plugin, audio, laned, notes): (_, Box<dyn PluginAudio>, _, _) = match &self
+            .0
+            .isolation
+        {
+            #[cfg(unix)]
+            Some(isolation) => {
+                let saved = saved.as_deref();
+                let opened =
+                    crate::bridge::open(&self.0.scanner, isolation, &found, saved, config, pins)?;
+                (opened.plugin, opened.audio, opened.laned, opened.notes)
+            }
+            _ => {
+                let opening = match record.format {
+                    PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config, pins),
+                    PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config, pins),
+                }?;
+                let crate::backend::Opening {
+                    plugin,
+                    started,
+                    notes,
+                } = opening;
+                let laned = laned_here();
+                let audio = Box::new(Player::new(started, laned.clone()));
+                (plugin, audio, laned, notes)
+            }
+        };
         let has_window = plugin.gui().is_some_and(|gui| gui.is_offered());
         let mut hosted = Hosted {
             format: record.format,
@@ -495,7 +638,7 @@ impl Plugins {
             notes,
             parameters: None,
             pins: BTreeMap::new(),
-            laned: Arc::new(LanedPins::new()),
+            laned,
             lanes: AutomatedPins::NONE,
             shown: BTreeMap::new(),
         };
@@ -505,13 +648,36 @@ impl Plugins {
         hosted.send_pins(record);
         let notes = hosted.notes(record);
         let lanes = hosted.automated(record);
-        let laned = hosted.laned.clone();
         self.0.table.borrow_mut().loaded.insert(id.clone(), hosted);
         Ok(Opened {
-            engine: ForEngine::Play(Some(Playing { started, laned })),
+            engine: ForEngine::Play(Some(audio)),
             notes,
             lanes,
         })
+    }
+
+    /// The name the composer knows a plugin by: the one the scan found, or its id.
+    fn name_of(&self, hosted: &Hosted) -> String {
+        self.installed_name(hosted.format, &hosted.plugin_id)
+            .unwrap_or_else(|| hosted.plugin_id.clone())
+    }
+
+    /// Whether the plugin of this record stopped working and waits for [`Self::start_again`].
+    /// Read while drawing a card, so it gives up on a borrowed table.
+    pub fn has_stopped(&self, id: &InstanceId) -> bool {
+        self.0
+            .stopped
+            .try_borrow()
+            .is_ok_and(|stopped| stopped.contains_key(id))
+    }
+
+    /// Loads the plugin of a record that stopped working again, from its state as last saved,
+    /// for the composer: whoever polls runs its behaviour again.
+    pub fn start_again(&self, id: &InstanceId) {
+        if self.0.stopped.borrow_mut().remove(id).is_some() {
+            self.retry(id);
+            self.0.table.borrow_mut().card_changed = true;
+        }
     }
 
     fn retry(&self, id: &InstanceId) {
@@ -558,6 +724,10 @@ impl Plugins {
             ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
+        let deadline = Instant::now() + CLOSING;
+        for hosted in loaded.values_mut().chain(&mut *retired) {
+            hosted.plugin.closing(deadline);
+        }
         for hosted in loaded.values_mut().chain(&mut *retired) {
             // The placements still say which were open.
             if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
@@ -614,13 +784,14 @@ impl Plugins {
                     let none = HostedUpdate::Plugin(None, AutomatedPins::NONE);
                     updates.push((id.clone(), hosted.plugin_id.clone(), none));
                 }
-                Restart::Waiting => match hosted
-                    .plugin
-                    .restart(hosted.config, &pins_of(hosted, project, id))
-                {
+                Restart::Waiting => match hosted.plugin.restart(
+                    hosted.config,
+                    &pins_of(hosted, project, id),
+                    &hosted.laned,
+                ) {
                     // The engine has not given it back yet.
                     None => {}
-                    Some(Ok(started)) => {
+                    Some(Ok(audio)) => {
                         hosted.restart = Restart::Idle;
                         // What was on its way to the old audio side went with it, and the
                         // record may have changed meanwhile: every pin goes again.
@@ -628,9 +799,7 @@ impl Plugins {
                         if let Some(record) = record_of(project, id) {
                             hosted.send_pins(record);
                         }
-                        let laned = hosted.laned.clone();
-                        let playing = Playing { started, laned };
-                        let update = HostedUpdate::Plugin(Some(playing), hosted.lanes);
+                        let update = HostedUpdate::Plugin(Some(audio), hosted.lanes);
                         updates.push((id.clone(), hosted.plugin_id.clone(), update));
                     }
                     Some(Err(problem)) => {
@@ -748,6 +917,32 @@ impl Plugins {
             }
         }
 
+        // A plugin whose process stopped working goes at once: its slot is silent and reported
+        // until the composer starts it again, by a run of its behaviour that finds it stopped.
+        // Its window, which may be what crashed, does not come back by itself.
+        let crashed: Vec<InstanceId> = (loaded.iter())
+            .filter(|(_, hosted)| hosted.plugin.crashed())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in crashed {
+            if let Some(mut hosted) = loaded.remove(&id) {
+                if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
+                    finished_windows.push(handle);
+                }
+                *card_changed = true;
+                let stopped = Stopped {
+                    format: hosted.format,
+                    plugin_id: hosted.plugin_id.clone(),
+                    asset: hosted.asset.clone(),
+                    name: self.name_of(&hosted),
+                };
+                self.0.stopped.borrow_mut().insert(id.clone(), stopped);
+                self.retry(&id);
+                closed_for_good.push(id);
+                retired.push(hosted);
+            }
+        }
+
         retired.retain_mut(|hosted| !hosted.plugin.released());
         for id in closed_for_good {
             table.keep_open(&id, false);
@@ -788,6 +983,10 @@ fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
 /// Bytes that are already there are not written again, so a session that changed nothing
 /// leaves no diff.
 fn save(hosted: &mut Hosted, assets: &Assets) -> Result<(), PluginProblem> {
+    // A plugin that stopped working has nothing to give: its asset keeps what it had.
+    if hosted.plugin.crashed() {
+        return Ok(());
+    }
     let fail = |message: String| PluginProblem::StateNotWritten {
         plugin_id: hosted.plugin_id.clone(),
         message,

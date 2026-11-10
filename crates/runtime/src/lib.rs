@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use gpui::{App, AppContext as _, Context, Entity};
 use plugin_host::{
-    Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK,
-    WeakPlugins, default_search_paths,
+    Isolation, Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand,
+    VST_TRADEMARK, WeakPlugins, default_search_paths,
 };
 use sound_agent::{AgentSettings, Agents, AgentsPage, Sidebar};
 use sound_core::{
@@ -114,18 +114,25 @@ To check a vibrato or the tuning, solo the track and measure one held note with 
 When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
-/// The plugin host of one session: it scans this machine, keeps the plugins a project loads
-/// and saves their state. `read_only` is for `--inspect` and `--render`, which never write.
+/// The plugin host of one session that plays: it scans this machine, keeps the plugins a
+/// project loads and saves their state. Each plugin plays in a process of its own, so one that
+/// crashes costs its own slot; on macOS not yet in a window session, whose plugin windows
+/// still need the plugin in this process.
 ///
 /// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
 /// per bundle, so a plugin that crashes while it is looked at costs one bundle.
-pub fn plugins(read_only: bool) -> Result<Plugins> {
-    let loading = if read_only {
-        Loading::Only
-    } else {
-        Loading::AndSaving
-    };
+pub fn playing_plugins(in_window: bool) -> Result<Plugins> {
+    // Headless: what the plugin's process writes goes nowhere, as this process's own output
+    // is what its caller reads.
+    let isolated = !(in_window && cfg!(target_os = "macos"));
+    let loading = Loading::AndSaving(isolated.then(|| Isolation::new(!in_window)));
     with_cache(loading, ScanCache::of_this_machine())
+}
+
+/// The plugin host of `--render` and `--plugin-params`, which never write. Its plugins play in
+/// this process, which is already one of its own.
+pub fn read_only_plugins() -> Result<Plugins> {
+    with_cache(Loading::Only, ScanCache::of_this_machine())
 }
 
 /// The host `runtime --plugins` uses: it looks at every bundle again, whatever the cache of
@@ -143,8 +150,9 @@ pub fn plugins_for_inspecting() -> Result<Plugins> {
 
 /// How much of a plugin a host is for.
 enum Loading {
-    /// Loads a plugin and saves its state into the project.
-    AndSaving,
+    /// Loads a plugin and saves its state into the project, each in a process of its own when
+    /// it says how.
+    AndSaving(Option<Isolation>),
     /// Loads a plugin and never writes: `--render`.
     Only,
     /// Looks a plugin up and never loads one: `--inspect`, `--plugins`.
@@ -155,7 +163,8 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
     let scanner = ScanCommand::this_program()?;
     let paths = default_search_paths();
     Ok(match loading {
-        Loading::AndSaving => Plugins::new(paths, scanner, cache),
+        Loading::AndSaving(None) => Plugins::new(paths, scanner, cache),
+        Loading::AndSaving(Some(isolation)) => Plugins::isolated(paths, scanner, cache, isolation),
         Loading::Only => Plugins::read_only(paths, scanner, cache),
         Loading::None => Plugins::listing(paths, scanner, cache),
     })
