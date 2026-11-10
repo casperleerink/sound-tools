@@ -279,12 +279,17 @@ fn apply_level(state: &Level, context: &mut BehaviourContext<'_>) -> Result<(), 
 pub(crate) struct Rack {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<(String, f32)>,
+    /// A frame of every sub-block and a value every lane bends to there, as a lane that moves
+    /// inside a block does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bend: Option<(usize, f32)>,
 }
 
 /// Plays steady lanes, as the lane player of a track does: every lane every block, at offset
-/// 0, also while the project does not play.
+/// 0, also while the project does not play. With a bend, every lane again at its frame.
 pub(crate) struct LanePlayer {
     lanes: Vec<Automation>,
+    bend: Option<(usize, f32)>,
 }
 
 impl LanePlayer {
@@ -292,7 +297,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Vec<Automation>;
+    type Update = (Vec<Automation>, Option<(usize, f32)>);
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -300,13 +305,20 @@ impl Processor for LanePlayer {
 
     fn prepare(&mut self, _config: &PrepareConfig) {}
 
-    fn update(&mut self, update: &mut Vec<Automation>) {
-        std::mem::swap(&mut self.lanes, update);
+    fn update(&mut self, update: &mut Self::Update) {
+        std::mem::swap(&mut self.lanes, &mut update.0);
+        self.bend = update.1;
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         for lane in &self.lanes {
             context.event_outputs.push(Self::OUTPUT, 0, *lane);
+        }
+        if let Some((frame, value)) = self.bend {
+            for lane in &self.lanes {
+                let bent = Automation { value, ..*lane };
+                context.event_outputs.push(Self::OUTPUT, frame, bent);
+            }
         }
     }
 }
@@ -347,8 +359,11 @@ fn play_lanes(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), Be
     for name in missing {
         context.problem(format!("no lane for {name}"));
     }
-    let player = context.processor("lanes", || LanePlayer { lanes: Vec::new() })?;
-    context.update(player, lanes)?;
+    let player = context.processor("lanes", || LanePlayer {
+        lanes: Vec::new(),
+        bend: None,
+    })?;
+    context.update(player, (lanes, state.bend))?;
     context.connect(OutputEndpoint::new(player, LanePlayer::OUTPUT).to(input))?;
     Ok(())
 }

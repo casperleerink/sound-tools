@@ -28,11 +28,34 @@ use crate::processor::{EventInput, ProcessContext, Timed};
 ///
 /// Where a lane bends inside a block, its owner sends every lane again at that frame, and the
 /// engine plays the device's block in pieces split there. So each piece of a device hears
-/// every lane at offset 0, and a lane bends on its frame.
+/// every lane at offset 0, and a lane bends on its frame. A device that cuts its pieces itself
+/// (`Ports::automation_input_cut_by_processor`) gets the whole block and cuts it with
+/// [`automation_pieces`], at the same frames.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Automation {
     pub parameter: u16,
     pub value: f32,
+}
+
+/// The pieces the engine would play a block of `frames` frames in, for these lane values of the
+/// block: a new piece at every frame after the first that a value arrives on.
+pub fn automation_pieces(
+    lanes: &[Timed<Automation>],
+    frames: usize,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if start >= frames {
+            return None;
+        }
+        let end = (lanes.iter())
+            .map(|timed| timed.offset)
+            .find(|offset| *offset > start)
+            .map_or(frames, |offset| offset.min(frames));
+        let piece = start..end;
+        start = end;
+        Some(piece)
+    })
 }
 
 /// The lanes an owner plays into the numbers of one instance, as the views see them: the view
