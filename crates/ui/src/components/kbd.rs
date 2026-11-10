@@ -69,7 +69,9 @@ impl RenderOnce for Kbd {
         let theme = cx.theme();
         let (bg, border, text) = (theme.alpha_at(0.04), theme.alpha_at(0.05), theme.gray_900);
 
+        let selector = self.shortcut.clone();
         self.base
+            .debug_selector(move || format!("kbd-{selector}"))
             .flex()
             .flex_none()
             .items_center()

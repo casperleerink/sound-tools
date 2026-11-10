@@ -473,6 +473,28 @@ tool({
   globalKeys: ["tab", "cmd-z"],
 });
 
+tool({
+  name: "acts",
+  title: "Acts",
+  when: "Never",
+  doc: "Actions.",
+  state: { count: number({ min: 0, max: 10 }) },
+  sound: () => 0,
+  actions: {
+    count: { title: "Count", keys: ["c", "shift-up", "cmd-shift-z"], everywhere: true, run: ({ update }) => update("Count", ({ state }) => { state.count += 1; }) },
+    ask: { title: "Ask", run: async ({ confirm }) => { await confirm({ message: "Sure?", confirm: "Yes" }); } },
+    pass: { title: "Pass", keys: ["c"], run: ({ state }) => state.count > 0 },
+    // @ts-expect-error: shift is held last, after cmd, ctrl and alt.
+    wrong: { title: "Wrong", keys: ["shift-cmd-z"], run: () => {} },
+  },
+});
+
+// A shortcut names a key, or an action by its tool and its name.
+Toggle({ label: "C", tooltip: "Count", shortcut: "acts.count", on: true });
+Toggle({ label: "C", tooltip: "Count", shortcut: "cmd-c", on: true });
+// @ts-expect-error: no key is called `del`.
+Toggle({ label: "C", tooltip: "Count", shortcut: "del", on: true });
+
 // A select's value is typed by its options.
 const lanes = [{ value: "velocity", label: "Velocity" }, { value: "pedal", label: "Pedal" }] as const;
 const lane = (): "velocity" | "pedal" => "velocity";

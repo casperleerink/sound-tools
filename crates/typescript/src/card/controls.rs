@@ -9,7 +9,6 @@ use gpui::{
     Window, anchored, canvas, deferred, div, hsla, point, prelude::*, px,
 };
 use serde_json::{Value, json};
-use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::gesture::ValueKey;
 use sound_ui::components::notice::{Notice, NoticeTone};
@@ -18,6 +17,7 @@ use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::slider::Slider;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::{ActiveTheme, Shortcuts, shortcuts};
 
 use crate::bun::EventKind;
 use crate::tree::{
@@ -224,7 +224,10 @@ impl Drawing<'_> {
         let toggle = toggle
             .when(hears.click, |toggle| toggle.on_click(self.clicked(id)))
             .when_some(props.color, |toggle, color| toggle.color(color.0))
-            .when_some(tooltip_of(&props.tooltip, &props.shortcut), Toggle::tooltip)
+            .when_some(
+                tooltip_of(&props.tooltip, &props.shortcut, self.cx),
+                Toggle::tooltip,
+            )
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
         let wrap = self
@@ -278,7 +281,7 @@ impl Drawing<'_> {
             .disabled(props.disabled == Some(true))
             .when_some(props.opacity, |button, opacity| button.opacity(opacity))
             .when_some(
-                tooltip_of(&props.tooltip, &props.shortcut),
+                tooltip_of(&props.tooltip, &props.shortcut, self.cx),
                 |mut button, tooltip| {
                     (button.interactivity()).tooltip(move |_, cx| tooltip.clone().view(cx));
                     button
@@ -535,23 +538,23 @@ fn clicks(key: &Keystroke) -> bool {
 }
 
 /// The tooltip of a button or a toggle, with its shortcut's keys after its words.
-fn tooltip_of(text: &Option<String>, shortcut: &Option<String>) -> Option<Tooltip> {
+fn tooltip_of(text: &Option<String>, shortcut: &Option<String>, cx: &App) -> Option<Tooltip> {
     let tooltip = Tooltip::new(text.clone()?);
-    Some(match shortcut {
-        Some(keys) => tooltip.shortcut(&shortcut_of(keys)),
+    let keys = shortcut.as_deref().and_then(|keys| shortcut_of(keys, cx));
+    Some(match keys {
+        Some(keys) => tooltip.shortcut(&keys),
         None => tooltip,
     })
 }
 
-/// A key as the SDK names it, `cmd-alt-c`, as a menu draws it: `mod+alt+c`.
-pub(super) fn shortcut_of(mut keys: &str) -> String {
-    let mut parts = Vec::new();
-    for (prefix, drawn) in [("cmd-", "mod"), ("ctrl-", "ctrl"), ("alt-", "alt")] {
-        if let Some(rest) = keys.strip_prefix(prefix) {
-            parts.push(drawn);
-            keys = rest;
-        }
-    }
-    parts.push(keys);
-    parts.join("+")
+/// What a `shortcut` draws, as a menu draws keys: the key it names, or the first key that does
+/// the action it names, `song.record`, now. `None` for an action with no key.
+pub(super) fn shortcut_of(shortcut: &str, cx: &App) -> Option<String> {
+    let names_action = (shortcut.rsplit_once('.'))
+        .is_some_and(|(group, action)| !group.is_empty() && !action.is_empty());
+    let key = match names_action {
+        true => cx.try_global::<Shortcuts>()?.keys(shortcut).first()?,
+        false => shortcut,
+    };
+    Some(shortcuts::drawn(key))
 }

@@ -43,6 +43,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
+use sound_ui::Shortcuts;
 
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
@@ -67,15 +68,36 @@ pub const FOLDER: &str = "extensions";
 /// it has the focus. The plain keys of the window, such as space, leave it alone.
 pub const KEY_CONTEXT: &str = "ToolKeys";
 
-/// The key context of a card or a page whose tool hears the keys `takes`, or every key: the
-/// computer keys leave those to it.
-pub(crate) fn key_context(takes: Option<&[String]>) -> gpui::KeyContext {
+/// The key context of a card or a page of the tool `info`: the plain keys it takes, which the
+/// computer keys leave to it. Every key for an `onKey` that names none, else the keys it names
+/// and those that do its actions now.
+pub(crate) fn key_context(info: &ToolInfo, cx: &gpui::App) -> gpui::KeyContext {
     let mut context = gpui::KeyContext::default();
-    match takes {
-        None => context.add(KEY_CONTEXT),
-        Some(takes) => takes.iter().for_each(|key| context.add(taken(key))),
+    let named = match (info.keys, &info.takes) {
+        (true, None) => {
+            context.add(KEY_CONTEXT);
+            return context;
+        }
+        (true, Some(takes)) => takes.as_slice(),
+        (false, _) => &[],
+    };
+    let shortcuts = cx.try_global::<Shortcuts>();
+    let bound = (shortcuts.iter())
+        .flat_map(|shortcuts| shortcuts.chords(&info.name))
+        .map(|chord| chord.strip_prefix("shift-").unwrap_or(chord));
+    for key in named.iter().map(String::as_str).chain(bound) {
+        context.add(taken(key));
     }
     context
+}
+
+/// The actions of `tool` that the key does now, in the order its code tries them.
+pub(crate) fn actions_on(tool: &str, keystroke: &gpui::Keystroke, cx: &gpui::App) -> Vec<String> {
+    let Some(shortcuts) = cx.try_global::<Shortcuts>() else {
+        return Vec::new();
+    };
+    let bound = shortcuts.bound(tool, &sound_ui::shortcuts::chord(keystroke));
+    bound.into_iter().map(str::to_string).collect()
 }
 
 fn taken(key: &str) -> String {

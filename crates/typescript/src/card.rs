@@ -30,7 +30,7 @@ use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::DropdownMenu;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::renders::{self, Part};
-use sound_ui::{ActiveTheme, ControlEdit, Session, Waveforms, every_poll};
+use sound_ui::{ActiveTheme, ControlEdit, Session, Shortcuts, Waveforms, every_poll};
 
 use crate::bun::PageSize;
 use crate::feeds::{Drawn, Feeds};
@@ -311,7 +311,7 @@ impl TypeScriptCard {
         let card = live.update(cx, |live, cx| live.add(id.clone(), tool, surface, cx));
         let focus = cx.focus_handle();
         let title_focus = cx.focus_handle();
-        let hears_keys = live.read(cx).info(card).is_some_and(|info| info.keys);
+        let hears_keys = (live.read(cx).info(card)).is_some_and(|info| info.hears_keys());
         // Not from what has the focus, such as the composer of the agent while it is typed in.
         if page && hears_keys && window.focused(cx).is_none() {
             window.focus(&focus, cx);
@@ -397,6 +397,8 @@ impl TypeScriptCard {
             }
         })
         .detach();
+        // The keys of its actions changed: the plain keys it takes, and those its tooltips show.
+        cx.observe_global::<Shortcuts>(|_, cx| cx.notify()).detach();
         // Escape lets go of a drag wherever the keys are, as a drag does not take them.
         cx.observe_keystrokes(|view, event, _, cx| {
             if event.keystroke.key == "escape" {
@@ -598,16 +600,16 @@ impl TypeScriptCard {
     /// Whether its page takes the keys: its tool hears them, or it shows an overlay, for escape
     /// to close it.
     fn takes_keys(&self, info: Option<&ToolInfo>) -> bool {
-        info.is_some_and(|info| info.keys) || !self.overlays.is_empty()
+        info.is_some_and(ToolInfo::hears_keys) || !self.overlays.is_empty()
     }
 
     /// When its page takes the keys, the key context of its tool if it hears them: what of the
-    /// plain keys the computer keys leave to it, all or those it names.
+    /// plain keys the computer keys leave to it.
     fn keys_of_page(&self, cx: &App) -> Option<Option<gpui::KeyContext>> {
         let info = self.live.read(cx).info(self.card);
         let context = (info.as_deref())
-            .filter(|info| info.keys)
-            .map(|info| crate::key_context(info.takes.as_deref()));
+            .filter(|info| info.hears_keys())
+            .map(|info| crate::key_context(info, cx));
         self.takes_keys(info.as_deref()).then_some(context)
     }
 
@@ -760,7 +762,7 @@ impl TypeScriptCard {
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
         let takes_keys = self.takes_keys(info.as_deref());
         let title_focus = (info.as_deref())
-            .is_some_and(|info| info.keys)
+            .is_some_and(ToolInfo::hears_keys)
             .then(|| self.title_focus.clone());
         Drawing {
             info,
@@ -818,10 +820,10 @@ impl TypeScriptCard {
             .child(bar);
         // Out of the page, it hands the page the keys its controls do not keep, such as R to
         // record with Play focused, and lets go of them when the focus leaves it.
-        let info = self.live.read(cx).info(self.card).filter(|info| info.keys);
-        let bar = match info {
+        let info = self.live.read(cx).info(self.card);
+        let bar = match info.filter(|info| info.hears_keys()) {
             Some(info) => {
-                let context = crate::key_context(info.takes.as_deref());
+                let context = crate::key_context(&info, cx);
                 hearing_keys(bar, &self.title_focus, Some(context), &self.handle)
             }
             None => bar,

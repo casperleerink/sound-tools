@@ -284,6 +284,12 @@ export const PLAIN_KEYS = [
 export type PlainKey = (typeof PLAIN_KEYS)[number];
 /** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
 export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${PlainKey}`;
+/** A key an action has: a `KeyName` with shift as well, held last: `"shift-up"`, `"cmd-shift-z"`. */
+export type ActionKey = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${"" | "shift-"}${PlainKey}`;
+/** An action by its tool and its name: `"song.record"`. */
+export type ActionId = `${string}.${string}`;
+/** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */
+export type Shortcut = KeyName | ActionId;
 /** The keys the app keeps: undo, new, open, quit, the panel, the computer keys, and tab. */
 export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "tab";
 
@@ -301,7 +307,7 @@ export interface MenuItem {
   /** A line above it, between it and the items before. */
   separator?: boolean;
   /** The keys that do it too, drawn at the end of its row. */
-  shortcut?: KeyName;
+  shortcut?: Shortcut;
 }
 
 /** A device `offers` gives. */

@@ -2,7 +2,7 @@
 
 import { SelectOption } from "./components";
 import { Unit } from "./fields";
-import { Drag, Dropped, KeyName, Live, Num, PointerEvents, TakeList, WaveList } from "./live";
+import { Drag, Dropped, KeyName, Live, Num, PointerEvents, Shortcut, TakeList, WaveList } from "./live";
 import { Child, element, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
@@ -249,7 +249,7 @@ export type IconName =
 export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<Color> }): UiNode => element("icon", { ...props }, []);
 
 /** The tooltip of a button or a toggle, and the keys that do it too, drawn in it. */
-type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: KeyName };
+type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: Shortcut };
 
 /**
  * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.

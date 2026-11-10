@@ -104,6 +104,8 @@ function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "rele
 export const host = {
   /** Whether `name` names a key as `KeyName` does. */
   isKeyName: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "") as never),
+  /** Whether `name` names a key as `ActionKey` does. */
+  isActionKey: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?(shift-)?/, "") as never),
   tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
