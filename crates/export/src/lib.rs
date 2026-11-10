@@ -13,7 +13,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use sound_media::analysis::{Loudness as LoudnessMeter, LoudnessMeasures};
+use sound_media::analysis::{LoudnessMeasures, LoudnessMeter};
 
 pub use settings::{CEILING_DBTP, Depth, Format, Loudness, SampleRate, Settings};
 
@@ -22,21 +22,6 @@ const CHANNELS: usize = 2;
 /// Frames the second pass reads at once.
 const CHUNK_FRAMES: usize = 4096;
 const MP3_KBPS: u32 = 320;
-/// What the MP3 encoder reads from the environment to tune itself, which changes the bytes it
-/// writes. Its developers set them; an export with one of them set would not be the same file.
-const MP3_TUNING: [&str; 11] = [
-    "MP3_RESERVOIR",
-    "MP3_RESV_GAIN",
-    "MP3_RESV_LOOKAHEAD",
-    "MP3_STEREO",
-    "MP3_SHORT_SHAPE",
-    "MP3_PICK",
-    "MP3_SHAPE",
-    "MP3_PSY_DOMAIN",
-    "MP3_THR_CAP",
-    "MP3_SMR_DB",
-    "RFF_MP3_XRPOW",
-];
 
 /// An export on its way: [`push`](Self::push) the render into it at the settings' rate, then
 /// [`finish`](Self::finish).
@@ -62,13 +47,6 @@ pub struct Report {
 
 impl Export {
     pub fn new(settings: Settings) -> Result<Self> {
-        if settings.format == Format::Mp3
-            && let Some(name) = MP3_TUNING
-                .iter()
-                .find(|name| std::env::var_os(name).is_some())
-        {
-            bail!("{name} is set, which changes how MP3s are written: unset it to export one");
-        }
         let raw = tempfile::tempfile().context("could not make a file for the render")?;
         Ok(Self {
             settings,
@@ -91,7 +69,7 @@ impl Export {
         if let Some(at) = samples.iter().position(|sample| !sample.is_finite()) {
             let frame = self.frames + (at / CHANNELS) as u64;
             let seconds = frame as f64 / f64::from(self.sample_rate());
-            bail!("the render went wrong at {seconds:.2} s: a sample there is not a number");
+            bail!("the sound broke at {seconds:.2} s, so nothing was exported");
         }
         for sample in samples {
             self.peak = self.peak.max(sample.abs());
@@ -187,7 +165,7 @@ struct Samples {
 
 impl Samples {
     /// The next samples, interleaved by channel; empty at the end.
-    fn next(&mut self) -> Result<&[f32]> {
+    fn next(&mut self) -> Result<&mut [f32]> {
         let mut filled = 0;
         while filled < self.bytes.len() {
             match self.raw.read(&mut self.bytes[filled..])? {
@@ -203,7 +181,7 @@ impl Samples {
                 .iter()
                 .map(|bytes| f32::from_le_bytes(*bytes) * gain),
         );
-        Ok(&self.buffer)
+        Ok(&mut self.buffer)
     }
 }
 
@@ -303,10 +281,12 @@ fn write_mp3(file: &mut File, rate: u32, samples: &mut Samples) -> Result<()> {
         if chunk.is_empty() && pushed {
             break;
         }
+        for sample in chunk.iter_mut() {
+            *sample = sample.clamp(-1.0, 1.0);
+        }
         // At least one push, even of nothing, so the encoder knows the format of an empty file.
-        let clipped: Vec<f32> = chunk.iter().map(|sample| sample.clamp(-1.0, 1.0)).collect();
         encoder
-            .push_pcm_f32(&clipped, CHANNELS as u16, rate)
+            .push_pcm_f32(chunk, CHANNELS as u16, rate)
             .map_err(|error| anyhow::anyhow!("the MP3 encoder failed: {error:?}"))?;
         pushed = true;
         while let Ok(packet) = encoder.next_packet() {

@@ -409,7 +409,7 @@ impl TruePeak {
 
 /// The loudness of a whole stereo sound and its true peak, as [`Meter`] measures them, and
 /// nothing else: what a loudness normalization needs, cheap enough for a render of any length.
-pub struct Loudness {
+pub struct LoudnessMeter {
     momentary: Momentary,
     blocks: usize,
     windows: Vec<f64>,
@@ -417,7 +417,7 @@ pub struct Loudness {
     peak: f32,
 }
 
-/// What [`Loudness`] measured. `None` is silence, or for the loudness a sound shorter than one
+/// What [`LoudnessMeter`] measured. `None` is silence, or for the loudness a sound shorter than one
 /// block of 400 ms.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LoudnessMeasures {
@@ -427,7 +427,7 @@ pub struct LoudnessMeasures {
     pub true_peak: Option<f64>,
 }
 
-impl Loudness {
+impl LoudnessMeter {
     pub fn new(sample_rate: u32) -> Self {
         Self {
             momentary: Momentary::new(sample_rate),
@@ -814,7 +814,7 @@ mod tests {
         let mut samples = sine(1_000.0, 0.01, 0.0, 3.0, 1.0);
         samples.extend(sine(1_000.0, loud, 0.0, 5.0, 0.5));
         samples.extend(&sine(12_000.0, 0.5, std::f64::consts::FRAC_PI_4, 1.0, 1.0)[..2 * 16]);
-        let mut loudness = Loudness::new(RATE);
+        let mut loudness = LoudnessMeter::new(RATE);
         for piece in samples.chunks(2 * 333) {
             loudness.push(piece);
         }

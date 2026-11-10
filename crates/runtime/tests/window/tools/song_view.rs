@@ -293,6 +293,11 @@ fn export_audio_asks_how_and_writes_the_mp3_chosen(cx: &mut TestAppContext) {
     screen.update(|window, _| window.refresh());
     screen.run_until_parked();
     assert!(screen.debug_bounds("segment-24").is_some());
+    // Tab reaches the rows, as in the main window.
+    let focused = |screen: &mut VisualTestContext| screen.update(|window, cx| window.focused(cx));
+    let before = focused(&mut screen);
+    screen.simulate_keystrokes("tab");
+    assert_ne!(focused(&mut screen), before);
     let mp3 = screen.debug_bounds("segment-mp3").unwrap().center();
     screen.simulate_click(mp3, Modifiers::default());
     screen.run_until_parked();

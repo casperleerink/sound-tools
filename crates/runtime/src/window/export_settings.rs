@@ -5,14 +5,13 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{
-    App, Context, FocusHandle, Global, KeyDownEvent, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, div, prelude::*, px, size,
-};
-use sound_export::{Depth, Format, Loudness, SampleRate, Settings};
+use gpui::{App, Context, FocusHandle, Global, KeyDownEvent, Window, div, prelude::*, px};
+use sound_export::{CEILING_DBTP, Depth, Format, Loudness, SampleRate, Settings};
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ActiveTheme, typography};
+
+use super::new_project::{small_window, small_window_root};
 
 const WIDTH: f32 = 440.;
 const HEIGHT: f32 = 300.;
@@ -27,7 +26,7 @@ impl Global for RememberedIn {}
 pub type OnExport = Rc<dyn Fn(Settings, &mut App)>;
 
 /// Opens the screen with the last settings, or brings the open one forward with `on_export`.
-pub fn choose(title: &str, on_export: OnExport, cx: &mut App) {
+pub fn choose(title: &'static str, on_export: OnExport, cx: &mut App) {
     let open = (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>());
     if let Some(open) = open {
         let shown = open.update(cx, |screen, window, _| {
@@ -40,20 +39,7 @@ pub fn choose(title: &str, on_export: OnExport, cx: &mut App) {
         }
     }
     let settings = remembered(cx);
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(gpui::Bounds::centered(
-            None,
-            size(px(WIDTH), px(HEIGHT)),
-            cx,
-        ))),
-        titlebar: Some(TitlebarOptions {
-            title: Some(SharedString::from(title.to_string())),
-            ..Default::default()
-        }),
-        app_id: Some(crate::app::TOOL_NAME.into()),
-        ..Default::default()
-    };
-    let opened = cx.open_window(options, |window, cx| {
+    let opened = cx.open_window(small_window(title, WIDTH, HEIGHT, cx), |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -82,25 +68,22 @@ fn remembered(cx: &App) -> Settings {
         .unwrap_or_default()
 }
 
-/// Keeps `settings` for the next export, off the UI thread. Not keeping them loses only that.
-fn remember(settings: Settings, cx: &mut App) {
-    let Some(file) = cx.try_global::<RememberedIn>().map(|file| file.0.clone()) else {
+/// Keeps `settings` for the next export. Not keeping them loses only that.
+fn remember(settings: Settings, cx: &App) {
+    let Some(RememberedIn(file)) = cx.try_global::<RememberedIn>() else {
         return;
     };
-    cx.background_spawn(async move {
-        let written = serde_json::to_vec_pretty(&settings)
-            .map_err(anyhow::Error::from)
-            .and_then(|bytes| {
-                if let Some(folder) = file.parent() {
-                    std::fs::create_dir_all(folder)?;
-                }
-                Ok(std::fs::write(&file, bytes)?)
-            });
-        if let Err(error) = written {
-            eprintln!("error: the export settings were not kept: {error:#}");
-        }
-    })
-    .detach();
+    let written = serde_json::to_vec_pretty(&settings)
+        .map_err(anyhow::Error::from)
+        .and_then(|bytes| {
+            if let Some(folder) = file.parent() {
+                std::fs::create_dir_all(folder)?;
+            }
+            Ok(std::fs::write(file, bytes)?)
+        });
+    if let Err(error) = written {
+        eprintln!("error: the export settings were not kept: {error:#}");
+    }
 }
 
 pub struct ExportSettings {
@@ -120,52 +103,79 @@ impl ExportSettings {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match event.keystroke.key.as_str() {
-            "escape" => window.remove_window(),
-            "enter" => self.export(window, cx),
-            _ => return,
+        if event.keystroke.key == "enter" {
+            self.export(window, cx);
+            cx.stop_propagation();
         }
-        cx.stop_propagation();
     }
 
-    fn set(&mut self, value: &str, cx: &mut Context<Self>) {
-        let settings = &mut self.settings;
-        match value {
-            "wav" => settings.format = Format::Wav(self.depth),
-            "mp3" => settings.format = Format::Mp3,
-            "44100" => settings.rate = SampleRate::Hz44100,
-            "48000" => settings.rate = SampleRate::Hz48000,
-            "as-it-plays" => settings.loudness = None,
-            "streaming" => settings.loudness = Some(Loudness::Streaming),
-            "broadcast" => settings.loudness = Some(Loudness::Broadcast),
-            depth => {
-                self.depth = match depth {
-                    "16" => Depth::Sixteen,
-                    "24" => Depth::TwentyFour,
-                    _ => Depth::Float,
-                };
-                settings.format = Format::Wav(self.depth);
-            }
-        }
-        cx.notify();
+    fn set_format(&mut self, format: Format) {
+        self.settings.format = match format {
+            Format::Wav(_) => Format::Wav(self.depth),
+            Format::Mp3 => Format::Mp3,
+        };
+    }
+
+    fn set_depth(&mut self, depth: Depth) {
+        self.depth = depth;
+        self.settings.format = Format::Wav(depth);
+    }
+
+    fn set_rate(&mut self, rate: SampleRate) {
+        self.settings.rate = rate;
+    }
+
+    fn set_loudness(&mut self, loudness: Option<Loudness>) {
+        self.settings.loudness = loudness;
     }
 }
 
-/// One row: what it sets, and the choices.
-fn row(
+/// Each choice of a row: a value for the tests to find it by, its label, and what it sets.
+type Choices<T> = &'static [(&'static str, &'static str, T)];
+
+/// A WAV of any depth is the one WAV choice of the format row.
+const FORMATS: Choices<Format> = &[
+    ("wav", "WAV", Format::Wav(Depth::Float)),
+    ("mp3", "MP3", Format::Mp3),
+];
+const RATES: Choices<SampleRate> = &[
+    ("44100", "44.1 kHz", SampleRate::Hz44100),
+    ("48000", "48 kHz", SampleRate::Hz48000),
+];
+const DEPTHS: Choices<Depth> = &[
+    ("16", "16-bit", Depth::Sixteen),
+    ("24", "24-bit", Depth::TwentyFour),
+    ("32", "32-bit float", Depth::Float),
+];
+const LOUDNESSES: Choices<Option<Loudness>> = &[
+    ("as-it-plays", "As it plays", None),
+    ("streaming", "Streaming", Some(Loudness::Streaming)),
+    ("broadcast", "Broadcast", Some(Loudness::Broadcast)),
+];
+
+/// One row: what it sets, and its choices, with `chosen` selected.
+fn row<T: Copy + PartialEq + 'static>(
     label: &'static str,
-    id: &'static str,
-    value: &'static str,
-    options: &[(&'static str, &'static str)],
+    chosen: T,
+    choices: Choices<T>,
+    set: fn(&mut ExportSettings, T),
     cx: &mut Context<ExportSettings>,
 ) -> impl IntoElement {
     let muted = cx.theme().gray_800;
+    let value = choices.iter().find(|choice| choice.2 == chosen);
     let screen = cx.entity().downgrade();
-    let control = SegmentedControl::new(id, value)
-        .options(options.iter().copied())
+    let control = SegmentedControl::new(label, value.map_or("", |choice| choice.0))
+        .options(choices.iter().map(|(value, label, _)| (*value, *label)))
         .on_change(move |value, _, cx| {
+            let Some(choice) = choices.iter().find(|choice| choice.0 == value.as_ref()) else {
+                return;
+            };
             // Fails only once the screen is closed.
-            screen.update(cx, |screen, cx| screen.set(&value, cx)).ok();
+            (screen.update(cx, |screen, cx| {
+                set(screen, choice.2);
+                cx.notify();
+            }))
+            .ok();
         });
     div()
         .flex()
@@ -178,67 +188,35 @@ fn row(
 
 impl Render for ExportSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = self.settings;
-        let format = match settings.format {
-            Format::Wav(_) => "wav",
-            Format::Mp3 => "mp3",
-        };
-        let rate = match settings.rate {
-            SampleRate::Hz44100 => "44100",
-            SampleRate::Hz48000 => "48000",
-        };
-        let depth = match self.depth {
-            Depth::Sixteen => "16",
-            Depth::TwentyFour => "24",
-            Depth::Float => "32",
-        };
-        let loudness = match settings.loudness {
-            None => "as-it-plays",
-            Some(Loudness::Streaming) => "streaming",
-            Some(Loudness::Broadcast) => "broadcast",
+        let Settings {
+            format,
+            rate,
+            loudness,
+        } = self.settings;
+        let format_choice = match format {
+            Format::Wav(_) => Format::Wav(Depth::Float),
+            Format::Mp3 => Format::Mp3,
         };
         let theme = cx.theme();
         let (background, text, muted) = (theme.gray_100, theme.gray_950, theme.gray_800);
-        let mut rows = div().flex().flex_col().gap_4().child(row(
-            "Format",
-            "export-format",
-            format,
-            &[("wav", "WAV"), ("mp3", "MP3")],
-            cx,
-        ));
-        rows = rows.child(row(
-            "Sample rate",
-            "export-rate",
-            rate,
-            &[("44100", "44.1 kHz"), ("48000", "48 kHz")],
-            cx,
-        ));
-        // An MP3 has no bit depth to choose.
-        if format == "wav" {
-            rows = rows.child(row(
-                "Bit depth",
-                "export-depth",
-                depth,
-                &[("16", "16-bit"), ("24", "24-bit"), ("32", "32-bit float")],
-                cx,
-            ));
+        let mut rows = div().flex().flex_col().gap_4();
+        rows = rows.child(row("Format", format_choice, FORMATS, Self::set_format, cx));
+        rows = rows.child(row("Sample rate", rate, RATES, Self::set_rate, cx));
+        if let Format::Wav(depth) = format {
+            rows = rows.child(row("Bit depth", depth, DEPTHS, Self::set_depth, cx));
         }
         rows = rows.child(row(
             "Loudness",
-            "export-loudness",
             loudness,
-            &[
-                ("as-it-plays", "As it plays"),
-                ("streaming", "Streaming"),
-                ("broadcast", "Broadcast"),
-            ],
+            LOUDNESSES,
+            Self::set_loudness,
             cx,
         ));
-        let hint = match settings.loudness {
-            None => "",
-            Some(Loudness::Streaming) => "−14 LUFS, peaks under −1 dB",
-            Some(Loudness::Broadcast) => "−23 LUFS, peaks under −1 dB",
-        };
+        let hint = loudness.map(|loudness| {
+            let minus = |value: f64| format!("{value:.0}").replace('-', "−");
+            let (lufs, peak) = (minus(loudness.lufs()), minus(CEILING_DBTP));
+            format!("{lufs} LUFS, peaks under {peak} dB")
+        });
         let buttons = div()
             .flex()
             .justify_end()
@@ -253,7 +231,7 @@ impl Render for ExportSettings {
                     .variant(ButtonVariant::Primary)
                     .on_click(cx.listener(|screen, _, window, cx| screen.export(window, cx))),
             );
-        div()
+        small_window_root()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .size_full()
@@ -272,7 +250,7 @@ impl Render for ExportSettings {
                         .justify_end()
                         .text_size(px(12.))
                         .text_color(muted)
-                        .child(hint),
+                        .children(hint),
                 ),
             )
             .child(buttons)

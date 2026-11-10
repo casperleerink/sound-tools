@@ -3,8 +3,8 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-/// How a piece is exported. The default is what an export was before there was a choice, and
-/// what "Render to audio track" keeps.
+/// How a piece is exported. The default, 48 kHz 32-bit float with no loudness, is what "Render
+/// to audio track" uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub format: Format,
@@ -15,7 +15,6 @@ pub struct Settings {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Format {
     Wav(Depth),
-    /// 320 kbps.
     Mp3,
 }
 
@@ -124,13 +123,13 @@ impl Settings {
         let mut rest = Vec::new();
         let mut flags = flags.iter();
         while let Some(flag) = flags.next() {
-            let mut value = |name| match flags.next() {
+            let mut value = || match flags.next() {
                 Some(value) => Ok(*value),
-                None => bail!("{name} needs a value"),
+                None => bail!("{flag} needs a value"),
             };
             match *flag {
                 "--rate" => {
-                    let value = value("--rate")?;
+                    let value = value()?;
                     let found = SampleRate::ALL
                         .into_iter()
                         .find(|rate| value == rate.hz().to_string());
@@ -140,7 +139,7 @@ impl Settings {
                     rate = Some(found);
                 }
                 "--depth" => {
-                    let value = value("--depth")?;
+                    let value = value()?;
                     let found = Depth::ALL
                         .into_iter()
                         .find(|depth| value == depth.bits().to_string());
@@ -150,7 +149,7 @@ impl Settings {
                     depth = Some(found);
                 }
                 "--loudness" => {
-                    let value = value("--loudness")?;
+                    let value = value()?;
                     let found = Loudness::ALL
                         .into_iter()
                         .find(|loudness| value == loudness.word());

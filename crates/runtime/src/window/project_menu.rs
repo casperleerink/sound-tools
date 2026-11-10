@@ -277,11 +277,7 @@ fn export_to(
             };
             // The save panel asked about this very name, so it is not changed here.
             if !settings.format.names(&path) {
-                let kind = match settings.format {
-                    sound_export::Format::Wav(_) => "a WAV",
-                    sound_export::Format::Mp3 => "an MP3",
-                };
-                let message = format!("The name must end in .{ending} for {kind}.");
+                let message = format!("The name must end in .{ending}.");
                 session.update(cx, |session, cx| session.report(message, cx));
                 return;
             }
