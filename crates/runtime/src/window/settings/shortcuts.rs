@@ -44,9 +44,9 @@ struct Row {
 }
 
 /// An action of the app on a key of a tool's action takes the key from it, unless it works in a
-/// part of the window only. Other actions of its
-/// own group share the key with it, which is worth a line only for a key the composer gave it:
-/// a tool shares keys on purpose, such as delete for the chosen notes, else the chosen clips.
+/// part of the window only. Other actions of its own group share the key with it, which is
+/// worth a line only for a key the composer gave it: a tool shares keys on purpose, such as
+/// delete for the chosen notes, else the chosen clips.
 fn hint_of(group: &Group, id: &str, shortcuts: &Shortcuts) -> Option<String> {
     let of_app = group.name == app_keys::GROUP;
     let changed = shortcuts.is_changed(id);

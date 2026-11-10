@@ -58,7 +58,6 @@ fn kept(file: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap()
 }
 
-/// A key as the keymap names it: cmd is ctrl on Windows and Linux.
 impl Opened<'_> {
     fn open_shortcuts(&mut self) {
         self.keys("secondary-,");

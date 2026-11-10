@@ -159,7 +159,7 @@ function problemsOf(spec: Spec): string[] {
     }
     for (const key of spec.globalKeys ?? []) {
       if (APP_KEYS.includes(key)) {
-        problems.push(`globalKeys: ${key} is the app's: undo, new, open, quit, the panel, the computer keys and tab are`);
+        problems.push(`globalKeys: ${key} is the app's: undo, redo, new, open, quit, settings, the panel, the computer keys and tab are`);
       }
     }
     if (spec.actions && spec.name === "app") {
