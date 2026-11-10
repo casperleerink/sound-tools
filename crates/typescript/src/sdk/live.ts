@@ -293,13 +293,14 @@ type SymbolKey = (typeof SYMBOL_KEYS)[number];
 type Held = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}`;
 /** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
 export type KeyName = `${Held}${PlainKey}`;
+type ActionHeld = `${"" | "cmd-"}${"" | "alt-"}`;
 /**
- * A key an action has: a `KeyName`, or one with shift, held last: `"shift-up"`, `"cmd-shift-z"`.
- * A symbol key with shift is named by what it then types, with no shift: `"?"`, `"cmd-+"`.
- * For an action `cmd` is ctrl on Windows and Linux, where `ctrl-` names no key: it is a key
- * of its own on macOS only. The app's own keys are none of an action's.
+ * A key an action has, with cmd, alt and shift held first and in that order: `"space"`,
+ * `"shift-up"`, `"cmd-shift-z"`. `cmd` is ctrl on Windows and Linux, so there is no `ctrl-`: a
+ * key named here works on every system. A symbol key with shift is named by what it then
+ * types, with no shift: `"?"`, `"cmd-+"`. The app's own keys are none of an action's.
  */
-export type ActionKey = Exclude<`${Held}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${Held}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`, AppKey>;
+export type ActionKey = Exclude<`${ActionHeld}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${ActionHeld}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`, AppKey>;
 /** An action by its tool and its name: `"song.record"`. The app's own are `"app.undo"`, `"app.redo"` and `"app.computer_keys"`. */
 export type ActionId = `${string}.${string}`;
 /** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */

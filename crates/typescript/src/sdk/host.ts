@@ -106,7 +106,7 @@ export const host = {
   isKeyName: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "") as never),
   /** Whether `name` names a key as `ActionKey` does. */
   isActionKey: (name: string) => {
-    const key = name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "");
+    const key = name.replace(/^(cmd-)?(alt-)?/, "");
     const shifted = key.startsWith("shift-") ? key.slice(6) : null;
     if (shifted === null) return [...PLAIN_KEYS, ...SHIFTED_KEYS].includes(key as never);
     return PLAIN_KEYS.includes(shifted as never) && !SYMBOL_KEYS.includes(shifted as never);

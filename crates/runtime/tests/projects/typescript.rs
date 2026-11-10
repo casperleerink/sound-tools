@@ -378,6 +378,10 @@ fn an_action_declared_wrong_is_a_problem_of_its_tool() {
             "mute: { title: \"Mute\", keys: [\"shift-1\"], run: () => {} }",
         ),
         (
+            "control",
+            "mute: { title: \"Mute\", keys: [\"ctrl-r\"], run: () => {} }",
+        ),
+        (
             "taken",
             "mute: { title: \"Mute\", keys: [\"cmd-z\"], run: () => {} }",
         ),
@@ -397,6 +401,7 @@ fn an_action_declared_wrong_is_a_problem_of_its_tool() {
         .collect();
     let expected = [
         "extensions/app.ts: tool app: actions: the actions of `app` are the app's own",
+        "extensions/control.ts: tool control: actions.mute: ctrl-r is no key",
         "extensions/keyed.ts: tool keyed: actions.mute: shift-cmd-m is no key",
         "extensions/named.ts: tool named: actions: Mute is no name",
         "extensions/shifted.ts: tool shifted: actions.mute: shift-1 is no key",

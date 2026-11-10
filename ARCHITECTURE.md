@@ -186,6 +186,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **Actions of one tool may share a key** and are tried in order until one has something to do, so delete takes out notes, else clips. Rejected: a condition per key, a second language beside the code.
 - **An action gets no key event**, so anything can run it later: a list, MIDI. `onKey` stays for keys that are held, and for projects that keep older template code.
 - The app's keys win over a tool's on the same key, and tab is no action: the focus can always move on.
+- A key an action declares works on every system: `cmd` is ctrl on Windows and Linux, and there is no `ctrl`. The composer's own keys may be any they press.
 
 ## The agent sidebar
 

@@ -486,6 +486,8 @@ tool({
     pass: { title: "Pass", keys: ["c"], run: ({ state }) => state.count > 0 },
     // @ts-expect-error: shift is held last, after cmd, ctrl and alt.
     wrong: { title: "Wrong", keys: ["shift-cmd-z"], run: () => {} },
+    // @ts-expect-error: cmd is ctrl on Windows and Linux, so an action names no ctrl.
+    control: { title: "Control", keys: ["ctrl-r"], run: () => {} },
     // @ts-expect-error: redo is the app's.
     taken: { title: "Taken", keys: ["cmd-shift-z"], run: () => {} },
     // @ts-expect-error: a symbol key with shift is named by what it types, "!".
