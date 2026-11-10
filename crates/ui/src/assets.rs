@@ -58,6 +58,7 @@ icons!(
     "eye-off",
     "folder",
     "info",
+    "keyboard",
     "keyboard-music",
     "loader-circle",
     "lock",

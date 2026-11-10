@@ -118,11 +118,11 @@ fn a_duplicate_goes_after_the_chosen_clips_and_is_chosen(cx: &mut TestAppContext
         .unwrap_or_default();
     let at = window.on_lane(BAR / 2, 1);
     window.click(at);
-    window.cx.simulate_keystrokes("cmd-d");
+    window.cx.simulate_keystrokes("secondary-d");
     window.until("one copy", |window| window.starts("t01").len() == 2);
     window.wait_for_bun();
     // The copy is chosen: the next duplicate goes after it, not over it.
-    window.cx.simulate_keystrokes("cmd-d");
+    window.cx.simulate_keystrokes("secondary-d");
     window.until("two copies", |window| window.starts("t01").len() == 3);
     assert_eq!(window.starts("t01"), [0, length, 2 * length]);
     window.after_the_runs();
@@ -143,12 +143,12 @@ fn clips_of_two_tracks_paste_on_the_chosen_track_and_the_one_under_it(cx: &mut T
     window.press_with(second, 1, cmd);
     window.release(second);
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-c");
+    window.cx.simulate_keystrokes("secondary-c");
     // The second track chosen: the first clip lands there, the second on the third track.
     let at = window.on_lane(BAR / 2, 1);
     window.click(at);
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("the clips pasted", |window| {
         window.starts("t01").len() == 2 && window.starts("t02").len() == 2
     });
@@ -313,9 +313,9 @@ fn clips_and_regions_are_chosen_copied_pasted_nudged_and_deleted_together(cx: &m
     window.drag_to(to);
     window.release(to);
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-c");
+    window.cx.simulate_keystrokes("secondary-c");
     // At the playhead, the start: each on the row it came from.
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("both pasted", |window| {
         window.has("song/t01/c00-2") && window.has("song/audio-voice/region-2")
     });
@@ -356,7 +356,7 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
     let clip = window.on_lane(BAR / 2, 0);
     window.click(clip);
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-x");
+    window.cx.simulate_keystrokes("secondary-x");
     window.until("the clip cut", |window| !window.has("song/t00/c00"));
     let cut = points(&mut window);
     // Where it was, the line is straight from its end on.
@@ -369,7 +369,7 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
     window.click(ruler + point(px(LEAD + (8 * BAR) as f32 * ACROSS), px(8.)));
     window.until_playhead(8 * BAR);
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("the clip pasted", |window| window.has("song/t00/c00"));
     assert_eq!(window.record("song/t00/c00")["start"], 8 * BAR);
     let pasted = points(&mut window);

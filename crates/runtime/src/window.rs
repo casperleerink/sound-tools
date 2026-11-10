@@ -9,6 +9,7 @@
 //! and quitting. Musical keys, such as space to play, are the project's, through
 //! [`GlobalKeys`].
 
+mod app_keys;
 pub mod audio_input;
 mod history;
 pub mod live_input;
@@ -48,7 +49,8 @@ use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::focus::TabStop;
 use sound_ui::{
-    ActiveTheme, Assets, Devices, GlobalKeys, Session, SpareKey, SpareKeys, Views, typography,
+    ActiveTheme, Assets, Devices, GlobalKeys, Session, Shortcuts, SpareKey, SpareKeys, Views,
+    typography,
 };
 
 use audio_input::OpenInput;
@@ -1020,10 +1022,14 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
                 shell.live.update(cx, LiveInput::toggle_computer_keys)
             }))
+            // A key that is taken before every binding and listener, as the key pressed for an
+            // action in Settings is, still reaches the first key listener of the window in
+            // GPUI, and only that one. So the first one does nothing.
+            .capture_key_down(|_: &KeyDownEvent, _, _| {})
             // Before the focused view hears it, so a key that plays does nothing else.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                let key = &event.keystroke.key;
-                let free = keys_are_free(window) && !sound_typescript::takes_key(window, key);
+                let free =
+                    keys_are_free(window) && !sound_typescript::takes_key(window, &event.keystroke);
                 if (shell.live).update(cx, |live, _| live.computer_key_down(event, free)) {
                     cx.stop_propagation();
                 }
@@ -1104,15 +1110,14 @@ impl Render for Shell {
 const KEY_CONTEXT: &str = "Shell";
 const SETTINGS_CONTEXT: &str = "Settings";
 
-/// Outside a text field, where keys are characters and cmd-z is not an undo of the project.
-fn outside_text() -> String {
-    format!("{KEY_CONTEXT} && !{}", text_input::KEY_CONTEXT)
-}
-
-/// Where the plain keys are free: outside a text field, and outside a tool of the project that
-/// has the keys, which plays them.
+/// Where the plain keys are free: outside a text field, where keys are characters, and outside
+/// a tool of the project that has the keys, which plays them.
 fn plain_keys() -> String {
-    format!("{} && !{}", outside_text(), sound_typescript::KEY_CONTEXT)
+    format!(
+        "{KEY_CONTEXT} && !{} && !{}",
+        text_input::KEY_CONTEXT,
+        sound_typescript::KEY_CONTEXT
+    )
 }
 
 /// Whether the plain keys are free where the focus is: the computer keys and the keys of the
@@ -1122,31 +1127,20 @@ fn keys_are_free(window: &Window) -> bool {
         .is_ok_and(|plain| plain.depth_of(&window.context_stack()).is_some())
 }
 
-/// The keys of the app. Undo works outside a text field. Tab moves the focus everywhere. The
-/// computer keys and the keys of the project are no bindings: they need the key going up as
-/// well, see the key listeners of [`Shell`]. `secondary` is cmd on macOS and ctrl on Windows
-/// and Linux.
+/// The keys of the app. Those of its actions are the ones the keymap has for them, see
+/// [`app_keys`]. Tab moves the focus everywhere and escape closes Settings, whatever the
+/// composer's own keys are. The computer keys and the keys of the project are no bindings: they
+/// need the key going up as well, see the key listeners of [`Shell`].
 pub fn bind_keys(cx: &mut App) {
-    let outside_text = outside_text();
-    let outside_text = Some(outside_text.as_str());
     cx.bind_keys([
-        KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-z", Undo, outside_text),
-        KeyBinding::new("alt-secondary-z", UndoKeepingVersion, outside_text),
-        KeyBinding::new("shift-secondary-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("tab", FocusNext, Some(new_project::SMALL_WINDOW)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(new_project::SMALL_WINDOW)),
-        KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-o", OpenProject, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-,", sound_ui::OpenSettings, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", CloseSettings, Some(SETTINGS_CONTEXT)),
-        KeyBinding::new("secondary-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
+    app_keys::install(cx);
 }
 
 /// Opening the left panel in a window too narrow for it and the main area makes the window
@@ -1256,7 +1250,6 @@ pub fn run_app() {
 
 fn init(cx: &mut App) {
     sound_ui::init(cx);
-    bind_keys(cx);
     // Without a support folder the panel still works, and opens at every start.
     let support = match crate::app::support_folder() {
         Ok(support) => Some(support),
@@ -1265,6 +1258,16 @@ fn init(cx: &mut App) {
             None
         }
     };
+    // Before the keys are bound and a tool loads: both go by the composer's own keys. Without
+    // a support folder those last as long as the app runs.
+    if let Some(support) = &support {
+        let (shortcuts, unread) = Shortcuts::open(crate::app::shortcuts_file(support));
+        if let Some(error) = unread {
+            eprintln!("error: {error}");
+        }
+        cx.set_global(shortcuts);
+    }
+    bind_keys(cx);
     if let Some(support) = &support {
         crate::update::check_in_background(support, cx);
     }

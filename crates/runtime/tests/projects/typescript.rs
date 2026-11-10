@@ -361,6 +361,59 @@ fn a_key_the_app_keeps_is_a_problem_of_the_tool_that_takes_it() {
     );
 }
 
+#[test]
+fn an_action_declared_wrong_is_a_problem_of_its_tool() {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
+    let wrong = [
+        ("app", "mute: { title: \"Mute\", run: () => {} }"),
+        (
+            "keyed",
+            "mute: { title: \"Mute\", keys: [\"shift-cmd-m\"], run: () => {} }",
+        ),
+        (
+            "shifted",
+            "mute: { title: \"Mute\", keys: [\"shift-1\"], run: () => {} }",
+        ),
+        (
+            "control",
+            "mute: { title: \"Mute\", keys: [\"ctrl-r\"], run: () => {} }",
+        ),
+        (
+            "taken",
+            "mute: { title: \"Mute\", keys: [\"cmd-z\"], run: () => {} }",
+        ),
+        ("named", "Mute: { title: \"Mute\", run: () => {} }"),
+        ("titled", "mute: { title: \" \", run: () => {} }"),
+    ];
+    let folder = crate::support::project_folder();
+    for (name, action) in wrong {
+        let code = LEVEL
+            .replace("\"level\"", &format!("\"{name}\""))
+            .replace("sound:", &format!("actions: {{ {action} }},\n  sound:"));
+        crate::support::write(folder.path(), &format!("extensions/{name}.ts"), &code);
+    }
+    let harness = Harness::open(folder);
+    let problems: Vec<String> = (harness.project.problems().into_iter())
+        .map(|problem| format!("{}: {}", problem.path, problem.message))
+        .collect();
+    let expected = [
+        "extensions/app.ts: tool app: actions: the actions of `app` are the app's own",
+        "extensions/control.ts: tool control: actions.mute: ctrl-r is no key",
+        "extensions/keyed.ts: tool keyed: actions.mute: shift-cmd-m is no key",
+        "extensions/named.ts: tool named: actions: Mute is no name",
+        "extensions/shifted.ts: tool shifted: actions.mute: shift-1 is no key",
+        "extensions/taken.ts: tool taken: actions.mute: cmd-z is the app's",
+        "extensions/titled.ts: tool titled: actions.mute: write its title",
+    ];
+    assert_eq!(problems.len(), expected.len(), "{problems:#?}");
+    for (problem, expected) in problems.iter().zip(expected) {
+        assert!(problem.starts_with(expected), "{problem}");
+    }
+}
+
 /// Every function of the sound graph once, in mono and in stereo by its `out`, so a node the
 /// SDK sends and the runtime does not read fails a test.
 const EVERY_NODE: &str = r#"import * as s from "./sdk";
