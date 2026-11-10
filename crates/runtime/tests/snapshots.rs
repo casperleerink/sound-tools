@@ -5,6 +5,7 @@
 //!
 //! - `default.png`: a new, empty project, with the ways to start one.
 //! - `new-project.png`: the templates a new project starts from.
+//! - `export-settings.png`: how a piece is exported, as "Export audio…" asks first.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.
 //! - `menu.png`, `menu-devices.png`: the project menu, open, after one edit.
@@ -32,6 +33,7 @@ use gpui::{
 };
 use plugin_host::{PluginFormat, WeakPlugins};
 use runtime::app::ChosenDevices;
+use runtime::window::export_settings::{self, ExportSettings};
 use runtime::window::new_project::{TemplatePicker, choose_template};
 use runtime::window::{DeviceAccess, DeviceMenu, Shell};
 use runtime::{OFFLINE, views};
@@ -294,6 +296,7 @@ fn main() -> Result<()> {
     }
 
     templates(&mut cx, &save)?;
+    export(&mut cx, &save)?;
     notices(&mut cx, &save)?;
     menu(&mut cx, opened, &save)?;
     Ok(())
@@ -309,6 +312,20 @@ fn templates(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     let picker = picker.context("the templates did not open")?;
     save(cx, picker.into(), "new-project")?;
     cx.update_window(picker.into(), |_, window, _| window.remove_window())?;
+    cx.run_until_parked();
+    Ok(())
+}
+
+/// The export settings, as "Export audio…" opens them.
+fn export(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
+    cx.update(|cx| export_settings::choose("Export audio", Rc::new(|_, _| {}), cx));
+    cx.run_until_parked();
+    let screen = cx.update(|cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
+    });
+    let screen = screen.context("the export settings did not open")?;
+    save(cx, screen.into(), "export-settings")?;
+    cx.update_window(screen.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
     Ok(())
 }
