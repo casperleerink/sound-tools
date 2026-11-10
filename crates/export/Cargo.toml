@@ -1,0 +1,19 @@
+[package]
+name = "sound-export"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+hound.workspace = true
+rusty_mp3.workspace = true
+serde.workspace = true
+sound-media.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+rusty_mp3.workspace = true

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/export", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -37,6 +37,7 @@ test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
 sound-agent = { path = "crates/agent" }
 sound-core = { path = "crates/core" }
+sound-export = { path = "crates/export" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
 sound-signals = { path = "crates/signals" }
@@ -108,6 +109,9 @@ schemars = "1.2.2"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps key order stable, so agent diffs of project files stay small.
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+# The MP3 encoder of exports. Pure Rust, no dependencies. Apache-2.0. Pinned: a minor release
+# may change the bytes it writes, and an export must stay the same file.
+rusty_mp3 = "=1.0.5"
 # Errors name the field, such as `state.gain`, so an agent can fix its edit.
 serde_path_to_error = "0.1"
 # Checks the agent CLI the app downloads against its pinned checksum. MIT OR Apache-2.0.
@@ -193,6 +197,8 @@ runtime = { opt-level = 3 }
 sampler = { opt-level = 3 }
 saturator = { opt-level = 3 }
 sound-core = { opt-level = 3 }
+sound-export = { opt-level = 3 }
+rusty_mp3 = { opt-level = 3 }
 sound-media = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
 sound-signals = { opt-level = 3 }

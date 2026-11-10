@@ -494,7 +494,19 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// Opens the project without its lock, so it works next to a running runtime. The engine
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
-    let (control, engine) = Engine::new(OFFLINE);
+    open_read_only_at(folder, plugins, OFFLINE.sample_rate)
+}
+
+/// As [`open_read_only_with`], with the engine at `sample_rate`, as on a device of that rate.
+pub fn open_read_only_at(
+    folder: &Path,
+    plugins: Plugins,
+    sample_rate: u32,
+) -> Result<(Project, Engine)> {
+    let (control, engine) = Engine::new(EngineConfig {
+        sample_rate,
+        ..OFFLINE
+    });
     // A runtime that holds the project may be writing its log.
     let extensions = Extensions::load(folder, &tool_schemas()?, false);
     let (registry, extensions) = registry_of(plugins, extensions)?;
