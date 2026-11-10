@@ -27,7 +27,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
-- Interface state that is about how the composer works (zoom, snap, the loop, expanded cards, shown lanes, open returns, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, and its threads.
+- Interface state that is about how the composer works (zoom, snap, the loop, expanded cards, shown lanes, open returns, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, its threads, and the composer's own shortcuts.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
 - Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound, on the 24 pt grid of the other icons. A plugin shows a plug. The built-in instruments are one group; the built-in effects are grouped by what they do (Tone, Dynamics, Space, Mix), with the plugins last.
 
@@ -78,7 +78,8 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 ### Keys
 
 - The keys follow macOS. On Windows and Linux ctrl takes the place of cmd.
-- A key plays or stops only where a tool takes it, and not while a text field has the keys. Keys with cmd and tab always stay the window's, so the focus can always move on.
+- A key plays or stops only where a tool has an action for it, and not while a text field has the keys. Tab always stays the window's, so the focus can always move on.
+- Everything a key does has a name. Settings lists them under Shortcuts, where the composer gives any of them another key or none; nobody has to. A tooltip and a menu show the key as it is now.
 - A group of options is one tab stop, such as a segmented control or the drum pads. The arrows move inside it.
 - Escape lets go, closes what is open, or gives the focus back.
 - The computer keys (cmd-K) play what is selected like a MIDI keyboard, and their letters then do nothing else. Both play it whether the project plays or not.
