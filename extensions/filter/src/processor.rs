@@ -12,10 +12,13 @@
 //! automated across 0 glides from one way to the other and stays in time.
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, FilterCharacter, Lfo, LfoShape,
-    Oversampler, OversamplerDelay, OversamplingFilters, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed, SvfFactors, SvfSection, Targets, all_zero, amplitude, held, soft_clip,
-    svf_response,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
+};
+
+use sound_dsp::{
+    FilterCharacter, Lfo, LfoShape, Oversampler, OversamplerDelay, OversamplingFilters, SvfFactors,
+    SvfSection, all_zero, amplitude, held, soft_clip, svf_response,
 };
 
 use crate::{CUTOFF, DRIVE, FilterState, LFO_DEPTH, MIX, PARAMETERS, RESONANCE};

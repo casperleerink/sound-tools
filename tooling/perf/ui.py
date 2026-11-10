@@ -17,6 +17,7 @@ HEADLINE = [
     ("draw ms", ("draw ms", "mean")),
     ("allocations", ("allocations per update", "mean")),
     ("MB allocated", ("allocated bytes per update", "mean")),
+    ("nodes drawn", ("nodes drawn per update",)),
 ]
 
 

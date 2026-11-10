@@ -14,13 +14,10 @@ use sound_notes::{Amount, Bend, Controller, NOTES_INPUT, NoteEvent, Pedal, Pitch
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
-/// Counts allocations while it is armed, so a test can say that a block of audio made none.
-/// The realtime sanitizer cannot see inside a plugin's own call, and that is exactly where a
-/// buffer the host handed the plugin would grow.
+/// Counts allocations while it is armed. The realtime sanitizer cannot see inside a plugin's
+/// own call, which is where a buffer the host handed the plugin would grow.
 ///
-/// Armed per thread: only the thread that renders is the audio thread. Another thread of the
-/// process, of the test runner or of a plugin, may allocate at any time, and counting it made
-/// the test fail now and then.
+/// Armed per thread: other threads, of the test runner or of a plugin, may allocate any time.
 pub(crate) struct CountingAllocator;
 
 thread_local! {
@@ -28,13 +25,12 @@ thread_local! {
 }
 static ALLOCATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Whether this thread is the one being counted. A thread that is ending has no flag left, and
-/// is not the one being counted.
+/// A thread that is ending has no flag left.
 fn armed() -> bool {
     ARMED.try_with(std::cell::Cell::get).unwrap_or(false)
 }
 
-// SAFETY: every call is handed to the system allocator unchanged. The counter only counts.
+// SAFETY: every call is handed to the system allocator unchanged.
 unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         if armed() {
@@ -63,7 +59,6 @@ unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
     }
 }
 
-/// How many allocations happened on this thread while `work` ran.
 pub(crate) fn allocations_during<T>(work: impl FnOnce() -> T) -> (T, u64) {
     ALLOCATIONS.store(0, std::sync::atomic::Ordering::Relaxed);
     ARMED.set(true);
@@ -225,9 +220,9 @@ fn apply_keys(state: &Keys, context: &mut BehaviourContext<'_>) -> Result<(), Be
 /// The port the keys sender exposes, which the rack wires to the instrument.
 const PLAYED_OUTPUT: &str = "played";
 
-/// A steady level in both channels, as the instrument of a rack. It makes the dry signal of an
-/// effect a number a test can read in any frame, and it is not a plugin, so a test that tells
-/// the plugin of this process to misbehave only tells the effect.
+/// A steady level in both channels, as the instrument of a rack: the dry signal of an effect is
+/// then a number a test can read in any frame. Not a plugin, so a test that tells the plugin
+/// to misbehave only tells the effect.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Level {
@@ -284,12 +279,17 @@ fn apply_level(state: &Level, context: &mut BehaviourContext<'_>) -> Result<(), 
 pub(crate) struct Rack {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<(String, f32)>,
+    /// A frame of every sub-block and a value every lane bends to there, as a lane that moves
+    /// inside a block does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bend: Option<(usize, f32)>,
 }
 
 /// Plays steady lanes, as the lane player of a track does: every lane every block, at offset
-/// 0, also while the project does not play.
+/// 0, also while the project does not play. With a bend, every lane again at its frame.
 pub(crate) struct LanePlayer {
     lanes: Vec<Automation>,
+    bend: Option<(usize, f32)>,
 }
 
 impl LanePlayer {
@@ -297,7 +297,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Vec<Automation>;
+    type Update = (Vec<Automation>, Option<(usize, f32)>);
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -305,18 +305,24 @@ impl Processor for LanePlayer {
 
     fn prepare(&mut self, _config: &PrepareConfig) {}
 
-    fn update(&mut self, update: &mut Vec<Automation>) {
-        std::mem::swap(&mut self.lanes, update);
+    fn update(&mut self, update: &mut Self::Update) {
+        std::mem::swap(&mut self.lanes, &mut update.0);
+        self.bend = update.1;
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         for lane in &self.lanes {
             context.event_outputs.push(Self::OUTPUT, 0, *lane);
         }
+        if let Some((frame, value)) = self.bend {
+            for lane in &self.lanes {
+                let bent = Automation { value, ..*lane };
+                context.event_outputs.push(Self::OUTPUT, frame, bent);
+            }
+        }
     }
 }
 
-/// Lanes that hold one value each, as the views see them.
 struct SteadyLanes(Vec<(std::sync::Arc<str>, f32)>);
 
 impl PlayedLanes for SteadyLanes {
@@ -325,9 +331,8 @@ impl PlayedLanes for SteadyLanes {
     }
 }
 
-/// The lanes of the rack, to the numbers its instrument names, by their names, shown to the
-/// views as a track shows its own. A name the instrument does not take a lane for is reported,
-/// and the rest play.
+/// Plays and shows the rack's lanes as a track does. A name the instrument takes no lane for is
+/// reported, and the rest play.
 fn play_lanes(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     if state.lanes.is_empty() {
         return Ok(());
@@ -354,8 +359,11 @@ fn play_lanes(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), Be
     for name in missing {
         context.problem(format!("no lane for {name}"));
     }
-    let player = context.processor("lanes", || LanePlayer { lanes: Vec::new() })?;
-    context.update(player, lanes)?;
+    let player = context.processor("lanes", || LanePlayer {
+        lanes: Vec::new(),
+        bend: None,
+    })?;
+    context.update(player, (lanes, state.bend))?;
     context.connect(OutputEndpoint::new(player, LanePlayer::OUTPUT).to(input))?;
     Ok(())
 }
@@ -365,10 +373,8 @@ impl State for Rack {
     const OWNS_CHILDREN: bool = true;
 }
 
-/// What a track does: the sender into the instrument, the instrument through the effect it has,
-/// and the last of them to the device.
-///
-/// One fixed effect slot named `effect`, after the instrument. A slot with no record is left out.
+/// The sender into the instrument, the instrument through the `effect` child when there is
+/// one, and the last of them to the device.
 fn apply_rack(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     play_lanes(state, context)?;
     if let Some(played) = context.child_output("keys", PLAYED_OUTPUT)
@@ -392,7 +398,6 @@ fn apply_rack(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), Be
     Ok(())
 }
 
-/// The one effect slot of the test rack, after its instrument.
 pub(crate) const EFFECT: &str = "effect";
 
 /// A tool whose behaviour refuses when it is told to, so a test can make the project reject a
@@ -418,14 +423,10 @@ pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).expect("an instance id")
 }
 
-/// Makes the test plugin write a line for every lifecycle call it gets into `path`, and makes
-/// it send `events` events out of every process call.
-///
-/// The plugin runs inside this process, so it reads this process's environment. Nextest gives
-/// every test its own process, so setting it here changes nothing for any other test.
+/// Sets what the test plugin reads from the environment: see `test_plugin_support`. Nextest
+/// gives every test its own process, so this changes nothing for any other test.
 pub(crate) fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
-    // SAFETY: nextest runs one test per process and this is called before any thread but this
-    // one exists, so no other thread can be reading the environment.
+    // SAFETY: called before any other thread exists, so none can be reading the environment.
     unsafe {
         match log {
             Some(path) => std::env::set_var(test_plugin_support::LOG_VARIABLE, path),
@@ -440,100 +441,69 @@ pub(crate) fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
     }
 }
 
-/// Makes the test plugin smooth its `Level` as a real plugin smooths its parameters, see
-/// `test_plugin_support::SMOOTH_VARIABLE`. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_smooth() {
     // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::SMOOTH_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin say its output is silent and write nothing into it, from its
-/// second block on. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_go_silent() {
-    // SAFETY: nextest runs one test per process and this is called before any thread but this
-    // one exists, so no other thread can be reading the environment.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::SILENT_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin answer `setProcessing` as the SDK's default does: not
-/// implemented. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_not_to_implement_set_processing() {
-    // SAFETY: as in `tell_the_plugin_to_go_silent`.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::NO_SET_PROCESSING_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin ask to be loaded and started again every time it is given its
-/// state while it loads. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_ask_for_a_reload_as_it_loads() {
-    // SAFETY: nextest runs one test per process and this is called before any thread but this
-    // one exists, so no other thread can be reading the environment.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::RELOAD_ON_STATE_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin hide its `Level` parameter until a note on `LIST_LEVEL_KEY`.
-/// Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_list_its_level_late() {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::LATE_LEVEL_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin's controller edit its `Level` to a quarter in the same moment it
-/// asks to be started again for a new latency. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_edit_as_it_restarts() {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::EDIT_AT_RESTART_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin keep a state in its edit controller as well as in its component:
-/// how loud it plays, which the pedal halves along with the transpose. Same rules as
-/// [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_keep_a_controller_state() {
-    // SAFETY: nextest runs one test per process and this is called before any thread but this
-    // one exists, so no other thread can be reading the environment.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::CONTROLLER_STATE_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin's edit controller fail to give its state. Same rules as
-/// [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_that_its_controller_fails() {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::CONTROLLER_FAILS_VARIABLE, "1") };
 }
 
-/// Makes the VST 3 test plugin write its state with the header last: room first, then the
-/// payload, then back to the start for the header. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_write_its_header_last() {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::HEADER_LAST_VARIABLE, "1") };
 }
 
-/// Makes the test plugin show a wheel or the key pressure in its right channel instead of the
-/// pedal: `bend`, `mod_wheel` or `pressure`, see `test_plugin_support::SHOW_VARIABLE`. Same
-/// rules as [`tell_the_plugin`].
+/// `bend`, `mod_wheel` or `pressure`.
 pub(crate) fn tell_the_plugin_to_show(wheel: &str) {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::SHOW_VARIABLE, wheel) };
 }
 
-/// Makes the VST 3 test plugin map no parameter to the wheels or the key pressure. Same rules
-/// as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_map_no_wheels() {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::NO_WHEELS_VARIABLE, "1") };
 }
 
-/// Makes the test plugin close its own window as soon as the host has shown it, which is what
-/// a composer does with the title bar of a real plugin's window. CLAP only, because VST 3 has
-/// no such call. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_close_its_window() {
-    // SAFETY: nextest runs one test per process and this is called before any thread but this
-    // one exists, so no other thread can be reading the environment.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe { std::env::set_var(test_plugin_support::CLOSE_GUI_VARIABLE, "1") };
 }
 
-/// Makes the test plugin offer no window of its own at all. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_have_no_window(without: bool) {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe {
         match without {
             true => std::env::set_var(test_plugin_support::NO_WINDOW_VARIABLE, "1"),
@@ -542,11 +512,9 @@ pub(crate) fn tell_the_plugin_to_have_no_window(without: bool) {
     }
 }
 
-/// Makes the test plugin ask its host for this window size as soon as it has a window, the way
-/// a plugin that sizes itself as it opens does. A width of zero stops it asking. Same rules as
-/// [`tell_the_plugin`].
+/// A width of zero stops it asking.
 pub(crate) fn tell_the_plugin_to_ask_for_a_window_size(width: u32, height: u32) {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe {
         match width == 0 || height == 0 {
             true => std::env::remove_var(test_plugin_support::RESIZE_GUI_VARIABLE),
@@ -558,11 +526,10 @@ pub(crate) fn tell_the_plugin_to_ask_for_a_window_size(width: u32, height: u32) 
     }
 }
 
-/// Makes the VST 3 test plugin's view ask for another size from inside `onSize`, which is
-/// inside the host's answer to a request of its own. A width of zero stops it asking. Same
-/// rules as [`tell_the_plugin`].
+/// Asks from inside `onSize`, which is inside the host's answer to a request of its own. A width
+/// of zero stops it asking.
 pub(crate) fn tell_the_plugin_to_ask_again_from_inside_the_answer(width: u32, height: u32) {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe {
         match width == 0 || height == 0 {
             true => std::env::remove_var(test_plugin_support::RESIZE_IN_ON_SIZE_VARIABLE),
@@ -574,12 +541,10 @@ pub(crate) fn tell_the_plugin_to_ask_again_from_inside_the_answer(width: u32, he
     }
 }
 
-/// Makes the VST 3 test plugin's controller edit its `Level` parameter through the host as
-/// soon as it has a component handler, the way its own window would when the composer turns a
-/// knob: one `beginEdit`, `count` values on the way down, one `endEdit`. The last value is
-/// `1 / count`. Same rules as [`tell_the_plugin`].
+/// One `beginEdit`, `count` values on the way down, one `endEdit`. The last value is
+/// `1 / count`.
 pub(crate) fn tell_the_plugin_to_edit_its_level(count: u32) {
-    // SAFETY: as above.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe {
         match count == 0 {
             true => std::env::remove_var(test_plugin_support::EDITS_VARIABLE),
@@ -613,11 +578,9 @@ pub(crate) fn lifecycle(path: &Path) -> Vec<LoggedCall> {
         .collect()
 }
 
-/// Every format the repository has a test plugin for. A check that is about the host and not
-/// about one format runs once per format, so both backends answer the same list.
+/// A check about the host and not one format runs once per format.
 pub(crate) const FORMATS: [PluginFormat; 2] = [PluginFormat::Clap, PluginFormat::Vst3];
 
-/// The folder a scan looks in, with the repository's own test plugins in it, one per format.
 pub(crate) fn plugin_folder(root: &Path) -> PathBuf {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
@@ -625,8 +588,6 @@ pub(crate) fn plugin_folder(root: &Path) -> PathBuf {
     folder
 }
 
-/// The same folder with only one format's test plugin in it, for a test that must not find
-/// the other one.
 pub(crate) fn plugin_folder_of(root: &Path, format: PluginFormat) -> PathBuf {
     let folder = root.join("plugins");
     match format {
@@ -636,18 +597,25 @@ pub(crate) fn plugin_folder_of(root: &Path, format: PluginFormat) -> PathBuf {
     folder
 }
 
-/// The scanner: the `plugin-scan` program of this crate, which the runtime does with its own
-/// executable.
+/// The runtime scans with its own executable; a test with this crate's `plugin-scan`.
 pub(crate) fn scanner() -> ScanCommand {
     ScanCommand::new(env!("CARGO_BIN_EXE_plugin-scan"), [])
 }
 
-/// No test ever reads or writes the cache of this machine.
+/// How the tests run a plugin in a process of its own: it writes what goes wrong where the test
+/// shows it, and a block may take long on a busy machine without counting as hung.
+pub(crate) fn isolation() -> plugin_host::Isolation {
+    let (block, hung_after) = (
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
+    );
+    plugin_host::Isolation::new(false).with_timeouts(block, hung_after, hung_after)
+}
+
 pub(crate) fn no_cache() -> ScanCache {
     ScanCache::none()
 }
 
-/// The id of the repository's test plugin of this format.
 pub(crate) fn plugin_id(format: PluginFormat) -> &'static str {
     match format {
         PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
@@ -659,11 +627,8 @@ pub(crate) fn record(format: PluginFormat, state_asset: &str) -> PluginRecord {
     PluginRecord::new(format, plugin_id(format), state_asset).expect("a plugin record")
 }
 
-/// What the test plugin saved, out of a state asset.
-///
-/// A CLAP asset is the plugin's own bytes. A VST 3 asset is the container this host writes,
-/// because VST 3 keeps two states: `SVT3`, then the component's state with its length, then
-/// the controller's. Reading it here is also what checks that the container is what it says.
+/// A CLAP asset is the plugin's own bytes. A VST 3 asset is the host's container of its two
+/// states: `SVT3`, then the component's state with its length, then the controller's.
 pub(crate) fn saved_state(format: PluginFormat, bytes: &[u8]) -> test_plugin_support::SavedState {
     let own = match format {
         PluginFormat::Clap => bytes,
@@ -676,19 +641,16 @@ pub(crate) fn saved_state(format: PluginFormat, bytes: &[u8]) -> test_plugin_sup
     test_plugin_support::load_state(own).expect("a Test Tone state")
 }
 
-/// The transpose the test plugin saved.
 pub(crate) fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
     saved_state(format, bytes).semitones
 }
 
-/// The level a parameter edit left the plugin on, out of the component part of a VST 3 state
-/// asset. It is hundredths, so 100 is the level a plugin nobody edited plays at.
+/// In hundredths, so 100 is the level of a plugin nobody edited.
 pub(crate) fn saved_edit_level(bytes: &[u8]) -> i32 {
     saved_state(PluginFormat::Vst3, bytes).edit_level
 }
 
-/// The level the plugin's edit controller saved, out of the controller part of a VST 3 state
-/// asset. `None` says the asset holds no controller state at all.
+/// `None` when the asset holds no controller state.
 pub(crate) fn saved_controller_level(bytes: &[u8]) -> Option<i32> {
     assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
     let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
@@ -697,8 +659,6 @@ pub(crate) fn saved_controller_level(bytes: &[u8]) -> Option<i32> {
     test_plugin_support::load_controller_state(&rest[4..4 + controller])
 }
 
-/// A VST 3 state asset as this host writes one, for a test that puts a state in the project
-/// before any plugin has run.
 pub(crate) fn vst3_state(component: &[u8], controller: &[u8]) -> Vec<u8> {
     let mut bytes = b"SVT3".to_vec();
     bytes.extend_from_slice(&(component.len() as u32).to_le_bytes());
@@ -708,7 +668,6 @@ pub(crate) fn vst3_state(component: &[u8], controller: &[u8]) -> Vec<u8> {
     bytes
 }
 
-/// The loudest sample of a channel.
 pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
@@ -719,8 +678,8 @@ pub(crate) fn state_asset(name: &str) -> AssetName {
     AssetName::new("plugin-state", name, "bin").expect("an asset name")
 }
 
-/// An open project on a temporary folder with an offline engine, a plugin host that looks in a
-/// folder of its own, and a rack with a `keys` sender.
+/// An open project on a temporary folder with an offline engine and a plugin host that looks
+/// in a folder of its own.
 pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
@@ -729,12 +688,48 @@ pub(crate) struct Harness {
 }
 
 impl Harness {
+    /// Each plugin in a process of its own, as a project that plays has them.
     pub(crate) fn new() -> Self {
         Self::open(tempfile::tempdir().expect("a temporary folder"), true)
     }
 
-    /// A project whose engine renders instead of playing on a device, which is what `--render`
-    /// opens. Every plugin is told, in the way its own format has for it.
+    /// Each plugin in a process of its own, with these timeouts, for a test of a plugin that
+    /// hangs.
+    #[cfg(unix)]
+    pub(crate) fn isolated_with(isolation: plugin_host::Isolation) -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let search = vec![plugin_folder(folder.path())];
+        let plugins = Plugins::isolated(search, scanner(), no_cache(), isolation);
+        Self::with_plugins(folder, plugins)
+    }
+
+    /// Runs the behaviour of every record the host asked to, as whoever polls does.
+    #[cfg(unix)]
+    pub(crate) fn rebind_retries(&mut self) {
+        for instance in self.plugins.take_retries() {
+            self.project
+                .rebind(&instance)
+                .expect("the record runs again");
+        }
+    }
+
+    /// Each plugin in this process, as Windows has them, for a test of what only a plugin in
+    /// this process shows: its window, and the threads and instances its log counts.
+    pub(crate) fn in_process() -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let search = vec![plugin_folder(folder.path())];
+        Self::open_in_process_with_paths(folder, search)
+    }
+
+    pub(crate) fn open_in_process_with_paths(
+        folder: tempfile::TempDir,
+        search_paths: Vec<PathBuf>,
+    ) -> Self {
+        let plugins = Plugins::new(search_paths, scanner(), no_cache());
+        Self::with_plugins(folder, plugins)
+    }
+
+    /// What `--render` opens.
     pub(crate) fn rendering_offline() -> Self {
         let folder = tempfile::tempdir().expect("a temporary folder");
         let scan_folder = plugin_folder(folder.path());
@@ -746,7 +741,6 @@ impl Harness {
         )
     }
 
-    /// Opens a folder again, as closing and reopening a project does.
     pub(crate) fn reopen(self) -> Self {
         let Self {
             project, folder, ..
@@ -766,20 +760,17 @@ impl Harness {
         writes_state: bool,
     ) -> Self {
         let plugins = if writes_state {
-            Plugins::new(search_paths, scanner(), no_cache())
+            Plugins::isolated(search_paths, scanner(), no_cache(), isolation())
         } else {
             Plugins::read_only(search_paths, scanner(), no_cache())
         };
         Self::with_plugins(folder, plugins)
     }
 
-    /// A project on `folder` with a host that is already made, for a test that wants to say
-    /// how it scans.
     pub(crate) fn with_plugins(folder: tempfile::TempDir, plugins: Plugins) -> Self {
         Self::with_plugins_and_engine(folder, plugins, EngineConfig::new(SAMPLE_RATE, 2))
     }
 
-    /// The same, with the engine given: a device run or a render.
     pub(crate) fn with_plugins_and_engine(
         folder: tempfile::TempDir,
         plugins: Plugins,
@@ -825,7 +816,7 @@ impl Harness {
     }
 
     /// A rack `track` whose instrument is a steady level, with the plugin of `record` as its
-    /// effect. The dry signal is then a number a test can read in any frame.
+    /// effect.
     pub(crate) fn add_level_track(&mut self, value: f32, record: PluginRecord) {
         let mut changes = Changes::new();
         changes.create(id("track"), Rack::default());
@@ -836,7 +827,6 @@ impl Harness {
             .expect("the track is added");
     }
 
-    /// Puts a plugin in the effect slot of the rack, after its instrument.
     pub(crate) fn add_effect(&mut self, record: PluginRecord) {
         let mut changes = Changes::new();
         changes.create(id(&format!("track/{EFFECT}")), record);
@@ -845,8 +835,8 @@ impl Harness {
             .expect("the effect is added");
     }
 
-    /// Writes an offset, in hundredths, into the state asset of an effect, as the host would
-    /// have saved it. It is what the effect half of the test plugin adds to every sample.
+    /// The offset, in hundredths, is what the effect half of the test plugin adds to every
+    /// sample.
     pub(crate) fn write_offset(&self, format: PluginFormat, name: &str, offset: i32) {
         let own = test_plugin_support::save_state(test_plugin_support::SavedState {
             offset,
@@ -883,8 +873,7 @@ impl Harness {
             .collect()
     }
 
-    /// Renders `frames` frames with nothing but the engine, and counts what was allocated
-    /// anywhere in this process while it did.
+    /// Renders with nothing but the engine, and counts what this thread allocated meanwhile.
     pub(crate) fn render_counting_allocations(&mut self, frames: usize) -> (Render, u64) {
         let mut output = vec![0.0_f32; frames * 2];
         let ((), allocations) = allocations_during(|| {
@@ -895,8 +884,7 @@ impl Harness {
         (Render { output }, allocations)
     }
 
-    /// Renders without polling the host, so a test decides itself when the host does its
-    /// main-thread work and at what time.
+    /// So a test decides itself when the host does its main-thread work.
     pub(crate) fn render_without_polling(&mut self, frames: usize) -> Render {
         let mut output = vec![0.0_f32; frames * 2];
         for buffer in output.chunks_mut(512 * 2) {
@@ -906,8 +894,8 @@ impl Harness {
         Render { output }
     }
 
-    /// Renders `frames` frames in device buffers of 512, interleaved, and polls the host after
-    /// every buffer as the runtime does.
+    /// Renders in device buffers of 512, interleaved, and polls the host after every buffer as
+    /// the runtime does.
     pub(crate) fn render(&mut self, frames: usize) -> Render {
         let mut output = vec![0.0_f32; frames * 2];
         for buffer in output.chunks_mut(512 * 2) {
@@ -927,7 +915,6 @@ impl Harness {
     }
 }
 
-/// One render, as two channels.
 pub(crate) struct Render {
     output: Vec<f32>,
 }
@@ -945,8 +932,6 @@ impl Render {
         &self.output
     }
 
-    /// The first frame where the left channel is not silent, which is the frame the plugin
-    /// started a note on.
     pub(crate) fn first_sound(&self) -> Option<usize> {
         self.left().iter().position(|sample| *sample != 0.0)
     }

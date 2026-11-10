@@ -24,7 +24,7 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Check a crate's current version and changelog before using it from memory: agents write for older APIs.
 - A record field read with `deserialize_with` needs `#[schemars(with = ...)]` naming the type it really reads, or its `sdk.ts` type is wrong.
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
-- Before writing DSP math, a knob or a file picker in an extension, look in `sound_core` and `sound_ui`: extensions kept copying them. A helper a second crate needs moves there, not into a copy.
+- Before writing DSP math, a knob or a file picker in an extension, look in `sound_dsp` and `sound_ui`: extensions kept copying them. A helper a second crate needs moves there, not into a copy.
 - Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
 - Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.
@@ -56,7 +56,7 @@ How the engine keeps to that:
 - Events are `Copy` types in preallocated per-port buffers. Overflow is counted, never allocated.
 - Processors have two phases, from Pd: `prepare` on the control thread may allocate; `update` and `process` on the audio thread may not. `update` swaps values out of its message and never drops them.
 - Processors live in a slot table. A routing change sends a new schedule and every surviving processor keeps its state.
-- Device buffers are split into sub-blocks of at most 64 frames. Edits are taken at each sub-block start. A processor with an automation input plays its sub-block in pieces, split where a lane bends, so automation lands on its frame; a sub-block with no bend is one piece.
+- Device buffers are split into sub-blocks of at most 64 frames. Edits are taken at each sub-block start. A processor with an automation input plays its sub-block in pieces, split where a lane bends, so automation lands on its frame. The plugin host cuts its own, so a plugin in another process costs one call per sub-block.
 - Time is integers: engine time is a frame counter, and ticks convert to frames through one function in `clock.rs`, which rounds in one place. Every part then agrees on the frame of a tick.
 - Timeline processors make their own events from the transport info of each block, instead of the control thread scheduling ahead. Timing then never depends on control thread latency.
 
@@ -66,7 +66,7 @@ How the engine keeps to that:
 
 - The CI job `test` in `.github/workflows/ci.yml` runs the whole test suite with the sanitizer on, on main.
 - A test in `crates/core/tests/engine.rs` starts a child that allocates inside `process` and expects the abort, so a sanitizer that is silently off fails CI.
-- `HostedPlugin` wraps each call into a third-party plugin in a `ScopedDisabler`: what a plugin does inside itself is not ours to check. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
+- Each call into a plugin is in a `ScopedDisabler`; for a plugin in its own process that is the socket write, poll and read of a block. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
 
 `no_denormals` wraps the body of `process_block`, so offline renders and the device compute the same.
 
@@ -81,13 +81,13 @@ How the engine keeps to that:
 ## Testing
 
 - DSP, graph, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio testable: render frames, then assert on samples or snapshot a summary with `insta`.
-- Project folder tests call `Project::apply_outside_changes` with explicit paths, the function the file watcher calls, so they do not depend on timing.
+- A test that changes a file tells the code, as the watcher does: `Project::apply_outside_changes`, or `Opened::save_code` for tools. A busy Mac drops file events for minutes, so only CI runs the tests that start the system's watcher.
 - Property tests (`proptest`) cover the graph compiler, the clock round trips, transport events over random tempo maps and buffer sizes, and state application.
 - `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
 - Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
-- Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule. A budget that does not hold yet is printed, not asserted, until the change that fixes its cause.
+- Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule.
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 - Verify with `cargo verify`, never the whole workspace: it tests the crates the branch changed and runs clippy on those and every crate that uses them, one run at a time per machine, so parallel agents fit in 8 GB. Its arguments go to nextest: `-E 'test(name)'` while iterating, `-p runtime -E 'test(song)'` when you changed behaviour a dependent tests. The pull request's Linux job runs every test, and main runs them on all three systems.

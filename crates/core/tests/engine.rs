@@ -7,9 +7,9 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use sound_core::{
-    AudioInput, AudioOutput, Connection, Engine, EngineConfig, EngineControl, EventInput,
-    EventOutput, GraphError, InputId, LiveInput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext,
-    Processor, live_input,
+    AudioInput, AudioOutput, Automation, Connection, Engine, EngineConfig, EngineControl,
+    EventInput, EventOutput, GraphError, InputId, LiveInput, MAX_BLOCK, Ports, PrepareConfig,
+    ProcessContext, Processor, live_input,
 };
 
 const OUTPUT: AudioOutput = AudioOutput::new(0);
@@ -1141,4 +1141,94 @@ fn the_realtime_sanitizer_catches_an_allocation_when_enabled() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "the allocation went unnoticed");
     assert!(stderr.contains("RealtimeSanitizer"), "{stderr}");
+}
+
+const LANES_OUT: EventOutput<Automation> = EventOutput::new(0);
+const LANES_IN: EventInput<Automation> = EventInput::new(0);
+
+/// A lane that bends at frame 32 of every sub-block.
+struct Bending;
+
+impl Processor for Bending {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().event_output(LANES_OUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        for (offset, value) in [(0, 0.0), (32, 1.0)] {
+            let lane = Automation {
+                parameter: 0,
+                value,
+            };
+            context.event_outputs.push(LANES_OUT, offset, lane);
+        }
+    }
+}
+
+/// Writes into every frame how many frames the call it was played in had.
+struct PieceLength {
+    cuts_itself: bool,
+}
+
+impl Processor for PieceLength {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        let ports = Ports::new();
+        let ports = match self.cuts_itself {
+            true => ports.automation_input_cut_by_processor(LANES_IN),
+            false => ports.event_input(LANES_IN),
+        };
+        ports.audio_output(OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let frames = context.frames as f32;
+        for channel in context.audio_outputs.get(OUTPUT) {
+            channel.fill(frames);
+        }
+    }
+}
+
+/// The engine plays a processor's sub-block in pieces cut where a lane bends, unless the
+/// processor cuts them itself: then the sub-block is one call.
+#[test]
+fn a_processor_that_cuts_its_own_pieces_is_called_once_per_sub_block() {
+    for cuts_itself in [false, true] {
+        let (mut control, mut engine) = mono();
+        let mut edit = control.edit();
+        let lanes = edit.add_processor("lanes", Bending).unwrap();
+        let device = edit
+            .add_processor("device", PieceLength { cuts_itself })
+            .unwrap();
+        edit.connect(Connection::new(
+            lanes.id(),
+            LANES_OUT,
+            device.id(),
+            LANES_IN,
+        ))
+        .unwrap();
+        to_device(&mut edit, device.id());
+        edit.commit().unwrap();
+
+        let output = render(&mut engine, MAX_BLOCK * 4, MAX_BLOCK * 2);
+        let expected = match cuts_itself {
+            true => MAX_BLOCK as f32,
+            false => 32.0,
+        };
+        assert!(
+            output.iter().all(|frames| *frames == expected),
+            "{cuts_itself}: {output:?}"
+        );
+    }
 }

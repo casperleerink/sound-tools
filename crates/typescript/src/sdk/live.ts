@@ -8,9 +8,9 @@ import { ChildTools, Context, Frozen } from "./tools";
 
 /**
  * The clock of the project, one for all tools: where the piece plays and how fast. A binding
- * that reads `playing`, `repeat`, `click`, `tempo_map` or `sections` runs again when it changes.
- * `tick`, `bar`, `beat` and `bpm` move on every frame: read them in a handler, `tick` or
- * `onKey`, and show them with `now.tick` and `now.bpm`, which move without code.
+ * that reads `playing`, `repeat`, `click`, `computerKeys`, `tempo_map` or `sections` runs
+ * again when it changes. `tick`, `bar`, `beat` and `bpm` move on every frame: read them in a
+ * handler, `tick` or `onKey`, and show them with `now.tick` and `now.bpm`.
  */
 export interface Clock {
   readonly playing: boolean;
@@ -102,10 +102,9 @@ function liveKey(value: unknown): string {
 }
 
 /**
- * A number the window works out again on every frame, without running code: where the
- * playhead is, a field as a drag turns it, an output of the sound, how far a drag went. Combine them with the
- * methods, which take a live value or a number. Code cannot read one: it is no number, so
- * `if (now.tick > 960)` is a type error.
+ * A number the window works out on every frame, without running code. Combine it with the
+ * methods, which take a live value or a number. Code cannot read one: `if (now.tick > 960)` is a
+ * type error.
  */
 export class Live {
   constructor(readonly node: LiveNode) {}
@@ -142,7 +141,7 @@ export class Live {
   smooth(ms: number): Live { return this.ease({ kind: "smooth", ms }); }
   /** Rises with it at once and falls at most `perSecond` a second: a meter's bar. */
   fall(perSecond: number): Live { return this.ease({ kind: "fall", per_second: perSecond }); }
-  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.3)`. */
+  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.5)`. */
   hold(seconds: number): Live { return this.ease({ kind: "hold", seconds }); }
   private ease(ease: EaseNode): Live { return new Live({ op: "ease", x: this, ease, key: liveKey([this, ease]) }); }
 }
@@ -163,6 +162,8 @@ export interface DragValues {
   y: Live;
   /** 1 while the pointer holds it, and until its code answered the end. */
   active: Live;
+  /** 1 while it is held with alt. */
+  alt: Live;
 }
 
 /** What the window shows of a space, in its units. */
@@ -261,7 +262,7 @@ function sources(): Now<Record<string, number>> {
     file: (asset, options) => ({ source: "file", asset, ...options }),
     take: (name) => ({ source: "take", name }),
     drag: (id) =>
-      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
+      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active", "alt"]),
     space: (key) =>
       part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
     hover: (key) => new Live({ op: "hover", key }),
@@ -271,21 +272,41 @@ function sources(): Now<Record<string, number>> {
 /** The sources of live values, for components of a view, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
 
-
+/** The keys that type a character other than a letter. */
+export const SYMBOL_KEYS = [
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "=", "[", "]", ";", "'", ",", ".", "/", "`", "\\"
+] as const;
+/** What the symbol keys type with shift. */
+export const SHIFTED_KEYS = [
+  "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "{", "}", ":", '"', "<", ">", "?", "~", "|"
+] as const;
 /** The keys of the computer keyboard, as the window names them. */
 export const PLAIN_KEYS = [
   "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
-  "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "=",
-  "[", "]", ";", "'", ",", ".", "/", "`", "\\", "space", "enter", "escape", "backspace", "delete",
+  "t", "u", "v", "w", "x", "y", "z", ...SYMBOL_KEYS, "space", "enter", "escape", "backspace", "delete",
   "tab", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "f1", "f2", "f3",
   "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"
 ] as const;
 /** A key of the computer keyboard by its name. */
 export type PlainKey = (typeof PLAIN_KEYS)[number];
+type SymbolKey = (typeof SYMBOL_KEYS)[number];
+type Held = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}`;
 /** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
-export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${PlainKey}`;
-/** The keys the app keeps: undo, new, open, quit, the panel, the computer keys, and tab. */
-export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "tab";
+export type KeyName = `${Held}${PlainKey}`;
+type ActionHeld = `${"" | "cmd-"}${"" | "alt-"}`;
+/**
+ * A key an action has, with cmd, alt and shift held first and in that order: `"space"`,
+ * `"shift-up"`, `"cmd-shift-z"`. `cmd` is ctrl on Windows and Linux, so there is no `ctrl-`: a
+ * key named here works on every system. A symbol key with shift is named by what it then
+ * types, with no shift: `"?"`, `"cmd-+"`. The app's own keys are none of an action's.
+ */
+export type ActionKey = Exclude<`${ActionHeld}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${ActionHeld}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`, AppKey>;
+/** An action by its tool and its name: `"song.record"`. The app's own are `"app.undo"`, `"app.redo"` and `"app.computer_keys"`. */
+export type ActionId = `${string}.${string}`;
+/** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */
+export type Shortcut = KeyName | ActionId;
+/** The keys the app keeps: undo, redo, new, open, quit, settings, the panel, the computer keys, and tab. */
+export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "cmd-shift-z" | "cmd-alt-z" | "cmd-," | "tab" | "shift-tab";
 
 /** An item of `openMenu`. */
 export interface MenuItem {
@@ -301,7 +322,7 @@ export interface MenuItem {
   /** A line above it, between it and the items before. */
   separator?: boolean;
   /** The keys that do it too, drawn at the end of its row. */
-  shortcut?: KeyName;
+  shortcut?: Shortcut;
 }
 
 /** A device `offers` gives. */
@@ -326,7 +347,6 @@ export interface Offers {
   here: string | null;
 }
 
-/** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
 /** How a menu of `openMenu` shows. */
 export interface MenuOptions {
   /** Quiet lines under the items. */
@@ -339,6 +359,7 @@ export interface MenuOptions {
   search?: boolean;
 }
 
+/** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
 export interface MovedNumber {
   name: string;
   /** What a person reads for it: as its device names it, such as a plugin's parameter, or its name in plain words, `Osc 1 position`. */

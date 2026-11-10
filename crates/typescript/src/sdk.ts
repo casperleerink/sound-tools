@@ -1,8 +1,7 @@
-// The SDK of the project's own tools. Sound Tools writes this file and the folder `sdk/` when
-// the project opens, so an edit there is lost. Read `agent-docs/extensions.md` first.
+// The SDK of the project's own tools. Sound Tools writes this file and `sdk/` when the project
+// opens, so an edit there is lost. Read `agent-docs/extensions.md` first.
 //
-// A tool is a `.ts` or `.tsx` file next to this one that calls `tool` and imports from `./sdk`.
-// Below is every name it may import, by the module of `sdk/` that declares it with its doc.
+// Below is every name a tool may import, by the module of `sdk/` that declares it with its doc.
 
 // the fields of a record and the inputs of a tool
 export {
@@ -28,7 +27,7 @@ export {
   takes, tool
 } from "./sdk/tools";
 export type {
-  At, ChildBang, ChildNotes, ChildNumber, ChildPort, ChildTools, Connection, Context, Declaration,
+  Action, At, ChildBang, ChildNotes, ChildNumber, ChildPort, ChildTools, Connection, Context, Declaration,
   DraftChildren, FilledStateOfTool, Frozen, HeardEvent, Key, NewChild, NoteEvent, OwnAudio,
   OwnedChild, OwnNotes, Parent, Part, Performer, ProjectTool, SendTo, StateOfTool, Take, Takes,
   TakingTool, Tick, ToolName, ToolSpec
@@ -38,9 +37,9 @@ export {
   Live, now
 } from "./sdk/live";
 export type {
-  Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName, MenuItem,
-  MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents, Press,
-  Section, SpaceValues, TakeList, TempoMap, View, WaveList
+  ActionId, ActionKey, Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName,
+  MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents,
+  Press, Section, Shortcut, SpaceValues, TakeList, TempoMap, View, WaveList
 } from "./sdk/live";
 // what runs again when a value changes: `memo`, `signal`, `timeout`
 export {
@@ -59,7 +58,7 @@ export type {
 // the elements of a view: `div` and its `Style`, `Space` and its shapes, `Button`, `Input`
 export {
   Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  PeakMeter, Rect, Space, TitleBar, Toggle, Wave
+  Rect, Space, TitleBar, Toggle, Wave
 } from "./sdk/drawing";
 export type {
   ButtonProps, CardSelect, Color, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint,
@@ -71,7 +70,7 @@ export {
   Slider, Steps, valueAt, words
 } from "./sdk/components";
 export type {
-  FaderProps, Kept, KnobProps, NumberBoxProps, PadProps, Peaks, SegmentedControlProps,
+  FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, SegmentedControlProps,
   SelectOption, SelectProps, SliderProps, StepsProps, Travel, ValueProps
 } from "./sdk/components";
 // what the runtime calls

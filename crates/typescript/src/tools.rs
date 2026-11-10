@@ -26,6 +26,8 @@ use sound_signals::{
     ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
+use sound_ui::shortcuts;
+
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
 use crate::feeds::played_name;
@@ -68,6 +70,9 @@ pub(crate) struct ToolInfo {
     /// The keys it hears wherever the focus is, while its view is the main view: `space`.
     #[serde(default)]
     pub global_keys: Vec<String>,
+    /// What it does on a key, by name, in the order its code gives them.
+    #[serde(default)]
+    pub actions: Named<ActionInfo>,
     /// It hears note events, `onNotes`: what reaches its `notes`.
     pub notes: bool,
     /// It keeps what its `recorder` children take, `onTake`.
@@ -77,6 +82,17 @@ pub(crate) struct ToolInfo {
     /// The tools of its children by name, when it names them. An empty map allows none.
     #[serde(default)]
     pub children: Option<Named<String>>,
+}
+
+/// Something a tool does on a key, as its code declares it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActionInfo {
+    pub title: String,
+    /// The keys that do it until the composer picks others.
+    pub keys: Vec<String>,
+    /// Its key does it wherever the focus is, while the view of its tool is the main view.
+    pub everywhere: bool,
 }
 
 /// What a tool is to a track, which goes in its `effects` or plays as its instrument.
@@ -91,6 +107,12 @@ pub(crate) enum ToolKind {
 /// Named things in the order the code gives them.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Named<T>(pub Vec<(String, T)>);
+
+impl<T> Default for Named<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Named<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -422,7 +444,36 @@ impl Named<Field> {
 }
 
 impl ToolInfo {
-    /// What the `Signals` processor of this tool is.
+    /// Whether a card or a page of it takes the keys: for `onKey`, or for its actions.
+    pub(crate) fn hears_keys(&self) -> bool {
+        self.keys || !self.actions.0.is_empty()
+    }
+
+    /// Whether its action `name` runs wherever the focus is.
+    pub(crate) fn acts_everywhere(&self, name: &str) -> bool {
+        let mut actions = self.actions.0.iter();
+        actions.any(|(action, info)| action == name && info.everywhere)
+    }
+
+    /// Its actions as the keymap of the window lists them. `None` for a tool with none.
+    pub(crate) fn shortcuts(&self) -> Option<shortcuts::Group> {
+        let actions = self
+            .actions
+            .0
+            .iter()
+            .map(|(name, action)| shortcuts::Action {
+                name: name.clone(),
+                title: action.title.clone(),
+                keys: action.keys.clone(),
+            });
+        let actions: Vec<_> = actions.collect();
+        (!actions.is_empty()).then(|| shortcuts::Group {
+            name: self.name.clone(),
+            title: self.title.clone(),
+            actions,
+        })
+    }
+
     /// What the tool is to a track: an effect when it has one voice whose sound reads what
     /// comes in, as a parent's does; else an instrument.
     pub(crate) fn tool_kind(&self) -> ToolKind {
@@ -821,7 +872,6 @@ impl Sounds {
         self.sounds.values().filter_map(|code| code.as_ref().err())
     }
 
-    /// The tool for the core.
     pub(crate) fn json_tool(self) -> JsonTool {
         let info = self.info.clone();
         JsonTool {
@@ -839,6 +889,10 @@ impl Sounds {
             // A sample its record names may come after the record, as an audio clip's may.
             asset_folders: vec![sound_media::AUDIO_FOLDER],
             owns_children: info.behaviour,
+            required_children: (info.children.iter().flat_map(|named| &named.0))
+                .map(|(name, _)| name.clone())
+                .filter(|name| !name.ends_with(ANY_NAME))
+                .collect(),
             end: None,
         }
     }
@@ -865,7 +919,6 @@ impl Sounds {
         })
     }
 
-    /// The compiled sound for the choices of `state`.
     fn code(&self, state: &Value) -> Result<Arc<Code>, String> {
         let key = self.info.sound_key(state);
         // A checked record has one of the options of each choice, and Bun sent each combination.
@@ -1579,10 +1632,9 @@ fn is_region(name: &str, port: &str, context: &BehaviourContext<'_>) -> bool {
     port == AUDIO_OUTPUT && context.child_tool(name) == Some(region::NAME)
 }
 
-/// One player for the regions that play into each place, by that place, as main's arrangement
-/// played the clips of an audio track: where one ends and the next starts they crossfade, and
-/// where they overlap the last by name is heard. A region whose file is not read yet is left
-/// out: it runs again when it is, and so does this.
+/// One player for the regions that play into each place, by that place: where one ends and the
+/// next starts they crossfade, and where they overlap the last by name is heard. A region whose
+/// file is not read yet is left out: it runs again when it is, and so does this.
 fn region_players(
     declaration: &Declaration,
     context: &mut BehaviourContext<'_>,

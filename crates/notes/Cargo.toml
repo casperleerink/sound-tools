@@ -12,6 +12,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sound-core.workspace = true
+sound-dsp.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

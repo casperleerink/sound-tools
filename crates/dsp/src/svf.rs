@@ -2,7 +2,7 @@
 //! high pass and notch, at 12 or 24 dB per octave, with resonance. The EQ and the filters of a
 //! tool's sound mix its raw outputs in the shapes of [`SvfShape`], and the Utility in its own
 //! ([`SvfSection::band_and_low`]). Next to
-//! [`Smoothed`](crate::Smoothed), a helper a processor uses per frame. The core itself filters
+//! [`Smoothed`](sound_core::Smoothed), a helper a processor uses per frame. The core itself filters
 //! nothing.
 //!
 //! Each section is the state variable filter in its trapezoidal form (Simper, "Solving the

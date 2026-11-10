@@ -6,9 +6,11 @@
 //! the block from where the last block left it, so nothing steps. It keeps a mono path while
 //! nothing spreads it across the stereo field, which halves the work of its filters.
 
-use sound_core::{
-    EnvelopeState, HIGHEST_PHASE_STEP, Lfo, MAX_BLOCK, Oversampler, SvfFactors, SvfSection,
-    pan_gains, poly_blep, soft_clip,
+use sound_core::MAX_BLOCK;
+
+use sound_dsp::{
+    EnvelopeState, HIGHEST_PHASE_STEP, Lfo, Oversampler, SvfFactors, SvfSection, pan_gains,
+    poly_blep, soft_clip,
 };
 use sound_notes::{Velocity, frequency_hz};
 

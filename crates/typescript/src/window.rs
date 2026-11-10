@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, PathPromptOptions, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
@@ -28,7 +28,7 @@ use sound_ui::components::device_card::{
 };
 use sound_ui::{
     DeviceLabel, DeviceOffer, Devices, FinishedTake, GlobalKeys, Loop, OfferGroup, Playhead,
-    Session, Takes, Views,
+    Session, Shortcuts, Takes, Views,
 };
 
 use crate::bun::{
@@ -56,7 +56,6 @@ const CARD_ROOM: PageSize = PageSize {
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
-    /// The `extensions/` folder of the project.
     folder: PathBuf,
     session: WeakEntity<Session>,
     host: Host,
@@ -66,7 +65,7 @@ pub(crate) struct Live {
     opening: u64,
     skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
-    tools: Rc<RefCell<Vec<ToolInfo>>>,
+    tools: Rc<RefCell<Vec<Rc<ToolInfo>>>>,
     /// Goes up when the tools do, so the pickers fill themselves again.
     generation: Rc<Cell<u64>>,
     cards: HashMap<u64, Card>,
@@ -91,12 +90,10 @@ pub(crate) struct Live {
     /// Where the code of the running Bun played: an instance's own voices and controls, or the
     /// feed of a child of it. A new Bun knows nothing of them, so each place hears it is gone.
     performed_on: HashSet<(InstanceId, Option<String>)>,
-    /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// Hears the changes in `extensions/`.
-    _watcher: Option<RecommendedWatcher>,
+    watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
     watch_problem: Option<Problem>,
     changed: smol::channel::Sender<()>,
@@ -107,14 +104,12 @@ pub(crate) struct Live {
     asked: Option<Asked>,
 }
 
-/// The Bun of the window.
 enum Host {
     Running {
         bun: Arc<Bun>,
         /// A step of the control loops is out. One at a time, so a slow loop does not pile
         /// steps up.
         ticking: bool,
-        /// Hears what Bun says, until it ends.
         _hearing: Task<()>,
     },
     /// A new Bun starts and loads on a thread of its own. `again`: `extensions/` changed
@@ -157,6 +152,24 @@ struct Card {
     menu: Option<OpenedMenu>,
 }
 
+/// What changed for the cards of the window, which each card filters.
+pub(crate) enum CardsChanged {
+    One(u64),
+    /// Every card, as when the tools loaded again.
+    All,
+}
+
+impl CardsChanged {
+    pub(crate) fn concerns(&self, card: u64) -> bool {
+        match self {
+            Self::One(one) => *one == card,
+            Self::All => true,
+        }
+    }
+}
+
+impl EventEmitter<CardsChanged> for Live {}
+
 /// What a tree is drawn on.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Surface {
@@ -175,13 +188,52 @@ pub fn start_window(
     devices: &mut Devices,
     cx: &mut App,
 ) {
+    start(extensions, session, views, devices, true, cx);
+}
+
+/// Tells a window of a change in `extensions/`, as its watcher does.
+#[cfg(feature = "test-support")]
+pub struct CodeChanges(smol::channel::Sender<()>);
+
+#[cfg(feature = "test-support")]
+impl CodeChanges {
+    pub fn tell(&self) {
+        self.0.try_send(()).ok();
+    }
+}
+
+/// [`start_window`] with no watcher: the test tells it of each change, as the system can take
+/// seconds to.
+#[cfg(feature = "test-support")]
+pub fn start_window_unwatched(
+    extensions: Extensions,
+    session: &Entity<Session>,
+    views: &mut Views,
+    devices: &mut Devices,
+    cx: &mut App,
+) -> CodeChanges {
+    CodeChanges(start(extensions, session, views, devices, false, cx))
+}
+
+fn start(
+    extensions: Extensions,
+    session: &Entity<Session>,
+    views: &mut Views,
+    devices: &mut Devices,
+    watched: bool,
+    cx: &mut App,
+) -> smol::channel::Sender<()> {
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
-    let live = Live::start(extensions, session, &tools, &generation, cx);
-    // The keys the tool of the main view takes wherever the focus is.
+    let live = Live::start(extensions, session, &tools, &generation, watched, cx);
+    let changed = live.read(cx).changed.clone();
+    // The keys the tool of the main view takes wherever the focus is: those of its actions that
+    // run everywhere, then its `globalKeys`.
     GlobalKeys::set(
         {
             let (live, session, tools) = (live.downgrade(), session.downgrade(), tools.clone());
+            // The keys that went down as an action, whose up its `onKey` does not hear.
+            let acted = RefCell::new(HashSet::new());
             move |key, cx| {
                 let (Some(live), Some(session)) = (live.upgrade(), session.upgrade()) else {
                     return false;
@@ -189,20 +241,27 @@ pub fn start_window(
                 let Some(main) = Views::main_instance(&session, cx) else {
                     return false;
                 };
-                let tool = session
-                    .read(cx)
-                    .project()
-                    .tool_of(&main)
-                    .map(str::to_string);
-                let takes = tool.is_some_and(|tool| {
-                    find(&tools.borrow(), &tool)
-                        .is_some_and(|info| info.global_keys.contains(&key.name))
-                });
-                // A key it took comes up to it whatever it takes now.
-                if key.down && (!takes || live.read(cx).shows_dialog(&main)) {
-                    return false;
-                }
                 let (name, modifiers) = (key.keystroke.key.clone(), key.keystroke.modifiers);
+                if key.down {
+                    let tool = session.read(cx).project().tool_of(&main);
+                    let info = tool.and_then(|tool| find(&tools.borrow(), tool).cloned());
+                    let Some(info) = info.filter(|_| !live.read(cx).shows_dialog(&main)) else {
+                        return false;
+                    };
+                    let mut actions = crate::actions_on(&info.name, key.keystroke, cx);
+                    actions.retain(|action| info.acts_everywhere(action));
+                    if !actions.is_empty() {
+                        acted.borrow_mut().insert(name);
+                        live.update(cx, |live, cx| live.act(&main, &actions, cx));
+                        return true;
+                    }
+                    if !info.global_keys.contains(&key.name) {
+                        return false;
+                    }
+                } else if acted.borrow_mut().remove(&name) {
+                    return true;
+                }
+                // A key it took comes up to it whatever it takes now.
                 live.update(cx, |live, cx| {
                     live.key(&main, &name, key.down, modifiers, cx)
                 });
@@ -250,6 +309,7 @@ pub fn start_window(
             name: info.title.clone().into(),
         })
     });
+    changed
 }
 
 /// Watches `folder` and its folders but `node_modules`, and says on `changed` when a file
@@ -330,8 +390,9 @@ impl Live {
     fn start(
         extensions: Extensions,
         session: &Entity<Session>,
-        tools: &Rc<RefCell<Vec<ToolInfo>>>,
+        tools: &Rc<RefCell<Vec<Rc<ToolInfo>>>>,
         generation: &Rc<Cell<u64>>,
+        watched: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         let Extensions {
@@ -342,10 +403,15 @@ impl Live {
             skipped,
             problems,
         } = extensions;
-        *tools.borrow_mut() = loaded;
+        list_actions(&loaded, cx);
+        *tools.borrow_mut() = loaded.into_iter().map(Rc::new).collect();
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
-            let (watcher, watch_problem) = watch(&folder, changed.clone());
+            let (watcher, watch_problem) = if watched {
+                watch(&folder, changed.clone())
+            } else {
+                (None, None)
+            };
             let hearing_changes = cx.spawn(async move |live, cx| {
                 while changes.recv().await.is_ok() {
                     // Until it is quiet: an editor saves in several writes, an agent several
@@ -388,7 +454,9 @@ impl Live {
                         live.tell_soon(cx);
                     }
                 }
-                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => {}
+                ProjectEvent::ProjectFileChanged
+                | ProjectEvent::ProblemsChanged
+                | ProjectEvent::WentBack(_) => {}
             })
             .detach();
             let live = Live {
@@ -413,7 +481,7 @@ impl Live {
                 performed_on: HashSet::new(),
                 last_frame: Instant::now(),
                 problems,
-                _watcher: watcher,
+                watcher,
                 watch_problem,
                 changed,
                 _tasks: [hearing_changes, framing],
@@ -442,7 +510,6 @@ impl Live {
         idle(&self.host)
     }
 
-    /// `bun` as the Bun of the window, heard until it ends.
     fn running(bun: Arc<Bun>, cx: &mut Context<Self>) -> Host {
         let events = bun.events();
         let hearing = cx.spawn(async move |live, cx| {
@@ -460,8 +527,14 @@ impl Live {
     }
 }
 
-/// The tool named `name`, as it last loaded.
-fn find<'a>(tools: &'a [ToolInfo], name: &str) -> Option<&'a ToolInfo> {
+/// Lists the actions of the tools that loaded in the keymap of the window, in place of those of
+/// the load before.
+fn list_actions(tools: &[ToolInfo], cx: &mut App) {
+    let groups = tools.iter().filter_map(ToolInfo::shortcuts).collect();
+    cx.default_global::<Shortcuts>().set_tool_groups(groups);
+}
+
+fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
     tools.iter().find(|info| info.name == name)
 }
 
@@ -469,7 +542,6 @@ fn key(tool: &str) -> String {
     format!("{FOLDER}/{tool}")
 }
 
-/// The `state` of the record of `id`.
 pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json::Value> {
     serde_json::from_str(&project.state_json(id)?).ok()
 }
@@ -489,7 +561,7 @@ fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
 
 /// Whether Bun holds the record of `id`: one of a tool of the project, or one inside one at
 /// any depth, which the code of that tool reads.
-fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
+fn told_to_bun(project: &Project, tools: &[Rc<ToolInfo>], id: &InstanceId) -> bool {
     let ours =
         |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
     ours(id) || id.ancestors().any(|owner| ours(&owner))
@@ -551,7 +623,7 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
 
 /// What a picker offers of the tools of `kind`: each one's record at its defaults. Not an owner,
 /// whose place is the top of the project.
-fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
+fn offers(tools: &[Rc<ToolInfo>], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools
         .iter()
         .filter(|info| kind(info.tool_kind()) && !info.behaviour);
@@ -584,7 +656,6 @@ impl Live {
         counts
     }
 
-    /// The nodes of a card. `None` until its first ops came.
     pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<NodeTable>, String>> {
         self.cards.get(&card)?.tree.as_ref()
     }
@@ -596,18 +667,16 @@ impl Live {
             .any(|card| matches!(&card.tree, Some(Ok(table)) if table.shows_dialog()))
     }
 
-    /// The watches the live values of a card read.
     pub(crate) fn watches(&self, card: u64) -> Option<&BTreeMap<String, f32>> {
         self.cards.get(&card).map(|card| &card.watches)
     }
 
-    /// The tool of a card, as it last loaded.
-    /// Goes up each time the tools load.
     pub(crate) fn generation(&self) -> u64 {
         self.generation.get()
     }
 
-    pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
+    /// The tool of a card, as it last loaded.
+    pub(crate) fn info(&self, card: u64) -> Option<Rc<ToolInfo>> {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
 
@@ -896,7 +965,29 @@ impl Live {
         }
     }
 
-    /// How many presses and drags of the card its code answered.
+    /// Opens the window of its own of the child `path` of `instance`. A path or a device with no
+    /// window is a mistake of the code; a window that does not open is the device's.
+    fn open_window(&mut self, instance: &InstanceId, path: &str, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let child = path
+            .split('/')
+            .try_fold(instance.clone(), |id, name| id.child(name));
+        let refused = match child {
+            Err(error) => error.to_string(),
+            Ok(child) => match Devices::open_window(&session, &child, cx) {
+                Some(Ok(())) => return,
+                Some(Err(error)) => {
+                    return session.update(cx, |session, cx| session.report(error, cx));
+                }
+                None => "it has no window of its own".to_string(),
+            },
+        };
+        let problem = format!("its openWindow({path:?}) was refused: {refused}");
+        self.tool_problem(instance, problem, cx);
+    }
+
     pub(crate) fn events_answered(&self, card: u64) -> u64 {
         self.cards
             .get(&card)
@@ -911,9 +1002,14 @@ impl Live {
         }
     }
 
-    /// Where each live control of the instance was put last.
     pub(crate) fn played_of(&self, id: &InstanceId) -> Option<&BTreeMap<String, f32>> {
         self.played.get(id)
+    }
+
+    fn cards_of(&self, id: &InstanceId, cx: &mut Context<Self>) {
+        for (card, _) in self.cards.iter().filter(|(_, entry)| entry.id == *id) {
+            cx.emit(CardsChanged::One(*card));
+        }
     }
 
     /// Sends what `update` makes for the tool of instance `id` to its processor, as the
@@ -990,7 +1086,7 @@ impl Live {
                 .or_default()
                 .insert(name.to_string(), value);
             // A pad or a knob of the card shows where it is, also while nothing else redraws.
-            cx.notify();
+            self.cards_of(id, cx);
         }
         Ok(())
     }
@@ -1194,6 +1290,15 @@ impl Live {
         }
     }
 
+    /// Tells Bun what changed, for code that runs now: the session and the clock it runs with.
+    fn before_code(&mut self, cx: &mut Context<Self>) -> Option<(Entity<Session>, Clock)> {
+        let session = self.session.upgrade()?;
+        let clock = clock_of(&session, cx);
+        self.told_transport = Some(clock.transport);
+        self.tell(cx);
+        Some((session, clock))
+    }
+
     /// A key of the computer keyboard went down or up on a card of `id` that has the keys, or
     /// wherever the focus is for the main view of `id`.
     pub(crate) fn key(
@@ -1204,12 +1309,9 @@ impl Live {
         modifiers: gpui::Modifiers,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.session.upgrade() else {
+        let Some((session, clock)) = self.before_code(cx) else {
             return;
         };
-        let clock = clock_of(&session, cx);
-        self.told_transport = Some(clock.transport);
-        self.tell(cx);
         let request = Request::Key {
             instance: played(session.read(cx).project(), id),
             key,
@@ -1218,6 +1320,20 @@ impl Live {
             alt: modifiers.alt,
             cmd: modifiers.platform,
             ctrl: modifiers.control,
+            clock,
+        };
+        self.host.send(&request);
+    }
+
+    /// The key of `actions` of the tool of `id` went down: its code runs them in order until
+    /// one does it.
+    pub(crate) fn act(&mut self, id: &InstanceId, actions: &[String], cx: &mut Context<Self>) {
+        let Some((session, clock)) = self.before_code(cx) else {
+            return;
+        };
+        let request = Request::Action {
+            instance: played(session.read(cx).project(), id),
+            actions,
             clock,
         };
         self.host.send(&request);
@@ -1361,7 +1477,7 @@ impl Live {
         self.last_frame = Instant::now();
         let clock = clock_of(&session, cx);
         let ticks =
-            |tools: &[ToolInfo], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
+            |tools: &[Rc<ToolInfo>], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
         // Only for code that runs now: a knob turned on a card tells Bun nothing.
         if (session.read(cx).project().instances())
             .any(|(_, tool)| ticks(&self.tools.borrow(), tool))
@@ -1396,15 +1512,16 @@ impl Live {
             return;
         };
         let mut moved = BTreeMap::new();
-        let mut shown_watches_moved = false;
+        let mut shown_moved = Vec::new();
         let tools = self.tools.borrow();
-        for entry in self.cards.values_mut() {
+        for (card, entry) in self.cards.iter_mut() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
             if watches != entry.watches {
-                shown_watches_moved |= entry
-                    .tree
-                    .as_ref()
-                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
+                if (entry.tree.as_ref())
+                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches))
+                {
+                    shown_moved.push(*card);
+                }
                 entry.watches = watches.clone();
             }
             let told = self.told_watches.get(&entry.id);
@@ -1441,8 +1558,8 @@ impl Live {
             }
         }
         self.tell_song(cx);
-        if shown_watches_moved {
-            cx.notify();
+        for card in shown_moved {
+            cx.emit(CardsChanged::One(card));
         }
     }
 
@@ -1471,6 +1588,10 @@ impl Live {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
+                // An answer that changes nothing, as when a record its code reads changed.
+                if mount || event || !ops.as_ref().is_ok_and(Vec::is_empty) {
+                    cx.emit(CardsChanged::One(card));
+                }
                 if event {
                     entry.events_answered += 1;
                 }
@@ -1485,19 +1606,28 @@ impl Live {
                         None
                     }
                 };
+                let mut refused = None;
                 match (base, ops) {
-                    (Some(mut table), ops) => {
-                        let applied = ops.and_then(|ops| {
-                            Rc::make_mut(&mut table).apply(ops)?;
-                            Ok(table)
-                        });
+                    (Some(mut table), Ok(ops)) => {
+                        let applied = Rc::make_mut(&mut table).apply(ops).map(|()| table);
+                        refused = applied.as_ref().err().cloned();
                         entry.stale &= !(mount && applied.is_ok());
                         entry.tree = Some(applied);
                     }
-                    (None, Err(error)) => entry.tree = Some(Err(error)),
+                    // Bun told the tool's failure already.
+                    (_, Err(error)) => entry.tree = Some(Err(error)),
                     (None, Ok(_)) => {}
                 }
                 crate::bun::count_batch(started.elapsed());
+                let tool = entry.tool.clone();
+                let problem = refused.and_then(|error| {
+                    let tools = self.tools.borrow();
+                    Some(find(&tools, &tool)?.problem(format!("its card failed: {error}")))
+                });
+                if let Some(problem) = problem {
+                    self.problems.push(problem);
+                    self.report(cx);
+                }
             }
             Event::Reads { instance, reads } => {
                 self.reads.insert(instance, reads);
@@ -1561,7 +1691,8 @@ impl Live {
                     detail,
                     confirm,
                 });
-                cx.notify();
+                // The first card that hears it asks.
+                cx.emit(CardsChanged::All);
             }
             Event::OpenMenu {
                 question,
@@ -1570,17 +1701,19 @@ impl Live {
                 width,
                 max_height,
                 search,
-            } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
+            } => match (self.last_event_card).filter(|card| self.cards.contains_key(card)) {
                 Some(card) => {
-                    card.menu = Some(OpenedMenu {
-                        question,
-                        items,
-                        notes,
-                        width,
-                        max_height,
-                        search,
-                    });
-                    cx.notify();
+                    if let Some(entry) = self.cards.get_mut(&card) {
+                        entry.menu = Some(OpenedMenu {
+                            question,
+                            items,
+                            notes,
+                            width,
+                            max_height,
+                            search,
+                        });
+                    }
+                    cx.emit(CardsChanged::One(card));
                 }
                 None => self.menu_picked(question, None),
             },
@@ -1630,6 +1763,7 @@ impl Live {
                     answer: Answer::Numbers(numbers),
                 });
             }
+            Event::OpenWindow { instance, path } => self.open_window(&instance, &path, cx),
             Event::Transport { op } => self.transport(op, cx),
             Event::Select {
                 instance,
@@ -1664,7 +1798,6 @@ impl Live {
                 );
             }
         }
-        cx.notify();
     }
 
     /// Tells Bun the tempo map and the sections when they are not what it was told.
@@ -1849,10 +1982,10 @@ impl Live {
         .detach();
     }
 
-    /// Renders the child `path` of `instance` over `span`, see [`sound_ui::render`], into a new
-    /// file of `assets/audio/` named after `name`, and answers the `render` `question` of Bun
-    /// with its name there, or with none. What the render left out, such as a plugin that did
-    /// not load, is a notice.
+    /// Renders the child `path` of `instance` from `from` to `to`, see [`sound_ui::render`], into
+    /// a new file of `assets/audio/` named after `name`, and answers the `render` `question` of
+    /// Bun with its name there, or with none. What the render left out, such as a plugin that
+    /// did not load, is a notice.
     #[expect(clippy::too_many_arguments, reason = "the fields of one event")]
     fn render(
         &mut self,
@@ -2010,8 +2143,10 @@ impl Live {
     /// Something changed in `extensions/`: maybe a fix, so every file runs again.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.skipped.clear();
-        // A new folder is watched too.
-        (self._watcher, self.watch_problem) = watch(&self.folder, self.changed.clone());
+        // A new folder is watched too. No watcher, no events: a test told of this change.
+        if self.watcher.is_some() {
+            (self.watcher, self.watch_problem) = watch(&self.folder, self.changed.clone());
+        }
         self.restart(cx);
     }
 
@@ -2040,7 +2175,7 @@ impl Live {
             "its {} {why}, so the tools run without this file: fix it and save",
             runs.what
         ));
-        self.skipped.insert(info.file, problem.message);
+        self.skipped.insert(info.file.clone(), problem.message);
         self.restart(cx);
     }
 
@@ -2065,7 +2200,7 @@ impl Live {
                 None => {
                     let tools = self.tools.borrow();
                     let info = (project.tool_of(&id)).and_then(|tool| find(&tools, tool));
-                    let Some(processor) = info.map(ToolInfo::processor) else {
+                    let Some(processor) = info.map(|info| info.processor()) else {
                         return Ok(());
                     };
                     project.send::<Signals>(&id, processor, SignalsUpdate::PerformerGone)
@@ -2160,8 +2295,8 @@ impl Live {
                     .collect(),
             }
         });
-        let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
-            .filter(|info| find(&tools, &info.name).is_none())
+        let gone: Vec<Rc<ToolInfo>> = (self.tools.borrow().iter())
+            .filter(|info| !tools.iter().any(|tool| tool.name == info.name))
             .cloned()
             .collect();
         // A file Bun runs without says why already.
@@ -2173,7 +2308,11 @@ impl Live {
         }));
         self.problems = problems;
         self.report(cx);
-        *self.tools.borrow_mut() = gone.into_iter().chain(tools).collect();
+        list_actions(&tools, cx);
+        *self.tools.borrow_mut() = gone
+            .into_iter()
+            .chain(tools.into_iter().map(Rc::new))
+            .collect();
         self.generation.set(self.generation.get() + 1);
         // The new Bun knows no card and has read nothing yet.
         self.reads.clear();
@@ -2193,6 +2332,7 @@ impl Live {
                 self.take(&take, cx);
             }
         }
+        cx.emit(CardsChanged::All);
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.
@@ -2415,7 +2555,6 @@ fn offered(takes: Takes, session: Option<Entity<Session>>, cx: &App) -> Vec<Offe
         .collect()
 }
 
-/// A menu the code of a card opened, which the card shows when it draws next.
 /// A yes-or-no question of code, with the system's question: the first card that draws asks it
 /// in its window, which is the project's.
 pub(crate) struct Asked {
@@ -2426,6 +2565,7 @@ pub(crate) struct Asked {
     pub confirm: String,
 }
 
+/// A menu the code of a card opened, which the card shows when it draws next.
 pub(crate) struct OpenedMenu {
     pub question: u64,
     pub items: Vec<MenuItemSpec>,

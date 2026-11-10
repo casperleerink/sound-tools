@@ -371,8 +371,8 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
     // Chosen, copied, and pasted at the playhead, the start, on its track.
     let clip = window.on_lane(BAR / 2, 1);
     window.click(clip);
-    window.cx.simulate_keystrokes("cmd-c");
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-c");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("the clip pasted", |window| window.has("song/t01/c00-2"));
     let pasted = window.record("song/t01/c00-2");
     assert_eq!(pasted["start"], 0);
@@ -872,7 +872,9 @@ fn notes_are_copied_and_pasted_in_the_editor(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     window.editor("t00/c00");
-    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window
+        .cx
+        .simulate_keystrokes("secondary-a secondary-c secondary-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Paste notes"));
@@ -896,7 +898,7 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     window.editor("t00/c00");
-    window.cx.simulate_keystrokes("cmd-a cmd-c");
+    window.cx.simulate_keystrokes("secondary-a secondary-c");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
@@ -917,14 +919,16 @@ fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut
     window.double_click(clip);
     window.editor("t00/c00");
     // A copy of every note a span on starts past the end of the clip.
-    window.cx.simulate_keystrokes("cmd-a cmd-d");
+    window.cx.simulate_keystrokes("secondary-a secondary-d");
     window.wait_for_bun();
     assert_eq!(notes(&mut window), count);
-    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window
+        .cx
+        .simulate_keystrokes("secondary-a secondary-c secondary-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
     window.cx.simulate_keystrokes("secondary-z");
     window.until("the paste undone", |window| notes(window) == count);
-    window.cx.simulate_keystrokes("cmd-c cmd-d");
+    window.cx.simulate_keystrokes("secondary-c secondary-d");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
@@ -1038,7 +1042,7 @@ fn a_clip_copied_from_its_menu_is_pasted(cx: &mut TestAppContext) {
     window.pick("menu-1");
     window.wait_for_bun();
     window.click(clip);
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("the clip pasted", |window| window.has("song/t01/c00-2"));
     assert_eq!(window.problems(), []);
 }
@@ -1060,7 +1064,9 @@ fn notes_pasted_into_a_clip_with_no_length_are_kept(cx: &mut TestAppContext) {
     let at = window.on_lane(BAR / 4, 0);
     window.double_click(at);
     window.editor("t00/c00");
-    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window
+        .cx
+        .simulate_keystrokes("secondary-a secondary-c secondary-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
 }
 
@@ -1422,7 +1428,7 @@ fn the_keys_choose_move_and_name_the_track_whose_panel_shows(cx: &mut TestAppCon
     // Enter names it.
     window.cx.simulate_keystrokes("enter");
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-a");
+    window.cx.simulate_keystrokes("secondary-a");
     window.cx.simulate_input("Keys");
     window.cx.simulate_keystrokes("enter");
     window.until("the track named", |window| {

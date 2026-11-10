@@ -1,17 +1,4 @@
 //! The CLAP backend: the host callbacks a CLAP plugin makes, loading one, and playing it.
-//!
-//! CLAP splits a plugin in two. The plugin's own handle belongs to the application's main
-//! thread and only its audio processor may go to the audio thread, which is the rule `host.rs`
-//! and `processor.rs` are built on. `start_processing` and `stop_processing` belong to the
-//! audio thread and `deactivate` to the main thread while nothing is processing.
-//!
-//! Nothing the plugin sends out is read: it is given a void event list, which takes every event
-//! and keeps none. A buffer of ours would have to grow while the plugin pushed into it, on the
-//! audio thread, where the sanitizer cannot see it because the plugin's own call is exempt.
-//! What a plugin changed of its parameters is asked for on the main thread instead.
-//!
-//! A value the host sets goes in as a parameter event at the start of a block, through a ring
-//! of a fixed size: CLAP has no main-thread call that sets a value while the plugin is active.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -41,7 +28,8 @@ use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Re
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
 use crate::parameters::{Parameter, Steps, by_id, playable};
 use crate::processor::{
-    Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
+    Control, EVENT_CAPACITY, Laned, Player, PluginAudio, PluginEvent, Started, copy_in, copy_out,
+    not_ours,
 };
 use crate::scan::ScannedPlugin;
 use crate::window::WindowSize;
@@ -64,24 +52,23 @@ impl HostHandlers for SoundToolsHost {
     }
 }
 
-/// How many values one block can carry into the plugin, apart from the notes: the pins of a
-/// record, which are at most this many. A value that finds the ring full waits on the main
-/// thread for the next poll. The lanes of the pins have as much room again.
+/// How many values the host sets one block can carry, apart from the notes: at most the pins of
+/// a record. CLAP has no main-thread call that sets a value while the plugin is active, so they
+/// go in as events at the start of a block, through a ring. The lanes have as much room again.
 const VALUE_CAPACITY: usize = MAX_AUTOMATED;
 
-/// Callbacks a plugin may make from any thread. They only note what was asked for; the work
-/// happens in the poll on the main thread.
+/// Callbacks a plugin may make from any thread. They only note what was asked for; the poll on
+/// the main thread does the work.
 #[derive(Default)]
 pub(crate) struct SharedCallbacks {
     callback_requested: AtomicBool,
-    /// The plugin asked for a flush, see [`HostParamsImplShared::request_flush`].
     flush_requested: AtomicBool,
     restart_requested: AtomicBool,
     /// The plugin closed its own window, or lost it. The next poll frees what is left.
     window_closed: AtomicBool,
-    /// A size the plugin asked its window to be, packed into one number. Zero means none.
+    /// Packed into one number. Zero means none.
     window_size_wanted: AtomicU64,
-    /// The plugin's own state extension, if it has one. Filled in while it initializes.
+    /// Filled in while the plugin initializes.
     state: OnceLock<Option<PluginState>>,
 }
 
@@ -96,7 +83,7 @@ impl<'a> SharedHandler<'a> for SharedCallbacks {
     }
 
     fn request_process(&self) {
-        // We call the plugin every block while its track exists, so there is nothing to start.
+        // The host calls the plugin every block anyway, so there is nothing to start.
     }
 
     fn request_callback(&self) {
@@ -104,17 +91,12 @@ impl<'a> SharedHandler<'a> for SharedCallbacks {
     }
 }
 
-/// The window callbacks. A plugin may make them from any thread, so they only note what
-/// happened; the poll does the work on the main thread.
 impl HostGuiImpl for SharedCallbacks {
-    /// Whether the composer may drag the window's edge is asked once, when the window is made,
-    /// so a plugin that changes its hints while open keeps its first answer. The plugin says how
-    /// big it wants to be through `request_resize`.
+    /// The hints are read once, when the window is made, so a plugin keeps its first answer.
     fn resize_hints_changed(&self) {}
 
     fn request_resize(&self, new_size: GuiSize) -> Result<(), HostError> {
-        // Acknowledged here and done at the next poll, which CLAP allows for a call that may
-        // come from another thread.
+        // Done at the next poll, which CLAP allows for a call that may come from another thread.
         self.window_size_wanted
             .store(new_size.pack_to_u64(), Ordering::Release);
         Ok(())
@@ -138,23 +120,20 @@ impl HostGuiImpl for SharedCallbacks {
 }
 
 impl HostParamsImplShared for SharedCallbacks {
-    /// While the plugin is active the host calls `process` for every block, which is a flush.
-    /// One asked for while it loads, which a plugin does as it reads its state, is done before
-    /// it is activated: Six Sines puts a state it reads in a queue that a flush empties, and
-    /// emptied by the first block instead it ends the notes of that block.
+    /// While the plugin is active every block's `process` is a flush. One asked for while it
+    /// loads its state is done before it is activated: Six Sines queues the state it reads for a
+    /// flush, and emptied by the first block instead it ends the notes of that block.
     fn request_flush(&self) {
         self.flush_requested.store(true, Ordering::Release);
     }
 }
 
 pub(crate) struct MainThreadCallbacks<'a> {
-    /// Only here for its lifetime, which ties this handler to the shared one of the same
-    /// instance.
+    /// Only here for its lifetime, which ties this handler to the shared one.
     _shared: &'a SharedCallbacks,
-    /// Set by `mark_dirty`, which the plugin may call while it initializes, before the table
-    /// knows it.
+    /// Kept here because the plugin may call `mark_dirty` while it initializes, before the
+    /// table knows it.
     state_is_dirty: Cell<bool>,
-    /// The plugin changed its parameters or their names, and the host reads them again.
     parameters_changed: Cell<bool>,
 }
 
@@ -167,8 +146,8 @@ impl HostStateImpl for MainThreadCallbacks<'_> {
 }
 
 impl HostParamsImplMainThread for MainThreadCallbacks<'_> {
-    /// Only a change of the list or its names is noted. New values need nothing: the host asks
-    /// for the values of the pins at every poll anyway.
+    /// Only a change of the list or its names is noted: the host reads the pins' values at every
+    /// poll anyway.
     fn rescan(&self, flags: ParamRescanFlags) {
         let list = ParamRescanFlags::INFO | ParamRescanFlags::TEXT | ParamRescanFlags::ALL;
         if flags.intersects(list) {
@@ -181,18 +160,15 @@ impl HostParamsImplMainThread for MainThreadCallbacks<'_> {
     fn clear(&self, _param_id: ClapId, _flags: ParamClearFlags) {}
 }
 
-/// A plugin may only change its latency while it is being activated, and says so here. The
-/// host reads the latency after every activation anyway, so there is nothing to note.
+/// CLAP only allows this while the plugin is being activated, and the host reads the latency
+/// after every activation anyway.
 impl HostLatencyImpl for MainThreadCallbacks<'_> {
     fn changed(&self) {}
 }
 
-/// The CLAP entry of `bundle`, loaded.
-///
 /// clack loads the library with a plain `LoadLibraryExW`, which on Windows looks for the DLLs a
 /// plugin imports beside this program and not beside the plugin. So the library is loaded
-/// first with its own folder in the search, see `library.rs`; clack's load then finds it
-/// loaded already, and this first load lets go once clack holds it.
+/// first with its own folder in the search; clack's load then finds it loaded already.
 ///
 /// # Safety
 ///
@@ -206,11 +182,10 @@ unsafe fn load_entry(bundle: &std::path::Path) -> Result<clack_host::entry::Plug
     unsafe { clack_host::entry::PluginEntry::load(bundle) }.map_err(|error| error.to_string())
 }
 
-/// The child side of a scan: loads one bundle and says what is in it. Everything that can go
-/// wrong here is the plugin's, which is why the caller is a process of its own.
+/// The child side of a scan: the plugins in one bundle.
 pub(crate) fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>, String> {
-    // SAFETY: loading a plugin runs its code, which no host can check in advance. This is why
-    // the scan runs in a child process. See `scan.rs`.
+    // SAFETY: loading a plugin runs its code, which no host can check. This runs in the scan's
+    // child process, so a crash costs only that.
     let entry =
         unsafe { load_entry(bundle) }.map_err(|error| format!("{}: {error}", bundle.display()))?;
     let factory = entry
@@ -239,15 +214,14 @@ pub(crate) fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>
     Ok(plugins)
 }
 
-/// Makes an instance of the plugin `found` names, which runs its code. It is not activated.
+/// An instance of the plugin `found` names, not activated.
 fn instantiate(found: &ScannedPlugin) -> Result<PluginInstance<SoundToolsHost>, PluginProblem> {
     let fail = |message: String| PluginProblem::DidNotLoad {
         plugin_id: found.id.clone(),
         message,
     };
-    // SAFETY: loading a plugin runs its code, which no host can check in advance. The scan ran
-    // this same bundle in a child process first, so a bundle that crashes on load is already
-    // known and never reaches here.
+    // SAFETY: loading a plugin runs its code, which no host can check. The scan loaded this
+    // bundle in a child process first, so one that crashes on load never reaches here.
     let entry = unsafe { load_entry(&found.path) }.map_err(fail)?;
     let host_info = HostInfo::new(HOST_NAME, HOST_VENDOR, HOST_URL, HOST_VERSION)
         .map_err(|error| fail(error.to_string()))?;
@@ -267,16 +241,14 @@ fn instantiate(found: &ScannedPlugin) -> Result<PluginInstance<SoundToolsHost>, 
     .map_err(|error| fail(error.to_string()))
 }
 
-/// Every parameter a host may set of the plugin `found` names, read without activating it:
-/// CLAP gives a plugin's parameters from the moment it is made, so nothing is prepared for audio
-/// that is never played.
+/// Every parameter a host may set of the plugin `found` names. CLAP gives them from the moment
+/// it is made, so it is not activated.
 pub(crate) fn read_parameters(found: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
     let mut instance = instantiate(found)?;
     Ok(parameters_of(&mut instance))
 }
 
-/// Every parameter a host may set of a plugin that is made, active or not: CLAP puts these
-/// calls on the main thread either way.
+/// Works active or not: CLAP puts these calls on the main thread either way.
 fn parameters_of(instance: &mut PluginInstance<SoundToolsHost>) -> Vec<Parameter> {
     let Some(params) = params_extension(instance) else {
         return Vec::new();
@@ -323,15 +295,13 @@ fn parameters_of(instance: &mut PluginInstance<SoundToolsHost>) -> Vec<Parameter
     parameters
 }
 
-/// The first value of a stepped parameter and how many it takes. The values of a stepped CLAP
-/// parameter are whole numbers, which the specification makes of a plain value by cutting off
-/// what follows the point. A range wider than a `u32` counts saturates: it is a knob anyway.
+/// The first value of a stepped parameter and how many it takes. CLAP makes a stepped value a
+/// whole number by cutting off what follows the point. A count wider than a `u32` saturates.
 fn whole_steps(minimum: f64, maximum: f64) -> (f64, u32) {
     let (first, last) = (minimum.trunc(), maximum.trunc());
     (first, (last - first + 1.0).max(1.0) as u32)
 }
 
-/// The parameters extension. A plugin without one has no parameters a host can see.
 fn params_extension(instance: &PluginInstance<SoundToolsHost>) -> Option<PluginParams> {
     instance.plugin_shared_handle().get_extension()
 }
@@ -350,10 +320,7 @@ pub(crate) fn load(
     };
     let mut instance = instantiate(found)?;
 
-    // What kind of run this is, before the plugin is activated and on the main thread, which
-    // is where CLAP puts this call. A plugin that streams from disk may wait for its samples
-    // in an offline render instead of playing silence. A plugin that has no opinion has no
-    // extension, and one that refuses the mode keeps the one it had.
+    // Before activation, as CLAP asks. A plugin that refuses the mode keeps the one it had.
     if let Some(render) = instance
         .plugin_shared_handle()
         .get_extension::<PluginRender>()
@@ -365,7 +332,7 @@ pub(crate) fn load(
         let _refused = render.set(&instance.plugin_handle(), mode);
     }
 
-    // The saved state before the plugin is activated, as CLAP asks.
+    // Before activation, as CLAP asks.
     if let Some(bytes) = saved {
         let state = instance.access_shared_handler(|shared| shared.state.get().copied());
         if let Some(Some(state)) = state {
@@ -379,10 +346,8 @@ pub(crate) fn load(
         }
     }
 
-    // The pins of the record before the plugin is activated, on the main thread, which is
-    // where CLAP puts a flush while a plugin is inactive. A plugin that smooths its parameters
-    // sets up its smoothing as it is activated, from the values it has then, so its first
-    // block plays the pins and does not glide to them from its state.
+    // The pins before activation: a plugin sets up its smoothing as it is activated, so its
+    // first block plays the pins and does not glide to them from its state.
     let parameters = (!pins.is_empty()).then(|| by_id(parameters_of(&mut instance)));
     let asked = instance
         .access_shared_handler(|shared| shared.flush_requested.swap(false, Ordering::AcqRel));
@@ -394,10 +359,9 @@ pub(crate) fn load(
     }
 
     let (started, values, ports) = activate(&mut instance, config).map_err(fail)?;
-    // The pedal is only missing from a plugin that has somewhere to take notes. A plugin with
-    // no note port at all, which is what an ordinary effect is, has no pedal to miss, and this
-    // host cannot ask what a record is for. Audio inputs say nothing either way: Six Sines is
-    // an instrument with a stereo input for audio-rate modulation.
+    // Only a plugin with a note port can miss the pedal; an ordinary effect has none. Audio
+    // inputs say nothing either way: Six Sines is an instrument with a stereo input for
+    // audio-rate modulation.
     let notes = match ports.takes_notes && !ports.takes_midi {
         false => Vec::new(),
         true => vec![PluginProblem::NoPedal {
@@ -417,8 +381,8 @@ pub(crate) fn load(
     })
 }
 
-/// Gives an inactive plugin `changes` at once, with `params.flush`, the call CLAP has for a
-/// value outside a block.
+/// Gives an inactive plugin `changes` with `params.flush`, CLAP's call for a value outside a
+/// block.
 fn flush(
     instance: &mut PluginInstance<SoundToolsHost>,
     changes: impl Iterator<Item = ParameterChange>,
@@ -441,13 +405,10 @@ fn flush(
     let Some(mut plugin) = instance.inactive_plugin_handle() else {
         return;
     };
-    // What a plugin says back is not read, as in a block.
     params.flush(&mut plugin, &events.as_input(), &mut OutputEvents::void());
 }
 
-/// Activates a plugin that is not active, and gives its audio side with what its ports say,
-/// and the main thread's end of the values going into it. Its latency is read here, after the
-/// activation, which is the one moment CLAP lets it change.
+/// Activates the plugin. Its latency is read right after, the one moment CLAP lets it change.
 fn activate(
     instance: &mut PluginInstance<SoundToolsHost>,
     config: PrepareConfig,
@@ -466,7 +427,6 @@ fn activate(
         .get_extension::<PluginLatency>()
     {
         Some(latency) => latency.get(&instance.plugin_handle()),
-        // A plugin with no latency extension has none.
         None => 0,
     };
     let (ring, values) = rtrb::RingBuffer::new(VALUE_CAPACITY);
@@ -489,12 +449,11 @@ fn activate(
     Ok((started, values, ports))
 }
 
-/// The main thread's end of the values going into a plugin's processor, one per audio side.
+/// The main thread's end of the values going into one audio side.
 struct ValuesIn {
     ring: rtrb::Producer<ParameterChange>,
-    /// How many values went into the ring, and how many the processor has played: a block takes
-    /// them at its start and counts them once its `process` is over. Equal once every value
-    /// sent is in what the plugin says.
+    /// How many values went into the ring, and how many the processor has played: a block
+    /// counts them once its `process` is over. Equal once the plugin holds every value sent.
     pushed: u64,
     played: Arc<AtomicU64>,
 }
@@ -503,8 +462,7 @@ struct ValuesIn {
 pub(crate) struct ClapPlugin {
     plugin_id: String,
     instance: PluginInstance<SoundToolsHost>,
-    /// Whether the plugin holds what it made for a window, so that `create` is never called
-    /// twice, which CLAP forbids.
+    /// So that `create` is never called twice, which CLAP forbids.
     created_window: bool,
     values: ValuesIn,
     /// The newest value of each parameter that found the ring full. It goes at the next poll.
@@ -512,7 +470,6 @@ pub(crate) struct ClapPlugin {
 }
 
 impl ClapPlugin {
-    /// Puts what is waiting into the ring, as far as there is room, and keeps the rest.
     fn send_waiting(&mut self) {
         let ValuesIn { ring, pushed, .. } = &mut self.values;
         self.waiting.retain(
@@ -549,13 +506,11 @@ impl LoadedPlugin for ClapPlugin {
             restart,
             // CLAP has no call that asks to be unloaded: a restart is all it asks for.
             reload: false,
-            // The flag is cleared here and the host keeps what it was told until the bytes are
-            // written, so a change that the once-a-second rule made wait is not forgotten.
+            // Cleared here: the host keeps it until the bytes are written.
             state_is_dirty: self
                 .instance
                 .access_handler(|main| main.state_is_dirty.replace(false)),
-            // CLAP sends the sustain pedal as a MIDI message, so no mapping stands between the
-            // pedal and the plugin and there is nothing that can move.
+            // CLAP sends the pedal as MIDI, so there is no mapping that can move.
             pedal_unmapped: false,
             window_closed,
             window_size: (size != 0).then(|| {
@@ -609,8 +564,7 @@ impl LoadedPlugin for ClapPlugin {
     }
 
     fn send(&mut self, change: ParameterChange) {
-        // A newer value of a parameter that is still waiting takes its place: only the last
-        // is the one the plugin is to end on.
+        // A newer value replaces one still waiting: only the last counts.
         self.waiting.insert(change.id, change.value);
         self.send_waiting();
     }
@@ -621,8 +575,7 @@ impl LoadedPlugin for ClapPlugin {
         self.waiting.is_empty() && played >= self.values.pushed
     }
 
-    /// CLAP says where a hand is in the gesture events of a block's output, which this host
-    /// does not read.
+    /// CLAP says it in the gesture events of a block's output, which this host does not read.
     fn hand(&mut self) -> Hand {
         Hand::Unknown
     }
@@ -636,13 +589,14 @@ impl LoadedPlugin for ClapPlugin {
         &mut self,
         config: PrepareConfig,
         pins: &[ParameterChange],
-    ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
+        laned: &Laned,
+    ) -> Option<Result<Box<dyn PluginAudio>, PluginProblem>> {
         // Deactivating needs the audio side back: clack refuses while it is still held.
         if self.instance.is_active() && self.instance.try_deactivate().is_err() {
             return None;
         }
-        // A pin that changed while the plugin waited went to the ring of the audio side that
-        // was going, so the plugin has not heard it.
+        // A pin that changed while the plugin waited went into the old audio side's ring, so
+        // the plugin has not heard it.
         flush(&mut self.instance, pins.iter().copied());
         let activated =
             activate(&mut self.instance, config).map_err(|message| PluginProblem::DidNotRestart {
@@ -650,17 +604,15 @@ impl LoadedPlugin for ClapPlugin {
                 message,
             });
         Some(activated.map(|(started, values, _)| {
-            // What the old ring still held went with the old audio side. The host sends every
-            // pin again, as its record has it now, so nothing older is kept here.
+            // `pins` was every pin as the record has it now, so nothing older is kept.
             self.values = values;
             self.waiting.clear();
-            Box::new(started) as Box<dyn Started>
+            Box::new(Player::new(Box::new(started), laned.clone())) as Box<dyn PluginAudio>
         }))
     }
 }
 
-/// The plugin's own text for a value of a parameter. CLAP leaves the length of the text to the
-/// host; what does not fit is cut off by the plugin.
+/// CLAP leaves the length of the text to the host; the plugin cuts off what does not fit.
 fn text_of(
     params: &PluginParams,
     plugin: &PluginMainThreadHandle,
@@ -672,7 +624,7 @@ fn text_of(
     Some(String::from_utf8_lossy(text).into_owned())
 }
 
-/// How to show a plugin on this machine: the platform's windowing API, in a window of ours.
+/// The platform's windowing API, in a window of ours.
 fn configuration() -> Option<GuiConfiguration<'static>> {
     Some(GuiConfiguration {
         api_type: GuiApiType::default_for_current_platform()?,
@@ -699,10 +651,8 @@ impl ClapPlugin {
     }
 }
 
-/// CLAP has two ways to show a plugin: a floating window the plugin owns, or one the host owns
-/// with the plugin's view in it. The specification calls the floating one a fallback every
-/// plugin should support; in practice almost none do, and neither real CLAP instrument on the
-/// machine this was written on does. So the host makes the window.
+/// The host owns the window. CLAP calls a floating window the plugin owns a fallback every
+/// plugin should support, but almost none do.
 impl PluginGui for ClapPlugin {
     fn is_offered(&mut self) -> bool {
         let Some(configuration) = configuration() else {
@@ -725,7 +675,6 @@ impl PluginGui for ClapPlugin {
         }
         gui.create(&self.instance.plugin_handle(), configuration)
             .map_err(|error| self.failed(error))?;
-        // From here the plugin holds resources for a window, and `destroy` frees them.
         self.created_window = true;
         Ok(())
     }
@@ -745,8 +694,7 @@ impl PluginGui for ClapPlugin {
         };
         match gui.set_scale(&self.instance.plugin_handle(), scale) {
             Ok(()) => {}
-            // A plugin that reads the scale from the system itself refuses, as CLAP allows.
-            // Its sizes are physical pixels either way.
+            // A plugin that reads the scale from the system refuses, as CLAP allows.
             Err(_ignored) => {}
         }
     }
@@ -754,8 +702,7 @@ impl PluginGui for ClapPlugin {
     unsafe fn set_parent(&mut self, view: NonNull<c_void>) -> Result<(), PluginProblem> {
         let gui = self.gui_extension().ok_or_else(|| self.no_window())?;
         let configuration = configuration().ok_or_else(|| self.no_window())?;
-        // The view of this platform's windowing API: an `NSView` for Cocoa, an `HWND` for
-        // Win32. CLAP holds either as the same pointer.
+        // An `NSView` for Cocoa, an `HWND` for Win32: CLAP holds either as the same pointer.
         let parent =
             clack_extensions::gui::Window::from_generic_ptr(configuration.api_type, view.as_ptr());
         // SAFETY: the caller keeps the view alive until `destroy` has run.
@@ -776,10 +723,8 @@ impl PluginGui for ClapPlugin {
         gui.can_resize(&self.instance.plugin_handle())
     }
 
-    /// The plugin's own answer to the size first (`adjust_size`), and then that size. A plugin
-    /// that does not adjust takes the size as it was offered, as a VST 3 view that does not
-    /// constrain does. One that refuses the size keeps the one it has, which the window goes
-    /// back to; that is said on the terminal, because a drag has nobody else to tell.
+    /// A plugin that refuses the size keeps its own, which the window goes back to. That is
+    /// said on the terminal, because a drag has nobody else to tell.
     fn resize(&mut self, wanted: WindowSize) -> Option<WindowSize> {
         let gui = self.gui_extension()?;
         let plugin = self.instance.plugin_handle();
@@ -814,28 +759,23 @@ impl PluginGui for ClapPlugin {
 struct ClapStarted {
     audio: PluginAudioProcessor<SoundToolsHost>,
     dialect: Dialect,
-    /// Whether the note port takes MIDI, which is the only way to send the pedal, the wheels
-    /// and the key pressure.
+    /// The only way to send the pedal, the wheels and the key pressure, see [`midi`].
     takes_midi: bool,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
-    /// One buffer per channel of every audio input port, by port: CLAP wants a buffer for each
-    /// port the plugin declared. The first port gets the track and the rest silence. Empty when
-    /// the plugin takes no audio in, which is the usual case for an instrument.
+    /// One buffer per channel of every audio input port: CLAP wants one for each port the
+    /// plugin declared. The first port gets our input and the rest silence.
     input_channels: Vec<Vec<Vec<f32>>>,
-    /// The same for the output ports. Only the first one is heard.
+    /// Only the first port is heard.
     output_channels: Vec<Vec<Vec<f32>>>,
     input_events: EventBuffer,
     /// How many more note and control events the buffer takes in this block, so a block never
-    /// grows it. The values of parameters have room of their own on top.
+    /// grows it. Values and lanes have room of their own on top.
     room: usize,
-    /// How many more values of automation lanes the buffer takes in this block.
     lane_room: usize,
-    /// What the plugin said its latency was when it was activated.
     latency: u32,
-    /// The values the host sets, from the main thread.
     values: rtrb::Consumer<ParameterChange>,
-    /// How many of them this block took, counted into `played` once the plugin has run.
+    /// How many values this block took, counted into `played` once the plugin has run.
     taken: u64,
     played: Arc<AtomicU64>,
 }
@@ -843,8 +783,6 @@ struct ClapStarted {
 /// Which events the plugin's note port takes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Dialect {
-    /// CLAP note events. The pedal, the wheels and the key pressure still need MIDI, see
-    /// [`midi`].
     Clap,
     Midi,
 }
@@ -890,8 +828,8 @@ impl ClapStarted {
 
 impl Drop for ClapStarted {
     fn drop(&mut self) {
-        // Reached only when the engine itself is gone, which ends the audio thread before this
-        // runs. Every other way out of the engine stops the plugin there first.
+        // Only does something when the engine itself is gone, with its audio thread: every
+        // other way out of the engine stops the plugin there first.
         self.stop();
     }
 }
@@ -909,16 +847,13 @@ impl Started for ClapStarted {
         self.input_events.clear();
         self.room = EVENT_CAPACITY;
         self.lane_room = VALUE_CAPACITY;
-        // The values the host set since the last block, at its first frame, because they were
-        // true before it began. Ahead of the notes, so the events stay in time order. Never more
-        // than the room kept for them: the ring holds no more, and what the host could not put
-        // in waits on its side.
+        // The values the host set since the last block, at its first frame and ahead of the
+        // notes, so the events stay in time order.
         while (self.taken as usize) < VALUE_CAPACITY {
             let Ok(change) = self.values.pop() else {
                 break;
             };
             self.taken += 1;
-            // An id CLAP calls invalid names no parameter, and a record cannot hold it.
             if let Some(id) = ClapId::from_raw(change.id) {
                 let event = ParamValueEvent::new(0, id, Pckn::match_all(), change.value);
                 self.input_events.push(&event);
@@ -931,7 +866,6 @@ impl Started for ClapStarted {
             return false;
         }
         self.lane_room -= 1;
-        // An id CLAP calls invalid names no parameter, and a record cannot hold it.
         if let Some(id) = ClapId::from_raw(id) {
             let event = ParamValueEvent::new(0, id, Pckn::match_all(), value);
             self.input_events.push(&event);
@@ -956,8 +890,7 @@ impl Started for ClapStarted {
             }
             (PluginEvent::Off { key }, Dialect::Clap) => {
                 let pckn = Pckn::new(0_u16, 0_u16, u16::from(key), Match::All);
-                // CLAP's note off carries a release velocity. The note contract has none, so
-                // the usual half value goes out.
+                // The note contract has no release velocity, so the usual half goes out.
                 self.input_events
                     .push(&NoteOffEvent::new(offset, pckn, 0.5));
             }
@@ -997,9 +930,8 @@ impl Started for ClapStarted {
             AudioPortBuffer {
                 latency: 0,
                 channels: AudioPortBufferType::f32_input_only(
-                    // Not `constant`: a constant buffer tells the plugin every sample of it is
-                    // the same, which is true of the silence an instrument gets and not of the
-                    // sound an effect is given.
+                    // Not `constant`, which tells the plugin every sample is the same: true of
+                    // silence, not of the sound an effect is given.
                     port.iter_mut()
                         .map(|channel| InputChannel::variable(&mut channel[..frames])),
                 ),
@@ -1015,8 +947,9 @@ impl Started for ClapStarted {
                 }
             }));
         let input = input_events.as_input();
-        // Nothing reads what a plugin sends out: MIDI from a plugin is not built. A void list
-        // takes every event and keeps none, so a plugin that sends thousands grows nothing.
+        // Nothing a plugin sends out is read. A buffer of ours would grow as the plugin pushed
+        // into it, on the audio thread, where the sanitizer does not look inside the plugin's
+        // call. A void list keeps nothing.
         let mut output = OutputEvents::void();
 
         let processed = match not_ours(|| audio.ensure_processing_started()) {
@@ -1026,8 +959,8 @@ impl Started for ClapStarted {
             }
             Err(_) => false,
         };
-        // Only now does what the plugin says on the main thread hold the values of this block.
-        // A plugin that failed has played them too, as far as the host can ever know.
+        // Only now does the plugin hold this block's values. A plugin that failed counts as
+        // having played them too.
         let taken = std::mem::take(&mut self.taken);
         if taken > 0 {
             self.played.fetch_add(taken, Ordering::Release);
@@ -1042,14 +975,13 @@ impl Started for ClapStarted {
     }
 
     fn stop(&mut self) {
-        // The plugin's own `stop_processing` runs in here.
         not_ours(|| self.audio.ensure_processing_stopped());
     }
 }
 
-/// A control as a MIDI message on channel 1, with its value as it was played. It always goes as
-/// raw MIDI: CLAP note events have no sustain and no channel-wide bend, mod wheel or pressure,
-/// so a plugin whose note port takes no MIDI does not get them at all.
+/// A control as a MIDI message on channel 1. CLAP note events have no sustain and no
+/// channel-wide bend, mod wheel or pressure, so a plugin whose note port takes no MIDI does not
+/// get them at all.
 fn midi(control: Control) -> [u8; 3] {
     // Controller 64 is the sustain pedal and controller 1 the mod wheel.
     match control {
@@ -1065,11 +997,11 @@ fn midi(control: Control) -> [u8; 3] {
     }
 }
 
-/// What the plugin's ports say: whether and how to send it notes, and how many channels to
-/// give each of its audio ports.
+/// What the plugin's ports say: whether and how to send it notes, and how many channels each of
+/// its audio ports has.
 struct PortLayout {
     dialect: Dialect,
-    /// Whether the plugin has a note input port at all. An ordinary effect has none.
+    /// An ordinary effect has no note input port.
     takes_notes: bool,
     takes_midi: bool,
     input_channels: Vec<usize>,
@@ -1121,8 +1053,7 @@ fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
 mod tests {
     use super::*;
 
-    /// CLAP makes a whole number of a plain value by cutting off what follows the point, also
-    /// below zero, so a range of -1.5 to 2.7 takes -1, 0, 1 and 2.
+    /// CLAP cuts toward zero, also below it, so -1.5 to 2.7 takes -1, 0, 1 and 2.
     #[test]
     fn the_steps_of_a_stepped_parameter_cut_its_bounds_toward_zero() {
         assert_eq!(whole_steps(-1.5, 2.7), (-1.0, 4));

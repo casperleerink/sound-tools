@@ -9,8 +9,8 @@ use smol::future;
 
 use super::protocol::Outgoing;
 use crate::provider::{
-    Account, AgentEvent, ApprovalMode, Driver, Events, ExitReason, Installed, Provider, Thread,
-    ThreadOptions, TurnOutcome,
+    Account, AgentEvent, ApprovalMode, Driver, Events, ExitReason, Installed, Provider,
+    SignInChoice, Thread, ThreadOptions, TurnOutcome, claude_choices,
 };
 
 fn fixtures() -> PathBuf {
@@ -170,7 +170,9 @@ fn cancelling_next_loses_nothing_of_a_message() {
             panic!("an event before the fake read anything: {event:?}");
         }
     }
-    let Driver::Claude(driver) = &events.driver;
+    let Driver::Claude(driver) = &events.driver else {
+        panic!("not Claude");
+    };
     let written = driver.writing.as_ref().map_or(0, |writing| writing.written);
     assert!(
         written > 0 && written < line.len(),
@@ -204,6 +206,16 @@ fn installed(scenario: &str, account: &Path, output: &Path) -> Installed {
         program: fixtures().join("fake-claude.sh"),
         environment,
     }
+}
+
+fn signed_in_as(provider: Provider, installed: &Installed) -> Option<Account> {
+    smol::block_on(provider.status(installed)).unwrap().account
+}
+
+async fn run(choice: &SignInChoice, installed: &Installed) -> std::io::Result<()> {
+    let (steps, _) = smol::channel::unbounded();
+    let (_, answers) = smol::channel::unbounded();
+    choice.run(installed, steps, answers).await
 }
 
 #[test]
@@ -246,19 +258,19 @@ fn signs_in_with_the_choice_then_out() {
     let account = folder.path().join("account");
     let installed = installed("login", &account, &folder.path().join("output"));
     let provider = Provider::Claude;
-    assert_eq!(smol::block_on(provider.account(&installed)).unwrap(), None);
+    assert_eq!(signed_in_as(provider, &installed), None);
 
-    let choices = provider.sign_in_choices();
+    let choices = claude_choices();
     let labels: Vec<_> = choices.iter().map(|choice| choice.label()).collect();
     assert_eq!(
         labels,
         [
             "Sign in with your Claude plan",
-            "Use an Anthropic Console account (API)"
+            "Use an Anthropic Console account"
         ]
     );
-    smol::block_on(choices[0].run(&installed)).unwrap();
-    let signed_in = smol::block_on(provider.account(&installed)).unwrap();
+    smol::block_on(run(&choices[0], &installed)).unwrap();
+    let signed_in = signed_in_as(provider, &installed);
     assert_eq!(
         signed_in,
         Some(Account {
@@ -267,8 +279,8 @@ fn signs_in_with_the_choice_then_out() {
         })
     );
 
-    smol::block_on(provider.sign_out(&installed)).unwrap();
-    assert_eq!(smol::block_on(provider.account(&installed)).unwrap(), None);
+    smol::block_on(provider.sign_out(&installed, None)).unwrap();
+    assert_eq!(signed_in_as(provider, &installed), None);
 }
 
 #[test]
@@ -276,13 +288,14 @@ fn a_failed_sign_in_and_a_broken_status_say_why() {
     let folder = tempfile::tempdir().unwrap();
     let account = folder.path().join("account");
     let output = folder.path().join("output");
-    let choice = Provider::Claude.sign_in_choices()[1];
-    let failed = smol::block_on(choice.run(&installed("login_fails", &account, &output)));
+    let installed_failing = installed("login_fails", &account, &output);
+    let choice = &claude_choices()[1];
+    let failed = smol::block_on(run(choice, &installed_failing));
     assert_eq!(
         failed.unwrap_err().to_string(),
         "OAuth login failed: access denied"
     );
-    let broken = smol::block_on(Provider::Claude.account(&installed("broken", &account, &output)));
+    let broken = smol::block_on(Provider::Claude.status(&installed("broken", &account, &output)));
     assert_eq!(
         broken.unwrap_err().to_string(),
         "Error: the config is damaged"
@@ -291,7 +304,7 @@ fn a_failed_sign_in_and_a_broken_status_say_why() {
         program: folder.path().join("missing"),
         environment: Default::default(),
     };
-    assert!(smol::block_on(Provider::Claude.account(&missing)).is_err());
+    assert!(smol::block_on(Provider::Claude.status(&missing)).is_err());
 }
 
 #[test]
@@ -299,8 +312,8 @@ fn cancelling_the_sign_in_ends_its_process() {
     let folder = tempfile::tempdir().unwrap();
     let output = folder.path().join("output");
     let installed = installed("login_waits", &folder.path().join("account"), &output);
-    let choice = Provider::Claude.sign_in_choices()[0];
-    let mut signing_in = Box::pin(choice.run(&installed));
+    let choice = &claude_choices()[0];
+    let mut signing_in = Box::pin(run(choice, &installed));
     assert!(smol::block_on(future::poll_once(&mut signing_in)).is_none());
     wait_for("the sign-in did not start", || {
         fs::read_to_string(&output).is_ok_and(|pid| !pid.trim().is_empty())

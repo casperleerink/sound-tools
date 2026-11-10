@@ -14,9 +14,11 @@
 //! The two channels share one level and one gain, so the stereo image does not move.
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, PeakDetector, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, all_held_silent, amplitude, held, pole,
+    AudioInput, AudioOutput, Automated, AutomationInput, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::{PeakDetector, all_held_silent, amplitude, held, pole};
 
 use crate::{GateState, PARAMETERS, RANGE, SUSTAIN, THRESHOLD, TRANSIENT};
 

@@ -3,6 +3,7 @@
 //! does not know is an error on the card, not something left out.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui::{Div, Hsla, Stateful, prelude::*, px};
 use serde::de::value::MapAccessDeserializer;
@@ -149,18 +150,6 @@ props! {
         on_press: bool,
         on_release: bool,
         on_click: bool,
-    }
-}
-
-props! {
-    /// A stereo meter of the app: the peaks of `of` as `now.peak` names them, of the channels of
-    /// the audio input `input` names, or of what the device plays.
-    MeterProps / MeterChange {
-        key: String,
-        of: String,
-        input: Vec<usize>,
-        horizontal: bool,
-        length: f32,
     }
 }
 
@@ -352,7 +341,6 @@ pub(crate) enum Props {
     Card(CardProps),
     Button(ButtonProps),
     Icon(IconProps),
-    Meter(MeterProps),
     Toggle(ToggleProps),
     Slider(SliderProps),
     Segmented(SegmentedProps),
@@ -372,7 +360,6 @@ pub(crate) enum Change {
     Card(CardChange),
     Button(ButtonChange),
     Icon(IconChange),
-    Meter(MeterChange),
     Toggle(ToggleChange),
     Slider(SliderChange),
     Segmented(SegmentedChange),
@@ -438,7 +425,6 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "card" => Props::Card(next(&mut seq, "props")?),
                         "button" => Props::Button(next(&mut seq, "props")?),
                         "icon" => Props::Icon(next(&mut seq, "props")?),
-                        "meter" => Props::Meter(next(&mut seq, "props")?),
                         "toggle" => Props::Toggle(next(&mut seq, "props")?),
                         "slider" => Props::Slider(next(&mut seq, "props")?),
                         "segmented" => Props::Segmented(next(&mut seq, "props")?),
@@ -465,7 +451,6 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "card" => Change::Card(next(&mut seq, "props")?),
                         "button" => Change::Button(next(&mut seq, "props")?),
                         "icon" => Change::Icon(next(&mut seq, "props")?),
-                        "meter" => Change::Meter(next(&mut seq, "props")?),
                         "toggle" => Change::Toggle(next(&mut seq, "props")?),
                         "slider" => Change::Slider(next(&mut seq, "props")?),
                         "segmented" => Change::Segmented(next(&mut seq, "props")?),
@@ -506,7 +491,6 @@ const FAMILIES: &[&str] = &[
     "card",
     "button",
     "icon",
-    "meter",
     "toggle",
     "slider",
     "segmented",
@@ -521,28 +505,48 @@ const FAMILIES: &[&str] = &[
 pub(crate) struct Uses {
     pub watches: bool,
     pub tick: bool,
-    /// It moves on every frame by itself: with the time since it opened, a history, a scope or
-    /// a take as it grows. What moves with the engine's levels, what a lane or a cable plays or
-    /// as it eases draws again only when that changed, see `Feeds::changed`.
+    /// It moves on every frame by itself: with the time since it opened, a history or a scope.
+    /// What moves with the engine's levels, a take, what a lane or a cable plays or as it eases
+    /// draws again only when that changed, see `Feeds::changed`.
     pub animates: bool,
-    /// The peaks it reads, by name, and whether it reads the device output.
+    /// The peaks it reads, by name.
     pub peaks: BTreeSet<String>,
+    /// It reads the peak of what the device plays.
     pub output: bool,
     /// It reads the level of the audio input.
     pub input: bool,
     /// The numbers it reads as they play.
     pub played: BTreeSet<String>,
-    /// The scopes it draws.
     pub scopes: BTreeSet<String>,
     /// The fields of instances inside it it reads, as `path.field`.
     pub inside: BTreeSet<String>,
-    /// The audio files whose waveforms it draws.
     pub files: BTreeSet<String>,
     /// The recorders whose takes it draws as they grow.
     pub takes: BTreeSet<String>,
 }
 
 impl Uses {
+    /// It may change on every frame with no code running.
+    pub(crate) fn per_frame(&self) -> bool {
+        let Self {
+            tick,
+            animates,
+            output,
+            input,
+            peaks,
+            played,
+            takes,
+            ..
+        } = self;
+        *tick
+            || *animates
+            || *output
+            || *input
+            || !peaks.is_empty()
+            || !played.is_empty()
+            || !takes.is_empty()
+    }
+
     pub(crate) fn join(&mut self, other: &Uses) {
         self.watches |= other.watches;
         self.tick |= other.tick;
@@ -664,12 +668,15 @@ pub(crate) struct NodeTable {
     slots: Vec<Option<Entry>>,
     ids: HashMap<u64, usize>,
     root: Option<usize>,
-    drags: HashMap<u64, Drag>,
+    drags: HashMap<u64, Rc<Drag>>,
     counts: UseCounts,
     /// What the nodes use together, worked out again after a batch that changed it.
     uses: Uses,
     /// Goes up with every batch, so what a frame keeps of the nodes knows when to look again.
     version: u64,
+    /// How many divs, and how many spaces, have each key: one, or the window would mix up
+    /// their hover, press and scroll.
+    keyed: HashMap<Keyed, usize>,
 }
 
 impl NodeTable {
@@ -677,11 +684,30 @@ impl NodeTable {
         self.root
     }
 
+    pub(crate) fn has(&self, id: u64) -> bool {
+        self.ids.contains_key(&id)
+    }
+
+    /// Whether the node in `slot`, or one in it, may take the keys: the window finds what tab
+    /// goes to among what it drew.
+    pub(crate) fn holds_focus(&self, slot: usize) -> bool {
+        let Some(entry) = self.get(slot) else {
+            return false;
+        };
+        let takes = match &entry.props {
+            Props::Div(div) => div.tab_stop == Some(true),
+            Props::Space(space) => space.drag.is_some(),
+            Props::Shape(shape) => shape.drag.is_some(),
+            Props::Text(_) | Props::Icon(_) | Props::Marker => false,
+            _ => true,
+        };
+        takes || entry.children.iter().any(|child| self.holds_focus(*child))
+    }
+
     pub(crate) fn get(&self, slot: usize) -> Option<&Entry> {
         self.slots.get(slot)?.as_ref()
     }
 
-    /// Whether it shows a dialog.
     pub(crate) fn shows_dialog(&self) -> bool {
         (self.entries()).any(
             |entry| matches!(&entry.props, Props::Overlay(overlay) if overlay.modal == Some(true)),
@@ -701,7 +727,7 @@ impl NodeTable {
         }
     }
 
-    pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Drag> {
+    pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Rc<Drag>> {
         self.drags.get(&id?)
     }
 
@@ -763,7 +789,6 @@ impl NodeTable {
         false
     }
 
-    /// The slot and the id of every space.
     pub(crate) fn spaces(&self) -> Vec<(usize, u64)> {
         (self.slots.iter().enumerate())
             .filter_map(|(slot, entry)| entry.as_ref().map(|entry| (slot, entry)))
@@ -772,15 +797,54 @@ impl NodeTable {
             .collect()
     }
 
-    /// Whether a div is placed over the others.
-    pub(crate) fn lays_over(&self) -> bool {
-        (self.entries()).any(|entry| match &entry.props {
-            Props::Div(div) => div
-                .style
-                .as_ref()
-                .is_some_and(|style| style.absolute.is_some()),
-            _ => false,
-        })
+    /// Whether the node in `slot` must draw in the page, not over it: something may lie over it
+    /// (a div placed with `absolute` in a div the node is in, or an overlay the node is in), or
+    /// a div it is in fades it, which fades only what draws inside it.
+    pub(crate) fn kept_in_page(&self, slot: usize) -> bool {
+        let mut at = self.get(slot).and_then(|entry| entry.parent);
+        while let Some(parent) = at {
+            let Some(entry) = self.get(parent) else {
+                return false;
+            };
+            let absolute = |child: &usize| match self.get(*child).map(|child| &child.props) {
+                Some(Props::Div(div)) => {
+                    (div.style.as_ref()).is_some_and(|style| style.absolute.is_some())
+                }
+                _ => false,
+            };
+            let fades = match &entry.props {
+                // With no style, a disabled div takes the look of one.
+                Props::Div(div) => match &div.style {
+                    Some(style) => style.fades(div.disabled == Some(true)),
+                    None => div.disabled == Some(true),
+                },
+                _ => false,
+            };
+            if matches!(entry.props, Props::Overlay(_))
+                || fades
+                || entry.children.iter().any(absolute)
+            {
+                return true;
+            }
+            at = entry.parent;
+        }
+        false
+    }
+
+    /// The slot of the div that says `titleBar`.
+    pub(crate) fn title_bar(&self) -> Option<usize> {
+        let mut todo = vec![self.root?];
+        while let Some(slot) = todo.pop() {
+            let Some(entry) = self.get(slot) else {
+                continue;
+            };
+            match &entry.props {
+                Props::Div(div) if div.title_bar == Some(true) => return Some(slot),
+                Props::Div(_) | Props::Overlay(_) => todo.extend(&entry.children),
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(crate) fn version(&self) -> u64 {
@@ -802,6 +866,7 @@ impl NodeTable {
     pub(crate) fn apply(&mut self, ops: Vec<Op>) -> Result<(), String> {
         self.version += 1;
         let mut emptied = HashSet::new();
+        let mut keyed = Vec::new();
         for op in ops {
             match op {
                 Op::Create(id, props) => {
@@ -815,6 +880,10 @@ impl NodeTable {
                     }
                     let uses = uses_of(&props);
                     self.counts.count(&uses, true);
+                    if let Some(key) = key_of(&props) {
+                        *self.keyed.entry(key.clone()).or_default() += 1;
+                        keyed.push(key);
+                    }
                     let entry = Entry {
                         id,
                         props,
@@ -830,6 +899,7 @@ impl NodeTable {
                     let Some(entry) = self.entry_mut(slot) else {
                         return Err(format!("no node {id}"));
                     };
+                    let key_before = key_of(&entry.props);
                     match (&mut entry.props, change) {
                         (Props::Div(props), Change::Div(change)) => props.apply(change),
                         (Props::Text(props), Change::Text(change)) => props.apply(change),
@@ -837,7 +907,6 @@ impl NodeTable {
                         (Props::Input(props), Change::Input(change)) => props.apply(change),
                         (Props::Button(props), Change::Button(change)) => props.apply(change),
                         (Props::Icon(props), Change::Icon(change)) => props.apply(change),
-                        (Props::Meter(props), Change::Meter(change)) => props.apply(change),
                         (Props::Toggle(props), Change::Toggle(change)) => props.apply(change),
                         (Props::Slider(props), Change::Slider(change)) => props.apply(change),
                         (Props::Segmented(props), Change::Segmented(change)) => {
@@ -851,10 +920,20 @@ impl NodeTable {
                         _ => return Err(format!("a change of another kind of node for {id}")),
                     }
                     let after = uses_of(&entry.props);
+                    let key_after = key_of(&entry.props);
                     if after != entry.uses {
                         let before = std::mem::replace(&mut entry.uses, after.clone());
                         self.counts.count(&before, false);
                         self.counts.count(&after, true);
+                    }
+                    if key_before != key_after {
+                        if let Some(key) = key_before {
+                            self.unkey(&key);
+                        }
+                        if let Some(key) = key_after {
+                            *self.keyed.entry(key.clone()).or_default() += 1;
+                            keyed.push(key);
+                        }
                     }
                 }
                 Op::Insert {
@@ -911,7 +990,7 @@ impl NodeTable {
                 }
                 Op::Root(id) => self.root = Some(self.slot(id)?),
                 Op::Drag(id, drag) => {
-                    self.drags.insert(id, drag);
+                    self.drags.insert(id, Rc::new(drag));
                 }
             }
         }
@@ -919,7 +998,28 @@ impl NodeTable {
             self.tidy(parent);
         }
         self.uses = self.counts.uses();
-        Ok(())
+        if let Some((kind, key)) = keyed.iter().find(|(_, key)| key.starts_with('#')) {
+            return Err(format!(
+                "the key \"{key}\" of a {kind} starts with \"#\", which the window keeps for \
+                 what has no key: start it with another character"
+            ));
+        }
+        match keyed.iter().find(|key| self.keyed.get(*key) > Some(&1)) {
+            Some((kind, key)) => Err(format!(
+                "two {kind}s of this view have the key \"{key}\": give each its own, such as \
+                 one made from the item a row of a list shows"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    fn unkey(&mut self, key: &Keyed) {
+        if let Some(count) = self.keyed.get_mut(key) {
+            *count -= 1;
+            if *count == 0 {
+                self.keyed.remove(key);
+            }
+        }
     }
 
     /// Takes the children that are gone out of the list of `parent`.
@@ -941,24 +1041,29 @@ impl NodeTable {
         };
         self.ids.remove(&entry.id);
         self.counts.count(&entry.uses, false);
+        if let Some(key) = key_of(&entry.props) {
+            self.unkey(&key);
+        }
         for child in entry.children {
             self.remove(child);
         }
     }
 }
 
+/// The kind of a node with a key, and its key: a div and a space may share one.
+type Keyed = (&'static str, String);
+
+fn key_of(props: &Props) -> Option<Keyed> {
+    match props {
+        Props::Div(div) => Some(("div", div.key.clone()?)),
+        Props::Space(space) => Some(("space", space.key.clone()?)),
+        _ => None,
+    }
+}
+
 fn uses_of(props: &Props) -> Uses {
     match props {
         Props::Shape(shape) => shape.uses(),
-        Props::Meter(MeterProps { of, input, .. }) => {
-            let mut uses = Uses::default();
-            match (of, input) {
-                (_, Some(_)) => uses.input = true,
-                (Some(name), None) => _ = uses.peaks.insert(name.clone()),
-                (None, None) => uses.output = true,
-            }
-            uses
-        }
         Props::Slider(SliderProps {
             value: Some(value), ..
         }) => {
@@ -1026,10 +1131,7 @@ impl ShapeProps {
             Some(List::File { asset, .. }) => {
                 uses.files.insert(asset.clone());
             }
-            Some(List::Take { name }) => {
-                uses.takes.insert(name.clone());
-                uses.animates = true;
-            }
+            Some(List::Take { name }) => _ = uses.takes.insert(name.clone()),
             None => {}
         }
         uses
@@ -1629,6 +1731,7 @@ pub(crate) enum DragPart {
     X,
     Y,
     Active,
+    Alt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -1853,7 +1956,7 @@ pub(crate) enum Weight {
     Semibold,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ScrollAxis {
     X,
@@ -1922,6 +2025,15 @@ impl TryFrom<String> for Color {
 }
 
 impl Style {
+    /// Whether it may draw what is in it at less than full opacity.
+    fn fades(&self, disabled: bool) -> bool {
+        let looks = [self.hover, self.pressed].into_iter().flatten();
+        self.opacity.is_some()
+            || looks
+                .chain(disabled.then(|| self.disabled_look()))
+                .any(|look| look.opacity.is_some())
+    }
+
     /// How it lines its children up, and nothing of its size or looks: the inside of a div
     /// whose children scroll.
     pub(crate) fn lines_up(&self, element: Div) -> Div {
@@ -1935,12 +2047,10 @@ impl Style {
         lines.apply(element, false)
     }
 
-    /// Whether its text is cut off with "…" where it does not fit.
     pub(crate) fn truncates(&self) -> bool {
         self.truncate
     }
 
-    /// The axis its children scroll along, if any.
     pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
         self.scroll
     }
@@ -2041,17 +2151,28 @@ impl Style {
         }
     }
 
-    /// The height its style fixes, if any.
+    /// The height it lays out at whatever it holds, if its style fixes one: no minimum,
+    /// maximum or growth changes it, and it takes its room in its parent.
     pub(crate) fn fixed_height(&self) -> Option<f32> {
-        self.height
+        match (self.min_height, self.max_height, self.grow, self.absolute) {
+            (None, None, false, None) => self.height,
+            _ => None,
+        }
     }
 
-    /// Whether it stacks its children down, and the room between them.
+    /// Whether it stacks its children down, one under the other, and the room between them.
     pub(crate) fn stacks_down(&self) -> Option<f32> {
+        if self.wrap {
+            return None;
+        }
         match self.direction {
             Some(Direction::Row) => None,
             Some(Direction::Column) | None => Some(self.gap.unwrap_or(0.0)),
         }
+    }
+
+    pub(crate) fn padding_top(&self) -> f32 {
+        (self.padding_top.or(self.padding_y).or(self.padding)).unwrap_or(0.0)
     }
 
     /// Its layout and look, `disabled` or not.
@@ -2173,7 +2294,6 @@ impl Style {
     }
 }
 
-/// Sets the field `name` of a record.
 pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_json::Value) {
     if let Some(fields) = state.as_object_mut() {
         fields.insert(name.to_string(), value);
@@ -2298,5 +2418,44 @@ mod tests {
                 .contains("into itself")
         );
         assert_eq!(table.children_of(1), [2]);
+    }
+
+    #[test]
+    fn a_key_names_one_div_and_one_space_and_passes_on_when_its_node_goes() {
+        let mut table = NodeTable::default();
+        let made = ops(serde_json::json!([
+            ["create", 1, "div", {}],
+            ["create", 2, "div", { "key": "row" }],
+            ["create", 3, "space", { "key": "row" }],
+            ["insert", 1, 2, null], ["insert", 1, 3, null], ["root", 1],
+        ]));
+        table.apply(made.unwrap()).unwrap();
+        // A part shown again makes its new node before its old one goes.
+        let again = ops(serde_json::json!([
+            ["create", 4, "div", { "key": "row" }],
+            ["insert", 1, 4, null], ["remove", 2],
+        ]));
+        table.apply(again.unwrap()).unwrap();
+        let renamed = ops(serde_json::json!([
+            ["create", 5, "div", { "key": "other" }],
+            ["insert", 1, 5, null], ["set", 4, "div", { "key": "free" }],
+        ]));
+        table.apply(renamed.unwrap()).unwrap();
+        let twice = ops(serde_json::json!([["set", 5, "div", { "key": "free" }]]));
+        let error = table.apply(twice.unwrap()).unwrap_err();
+        assert!(
+            error.contains("two divs") && error.contains("\"free\""),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_key_that_starts_with_a_hash_is_an_error_and_one_with_a_hash_inside_is_not() {
+        let mut table = NodeTable::default();
+        let fine = ops(serde_json::json!([["create", 1, "div", { "key": "list#1000000" }]]));
+        table.apply(fine.unwrap()).unwrap();
+        let taken = ops(serde_json::json!([["create", 2, "space", { "key": "#space-0-5" }]]));
+        let error = table.apply(taken.unwrap()).unwrap_err();
+        assert!(error.contains("starts with"), "{error}");
     }
 }

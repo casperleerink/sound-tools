@@ -1,8 +1,8 @@
 //! Rules about the workspace itself, checked by tests.
 //!
-//! Extensions live in `extensions/`. They depend on the core, the UI SDK and small shared
-//! contract crates, never on each other. This keeps the build wide and parallel, which
-//! protects the extension edit loop.
+//! Extensions live in `extensions/`. They depend on the core, the DSP helpers, the UI SDK and
+//! small shared contract crates, never on each other. This keeps the build wide and parallel,
+//! which protects the extension edit loop.
 //!
 //! The core depends on no other crate of the workspace, so it knows no music.
 //!

@@ -4,7 +4,7 @@ use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,
 };
 
-use crate::components::kbd::key_label;
+use crate::components::kbd::{key_label, keys_of};
 use crate::theme::ActiveTheme;
 
 #[derive(Clone)]
@@ -23,8 +23,7 @@ impl Tooltip {
 
     /// The keys that do it too, as [`Kbd`](crate::components::kbd::Kbd) takes them: `"mod+k"`.
     pub fn shortcut(mut self, shortcut: &str) -> Self {
-        self.keys = shortcut
-            .split('+')
+        self.keys = (keys_of(shortcut).into_iter())
             .map(|key| key_label(key).into())
             .collect();
         self

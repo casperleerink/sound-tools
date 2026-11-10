@@ -8,6 +8,7 @@ mod binding;
 mod composite;
 mod editing;
 mod generated;
+mod history;
 mod json_tools;
 mod live_input;
 mod outside;

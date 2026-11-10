@@ -1,26 +1,20 @@
 //! The VST 3 backend: what this machine has, loading one plugin, and playing it.
 //!
-//! VST 3 is a COM API. The `vst3` crate gives the raw interfaces generated from Steinberg's
-//! headers and nothing else, so the safe layer is here. Every call into a plugin is `unsafe`
-//! and every one of them is in this folder. `kResultTrue` is the same number as `kResultOk`, so
-//! a call that worked is checked against `kResultOk` alone.
+//! The `vst3` crate gives only the raw COM interfaces, so every `unsafe` call into a plugin is
+//! in this folder. `kResultTrue` is the same number as `kResultOk`, so success is checked
+//! against `kResultOk` alone.
 //!
-//! What a plugin is made of, and which thread each part belongs to:
+//! - `IComponent` is the plugin: it owns the buses and the state. Main thread.
+//! - `IAudioProcessor` is the same object. `setProcessing` and `process` belong to the thread
+//!   that processes; `setupProcessing` and `setActive` to the main thread while nothing
+//!   processes. Same rule as CLAP.
+//! - `IEditController` is the interface side, the same object or a second one joined by
+//!   `IConnectionPoint`. It makes the window (`IPlugView`). Main thread.
 //!
-//! - `IComponent` is the plugin. It is created from the factory, initialized with a host
-//!   context, and it owns the buses and the state. Main thread.
-//! - `IAudioProcessor` is the same object asked for another interface. `setProcessing` and
-//!   `process` belong to the thread that processes; `setupProcessing` and `setActive` belong to
-//!   the main thread while nothing is processing. Same rule as CLAP, so the one host in
-//!   `host.rs` holds both.
-//! - `IEditController` is the interface side. It may be the same object or a second one, and
-//!   the two are joined by `IConnectionPoint`. It is what knows the MIDI mapping, which is how
-//!   the sustain pedal and the wheels reach a VST 3 plugin, and it is what makes the plugin's
-//!   own window (`IPlugView`, in `view.rs`). Main thread, like the window.
-//!
-//! VST 3 has no MIDI controller event. The format's own answer is `IMidiMapping`: the
-//! controller asks which parameter a MIDI controller number is mapped to, and the host sends
-//! that parameter as a normalized value in the block's parameter changes. See `plugin.rs`.
+//! VST 3 has no MIDI controller event. The format's answer is `IMidiMapping`: the controller
+//! says which parameter a controller number is mapped to, and the host sends that parameter's
+//! normalized value in the block's parameter changes. That is how the pedal and the wheels
+//! reach a VST 3 plugin.
 
 mod context;
 mod module;
@@ -56,12 +50,8 @@ pub(crate) fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
         .collect())
 }
 
-/// The plugin's class id as a record holds it: the sixteen bytes as thirty-two uppercase hex
-/// digits.
-///
-/// This is what Steinberg's own `FUID::toString` gives, and what a `.vstpreset` file holds, so
-/// the id in a record is the one a plugin's maker publishes, and the same on every platform. A
-/// class id never changes, which is what makes it the name of a plugin for good.
+/// The class id as thirty-two uppercase hex digits, as Steinberg's `FUID::toString` writes it,
+/// so a record holds the id the plugin's maker publishes, the same on every platform.
 pub(crate) fn class_id_text(id: &TUID) -> String {
     in_text_order(*id)
         .iter()
@@ -85,10 +75,8 @@ pub(crate) fn class_id_of(text: &str) -> Option<TUID> {
     Some(in_text_order(id))
 }
 
-/// A class id with its bytes in the order its text has them, or back: the swaps undo
-/// themselves. On Windows a class id is laid out as a COM `GUID`, whose first three fields are
-/// little-endian numbers, and `FUID::toString` writes those fields as numbers. Elsewhere the
-/// bytes are already in the order of the text.
+/// A class id with its bytes in text order, or back: the swaps undo themselves. On Windows a
+/// class id is a COM `GUID`, whose first three fields are little-endian numbers.
 fn in_text_order(mut id: TUID) -> TUID {
     if cfg!(target_os = "windows") {
         id[..4].reverse();
@@ -99,12 +87,9 @@ fn in_text_order(mut id: TUID) -> TUID {
 }
 
 /// The biggest state this host reads or writes, and the most a plugin may put in one stream.
-///
-/// One number for both sides: a state that would not be read back is not written over the one
-/// that is there, and a file that is not ours cannot make this process allocate more than this.
-/// Real plugin states are kilobytes to a few megabytes; a sampler that keeps its samples in its
-/// state is the only thing that comes near, and half a gigabyte is past any of them. It is also
-/// what keeps the lengths in a state asset inside the four bytes they are written in.
+/// One number for both, so a state that could not be read back is never written, and a file
+/// that is not ours cannot make this process allocate more. Far above any real state, and it
+/// keeps a state asset's lengths inside their four bytes.
 pub(crate) const MAX_STATE: usize = 512 * 1024 * 1024;
 
 /// A call into a plugin that answered with a failure code.

@@ -216,20 +216,15 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
     std::fs::create_dir_all(sfz.parent().unwrap()).unwrap();
     std::fs::write(&sfz, "<region> sample=../../audio/kalimba.wav").unwrap();
     let mut copy = Harness::open(folder);
-    // The plugin doc names a plugin no machine is expected to have. That is the case its
-    // doc describes: the record loads, the track is silent and the problem names the id.
     let problems: Vec<String> = copy
         .project
         .problems()
         .into_iter()
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
-    // Every plugin the docs name is one no machine is expected to have: two instruments, one per
-    // format. The library instrument of the library doc is not on this machine either: the test
-    // has no library.
+    // No machine is expected to have the plugin the docs name, and the test has no library.
     let expected = [
         "state/song/rhodes/synth.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
-        "state/song/strings/synth.json: this machine has no VST 3 plugin",
         "state/song/violins/synth.json: Violin section, sustain cannot play",
     ];
     assert_eq!(problems.len(), expected.len(), "{problems:?}");
@@ -282,13 +277,10 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "song/piano",
             "song/piano/synth",
             "song/rhodes",
-            "song/rhodes/lane-cutoff",
             "song/rhodes/synth",
             "song/snare",
             "song/snare/chain",
             "song/snare/chain/tight",
-            "song/strings",
-            "song/strings/synth",
             "song/synth",
             "song/synth/synth",
             "song/violins",

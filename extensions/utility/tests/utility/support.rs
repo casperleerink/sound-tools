@@ -2,49 +2,11 @@
 
 use std::f64::consts::TAU;
 
-use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
-    ProcessContext, Processor,
-};
+use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node};
+pub(crate) use sound_dsp::testing::{Signal, Source, amplitude_at, largest_step, noise, peak};
 use utility::{Utility, UtilityState};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
-
-/// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
-
-/// A processor that plays a signal. The closure is made on the control thread; calling it
-/// allocates nothing.
-pub(crate) struct Source {
-    signal: Signal,
-}
-
-impl Source {
-    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
-
-    pub(crate) fn new(signal: Signal) -> Self {
-        Self { signal }
-    }
-}
-
-impl Processor for Source {
-    type Update = ();
-
-    fn ports(&self) -> Ports {
-        Ports::new().audio_output(Self::OUTPUT)
-    }
-
-    fn prepare(&mut self, _: &PrepareConfig) {}
-
-    fn update(&mut self, _: &mut ()) {}
-
-    fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
-        for (left, right) in left.iter_mut().zip(right.iter_mut()) {
-            [*left, *right] = (self.signal)();
-        }
-    }
-}
 
 /// A sine of this frequency, from phase 0, with its amplitude on the left and on the right. A
 /// negative amplitude is the sine upside down.
@@ -71,18 +33,6 @@ pub(crate) fn two_sines(left_hz: f64, right_hz: f64, amplitude: f32) -> Signal {
         sine(right_hz, [amplitude; 2]),
     ];
     Box::new(move || [left()[0], right()[0]])
-}
-
-/// White noise from -amplitude to amplitude, the same every run, other in each channel.
-pub(crate) fn noise(amplitude: f32) -> Signal {
-    let mut state = 0x2545_f491_4f6c_dd1d_u64;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        (state >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0
-    };
-    Box::new(move || [next() * amplitude, next() * amplitude])
 }
 
 /// The first `frames` of a signal, left and right: what the utility hears.
@@ -142,18 +92,6 @@ impl Rig {
     }
 }
 
-/// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
-/// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.
-pub(crate) fn amplitude_at(samples: &[f32], start: usize, hz: f64, sample_rate: u32) -> f64 {
-    let (mut sine, mut cosine) = (0.0, 0.0);
-    for (offset, sample) in samples.iter().enumerate() {
-        let angle = TAU * hz * (start + offset) as f64 / f64::from(sample_rate);
-        sine += f64::from(*sample) * angle.sin();
-        cosine += f64::from(*sample) * angle.cos();
-    }
-    2.0 * sine.hypot(cosine) / samples.len() as f64
-}
-
 /// The amplitude of a sine through a utility on the left and on the right, once it has settled.
 pub(crate) fn measured(state: UtilityState, hz: f64, input: [f32; 2]) -> [f64; 2] {
     measured_at(state, hz, input, SAMPLE_RATE)
@@ -175,18 +113,4 @@ pub(crate) fn measured_at(
     rig.render(settle);
     rig.render(window)
         .map(|channel| amplitude_at(&channel, settle, hz, sample_rate))
-}
-
-pub(crate) fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
-/// The largest step from one sample to the next.
-pub(crate) fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .map(|pair| (pair[1] - pair[0]).abs())
-        .fold(0.0, f32::max)
 }

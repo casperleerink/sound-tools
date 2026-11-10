@@ -1,9 +1,5 @@
-//! A plugin's window that the composer resizes by dragging its edge, and keys typed into a
-//! plugin's window.
-//!
-//! GPUI's platform for tests resizes a window as a drag of its edge would, and types into it,
-//! with no display. What it cannot do is give a plugin a real view, which is where a real
-//! plugin takes the keyboard itself; that is checked by hand.
+//! A plugin's window that the composer resizes by dragging its edge, and keys typed into it.
+//! GPUI's test platform resizes a window as a drag of its edge would.
 
 use std::path::Path;
 
@@ -20,11 +16,8 @@ use crate::support::{
 
 const SLOT: &str = "track/instrument";
 
-/// Makes the test plugin one whose window the composer may resize. Same rules as
-/// [`tell_the_plugin`].
 fn tell_the_plugin_it_may_be_resized(may: bool) {
-    // SAFETY: nextest runs one test per process and this is called before any thread but this
-    // one exists, so no other thread can be reading the environment.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe {
         match may {
             true => std::env::set_var(RESIZABLE_VARIABLE, "1"),
@@ -33,7 +26,6 @@ fn tell_the_plugin_it_may_be_resized(may: bool) {
     }
 }
 
-/// The window calls the plugin wrote down, in order.
 fn window_calls(log: &Path) -> Vec<String> {
     lifecycle(log)
         .into_iter()
@@ -42,10 +34,9 @@ fn window_calls(log: &Path) -> Vec<String> {
         .collect()
 }
 
-/// A project with the test plugin of `format` on a track, its window open.
 fn open(format: PluginFormat, log: &Path, cx: &mut TestAppContext) -> (Harness, AnyWindowHandle) {
     tell_the_plugin(Some(log), None);
-    let mut harness = Harness::new();
+    let mut harness = Harness::in_process();
     harness.add_track(record(format, "piano"), Vec::new());
     harness.play(512);
     cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
@@ -54,8 +45,7 @@ fn open(format: PluginFormat, log: &Path, cx: &mut TestAppContext) -> (Harness, 
     (harness, handle)
 }
 
-/// How big the window is. A window of the platform for tests has no title bar, so that is the
-/// size of its content.
+/// A test platform window has no title bar, so its bounds are its content.
 fn content_size(handle: AnyWindowHandle, cx: &mut TestAppContext) -> (u32, u32) {
     let content = cx
         .update(|cx| handle.update(cx, |_, window, _| window.bounds().size))
@@ -66,10 +56,8 @@ fn content_size(handle: AnyWindowHandle, cx: &mut TestAppContext) -> (u32, u32) 
     )
 }
 
-/// A drag of the edge of a window the plugin allows to be resized: the plugin makes a size it
-/// takes of it (CLAP's `adjust_size`, VST 3's `checkSizeConstraint`), takes it (`set_size`,
-/// `onSize`), and the window ends on it at the next poll. The test plugin takes nothing smaller
-/// than 200 by 150.
+/// The plugin adjusts the size (CLAP's `adjust_size`, VST 3's `checkSizeConstraint`) and takes
+/// it (`set_size`, `onSize`).
 #[gpui::test]
 fn a_window_the_plugin_allows_to_resize_follows_a_drag_within_what_the_plugin_takes(
     cx: &mut TestAppContext,
@@ -88,18 +76,16 @@ fn resizing_within_limits(format: PluginFormat, cx: &mut TestAppContext) {
     assert_eq!(content_size(handle, cx), (WINDOW_WIDTH, WINDOW_HEIGHT));
     let before = window_calls(&log).len();
 
-    // Larger: the plugin takes it as it is.
     cx.simulate_window_resize(handle, size(px(640.), px(480.)));
     let calls = window_calls(&log).split_off(before);
     assert_eq!(calls, ["gui_adjust_size", "gui_on_size"], "{format:?}");
     cx.update(|cx| harness.plugins.settle_windows(cx));
     assert_eq!(content_size(handle, cx), (640, 480), "{format:?}");
 
-    // Smaller than it takes: the window goes back to the smallest the plugin takes.
     cx.simulate_window_resize(handle, size(px(100.), px(100.)));
     cx.update(|cx| harness.plugins.settle_windows(cx));
     assert_eq!(content_size(handle, cx), SMALLEST_WINDOW, "{format:?}");
-    // And that size, which is the one the host gave it, is not told to the plugin again.
+    // The size the host gave is not told to the plugin again.
     let told = window_calls(&log);
     cx.update(|cx| harness.plugins.settle_windows(cx));
     assert_eq!(window_calls(&log), told);
@@ -107,10 +93,8 @@ fn resizing_within_limits(format: PluginFormat, cx: &mut TestAppContext) {
     cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
 }
 
-/// Makes a resizable test plugin one that does not adjust a size. Same rules as
-/// [`tell_the_plugin`].
 fn tell_the_plugin_not_to_adjust(not: bool) {
-    // SAFETY: as `tell_the_plugin_it_may_be_resized`.
+    // SAFETY: as in `tell_the_plugin`.
     unsafe {
         match not {
             true => std::env::set_var(NO_ADJUST_VARIABLE, "1"),
@@ -119,7 +103,6 @@ fn tell_the_plugin_not_to_adjust(not: bool) {
     }
 }
 
-/// A resizable plugin that does not adjust a size takes it as it was offered, in both formats:
 /// CLAP's `adjust_size` says nothing and VST 3's `checkSizeConstraint` leaves the rectangle.
 #[gpui::test]
 fn a_plugin_that_does_not_adjust_a_size_takes_it_as_it_was_dragged(cx: &mut TestAppContext) {
@@ -141,9 +124,8 @@ fn a_plugin_that_does_not_adjust_a_size_takes_it_as_it_was_dragged(cx: &mut Test
     tell_the_plugin_it_may_be_resized(false);
 }
 
-/// A VST 3 view that asks for another size from inside the `onSize` of a drag is refused, as
-/// a request from inside the answer to one of its own is: `onSize` is never called inside
-/// `onSize`. The window ends on the size the view then says it has.
+/// `onSize` is never called inside `onSize`. The window ends on the size the view then says it
+/// has.
 #[gpui::test]
 fn a_view_that_asks_for_a_size_inside_the_answer_to_a_drag_is_not_answered_inside_it(
     cx: &mut TestAppContext,
@@ -168,8 +150,6 @@ fn a_view_that_asks_for_a_size_inside_the_answer_to_a_drag_is_not_answered_insid
     tell_the_plugin_it_may_be_resized(false);
 }
 
-/// A window the plugin does not allow to be resized cannot be dragged, and nothing is ever
-/// asked of the plugin about a size, whatever the window does.
 #[gpui::test]
 fn a_window_the_plugin_does_not_allow_to_resize_asks_it_nothing(cx: &mut TestAppContext) {
     tell_the_plugin_it_may_be_resized(false);
@@ -186,9 +166,8 @@ fn a_window_the_plugin_does_not_allow_to_resize_asks_it_nothing(cx: &mut TestApp
     }
 }
 
-/// A key typed while the plugin's own view does not have the keyboard reaches the window, and
-/// the host passes it on with `IPlugView::onKeyDown` and `onKeyUp`. CLAP has no such call: a
-/// CLAP plugin takes the keyboard in its own view, so nothing is passed on and nothing breaks.
+/// A key the plugin's own view does not take reaches the window, and the host passes it on with
+/// `IPlugView::onKeyDown` and `onKeyUp`. CLAP has no such call.
 #[gpui::test]
 fn a_key_typed_in_a_plugins_window_reaches_a_vst3_view(cx: &mut TestAppContext) {
     for format in FORMATS {

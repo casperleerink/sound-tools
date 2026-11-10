@@ -1,39 +1,21 @@
 //! The VST 3 side of a plugin's own window: `IPlugView` in a window of ours.
 //!
-//! The host machinery is in `host/windows.rs` and `window.rs` and knows no format. What a
-//! plugin has to do for a window is [`crate::backend::PluginGui`], and this is the VST 3 answer
-//! to it. The CLAP answer is in `clap.rs`; neither format changed the machinery.
-//!
 //! What the format says, from `pluginterfaces/gui/iplugview.h`:
 //!
-//! - The view comes from the plugin's edit controller, `createView(ViewType::kEditor)`. A
-//!   controller that has no window answers with nothing, and then the card stops offering one.
-//!   No view is ever made outside the composer's open: asking a plugin whether it has a window
-//!   means building its whole interface, which is up to a second.
-//! - `isPlatformTypeSupported(kPlatformTypeNSView)` is how a host asks whether the plugin can
-//!   put its view in a Cocoa view of ours, and `kPlatformTypeHWND` in a Win32 window of ours.
-//!   On macOS the coordinates of a `ViewRect` are logical; on Windows they are physical pixels,
-//!   which `window.rs` turns into GPUI's. On Windows the view is told the scale through
-//!   `IPlugViewContentScaleSupport` when it has it; one without it reads the scale itself.
-//! - `setFrame` before `attached`: "Note that in this call the plug-in could call a
-//!   IPlugFrame::resizeView ()". So the frame is in place before the view has a parent.
-//! - `attached(parent, <that type>)` puts the plugin's view in ours. `removed()` takes
-//!   it out again, and only a view that was attached may be removed.
-//! - A plugin that wants another size calls `IPlugFrame::resizeView`, and then, in the words of
-//!   the header, "Afterwards, in the same callstack, the host has to call IPlugView::onSize ()
-//!   if a resize is needed (size was changed)". [`PlugFrame::resizeView`] does exactly that, and
-//!   leaves the window itself to the next poll, which is the one place that has the application.
-//!   The shape of it is Steinberg's own `editorhost.cpp`: refuse a request for a view that is
-//!   not the one this frame holds, refuse a request made from inside another one, say nothing
-//!   to a view that already has the size that was asked for, and read the view's own size
-//!   afterwards, because that is what the window has to end on whatever happened in between.
-//!   Without the guard a plugin that answers `onSize` with the same request runs the host out
-//!   of stack.
+//! - `setFrame` before `attached`, because "in this call the plug-in could call a
+//!   IPlugFrame::resizeView ()".
+//! - Only a view that was attached may be `removed()`.
+//! - After `IPlugFrame::resizeView`, "in the same callstack, the host has to call
+//!   IPlugView::onSize () if a resize is needed". [`PlugFrame::resizeView`] does that the way
+//!   Steinberg's `editorhost.cpp` does: refuse a view that is not the frame's, refuse a request
+//!   from inside another one (a plugin that answers `onSize` with the same request would run
+//!   the host out of stack), skip a view that already has the size, and end on the view's own
+//!   size. The window follows at the next poll, which is the one place that has the
+//!   application.
+//! - A `ViewRect` is in logical pixels on macOS and physical pixels on Windows.
 //!
-//! Every call here belongs to the thread the user interface lives on, which is the thread
-//! [`crate::Plugins`] lives on. The one call a plugin makes of its own accord is
-//! `IPlugFrame::resizeView`, which VST 3 puts on that same thread; it is written down in an
-//! atomic all the same, so a plugin that calls it from elsewhere cannot make this host unsound.
+//! Every call is on the UI thread, `resizeView` included by the format. The frame still uses
+//! atomics, so a plugin that calls from elsewhere cannot make this host unsound.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -54,25 +36,20 @@ use crate::backend::{KeyDirection, PluginGui};
 use crate::processor::not_ours;
 use crate::window::WindowSize;
 
-/// The plugin's own window, from the VST 3 side. One of these per loaded plugin that has an
-/// edit controller; [`Vst3Gui::is_offered`] says whether that controller really has a window.
+/// The plugin's own window, from the VST 3 side, for a plugin that has an edit controller.
 pub(super) struct Vst3Gui {
-    /// The half of the plugin that makes views. Kept as a reference of its own, so the view
-    /// cannot outlive the object it came from.
+    /// Kept as a reference of its own, so the view cannot outlive the object it came from.
     controller: ComPtr<IEditController>,
-    /// What the plugin asks the host to resize it. It outlives every view: a view is given a
-    /// null frame before it is released, and this goes with the plugin.
+    /// Outlives every view: a view is given a null frame before it is released.
     frame: ComWrapper<PlugFrame>,
-    /// The view while a window holds it. `None` says the plugin holds nothing for a window.
     view: Option<ComPtr<IPlugView>>,
-    /// Whether `attached` was answered, so that `removed` is called for that and nothing else.
+    /// Whether `attached` worked, so `removed` is called only then.
     attached: bool,
     plugin_id: String,
 }
 
 impl Vst3Gui {
-    /// The window side of a plugin that has an edit controller. A plugin without one has no
-    /// window at all and gets `None`.
+    /// `None` for a plugin with no edit controller, which has no window.
     pub(super) fn new(
         controller: Option<&ComPtr<IEditController>>,
         plugin_id: &str,
@@ -86,12 +63,11 @@ impl Vst3Gui {
         })
     }
 
-    /// A size the plugin asked for since the last call, for [`crate::backend::Requests`].
     pub(super) fn take_wanted_size(&self) -> Option<WindowSize> {
         self.frame.take_wanted_size()
     }
 
-    /// The plugin's editor view, made anew. `None` says this plugin has no window.
+    /// `None` says this plugin has no window.
     fn make_view(&self) -> Option<ComPtr<IPlugView>> {
         // SAFETY: the controller came from the plugin and is alive, and `kEditor` is a static
         // C string. `createView` gives a view whose reference belongs to this host.
@@ -116,13 +92,9 @@ impl Vst3Gui {
 }
 
 impl PluginGui for Vst3Gui {
-    /// A plugin with an edit controller is offered a window, without being asked.
-    ///
-    /// The format's only way of asking is `createView`, which builds the plugin's whole
-    /// interface: up to a second for one of the pianos this was measured on, on the thread that
-    /// draws, for every load in every mode, including the ones that can open no window at all.
-    /// Nearly every instrument has a window, so the card offers one and a plugin that turns out
-    /// to have none says so once and is not offered one again this session.
+    /// Offered without asking: the format's only way to ask is `createView`, which builds the
+    /// plugin's whole interface (up to a second for some pianos) on the thread that draws.
+    /// Nearly every instrument has a window; one that has none says so when it is opened.
     fn is_offered(&mut self) -> bool {
         true
     }
@@ -135,16 +107,14 @@ impl PluginGui for Vst3Gui {
         if !supports_our_view(&view) {
             return Err(self.no_window());
         }
-        // The frame goes in before the view has a parent, because a plugin may ask to be
-        // resized from inside `attached`, which is the very next call. The frame is told which
-        // view it belongs to first, so a request that names another one is refused.
+        // The frame learns its view first, so a resize from inside `attached` is accepted.
         let frame = self
             .frame
             .as_com_ref::<IPlugFrame>()
             .ok_or_else(|| self.no_window())?;
         self.frame.holds(view.as_ptr());
-        // SAFETY: the view came from the plugin and is alive. The frame belongs to this object,
-        // which outlives the view: `destroy` gives the view a null frame before it is released.
+        // SAFETY: the view came from the plugin and is alive. The frame outlives the view:
+        // `destroy` gives the view a null frame before it is released.
         let result = unsafe { not_ours(|| view.setFrame(frame.as_ptr())) };
         if result != kResultOk {
             self.frame.holds(std::ptr::null_mut());
@@ -170,8 +140,6 @@ impl PluginGui for Vst3Gui {
         window_size(&rect)
     }
 
-    /// Through `IPlugViewContentScaleSupport`, which a view need not have: one without it reads
-    /// the scale from the system itself.
     fn set_scale(&mut self, scale: f64) {
         let Some(support) = self
             .view
@@ -180,8 +148,8 @@ impl PluginGui for Vst3Gui {
         else {
             return;
         };
-        // SAFETY: the view came from the plugin and is alive, and this is the same object. A
-        // view that answers no reads the scale itself, which the format allows.
+        // SAFETY: the view came from the plugin and is alive. A view without this interface, or
+        // that answers no, reads the scale itself, which the format allows.
         unsafe { not_ours(|| support.setContentScaleFactor(scale as f32)) };
     }
 
@@ -199,8 +167,7 @@ impl PluginGui for Vst3Gui {
         Ok(())
     }
 
-    /// VST 3 has no separate show: a view is on screen as soon as it is attached to a parent
-    /// that is on screen, which is the window this host has just made for it.
+    /// VST 3 has no separate show: a view attached to a parent on screen is on screen.
     fn show(&mut self) -> Result<(), PluginProblem> {
         Ok(())
     }
@@ -214,10 +181,7 @@ impl PluginGui for Vst3Gui {
         result == kResultOk
     }
 
-    /// `checkSizeConstraint` makes a size the view takes of the one the composer dragged to,
-    /// and `onSize` gives it that size, unless it has it already. What the view says it is
-    /// afterwards is what the window ends on. A plugin that asks for another size from inside
-    /// `onSize` is answered by the frame as any request is.
+    /// The window ends on what the view says its size is afterwards.
     fn resize(&mut self, wanted: WindowSize) -> Option<WindowSize> {
         let view = self.view.as_ref()?;
         let mut rect = ViewRect {
@@ -226,14 +190,11 @@ impl PluginGui for Vst3Gui {
             right: i32::try_from(wanted.width).ok()?,
             bottom: i32::try_from(wanted.height).ok()?,
         };
-        // SAFETY: the view came from the plugin and is alive, and `rect` outlives the call. A
-        // view that does not constrain leaves the rectangle as it was, which is then the size.
+        // SAFETY: the view came from the plugin and is alive, and `rect` outlives the call.
         unsafe { not_ours(|| view.checkSizeConstraint(&mut rect)) };
         let offered = window_size(&rect)?;
-        // The frame counts this as a request being answered, so a plugin that asks for another
-        // size from inside this `onSize` is refused, as a request from inside the answer to one
-        // of its own is: a nested `onSize` is what `editorhost.cpp` guards against. The view's
-        // own size afterwards is what the window ends on either way.
+        // Counts as answering a request, so a `resizeView` from inside this `onSize` is
+        // refused, as `editorhost.cpp` refuses a nested one.
         if self.frame.answering.swap(true, Ordering::AcqRel) {
             return None;
         }
@@ -268,46 +229,32 @@ impl PluginGui for Vst3Gui {
         result == kResultOk
     }
 
-    /// The order is the one Steinberg's `editorhost.cpp` takes in `closePlugView`: the frame
-    /// goes first, then `removed`, then the release. The frame first, because a plugin is
-    /// allowed to ask for a resize from inside `removed` and there must be nothing of ours left
-    /// for it to ask; `removed` only for an `attached` that was answered, which is what the
-    /// format says the call is the other half of.
+    /// The order of Steinberg's `editorhost.cpp` `closePlugView`: the frame first, because a
+    /// plugin may ask for a resize from inside `removed`; then `removed`; then the release.
     fn destroy(&mut self) {
         let Some(view) = self.view.take() else {
             return;
         };
-        // A size the plugin asked for while it was in a window is nothing to anybody now.
         let _wanted = self.frame.take_wanted_size();
         self.frame.holds(std::ptr::null_mut());
         // SAFETY: the view is alive and is not in anybody else's hands.
         unsafe {
-            // The plugin lets go of this host's frame before anything else, so nothing of the
-            // plugin's can reach an object of ours while the view is being taken apart.
             not_ours(|| view.setFrame(std::ptr::null_mut()));
             if std::mem::take(&mut self.attached) {
                 not_ours(|| view.removed());
             }
         }
-        // Dropping the pointer releases the view, which is the last thing the plugin holds.
         drop(view);
     }
 }
 
-/// What the plugin asks the host to do with the window its view is in.
-///
-/// It is one object per plugin and lives as long as the plugin does. A view is given a null
-/// frame before it is released, so no plugin holds this after the host has let go of it.
+/// What the plugin asks of the window its view is in. One per plugin.
 #[derive(Default)]
 pub(super) struct PlugFrame {
-    /// A size the plugin asked for, packed into one number. Zero means none. Packed and not two
-    /// fields, so a width and a height are always the pair the plugin asked for.
+    /// A size the plugin asked for, packed so the width and height are always one pair. Zero
+    /// means none.
     wanted: AtomicU64,
-    /// The view this frame was given to. A request that names another view is refused, as
-    /// `editorhost.cpp` refuses one, so this host never calls into a view it does not own.
     view: AtomicPtr<IPlugView>,
-    /// Whether a request is being answered. A plugin that asks again from inside `onSize` is
-    /// refused instead of being let into this call a second time.
     answering: AtomicBool,
 }
 
@@ -316,18 +263,14 @@ impl Class for PlugFrame {
 }
 
 impl PlugFrame {
-    /// The size the plugin last asked for, once.
     fn take_wanted_size(&self) -> Option<WindowSize> {
         unpack(self.wanted.swap(0, Ordering::AcqRel))
     }
 
-    /// Says which view this frame belongs to, or none while it belongs to no view.
     fn holds(&self, view: *mut IPlugView) {
         self.view.store(view, Ordering::Release);
     }
 
-    /// The size of a view, when it says.
-    ///
     /// # Safety
     ///
     /// `view` must be alive.
@@ -348,11 +291,6 @@ impl PlugFrame {
 }
 
 impl IPlugFrameTrait for PlugFrame {
-    /// The plugin wants its window to be another size.
-    ///
-    /// The format asks the host to answer `onSize` in the same callstack, so that the plugin
-    /// resizes the view it made; the window around it is given the size at the next poll, which
-    /// is the one place that has the application. See the module documentation.
     unsafe fn resizeView(&self, view: *mut IPlugView, new_size: *mut ViewRect) -> tresult {
         if new_size.is_null() || view.is_null() || view != self.view.load(Ordering::Acquire) {
             return kInvalidArgument;
@@ -361,28 +299,21 @@ impl IPlugFrameTrait for PlugFrame {
         let Some(wanted) = window_size(unsafe { &*new_size }) else {
             return kInvalidArgument;
         };
-        // A request made from inside the answer to another one. Refused, as `editorhost.cpp`
-        // refuses it; the view's own size below is what the window ends on, so a plugin that
-        // insists on another size still gets it.
+        // A request from inside the answer to another one.
         if self.answering.swap(true, Ordering::AcqRel) {
             return kResultFalse;
         }
-        // SAFETY: the view is the one this frame was given to, which `Vst3Gui` holds a
-        // reference to for as long as the frame names it, so it is alive. The rectangle is the
-        // caller's own and is only read by the plugin it came from.
+        // SAFETY: the view is the frame's, which `Vst3Gui` holds for as long as the frame names
+        // it. The rectangle is the caller's own.
         let settled = unsafe {
             let Some(view) = ComRef::from_raw(view) else {
                 self.answering.store(false, Ordering::Release);
                 return kInvalidArgument;
             };
-            // Nothing is said to a view that already has the size that was asked for, which is
-            // the check `editorhost.cpp` makes before it touches anything.
             if Self::size_of(view) != Some(wanted) {
                 not_ours(|| view.onSize(new_size));
             }
             self.answering.store(false, Ordering::Release);
-            // What the view really is now. A plugin may have asked for another size from
-            // inside `onSize`, and then this is that size and not the one this call carried.
             Self::size_of(view).unwrap_or(wanted)
         };
         self.wanted.store(pack(settled), Ordering::Release);
@@ -390,9 +321,9 @@ impl IPlugFrameTrait for PlugFrame {
     }
 }
 
-/// A key as `IPlugView::onKeyDown` takes it, read from `pluginterfaces/gui/iplugview.h` and
-/// `keycodes.h`: the character the key types, a virtual key code for a key that types none,
-/// and the modifiers. A space is both, `' '` and `KEY_SPACE`, as `keycodes.h` converts it.
+/// A key as `IPlugView::onKeyDown` takes it (`keycodes.h`): the character it types, a virtual
+/// key code for a key that types none, and the modifiers. A space is both, as `keycodes.h` has
+/// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Vst3Key {
     character: u16,
@@ -477,9 +408,8 @@ fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
     }
 }
 
-/// The kind of view this host puts a plugin's view in on this platform: an `NSView`, or on
-/// Windows an `HWND`. Linux has no plugin windows yet; it is asked for an `NSView`, which no
-/// plugin there makes, and the card does not offer a window.
+/// Linux has no plugin windows yet: it asks for an `NSView`, which no plugin there makes, so
+/// opening one finds that the plugin has no window.
 fn platform_type() -> FIDString {
     if cfg!(target_os = "windows") {
         vst3::Steinberg::kPlatformTypeHWND
@@ -488,15 +418,13 @@ fn platform_type() -> FIDString {
     }
 }
 
-/// Whether a view can live in a view of ours, of the one kind this host makes.
 fn supports_our_view(view: &ComPtr<IPlugView>) -> bool {
     // SAFETY: the view came from the plugin and is alive, and the type is a static C string.
     let result = unsafe { not_ours(|| view.isPlatformTypeSupported(platform_type())) };
     result == kResultOk
 }
 
-/// A window size out of a view rectangle. `None` says the rectangle is empty, which is no size
-/// for a window.
+/// `None` for an empty rectangle.
 fn window_size(rect: &ViewRect) -> Option<WindowSize> {
     let width = rect.right.checked_sub(rect.left)?;
     let height = rect.bottom.checked_sub(rect.top)?;
@@ -509,7 +437,6 @@ fn window_size(rect: &ViewRect) -> Option<WindowSize> {
     })
 }
 
-/// A size as one number, so that the width and the height a plugin asked for are read together.
 fn pack(size: WindowSize) -> u64 {
     (u64::from(size.width) << 32) | u64::from(size.height)
 }
@@ -534,11 +461,9 @@ mod tests {
     use crate::backend::Opening;
     use crate::scan::ScannedPlugin;
 
-    /// The repository's VST 3 test plugin, loaded, with a log of every call it gets.
-    ///
-    /// These drive the backend directly, because a window of GPUI's test platform has no
-    /// `NSView` to give a plugin: through the host, `attached` and `removed` never run, and
-    /// they are where a real plugin does most of what it does for a window.
+    /// The repository's VST 3 test plugin, loaded, logging every call it gets. These tests drive
+    /// the backend directly because GPUI's test platform has no `NSView` to give a plugin, so
+    /// through the host `attached` and `removed` would never run.
     fn loaded(folder: &Path, log: &Path) -> Opening {
         // SAFETY: nextest runs one test per process and no thread but this one exists yet.
         unsafe { std::env::set_var(test_plugin_support::LOG_VARIABLE, log) };
@@ -570,7 +495,6 @@ mod tests {
         }
     }
 
-    /// Every call the plugin wrote down, in order.
     fn calls(log: &Path) -> Vec<String> {
         std::fs::read_to_string(log)
             .unwrap_or_default()
@@ -580,9 +504,8 @@ mod tests {
             .collect()
     }
 
-    /// A parent the plugin is given and never touches. It is one live byte of ours, not an
-    /// `NSView`: the test plugin only ever checks that it is not null, which is what lets these
-    /// run with no display. A real view would use it, and that is checked by hand.
+    /// One live byte, not an `NSView`: the test plugin only checks that it is not null, so these
+    /// run with no display.
     struct Parent(*mut u8);
 
     impl Parent {
@@ -602,9 +525,6 @@ mod tests {
         }
     }
 
-    /// A view that is attached is taken apart in the order the SDK example takes it: the frame
-    /// first, so a plugin cannot ask for a resize in the middle of its own removal, then
-    /// `removed`, then the release.
     #[test]
     fn a_view_that_was_attached_is_removed_after_its_frame_goes_and_before_it_is_released() {
         let folder = tempfile::tempdir().expect("a folder");
@@ -631,9 +551,7 @@ mod tests {
         );
     }
 
-    /// On Windows a view is told the scale of its window through a second interface, and its
-    /// size afterwards is what the window takes. A view that grows with the scale shows that
-    /// the call reached it.
+    /// The test view grows with the scale, which shows the call reached it.
     #[test]
     fn a_view_is_told_the_scale_and_its_size_follows() {
         let folder = tempfile::tempdir().expect("a folder");
@@ -657,8 +575,6 @@ mod tests {
         gui.destroy();
     }
 
-    /// A plugin that refuses its parent. The host says so, and `removed` is the other half of
-    /// an `attached` that worked, so it is not called for one that did not.
     #[test]
     fn a_view_that_refused_its_parent_is_not_removed() {
         let folder = tempfile::tempdir().expect("a folder");
@@ -679,8 +595,7 @@ mod tests {
         tell_the_plugin(test_plugin_support::ATTACH_FAILS_VARIABLE, None);
     }
 
-    /// `iplugview.h` says a plugin may ask for a resize from inside `attached`. The frame takes
-    /// it, and the size waits for whoever polls, which is the only one that has a window.
+    /// `iplugview.h` allows a resize from inside `attached`.
     #[test]
     fn a_view_may_ask_for_a_resize_from_inside_attached() {
         let folder = tempfile::tempdir().expect("a folder");
@@ -715,8 +630,6 @@ mod tests {
         vst3_key(&Keystroke::parse(text).expect("a keystroke"))
     }
 
-    /// What the host tells a plugin about a key, in the words of `keycodes.h`: the character a
-    /// key types, a virtual code for one that types none, and the modifiers. A space is both.
     #[test]
     fn a_key_reaches_a_vst3_view_as_its_character_its_code_and_its_modifiers() {
         use vst3::Steinberg::KeyModifier_::{kAlternateKey, kCommandKey, kControlKey, kShiftKey};

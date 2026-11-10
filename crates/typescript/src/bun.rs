@@ -125,6 +125,14 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
+    /// The key of some actions of its tool went down: its code runs them in this order until
+    /// one does it.
+    Action {
+        instance: Played<'a>,
+        actions: &'a [String],
+        #[serde(flatten)]
+        clock: Clock,
+    },
     /// A take one of its `recorder` children made, for its `onTake` to keep.
     Take {
         instance: Played<'a>,
@@ -507,6 +515,8 @@ pub(crate) enum Event {
         key: String,
         label: String,
     },
+    /// The code of `instance` opens the window of its own of its child at `path`.
+    OpenWindow { instance: InstanceId, path: String },
     /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
     Select {
         instance: InstanceId,
@@ -697,7 +707,6 @@ pub(crate) fn record_key(tool: &str, state: &str) -> u64 {
     crate::tools::key(&(tool, state))
 }
 
-/// The number of the next Bun of the process.
 static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
@@ -707,7 +716,6 @@ static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
 static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
 static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
 static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
-/// What the last batch of ops cost: Bun's milliseconds and the window's microseconds to apply.
 static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
 static LAST_APPLY_MICROS: AtomicU64 = AtomicU64::new(0);
 
@@ -1135,8 +1143,6 @@ fn print(printed: impl Read, mut log: Option<std::fs::File>) {
     }
 }
 
-/// Hears what Bun `number` says after its load and passes its events on to `events`, and the
-/// answers of behaviours to them, until it hangs or stops, which [`Event::Ended`] says.
 /// One thing Bun was told is done, or will never be.
 fn done(busy: &mut Busy) {
     if busy.pending > 0 {
@@ -1144,6 +1150,8 @@ fn done(busy: &mut Busy) {
     }
 }
 
+/// Hears what Bun `number` says after its load and passes its events on to `events`, and the
+/// answers of behaviours to them, until it hangs or stops, which [`Event::Ended`] says.
 fn hear(
     number: u64,
     heard: &mpsc::Receiver<Line>,

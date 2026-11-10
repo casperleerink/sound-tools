@@ -9,9 +9,12 @@
 //!   keeps the composer's approval mode and model there too (`settings`).
 //! - [`login_shell_environment`] is the environment to run it in. An app opened from the
 //!   Finder has a bare `PATH`, and the agent needs `cargo` and `git`.
-//! - [`install`] downloads the provider's pinned program, which the sidebar runs, and
-//!   [`Provider::account`] and [`SignInChoice`] run its own sign-in. [`Onboarding`] shows
-//!   each [`Setup`] state until the agent is ready.
+//! - [`Agents`] finds each provider's program once for the app, downloads Claude Code when
+//!   there is none ([`install`]) and runs the provider's own sign-in ([`Provider::status`],
+//!   [`SignInChoice`]). [`AgentsPage`] shows
+//!   each [`Setup`] state on the Settings page; the sidebar runs a thread once one is ready.
+//! - Once it is ready, the sidebar also names the versions of the project history with the
+//!   provider's small model ([`Provider::ask_small_model`], `naming`).
 //!
 //! No async runtime of its own: the futures run on smol, so gpui's executors or
 //! `smol::block_on` drive them.
@@ -19,6 +22,7 @@
 mod conversation;
 mod environment;
 mod install;
+mod naming;
 mod process;
 mod provider;
 mod settings;
@@ -29,9 +33,13 @@ pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command, Events,
-    ExitReason, Image, ImageFormat, Installed, Message, Model, Provider, SignInChoice, StepId,
-    StepKind, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
+    Account, AgentEvent, Answer, ApprovalAnswer, ApprovalId, ApprovalMode, Attachment, Command,
+    Events, ExitReason, Image, ImageFormat, Installed, Message, Model, Pick, Provider, Service,
+    SignInChoice, SignInQuestion, SignInStep, SignedIn, Status, StepId, StepKind, StepOutcome,
+    Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
-pub use view::{FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};
+pub use view::{
+    Agents, AgentsEvent, AgentsPage, FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Program,
+    Reason, SIDEBAR_KEY_CONTEXT, Setup, SetupAction, Sidebar, SigningIn, Stop,
+};

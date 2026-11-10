@@ -20,8 +20,10 @@ use std::sync::Arc;
 
 use sound_core::{
     AudioOutput, Automated, AutomationInput, EventInput, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, amplitude,
+    ProcessContext, Processor, Smoothed, Targets,
 };
+
+use sound_dsp::amplitude;
 use sound_notes::{NoteEvent, Velocity};
 
 use crate::sounds::Rendered;
@@ -32,8 +34,8 @@ type DrumTargets = Targets<DrumPadState, { AUTOMATED.len() }>;
 /// Voices that sound at once: one per pad, and the rest for the ones that fade out.
 pub const VOICES: usize = 32;
 
-/// How long a voice takes to fade out when it is cut: by a new hit of its pad, by a hit of its
-/// choke group, or when the transport stops or jumps.
+/// How long a voice takes to fade out when it is cut: by a new hit of its pad or by a hit of its
+/// choke group.
 pub const FADE_SECONDS: f32 = 0.005;
 
 /// How long a change of volume or pan takes to arrive.
@@ -46,7 +48,7 @@ pub fn pad_gains(pad: &Pad) -> [f32; 2] {
 }
 
 fn gains_at(level: f32, pan: f32) -> [f32; 2] {
-    sound_core::pan_gains(f64::from(level), pan.clamp(-1.0, 1.0))
+    sound_dsp::pan_gains(f64::from(level), pan.clamp(-1.0, 1.0))
 }
 
 /// One pad as the audio thread plays it. Its volume and pan are in the record of the kit.
@@ -201,12 +203,6 @@ impl DrumPad {
         }
     }
 
-    fn fade(voice: &mut Voice, fade_frames: u32) {
-        if voice.fading.is_none() {
-            voice.fading = Some(fade_frames);
-        }
-    }
-
     /// Lets go of a voice without freeing anything here, see the rules of this file.
     fn retire(&mut self, voice: Voice) {
         let current = self.pads[voice.pad].sound.as_ref();
@@ -230,8 +226,8 @@ impl DrumPad {
         let (choke, fade_frames) = (play.choke, self.fade_frames);
         for voice in self.voices.iter_mut().flatten() {
             let chokes = choke && self.pads[voice.pad].choke;
-            if voice.pad == pad || chokes {
-                Self::fade(voice, fade_frames);
+            if (voice.pad == pad || chokes) && voice.fading.is_none() {
+                voice.fading = Some(fade_frames);
             }
         }
         let play = &self.pads[pad];
@@ -271,20 +267,15 @@ impl DrumPad {
                 }
             }
             // A drum is struck and rings out: a note off, the pedal and the controllers do
-            // nothing.
+            // nothing. `AllOff` (a stop or a jump) releases a note, as in every instrument,
+            // and a hit has no release, so it rings out too.
             NoteEvent::Off { .. }
+            | NoteEvent::AllOff
             | NoteEvent::Pedal(_)
             | NoteEvent::Bend(_)
             | NoteEvent::ModWheel(_)
             | NoteEvent::Pressure(_)
             | NoteEvent::Control { .. } => {}
-            // A stop or a jump of the transport: everything fades out.
-            NoteEvent::AllOff => {
-                let fade_frames = self.fade_frames;
-                for voice in self.voices.iter_mut().flatten() {
-                    Self::fade(voice, fade_frames);
-                }
-            }
         }
     }
 

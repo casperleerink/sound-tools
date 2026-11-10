@@ -12,6 +12,8 @@
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
 //! runtime <project-folder> --screenshot <png>              draw the window as it opens (macOS)
+//! runtime <project-folder> --save-template <name> [--with-content] [--replace]
+//!                                                          save the project as a template
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
 //! runtime --plugins                                        list the plugins of this machine
 //! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
@@ -49,6 +51,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
 use runtime::report::Timeline;
+use runtime::templates::{self, Keep};
 use runtime::{OFFLINE, open_or_create_with, open_read_only_at, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
@@ -90,6 +93,7 @@ fn print_events(project: &mut Project) {
                 );
             }
             ProjectEvent::ProblemsChanged => problems_changed = true,
+            ProjectEvent::WentBack(point) => println!("went back to {point}"),
         }
     }
     if problems_changed {
@@ -110,8 +114,8 @@ fn print_status(project: &mut Project, status: &EngineStatus) {
         status.playhead_tick.0,
         status.batches_applied,
         status.event_overflows,
-        project.undo_label().unwrap_or("nothing"),
-        project.redo_label().unwrap_or("nothing"),
+        project.undo_label().unwrap_or_else(|| "nothing".into()),
+        project.redo_label().unwrap_or_else(|| "nothing".into()),
     );
 }
 
@@ -170,7 +174,7 @@ fn run(folder: &Path) -> Result<()> {
     );
     let (control, engine) = Engine::new(config);
     // Headless may block on the scan: it has no window to keep answering.
-    let plugins = runtime::plugins(false)?;
+    let plugins = runtime::playing_plugins(false)?;
     let mut project = open_or_create_with(folder, control, plugins.clone())?;
     for notice in plugins.take_notices() {
         println!("plugin scan: {notice}");
@@ -246,6 +250,34 @@ fn inspect(folder: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Saves the project as the template `name` for a new project on this machine. One of that
+/// name is replaced only with `--replace`: the command cannot ask.
+fn save_template(folder: &Path, name: &str, flags: &[&str]) -> Result<()> {
+    if name.starts_with("--") {
+        bail!("--save-template takes a name first\n{USAGE}");
+    }
+    if let Some(flag) = (flags.iter()).find(|flag| !["--with-content", "--replace"].contains(flag))
+    {
+        bail!("unknown option {flag}\n{USAGE}");
+    }
+    let root = templates::saved_folder()?;
+    let replaced = templates::exists_in(&root, name)?;
+    if replaced && !flags.contains(&"--replace") {
+        bail!("There is a template “{name}” already. Ask the composer, then add --replace.");
+    }
+    let keep = match flags.contains(&"--with-content") {
+        true => Keep::Everything,
+        false => Keep::tools_of(&runtime::open_for_inspect(folder)?)?,
+    };
+    let saved = templates::save_in(&root, folder, name, &keep)?;
+    let verb = if replaced { "Replaced" } else { "Saved" };
+    println!(
+        "{verb} the template “{}”: {}",
+        saved.name, saved.description
+    );
+    Ok(())
+}
+
 /// What a render plays.
 enum Span {
     /// From the start, this long, with no tail. Whatever the clips say.
@@ -296,6 +328,28 @@ impl Position {
     }
 }
 
+/// The longest a render or an analysis plays.
+const LONGEST_HOURS: u32 = 3;
+const LONGEST_SECONDS: f64 = (LONGEST_HOURS * 60 * 60) as f64;
+
+// A WAV file holds at most 4 GiB, and the tail of a render adds up to 10 seconds.
+const _: () = assert!(
+    (LONGEST_HOURS as u64 * 60 * 60 + 10)
+        * OFFLINE.sample_rate as u64
+        * OFFLINE.channels as u64
+        * 4
+        < u32::MAX as u64
+);
+
+fn parse_seconds(text: &str) -> Result<f64> {
+    match text.parse() {
+        Ok(seconds) if seconds > 0.0 && seconds <= LONGEST_SECONDS => Ok(seconds),
+        _ => bail!(
+            "--seconds takes a number of seconds above 0 and up to {LONGEST_SECONDS} ({LONGEST_HOURS} hours)"
+        ),
+    }
+}
+
 /// What a render and an analysis play: the flags after `--render <file>` or `--analyze`.
 #[derive(Default)]
 struct Options {
@@ -320,7 +374,7 @@ impl Options {
             };
             match *flag {
                 "--seconds" => {
-                    options.seconds = Some(value.parse().context("--seconds takes a number")?);
+                    options.seconds = Some(parse_seconds(value)?);
                 }
                 "--from" => options.from = Some(Position::parse(value)?),
                 "--to" => options.to = Some(Position::parse(value)?),
@@ -332,10 +386,18 @@ impl Options {
         Ok(options)
     }
 
-    /// What a render of `project` plays. With neither `--from` nor `--to`, the project from the
-    /// start to the end of the last clip, and the tail.
-    fn span(&self, project: &Project) -> Result<Span> {
-        let clock = project.clock();
+    /// Where a range starts, as the composer gave it.
+    fn start(&self) -> &'static str {
+        if self.from.is_some() {
+            "--from"
+        } else {
+            "the start"
+        }
+    }
+
+    /// What a render plays. `end` is the end of the last clip: with neither `--from` nor
+    /// `--to`, the project from the start to there, and the tail.
+    fn span(&self, clock: &Clock, end: Option<Ticks>) -> Result<Span> {
         match (self.seconds, self.from, self.to) {
             (Some(_), _, _) if self.no_tail => bail!("--seconds has no tail to leave out"),
             (Some(seconds), None, None) => Ok(Span::Seconds(seconds)),
@@ -346,12 +408,31 @@ impl Options {
                 let from = from.map_or(Ticks(0), |from| from.tick(clock));
                 let to = match to {
                     Some(to) => to.tick(clock),
-                    None => project
-                        .end()
-                        .context("the project has no clips, so there is nothing to render")?,
+                    None => {
+                        end.context("the project has no clips, so there is nothing to render")?
+                    }
                 };
+                let start = self.start();
                 if to <= from {
-                    bail!("--to must come after --from");
+                    match self.to {
+                        Some(_) => bail!("--to must come after {start}"),
+                        None if self.from.is_some() => {
+                            bail!("--from must come before the end of the last clip")
+                        }
+                        None => {
+                            bail!("the last clip ends at the start, so there is nothing to render")
+                        }
+                    }
+                }
+                if clock.seconds_of(to) - clock.seconds_of(from) > LONGEST_SECONDS {
+                    match self.to {
+                        Some(_) => bail!(
+                            "--to is more than {LONGEST_HOURS} hours after {start}, and a render is at most {LONGEST_HOURS} hours"
+                        ),
+                        None => bail!(
+                            "the last clip ends more than {LONGEST_HOURS} hours after {start}, and a render is at most {LONGEST_HOURS} hours"
+                        ),
+                    }
                 }
                 Ok(Span::Range(from, to, !self.no_tail))
             }
@@ -365,6 +446,9 @@ impl Options {
         }
         if self.no_tail {
             bail!("--no-tail is for a project: a file has no tail");
+        }
+        if length <= 0.0 {
+            bail!("the file has no sound to measure");
         }
         let seconds = |position: Option<Position>, otherwise: f64| match position {
             None => Ok(otherwise),
@@ -380,8 +464,11 @@ impl Options {
             }
             (None, from, to) => (seconds(from, 0.0)?, seconds(to, length)?),
         };
+        if from >= length {
+            bail!("--from must come before the end of the file");
+        }
         if to <= from {
-            bail!("--to must come after --from, and --from before the end of the file");
+            bail!("--to must come after {}", self.start());
         }
         Ok((from, to))
     }
@@ -393,7 +480,7 @@ fn open_for_render(
     options: &Options,
     sample_rate: u32,
 ) -> Result<(Project, Engine, Plugins)> {
-    let plugins = runtime::plugins(true)?;
+    let plugins = runtime::read_only_plugins()?;
     let (mut project, engine) = open_read_only_at(folder, plugins.clone(), sample_rate)?;
     print_problems(&project);
     if let Some(only) = &options.only {
@@ -447,10 +534,11 @@ fn render(
     options: &Options,
     progress: bool,
 ) -> Result<()> {
+    refuse_to_replace(folder, file)?;
     let mut export = sound_export::Export::new(settings)?;
     let (mut project, mut engine, plugins) =
         open_for_render(folder, options, export.sample_rate())?;
-    let span = options.span(&project)?;
+    let span = options.span(project.clock(), project.end())?;
     let length = match span {
         Span::Seconds(seconds) => (seconds * f64::from(engine.sample_rate())) as u64,
         Span::Range(from, to, _) => {
@@ -485,6 +573,21 @@ fn render(
     print_event_overflows(&mut project)
 }
 
+/// A render makes a new file in the project, such as one under `assets/audio/`, but never
+/// replaces one: records, recordings and imported files are never written over. Outside the
+/// project it may replace a file. Compared as resolved paths, so no spelling of the path gets
+/// past it.
+fn refuse_to_replace(folder: &Path, file: &Path) -> Result<()> {
+    // Either fails when nothing is there: a new file, or a folder that the render reports.
+    let (Ok(folder), Ok(file)) = (folder.canonicalize(), file.canonicalize()) else {
+        return Ok(());
+    };
+    if file.starts_with(folder) {
+        bail!("That file is part of the project and is never written over: pick a new name.");
+    }
+    Ok(())
+}
+
 /// How much earlier than its start a range of an analysis plays: long enough for most tails of
 /// reverbs and releases to reach into it.
 const WARM_UP_SECONDS: f64 = 4.0;
@@ -496,7 +599,7 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
         return analyze_file(path, options);
     }
     let (mut project, mut engine, plugins) = open_for_render(path, options, OFFLINE.sample_rate)?;
-    let span = options.span(&project)?;
+    let span = options.span(project.clock(), project.end())?;
     let clock = project.clock().clone();
     let timeline = match span {
         Span::Seconds(seconds) => Timeline::Project {
@@ -641,7 +744,7 @@ fn list_plugin_parameters(format: &str, plugin_id: &str) -> Result<()> {
     let Some(format) = PluginFormat::of_str(format) else {
         bail!("{format:?} is not a plugin format: clap or vst3");
     };
-    let plugins = runtime::plugins(true)?;
+    let plugins = runtime::read_only_plugins()?;
     println!(
         "{}",
         runtime::plugin_parameters(&plugins, format, plugin_id)?
@@ -663,7 +766,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png>]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -694,6 +797,19 @@ fn start_window_process() -> bool {
 fn main() -> Result<()> {
     #[cfg(windows)]
     print_to_the_terminal();
+    // A plugin in a process of its own, before anything of the app: no log, no update.
+    #[cfg(unix)]
+    {
+        let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+        if arguments
+            .first()
+            .is_some_and(|first| first == plugin_host::PLAY_ARGUMENT)
+        {
+            let Err(message) = plugin_host::serve_plugin(arguments.get(1..).unwrap_or_default());
+            bail!(message);
+        }
+        plugin_host::remember_this_program();
+    }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     let (arguments, progress) = match arguments.as_slice() {
@@ -735,6 +851,9 @@ fn main() -> Result<()> {
             render(Path::new(folder), file, settings, &options, progress)
         }
         [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
+        [folder, "--save-template", name, flags @ ..] => {
+            save_template(Path::new(folder), name, flags)
+        }
         #[cfg(target_os = "macos")]
         [folder, "--screenshot", png] => {
             runtime::screenshot::screenshot(Path::new(folder), Path::new(png))
@@ -748,6 +867,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sound_core::TempoMap;
 
     #[test]
     fn a_position_is_ticks_a_time_or_seconds() {
@@ -765,5 +885,76 @@ mod tests {
         for wrong in ["1:75", "1:-5", "-3s", "1:2:3", "bar 5", "", "inf s"] {
             assert!(Position::parse(wrong).is_err(), "{wrong}");
         }
+    }
+
+    #[test]
+    fn seconds_are_above_zero_and_at_most_the_longest() {
+        for right in ["0.001", "10800"] {
+            assert!(Options::parse(&["--seconds", right]).is_ok(), "{right}");
+        }
+        for wrong in ["0", "-1", "NaN", "inf", "10800.5", "1e12"] {
+            assert!(Options::parse(&["--seconds", wrong]).is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn a_range_is_at_most_the_longest_and_says_which_option_made_it_longer() {
+        let clock = Clock::new(TempoMap::default(), OFFLINE.sample_rate);
+        let at = |seconds| Some(clock.tick_at_seconds(seconds));
+        let span = |arguments: &[&str], end| {
+            let options = Options::parse(arguments).unwrap();
+            options
+                .span(&clock, end)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        };
+        assert!(span(&[], at(LONGEST_SECONDS)).is_ok());
+        let error = span(&[], at(LONGEST_SECONDS + 1.0)).unwrap_err();
+        assert!(
+            error.contains("last clip") && !error.contains("--to"),
+            "{error}"
+        );
+        assert!(span(&["--to", "10800s"], None).is_ok());
+        let error = span(&["--to", "18446744073709551615", "--no-tail"], None).unwrap_err();
+        assert!(
+            error.contains("--to") && error.contains("the start"),
+            "{error}"
+        );
+        let error = span(&["--from", "1s", "--to", "10802s"], None).unwrap_err();
+        assert!(error.contains("after --from"), "{error}");
+        let error = span(&["--to", "0"], at(10.0)).unwrap_err();
+        assert!(error.contains("--to must come after the start"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_render_never_replaces_a_file_of_the_project() {
+        let outside = tempfile::tempdir().unwrap();
+        let folder = outside.path().join("piece");
+        std::fs::create_dir_all(folder.join("assets/audio")).unwrap();
+        std::fs::write(folder.join("project.json"), "{}").unwrap();
+        // The same folder spelled through a link, as /tmp is /private/tmp on macOS.
+        let alias = outside.path().join("alias");
+        std::os::unix::fs::symlink(&folder, &alias).unwrap();
+        let options = Options::parse(&["--seconds", "0.1"]).unwrap();
+        let spellings = [
+            folder.join("project.json"),
+            alias.join("project.json"),
+            folder.join("assets/../project.json"),
+        ];
+        for wav in spellings {
+            let refused = render(&folder, &wav, Default::default(), &options, false).unwrap_err();
+            assert!(
+                refused.to_string().contains("never written over"),
+                "{refused}"
+            );
+            assert!(render(&alias, &wav, Default::default(), &options, false).is_err());
+        }
+        assert_eq!(std::fs::read(folder.join("project.json")).unwrap(), b"{}");
+        let new = folder.join("assets/audio/bass.wav");
+        assert!(refuse_to_replace(&folder, &new).is_ok());
+        let beside = outside.path().join("piece.wav");
+        std::fs::write(&beside, "old").unwrap();
+        assert!(refuse_to_replace(&folder, &beside).is_ok());
     }
 }

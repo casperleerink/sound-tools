@@ -11,6 +11,7 @@ mod delay;
 mod drum_pad;
 mod eq;
 mod filter;
+mod history;
 mod limiter;
 mod modulation;
 mod other_apps;

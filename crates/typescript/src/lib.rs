@@ -43,10 +43,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
+use sound_ui::Shortcuts;
 
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
-pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
+pub use card::{TitleBar, drawn_nodes, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
 pub use card::{node_counts, page_has_text, page_ready};
 #[cfg(feature = "test-support")]
@@ -54,6 +55,8 @@ pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use tools::forget_gone;
 pub use window::start_window;
+#[cfg(feature = "test-support")]
+pub use window::{CodeChanges, start_window_unwatched};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};
@@ -65,26 +68,53 @@ pub const FOLDER: &str = "extensions";
 /// it has the focus. The plain keys of the window, such as space, leave it alone.
 pub const KEY_CONTEXT: &str = "ToolKeys";
 
-/// The key context of a card or a page whose tool hears the keys `takes`, or every key: the
-/// computer keys leave those to it.
-pub(crate) fn key_context(takes: Option<&[String]>) -> gpui::KeyContext {
+/// The key context of a card or a page of the tool `info`: the keys it takes, which the computer
+/// keys leave to it. Every key for an `onKey` that names none, else the keys it names, with or
+/// without shift, and the keys that do its actions now, each as it is with shift.
+pub(crate) fn key_context(info: &ToolInfo, cx: &gpui::App) -> gpui::KeyContext {
     let mut context = gpui::KeyContext::default();
-    match takes {
-        None => context.add(KEY_CONTEXT),
-        Some(takes) => takes.iter().for_each(|key| context.add(taken(key))),
+    let named = match (info.keys, &info.takes) {
+        (true, None) => {
+            context.add(KEY_CONTEXT);
+            return context;
+        }
+        (true, Some(takes)) => takes.as_slice(),
+        (false, _) => &[],
+    };
+    let shortcuts = cx.try_global::<Shortcuts>();
+    for key in named {
+        context.add(taken(key));
+    }
+    for chord in (shortcuts.iter()).flat_map(|shortcuts| shortcuts.chords(&info.name)) {
+        context.add(acted(chord));
     }
     context
+}
+
+/// The actions of `tool` that the key does now, in the order its code tries them.
+pub(crate) fn actions_on(tool: &str, keystroke: &gpui::Keystroke, cx: &gpui::App) -> Vec<String> {
+    let Some(shortcuts) = cx.try_global::<Shortcuts>() else {
+        return Vec::new();
+    };
+    let bound = shortcuts.bound(tool, &sound_ui::shortcuts::chord(keystroke));
+    bound.into_iter().map(str::to_string).collect()
 }
 
 fn taken(key: &str) -> String {
     format!("{KEY_CONTEXT}_{key}")
 }
 
-/// Whether the focus is in a tool that hears the plain key `key`, which the computer keys leave
-/// to it.
-pub fn takes_key(window: &gpui::Window, key: &str) -> bool {
-    let key = taken(key);
-    (window.context_stack().iter()).any(|context| context.contains(&key))
+fn acted(chord: &str) -> String {
+    format!("ToolAction_{chord}")
+}
+
+/// Whether the focus is in a tool that takes the key, which the computer keys leave to it.
+pub fn takes_key(window: &gpui::Window, keystroke: &gpui::Keystroke) -> bool {
+    let names = [
+        taken(&keystroke.key),
+        acted(&sound_ui::shortcuts::chord(keystroke)),
+    ];
+    (window.context_stack().iter()).any(|context| names.iter().any(|name| context.contains(name)))
 }
 
 /// A note event as the code of a tool sends and hears it, see `NoteEvent` in `sdk.ts`: a
@@ -184,6 +214,9 @@ pub const HOST_TYPES: &str = include_str!("node.d.ts");
 const BUN_TYPES: &str = include_str!("bun.d.ts");
 /// What the runtime writes in `extensions/` and owns there: files, and the folder `sdk`.
 const OWNED: [&str; 4] = ["sdk.ts", "sdk", "tsconfig.json", "bun.d.ts"];
+/// What the runtime writes in `extensions/`, which the project history leaves out.
+pub const WRITTEN_BY_THE_RUNTIME: [&str; 5] =
+    [OWNED[0], OWNED[1], OWNED[2], OWNED[3], bun::LOG_FILE];
 /// The sounds of a tool that do not build that its problem names; it counts the others.
 const SHOWN_FAILURES: usize = 3;
 /// JSX makes the nodes of `sdk.ts`. Also what `bun check -p extensions` checks with.
@@ -212,7 +245,7 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
     AgentDoc {
         name: "extensions-sound",
         group: WRITING,
-        when: "A tool's sound needs feedback, buffers, files, stereo, voices, outputs or its spectrum",
+        when: "A tool's sound needs feedback, files, stereo, a sidechain, voices, outputs or its spectrum",
         markdown: include_str!("extensions-sound.md"),
     },
     AgentDoc {
@@ -242,7 +275,6 @@ const PROJECT_TOOLS: &str = "Tools of this project";
 
 /// The tools of a project, from their first load.
 pub struct Extensions {
-    /// The `extensions/` folder of the project.
     folder: PathBuf,
     /// Bun after its first load, for the window. `None` when the folder has no tool file, or
     /// Bun did not start.
@@ -575,12 +607,12 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
 /// Registers the cards of the blocks of this crate that have one: a region's.
 pub fn register_views(views: &mut sound_ui::Views) {
     region_card::register(views);
 }
 
+/// Whether this machine has a Bun to run the tools with.
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }

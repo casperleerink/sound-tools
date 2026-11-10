@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
-use sound_core::{Oversampler, OversamplingFilters};
+use sound_dsp::{Oversampler, OversamplingFilters};
 
 pub use moments::Moment;
 use moments::MomentFinder;

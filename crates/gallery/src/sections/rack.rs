@@ -10,7 +10,7 @@ use gpui::{
     AnyElement, App, AppContext, Entity, FocusHandle, FontWeight, IntoElement, ParentElement,
     Point, SharedString, Styled, Window, div, point, px,
 };
-use sound_core::LfoShape;
+use sound_dsp::LfoShape;
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{Cell, ROW_HEIGHT};

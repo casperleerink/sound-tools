@@ -10,8 +10,8 @@ use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
 use crate::metering::{PeaksReader, SharedPeaks, every_poll};
 use crate::recording::Recording;
 use sound_core::{
-    EngineControl, EngineStatus, GraphError, InstanceId, Project, ProjectEdit, ProjectError,
-    ProjectEvent, Ticks,
+    EngineControl, EngineStatus, GraphError, InstanceId, PointId, Project, ProjectEdit,
+    ProjectError, ProjectEvent, Ticks,
 };
 
 /// How often the session polls. About one display frame, so the playhead moves smoothly.
@@ -323,22 +323,57 @@ impl Session {
         }
     }
 
-    /// Undo for keys and menus. Ignored while a gesture is open: undo in the middle of a drag
-    /// would be overwritten by the next mouse move and leave a step that ends nowhere.
+    /// Undo for keys and menus.
     pub fn undo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() {
-            self.edit(cx, Project::undo);
-        }
+        self.go_elsewhere(cx, Project::undo);
     }
 
-    /// Redo, ignored while a gesture is open, like [`Self::undo`].
+    /// Undo that keeps what it takes back as a version.
+    pub fn undo_keeping_version(&mut self, cx: &mut Context<Self>) {
+        self.go_elsewhere(cx, Project::undo_keeping_version);
+    }
+
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() {
-            self.edit(cx, Project::redo);
+        self.go_elsewhere(cx, Project::redo);
+    }
+
+    /// Goes to a point of the history.
+    pub fn go_to(&mut self, point: PointId, cx: &mut Context<Self>) {
+        self.go_elsewhere(cx, |project| project.go_to(point));
+    }
+
+    /// Merges the version that begins at `start` into the current point, see
+    /// [`Project::merge`].
+    pub fn merge(&mut self, start: PointId, keep_mine: bool, cx: &mut Context<Self>) {
+        self.go_elsewhere(cx, |project| project.merge(start, keep_mine));
+    }
+
+    /// Writes other files over the folder, unless a drag is open, whose next move would write
+    /// over them, or a take records, which would land in a project that is gone. Then a
+    /// notice says why nothing happened.
+    fn go_elsewhere<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        operation: impl FnOnce(&mut Project) -> Result<R, ProjectError>,
+    ) {
+        let waits = if self.gesture.is_some() {
+            Some("Let go of the drag first.")
+        } else if self.recording.read(cx).is_recording() {
+            Some("Stop recording first.")
+        } else {
+            None
+        };
+        match waits {
+            Some(reason) => {
+                if self.set_notice(NoticeSource::Edit, reason.into()) {
+                    cx.notify();
+                }
+            }
+            None => _ = self.edit(cx, operation),
         }
     }
 
-    /// Makes every file change until [`Self::end_request`] one undo step named `label`, see
+    /// Makes every file change until [`Self::end_request`] one point named `label`, see
     /// [`Project::begin_request`]. For an agent that knows where a request begins and ends.
     pub fn begin_request(&mut self, label: &str) {
         self.project.begin_request(label);

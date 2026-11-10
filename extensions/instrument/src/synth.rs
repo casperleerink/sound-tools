@@ -11,9 +11,13 @@
 //! as it always has.
 
 use sound_core::{
-    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput,
-    HIGHEST_PHASE_STEP, MAX_BLOCK, Oversampler, OversamplingFilters, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, poly_blep,
+    AudioOutput, Automated, AutomationInput, EventInput, MAX_BLOCK, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
+};
+
+use sound_dsp::{
+    Envelope, EnvelopeState, HIGHEST_PHASE_STEP, Oversampler, OversamplingFilters, SvfFactors,
+    SvfSection, poly_blep,
 };
 use sound_notes::{NoteEvent, Velocity, Voice as _, Voices, Wheels, frequency_hz};
 

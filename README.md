@@ -56,7 +56,7 @@ Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has t
 cargo run -p runtime -- ~/Music/my-piece
 ```
 
-The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. There is no save. The app writes every finished edit to the folder.
+The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. A folder with other files and no project does not open. There is no save: every finished edit is in the folder.
 
 ### Install the app
 
@@ -92,16 +92,16 @@ To make a release, run `/release` in Claude Code. With no argument it decides fr
 5. Click a track name for its devices: the synth, the filter and the effects of its chain. **+ Effect** adds one.
 6. Drag a WAV or AIFF file from the Finder onto the timeline for an audio region.
 7. Plug in a MIDI keyboard and play. The R of a track arms it; the record button records it.
-8. cmd-z undoes, shift-cmd-z redoes. cmd-q quits. There is no save; every edit is written to the folder.
+8. cmd-z undoes, shift-cmd-z redoes, alt-cmd-z undoes and keeps what it took back as a version. cmd-q quits. There is no save; every edit is written to the folder, and the History tab goes back to any state of it.
 
 The DAW's own gestures and keys are its code, in `templates/daw/extensions`. Their rules are in [DESIGN.md](DESIGN.md).
 
 ## Work with an agent
 
-The agent sidebar runs Claude Code in the project folder, with no terminal.
+The agent sidebar runs Claude Code or Pi in the project folder, with no terminal: the one you installed, else it downloads Claude Code.
 
 1. Run the app on a project and press space.
-2. Open the agent sidebar: the icon right of the traffic lights, cmd-B, or cmd-L to also focus its composer. The first time, **Set up** downloads Claude Code and signs you in, in your browser.
+2. Open the agent sidebar: the icon right of the traffic lights, cmd-B, or cmd-L to also focus its composer. The first time, **Open Settings** in the sidebar and sign in: Claude Code with your Claude plan, or Pi with any provider it offers. The model picker in the composer switches between them.
 3. Ask in plain language:
    - `Add a bass line in bars 5 to 8 that follows the chords on the piano track`
    - `Add a new track with a simple melody over bars 1 to 4`
@@ -135,7 +135,7 @@ With the command line tool installed, `sound-tools` takes the place of `cargo ru
 - `--inspect` prints a summary and changes nothing. It loads no plugin.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float. By default it plays to the end of the last clip, then keeps going until reverbs and releases are silent for half a second, at most 10 s more. `--from <ticks> --to <ticks>` renders a range the same way, and with `--no-tail` stops at its end. `--seconds <n>` renders exactly the first n seconds. **Export audio…** and **Export selection…** in the project menu run the same render. A notice in the corner shows how far it is. Export selection covers the time from the first selected clip to the last one, with all tracks playing. In the DAW, **Render to audio track** in a clip's or a track's menu renders that track alone onto a new audio track under it, and mutes the track.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
-- `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect or both). It scans every plugin again, so it also retries one that failed before.
+- `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect, both or neither). It scans every plugin again, so it also retries one that failed before.
 - `--version` prints the version.
 
 A release build is `cargo build --release -p runtime`. The binary is `target/release/runtime`.
@@ -146,7 +146,7 @@ A release build is `cargo build --release -p runtime`. The binary is `target/rel
 cargo fmt --all --check
 typos
 cargo clippy --workspace --all-targets --locked
-cargo nextest run --workspace --locked
+cargo nextest run --workspace --locked --profile ci
 cargo shear
 cargo deny check
 ```

@@ -2,7 +2,7 @@
 //! the drive of a filter, the warp of an oscillator. A bend makes harmonics far above the top
 //! of the hearing range, and at the sample rate those fold back into it as tones that are not
 //! in tune with anything. At four times the rate they are taken away first, on the way down.
-//! Next to [`Smoothed`](crate::Smoothed), a helper a processor uses per frame. The core itself
+//! Next to [`Smoothed`](sound_core::Smoothed), a helper a processor uses per frame. The core itself
 //! bends nothing.
 //!
 //! Each stage is a half band filter: a linear phase FIR filter whose cutoff is a quarter of its
@@ -18,7 +18,9 @@
 
 use std::f64::consts::PI;
 
-use crate::{MAX_BLOCK, bessel_i0};
+use sound_core::MAX_BLOCK;
+
+use crate::bessel_i0;
 
 /// The middle tap of the first stage, from its start. The filter is twice this plus one long,
 /// and delays by this many samples of its rate. Odd, so the taps at its ends are not zero.

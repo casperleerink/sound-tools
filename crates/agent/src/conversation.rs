@@ -698,7 +698,7 @@ mod tests {
         };
         conversation.apply(busy, now);
         let started = AgentEvent::Started {
-            account: crate::Account::default(),
+            account: Some(crate::Account::default()),
             models: Vec::new(),
         };
         conversation.apply(started, now);

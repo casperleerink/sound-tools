@@ -7,8 +7,7 @@ publish.workspace = true
 [lints]
 workspace = true
 
-# The child process that lists one bundle. The runtime uses its own executable for this; the
-# tests of this crate use the binary, so they need no runtime.
+# The scan's child process for this crate's tests.
 [[bin]]
 name = "plugin-scan"
 path = "src/bin/plugin-scan.rs"
@@ -38,6 +37,17 @@ sound-notes.workspace = true
 sound-ui.workspace = true
 thiserror.workspace = true
 vst3.workspace = true
+
+# A plugin in a process of its own, see src/bridge.
+[target.'cfg(unix)'.dependencies]
+audio_thread_priority.workspace = true
+libc.workspace = true
+memmap2.workspace = true
+no_denormals.workspace = true
+
+# Real-time priority through rtkit, as cpal gets it, see crates/core/Cargo.toml.
+[target.'cfg(target_os = "linux")'.dependencies]
+audio_thread_priority = { workspace = true, features = ["with_dbus"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

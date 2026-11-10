@@ -24,11 +24,12 @@ fn edit(harness: &mut Harness, change: impl FnOnce(&mut DrumPadState)) {
     harness.project.commit("Edit drums", changes).unwrap();
 }
 
-/// Plays the notes of the track again from the start.
+/// Plays the notes of the track again from the start, once what still rings after the stop
+/// has died away.
 fn again(harness: &mut Harness, frames: usize, take: bool) -> Vec<f32> {
     harness.project.engine().stop();
     harness.project.engine().seek(Ticks(0));
-    harness.render_as_it_is(4_800);
+    harness.render_as_it_is((MAX_SAMPLE_SECONDS * f64::from(SAMPLE_RATE)) as usize);
     harness.project.engine().play();
     let played = match take {
         true => harness.render(frames),

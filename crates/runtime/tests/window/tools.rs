@@ -15,10 +15,12 @@ use runtime::window::DeviceAccess;
 use sound_core::{Changes, Problem, Project, Ticks};
 use sound_notes::{Pitch, Velocity};
 
-use crate::support::{Opened, id, open_files, open_folder, peak};
+use crate::support::{Opened, id, open_files, open_folder, open_folder_watched, peak};
 
+mod actions;
 mod edits;
 mod gestures;
+mod lists;
 mod mixer;
 mod nested;
 mod parts;
@@ -26,6 +28,7 @@ mod piano_roll;
 mod rack;
 mod recorder;
 pub(crate) mod scenarios;
+mod shortcuts;
 mod song;
 mod song_view;
 mod takes_and_notes;
@@ -847,7 +850,7 @@ fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again(cx: &mut
     file.set_modified(modified).unwrap();
 
     // The save plays the new sound, still with the sine it read at the start.
-    write(&root, "extensions/player.ts", &player(0.5));
+    window.save_code("extensions/player.ts", &player(0.5));
     window.until("the saved tool at half the level", |window| {
         (window.loudest(4_800) - 0.25).abs() < 0.02
     });
@@ -898,7 +901,6 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         ("extensions/stuck.ts", stuck.as_str()),
     ];
     let mut window = open(cx, &files);
-    let root = window.folder.path().to_path_buf();
     // The engine runs and the loops tick: Bun hangs in the tick of `stuck`.
     window.wait_for_bun();
 
@@ -930,7 +932,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         window.record("heard")["last"] == 64
     });
 
-    write(&root, "extensions/stuck.ts", &noted("stuck", false));
+    window.save_code("extensions/stuck.ts", &noted("stuck", false));
     window.until("the fix", |window| window.problems().is_empty());
     window.play_midi(65);
     window.until("the note in the fixed tool", |window| {
@@ -938,6 +940,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     });
 }
 
+/// The one test of the window's watcher on `extensions/`: the others tell it of their saves.
 #[gpui::test]
 fn a_change_of_a_file_a_tool_imports_changes_its_sound(cx: &mut TestAppContext) {
     let project = r#"{"format": 1, "extensions": [],
@@ -961,7 +964,11 @@ tool({
         ("extensions/hum.ts", hum),
         ("extensions/lib/level.ts", "export const LEVEL = 0.5;\n"),
     ];
-    let mut window = open(cx, &files);
+    let folder = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        write(folder.path(), path, contents);
+    }
+    let mut window = open_folder_watched(cx, folder);
     let level = window.loudest(4_800);
     assert!((level - 0.5).abs() < 0.02, "{level}");
 
@@ -1008,7 +1015,7 @@ tool({{
     let log = || std::fs::read_to_string(root.join("extensions/log.txt")).unwrap_or_default();
     window.until("the line of the code", |_| log().contains("level 0.5\n"));
 
-    write(&root, "extensions/hum.ts", &hum("0.25"));
+    window.save_code("extensions/hum.ts", &hum("0.25"));
     window.until("only the line of the new code", |_| {
         let log = log();
         log.contains("level 0.25\n") && !log.contains("level 0.5")
@@ -1110,8 +1117,7 @@ impl Opened<'_> {
 
     /// Saves the code of `pads` and waits for a new Bun to run it.
     fn save_pads(&mut self, on_child: bool) {
-        let root = self.folder.path().to_path_buf();
-        write(&root, "extensions/pads.ts", &pads(on_child, true));
+        self.save_code("extensions/pads.ts", &pads(on_child, true));
         self.until_found("div-saved");
     }
 }
@@ -1137,8 +1143,7 @@ fn held_until_a_save(window: &mut Opened<'_>, key: &str, file: &str, code: &str)
     window.wait_for_bun();
     window.cx.simulate_keystrokes(key);
     window.until(key, |window| window.loudest(480) > 0.05);
-    let root = window.folder.path().to_path_buf();
-    write(&root, file, &format!("{code}// Saved after {key}.\n"));
+    window.save_code(file, &format!("{code}// Saved after {key}.\n"));
     window.until("the release of the note", |window| {
         window.loudest(4_800) == 0.0
     });
@@ -1228,8 +1233,7 @@ fn a_bang_old_code_sent_for_later_does_not_fire_with_a_new_bun(cx: &mut TestAppC
     let files = files.map(|(path, text)| (path.to_string(), text));
     let mut window = open_files(cx, &files);
     window.press_on_pads("f");
-    let root = window.folder.path().to_path_buf();
-    write(&root, "extensions/pads.ts", &hits(true));
+    window.save_code("extensions/pads.ts", &hits(true));
     window.until_found("div-saved");
     // Past the frame the old code sent its bang for.
     window.render(6 * OFFLINE.sample_rate as usize);
@@ -1598,17 +1602,16 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     assert!(window.playing());
 
     // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
-    let to_the_bar = |window: &mut Opened| {
+    let playhead_and_bar = |window: &mut Opened| {
         let session = window.session.clone();
         let status = window
             .cx
             .update(|_, cx| session.update(cx, |session, _| session.engine().poll().unwrap()));
         let frame = status.playhead_frame.0 as usize;
-        let bar = frame.div_ceil(BAR_FRAMES) * BAR_FRAMES;
-        let before = window.loudest(bar - frame);
-        (bar, before)
+        (frame, frame.div_ceil(BAR_FRAMES) * BAR_FRAMES)
     };
-    let (bar, before) = to_the_bar(&mut window);
+    let (frame, bar) = playhead_and_bar(&mut window);
+    let before = window.loudest(bar - frame);
     assert_eq!(before, 0.0, "before the bar line at {bar}");
     let mut first = vec![0.0_f32; 64 * OFFLINE.channels];
     window.engine.process_block(&mut first);
@@ -1620,9 +1623,12 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         window.cx.simulate_click(middle, Modifiers::default());
         queued(window) == Some(-1.0)
     });
-    // It plays on to the bar line, and is silent from a release after it.
-    let (bar, before) = to_the_bar(&mut window);
-    assert!(before > 0.1, "{before} before the bar line at {bar}");
+    // It plays on to the bar line, and is silent from a release after it. Heard in the last
+    // tenth of a second: how much of the note's attack is left depends on when Bun answered.
+    let (frame, bar) = playhead_and_bar(&mut window);
+    window.render(bar - frame - 4_800);
+    let before = window.loudest(4_800);
+    assert!(before > 0.05, "{before} just before the bar line at {bar}");
     window.loudest(960);
     assert_eq!(window.loudest(2 * BAR_FRAMES), 0.0);
     assert_eq!(window.problems(), []);
@@ -1889,4 +1895,85 @@ fn a_controller_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut T
     let right = window.right(usize::try_from(sent - now).unwrap() + 1_000);
     let shown = right.iter().position(|sample| *sample > 0.25).unwrap() as u64;
     assert_eq!(now + shown, sent);
+}
+
+/// A parent that opens the window of its plugin child `piano` on one key, and of its drone,
+/// which has none, on another.
+const OPENER: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "opener",
+  title: "Opener",
+  when: "You want to open the window of a plugin",
+  doc: "w opens the window of the plugin, x that of the drone.",
+  state: {},
+  behaviour: () => ({ connections: [{ from: { child: "piano" }, to: { port: "audio" } }] }),
+  onKey: ({ openWindow }, { key, down }) => {
+    if (!down) return;
+    if (key === "w") openWindow("piano");
+    if (key === "x") openWindow("drone");
+  },
+  view: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Open"),
+});
+"#;
+
+/// The opener with its plugin `piano` and its drone, once the plugin has loaded.
+fn open_opener(cx: &mut TestAppContext) -> Opened<'_> {
+    let plugin = crate::support::test_plugin_record(plugin_host::PluginFormat::Clap, "piano");
+    let files = [
+        (
+            "project.json",
+            r#"{"format": 1, "extensions": ["plugin-host"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "opener", "port": "audio"}, "to": {"device_output": 0}}]}"#,
+        ),
+        (
+            "state/opener/instance.json",
+            r#"{"tool": "opener", "state": {}}"#,
+        ),
+        ("state/opener/piano.json", plugin.as_str()),
+        (
+            "state/opener/drone.json",
+            r#"{"tool": "drone", "state": {}}"#,
+        ),
+        ("extensions/opener.ts", OPENER),
+        ("extensions/drone.ts", DRONE),
+    ];
+    let mut window = open_with_test_plugins(cx, &files);
+    window.until("the plugin", |window| window.problems().is_empty());
+    window
+}
+
+fn refused_for_no_window(window: &mut Opened<'_>) -> bool {
+    (window.problems().iter()).any(|problem| problem.message.contains("no window of its own"))
+}
+
+#[gpui::test]
+fn code_opens_the_window_of_a_plugin_child_and_a_child_with_none_is_a_problem(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_opener(cx);
+    let piano = id("opener/piano");
+    let is_open = |window: &Opened<'_>| {
+        let plugins = window.plugins.upgrade().expect("the plugin host");
+        plugins.window_is_open(&piano)
+    };
+    assert!(!is_open(&window));
+
+    window.cx.simulate_keystrokes("w");
+    window.until("the plugin's window", |window| is_open(window));
+
+    window.cx.simulate_keystrokes("x");
+    window.until("the refusal", refused_for_no_window);
+}
+
+#[gpui::test]
+fn a_plugin_with_no_window_of_its_own_is_a_problem_of_the_code_that_opens_it(
+    cx: &mut TestAppContext,
+) {
+    // SAFETY: nextest runs one test per process and no other thread reads the environment yet.
+    unsafe { std::env::set_var(test_plugin_support::NO_WINDOW_VARIABLE, "1") };
+    let mut window = open_opener(cx);
+    window.cx.simulate_keystrokes("w");
+    window.until("the refusal", refused_for_no_window);
 }

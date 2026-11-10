@@ -18,6 +18,7 @@ pub(crate) struct DragNumbers {
     pub dx: f64,
     pub dy: f64,
     pub active: bool,
+    pub alt: bool,
 }
 
 impl DragNumbers {
@@ -30,6 +31,7 @@ impl DragNumbers {
             DragPart::X => self.start_x + self.dx,
             DragPart::Y => self.start_y + self.dy,
             DragPart::Active => f64::from(u8::from(self.active)),
+            DragPart::Alt => f64::from(u8::from(self.alt)),
         }
     }
 }
