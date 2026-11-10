@@ -64,7 +64,7 @@ export const pressTime = (page: Page, sections: boolean, mark?: Mark) => async (
     { label: "Tempo", icon: "tempo-change", disabled: clock.tempo_map.tempo_changes.some((each) => each.tick === tick) },
     { label: "Time signature", icon: "time-signature", disabled: bar === 1 || signature },
     { label: "Section", icon: "section", disabled: section !== undefined },
-    ...(removed ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
+    ...(removed ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "song.delete_mark" as const, separator: true }] : []),
   ]);
   // A tempo or a time signature added is chosen with the playhead on it, for the transport to change.
   if (picked === 0) {

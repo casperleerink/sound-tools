@@ -97,9 +97,9 @@ export function Transport({ clock, record }: { clock: Clock; record: TransportRe
     <div key="transport" style={pill}>
       <div style={{ direction: "row", align: "center", gap: 4 }}>
         <Button key="play" icon={() => (clock.playing ? "pause" : "play")} variant={() => (clock.playing ? "subtle" : "ghost")} color="green" size="sm" rounded
-          tooltip={() => (clock.playing ? "Pause" : "Play")} shortcut="space" onClick={() => (clock.playing ? clock.pause() : clock.play())} />
+          tooltip={() => (clock.playing ? "Pause" : "Play")} shortcut="song.play" onClick={() => (clock.playing ? clock.pause() : clock.play())} />
         <Button key="stop" icon="square" variant="ghost" size="sm" rounded tooltip="Stop" onClick={() => clock.stop()} />
-        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded tooltip="Record" shortcut="r" onClick={record.press} />
+        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded tooltip="Record" shortcut="song.record" onClick={record.press} />
       </div>
       {clockText("transport-position", 44, "position")}
       {clockText("transport-time", 40, "time", "gray-700")}
