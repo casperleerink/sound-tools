@@ -1,15 +1,17 @@
 //! The Settings page, over the whole window: its sections on the left, the one picked on the
 //! right. Agents is what the installed [`SettingsSlot`] makes; Audio is the window's own, the
-//! output and the input device.
+//! output and the input device; Shortcuts is the keys of every action.
 //!
 //! A device picked here is kept for this machine, never in the project, and the app starts
 //! again on it: the engine runs at the rate of its output device.
 
+mod shortcuts;
+
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AnyView, Context, Entity, FocusHandle, FontWeight, SharedString, Task, Window, div,
-    prelude::*, px,
+    AnyElement, AnyView, App, Context, Div, Entity, FocusHandle, FontWeight, SharedString, Task,
+    Window, div, prelude::*, px,
 };
 use sound_core::DeviceChoice;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -22,6 +24,7 @@ use super::SettingsSlot;
 use super::project_menu::switch_devices;
 use super::{CloseSettings, LEFT_PANEL_WIDTH, SETTINGS_CONTEXT, Shell, TOP_ROW_HEIGHT};
 use crate::app::ChosenDevices;
+use shortcuts::ShortcutList;
 
 /// The audio devices of this machine, and which the composer chose.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -39,6 +42,7 @@ pub type ListDevices = Arc<dyn Fn() -> DeviceList + Send + Sync>;
 pub enum Section {
     Agents,
     Audio,
+    Shortcuts,
 }
 
 impl Section {
@@ -46,6 +50,7 @@ impl Section {
         match self {
             Self::Agents => "Agents",
             Self::Audio => "Audio",
+            Self::Shortcuts => "Shortcuts",
         }
     }
 
@@ -53,8 +58,22 @@ impl Section {
         match self {
             Self::Agents => "bot",
             Self::Audio => "volume-2",
+            Self::Shortcuts => "keyboard",
         }
     }
+}
+
+/// The column a section is laid out in, in the middle of the page.
+fn column() -> Div {
+    div().mx_auto().max_w(px(640.)).px(px(40.))
+}
+
+fn heading(section: Section, cx: &App) -> Div {
+    div()
+        .text_size(px(20.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(cx.theme().gray_950)
+        .child(section.name())
 }
 
 /// The value of the row for the default device of the system. A device's id never is empty.
@@ -70,6 +89,7 @@ pub struct SettingsPage {
     /// The devices to pick from, once they are listed. A test window has none.
     devices: Option<DeviceList>,
     _listing: Task<()>,
+    shortcuts: Entity<ShortcutList>,
     focus: FocusHandle,
     back: FocusHandle,
 }
@@ -103,6 +123,7 @@ impl SettingsPage {
             output_name,
             devices: None,
             _listing: listing,
+            shortcuts: cx.new(ShortcutList::new),
             focus: cx.focus_handle(),
             back: cx.focus_handle().tab_stop(true),
         }
@@ -159,7 +180,10 @@ impl SettingsPage {
         let (strong, tint) = (cx.theme().gray_950, cx.theme().alpha_at(0.05));
         let chevron = cx.theme().gray_500;
         let shown = self.agents.is_some().then_some(Section::Agents);
-        let items = (shown.into_iter().chain([Section::Audio])).map(|section| {
+        let sections = shown
+            .into_iter()
+            .chain([Section::Audio, Section::Shortcuts]);
+        let items = sections.map(|section| {
             let selected = section == self.section;
             let name = section.name();
             let row = div()
@@ -343,11 +367,33 @@ impl SettingsPage {
     }
 }
 
+impl SettingsPage {
+    /// A section under its name, which scrolls when it is taller than the page.
+    fn scrolling(&self, body: impl IntoElement, cx: &App) -> AnyElement {
+        div()
+            .id("settings-section")
+            .size_full()
+            .overflow_y_scroll()
+            .child(
+                column()
+                    .pb(px(32.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(24.))
+                    .child(heading(self.section, cx))
+                    .child(body),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match (self.section, &self.agents) {
-            (Section::Agents, Some(agents)) => agents.clone().into_any_element(),
-            _ => self.audio(cx),
+        let section = match (self.section, &self.agents) {
+            // Its rows scroll themselves, so the keys can bring one into view.
+            (Section::Shortcuts, _) => self.shortcuts.clone().into_any_element(),
+            (Section::Agents, Some(agents)) => self.scrolling(agents.clone(), cx),
+            _ => self.scrolling(self.audio(cx), cx),
         };
         div()
             .id("settings")
@@ -371,31 +417,7 @@ impl Render for SettingsPage {
                             .child(Shell::drag_region().flex_1())
                             .children(Shell::window_controls(window)),
                     )
-                    .child(
-                        div()
-                            .id("settings-section")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(
-                                div()
-                                    .mx_auto()
-                                    .max_w(px(640.))
-                                    .px(px(40.))
-                                    .pb(px(32.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(24.))
-                                    .child(
-                                        div()
-                                            .text_size(px(20.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(cx.theme().gray_950)
-                                            .child(self.section.name()),
-                                    )
-                                    .child(body),
-                            ),
-                    ),
+                    .child(div().flex_1().min_h_0().child(section)),
             )
     }
 }

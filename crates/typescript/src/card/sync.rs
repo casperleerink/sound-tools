@@ -481,8 +481,8 @@ impl TypeScriptCard {
             if let Some(detail) = spec.detail {
                 item = item.description(detail);
             }
-            if let Some(keys) = spec.shortcut {
-                item = item.shortcut(shortcut_of(&keys));
+            if let Some(keys) = (spec.shortcut).and_then(|keys| shortcut_of(&keys, cx)) {
+                item = item.shortcut(keys);
             }
             if spec.separator {
                 entries.push((None, None));

@@ -27,7 +27,7 @@ export {
   takes, tool
 } from "./sdk/tools";
 export type {
-  At, ChildBang, ChildNotes, ChildNumber, ChildPort, ChildTools, Connection, Context, Declaration,
+  Action, At, ChildBang, ChildNotes, ChildNumber, ChildPort, ChildTools, Connection, Context, Declaration,
   DraftChildren, FilledStateOfTool, Frozen, HeardEvent, Key, NewChild, NoteEvent, OwnAudio,
   OwnedChild, OwnNotes, Parent, Part, Performer, ProjectTool, SendTo, StateOfTool, Take, Takes,
   TakingTool, Tick, ToolName, ToolSpec
@@ -37,9 +37,9 @@ export {
   Live, now
 } from "./sdk/live";
 export type {
-  Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName, MenuItem,
-  MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents, Press,
-  Section, SpaceValues, TakeList, TempoMap, View, WaveList
+  ActionId, ActionKey, Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName,
+  MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents,
+  Press, Section, Shortcut, SpaceValues, TakeList, TempoMap, View, WaveList
 } from "./sdk/live";
 // what runs again when a value changes: `memo`, `signal`, `timeout`
 export {

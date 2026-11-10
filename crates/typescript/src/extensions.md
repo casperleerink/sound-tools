@@ -150,7 +150,7 @@ tool({
 
 ## The clock
 
-One clock plays the project: `clock` in a view, its handlers and `tick`. No key plays or stops it unless a tool takes that key: a page plays on space with `globalKeys: ["space"]` and an `onKey` that calls `clock.play()` and `clock.pause()`. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
+One clock plays the project: `clock` in a view, its handlers and `tick`. No key plays or stops it unless a tool has an action for it: `actions: { play: { title: "Play or pause", keys: ["space"], everywhere: true, run: ({ clock }) => (clock.playing ? clock.pause() : clock.play()) } }` (`agent-docs/extensions-view.md`). `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
 
 ## Check your work
 

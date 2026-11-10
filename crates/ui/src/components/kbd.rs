@@ -27,6 +27,16 @@ impl Styled for Kbd {
     }
 }
 
+/// The keys of a shortcut, which `+` joins. A last `+` is the key itself: `mod++`.
+pub(crate) fn keys_of(shortcut: &str) -> Vec<&str> {
+    let (held, plus) = match shortcut.strip_suffix('+') {
+        Some(held) => (held, Some("+")),
+        None => (shortcut, None),
+    };
+    let held = held.split('+').filter(|key| !key.is_empty());
+    held.chain(plus).collect()
+}
+
 pub(crate) fn key_label(key: &str) -> String {
     let label = match key.to_lowercase().as_str() {
         "space" => "Space",
@@ -55,6 +65,7 @@ pub(crate) fn key_label(key: &str) -> String {
             "mod" | "ctrl" => "Ctrl",
             "alt" | "option" => "Alt",
             "shift" => "Shift",
+            "super" => "Super",
             "backspace" => "Backspace",
             "delete" => "Del",
             "tab" => "Tab",
@@ -69,12 +80,14 @@ impl RenderOnce for Kbd {
         let theme = cx.theme();
         let (bg, border, text) = (theme.alpha_at(0.04), theme.alpha_at(0.05), theme.gray_900);
 
+        let selector = self.shortcut.clone();
         self.base
+            .debug_selector(move || format!("kbd-{selector}"))
             .flex()
             .flex_none()
             .items_center()
             .gap(px(4.))
-            .children(self.shortcut.split('+').map(|key| {
+            .children(keys_of(&self.shortcut).into_iter().map(|key| {
                 div()
                     .flex()
                     .items_center()
@@ -90,5 +103,17 @@ impl RenderOnce for Kbd {
                     .text_color(text)
                     .child(key_label(key))
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_plus_key_is_a_key_of_a_shortcut() {
+        assert_eq!(keys_of("mod+shift+k"), ["mod", "shift", "k"]);
+        assert_eq!(keys_of("mod++"), ["mod", "+"]);
+        assert_eq!(keys_of("+"), ["+"]);
     }
 }

@@ -36,7 +36,7 @@ This is the main rule of the codebase.
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no other workspace crate, which `tooling/workspace-rules` checks.
 - Three layers: the core knows no music; extensions build blocks in Rust through core hooks, and a block names no DAW idea; tools of the project, in TypeScript, own the structure (tracks, clips, a mixer layout, a transport bar, what play and record mean), so a project can change them. The app knows no extension but where it registers them.
 - Tools find each other by port names, not by type, so a parent depends on no instrument, effect or plugin.
-- The core does own the musical clock, and nothing more musical: position, tempo map, play, pause, jump and a repeat range. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in a tool. Which key plays is a tool's choice; the app keeps only app and file shortcuts.
+- The core does own the musical clock, and nothing more musical: position, tempo map, play, pause, jump and a repeat range. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in a tool. Which key plays is a tool's choice, an action it declares; the app has only app and file actions.
 
 ## Tools, instances and behaviours
 
@@ -179,8 +179,19 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
 - What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. A level is shapes in a space. Rejected: a meter node of the window, which drew the whole page as it moved; cached parts of the page, not needed yet.
 - "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
-- Settings covers the whole window (cmd-, or the project menu), its sections listed on the left: Agents, Audio. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
+- Settings covers the whole window (cmd-, or the project menu), its sections listed on the left: Agents, Audio, Shortcuts. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
+
+## Shortcuts
+
+`crates/ui/src/shortcuts.rs`, `crates/runtime/src/window/app_keys.rs`.
+
+- **Actions first, keys on top**, as REAPER does: a tool or the app declares actions (a name, a title, default keys), and one keymap says which keys do each. So every action can be listed, shown beside its button and given another key. Rejected: keys only in a tool's `onKey`, which nothing can list or change.
+- **The composer's own keys are one file in the support folder**, by action id (`song.record`), for every project: they are the composer's habits, not part of a piece. An agent gives a key by changing an action's defaults in the tool's code, and the composer's keys win. Rejected: a file in the project, which an agent could change under the composer and every project would need again.
+- **Actions of one tool may share a key** and are tried in order until one has something to do, so delete takes out notes, else clips. Rejected: a condition per key, a second language beside the code.
+- **An action gets no key event**, so anything can run it later: a list, MIDI. `onKey` stays for keys that are held, and for projects that keep older template code.
+- The app's keys win over a tool's on the same key, and tab is no action: the focus can always move on.
+- A key an action declares works on every system: `cmd` is ctrl on Windows and Linux, and there is no `ctrl`. The composer's own keys may be any they press.
 
 ## The agent sidebar
 
@@ -205,7 +216,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for the SDK and the agent docs. Rejected: hand-written types, which drift; generating types for a tool of the project, which needs a second load.
 - **A built-in device is a child, never part of a sound.** One road to a reverb. Rejected: devices called inside a sound, which cut it into stages: a second road that needed its own types, checks and engine ports.
 - **Fast things never cross to Bun.** Knobs, choices, live controls, triggers and live values on screen (`now`) work without it; code hears a drag once, at its end. Rejected: `onMove`, every pointer move through Bun.
-- **Few concepts:** a tool (record, memory, tick), children, typed ports and connections, signal, view, update, clock. What can be a child (`fader`, `lane`, `region`) or a component is one; a new concept needs a reason a child cannot give.
+- **Few concepts:** a tool (record, memory, tick), children, typed ports and connections, signal, view, update, action, clock. What can be a child (`fader`, `lane`, `region`) or a component is one; a new concept needs a reason a child cannot give.
 - **No compiled code in a project.** Rejected: Rust a project adds (rebuilding the app, wasm, dylibs), which needs the Xcode tools or MSVC and a build when a project opens. A TS tool runs unchanged on any OS.
 - **One signals processor**; speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **A spectrum is a graph per bin** (`spectral`) on the same machine. Rejected: an op per effect, Rust for each new idea; bins as a list to loop over, a second way to write a sound.

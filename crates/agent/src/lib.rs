@@ -41,5 +41,5 @@ pub use provider::{
 pub use settings::AgentSettings;
 pub use view::{
     Agents, AgentsEvent, AgentsPage, FIX_NOT_LIVE, Markdown, MarkdownText, Onboarding, Program,
-    Reason, Setup, SetupAction, Sidebar, SigningIn,
+    Reason, SIDEBAR_KEY_CONTEXT, Setup, SetupAction, Sidebar, SigningIn, Stop,
 };
