@@ -552,9 +552,8 @@ fn tooltip_of(text: &Option<String>, shortcut: &Option<String>, cx: &App) -> Opt
 pub(super) fn shortcut_of(shortcut: &str, cx: &App) -> Option<String> {
     let names_action = (shortcut.rsplit_once('.'))
         .is_some_and(|(group, action)| !group.is_empty() && !action.is_empty());
-    let key = match names_action {
-        true => cx.try_global::<Shortcuts>()?.keys(shortcut).first()?,
-        false => shortcut,
-    };
-    Some(shortcuts::drawn(key))
+    match names_action {
+        true => cx.try_global::<Shortcuts>()?.shown(shortcut),
+        false => Some(shortcuts::drawn(shortcut)),
+    }
 }

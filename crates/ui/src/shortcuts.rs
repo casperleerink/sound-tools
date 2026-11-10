@@ -67,6 +67,8 @@ pub struct Shortcuts {
     own: OwnKeys,
     /// Where the composer's own keys are kept. Without one they last as long as the window.
     file: Option<PathBuf>,
+    /// The file did not read the last time, so its keys are not in use.
+    unread: bool,
 }
 
 impl Global for Shortcuts {}
@@ -88,7 +90,7 @@ pub fn chord(keystroke: &Keystroke) -> String {
 }
 
 /// A chord as [`Kbd`](crate::components::kbd::Kbd) and a tooltip draw it: `cmd-alt-c` is
-/// `mod+alt+c`.
+/// `mod+alt+c`, and on macOS `alt+mod+c`, where cmd is drawn last.
 pub fn drawn(mut chord: &str) -> String {
     let mut parts = Vec::new();
     for (prefix, drawn) in [
@@ -102,20 +104,35 @@ pub fn drawn(mut chord: &str) -> String {
             chord = rest;
         }
     }
+    if cfg!(target_os = "macos") && parts.first() == Some(&"mod") {
+        parts.rotate_left(1);
+    }
     parts.push(chord);
     parts.join("+")
 }
 
 impl Shortcuts {
     /// The keymap with the composer's own keys of `file`, where each change of them is kept. A
-    /// file that is not there yet holds none. One that does not read is an error, and stays as
-    /// it is.
-    pub fn open(file: PathBuf) -> Result<Self, ShortcutsError> {
-        Ok(Self {
-            own: read(&file)?,
+    /// file that is not there yet holds none. One that does not read comes with why: every
+    /// action then has its default keys, and no change is kept until the file reads, so it is
+    /// never written over.
+    pub fn open(file: PathBuf) -> (Self, Option<ShortcutsError>) {
+        let (own, error) = match read(&file) {
+            Ok(own) => (own, None),
+            Err(error) => (OwnKeys::new(), Some(error)),
+        };
+        let shortcuts = Self {
+            own,
+            unread: error.is_some(),
             file: Some(file),
             ..Self::default()
-        })
+        };
+        (shortcuts, error)
+    }
+
+    /// Whether the file of the composer's own keys did not read the last time.
+    pub fn is_unread(&self) -> bool {
+        self.unread
     }
 
     /// The tools of the project loaded: their groups replace those of the load before.
@@ -153,6 +170,12 @@ impl Shortcuts {
             (None, Some(action)) => &action.keys,
             (None, None) => &[],
         }
+    }
+
+    /// The first key of the action `id` as [`drawn`], for a menu or a tooltip. `None` for an
+    /// action with no key.
+    pub fn shown(&self, id: &str) -> Option<String> {
+        self.keys(id).first().map(|key| drawn(key))
     }
 
     /// The actions of `group` that `chord` does, by name, in the order the group has them.
@@ -212,7 +235,11 @@ impl Shortcuts {
     /// error and nothing changes, so it is never written over.
     fn change(&mut self, id: &str, keys: Option<Vec<String>>) -> Result<(), ShortcutsError> {
         let mut own = match &self.file {
-            Some(file) => read(file)?,
+            Some(file) => {
+                let own = read(file);
+                self.unread = own.is_err();
+                own?
+            }
             None => self.own.clone(),
         };
         match keys {
@@ -348,19 +375,19 @@ mod tests {
     fn a_change_keeps_the_keys_of_tools_that_are_not_loaded_and_of_another_window() {
         let folder = tempfile::tempdir().unwrap();
         let file = folder.path().join("support/shortcuts.json");
-        let mut first = Shortcuts::open(file.clone()).unwrap();
+        let (mut first, _) = Shortcuts::open(file.clone());
         first.set_tool_groups(vec![song()]);
         first.set_keys("beat.tap", keys(&["t"])).unwrap();
 
         // A second window read the file before the first changed it again.
-        let mut second = Shortcuts::open(file.clone()).unwrap();
+        let (mut second, _) = Shortcuts::open(file.clone());
         second.set_tool_groups(vec![song()]);
         first.set_keys("song.play", keys(&["p"])).unwrap();
         second
             .set_keys("song.delete-mark", keys(&["cmd-delete"]))
             .unwrap();
 
-        let reopened = Shortcuts::open(file).unwrap();
+        let (reopened, _) = Shortcuts::open(file);
         assert_eq!(reopened.keys("beat.tap"), ["t"]);
         assert_eq!(reopened.keys("song.play"), ["p"]);
         assert_eq!(reopened.keys("song.delete-mark"), ["cmd-delete"]);
@@ -372,17 +399,23 @@ mod tests {
     fn a_file_that_does_not_read_is_an_error_and_is_never_written_over() {
         let folder = tempfile::tempdir().unwrap();
         let file = folder.path().join("shortcuts.json");
-        let mut shortcuts = Shortcuts::open(file.clone()).unwrap();
-        shortcuts.set_tool_groups(vec![song()]);
-        fs::write(&file, "{ \"song.play\": [\"p\"").unwrap();
+        let broken = "{ \"song.play\": [\"p\"";
+        fs::write(&file, broken).unwrap();
 
-        assert!(Shortcuts::open(file.clone()).is_err());
-        assert!(shortcuts.set_keys("song.play", keys(&["o"])).is_err());
+        let (mut shortcuts, error) = Shortcuts::open(file.clone());
+        assert!(error.is_some() && shortcuts.is_unread());
+        shortcuts.set_tool_groups(vec![song()]);
         assert_eq!(shortcuts.keys("song.play"), ["space"]);
-        assert_eq!(
-            fs::read_to_string(&file).unwrap(),
-            "{ \"song.play\": [\"p\""
-        );
+        assert!(shortcuts.set_keys("song.play", keys(&["o"])).is_err());
+        assert!(shortcuts.reset("song.play").is_err());
+        assert_eq!(shortcuts.keys("song.play"), ["space"]);
+        assert_eq!(fs::read_to_string(&file).unwrap(), broken);
+
+        // Once it reads again, a change brings in the keys it holds.
+        fs::write(&file, "{ \"song.delete-mark\": [\"m\"] }").unwrap();
+        shortcuts.set_keys("song.play", keys(&["o"])).unwrap();
+        assert!(!shortcuts.is_unread());
+        assert_eq!(shortcuts.keys("song.delete-mark"), ["m"]);
     }
 
     #[test]
@@ -392,6 +425,13 @@ mod tests {
         assert_eq!(chord_of("shift-up"), "shift-up");
         assert_eq!(chord_of("shift-cmd-z"), "cmd-shift-z");
         assert_eq!(chord_of("alt-shift-ctrl-left"), "ctrl-alt-shift-left");
-        assert_eq!(drawn("cmd-shift-z"), "mod+shift+z");
+        let cmd_last = cfg!(target_os = "macos");
+        let redo = if cmd_last {
+            "shift+mod+z"
+        } else {
+            "mod+shift+z"
+        };
+        assert_eq!(drawn("cmd-shift-z"), redo);
+        assert_eq!(drawn("ctrl-up"), "ctrl+up");
     }
 }
