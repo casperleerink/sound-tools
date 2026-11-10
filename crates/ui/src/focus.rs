@@ -48,6 +48,7 @@ impl KeyboardFocus {
 pub struct TabStop {
     id: ElementId,
     element: Stateful<Div>,
+    focus_handle: Option<FocusHandle>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
 
@@ -62,8 +63,16 @@ impl TabStop {
         Self {
             id: id.into(),
             element,
+            focus_handle: None,
             on_click: None,
         }
+    }
+
+    /// Its focus in a handle the caller keeps, to give it the focus or to ask whether the
+    /// focus is in it. The handle is a tab stop.
+    pub fn focus_handle(mut self, handle: &FocusHandle) -> Self {
+        self.focus_handle = Some(handle.clone());
+        self
     }
 
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
@@ -78,7 +87,8 @@ impl RenderOnce for TabStop {
             focus_handle: cx.focus_handle().tab_stop(true),
             keyboard_focus: KeyboardFocus::default(),
         });
-        let focus_handle = state.read(cx).focus_handle.clone();
+        let focus_handle =
+            (self.focus_handle).unwrap_or_else(|| state.read(cx).focus_handle.clone());
         let ring_shows = (state.read(cx).keyboard_focus).shows_ring(&focus_handle, window);
         let ring = BoxShadow {
             color: cx.theme().lavender,

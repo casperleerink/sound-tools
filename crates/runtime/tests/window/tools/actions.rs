@@ -46,14 +46,14 @@ tool({
 
 impl Opened<'_> {
     /// What the actions of `instance` wrote down, once Bun answered.
-    fn did(&mut self, instance: &str) -> String {
+    pub(super) fn did(&mut self, instance: &str) -> String {
         self.wait_for_bun();
         let did = self.record(instance)["did"].as_str().map(str::to_string);
         did.unwrap_or_default()
     }
 
     /// The composer picks `keys` for the action `id`.
-    fn set_keys(&mut self, id: &str, keys: &[&str]) {
+    pub(super) fn set_keys(&mut self, id: &str, keys: &[&str]) {
         let keys = keys.iter().map(ToString::to_string).collect();
         self.cx.update(|_, cx| {
             let shortcuts = cx.global_mut::<Shortcuts>();

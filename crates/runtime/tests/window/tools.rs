@@ -28,6 +28,7 @@ mod piano_roll;
 mod rack;
 mod recorder;
 pub(crate) mod scenarios;
+mod shortcuts;
 mod song;
 mod song_view;
 mod takes_and_notes;
