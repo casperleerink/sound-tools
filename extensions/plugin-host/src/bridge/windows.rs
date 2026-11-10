@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::{ActivationPolicy, App, Keystroke, WindowId};
 use objc2::runtime::{AnyObject, Bool};
@@ -31,9 +31,6 @@ const HEARTBEAT: Duration = Duration::from_millis(100);
 
 /// How often the window looks which app is in front.
 const FOLLOW: Duration = Duration::from_millis(250);
-
-/// How long the system's quit, at logout, waits for the host to save and close this plugin.
-const LOGOUT: Duration = Duration::from_secs(10);
 
 /// What the window heard that waits for the next poll.
 #[derive(Default)]
@@ -90,15 +87,10 @@ pub(super) fn serve(
         .detach();
         cx.spawn(async move |cx| {
             loop {
-                cx.update(|_| follow(parent));
+                // Not in `cx.update`: a request the plugin answers with a dialog holds the app.
+                follow(parent);
                 cx.background_executor().timer(FOLLOW).await;
             }
-        })
-        .detach();
-        let on_quit = (windowed.clone(), requests.clone());
-        cx.on_app_quit(move |cx| {
-            serve_until_quit(&on_quit.0, &on_quit.1, cx);
-            async {}
         })
         .detach();
         cx.spawn(async move |cx| {
@@ -110,42 +102,6 @@ pub(super) fn serve(
         .detach();
     });
     end_now()
-}
-
-/// The system asks every app to quit, at logout or shutdown, this one too. It goes on serving
-/// the host here, in the quit itself, so the host saves the plugin and lets it go first: until
-/// the host's `Quit`, or the host is gone, or 10 s after the host's first closing request. A
-/// future of a quit handler gets only a moment.
-fn serve_until_quit(
-    windowed: &Rc<RefCell<Windowed>>,
-    requests: &smol::channel::Receiver<Received>,
-    cx: &mut App,
-) {
-    let mut until: Option<Instant> = None;
-    loop {
-        let next = match until {
-            None => requests.recv_blocking().ok(),
-            Some(until) => smol::block_on(async {
-                smol::future::or(async { requests.recv().await.ok() }, async {
-                    smol::Timer::at(until).await;
-                    None
-                })
-                .await
-            }),
-        };
-        let Some((message, bytes)) = next else {
-            end_now();
-        };
-        if until.is_none()
-            && matches!(
-                message.request,
-                Request::SaveState | Request::CloseWindow | Request::Quit
-            )
-        {
-            until = Some(Instant::now() + LOGOUT);
-        }
-        serve_one(windowed, message, bytes, cx);
-    }
 }
 
 fn serve_one(

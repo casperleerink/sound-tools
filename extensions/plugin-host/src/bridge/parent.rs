@@ -2,7 +2,8 @@
 //! [`BridgeAudio`] for the engine.
 //!
 //! Every control call waits for its answer. A child is hung only when its main thread has not
-//! come back to its loop for [`Isolation::hung_after`]. A crash, a hang, or an answer that is
+//! come back to its loop for [`Isolation::hung_after`], or [`Isolation::hung_loading_after`]
+//! for a request that loads, saves or opens the window. A crash, a hang, or an answer that is
 //! no answer of ours makes the plugin crashed, and from then on every call answers at once with
 //! nothing.
 
@@ -129,6 +130,13 @@ impl PluginAudio for BridgeAudio {
             right,
         } = block;
         let frames = left.len().min(sound_core::MAX_BLOCK);
+        if self.link.failed() {
+            pass_through(input, left, right, frames);
+            return Played {
+                played: false,
+                dropped: 0,
+            };
+        }
         let shared = self.link.mapping.shared();
         let left_over = shared.write_block(events, lanes);
         // SAFETY: the child reads these only between the byte below and its answer.
@@ -183,6 +191,7 @@ pub(crate) struct Bridged {
     crashed: bool,
     plugin_id: String,
     hung_after: Duration,
+    hung_loading_after: Duration,
     /// No call waits past this, once the host closes.
     deadline: Option<Instant>,
     /// Whether the plugin has a window its process can open, and whether it is open.
@@ -198,6 +207,7 @@ impl Bridged {
         if self.crashed() {
             return None;
         }
+        let hung_after = self.hung_after(&request);
         let message = Message {
             sends: std::mem::take(&mut self.sends),
             request,
@@ -206,20 +216,27 @@ impl Bridged {
             self.crash();
             return None;
         }
-        self.answer()
+        self.answer(hung_after)
     }
 
-    fn answer(&mut self) -> Option<Answer> {
+    fn hung_after(&self, request: &Request) -> Duration {
+        if request.is_loading() {
+            self.hung_loading_after
+        } else {
+            self.hung_after
+        }
+    }
+
+    fn answer(&mut self, hung_after: Duration) -> Option<Answer> {
         let Self {
             link,
             control,
             child,
-            hung_after,
             deadline,
             ..
         } = self;
         let read = {
-            let mut check = waiting(link, child, *hung_after, *deadline);
+            let mut check = waiting(link, child, hung_after, *deadline);
             protocol::read_message(control, &mut check)
         };
         match read {
@@ -236,12 +253,12 @@ impl Bridged {
             link,
             control,
             child,
-            hung_after,
+            hung_loading_after,
             deadline,
             ..
         } = self;
         let read = {
-            let mut check = waiting(link, child, *hung_after, *deadline);
+            let mut check = waiting(link, child, *hung_loading_after, *deadline);
             protocol::read_bytes(control, &mut check)
         };
         match read {
@@ -667,6 +684,7 @@ pub(crate) fn open(
         hand: None,
         crashed: false,
         hung_after: isolation.hung_after,
+        hung_loading_after: isolation.hung_loading_after,
         deadline: None,
         has_window: false,
         window_open: false,
@@ -692,7 +710,7 @@ pub(crate) fn open(
         bridged.crash();
         return Err(crashed());
     }
-    match bridged.answer() {
+    match bridged.answer(bridged.hung_loading_after) {
         Some(Answer::Loaded {
             latency,
             notes,

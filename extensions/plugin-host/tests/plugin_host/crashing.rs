@@ -110,8 +110,11 @@ fn a_plugin_that_crashes_as_it_plays_stops_and_the_rest_plays_on() {
 fn a_plugin_that_hangs_as_it_plays_stops_after_the_block_timeout() {
     for format in FORMATS {
         tell_the_plugin(None, None);
-        let isolation = Isolation::new(false)
-            .with_timeouts(Duration::from_millis(300), Duration::from_secs(60));
+        let isolation = Isolation::new(false).with_timeouts(
+            Duration::from_millis(300),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
         let mut harness = Harness::isolated_with(isolation);
         track(&mut harness, format, HANG_KEY);
         let started = Instant::now();
@@ -128,8 +131,11 @@ fn a_plugin_whose_main_thread_hangs_is_stopped_after_its_time() {
         tell_the_plugin(None, None);
         // SAFETY: as in `tell_the_plugin`.
         unsafe { std::env::set_var(HANG_SAVE_VARIABLE, "1") };
-        let isolation = Isolation::new(false)
-            .with_timeouts(Duration::from_secs(10), Duration::from_millis(500));
+        let isolation = Isolation::new(false).with_timeouts(
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+        );
         let mut harness = Harness::isolated_with(isolation);
         // A pedal that moves the plugin's state makes the host ask for it, and the plugin
         // hangs in its answer.

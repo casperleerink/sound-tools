@@ -609,7 +609,7 @@ pub(crate) fn isolation() -> plugin_host::Isolation {
         std::time::Duration::from_secs(10),
         std::time::Duration::from_secs(60),
     );
-    plugin_host::Isolation::new(false).with_timeouts(block, hung_after)
+    plugin_host::Isolation::new(false).with_timeouts(block, hung_after, hung_after)
 }
 
 pub(crate) fn no_cache() -> ScanCache {

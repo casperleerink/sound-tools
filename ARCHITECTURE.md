@@ -168,7 +168,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Inspect loads no plugin. Printing a project must not run third-party code.
 - A session that plays runs every plugin in a process of its own (the same program), so a crash or a hang costs its slot: silent (an effect lets the sound through), a problem, back only by Start again, never by itself. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
 - The audio thread waits for each sub-block of a plugin's process, one round trip of about 10 µs. Rejected: playing a block behind, a block of latency per plugin in a chain.
-- A child is hung only when its main thread has not come back to its loop for a minute, so a slow load is no hang.
+- A child is hung when its main thread has not come back to its loop for 10 s, a minute while it loads, saves or opens its window: the app waits for it, and a longer freeze is worse than a lost plugin.
 - Renders stay in their own process, so a crash fails the render instead of leaving a plugin out. Windows (the OS) plays plugins in-process for now: Rust has no Unix sockets there.
 - A plugin's window opens in the plugin's own process, as macOS cannot put one process's view in another's window: a panel that takes the keyboard without making that process the active app, floating over Sound Tools and hiding with it. Accepted: a key the plugin does not use reaches the computer keys a tick late, and Cmd-Q in a plugin window does nothing.
 - Plugins that talk between their own instances see only the ones in their process.
