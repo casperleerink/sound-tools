@@ -481,11 +481,13 @@ tool({
   state: { count: number({ min: 0, max: 10 }) },
   sound: () => 0,
   actions: {
-    count: { title: "Count", keys: ["c", "shift-up", "cmd-shift-z", "?", "cmd-+"], everywhere: true, run: ({ update }) => update("Count", ({ state }) => { state.count += 1; }) },
+    count: { title: "Count", keys: ["c", "shift-up", "cmd-shift-x", "?", "cmd-+"], everywhere: true, run: ({ update }) => update("Count", ({ state }) => { state.count += 1; }) },
     ask: { title: "Ask", run: async ({ confirm }) => { await confirm({ message: "Sure?", confirm: "Yes" }); } },
     pass: { title: "Pass", keys: ["c"], run: ({ state }) => state.count > 0 },
     // @ts-expect-error: shift is held last, after cmd, ctrl and alt.
     wrong: { title: "Wrong", keys: ["shift-cmd-z"], run: () => {} },
+    // @ts-expect-error: redo is the app's.
+    taken: { title: "Taken", keys: ["cmd-shift-z"], run: () => {} },
     // @ts-expect-error: a symbol key with shift is named by what it types, "!".
     shifted: { title: "Shifted", keys: ["shift-1"], run: () => {} },
   },

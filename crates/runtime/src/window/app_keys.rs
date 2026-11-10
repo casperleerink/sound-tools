@@ -164,6 +164,13 @@ impl AppAction {
     }
 }
 
+/// Whether the keys of the app's action `name` are its own wherever the focus is in the window,
+/// so that an action of a tool on one of them never runs.
+pub(super) fn takes_everywhere(name: &str) -> bool {
+    (ACTIONS.iter())
+        .any(|action| action.name == name && matches!(action.context, None | Some(KEY_CONTEXT)))
+}
+
 /// The key the app's action `name` has now, as a menu draws it. `None` when it has none.
 pub(super) fn key_of(name: &str, cx: &App) -> Option<String> {
     cx.try_global::<Shortcuts>()?

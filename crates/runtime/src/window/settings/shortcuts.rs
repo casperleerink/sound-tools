@@ -43,7 +43,8 @@ struct Row {
     hint: Option<String>,
 }
 
-/// An action of the app on a key of a tool's action takes the key from it. Other actions of its
+/// An action of the app on a key of a tool's action takes the key from it, unless it works in a
+/// part of the window only. Other actions of its
 /// own group share the key with it, which is worth a line only for a key the composer gave it:
 /// a tool shares keys on purpose, such as delete for the chosen notes, else the chosen clips.
 fn hint_of(group: &Group, id: &str, shortcuts: &Shortcuts) -> Option<String> {
@@ -53,7 +54,8 @@ fn hint_of(group: &Group, id: &str, shortcuts: &Shortcuts) -> Option<String> {
     let others = (shortcuts.keys(id).iter()).flat_map(|key| shortcuts.others_with(id, key));
     for (other_group, other) in others {
         let titles = match (other_group.name == app_keys::GROUP, of_app) {
-            (true, false) => &mut taking,
+            (true, false) if app_keys::takes_everywhere(&other.name) => &mut taking,
+            (true, false) => continue,
             (true, true) => &mut sharing,
             (false, _) if changed && other_group.name == group.name => &mut sharing,
             (false, _) => continue,

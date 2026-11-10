@@ -296,15 +296,16 @@ export type KeyName = `${Held}${PlainKey}`;
 /**
  * A key an action has: a `KeyName`, or one with shift, held last: `"shift-up"`, `"cmd-shift-z"`.
  * A symbol key with shift is named by what it then types, with no shift: `"?"`, `"cmd-+"`.
- * For an action `cmd` is ctrl on Windows and Linux.
+ * For an action `cmd` is ctrl on Windows and Linux, where `ctrl-` names no key: it is a key
+ * of its own on macOS only. The app's own keys are none of an action's.
  */
-export type ActionKey = `${Held}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${Held}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`;
+export type ActionKey = Exclude<`${Held}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${Held}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`, AppKey>;
 /** An action by its tool and its name: `"song.record"`. The app's own are `"app.undo"`, `"app.redo"` and `"app.computer_keys"`. */
 export type ActionId = `${string}.${string}`;
 /** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */
 export type Shortcut = KeyName | ActionId;
-/** The keys the app keeps: undo, new, open, quit, the panel, the computer keys, and tab. */
-export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "tab";
+/** The keys the app keeps: undo, redo, new, open, quit, settings, the panel, the computer keys, and tab. */
+export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "cmd-shift-z" | "cmd-alt-z" | "cmd-," | "tab" | "shift-tab";
 
 /** An item of `openMenu`. */
 export interface MenuItem {

@@ -59,10 +59,6 @@ fn kept(file: &Path) -> Value {
 }
 
 /// A key as the keymap names it: cmd is ctrl on Windows and Linux.
-fn chord(keys: &str) -> String {
-    shortcuts::chord(&Keystroke::parse(keys).unwrap())
-}
-
 impl Opened<'_> {
     fn open_shortcuts(&mut self) {
         self.keys("secondary-,");
@@ -139,7 +135,7 @@ fn a_key_pressed_for_an_action_of_a_tool_is_its_key_and_does_nothing_else(cx: &m
     window.wait_for_key("probe.go");
     window.keys("secondary-z");
     assert_eq!(window.undo_label().as_deref(), Some("Keep the note"));
-    assert_eq!(kept(&file), json!({"probe.go": [chord("secondary-z")]}));
+    assert_eq!(kept(&file), json!({"probe.go": ["cmd-z"]}));
     assert!(window.find("shortcut-hint-probe.go").is_some());
 
     // Escape leaves the key as it is, and Settings open.
@@ -147,7 +143,7 @@ fn a_key_pressed_for_an_action_of_a_tool_is_its_key_and_does_nothing_else(cx: &m
     window.keys("escape");
     assert!(!window.waits_for_key("probe.go"));
     assert!(window.settings_open());
-    assert_eq!(window.keys_of("probe.go"), [chord("secondary-z")]);
+    assert_eq!(window.keys_of("probe.go"), ["cmd-z"]);
 
     // On a key they share the app's action comes first: the tool's does not run.
     window.keys("escape");
@@ -198,7 +194,7 @@ fn an_action_of_the_app_follows_its_key_at_once_and_the_menu_draws_it(cx: &mut T
     window.open_shortcuts();
     window.wait_for_key("app.undo");
     window.keys("secondary-u");
-    assert_eq!(kept(&file), json!({"app.undo": [chord("secondary-u")]}));
+    assert_eq!(kept(&file), json!({"app.undo": ["cmd-u"]}));
     window.keys("escape");
 
     // The old key no longer undoes, the new one does.

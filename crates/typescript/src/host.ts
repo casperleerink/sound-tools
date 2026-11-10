@@ -99,7 +99,7 @@ const KEYS = {
   keys: true, globalKeys: true, onNotes: true, onTake: true,
 } satisfies Record<keyof Spec, true>;
 /** The keys the app keeps, on macOS and elsewhere: no tool takes them. */
-const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["tab"]);
+const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["cmd-shift-z", "cmd-alt-z", "cmd-,", "tab", "shift-tab"]);
 /** The most voices a sound plays at once. */
 const MAX_VOICES = 8;
 
@@ -174,7 +174,7 @@ function problemsOf(spec: Spec): string[] {
       }
       for (const key of action.keys ?? []) {
         if (APP_KEYS.includes(key)) {
-          problems.push(`actions.${name}: ${key} is the app's and never reaches a tool: undo, new, open, quit, the panel, the computer keys and tab are`);
+          problems.push(`actions.${name}: ${key} is the app's and never reaches a tool: undo, redo, new, open, quit, settings, the panel, the computer keys and tab are`);
         } else if (!sdk.host.isActionKey(key)) {
           problems.push(`actions.${name}: ${key} is no key; name one as "a", "space", "shift-up" or "cmd-shift-c", with cmd, ctrl, alt and shift first, in that order, and a symbol with shift by what it types, "?"`);
         }
