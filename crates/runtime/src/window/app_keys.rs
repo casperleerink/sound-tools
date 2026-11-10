@@ -19,9 +19,9 @@ pub(super) const GROUP: &str = "app";
 
 pub(super) const UNDO: &str = "undo";
 pub(super) const REDO: &str = "redo";
-pub(super) const UNDO_KEEPING_VERSION: &str = "undo-keeping-version";
-pub(super) const NEW_PROJECT: &str = "new-project";
-pub(super) const OPEN_PROJECT: &str = "open-project";
+pub(super) const UNDO_KEEPING_VERSION: &str = "undo_keeping_version";
+pub(super) const NEW_PROJECT: &str = "new_project";
+pub(super) const OPEN_PROJECT: &str = "open_project";
 pub(super) const SETTINGS: &str = "settings";
 
 struct AppAction {
@@ -63,7 +63,7 @@ const ACTIONS: &[AppAction] = &[
         in_text: false,
     },
     AppAction {
-        name: "computer-keys",
+        name: "computer_keys",
         title: "Play notes with the computer keys",
         keys: &["cmd-k"],
         action: || Box::new(ToggleComputerKeys),
@@ -79,7 +79,7 @@ const ACTIONS: &[AppAction] = &[
         in_text: true,
     },
     AppAction {
-        name: "stop-agent",
+        name: "stop_agent",
         title: "Stop the agent",
         keys: &["cmd-."],
         action: || Box::new(sound_agent::Stop),
@@ -87,7 +87,7 @@ const ACTIONS: &[AppAction] = &[
         in_text: true,
     },
     AppAction {
-        name: "left-panel",
+        name: "left_panel",
         title: "Open or close the left panel",
         keys: &["cmd-b"],
         action: || Box::new(OpenCloseLeftPanel),

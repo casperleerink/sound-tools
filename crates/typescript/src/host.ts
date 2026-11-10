@@ -90,7 +90,6 @@ function fail(tool: string, message: string) {
 }
 
 const NAME = /^[a-z][a-z0-9_]*$/;
-const ACTION_NAME = /^[a-z][a-z0-9_-]*$/;
 /** The most combinations of choices a tool has: the sound of each is made when it loads. */
 const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
@@ -167,15 +166,17 @@ function problemsOf(spec: Spec): string[] {
       problems.push("actions: the actions of `app` are the app's own, so give the tool another name");
     }
     for (const [name, action] of Object.entries(spec.actions ?? {})) {
-      if (!ACTION_NAME.test(name)) {
-        problems.push(`actions: ${name} is no name; an action name is lowercase letters, digits, - and _, starting with a letter`);
+      if (!NAME.test(name)) {
+        problems.push(`actions: ${name} is no name; an action name is lowercase letters, digits and _, starting with a letter`);
       }
       if (!action.title?.trim()) {
         problems.push(`actions.${name}: write its title, it is what the composer reads in the list of shortcuts`);
       }
       for (const key of action.keys ?? []) {
-        if (!sdk.host.isActionKey(key)) {
-          problems.push(`actions.${name}: ${key} is no key; name one as "a", "space", "shift-up" or "cmd-shift-c", with cmd, ctrl, alt and shift first, in that order`);
+        if (APP_KEYS.includes(key)) {
+          problems.push(`actions.${name}: ${key} is the app's and never reaches a tool: undo, new, open, quit, the panel, the computer keys and tab are`);
+        } else if (!sdk.host.isActionKey(key)) {
+          problems.push(`actions.${name}: ${key} is no key; name one as "a", "space", "shift-up" or "cmd-shift-c", with cmd, ctrl, alt and shift first, in that order, and a symbol with shift by what it types, "?"`);
         }
       }
     }

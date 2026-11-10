@@ -68,9 +68,9 @@ pub const FOLDER: &str = "extensions";
 /// it has the focus. The plain keys of the window, such as space, leave it alone.
 pub const KEY_CONTEXT: &str = "ToolKeys";
 
-/// The key context of a card or a page of the tool `info`: the plain keys it takes, which the
-/// computer keys leave to it. Every key for an `onKey` that names none, else the keys it names
-/// and those that do its actions now.
+/// The key context of a card or a page of the tool `info`: the keys it takes, which the computer
+/// keys leave to it. Every key for an `onKey` that names none, else the keys it names, with or
+/// without shift, and the keys that do its actions now, each as it is with shift.
 pub(crate) fn key_context(info: &ToolInfo, cx: &gpui::App) -> gpui::KeyContext {
     let mut context = gpui::KeyContext::default();
     let named = match (info.keys, &info.takes) {
@@ -82,11 +82,11 @@ pub(crate) fn key_context(info: &ToolInfo, cx: &gpui::App) -> gpui::KeyContext {
         (false, _) => &[],
     };
     let shortcuts = cx.try_global::<Shortcuts>();
-    let bound = (shortcuts.iter())
-        .flat_map(|shortcuts| shortcuts.chords(&info.name))
-        .map(|chord| chord.strip_prefix("shift-").unwrap_or(chord));
-    for key in named.iter().map(String::as_str).chain(bound) {
+    for key in named {
         context.add(taken(key));
+    }
+    for chord in (shortcuts.iter()).flat_map(|shortcuts| shortcuts.chords(&info.name)) {
+        context.add(acted(chord));
     }
     context
 }
@@ -104,11 +104,17 @@ fn taken(key: &str) -> String {
     format!("{KEY_CONTEXT}_{key}")
 }
 
-/// Whether the focus is in a tool that hears the plain key `key`, which the computer keys leave
-/// to it.
-pub fn takes_key(window: &gpui::Window, key: &str) -> bool {
-    let key = taken(key);
-    (window.context_stack().iter()).any(|context| context.contains(&key))
+fn acted(chord: &str) -> String {
+    format!("ToolAction_{chord}")
+}
+
+/// Whether the focus is in a tool that takes the key, which the computer keys leave to it.
+pub fn takes_key(window: &gpui::Window, keystroke: &gpui::Keystroke) -> bool {
+    let names = [
+        taken(&keystroke.key),
+        acted(&sound_ui::shortcuts::chord(keystroke)),
+    ];
+    (window.context_stack().iter()).any(|context| names.iter().any(|name| context.contains(name)))
 }
 
 /// A note event as the code of a tool sends and hears it, see `NoteEvent` in `sdk.ts`: a

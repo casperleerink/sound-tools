@@ -11,8 +11,6 @@ use std::{fmt, fs, io};
 
 use gpui::{Global, Keystroke};
 
-use crate::global_keys::chord_name;
-
 /// Something a tool or the app can do, which a key does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Action {
@@ -79,14 +77,27 @@ pub fn id(group: &str, action: &str) -> String {
 }
 
 /// A key as an action names it: `a`, or with cmd, ctrl, alt and shift held first, in that order,
-/// `cmd-shift-z`.
+/// `cmd-shift-z`. `cmd` is the key this system makes shortcuts with, ctrl on Windows and Linux,
+/// so the key an action names works on each; the Windows key there is `super`. A key that types
+/// another character with shift is named by that character, `?`, with no shift: GPUI gives it so.
 pub fn chord(keystroke: &Keystroke) -> String {
-    let name = chord_name(keystroke);
-    let key = keystroke.key.as_str();
-    match (name.strip_suffix(key)).filter(|_| keystroke.modifiers.shift) {
-        Some(held) => format!("{held}shift-{key}"),
-        None => name,
-    }
+    chord_on(keystroke, cfg!(target_os = "macos"))
+}
+
+fn chord_on(keystroke: &Keystroke, macos: bool) -> String {
+    let modifiers = keystroke.modifiers;
+    let (first, second) = match macos {
+        true => ((modifiers.platform, "cmd-"), (modifiers.control, "ctrl-")),
+        false => ((modifiers.control, "cmd-"), (modifiers.platform, "super-")),
+    };
+    let held = [
+        first,
+        second,
+        (modifiers.alt, "alt-"),
+        (modifiers.shift, "shift-"),
+    ];
+    let held = held.iter().filter(|(held, _)| *held).map(|(_, name)| *name);
+    held.chain([keystroke.key.as_str()]).collect()
 }
 
 /// A chord as [`Kbd`](crate::components::kbd::Kbd) and a tooltip draw it: `cmd-alt-c` is
@@ -96,6 +107,7 @@ pub fn drawn(mut chord: &str) -> String {
     for (prefix, drawn) in [
         ("cmd-", "mod"),
         ("ctrl-", "ctrl"),
+        ("super-", "super"),
         ("alt-", "alt"),
         ("shift-", "shift"),
     ] {
@@ -420,11 +432,18 @@ mod tests {
 
     #[test]
     fn a_chord_names_shift_after_the_other_modifiers() {
-        let chord_of = |keys: &str| chord(&Keystroke::parse(keys).unwrap());
+        let chord_of = |keys: &str| chord_on(&Keystroke::parse(keys).unwrap(), true);
         assert_eq!(chord_of("space"), "space");
         assert_eq!(chord_of("shift-up"), "shift-up");
         assert_eq!(chord_of("shift-cmd-z"), "cmd-shift-z");
         assert_eq!(chord_of("alt-shift-ctrl-left"), "ctrl-alt-shift-left");
+    }
+
+    #[test]
+    fn cmd_is_ctrl_on_windows_and_linux() {
+        let chord_of = |keys: &str| chord_on(&Keystroke::parse(keys).unwrap(), false);
+        assert_eq!(chord_of("shift-ctrl-z"), "cmd-shift-z");
+        assert_eq!(chord_of("super-z"), "super-z");
         let cmd_last = cfg!(target_os = "macos");
         let redo = if cmd_last {
             "shift+mod+z"

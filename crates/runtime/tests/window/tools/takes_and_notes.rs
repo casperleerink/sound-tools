@@ -183,7 +183,7 @@ fn the_editor_steps_velocities_duplicates_after_and_closes_on_escape(cx: &mut Te
     let a = at(&stepped, &a["start"], &a["pitch"]).clone();
     window.click(middle(&a));
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-d");
+    window.cx.simulate_keystrokes("secondary-d");
     window.wait_for_bun();
     let duplicated = window.notes_of("song/t00/c00");
     let added: Vec<&Value> = (duplicated.iter())

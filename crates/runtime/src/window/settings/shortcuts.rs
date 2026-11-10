@@ -39,26 +39,47 @@ struct Row {
     /// Its keys as [`Kbd`] takes them.
     keys: Vec<String>,
     changed: bool,
-    /// The other actions one of its keys does too, of its own group and of the app: those it
-    /// shares the key with where it works.
-    also: Vec<String>,
+    /// What the composer should know of the other actions on its keys.
+    hint: Option<String>,
+}
+
+/// An action of the app on a key of a tool's action takes the key from it. Other actions of its
+/// own group share the key with it, which is worth a line only for a key the composer gave it:
+/// a tool shares keys on purpose, such as delete for the chosen notes, else the chosen clips.
+fn hint_of(group: &Group, id: &str, shortcuts: &Shortcuts) -> Option<String> {
+    let of_app = group.name == app_keys::GROUP;
+    let changed = shortcuts.is_changed(id);
+    let (mut taking, mut sharing) = (Vec::new(), Vec::new());
+    let others = (shortcuts.keys(id).iter()).flat_map(|key| shortcuts.others_with(id, key));
+    for (other_group, other) in others {
+        let titles = match (other_group.name == app_keys::GROUP, of_app) {
+            (true, false) => &mut taking,
+            (true, true) => &mut sharing,
+            (false, _) if changed && other_group.name == group.name => &mut sharing,
+            (false, _) => continue,
+        };
+        if !titles.contains(&other.title.as_str()) {
+            titles.push(other.title.as_str());
+        }
+    }
+    match (taking.is_empty(), sharing.is_empty()) {
+        (false, _) => Some(format!(
+            "{} has this key, so it does nothing here",
+            taking.join(", ")
+        )),
+        (true, false) => Some(format!("Also on this key: {}", sharing.join(", "))),
+        (true, true) => None,
+    }
 }
 
 fn rows_of(group: &Group, shortcuts: &Shortcuts) -> Vec<Row> {
     let row = |action: &shortcuts::Action| {
         let id = shortcuts::id(&group.name, &action.name);
         let keys = shortcuts.keys(&id);
-        let mut also = Vec::new();
-        for (other_group, other) in (keys.iter()).flat_map(|key| shortcuts.others_with(&id, key)) {
-            let shares = other_group.name == group.name || other_group.name == app_keys::GROUP;
-            if shares && !also.contains(&other.title) {
-                also.push(other.title.clone());
-            }
-        }
         Row {
             keys: keys.iter().map(|key| shortcuts::drawn(key)).collect(),
             changed: shortcuts.is_changed(&id),
-            also,
+            hint: hint_of(group, &id, shortcuts),
             title: action.title.clone(),
             id,
         }
@@ -68,7 +89,7 @@ fn rows_of(group: &Group, shortcuts: &Shortcuts) -> Vec<Row> {
 
 impl ShortcutList {
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
-        // Tools that load again while the page is open, and a change from another window.
+        // Tools that load again while the page is open.
         cx.observe_global::<Shortcuts>(|_, cx| cx.notify()).detach();
         Self {
             waiting: None,
@@ -214,14 +235,14 @@ impl ShortcutList {
             (false, true) => keys.text_size(px(12.)).text_color(muted).child("No key"),
             (false, false) => keys.children(row.keys.into_iter().map(Kbd::new)),
         };
-        let also = (!row.also.is_empty()).then(|| {
-            let selector = format!("shortcut-also-{}", row.id);
+        let hint = row.hint.map(|hint| {
+            let selector = format!("shortcut-hint-{}", row.id);
             div()
                 .debug_selector(move || selector)
                 .truncate()
                 .text_size(px(12.))
                 .text_color(muted)
-                .child(format!("Also on this key: {}", row.also.join(", ")))
+                .child(hint)
         });
         let selector = format!("shortcut-{}", row.id);
         let action = div()
@@ -244,7 +265,7 @@ impl ShortcutList {
                     .flex()
                     .flex_col()
                     .child(div().truncate().text_color(text).child(row.title))
-                    .children(also),
+                    .children(hint),
             )
             .child(buttons)
             .child(keys);
@@ -290,8 +311,8 @@ impl Render for ShortcutList {
         let unread = unread.then(|| {
             Notice::new(
                 "shortcuts-unread",
-                "Your own shortcuts could not be read. Every action has its usual key, and a \
-                 change here will not be kept.",
+                "Your own shortcuts could not be read. The keys are as shown here, and a change \
+                 will not be kept.",
             )
             .tone(NoticeTone::Warning)
         });

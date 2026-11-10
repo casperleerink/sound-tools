@@ -246,4 +246,17 @@ fn the_computer_keys_leave_the_key_an_action_has_now(cx: &mut TestAppContext) {
     window.until("s counted", |window| window.record("keys")["count"] == 2);
     window.wait_for_bun();
     assert_eq!(window.record("keys")["last"], 60);
+
+    // With shift it is another key: the action takes only that one from the computer keys.
+    window.set_keys("keys.count", &["shift-d"]);
+    window.keys("shift-d");
+    window.until("shift-d counted", |window| {
+        window.record("keys")["count"] == 3
+    });
+    window.wait_for_bun();
+    assert_eq!(window.record("keys")["last"], 60);
+    window.keys("d");
+    window.until("d played by the computer keys", |window| {
+        window.record("keys")["last"] == 64
+    });
 }

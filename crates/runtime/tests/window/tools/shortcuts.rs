@@ -111,9 +111,13 @@ fn a_key_pressed_for_an_action_of_a_tool_is_its_key_and_does_nothing_else(cx: &m
     window.settle();
 
     window.open_shortcuts();
-    // Two actions of the tool share `d`, and each row says so.
-    assert!(window.find("shortcut-also-probe.chosen").is_some());
-    assert!(window.find("shortcut-also-probe.go").is_none());
+    // Two actions of the tool share `d` on purpose, which is no news to the composer.
+    assert!(window.find("shortcut-hint-probe.chosen").is_none());
+    // A key the composer gives an action that another has is: on the row they changed.
+    window.wait_for_key("probe.go");
+    window.keys("d");
+    assert!(window.find("shortcut-hint-probe.go").is_some());
+    assert!(window.find("shortcut-hint-probe.chosen").is_none());
 
     window.wait_for_key("probe.go");
     window.keys("a");
@@ -136,7 +140,7 @@ fn a_key_pressed_for_an_action_of_a_tool_is_its_key_and_does_nothing_else(cx: &m
     window.keys("secondary-z");
     assert_eq!(window.undo_label().as_deref(), Some("Keep the note"));
     assert_eq!(kept(&file), json!({"probe.go": [chord("secondary-z")]}));
-    assert!(window.find("shortcut-also-probe.go").is_some());
+    assert!(window.find("shortcut-hint-probe.go").is_some());
 
     // Escape leaves the key as it is, and Settings open.
     window.wait_for_key("probe.go");
@@ -227,9 +231,9 @@ fn an_action_of_the_app_follows_its_key_at_once_and_the_menu_draws_it(cx: &mut T
         drawn
     };
     assert_eq!(drawn(&mut window), [true, false]);
-    window.set_keys("app.new-project", &["cmd-alt-n"]);
+    window.set_keys("app.new_project", &["cmd-alt-n"]);
     assert_eq!(drawn(&mut window), [false, true]);
-    window.set_keys("app.new-project", &[]);
+    window.set_keys("app.new_project", &[]);
     assert_eq!(drawn(&mut window), [false, false]);
 }
 

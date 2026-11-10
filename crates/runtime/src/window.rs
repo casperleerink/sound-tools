@@ -1028,8 +1028,8 @@ impl Render for Shell {
             .capture_key_down(|_: &KeyDownEvent, _, _| {})
             // Before the focused view hears it, so a key that plays does nothing else.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                let key = &event.keystroke.key;
-                let free = keys_are_free(window) && !sound_typescript::takes_key(window, key);
+                let free =
+                    keys_are_free(window) && !sound_typescript::takes_key(window, &event.keystroke);
                 if (shell.live).update(cx, |live, _| live.computer_key_down(event, free)) {
                     cx.stop_propagation();
                 }

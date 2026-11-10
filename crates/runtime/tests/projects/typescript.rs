@@ -373,6 +373,14 @@ fn an_action_declared_wrong_is_a_problem_of_its_tool() {
             "keyed",
             "mute: { title: \"Mute\", keys: [\"shift-cmd-m\"], run: () => {} }",
         ),
+        (
+            "shifted",
+            "mute: { title: \"Mute\", keys: [\"shift-1\"], run: () => {} }",
+        ),
+        (
+            "taken",
+            "mute: { title: \"Mute\", keys: [\"cmd-z\"], run: () => {} }",
+        ),
         ("named", "Mute: { title: \"Mute\", run: () => {} }"),
         ("titled", "mute: { title: \" \", run: () => {} }"),
     ];
@@ -391,6 +399,8 @@ fn an_action_declared_wrong_is_a_problem_of_its_tool() {
         "extensions/app.ts: tool app: actions: the actions of `app` are the app's own",
         "extensions/keyed.ts: tool keyed: actions.mute: shift-cmd-m is no key",
         "extensions/named.ts: tool named: actions: Mute is no name",
+        "extensions/shifted.ts: tool shifted: actions.mute: shift-1 is no key",
+        "extensions/taken.ts: tool taken: actions.mute: cmd-z is the app's",
         "extensions/titled.ts: tool titled: actions.mute: write its title",
     ];
     assert_eq!(problems.len(), expected.len(), "{problems:#?}");

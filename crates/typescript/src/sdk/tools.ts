@@ -68,7 +68,7 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    */
   view?: (view: View<ValuesOf<S>, I, M, K>) => Child;
   /**
-   * What it does on a key, by name: lowercase letters, digits, `-`, `_`. The composer sees them
+   * What it does on a key, by name: lowercase letters, digits, `_`. The composer sees them
    * in the list of shortcuts and gives each the keys they want, which then replace `keys`. A key
    * does them while its view shows at the top, after a click on its card, or from a card inside
    * it that has no use for the key.
@@ -109,7 +109,7 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
 export interface Action<C> {
   /** What the composer reads in the list of shortcuts: "Play or stop". */
   title: string;
-  /** The keys that do it until the composer picks others: `["delete", "backspace"]`, `["shift-up"]`. Shift is a key of its own: `"up"` does nothing on shift-up. */
+  /** The keys that do it until the composer picks others: `["delete", "backspace"]`, `["shift-up"]`. Shift is a key of its own: `"up"` does nothing on shift-up. A symbol key with shift is named by what it types: `"?"`. */
   keys?: readonly ActionKey[];
   /** Also wherever the focus is, outside a text field, while its view is the whole window. */
   everywhere?: boolean;

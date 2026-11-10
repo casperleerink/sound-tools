@@ -1,7 +1,7 @@
 // For the host.
 
 import { Fields, Inputs } from "./fields";
-import { PLAIN_KEYS, Press } from "./live";
+import { PLAIN_KEYS, Press, SHIFTED_KEYS, SYMBOL_KEYS } from "./live";
 import { CardRoot, Child, forget, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
 import { adopted, batch, isRead, listener, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
 import { Context, Key, ToolSpec } from "./tools";
@@ -105,7 +105,12 @@ export const host = {
   /** Whether `name` names a key as `KeyName` does. */
   isKeyName: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "") as never),
   /** Whether `name` names a key as `ActionKey` does. */
-  isActionKey: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?(shift-)?/, "") as never),
+  isActionKey: (name: string) => {
+    const key = name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "");
+    const shifted = key.startsWith("shift-") ? key.slice(6) : null;
+    if (shifted === null) return [...PLAIN_KEYS, ...SHIFTED_KEYS].includes(key as never);
+    return PLAIN_KEYS.includes(shifted as never) && !SYMBOL_KEYS.includes(shifted as never);
+  },
   tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),

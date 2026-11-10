@@ -79,7 +79,7 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 
 - The keys follow macOS. On Windows and Linux ctrl takes the place of cmd.
 - A key plays or stops only where a tool has an action for it, and not while a text field has the keys. Tab always stays the window's, so the focus can always move on.
-- Everything a key does has a name. Settings lists them under Shortcuts, where the composer gives any of them another key or none; nobody has to. A tooltip and a menu show the key as it is now.
+- What a key does in the app and its templates has a name. Settings lists them under Shortcuts, where the composer gives any of them another key or none; nobody has to. A tooltip and a menu show the key as it is now.
 - A group of options is one tab stop, such as a segmented control or the drum pads. The arrows move inside it.
 - Escape lets go, closes what is open, or gives the focus back.
 - The computer keys (cmd-K) play what is selected like a MIDI keyboard, and their letters then do nothing else. Both play it whether the project plays or not.
