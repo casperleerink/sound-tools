@@ -13,11 +13,13 @@ use gpui::{
     App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, WeakEntity,
     Window, prelude::*,
 };
-use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 
+use sound_ui::{Session, Shortcuts};
+
+use super::app_keys;
 use crate::app::ChosenDevices;
 #[cfg(unix)]
 use crate::app::Installed;
@@ -57,16 +59,34 @@ struct Shown {
     rendering: bool,
     undo: Option<String>,
     redo: Option<String>,
+    keys: Keys,
+}
+
+/// The key each command of the menu has now, as the menu draws it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Keys {
+    undo: Option<String>,
+    redo: Option<String>,
+    new_project: Option<String>,
+    open_project: Option<String>,
+    settings: Option<String>,
 }
 
 impl Shown {
-    fn of(session: &Session) -> Self {
+    fn of(session: &Session, cx: &App) -> Self {
         let project = session.project();
         Self {
             has_selection: session.selected_span().is_some(),
             rendering: session.rendering().is_some(),
             undo: project.undo_label(),
             redo: project.redo_label(),
+            keys: Keys {
+                undo: app_keys::key_of(app_keys::UNDO, cx),
+                redo: app_keys::key_of(app_keys::REDO, cx),
+                new_project: app_keys::key_of(app_keys::NEW_PROJECT, cx),
+                open_project: app_keys::key_of(app_keys::OPEN_PROJECT, cx),
+                settings: app_keys::key_of(app_keys::SETTINGS, cx),
+            },
         }
     }
 }
@@ -76,7 +96,7 @@ impl ProjectMenu {
         let project = session.read(cx).project();
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
-        let shown = Shown::of(session.read(cx));
+        let shown = Shown::of(session.read(cx), cx);
         let items = entries(&shown, &[]);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
@@ -90,6 +110,8 @@ impl ProjectMenu {
         // project event, so this follows every notify, and it is cheap: a few small values to
         // compare, and new items only when one differs. A drag changes none of them until it ends.
         cx.observe(&session, |this, _, cx| this.refresh(cx))
+            .detach();
+        cx.observe_global::<Shortcuts>(|this, cx| this.refresh(cx))
             .detach();
         cx.subscribe_in(&menu, window, Self::on_picked).detach();
         Self {
@@ -118,7 +140,7 @@ impl ProjectMenu {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let shown = Shown::of(self.session.read(cx));
+        let shown = Shown::of(self.session.read(cx), cx);
         if shown != self.shown {
             self.shown = shown;
             self.set_entries(cx);
@@ -510,14 +532,20 @@ fn installed_message(installed: &Installed) -> (String, String) {
     (message, detail)
 }
 
+/// The item with the key that does it too, when it has one.
+fn with_key(item: MenuItem, key: &Option<String>) -> MenuItem {
+    match key {
+        Some(key) => item.shortcut(key.clone()),
+        None => item,
+    }
+}
+
 fn entries(shown: &Shown, recent: &[PathBuf]) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: String| MenuItem::new(value, label).selectable(false);
-    let history = |value, verb: &str, label: Option<&str>, shortcut: &'static str| {
+    let history = |value, verb: &str, label: Option<&str>, key: &Option<String>| {
         let text = label.map_or(verb.to_string(), |label| format!("{verb} {label}"));
-        command(value, text)
-            .shortcut(shortcut)
-            .disabled(label.is_none())
+        with_key(command(value, text), key).disabled(label.is_none())
     };
     vec![
         MenuEntry::Group(
@@ -529,11 +557,11 @@ fn entries(shown: &Shown, recent: &[PathBuf]) -> Vec<MenuEntry> {
         ),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items([
-            history(UNDO, "Undo", shown.undo.as_deref(), "mod+z"),
-            history(REDO, "Redo", shown.redo.as_deref(), "shift+mod+z"),
+            history(UNDO, "Undo", shown.undo.as_deref(), &shown.keys.undo),
+            history(REDO, "Redo", shown.redo.as_deref(), &shown.keys.redo),
         ])),
         MenuEntry::Separator,
-        MenuEntry::Group(MenuGroup::new().items(folder_items(recent))),
+        MenuEntry::Group(MenuGroup::new().items(folder_items(recent, &shown.keys))),
         MenuEntry::Note(format!("Sound Tools {}", crate::VERSION).into()),
     ]
 }
@@ -558,12 +586,9 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
 /// submenu, the project folder in the Finder, a terminal in it for a coding agent, the command
 /// that agent runs, and the app's log to send us. Windows has no command line tool, see
 /// `app::Installed`. A dev build or one started from a terminal writes no log, see `log_file`.
-fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
-    let mut items = vec![
-        MenuItem::new(NEW_PROJECT, "New project…")
-            .selectable(false)
-            .shortcut("mod+n"),
-    ];
+fn folder_items(recent: &[PathBuf], keys: &Keys) -> Vec<MenuItem> {
+    let new_project = MenuItem::new(NEW_PROJECT, "New project…").selectable(false);
+    let mut items = vec![with_key(new_project, &keys.new_project)];
     let rest = [
         (SAVE_TEMPLATE, "Save as template…"),
         (OPEN_PROJECT, "Open project…"),
@@ -583,8 +608,8 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
         .map(|(value, label)| {
             let item = MenuItem::new(value, label).selectable(false);
             match value {
-                OPEN_PROJECT => item.shortcut("mod+o"),
-                SETTINGS => item.shortcut("mod+,"),
+                OPEN_PROJECT => with_key(item, &keys.open_project),
+                SETTINGS => with_key(item, &keys.settings),
                 OPEN_RECENT => item
                     .submenu(recent_items(recent))
                     .disabled(recent.is_empty()),
@@ -713,7 +738,7 @@ mod tests {
 
     #[test]
     fn the_menu_offers_the_terminal_next_to_the_finder() {
-        let items: Vec<(SharedString, SharedString)> = folder_items(&[])
+        let items: Vec<(SharedString, SharedString)> = folder_items(&[], &Keys::default())
             .iter()
             .map(|item| (item.value.clone(), item.label()))
             .collect();

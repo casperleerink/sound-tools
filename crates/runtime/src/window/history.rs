@@ -22,7 +22,9 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::KeyboardFocus;
-use sound_ui::{ActiveTheme, Session, Theme};
+use sound_ui::{ActiveTheme, Session, Shortcuts, Theme};
+
+use super::app_keys;
 
 /// How many changes the open card shows at first, and how many more each "Show more" adds.
 const SHOWN: usize = 6;
@@ -149,6 +151,8 @@ impl HistoryPanel {
                 }
             }),
             cx.subscribe_in(&menu, window, Self::picked),
+            // The key a tooltip draws.
+            cx.observe_global::<Shortcuts>(|_, cx| cx.notify()),
         ];
         let focus_handle = cx.focus_handle().tab_stop(true);
         cx.on_focus_out(&focus_handle, window, |panel, _, _, cx| {
@@ -556,6 +560,7 @@ impl HistoryPanel {
     ) -> Vec<AnyElement> {
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut items = Vec::new();
+        let keeping_key = app_keys::key_of(app_keys::UNDO_KEEPING_VERSION, cx);
         let mut keyed = |item: Item, row: Stateful<gpui::Div>, rows: &mut Vec<AnyElement>| {
             items.push((item, rows.len()));
             rows.push(row.into_any_element());
@@ -664,10 +669,14 @@ impl HistoryPanel {
                             .into_any_element(),
                     ),
                     Entry::Undone { start, count } => {
-                        let tooltip = Tooltip::new(
-                            "Taken back with undo. Click to go there. This undo keeps work as a version:",
-                        )
-                        .shortcut("alt+mod+z");
+                        let taken_back = "Taken back with undo. Click to go there.";
+                        let tooltip = match &keeping_key {
+                            Some(key) => Tooltip::new(format!(
+                                "{taken_back} This undo keeps work as a version:"
+                            ))
+                            .shortcut(key),
+                            None => Tooltip::new(taken_back),
+                        };
                         let words = match count {
                             1 => "1 change taken back".to_string(),
                             _ => format!("{count} changes taken back"),

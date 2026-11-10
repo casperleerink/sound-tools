@@ -286,7 +286,7 @@ export type PlainKey = (typeof PLAIN_KEYS)[number];
 export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${PlainKey}`;
 /** A key an action has: a `KeyName` with shift as well, held last: `"shift-up"`, `"cmd-shift-z"`. */
 export type ActionKey = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${"" | "shift-"}${PlainKey}`;
-/** An action by its tool and its name: `"song.record"`. */
+/** An action by its tool and its name: `"song.record"`. The app's own are `"app.undo"`, `"app.redo"` and `"app.computer-keys"`. */
 export type ActionId = `${string}.${string}`;
 /** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */
 export type Shortcut = KeyName | ActionId;
