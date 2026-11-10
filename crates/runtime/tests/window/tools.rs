@@ -17,6 +17,7 @@ use sound_notes::{Pitch, Velocity};
 
 use crate::support::{Opened, id, open_files, open_folder, open_folder_watched, peak};
 
+mod actions;
 mod edits;
 mod gestures;
 mod lists;
@@ -27,6 +28,7 @@ mod piano_roll;
 mod rack;
 mod recorder;
 pub(crate) mod scenarios;
+mod shortcuts;
 mod song;
 mod song_view;
 mod takes_and_notes;

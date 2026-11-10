@@ -50,7 +50,8 @@ use crate::{ApprovalAnswer, Installed, Provider, Thread, TurnOutcome};
 
 actions!(agent_sidebar, [Stop]);
 
-const KEY_CONTEXT: &str = "AgentSidebar";
+/// The key context of the sidebar, where the app binds [`Stop`] to the key the composer gave it.
+pub const KEY_CONTEXT: &str = "AgentSidebar";
 /// What asking the agent to fix the files that are not live sends, from under a turn or from
 /// the window's notice. The agent reads what is not live itself.
 pub const FIX_NOT_LIVE: &str = "Fix the files that are not live.";
@@ -67,10 +68,11 @@ fn install_bindings(cx: &mut App) {
         return;
     }
     cx.set_global(BindingsInstalled);
-    cx.bind_keys([
-        KeyBinding::new("secondary-.", Stop, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-c", markdown::Copy, Some(markdown::KEY_CONTEXT)),
-    ]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-c",
+        markdown::Copy,
+        Some(markdown::KEY_CONTEXT),
+    )]);
 }
 
 /// The process of the thread, from the first send until **New** or until it ends.

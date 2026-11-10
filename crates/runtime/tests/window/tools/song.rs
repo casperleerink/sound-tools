@@ -151,7 +151,7 @@ fn delete_removes_the_chosen_clip_and_space_still_plays(cx: &mut TestAppContext)
     window.press(clip);
     window.release(clip);
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-d");
+    window.cx.simulate_keystrokes("secondary-d");
     window.until("the clip copied on", |window| {
         window.clips().iter().any(|(id, _)| id == "song/t01/c01-2")
     });

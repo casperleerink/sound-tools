@@ -16,6 +16,7 @@ pub mod recording;
 pub mod render;
 pub mod renders;
 pub mod session;
+pub mod shortcuts;
 pub mod spare_keys;
 pub mod theme;
 pub mod typography;
@@ -44,6 +45,7 @@ pub use metering::{Metering, PeaksReader, SharedPeaks, every_poll, on_every_poll
 pub use recording::{FinishedTake, LiveNote, LiveNotes, LiveSound, LiveTake, Recording};
 pub use render::{RenderProgram, render};
 pub use session::{ClickSwitch, Loop, POLL_INTERVAL, Playhead, Session, SpanOf};
+pub use shortcuts::Shortcuts;
 pub use spare_keys::{SpareKey, SpareKeys};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;

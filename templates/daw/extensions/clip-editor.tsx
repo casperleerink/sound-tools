@@ -1,4 +1,4 @@
-import { blend, Button, For, Fragment, h, Label, Line, memo, now, Rect, Select, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, Label, Line, memo, now, Rect, Select, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
@@ -130,48 +130,50 @@ function spanOf(notes: readonly Note[]) {
   return { start, span: Math.max(...notes.map((note) => note.start + note.length)) - start };
 }
 
+/** What an action of the song does to the notes of the open clip. */
+export type NoteCommand = "all" | "paste" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | keyof typeof NOTE_MOVES;
+/** How far each move takes the chosen notes: in steps of the grid, and in pitches. */
+const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "octave-up": [0, 12], "octave-down": [0, -12] } as const;
+
 /**
- * What a key does to the chosen notes of `clip`, which starts at `clip.start` in the song with
- * the playhead at `playhead`; whether it did something. A paste goes to the playhead when it is
- * inside the clip, else right after the chosen notes, else to the start of the clip.
+ * Does `command` to the notes of `clip`, which starts at `clip.start` in the song with the
+ * playhead at `playhead`; whether there was something to do: all but choosing them all and a
+ * paste need chosen notes. A paste goes to the playhead when it is inside the clip, else right
+ * after the chosen notes, else to the start of the clip.
  */
-export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
-  if (!clip || !key.down) return false;
+export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   // Notes an undo or another tool took away are no longer chosen.
   const chosen = indexesOf(clip.notes, memory.notes);
   const change = changer(memory, edit);
   const picked = () => [...chosen].map((index) => clip.notes[index]!);
   const without = (notes: Note[], gone: ReadonlySet<number>) => ({ notes: notes.filter((_, index) => !gone.has(index)), chosen: new Set<number>() });
-  if (key.cmd && key.key === "a") {
+  if (command === "all") {
     memory.notes = new Set(clip.notes.map(noteKey));
-  } else if (key.cmd && key.key === "v" && memory.copied) {
+  } else if (command === "paste") {
+    if (!memory.copied) return false;
     const inside = playhead >= clip.start && playhead < clip.start + lengthOf(clip);
     const at = inside ? playhead - clip.start : chosen.size > 0 ? (({ start, span }) => start + span)(spanOf(picked())) : 0;
     const pasted = memory.copied.map((note) => ({ ...note, start: note.start + at }));
     change("Paste notes", (notes) => ({ notes: [...notes, ...pasted], chosen: new Set(pasted.map((_, index) => notes.length + index)) }));
   } else if (chosen.size === 0) {
     return false;
-  } else if (key.key === "delete" || key.key === "backspace") {
+  } else if (command === "delete") {
     change("Delete notes", without);
-  } else if (key.cmd && (key.key === "c" || key.key === "x")) {
+  } else if (command === "copy" || command === "cut") {
     const { start } = spanOf(picked());
     memory.copied = picked().map((note) => ({ ...note, start: note.start - start }));
-    if (key.key === "x") change("Cut notes", without);
-  } else if (key.cmd && key.key === "d") {
+    if (command === "cut") change("Cut notes", without);
+  } else if (command === "duplicate") {
     const { span } = spanOf(picked());
     change("Duplicate notes", (notes, all) => moved(notes, all, span, 0, true));
-  } else if (key.alt && (key.key === "up" || key.key === "down")) {
-    const by = key.key === "up" ? VELOCITY_STEP : -VELOCITY_STEP;
+  } else if (command === "louder" || command === "softer") {
+    const by = command === "louder" ? VELOCITY_STEP : -VELOCITY_STEP;
     change("Change velocity", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, velocity: clamp(note.velocity + by, 1, 127) } : note)), chosen: all }));
-  } else if (key.key === "left" || key.key === "right" || key.key === "up" || key.key === "down") {
-    const step = memory.snap || BEAT / 4;
-    const ticks = key.key === "left" ? -step : key.key === "right" ? step : 0;
-    const pitches = key.key === "up" ? (key.shift ? 12 : 1) : key.key === "down" ? (key.shift ? -12 : -1) : 0;
-    change("Move notes", (notes, all) => moved(notes, all, ticks, pitches, false));
-  } else if (key.key === "escape") {
+  } else if (command === "none") {
     memory.notes = new Set();
   } else {
-    return false;
+    const [steps, pitches] = NOTE_MOVES[command];
+    change("Move notes", (notes, all) => moved(notes, all, steps * (memory.snap || BEAT / 4), pitches, false));
   }
   return true;
 }
@@ -366,7 +368,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
           <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
-          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="escape" onClick={onClose} />
+          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={onClose} />
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}
