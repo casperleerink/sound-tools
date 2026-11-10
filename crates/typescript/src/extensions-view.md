@@ -35,5 +35,7 @@ A view and a component run once. A value that changes (a field, a child, an outp
 
 ## Keys and MIDI
 
-- `onKey` hears keys after a click on the tool's card, or at once when its view is the window; `keys` and `globalKeys` say which (`ToolSpec` in `sdk/tools.ts`). A key with cmd, ctrl or alt only goes down.
+- A key that does something is an action: `actions: { record: { title: "Record", keys: ["r"], run } }` (`Action` in `sdk/tools.ts`). It runs after a click on the tool's card, at once when its view is the window, and with `everywhere` wherever the focus is. A `run` that returns `false` passes the key on to the tool's next action with it.
+- The composer changes the keys of any action in Settings, and theirs win over `keys`. So to give something a key, add an action or change its `keys`; a tooltip or a menu item names the action, `shortcut="song.record"`, and shows the key it has now.
+- `onKey` is only for keys that are held, such as one that plays a note while it is down; `keys` and `globalKeys` say which it hears.
 - `onNotes` hears what reaches the tool's `notes`, not its own `send`. `event.at` is the `time` it sounded, so a recording sent again with `{ at }` plays as played.
