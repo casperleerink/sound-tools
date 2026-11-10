@@ -1,4 +1,4 @@
-//! The project menu: the project name top-left as a quiet menu. Export the project or the selected clips as a WAV, undo and redo with what they would do,
+//! The project menu: the project name top-left as a quiet menu. Export the project or the selected clips, undo and redo with what they would do,
 //! the output and the input device, a new, recent or another project, the project folder in the
 //! Finder or in a terminal, the command line tool, and the app version. The terminal is where
 //! the composer starts a coding agent on the project, and the tool is what that agent runs to
@@ -267,9 +267,9 @@ fn switch_devices(chosen: ChosenDevices, cx: &mut Context<Session>) {
     .detach();
 }
 
-/// What the export runs after `<folder> --render <wav>`: nothing for the whole project, which
-/// the render ends by itself, or the time the selected clips cover. `None` when there is
-/// nothing to export.
+/// What the export runs after `<folder> --render <file>`, after its settings: nothing for the
+/// whole project, which the render ends by itself, or the time the selected clips cover.
+/// `None` when there is nothing to export.
 fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     let project = session.project();
     if !selection {
@@ -284,80 +284,119 @@ fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     ])
 }
 
-/// Asks where the WAV goes and renders it, see [`sound_ui::render`].
+/// Asks how the piece is exported, then where it goes, see [`export_to`].
 fn export_audio(
     session: Entity<Session>,
     selection: bool,
     window: &mut Window,
     cx: &mut Context<ProjectMenu>,
 ) {
-    let (folder, span) = session.read_with(cx, |session, _| {
-        let folder = session.project().root().to_path_buf();
-        (folder, export_span(session, selection))
-    });
+    let span = session.read_with(cx, |session, _| export_span(session, selection));
     let Some(span) = span else {
         let message = "Nothing in the project plays to an end, such as a clip, so there is nothing to export.";
         session.update(cx, |session, cx| session.report(message, cx));
         return;
     };
+    let title = if selection {
+        "Export selection"
+    } else {
+        "Export audio"
+    };
+    let main = window.window_handle();
+    let on_export = move |settings, cx: &mut App| {
+        let (session, span) = (session.clone(), span.clone());
+        // Fails only when the window is gone, and the export with it.
+        main.update(cx, |_, window, cx| {
+            export_to(session, span, settings, window, cx)
+        })
+        .ok();
+    };
+    super::export_settings::choose(title, Rc::new(on_export), cx);
+}
+
+/// Asks where the file goes and renders it, see [`sound_ui::render`].
+fn export_to(
+    session: Entity<Session>,
+    span: Vec<String>,
+    settings: sound_export::Settings,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let folder = session.read(cx).project().root().to_path_buf();
     // Next to the project folder and not in it: an export is not part of the project, and in
     // the folder it would end up in git and in front of the agent.
     let directory = folder.parent().unwrap_or(&folder).to_path_buf();
     let name = folder.file_name().unwrap_or_default().to_string_lossy();
-    let picked = cx.prompt_for_new_path(&directory, Some(&format!("{name}.wav")));
-    cx.spawn_in(window, async move |_, cx| {
-        let wav = match picked.await {
-            Ok(Ok(Some(wav))) => wav,
-            Ok(Ok(None)) | Err(_) => return,
-            Ok(Err(error)) => {
-                let message = format!("{error:#}");
+    let ending = settings.format.ending();
+    let picked = cx.prompt_for_new_path(&directory, Some(&format!("{name}.{ending}")));
+    window
+        .spawn(cx, async move |cx| {
+            let path = match picked.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    let message = format!("{error:#}");
+                    session.update(cx, |session, cx| session.report(message, cx));
+                    return;
+                }
+            };
+            // The save panel asked about this very name, so it is not changed here.
+            if !settings.format.names(&path) {
+                let kind = match settings.format {
+                    sound_export::Format::Wav(_) => "a WAV",
+                    sound_export::Format::Mp3 => "an MP3",
+                };
+                let message = format!("The name must end in .{ending} for {kind}.");
                 session.update(cx, |session, cx| session.report(message, cx));
                 return;
             }
-        };
-        let file = wav.file_name().unwrap_or_default().to_string_lossy();
-        let file = SharedString::from(file.into_owned());
-        let rendered = cx.update(|_, cx| {
-            let notice = SharedString::from(format!("Exporting {file}"));
-            sound_ui::render(&session, notice, wav.clone(), span, cx)
-        });
-        // Fails only when the window is gone.
-        let Ok(rendered) = rendered else {
-            return;
-        };
-        let rendered = rendered.await;
-        let errors = match rendered {
-            Ok(errors) => errors,
-            Err(error) => {
-                let message = format!("The export failed: {error:#}");
-                session.update(cx, |session, cx| session.report(message, cx));
+            let file = path.file_name().unwrap_or_default().to_string_lossy();
+            let file = SharedString::from(file.into_owned());
+            let mut arguments = settings.arguments();
+            arguments.extend(span);
+            let rendered = cx.update(|_, cx| {
+                let notice = SharedString::from(format!("Exporting {file}"));
+                sound_ui::render(&session, notice, path.clone(), arguments, cx)
+            });
+            // Fails only when the window is gone.
+            let Ok(rendered) = rendered else {
                 return;
+            };
+            let rendered = match rendered.await {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    let message = format!("The export failed: {error:#}");
+                    session.update(cx, |session, cx| session.report(message, cx));
+                    return;
+                }
+            };
+            let answer = cx.update(|window, cx| {
+                let message = format!("Exported {file}");
+                let mut detail = rendered.notes;
+                // A plugin that did not load or answer in the render is missing from the file.
+                let level = if rendered.problems.is_empty() {
+                    PromptLevel::Info
+                } else {
+                    let problems = rendered.problems.join("\n");
+                    detail.push(format!("It may be incomplete:\n{problems}"));
+                    PromptLevel::Warning
+                };
+                let detail = (!detail.is_empty()).then(|| detail.join("\n\n"));
+                let reveal = if cfg!(target_os = "macos") {
+                    "Show in Finder"
+                } else {
+                    "Show in folder"
+                };
+                let buttons = [reveal, "OK"];
+                window.prompt(level, &message, detail.as_deref(), &buttons, cx)
+            });
+            if let Ok(answer) = answer
+                && let Ok(0) = answer.await
+            {
+                cx.update(|_, cx| cx.reveal_path(&path)).ok();
             }
-        };
-        let answer = cx.update(|window, cx| {
-            let message = format!("Exported {file}");
-            // A plugin that did not load or answer in the render is missing from the file.
-            let (level, detail) = if errors.is_empty() {
-                (PromptLevel::Info, None)
-            } else {
-                let detail = format!("It may be incomplete:\n{}", errors.join("\n"));
-                (PromptLevel::Warning, Some(detail))
-            };
-            let reveal = if cfg!(target_os = "macos") {
-                "Show in Finder"
-            } else {
-                "Show in folder"
-            };
-            let buttons = [reveal, "OK"];
-            window.prompt(level, &message, detail.as_deref(), &buttons, cx)
-        });
-        if let Ok(answer) = answer
-            && let Ok(0) = answer.await
-        {
-            cx.update(|_, cx| cx.reveal_path(&wav)).ok();
-        }
-    })
-    .detach();
+        })
+        .detach();
 }
 
 /// The commands that open a terminal in `folder`, tried in turn while a program is missing.

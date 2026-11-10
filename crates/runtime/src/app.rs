@@ -33,6 +33,9 @@ const LEFT_PANEL_FILE: &str = "left-panel";
 /// change because it was opened on another computer.
 const AUDIO_DEVICES_FILE: &str = "audio-devices.json";
 
+/// How the composer last exported, for every project.
+const EXPORT_SETTINGS_FILE: &str = "export-settings.json";
+
 /// The agent programs the sidebar downloads, such as `claude/2.1.286/claude`.
 const AGENTS_FOLDER: &str = "agents";
 
@@ -201,6 +204,10 @@ impl ChosenDevices {
 /// The file that remembers whether the left panel is open.
 pub fn left_panel_file(support: &Path) -> PathBuf {
     support.join(LEFT_PANEL_FILE)
+}
+
+pub fn export_settings_file(support: &Path) -> PathBuf {
+    support.join(EXPORT_SETTINGS_FILE)
 }
 
 /// Where the agent sidebar keeps the agent programs it downloads, one folder per version.

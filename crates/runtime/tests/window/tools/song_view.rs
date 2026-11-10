@@ -6,8 +6,9 @@
 
 use gpui::{
     Bounds, ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
-    Pixels, Point, TestAppContext, point, px,
+    Pixels, Point, TestAppContext, VisualTestContext, point, px,
 };
+use runtime::window::export_settings::ExportSettings;
 use sound_core::Ticks;
 
 use super::song::open_song;
@@ -270,6 +271,61 @@ fn a_track_renders_onto_an_audio_track_under_it_with_its_fader_and_sends(cx: &mu
         Some("Render to audio track")
     );
     assert_eq!(window.problems(), []);
+}
+
+/// "Export audio…" asks how first. MP3 chosen there names the file in the save panel, and the
+/// file written is an MP3 of the piece.
+#[gpui::test]
+fn export_audio_asks_how_and_writes_the_mp3_chosen(cx: &mut TestAppContext) {
+    let mut window = super::song::open_song(cx, 1, 2);
+    let program = env!("CARGO_BIN_EXE_runtime").into();
+    (window.cx).update(|_, cx| cx.set_global(sound_ui::RenderProgram(program)));
+    window.wait_for_bun();
+    let menu = window.until_found("project-menu");
+    window.click(menu);
+    window.pick("menu-export");
+
+    let screen = window.cx.update(|_, cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
+    });
+    let screen = screen.expect("the export settings did not open");
+    let mut screen = VisualTestContext::from_window(screen.into(), &window.cx.cx);
+    screen.update(|window, _| window.refresh());
+    screen.run_until_parked();
+    assert!(screen.debug_bounds("segment-24").is_some());
+    let mp3 = screen.debug_bounds("segment-mp3").unwrap().center();
+    screen.simulate_click(mp3, Modifiers::default());
+    screen.run_until_parked();
+    assert!(
+        screen.debug_bounds("segment-24").is_none(),
+        "an MP3 has no bit depth"
+    );
+    screen.simulate_keystrokes("enter");
+    window.cx.run_until_parked();
+    let windows = window.cx.update(|_, cx| cx.windows().len());
+    assert_eq!(windows, 1, "the export settings are still open");
+
+    assert!(window.cx.did_prompt_for_new_path());
+    let output = tempfile::tempdir().unwrap();
+    let file = output.path().join("piece.mp3");
+    window
+        .cx
+        .simulate_new_path_selection(|_| Some(file.clone()));
+    window.until("the export is done", |window| {
+        window.cx.has_pending_prompt()
+    });
+    assert_eq!(window.notice(), None);
+    let mut decoder = rusty_mp3::Mp3Decoder::new();
+    decoder.push(&std::fs::read(&file).unwrap());
+    decoder.flush();
+    let mut peak = 0.0_f32;
+    while let Ok(frame) = decoder.next_frame() {
+        peak = frame
+            .samples
+            .iter()
+            .fold(peak, |peak, sample| peak.max(sample.abs()));
+    }
+    assert!(peak > 0.01, "{peak}");
 }
 
 #[gpui::test]

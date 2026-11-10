@@ -57,7 +57,7 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
     group: "Project",
-    when: "You can run commands: check how your work sounds, read the whole piece, or render a WAV",
+    when: "You can run commands: check how your work sounds, read the whole piece, or render audio",
     markdown: "# Inspect, measure and render from a command line
 
 Every form works while the project is open and changes no record.
@@ -65,12 +65,12 @@ Every form works while the project is open and changes no record.
 ```sh
 sound-tools . --inspect
 sound-tools . --analyze
-sound-tools . --render <wav>
+sound-tools . --render <file>
 ```
 
 - `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every instance with its record, the connections and the problems.
 - `--analyze` plays the piece and its tail offline, prints what it measures of the whole and writes the rest to a report file. Use it after a change, to check that it sounds as you meant.
-- `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
+- `--render` writes the piece as the file is named, `.wav` or `.mp3` (320 kbps), and prints its peak. A WAV is 48 kHz 32-bit float unless `--rate 44100` or `--depth 16` or `24` say otherwise. `--loudness streaming` (-14 LUFS) or `broadcast` (-23 LUFS) brings it there by gain alone, its true peak under -1 dB, and prints a `note:` when it cannot.
 
 `--analyze` and `--render` take the same options:
 

@@ -10,6 +10,7 @@
 //! [`GlobalKeys`].
 
 pub mod audio_input;
+pub mod export_settings;
 pub mod live_input;
 pub mod new_project;
 pub mod other_apps;
@@ -1080,6 +1081,9 @@ fn init(cx: &mut App) {
     };
     if let Some(support) = &support {
         crate::update::check_in_background(support, cx);
+        cx.set_global(export_settings::RememberedIn(
+            crate::app::export_settings_file(support),
+        ));
     }
     crate::agent_panel(support, cx).install(cx);
 }
