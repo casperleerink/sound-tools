@@ -13,8 +13,9 @@ use sound_core::{
     TimeSignatures,
 };
 use sound_notes::{
-    Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate, Pattern, Pitch,
-    Placing, PlayerWatches, QUEUED_STOP, Quantize, Velocity,
+    Amount, Clip, Controller, Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer,
+    NotePlayerUpdate, NoteTimeline, Pattern, Pitch, Placing, PlayerWatches, Point, QUEUED_STOP,
+    Quantize, Velocity,
 };
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -31,6 +32,8 @@ struct Probe {
     held: [u32; 128],
     /// What it says its output lags by, so the player before it is led by that much.
     latency: u32,
+    /// The value plus one of the last controller event it heard, its level instead when set.
+    controller: Option<f32>,
 }
 
 impl Probe {
@@ -72,10 +75,13 @@ impl Processor for Probe {
                     NoteEvent::On { pitch, .. } => self.held[usize::from(pitch.number())] += 1,
                     NoteEvent::Off { pitch } => self.held[usize::from(pitch.number())] = 0,
                     NoteEvent::AllOff => self.held = [0; 128],
+                    NoteEvent::Control { value, .. } => {
+                        self.controller = Some(f32::from(value.value()) + 1.0);
+                    }
                     _ => {}
                 }
             }
-            *sample = self.level();
+            *sample = self.controller.unwrap_or_else(|| self.level());
         }
         right.copy_from_slice(left);
     }
@@ -106,6 +112,7 @@ impl Harness {
                 Probe {
                     held: [0; 128],
                     latency,
+                    controller: None,
                 },
             )
             .unwrap();
@@ -541,4 +548,41 @@ fn placing_again_ends_the_notes_the_pattern_holds() {
     let (ended, level) = changes[1];
     assert_eq!(level, 0.0);
     assert!((100 * TICK..100 * TICK + 100).contains(&ended), "{ended}");
+}
+
+/// A controller lane sends nothing before its first point, then its value once per sub-block
+/// where it moves, read at the sub-block's last tick, and nothing after its clip: the
+/// instrument keeps what it heard. A seek into the lane sends the value there.
+#[test]
+fn a_controller_lane_plays_from_its_first_point_holds_after_its_clip_and_chases_a_seek() {
+    let mut harness = Harness::new(Vec::new());
+    let mut clip = Clip::new(Ticks(0), Length::new(Ticks(BAR)).unwrap(), Vec::new());
+    let point = |tick: u64, value: u8| Point {
+        tick: Ticks(tick),
+        value: Amount::new(value).unwrap(),
+    };
+    let brightness = Controller::new(74).unwrap();
+    clip.controllers.insert(
+        brightness,
+        vec![point(960, 10), point(1920, 10), point(1921, 90)],
+    );
+    let timeline = NotePlayerUpdate::Timeline(Arc::new(NoteTimeline::new([&clip])));
+    harness.control.update(harness.player, timeline).unwrap();
+    harness.control.play();
+    // The value plus one, as the probe shows it.
+    let output = harness.render_ticks(2 * BAR);
+    let first = 960 * TICK;
+    let jump = output.iter().position(|level| *level == 91.0).unwrap();
+    assert_eq!(level_changes(&output), [(first, 11.0), (jump, 91.0)]);
+    // The sub-block of at most 64 frames that holds tick 1921 sends 90.
+    assert!((1921 * TICK - 64..=1921 * TICK).contains(&jump), "{jump}");
+
+    harness.control.seek(Ticks(1500));
+    assert_eq!(level_changes(&harness.render_ticks(10))[..1], [(0, 11.0)]);
+    harness.control.seek(Ticks(2500));
+    harness.render_ticks(10);
+    // Before its first point: nothing is sent, and the instrument keeps 90.
+    harness.control.seek(Ticks(100));
+    let before = harness.render_ticks(100);
+    assert!(before.iter().all(|level| *level == 91.0));
 }

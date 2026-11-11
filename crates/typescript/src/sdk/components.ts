@@ -446,6 +446,8 @@ export type SelectProps<T> = ValueProps<T> & {
   menuWidth?: number;
   /** `"md"` says it in 13 points; 12 when left out, as a select of a card. */
   size?: "sm" | "md";
+  /** A field above its list that keeps the options whose label holds what is typed. */
+  search?: boolean;
 };
 
 const TRIGGER = {
@@ -465,7 +467,7 @@ export function Select<const T extends string | number | boolean | null>(props: 
   const open = async () => {
     const [value, options] = [get(), read(props.options)];
     const items = options.map(({ label, detail, icon, disabled, value: each }) => ({ label, detail, icon, disabled, checked: each === value, group: props.title }));
-    const picked = await openMenu(items, { width: props.menuWidth ?? 160 });
+    const picked = await openMenu(items, { width: props.menuWidth ?? 160, search: props.search });
     const option = picked === null ? undefined : options[picked];
     if (option && option.value !== value) set(option.value);
   };

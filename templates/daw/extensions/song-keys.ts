@@ -122,6 +122,7 @@ export const songActions: Record<string, SongAction> = {
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
   paste_notes: notes(["cmd-v"], "Paste notes", "paste"),
+  quantize_notes: notes(["q"], "Quantize the chosen notes, or all of them", "quantize"),
   delete_notes: notes(["backspace", "delete"], "Delete the chosen notes", "delete"),
   copy_notes: notes(["cmd-c"], "Copy the chosen notes", "copy"),
   cut_notes: notes(["cmd-x"], "Cut the chosen notes", "cut"),

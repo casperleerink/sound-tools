@@ -53,6 +53,7 @@ pub use card::{node_counts, page_has_text, page_ready};
 #[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
+pub use timeline::timeline_state;
 pub use tools::forget_gone;
 pub use window::start_window;
 #[cfg(feature = "test-support")]
@@ -197,8 +198,9 @@ impl NoteMessage {
 const SDK: &str = include_str!("sdk.ts");
 /// The modules `sdk.ts` names, by their path in `extensions/`. The runtime adds
 /// `sdk/records.ts`.
-const SDK_MODULES: [(&str, &str); 9] = [
+const SDK_MODULES: [(&str, &str); 10] = [
     ("sdk/fields.ts", include_str!("sdk/fields.ts")),
+    ("sdk/notes.ts", include_str!("sdk/notes.ts")),
     ("sdk/sound.ts", include_str!("sdk/sound.ts")),
     ("sdk/tools.ts", include_str!("sdk/tools.ts")),
     ("sdk/live.ts", include_str!("sdk/live.ts")),

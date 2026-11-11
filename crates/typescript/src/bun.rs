@@ -236,7 +236,7 @@ pub(crate) enum Answer<'a> {
     },
     /// What a lane or a cable can move of the child asked about.
     Numbers(Vec<Moved>),
-    /// Whether the composer said yes to a question.
+    /// Whether the composer said yes to a question, or a file was written.
     Confirmed(bool),
 }
 
@@ -466,6 +466,14 @@ pub(crate) enum Event {
         path: String,
         span: [u64; 2],
         tail: bool,
+        name: String,
+    },
+    /// Code exports the notes of the timeline child `path` of `instance` as a MIDI file the
+    /// composer names, offered as `name`: whether it was written goes to its `question`.
+    ExportNotes {
+        question: u64,
+        instance: InstanceId,
+        path: String,
         name: String,
     },
     /// Code asks the composer `message` with the system's question, its buttons `confirm` and

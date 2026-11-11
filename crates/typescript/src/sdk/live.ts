@@ -4,7 +4,7 @@
 import { splitPath } from "./components";
 import { IconName } from "./drawing";
 import { InputNames, Inputs, Unit } from "./fields";
-import { ChildTools, Context, Frozen } from "./tools";
+import { ChildTools, Context, Frozen, StateOfTool } from "./tools";
 
 /**
  * The clock of the project, one for all tools: where the piece plays and how fast. A binding
@@ -404,11 +404,13 @@ export interface PointerEvents {
 
 /**
  * What was let go on a node that hears drops: audio files from the system, copied into
- * `assets/audio/` under the names in `files`, or what a dragged `div` carries. `x` and `y` are
- * where, in the units of a space (0 on a `div`).
+ * `assets/audio/` under the names in `files`; MIDI files, one timeline at tick 0 for each part
+ * (a channel of a track that plays notes) in `timelines`, its `title` the part's name; or what
+ * a dragged `div` carries. `x` and `y` are where, in the units of a space (0 on a `div`).
  */
 export interface Dropped {
   files: string[];
+  timelines: StateOfTool<"timeline">[];
   carried: string | null;
   x: number;
   y: number;

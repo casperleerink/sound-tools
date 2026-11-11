@@ -30,8 +30,9 @@ allow = [
   "Unicode-3.0",
   # File-level copyleft. Fine as an unmodified dependency.
   "MPL-2.0",
-  # Public domain dedication. notify 8.
+  # Public domain dedications. notify 8; midly.
   "CC0-1.0",
+  "Unlicense",
 ]
 confidence-threshold = 0.8
 

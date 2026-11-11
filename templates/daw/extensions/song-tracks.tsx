@@ -1,11 +1,11 @@
-import { Button, For, Fragment, h, Icon, Input, Label, Meter, now, onCleanup, Select, Show, Space, Toggle, untrack, type Color } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, Label, Meter, now, onCleanup, Select, Show, Space, Toggle, untrack, type Color, type StateOfTool } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { snapsOf } from "./clip-editor";
 import type { Song } from "./song";
 import { addLane, LaneHead, learnName, showLanes } from "./song-automation";
 import { copyOf } from "./song-clips";
-import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, RULER, TEMPO, titleOf, type Child, type Page } from "./song-page";
+import { ADD_LANE, BEAT, colourOf, COLOR, HEADER, inputOf, itemTool, lanesOf, MASTER_ROW, muted, PALETTE, ROW, rowsOf, RULER, TEMPO, titleOf, type Child, type Page } from "./song-page";
 import { tape } from "./tape";
 import { freeName, track } from "./track";
 
@@ -257,6 +257,27 @@ const moveTrack = ({ update, rows }: Page, moved: string, before: string) =>
     names.splice(names.indexOf(before), 0, moved);
     state.order = names;
   });
+type SongPart = Parameters<Parameters<Song["update"]>[1]>[0];
+/** A fader for each return of the song, silent, as a new track sends into them. */
+const sendsOf = (part: SongPart) =>
+  part.children.filter((child) => child.tool === "bus").map((back) => ({ name: `send-${back.name}` as const, tool: "fader" as const, state: { gain_db: "-inf" as const } }));
+
+/** Adds an instrument track called `title` after the others, with `clips` on it: its name. */
+export function addInstrumentTrack(part: SongPart, title: string, clips: { name: string; state: StateOfTool<"timeline"> }[] = []): string {
+  const rows = rowsOf(part.children, part.state.order).map((each) => each.name);
+  const name = freeName(part.children.map((child) => child.name), "track");
+  part.children.push({
+    name, tool: track, state: { colour: PALETTE[rows.length % PALETTE.length]!.colour, title },
+    children: [
+      { name: "synth", tool: "instrument.synth", state: {} },
+      { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, { name: "rec", tool: "recorder", state: {} },
+      ...sendsOf(part), ...clips.map((clip) => ({ ...clip, tool: "timeline" as const })),
+    ],
+  });
+  part.state.order = [...rows, name];
+  return name;
+}
+
 /** Adds a track of `kind`: 0 an instrument track, 1 an audio track, 2 a return; the menu asks without one. */
 async function addTrack({ children, memory, update, openMenu, rows, tracks, returns }: Page, kind?: number) {
   const picked = kind ?? (await openMenu([{ label: "Instrument track" }, { label: "Audio track" }, { label: "Return track" }]));
@@ -264,18 +285,9 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
   const names = children.map((child) => child.name);
   const colour = PALETTE[rows().length % PALETTE.length]!.colour;
   update(["Add a track", "Add an audio track", "Add a return"][picked]!, (part) => {
-    const sends = part.children.filter((child) => child.tool === "bus").map((back) => ({ name: `send-${back.name}` as const, tool: "fader" as const, state: { gain_db: "-inf" as const } }));
+    const sends = sendsOf(part);
     if (picked === 0) {
-      const name = freeName(names, "track");
-      part.children.push({
-        name, tool: track, state: { colour, title: `Track ${tracks().length + 1}` },
-        children: [
-          { name: "synth", tool: "instrument.synth", state: {} },
-          { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, { name: "rec", tool: "recorder", state: {} },
-          ...sends,
-        ],
-      });
-      part.state.order = [...rows().map((each) => each.name), name];
+      addInstrumentTrack(part, `Track ${tracks().length + 1}`);
     } else if (picked === 1) {
       const name = freeName(names, "audio-1") as `audio-${string}`;
       const audio = rows().filter((each) => each.tool === "tape").length + 1;

@@ -15,9 +15,9 @@ use sound_core::{
     ToolSchema, Watch,
 };
 use sound_notes::{
-    Amount, Bend, Clip, Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate,
-    NoteTimeline, Pattern, PedalChange, Placing, PlayerWatches, Point, QUEUED_STOP, Quantize,
-    Schedule,
+    Amount, Bend, Clip, Controllers, Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer,
+    NotePlayerUpdate, NoteTimeline, Pattern, PedalChange, Placing, PlayerWatches, Point,
+    QUEUED_STOP, Quantize, Schedule,
 };
 use sound_signals::Number;
 
@@ -67,6 +67,10 @@ struct Record {
     /// The key pressure, 0 to 127, as `bend`.
     #[serde(default)]
     pressure: Vec<Point<Amount>>,
+    /// Other MIDI controllers by number, 0 to 119 but 1 and 64: points 0 to 127, as `bend`,
+    /// but each plays from its first point and holds where it ends.
+    #[serde(default)]
+    controllers: Controllers,
     /// What a view calls it. Nothing plays it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     title: String,
@@ -122,6 +126,29 @@ fn end(state: &Value) -> Option<Ticks> {
     start.checked_add(length).map(Ticks)
 }
 
+/// The state of a timeline that plays `clip` once, at its start, called `title`: what it
+/// holds and nothing it leaves at its default, as an agent writes one.
+pub fn timeline_state(clip: &Clip, title: &str) -> Result<Value, String> {
+    let mut state = serde_json::to_value(clip).map_err(|error| error.to_string())?;
+    if let Some(fields) = state.as_object_mut()
+        && !title.is_empty()
+    {
+        fields.insert("title".to_string(), title.into());
+    }
+    Ok(state)
+}
+
+/// What the timeline `state` plays as a clip, one round of a loop, and its title.
+pub(crate) fn timeline_clip(state: &Value) -> Result<(Clip, String), String> {
+    let record = record(state)?;
+    let round = round(&record)?;
+    let clip = Clip {
+        notes: record.notes.clone(),
+        ..lanes(&record, &round)?
+    };
+    Ok((clip, record.title))
+}
+
 /// The record of the timeline, for the SDK.
 pub(crate) fn schema() -> ToolSchema {
     ToolSchema {
@@ -164,17 +191,14 @@ fn lanes(record: &Record, round: &Pattern) -> Result<Clip, String> {
         bend: record.bend.clone(),
         mod_wheel: record.mod_wheel.clone(),
         pressure: record.pressure.clone(),
+        controllers: record.controllers.clone(),
         ..Clip::new(record.start, round.length(), Vec::new())
     };
     lanes.validate().map_err(|error| {
         let error = error.replace("the clip length", "the length");
         error.replace("from the start of its clip", "from `start`")
     })?;
-    let moves = !(lanes.pedal.is_empty()
-        && lanes.bend.is_empty()
-        && lanes.mod_wheel.is_empty()
-        && lanes.pressure.is_empty());
-    if moves && (record.looped || !record.plays) {
+    if lanes.has_lanes() && (record.looped || !record.plays) {
         return Err(
             "a timeline that loops or waits for a launch plays notes only: its pedal and lanes need one that plays once"
                 .to_string(),
@@ -207,7 +231,10 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
         let patterns = NotePlayerUpdate::Patterns(Arc::new(vec![pattern]));
         context.update(node, TimelineUpdate::Player(patterns))?;
     }
-    let moved = (&lanes.pedal, &lanes.bend, &lanes.mod_wheel, &lanes.pressure);
+    let moved = (
+        (&lanes.pedal, &lanes.bend, &lanes.mod_wheel),
+        (&lanes.pressure, &lanes.controllers),
+    );
     if context.changed("lanes", key(&(lanes.start, lanes.length, moved))) {
         let timeline = Arc::new(NoteTimeline::new([&lanes]));
         context.update(

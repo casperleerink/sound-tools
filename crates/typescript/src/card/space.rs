@@ -9,7 +9,6 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollEvent,
     WeakEntity, Window, canvas, div, point, prelude::*, px,
 };
-use serde_json::json;
 use sound_ui::ActiveTheme;
 use sound_ui::focus::TabStop;
 
@@ -255,8 +254,7 @@ impl Drawing<'_> {
                 }),
             )
             .on_drop(self.listener(move |view, carried: &Carried, window, cx| {
-                let (x, y) = units(window);
-                let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
+                let dropped = super::input::dropped(&[], &[], Some(&carried.0), units(window));
                 view.event(id, EventKind::Drop, dropped, cx);
             }))
             .into_any_element()

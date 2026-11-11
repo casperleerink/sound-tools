@@ -331,8 +331,8 @@ impl TypeScriptCard {
             .set(self.placed.borrow().get(&id).copied().map(under));
     }
 
-    /// Copies dropped files into `assets/audio/`, in the background, and tells the code of
-    /// `node` their names there and where they fell.
+    /// Copies dropped audio files into `assets/audio/` and reads dropped MIDI files into
+    /// timelines, in the background, and tells the code of `node` what came and where it fell.
     pub(super) fn drop_files(
         &mut self,
         node: u64,
@@ -343,23 +343,29 @@ impl TypeScriptCard {
         let assets = self.session.read(cx).project().assets().clone();
         let imported = cx.background_spawn(async move {
             (paths.iter())
-                .map(|path| sound_media::import(&assets, path))
+                .map(|path| match timelines_in(path) {
+                    Some(timelines) => timelines.map(Dropped::Timelines),
+                    None => (sound_media::import(&assets, path))
+                        .map(|file| Dropped::File(file.asset.to_string()))
+                        .map_err(|error| error.to_string()),
+                })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |view, cx| {
             let imported = imported.await;
             view.update(cx, |view, cx| {
-                let mut files = Vec::new();
-                for file in imported {
-                    match file {
-                        Ok(file) => files.push(file.asset.to_string()),
+                let (mut files, mut timelines) = (Vec::new(), Vec::new());
+                for dropped in imported {
+                    match dropped {
+                        Ok(Dropped::File(file)) => files.push(file),
+                        Ok(Dropped::Timelines(each)) => timelines.extend(each),
                         Err(error) => view
                             .session
                             .update(cx, |session, cx| session.report(error, cx)),
                     }
                 }
-                if !files.is_empty() {
-                    let dropped = json!({ "files": files, "carried": null, "x": x, "y": y });
+                if !files.is_empty() || !timelines.is_empty() {
+                    let dropped = dropped(&files, &timelines, None, (x, y));
                     view.event(node, EventKind::Drop, dropped, cx);
                 }
             })
@@ -974,4 +980,44 @@ pub(super) fn hearing_keys(
                 }
             },
         ))
+}
+
+enum Dropped {
+    File(String),
+    Timelines(Vec<Value>),
+}
+
+/// The timelines of the parts of the MIDI file at `path`, or what went wrong: `None` when it is
+/// not a MIDI file.
+fn timelines_in(path: &std::path::Path) -> Option<Result<Vec<Value>, String>> {
+    let mut start = [0; 4];
+    let mut file = std::fs::File::open(path).ok()?;
+    std::io::Read::read_exact(&mut file, &mut start).ok()?;
+    if !sound_notes::midi_file::is_midi_file(&start) {
+        return None;
+    }
+    let name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy())
+        .unwrap_or_default();
+    let not_imported = |error: String| format!("{name} was not imported. {error}");
+    let read = std::fs::read(path).map_err(|error| not_imported(error.to_string()));
+    let parts = read.and_then(|bytes| {
+        sound_notes::midi_file::read(&bytes, &name).map_err(|error| not_imported(error.to_string()))
+    });
+    Some(parts.and_then(|parts| {
+        (parts.iter())
+            .map(|(title, clip)| crate::timeline_state(clip, title))
+            .collect()
+    }))
+}
+
+/// What the code of a node that hears drops is told: see `Dropped` in `sdk/live.ts`.
+pub(super) fn dropped(
+    files: &[String],
+    timelines: &[Value],
+    carried: Option<&str>,
+    (x, y): (f64, f64),
+) -> Value {
+    json!({ "files": files, "timelines": timelines, "carried": carried, "x": x, "y": y })
 }

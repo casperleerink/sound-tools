@@ -23,9 +23,10 @@ Plays notes in time out of its output `notes`: once at their place in the song, 
 | `quantize` | where a launch lands while the piece plays: `"bar"`, `"beat"` or `"now"`. While it is stopped, at once | `"bar"` |
 | `pedal` | the sustain pedal: `{"start": 0, "value": 127}` moves in ticks from `start`, down from 64. It goes up where the timeline ends | `[]` |
 | `bend`, `mod_wheel`, `pressure` | `{"tick": 0, "value": 8191}` points in ticks from `start`, a straight line between them. Bend is -8192 to 8191 (a full bend is two semitones on a sound of this project), the others 0 to 127 | `[]` |
+| `controllers` | other MIDI controllers by number, not 1 or 64: `{"74": [{"tick": 0, "value": 64}]}`, as `mod_wheel`, but each plays from its first point and sends nothing after the end: the instrument keeps what it heard last, also after a seek. Plugins hear them, the bundled instruments do not | `{}` |
 | `title` | what a view calls it | `""` |
 
-`pedal`, `bend`, `mod_wheel` and `pressure` need a timeline that plays once: one that loops or waits for a launch plays notes only.
+The lanes need a timeline that plays once: one that loops or waits for a launch plays notes only.
 
 The piece ends where the last timeline that plays once, or the last region, stops: a render and an export play to there. A loop and one with `"plays": false` do not count.
 

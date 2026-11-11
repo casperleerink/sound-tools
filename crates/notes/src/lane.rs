@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{Clock, Frames, Ticks, Transport};
 
-use crate::{Amount, Bend};
+use crate::{Amount, Bend, Controllers};
 
 /// Where a lane stands at `tick`, which counts from the start of the clip like a note start.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -270,6 +270,17 @@ pub fn cut<V: LaneValue>(points: &[Point<V>], range: Range<Ticks>) -> Vec<Point<
         kept.extend(edge(last_tick));
     }
     kept
+}
+
+/// The controller lanes inside `range`, as [`cut`] does, but a lane plays only from its first
+/// point: a range that ends at or before it leaves no lane, and one that starts before it adds
+/// no point at its start, which `cut` already does not.
+pub fn cut_controllers(controllers: &Controllers, range: Range<Ticks>) -> Controllers {
+    let lanes = controllers.iter().filter_map(|(controller, points)| {
+        let first = points.first()?;
+        (first.tick < range.end).then(|| (*controller, cut(points, range.clone())))
+    });
+    lanes.filter(|(_, points)| !points.is_empty()).collect()
 }
 
 /// Whether a lane of a clip `length` long follows the rules of a clip: every point inside it,

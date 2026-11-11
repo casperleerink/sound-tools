@@ -32,7 +32,7 @@ fn load(line: &str) -> Result<Clip, String> {
 
 #[test]
 fn a_clip_with_lanes_round_trips_and_one_without_leaves_them_out() {
-    let line = r#"{"start":0,"length":3840,"notes":[],"bend":[{"tick":0,"value":-8192},{"tick":960,"value":8191}],"mod_wheel":[{"tick":0,"value":64}],"pressure":[{"tick":480,"value":127}]}"#;
+    let line = r#"{"start":0,"length":3840,"notes":[],"bend":[{"tick":0,"value":-8192},{"tick":960,"value":8191}],"mod_wheel":[{"tick":0,"value":64}],"pressure":[{"tick":480,"value":127}],"controllers":{"7":[{"tick":0,"value":100}],"74":[{"tick":10,"value":3}]}}"#;
     let clip = load(line).unwrap();
     assert_eq!(clip.bend, [bend(0, -8192), bend(960, 8191)]);
     assert_eq!(clip.mod_wheel, [amount(0, 64)]);
@@ -57,6 +57,15 @@ fn a_lane_that_breaks_the_rules_does_not_load_and_says_why() {
     assert!(
         error(r#""pressure":[{"tick":0,"value":-1}]"#)
             .starts_with("amount must be from 0 to 127, not -1")
+    );
+    // The pedal has a lane of its own.
+    assert!(
+        error(r#""controllers":{"64":[{"tick":0,"value":1}]}"#)
+            .starts_with("controller must be from 0 to 119 other than 1 and 64")
+    );
+    assert!(
+        error(r#""controllers":{"7":[{"tick":960,"value":1}]}"#)
+            .starts_with("controllers.7[0].tick must be less than the clip length 960")
     );
     assert!(error(r#""bend":[{"tick":0,"value":0.5}]"#).contains("invalid type"));
     assert!(error(r#""bend":[{"start":0,"value":0}]"#).contains("unknown field `start`"));

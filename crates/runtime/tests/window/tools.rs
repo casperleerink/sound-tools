@@ -21,6 +21,7 @@ mod actions;
 mod edits;
 mod gestures;
 mod lists;
+mod midi_tools;
 mod mixer;
 mod nested;
 mod parts;

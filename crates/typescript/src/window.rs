@@ -1679,6 +1679,12 @@ impl Live {
                 tail,
                 name,
             } => self.render(question, &instance, &path, span, tail, &name, cx),
+            Event::ExportNotes {
+                question,
+                instance,
+                path,
+                name,
+            } => self.export_notes(question, &instance, &path, &name, cx),
             Event::Confirm {
                 question,
                 message,
@@ -2075,6 +2081,79 @@ impl Live {
                     session.update(cx, |session, cx| session.report(message, cx));
                     answer(live, None);
                 }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Writes the notes of the timeline child `path` of `instance` as a MIDI file where the
+    /// composer says, next to the project folder, with the tempo and the time signature where
+    /// it starts, and answers the `exportNotes` `question` of Bun with whether it did.
+    fn export_notes(
+        &mut self,
+        question: u64,
+        instance: &InstanceId,
+        path: &str,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = move |live: &mut Self, written: bool| {
+            let answer = Answer::Confirmed(written);
+            live.host.send(&Request::Answer { question, answer });
+        };
+        let Some(session) = self.session.upgrade() else {
+            return answer(self, false);
+        };
+        let project = session.read(cx).project();
+        let id = InstanceId::new(&format!("{instance}/{path}")).ok();
+        let state = (id.as_ref())
+            .filter(|id| project.tool_of(id) == Some(crate::timeline::NAME))
+            .and_then(|id| project.state_json(id))
+            .and_then(|json| serde_json::from_str::<Value>(&json).ok());
+        let Some(state) = state else {
+            let problem =
+                format!("it exports the notes of {path:?}, which is no timeline of {instance}");
+            self.tool_problem(instance, problem, cx);
+            return answer(self, false);
+        };
+        let (clip, title) = match crate::timeline::timeline_clip(&state) {
+            Ok(clip) => clip,
+            Err(error) => {
+                let problem =
+                    format!("it exports the notes of {path:?}, which cannot play: {error}");
+                self.tool_problem(instance, problem, cx);
+                return answer(self, false);
+            }
+        };
+        let tempo_map = &project.project_file().tempo_map;
+        let bpm = tempo_map.change_at(clip.start).bpm.bpm();
+        let signature = tempo_map.time_signatures().bar_at(clip.start).signature;
+        let beats = |number: u32| u8::try_from(number).unwrap_or(u8::MAX);
+        let signature = (beats(signature.numerator()), beats(signature.denominator()));
+        // Next to the project folder and not in it, as an exported sound.
+        let folder = project.root().to_path_buf();
+        let directory = folder.parent().unwrap_or(&folder).to_path_buf();
+        let picked = cx.prompt_for_new_path(&directory, Some(&format!("{name}.mid")));
+        cx.spawn(async move |live, cx| {
+            let written = match picked.await {
+                Ok(Ok(Some(file))) => cx
+                    .background_spawn(async move {
+                        let bytes = sound_notes::midi_file::write(&clip, &title, bpm, signature)?;
+                        std::fs::write(&file, bytes)
+                    })
+                    .await
+                    .map(|()| true)
+                    .map_err(|error| format!("The notes were not exported: {error}")),
+                Ok(Err(error)) => Err(format!("The file picker did not open: {error}")),
+                _ => Ok(false),
+            };
+            live.update(cx, |live, cx| {
+                let written = written.unwrap_or_else(|error| {
+                    session.update(cx, |session, cx| session.report(error, cx));
+                    false
+                });
+                answer(live, written);
             })
             .ok();
         })

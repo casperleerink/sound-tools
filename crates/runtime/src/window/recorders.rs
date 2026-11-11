@@ -622,15 +622,7 @@ fn notes_record(
     let Some(clip) = raw.clip(|micros| take.clock.tick_at_micros(micros)) else {
         return Ok(None);
     };
-    let state = json!({
-        "start": clip.start.0,
-        "length": clip.length,
-        "notes": clip.notes,
-        "pedal": clip.pedal,
-        "bend": clip.bend,
-        "mod_wheel": clip.mod_wheel,
-        "pressure": clip.pressure,
-    });
+    let state = sound_typescript::timeline_state(&clip, "")?;
     Ok(Some((
         format!("{}-{name}", recorder.name()),
         "timeline",
