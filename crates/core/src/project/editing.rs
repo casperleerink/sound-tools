@@ -129,6 +129,23 @@ impl Edit {
         });
         project_file.into_iter().chain(records).collect()
     }
+
+    /// Names its point `label` instead, for code that learns late what the edit became.
+    pub fn rename(&mut self, label: &str) {
+        self.label = label.to_string();
+    }
+
+    /// The records it published over.
+    pub fn published(&self) -> impl Iterator<Item = &InstanceId> {
+        self.records.keys()
+    }
+
+    /// The `state` of `id` as JSON from before the edit: `None` when the edit made it or did not
+    /// touch it.
+    pub fn before_json(&self, id: &InstanceId) -> Option<String> {
+        let before = self.records.get(id)?.as_ref()?;
+        before.state.to_json().ok()
+    }
 }
 
 /// Every record of `changes` is one its tool accepts.

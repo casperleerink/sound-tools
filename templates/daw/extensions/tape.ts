@@ -1,14 +1,15 @@
 import { chain } from "./chain";
+import { lfo } from "./lfo";
 import { text, tool, type Connection, type Declaration } from "./sdk";
 import { automation, freeName, laneConnections } from "./track";
 
-const parts = { rec: "recorder", chain, mix: "fader", "send-*": "fader", "lane-*": "lane", "*": "region" } as const;
+const parts = { rec: "recorder", chain, mix: "fader", "send-*": "fader", "lane-*": "lane", "lfo-*": lfo, "*": "region" } as const;
 
 export const tape = tool({
   name: "tape",
   title: "Tape",
   when: "You change what an audio track of the song is made of or how it is wired",
-  doc: "An audio track of a `song`: its `region` children play through the effects of its `chain` into its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's, and whose level its meter shows. Each of `automation` moves a number of a child over the song, as a track's does. Each fader `send-<return>` is how loud it sends into that return of the song, which wires it. Its recorder `rec` records the audio input into new regions next to it while the song records. `colour` is how the song draws its regions, `title` what it calls the track.",
+  doc: "An audio track of a `song`: its `region` children play through the effects of its `chain` into its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's, and whose level its meter shows. Each of `automation` moves a number of a child over the song, as a track's does, by a lane or an LFO. Each fader `send-<return>` is how loud it sends into that return of the song, which wires it. Its recorder `rec` records the audio input into new regions next to it while the song records. `colour` is how the song draws its regions, `title` what it calls the track.",
   state: { colour: text({ default: "teal" }), title: text(), automation },
   children: parts,
   behaviour: ({ state, children }): Declaration<typeof parts> => {

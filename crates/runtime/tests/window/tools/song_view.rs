@@ -549,6 +549,60 @@ fn a_press_in_a_lane_adds_a_point_its_drag_moves_and_an_alt_drag_erases(cx: &mut
     assert_eq!(window.problems(), []);
 }
 
+/// The handle in the middle of a line bends it as one undo step; the bend stays when the point
+/// at its end moves, and a double-click on the handle straightens it.
+#[gpui::test]
+fn a_line_of_a_lane_bends_by_its_handle_and_a_double_click_straightens_it(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.show_toggles("t00");
+    let lanes = window.until_found("toggle-lanes-t00");
+    window.click(lanes);
+    window.until_found("div-lane-name-t00-lane-cutoff");
+    let curve = |window: &mut Opened<'_>| {
+        window.record("song/t00/lane-cutoff")["points"][0]["curve"].as_f64()
+    };
+    // A point at the foot of the row at bar 4, 20 Hz: the line from 6 kHz falls to it.
+    let foot = point(px(0.), px(0.4 * crate::song::ROW));
+    let [four, five] = [4, 5].map(|bar| window.on_lane(bar * BAR, 1) + foot);
+    window.click(four);
+    window.until("a point added", |window| {
+        window.record("song/t00/lane-cutoff")["points"][1]["tick"] == 4 * BAR
+    });
+    window.after_the_runs();
+    // The handle is at bar 2, halfway along the line on the cutoff's log travel.
+    let middle = (6_000f32 / 20.).ln() / 1_000f32.ln() / 2.;
+    let handle = window.on_lane(2 * BAR, 1)
+        + point(
+            px(0.),
+            px((0.1 + (1. - middle) * 0.8 - 0.5) * crate::song::ROW),
+        );
+    let before = crate::support::mark(&mut window);
+    let pulled = point(px(0.), px(0.1 * crate::song::ROW));
+    window.drag(handle, handle + pulled);
+    window.until("the line bent", |window| curve(window).is_some());
+    window.after_the_runs();
+    crate::support::one_undo_step(&mut window, "Bend a line", &before);
+    // Pulled down, the falling line drops early.
+    let bent = curve(&mut window).unwrap_or_default();
+    assert!((-0.45..-0.25).contains(&bent), "{bent}");
+
+    window.drag(four, five);
+    window.until("the point moved", |window| {
+        window.record("song/t00/lane-cutoff")["points"][1]["tick"] == 5 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(curve(&mut window), Some(bent));
+
+    // The handle stays where it was let go, at the middle of the longer line.
+    let moved = window.on_lane(5 * BAR / 2, 1) + (handle - window.on_lane(2 * BAR, 1)) + pulled;
+    window.double_click(moved);
+    window.until("the line straight", |window| curve(window).is_none());
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Straighten a line"));
+    assert_eq!(window.problems(), []);
+}
+
 /// An audio track has lanes as a track has, as the arrangement's had: its volume plays from one.
 #[gpui::test]
 fn an_audio_track_has_a_lane_for_its_volume(cx: &mut TestAppContext) {
@@ -1476,5 +1530,123 @@ fn delete_asks_before_it_deletes_the_track_whose_panel_shows(cx: &mut TestAppCon
     window.until("the track deleted", |window| !window.has("song/t01"));
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Delete a track"));
+    assert_eq!(window.problems(), []);
+}
+
+/// With Write automation on in the transport, a drag of a track's fader in the mixer while the
+/// song plays writes into the lane of its volume, from the volume the lane plays and not the
+/// fader's own: one undo step, and the fader keeps its volume.
+#[gpui::test]
+fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mut TestAppContext) {
+    let mut files = song_files(2, 2);
+    for (path, text) in &mut files {
+        if path == "state/song/t00/instance.json" {
+            let mut record: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+            let lane = serde_json::json!({ "lane": "lane-volume", "target": "mix.gain_db" });
+            (record["state"]["automation"].as_array_mut().unwrap()).push(lane);
+            *text = record.to_string();
+        }
+    }
+    let lane =
+        r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -12}], "scale": "fader"}}"#;
+    files.push(("state/song/t00/lane-volume.json".into(), lane.into()));
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = super::open(cx, &files);
+    window.wait_for_bun();
+    let toggle = window.until_found("button-mixer-toggle");
+    window.click(toggle);
+    let write = window.until_found("button-write-automation");
+    window.click(write);
+    let session = window.session.clone();
+    window.until("automation written", |window| {
+        window.cx.read(|cx| session.read(cx).writes_automation())
+    });
+    let fader = window.space_at("fader-t00/mix.gain_db") + point(px(14.), px(40.));
+    (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
+    window.play_and_draw(4_800);
+    let (before, record) = (
+        crate::support::mark(&mut window),
+        window.record("song/t00/mix"),
+    );
+    window.press(fader);
+    window.drag_to(fader - point(px(0.), px(2.)));
+    window.drag_to(fader - point(px(0.), px(4.)));
+    for _ in 0..10 {
+        window.play_and_draw(4_800);
+    }
+    window.release(fader - point(px(0.), px(4.)));
+    window.wait_for_bun();
+    let points = window.record("song/t00/lane-volume")["points"].clone();
+    let values: Vec<f64> = (points.as_array().unwrap().iter())
+        .filter_map(|point| point["value"].as_f64())
+        .collect();
+    // A few points up from -12 dB, not from the fader's own 0 dB.
+    let loudest = values.iter().copied().fold(f64::MIN, f64::max);
+    assert!(loudest > -12. && loudest < -6., "{values:?}");
+    assert_eq!(window.record("song/t00/mix"), record);
+    crate::support::one_undo_step(&mut window, "Write automation", &before);
+    assert_eq!(window.problems(), []);
+
+    // Pulled to the bottom, silence, it writes -100 dB, as a lane holds no -inf.
+    window.press(fader);
+    window.drag_to(fader + point(px(0.), px(400.)));
+    for _ in 0..5 {
+        window.play_and_draw(4_800);
+    }
+    window.release(fader + point(px(0.), px(400.)));
+    window.wait_for_bun();
+    let points = window.record("song/t00/lane-volume")["points"].clone();
+    let quietest = (points.as_array().unwrap().iter())
+        .filter_map(|point| point["value"].as_f64())
+        .fold(f64::MAX, f64::min);
+    assert_eq!(quietest, -100., "{points}");
+    assert_eq!(window.problems(), []);
+}
+
+/// A lane's menu moves its number with an LFO instead of points, as one undo step: the LFO
+/// sweeps between a quarter and three quarters of the cutoff's travel, which the filter plays,
+/// and its rate is a select under the lane's name. Points again bring a lane back.
+#[gpui::test]
+fn a_lanes_menu_moves_its_number_with_an_lfo(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.show_toggles("t00");
+    let lanes = window.until_found("toggle-lanes-t00");
+    window.click(lanes);
+    let name = window.until_found("div-lane-name-t00-lane-cutoff");
+    let before = crate::support::mark(&mut window);
+    window.click_with(name, MouseButton::Right);
+    window.pick("menu-1");
+    window.until("the LFO", |window| {
+        window.record("song/t00")["automation"][0]["lane"] == "lfo-chain-filter-cutoff-hz"
+    });
+    window.after_the_runs();
+    crate::support::one_undo_step(&mut window, "Move with an LFO", &before);
+    let lfo = window.record("song/t00/lfo-chain-filter-cutoff-hz");
+    let (low, high) = (lfo["low"].as_f64().unwrap(), lfo["high"].as_f64().unwrap());
+    // A quarter and three quarters of 20 Hz to 20 kHz on its log travel.
+    assert!(
+        (low - 112.).abs() < 2. && (high - 3_557.).abs() < 40.,
+        "{lfo}"
+    );
+    assert_eq!(lfo["scale"], "log");
+    let session = window.session.clone();
+    let filter = crate::support::id("song/t00/chain/filter");
+    window.until("the filter plays the LFO", |window| {
+        window.render(4_800);
+        (window.cx).read(|cx| session.read(cx).project().lanes(&filter).is_some())
+    });
+    window.until_found("div-lfo-rate-t00/lfo-chain-filter-cutoff-hz");
+    assert_eq!(window.problems(), []);
+
+    let name = window.until_found("div-lane-name-t00-lfo-chain-filter-cutoff-hz");
+    window.click_with(name, MouseButton::Right);
+    window.pick("menu-0");
+    window.until("points again", |window| {
+        window.record("song/t00")["automation"][0]["lane"] == "lane-chain-filter-cutoff-hz"
+    });
+    window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }

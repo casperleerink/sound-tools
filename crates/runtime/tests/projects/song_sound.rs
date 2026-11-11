@@ -144,6 +144,31 @@ fn a_volume_lane_moves_along_the_faders_travel() {
     assert!((-20.0..-17.0).contains(&decibels), "{decibels} dB");
 }
 
+/// A lane of a number inside a list or an object of a record, `osc_1.position` of a wavetable,
+/// moves that number.
+#[test]
+fn a_lane_moves_a_number_inside_a_record() {
+    let automated = r#"{"tool": "track", "state": {"automation": [{"lane": "lane-position", "target": "synth.osc_1.position"}]}}"#;
+    let lane = r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 0.25}]}}"#;
+    let mut harness = song(&[
+        ("state/song/t00/instance.json", automated),
+        (
+            "state/song/t00/synth.json",
+            r#"{"tool": "wavetable", "state": {}}"#,
+        ),
+        ("state/song/t00/lane-position.json", lane),
+    ]);
+    play(&mut harness, 4_800);
+    let synth = sound_core::InstanceId::new("song/t00/synth").unwrap();
+    let mut values = Vec::new();
+    let lanes = harness.project.lanes(&synth).unwrap();
+    lanes.values_at(sound_core::Ticks(0), &mut values);
+    let values: Vec<(String, f32)> = (values.into_iter())
+        .map(|(name, value)| (name.to_string(), value))
+        .collect();
+    assert_eq!(values, [("osc_1.position".to_string(), 0.25)]);
+}
+
 /// Two clips of a track that hold one pitch at once hold it until the later note ends, as main's
 /// arrangement did: the end of the first note does not cut the second.
 #[test]

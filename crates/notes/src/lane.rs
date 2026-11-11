@@ -181,10 +181,18 @@ pub fn pieces<'a>(
     (pieces, count + 1)
 }
 
-/// Where a lane of places on a travel stands at the project frame `frame`, on the straight line
-/// between the frames of the points around it: what a device hears. A tick is many frames, so a
-/// ramp a few ticks long would reach its point up to a tick early if it ended on a whole tick.
-pub fn value_at_frame(points: &[Point<f32>], frame: Frames, clock: &Clock) -> Option<f32> {
+/// Where a lane of places on a travel stands at the project frame `frame`, on the line between the
+/// frames of the points around it: what a device hears. A tick is many frames, so a ramp a few
+/// ticks long would reach its point up to a tick early if it ended on a whole tick.
+///
+/// `curves` bends the line out of each point, by its index, as [`bent`] does; a point it holds
+/// no curve for goes straight.
+pub fn value_at_frame(
+    points: &[Point<f32>],
+    curves: &[f32],
+    frame: Frames,
+    clock: &Clock,
+) -> Option<f32> {
     let after = points.partition_point(|point| clock.frame_of(point.tick) <= frame);
     let before = after.checked_sub(1).and_then(|index| points.get(index));
     match (before, points.get(after)) {
@@ -192,11 +200,22 @@ pub fn value_at_frame(points: &[Point<f32>], frame: Frames, clock: &Clock) -> Op
             let from = clock.frame_of(before.tick).0;
             let to = clock.frame_of(next.tick).0;
             let done = (frame.0 - from) as f64 / (to - from) as f64;
+            let curve = (after.checked_sub(1)).and_then(|index| curves.get(index));
+            let done = curve.map_or(done, |curve| bent(done, *curve));
             Some(f32::between(before.value, next.value, done))
         }
         (Some(only), None) | (None, Some(only)) => Some(only.value),
         (None, None) => None,
     }
+}
+
+/// How far along a line bent by `curve`, from -1 to 1, the place `done` of the way along it is:
+/// 0 goes straight, above 0 starts slow and ends fast, below 0 starts fast and ends slow.
+pub fn bent(done: f64, curve: f32) -> f64 {
+    if curve == 0.0 {
+        return done;
+    }
+    done.powf(4f64.powf(f64::from(curve)))
 }
 
 /// The lane with every point dropped that the straight line through the points it keeps
@@ -208,8 +227,20 @@ pub fn value_at_frame(points: &[Point<f32>], frame: Frames, clock: &Clock) -> Op
 /// end of a line, and the point before it is kept. A minute of pressure is thinned as fast as
 /// it is read.
 pub fn thinned<V: ExpressionValue>(points: &[Point<V>]) -> Vec<Point<V>> {
-    let number = |value: V| f64::from(value.number());
-    let step = f64::from(V::STEP);
+    thin(
+        points,
+        |value| f64::from(value.number()),
+        f64::from(V::STEP),
+    )
+}
+
+/// [`thinned`] for a lane of numbers, such as a recorded knob: a point goes that the line
+/// passes within `tolerance` of.
+pub fn thinned_within(points: &[Point<f32>], tolerance: f32) -> Vec<Point<f32>> {
+    thin(points, f64::from, f64::from(tolerance))
+}
+
+fn thin<V: Copy>(points: &[Point<V>], number: impl Fn(V) -> f64, step: f64) -> Vec<Point<V>> {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };

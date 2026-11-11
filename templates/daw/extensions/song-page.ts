@@ -1,7 +1,7 @@
 import { memo, now, type Color, type FilledStateOfTool } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import type { Song } from "./song";
-import type { track } from "./track";
+import { isMover, type track } from "./track";
 import { ticksAcross } from "./transport";
 
 // What the parts of the song's page share: its sizes and colours, what a row of the timeline
@@ -90,7 +90,7 @@ export const colourOf = (each: Child): Color => {
 export const lanesOf = (each: Child) =>
   each.tool === "track" || each.tool === "tape"
     ? each.state.automation.flatMap(({ lane, target }) =>
-        each.children.some((child) => child.name === lane && child.tool === "lane") ? [{ lane, target }] : [],
+        each.children.some((child) => child.name === lane && isMover(child.tool)) ? [{ lane, target }] : [],
       )
     : [];
 export const clipsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);

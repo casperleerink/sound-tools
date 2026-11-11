@@ -34,7 +34,7 @@ type Played = { instance: string; watches: Watches };
 /** A record as the runtime tells it: its `state` as the file holds it. */
 type Told = { id: string; tool: string; state: unknown };
 /** Where the piece plays and how, as the window tells it. */
-type Transport = { playing: boolean; tick: number; bar: number; beat: number; bpm: number; repeat: [number, number] | null; click: boolean; keys: boolean };
+type Transport = { playing: boolean; tick: number; bar: number; beat: number; bpm: number; repeat: [number, number] | null; click: boolean; keys: boolean; automation: boolean };
 /** Where the sound and the piece are now, which all code of a tool gets. */
 type Clock = { time: number; transport: Transport };
 /** The tempo map and the sections, as `project.json` holds them. */
@@ -1015,9 +1015,9 @@ const mounting = new Set<number>();
 const answering = new Set<number>();
 let flushing = false;
 /** Where the piece plays as last told: what moves on every frame, which no binding follows. */
-let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120, repeat: null, click: false, keys: false };
+let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120, repeat: null, click: false, keys: false, automation: false };
 /** What of the clock bindings follow, one for every tool. */
-const following = sdk.host.adopted({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false });
+const following = sdk.host.adopted({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false, automation: false });
 const song = sdk.host.adopted<Song>({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] });
 
 /** A tick as the window takes it: a whole number from 0. */
@@ -1042,6 +1042,7 @@ function clockFor(instance: string): SdkClock {
     get repeat() { return followed.repeat; },
     get click() { return followed.click; },
     get computerKeys() { return followed.keys; },
+    get writeAutomation() { return followed.automation; },
     get tempo_map() { return songOf.tempo_map; },
     get sections() { return songOf.sections; },
     get tick() { return moving("tick"); },
@@ -1055,6 +1056,7 @@ function clockFor(instance: string): SdkClock {
     setRepeat: (range) => op({ op: "repeat", range: range && [wholeTick(range.from, "repeat from"), wholeTick(range.to, "repeat to")] }),
     setClick: (on) => op({ op: "click", on }),
     setComputerKeys: (on) => op({ op: "keys", on }),
+    setWriteAutomation: (on) => op({ op: "automation", on }),
     update: (label, change) => {
       const draft = structuredClone({ tempo_map: song.tempo_map, sections: song.sections });
       change(draft);
@@ -1115,7 +1117,7 @@ function setClock({ time, transport: next }: Clock) {
   now = time;
   transport = next;
   const repeat = next.repeat && { from: next.repeat[0], to: next.repeat[1] };
-  sdk.host.batch(() => sdk.host.reconcile(following as never, { playing: next.playing, repeat, click: next.click, keys: next.keys } as never));
+  sdk.host.batch(() => sdk.host.reconcile(following as never, { playing: next.playing, repeat, click: next.click, keys: next.keys, automation: next.automation } as never));
 }
 
 /** Sends the ops at once when code changed something outside a request, such as after an `await`. */

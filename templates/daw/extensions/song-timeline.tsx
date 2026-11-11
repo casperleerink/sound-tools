@@ -4,7 +4,7 @@ import { LaneRow } from "./song-automation";
 import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
 import { Shades } from "./song-ruler";
-import { addInstrumentTrack, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
+import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./transport";
 
@@ -91,9 +91,11 @@ export const Timeline = ({ page }: { page: Page }) => {
   const itemMenu = async (key: string) => {
     if (!memory.selected.has(key)) choose(new Set([key]));
     const menu = CLIP_MENU.filter(({ command, tail }) => command || tail !== undefined || itemTool(children, key) === "timeline");
-    const picked = await openMenu(menu.map(({ label, shortcut, separator }) => ({ label, shortcut, separator })), { width: 240 });
-    const item = picked === null ? undefined : menu[picked];
     const row = key.split("/")[0]!;
+    const why = cannotRender(rows().find((each) => each.name === row));
+    const items = menu.map(({ label, shortcut, separator, tail }) => ({ label, shortcut, separator, ...(tail !== undefined && why ? { disabled: true, detail: why } : {}) }));
+    const picked = await openMenu(items, { width: 240 });
+    const item = picked === null ? undefined : menu[picked];
     if (item?.command) itemCommand(item.command, state.order, page);
     else if (item?.tail !== undefined) renderToTrack(page, row, [...memory.selected].filter((each) => each.startsWith(`${row}/`)), item.tail);
     else if (item?.exports) {

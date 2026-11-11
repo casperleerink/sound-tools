@@ -1,21 +1,27 @@
 import { chain } from "./chain";
+import { envelope, lfo } from "./lfo";
 import { list, takes, text, tool, type ChildTools, type Connection, type Declaration } from "./sdk";
 
-const parts = { synth: takes("notes"), chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "*": "timeline" } as const;
+const parts = { synth: takes("notes"), chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "lfo-*": lfo, "env-*": envelope, "*": "timeline" } as const;
 
-/** `"mix.gain_db"` or `"chain/verb.mix"`: the path of the child and the name of its number. */
+/** The tools that move a number of a track over time: a lane, an LFO and an envelope. */
+export const MOVERS = ["lane", "lfo", "envelope"] as const;
+export type Mover = (typeof MOVERS)[number];
+export const isMover = (tool: unknown): tool is Mover => MOVERS.includes(tool as Mover);
+
+/** `"mix.gain_db"`, `"chain/eq.bands[0].gain_db"` or `"synth.parameters.12.value"`: the path of the child and the name of its number. */
 export function splitTarget(target: string): [child: string, number: string] {
-  const dot = target.lastIndexOf(".");
+  const dot = target.indexOf(".");
   return [target.slice(0, dot), target.slice(dot + 1)];
 }
 
-/** What the lanes of a track move: each lane child `lane` into its number `target`. */
+/** What the lanes of a track move: each child `lane`, a lane, an LFO or an envelope, into its number `target`. */
 export const automation = list({ lane: text(), target: text() }, { max: 32 });
 
-/** A connection from each lane of `lanes` that is a child into the number it moves. */
+/** A connection from each of `lanes` that is a child that moves a number into the number it moves. */
 export function laneConnections<K extends ChildTools>(lanes: readonly { lane: string; target: string }[], children: readonly { name: string; tool: unknown }[]): Connection<K>[] {
   return lanes
-    .filter(({ lane }) => children.some((child) => child.name === lane && child.tool === "lane"))
+    .filter(({ lane }) => children.some((child) => child.name === lane && isMover(child.tool)))
     .map(({ lane, target }) => {
       // The record names the number: one the child does not have is a problem of the track.
       const [child, number] = splitTarget(target);
@@ -34,13 +40,16 @@ export const track = tool({
   name: "track",
   title: "Track",
   when: "You change what a track of the song is made of or how it is wired",
-  doc: "A track of a `song`: its `timeline` children, and what reaches its `notes`, play on its `synth`, any instrument, through the effects of its `chain`, into its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's volume, pan and mute, and whose level its meter shows. Each of `automation` moves a number of a child over the song: the lane child `lane` into `target`, such as `mix.gain_db` or `chain/filter.cutoff_hz`. Its recorder `rec` records what reaches its `notes` into new clips while the song records. Each fader `send-<return>` is how loud it sends into that return of the song, which wires it. `colour` is how the song draws its clips, `title` what it calls the track.",
+  doc: "A track of a `song`: its `timeline` children, and what reaches its `notes`, play on its `synth`, any instrument, through the effects of its `chain`, into its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's volume, pan and mute, and whose level its meter shows. Each of `automation` moves a number of a child over the song: the child `lane` into `target`, such as `mix.gain_db` or `chain/filter.cutoff_hz`; that child is a `lane-*` lane, an `lfo-*` LFO, or an `env-*` envelope, which also hears the track's notes. Its recorder `rec` records what reaches its `notes` into new clips while the song records. Each fader `send-<return>` is how loud it sends into that return of the song, which wires it. `colour` is how the song draws its clips, `title` what it calls the track.",
   state: { colour: text({ default: "blue" }), title: text(), automation },
   children: parts,
   behaviour: ({ state, children }): Declaration<typeof parts> => {
+    // The synth and each envelope hear every clip and what the track hears.
+    const hearing = ["synth" as const, ...children.filter((child) => child.tool === "envelope").map((child) => child.name as `env-${string}`)];
     const clips: Connection<typeof parts>[] = children
       .filter((child) => child.tool === "timeline")
-      .map((clip) => ({ from: { child: clip.name, notes: "notes" }, to: { child: "synth", notes: "notes" } }));
+      .flatMap((clip) => hearing.map((to) => ({ from: { child: clip.name, notes: "notes" }, to: { child: to, notes: "notes" } }) as Connection<typeof parts>));
+    const heard = hearing.slice(1).map((to) => ({ from: { notes: "notes" }, to: { child: to, notes: "notes" } }) as Connection<typeof parts>);
     return {
       connections: [
         ...clips,
@@ -48,6 +57,7 @@ export const track = tool({
         { from: { notes: "notes" }, to: { child: "rec", notes: "notes" } },
         // What the track hears, such as the keyboard while it is selected, plays its synth too.
         { from: { notes: "notes" }, to: { child: "synth", notes: "notes" } },
+        ...heard,
         { from: { child: "synth" }, to: { child: "chain" } },
         { from: { child: "chain" }, to: { child: "mix" } },
         { from: { child: "mix" }, to: { port: "audio" } },

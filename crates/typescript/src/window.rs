@@ -225,6 +225,9 @@ fn start(
 ) -> smol::channel::Sender<()> {
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
+    session.update(cx, |session, _| {
+        session.attach_follower(Box::new(crate::touch::Writer::default()));
+    });
     let live = Live::start(extensions, session, &tools, &generation, watched, cx);
     let changed = live.read(cx).changed.clone();
     // The keys the tool of the main view takes wherever the focus is: those of its actions that
@@ -618,6 +621,7 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
             .then(|| [looped.range.start.0, looped.range.end.0]),
         click: session.click_on(),
         keys: session.computer_keys_on(),
+        automation: session.writes_automation(),
     }
 }
 
@@ -1891,6 +1895,7 @@ impl Live {
             }
             TransportOp::Click { on } => session.set_click(on, cx),
             TransportOp::Keys { on } => session.set_computer_keys(on, cx),
+            TransportOp::Automation { on } => session.set_writes_automation(on, cx),
         });
     }
 

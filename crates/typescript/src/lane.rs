@@ -2,6 +2,7 @@
 //! output `value`. Its parent connects that to a number of another child, such as the cutoff of
 //! a filter, and the number follows the line.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -9,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
     BehaviourContext, BehaviourError, EventOutput, FADER_TOP_DB, JsonTool, JsonToolDoc,
-    OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, ToolSchema,
+    OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, Ticks, ToolSchema,
+    ValueRange,
 };
-use sound_notes::{Point, check_order};
+use sound_notes::{LaneValue, Point, check_order};
 use sound_signals::Number;
 
 use crate::tools::key;
@@ -19,7 +21,7 @@ use crate::tools::key;
 pub(crate) const NAME: &str = "lane";
 /// Its output, the number as it moves.
 pub(crate) const VALUE: &str = "value";
-const PROCESSOR: &str = "player";
+pub(crate) const PROCESSOR: &str = "player";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -27,12 +29,37 @@ struct Record {
     /// Points in ticks from the start of the song, in tick order, one per tick, at least one,
     /// in the units of the number it moves. Before the first point it holds the first value,
     /// after the last the last.
-    points: Vec<Point<f32>>,
+    points: Vec<LanePoint>,
     /// How the number moves between two points: `"linear"` in a straight line, `"log"` by equal
     /// ratios in equal times, as a frequency or a time sounds even, `"fader"` along a fader's
     /// travel, as a volume in decibels moves. A log lane's values are above 0.
     #[serde(default)]
     scale: Scale,
+}
+
+/// One point of a lane, and how the line bends from it to the next.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "Point")]
+struct LanePoint {
+    tick: Ticks,
+    #[serde(serialize_with = "short")]
+    value: f32,
+    /// How the line bends from this point to the next, -1 to 1: 0 is straight, above 0 starts
+    /// slow and ends fast, below 0 starts fast and ends slow.
+    #[serde(default, skip_serializing_if = "is_straight", serialize_with = "short")]
+    curve: f32,
+}
+
+fn is_straight(curve: &f32) -> bool {
+    *curve == 0.0
+}
+
+/// As the shortest decimal that reads back as the same `f32`: `0.1` and not
+/// `0.10000000149011612`, which JSON's numbers of 64 bits would write.
+fn short<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+    let shortest = value.to_string().parse().unwrap_or(f64::from(*value));
+    serializer.serialize_f64(shortest)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -104,7 +131,14 @@ fn record(state: &Value) -> Result<Record, String> {
     if record.points.is_empty() {
         return Err("state.points must hold at least one point".to_string());
     }
-    check_order("state.points", &record.points)?;
+    check_order("state.points", &line(&record.points))?;
+    let mut curves = record.points.iter().enumerate();
+    if let Some((index, point)) = curves.find(|(_, point)| !(-1.0..=1.0).contains(&point.curve)) {
+        return Err(format!(
+            "state.points[{index}].curve must be from -1 to 1, not {}",
+            point.curve
+        ));
+    }
     let lowest = match record.scale {
         Scale::Linear | Scale::Fader => f32::NEG_INFINITY,
         Scale::Log => 0.0,
@@ -125,20 +159,147 @@ fn record(state: &Value) -> Result<Record, String> {
     Ok(record)
 }
 
+/// What a hand writes lands on: a 1/32 note. A line takes one to go back to what a lane had,
+/// after the hand lets go.
+const GRID: u64 = 120;
+
+/// The lane of `state` with what a hand played written into it: `runs` of samples of rising
+/// ticks, each in the units of the number, spliced in turn into the line as the runs before
+/// left it. Each run keeps the line up to the tick before it, holds its last value, and goes
+/// back to the line that was there within a step of [`GRID`]. Samples land on the grid, and
+/// those the line passes close to on `travel`, the travel of the number, are dropped. Values
+/// have three significant digits, as a knob gives them.
+pub(crate) fn written(
+    state: &Value,
+    runs: &[Vec<(Ticks, f32)>],
+    travel: ValueRange,
+) -> Result<Value, String> {
+    let mut lane = record(state)?;
+    for run in runs {
+        lane.points = spliced(&lane, run, travel);
+    }
+    serde_json::to_value(&lane).map_err(|error| error.to_string())
+}
+
+fn spliced(record: &Record, run: &[(Ticks, f32)], travel: ValueRange) -> Vec<LanePoint> {
+    // On the grid, the last sample of each step.
+    let mut snapped: Vec<(Ticks, f32)> = Vec::with_capacity(run.len());
+    for &(tick, value) in run {
+        let tick = Ticks((tick.0 + GRID / 2) / GRID * GRID);
+        match snapped.last_mut() {
+            Some((last, held)) if *last == tick => *held = value,
+            _ => snapped.push((tick, value)),
+        }
+    }
+    let run = &snapped;
+    let (Some(&(first, _)), Some(&(last, held))) = (run.first(), run.last()) else {
+        return record.points.clone();
+    };
+    // A run of one tick still holds its value for one.
+    let last = if last == first {
+        Ticks(first.0 + 1)
+    } else {
+        last
+    };
+    let end = Ticks(last.0 + GRID);
+    let at = |tick: Ticks| record.value_at(tick);
+    let point = |tick: Ticks, value: f32| LanePoint {
+        tick,
+        value: travel.value(travel.position(value)),
+        curve: 0.0,
+    };
+    let places: Vec<Point<f32>> = (run.iter())
+        .map(|&(tick, value)| Point {
+            tick,
+            value: travel.position(value),
+        })
+        .collect();
+    let kept: BTreeSet<Ticks> = (sound_notes::thinned_within(&places, TOLERANCE).iter())
+        .map(|point| point.tick)
+        .collect();
+    let played = (run.iter())
+        .filter(|(tick, _)| *tick < last && kept.contains(tick))
+        .map(|&(tick, value)| point(tick, value));
+    // The line as it was up to the tick before the hand took it.
+    let edge = first.0.checked_sub(1).map(Ticks);
+    let before = (record.points.iter()).filter(|point| edge.is_some_and(|edge| point.tick < edge));
+    let guard = edge.map(|tick| point(tick, at(tick)));
+    let after = record.points.iter().filter(|point| point.tick > end);
+    let back = LanePoint {
+        curve: record.curve_at(end),
+        ..point(end, at(end))
+    };
+    (before.copied())
+        .chain(guard)
+        .chain(played)
+        .chain([point(last, held), back])
+        .chain(after.copied())
+        .collect()
+}
+
+/// How far, on the travel of its number from 0 to 1, a written line may pass from a sample it
+/// drops.
+const TOLERANCE: f32 = 0.02;
+
+impl Record {
+    /// The value at `tick`, as the player plays it.
+    fn value_at(&self, tick: Ticks) -> f32 {
+        let after = self.points.partition_point(|point| point.tick <= tick);
+        let before = after
+            .checked_sub(1)
+            .and_then(|index| self.points.get(index));
+        match (before, self.points.get(after)) {
+            (Some(before), Some(next)) => {
+                let done = (tick.0 - before.tick.0) as f64 / (next.tick.0 - before.tick.0) as f64;
+                let done = sound_notes::bent(done, before.curve);
+                let (from, to) = (
+                    self.scale.position(before.value),
+                    self.scale.position(next.value),
+                );
+                self.scale.value(f32::between(from, to, done))
+            }
+            (Some(only), None) | (None, Some(only)) => only.value,
+            (None, None) => 0.0,
+        }
+    }
+
+    /// The curve of the line at `tick`.
+    fn curve_at(&self, tick: Ticks) -> f32 {
+        let after = self.points.partition_point(|point| point.tick <= tick);
+        let before = after
+            .checked_sub(1)
+            .and_then(|index| self.points.get(index));
+        before.map_or(0.0, |point| point.curve)
+    }
+}
+
+/// The points without their curves.
+fn line(points: &[LanePoint]) -> Vec<Point<f32>> {
+    let point = |point: &LanePoint| Point {
+        tick: point.tick,
+        value: point.value,
+    };
+    points.iter().map(point).collect()
+}
+
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let record = record(state).map_err(BehaviourError::Other)?;
     let node = context.processor(PROCESSOR, LanePlayer::default)?;
-    let points: Vec<Point<f32>> = (record.points.iter())
-        .map(|point| Point {
-            tick: point.tick,
-            value: record.scale.position(point.value),
-        })
-        .collect();
-    let bits: Vec<(u64, u32)> = (points.iter())
-        .map(|point| (point.tick.0, point.value.to_bits()))
+    let mut points = line(&record.points);
+    for point in &mut points {
+        point.value = record.scale.position(point.value);
+    }
+    let curves: Vec<f32> = record.points.iter().map(|point| point.curve).collect();
+    let bits: Vec<(u64, u32, u32)> = (points.iter().zip(&record.points))
+        .map(|(point, saved)| (point.tick.0, point.value.to_bits(), saved.curve.to_bits()))
         .collect();
     if context.changed("line", key(&(record.scale, bits))) {
-        context.update(node, Arc::new((record.scale, points)))?;
+        let line = Arc::new(Line {
+            scale: record.scale,
+            points,
+            curves,
+        });
+        context.update(node, LaneUpdate::Line(line))?;
     }
     context.output(VALUE, OutputEndpoint::new(node, LanePlayer::OUTPUT));
     Ok(())
@@ -147,10 +308,26 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 /// Plays one lane: every block, its value where the block ends, at offset 0, also while the
 /// song stands still; where the line bends inside the block, again at that frame with its value
 /// where the next piece ends, so a fast ramp starts and ends on its frame. Every block and not
-/// only when it moved: a number that hears nothing goes back to its record.
+/// only when it moved: a number that hears nothing goes back to its record. While a hand holds
+/// the number, it sends nothing, so the number follows the hand.
 #[derive(Default)]
 pub(crate) struct LanePlayer {
-    line: Arc<(Scale, Vec<Point<f32>>)>,
+    line: Arc<Line>,
+    held: bool,
+}
+
+pub(crate) enum LaneUpdate {
+    Line(Arc<Line>),
+    /// A hand holds the number it moves, or lets go of it.
+    Held(bool),
+}
+
+/// What a lane plays: its points as places on its scale, and the curve out of each.
+#[derive(Default)]
+pub(crate) struct Line {
+    scale: Scale,
+    points: Vec<Point<f32>>,
+    curves: Vec<f32>,
 }
 
 impl LanePlayer {
@@ -158,7 +335,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Arc<(Scale, Vec<Point<f32>>)>;
+    type Update = LaneUpdate;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -167,19 +344,135 @@ impl Processor for LanePlayer {
     fn prepare(&mut self, _: &PrepareConfig) {}
 
     fn update(&mut self, update: &mut Self::Update) {
-        // The old line rides back to the control thread inside the update.
-        std::mem::swap(&mut self.line, update);
+        match update {
+            // The old line rides back to the control thread inside the update.
+            LaneUpdate::Line(line) => std::mem::swap(&mut self.line, line),
+            LaneUpdate::Held(held) => self.held = *held,
+        }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let (scale, points) = &*self.line;
+        if self.held {
+            return;
+        }
+        let Line {
+            scale,
+            points,
+            curves,
+        } = &*self.line;
         let (pieces, count) = sound_notes::pieces([points.as_slice()], &context.transport);
         let clock = context.transport.clock;
         for (offset, frame) in pieces.into_iter().take(count) {
-            if let Some(position) = sound_notes::value_at_frame(points, frame, clock) {
+            if let Some(position) = sound_notes::value_at_frame(points, curves, frame, clock) {
                 let value = Number(scale.value(position));
                 context.event_outputs.push(Self::OUTPUT, offset, value);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use sound_core::{Ticks, ValueRange};
+
+    use super::written;
+
+    fn points(state: &serde_json::Value) -> Vec<(u64, f64)> {
+        let points = state["points"].as_array().cloned().unwrap_or_default();
+        let point = |point: &serde_json::Value| {
+            let tick = point["tick"].as_u64().unwrap_or_default();
+            (tick, point["value"].as_f64().unwrap_or_default())
+        };
+        points.iter().map(point).collect()
+    }
+
+    fn run(samples: &[(u64, f32)]) -> Vec<(Ticks, f32)> {
+        samples
+            .iter()
+            .map(|&(tick, value)| (Ticks(tick), value))
+            .collect()
+    }
+
+    /// A hand that holds 0.8 from tick 480 to 600 on a line from 0 to 1 over 1200 ticks: the line
+    /// before it and after its return stays where it was, and the still hand is two points.
+    #[test]
+    fn a_run_goes_between_the_line_before_it_and_the_line_after_it() {
+        let lane = json!({"points": [{"tick": 0, "value": 0}, {"tick": 1200, "value": 1}]});
+        let still: Vec<(u64, f32)> = (480..=600).step_by(10).map(|tick| (tick, 0.8)).collect();
+        let travel = ValueRange::linear(0., 1.);
+        let state = written(&lane, &[run(&still)], travel).unwrap();
+        let expected = [
+            (0, 0.),
+            (479, 0.399),
+            (480, 0.8),
+            (600, 0.8),
+            (720, 0.6),
+            (1200, 1.),
+        ];
+        assert_eq!(points(&state), expected);
+    }
+
+    /// Two passes of a loop over the same ticks: the later one wins, its edge holds the first
+    /// pass's value, and it goes back to what the first pass left.
+    #[test]
+    fn a_later_pass_of_a_loop_writes_over_an_earlier_one() {
+        let lane = json!({"points": [{"tick": 0, "value": 0}]});
+        let travel = ValueRange::linear(0., 1.);
+        let first = run(&[(120, 0.5), (480, 0.5)]);
+        let second = run(&[(240, 0.9), (360, 0.9)]);
+        let state = written(&lane, &[first, second], travel).unwrap();
+        let expected = [
+            (0, 0.),
+            (119, 0.),
+            (120, 0.5),
+            (239, 0.5),
+            (240, 0.9),
+            (360, 0.9),
+            (480, 0.5),
+            (600, 0.),
+        ];
+        assert_eq!(points(&state), expected);
+    }
+
+    /// A hand that sweeps a cutoff from 125 Hz to 8 kHz and back once a bar for two bars,
+    /// sampled as the window polls, about every 16 ms: a few points on the 1/32 grid, with
+    /// three digits, that pass close to what it played.
+    #[test]
+    fn a_hand_writes_a_few_short_points_close_to_what_it_played() {
+        let lane = json!({"points": [{"tick": 0, "value": 1000, "curve": -0.7}], "scale": "log"});
+        let travel = ValueRange::logarithmic(20., 20_000.);
+        let hand: Vec<(u64, f32)> = (0..250)
+            .map(|index| {
+                let tick = 3840 + index * 31 + (index * 7) % 5;
+                let phase = (tick - 3840) as f64 / 3840. * std::f64::consts::TAU;
+                (tick, (1000. * 8f64.powf(phase.sin())) as f32)
+            })
+            .collect();
+        let state = written(&lane, &[run(&hand)], travel).unwrap();
+        let written = points(&state);
+        assert!(written.len() <= 20, "{state}");
+        // The point before the hand's first, which keeps the line before it, is off the grid.
+        assert!(
+            written
+                .iter()
+                .all(|(tick, _)| tick % 120 == 0 || *tick == 3839),
+            "{state}"
+        );
+        // No number longer than a tick: `4890` and not `4890.580810546875`. A curve it does not
+        // write stays as the file had it.
+        let text = state.to_string();
+        let runs = text.split(|char: char| !char.is_ascii_digit());
+        let longest = runs.map(str::len).max();
+        assert!(longest <= Some(5), "{text}");
+        assert_eq!(state["points"][0]["curve"], json!(-0.7), "{text}");
+        let lane = super::record(&state).unwrap();
+        let off = (hand.iter())
+            .map(|&(tick, value)| {
+                let line = travel.position(lane.value_at(Ticks(tick)));
+                (line - travel.position(value)).abs()
+            })
+            .fold(0f32, f32::max);
+        assert!(off < 0.05, "{off} {state}");
     }
 }

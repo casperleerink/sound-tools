@@ -3,8 +3,8 @@
 //! - `typescript-mixer.png`: the mixer example of `tooling/agent-eval/examples` as five tones play:
 //!   meters, faders, a muted strip, the master's scope and the device output.
 //! - `typescript-song-mixer.png`: the same song with its mixer open.
-//! - `typescript-song-lanes.png`: the same song with the automation lane of its first track
-//!   showing under it.
+//! - `typescript-song-lanes.png`: the same song with the automation lanes of its first track
+//!   showing under it: a bent line of its cutoff and an LFO of its volume.
 //! - `typescript-song.png`: the song of the DAW template (`templates/daw`), 12 tracks of 150 clips,
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
@@ -137,6 +137,28 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     ] {
         files.push((format!("state/song/t03/{path}"), record.to_string()));
     }
+    // The first track's cutoff falls early to bar 3, then slowly, and an LFO sways its volume
+    // twice a bar.
+    for (path, record) in &mut files {
+        match path.as_str() {
+            "state/song/t00/instance.json" => {
+                let mut track: serde_json::Value = serde_json::from_str(record)?;
+                let lfo = serde_json::json!({ "lane": "lfo-mix-gain-db", "target": "mix.gain_db" });
+                if let Some(lanes) = track["state"]["automation"].as_array_mut() {
+                    lanes.push(lfo);
+                }
+                *record = track.to_string();
+            }
+            "state/song/t00/lane-cutoff.json" => {
+                *record = r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 6000, "curve": -0.7}, {"tick": 7680, "value": 600}, {"tick": 245760, "value": 1500}], "scale": "log"}}"#.to_string();
+            }
+            _ => {}
+        }
+    }
+    files.push((
+        "state/song/t00/lfo-mix-gain-db.json".to_string(),
+        r#"{"tool": "lfo", "state": {"rate": "1/2", "low": -24, "high": -3}}"#.to_string(),
+    ));
     // A take of the voice, a region on its row from the second bar.
     files.push((
         "state/song/audio-voice/take.json".to_string(),

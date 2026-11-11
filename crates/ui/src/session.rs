@@ -45,6 +45,31 @@ pub type SpanOf = std::rc::Rc<dyn Fn(&Project) -> Option<(Ticks, Ticks)>>;
 /// every view that shows the click shows the same one.
 pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), GraphError>>;
 
+/// Follows the open gesture of a session, such as automation that writes what a hand plays.
+/// The window attaches one; the session calls it, so it sees every drag of every view.
+pub trait GestureFollower {
+    /// After each publish into the open gesture (`published`) and on each poll while it is open.
+    /// `writes` is whether automation is written ([`Session::writes_automation`]).
+    fn follow(
+        &mut self,
+        project: &mut Project,
+        gesture: &ProjectEdit,
+        playhead: Playhead,
+        published: bool,
+        writes: bool,
+    ) -> Result<(), ProjectError>;
+
+    /// Right before the gesture finishes: what it publishes joins the gesture's undo step.
+    fn finish(
+        &mut self,
+        project: &mut Project,
+        gesture: &mut ProjectEdit,
+    ) -> Result<(), ProjectError>;
+
+    /// Right before the gesture is cancelled, which puts the state before it back.
+    fn cancel(&mut self, project: &mut Project) -> Result<(), ProjectError>;
+}
+
 /// Where a notice came from decides what clears it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum NoticeSource {
@@ -81,6 +106,10 @@ pub struct Session {
     click_on: bool,
     /// Whether the computer keys play notes, which the window's live input follows.
     computer_keys_on: bool,
+    /// See [`Self::writes_automation`].
+    writes_automation: bool,
+    /// See [`GestureFollower`].
+    follower: Option<Box<dyn GestureFollower>>,
     /// See [`Self::rendering`].
     rendering: Option<(SharedString, u8)>,
     _polling: Task<()>,
@@ -118,6 +147,8 @@ impl Session {
             click: None,
             click_on: false,
             computer_keys_on: false,
+            writes_automation: false,
+            follower: None,
             rendering: None,
             _polling: polling,
         }
@@ -242,6 +273,24 @@ impl Session {
         }
     }
 
+    /// Whether a hand on a number that automation moves writes into it while the project plays.
+    /// Interface state, like the click.
+    pub fn writes_automation(&self) -> bool {
+        self.writes_automation
+    }
+
+    pub fn set_writes_automation(&mut self, on: bool, cx: &mut Context<Self>) {
+        if on != self.writes_automation {
+            self.writes_automation = on;
+            cx.notify();
+        }
+    }
+
+    /// Gives the session what follows its gestures.
+    pub fn attach_follower(&mut self, follower: Box<dyn GestureFollower>) {
+        self.follower = Some(follower);
+    }
+
     /// Turns the click on or off. Nothing without a click attached.
     pub fn set_click(&mut self, on: bool, cx: &mut Context<Self>) {
         let Some(click) = self.click.as_mut() else {
@@ -306,21 +355,53 @@ impl Session {
         let mut edit = self.gesture.take()?;
         let result = self.edit(cx, |project| publish(project, &mut edit));
         self.gesture = Some(edit);
+        if result.is_some() {
+            self.follow_gesture(true, cx);
+        }
         result
+    }
+
+    fn follow_gesture(&mut self, published: bool, cx: &mut Context<Self>) {
+        let (Some(follower), Some(edit)) = (self.follower.as_mut(), self.gesture.as_ref()) else {
+            return;
+        };
+        let playhead = *self.playhead.read(cx);
+        let writes = self.writes_automation;
+        let followed = follower.follow(&mut self.project, edit, playhead, published, writes);
+        if let Err(error) = followed {
+            self.report(error, cx);
+        }
     }
 
     /// Ends the gesture as one undo step and writes the files. Nothing without a gesture.
     pub fn finish_gesture(&mut self, cx: &mut Context<Self>) {
-        if let Some(edit) = self.gesture.take() {
-            self.edit(cx, |project| project.finish(edit));
-        }
+        let Some(mut edit) = self.gesture.take() else {
+            return;
+        };
+        let mut follower = self.follower.take();
+        self.edit(cx, |project| {
+            let followed = follower
+                .as_mut()
+                .map_or(Ok(()), |follower| follower.finish(project, &mut edit));
+            project.finish(edit).and(followed)
+        });
+        self.follower = follower;
     }
 
     /// Ends the gesture and applies the state from before it. Nothing without a gesture.
     pub fn cancel_gesture(&mut self, cx: &mut Context<Self>) {
-        if let Some(edit) = self.gesture.take() {
-            self.edit(cx, |project| project.cancel(edit));
-        }
+        let Some(edit) = self.gesture.take() else {
+            return;
+        };
+        let mut follower = self.follower.take();
+        // The follower goes first, so what it held lets go before the state before the
+        // gesture plays.
+        self.edit(cx, |project| {
+            let followed = (follower.as_mut()).map_or(Ok(()), |follower| follower.cancel(project));
+            let cancelled = project.cancel(edit);
+            cancelled.and(followed)
+        });
+        self.follower = follower;
     }
 
     /// Undo for keys and menus.
@@ -466,6 +547,7 @@ impl Session {
         if let Err(error) = self.project.poll() {
             self.report(error, cx);
         }
+        self.follow_gesture(false, cx);
         if self.emit_events(cx) {
             cx.notify();
         }

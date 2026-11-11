@@ -5,6 +5,7 @@ use filter::view::FilterView;
 use filter::{FilterState, FilterType};
 use gpui::{TestAppContext, point, px};
 use sound_core::Ticks;
+use sound_ui::POLL_INTERVAL;
 
 use crate::rack::record;
 use crate::support::{self, Opened, id, write_outside};
@@ -176,4 +177,162 @@ fn a_lane_that_arrives_during_a_knob_drag_ends_the_gesture(cx: &mut TestAppConte
     assert_ne!(opened.undo_label(), label);
     opened.release(point(knob.x, knob.y - px(40.)));
     assert!(!opened.gesture_open());
+}
+
+/// Plays `frames` and lets the window poll once, as a frame of the display does.
+fn play_on(opened: &mut Opened<'_>, frames: usize) {
+    opened.render(frames);
+    opened.cx.executor().advance_clock(POLL_INTERVAL);
+    opened.cx.run_until_parked();
+}
+
+fn points(opened: &mut Opened<'_>) -> Vec<(u64, f32)> {
+    let lane: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(opened.path("state/rack/cutoff.json")).unwrap(),
+    )
+    .unwrap();
+    let points = lane["state"]["points"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    (points.iter())
+        .map(|point| {
+            let value = point["value"].as_f64().unwrap_or_default() as f32;
+            (point["tick"].as_u64().unwrap_or_default(), value)
+        })
+        .collect()
+}
+
+/// While automation is written and the piece plays, a drag of the cutoff takes it over from its
+/// lane: what the hand plays, held still or moving, becomes the lane from where it was grabbed
+/// to where it was let go, which goes back to the line it had after. One undo step, which keeps
+/// the record's cutoff as it was; the lane plays again after it.
+#[gpui::test]
+fn a_drag_of_an_automated_cutoff_while_it_plays_writes_into_its_lane(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let far = 64 * support::BAR;
+    automate(&mut opened, &[(0, 1_000.), (far, 1_000.)]);
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.set_writes_automation(true, cx);
+            session.engine().play();
+        });
+    });
+    play_on(&mut opened, 24_000);
+    let before = support::mark(&mut opened);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.press(knob);
+    opened.drag_to(point(knob.x, knob.y - px(20.)));
+    // The hand holds still for a second, then moves on.
+    for _ in 0..10 {
+        play_on(&mut opened, 4_800);
+    }
+    opened.drag_to(point(knob.x, knob.y - px(40.)));
+    for _ in 0..5 {
+        play_on(&mut opened, 4_800);
+    }
+    let played = shown_cutoff(&mut opened);
+    opened.release(point(knob.x, knob.y - px(40.)));
+    opened.settle();
+
+    let written = points(&mut opened);
+    let (first, last) = (written[0], written[written.len() - 1]);
+    assert_eq!((first, last), ((0, 1_000.), (far, 1_000.)), "{written:?}");
+    // The line holds 1 kHz up to where the hand took it, and goes back to 1 kHz after.
+    let (edge, grabbed) = (written[1], written[2]);
+    assert_eq!((grabbed.0 - edge.0, edge.1), (1, 1_000.), "{written:?}");
+    assert!(grabbed.1 > 1_000., "{written:?}");
+    let back = written[written.len() - 2];
+    let let_go = written[written.len() - 3];
+    assert_eq!((back.0 - let_go.0, back.1), (120, 1_000.), "{written:?}");
+    assert_eq!(let_go.1, played, "{written:?}");
+    // A second of a still hand is one flat line, above where it started.
+    let still = written
+        .windows(2)
+        .any(|pair| pair[0].1 == pair[1].1 && pair[0].1 > 1_000. && pair[1].0 - pair[0].0 > 1_500);
+    assert!(still, "{written:?}");
+    assert!(written.len() < 12, "{written:?}");
+    assert_eq!(
+        state(&mut opened).cutoff_hz,
+        FilterState::default().cutoff_hz
+    );
+    support::one_undo_step(&mut opened, "Write automation", &before);
+
+    // The lane plays again: the knob shows it and holds still without the switch.
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| session.set_writes_automation(false, cx));
+    });
+    play_on(&mut opened, 4_800);
+    assert!(opened.find("automated-cutoff_hz").is_some());
+}
+
+/// Escape during a drag that writes automation puts everything back: the lane has its points,
+/// there is no undo step, and the lane plays again.
+#[gpui::test]
+fn escape_during_a_drag_that_writes_automation_leaves_the_lane_as_it_was(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    automate(&mut opened, &[(0, 300.), (support::BAR, 3_000.)]);
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.set_writes_automation(true, cx);
+            session.engine().play();
+        });
+    });
+    play_on(&mut opened, 4_800);
+    let (lane, label) = (points(&mut opened), opened.undo_label());
+    let knob = opened.control("knob-cutoff_hz");
+    opened.press(knob);
+    opened.drag_to(point(knob.x, knob.y - px(30.)));
+    play_on(&mut opened, 4_800);
+    opened.keys("escape");
+    opened.release(point(knob.x, knob.y - px(30.)));
+    opened.settle();
+    assert_eq!(points(&mut opened), lane);
+    assert_eq!(opened.undo_label(), label);
+    assert_eq!(state(&mut opened), FilterState::default());
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| session.set_writes_automation(false, cx));
+    });
+    play_on(&mut opened, 4_800);
+    assert!(opened.find("automated-cutoff_hz").is_some());
+}
+
+/// A hand that holds the cutoff while the loop goes back writes each pass on its own: the
+/// second pass writes from the loop's start, where the first had not been.
+#[gpui::test]
+fn a_drag_held_over_the_end_of_a_loop_writes_each_pass(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    automate(&mut opened, &[(0, 1_000.), (64 * support::BAR, 1_000.)]);
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.set_writes_automation(true, cx);
+            let range = Ticks(0)..Ticks(support::BAR);
+            session.set_loop(sound_ui::Loop { range, on: true }, cx);
+            session.engine().play();
+        });
+    });
+    // Half a second into the bar of two seconds, then on past its end.
+    play_on(&mut opened, 24_000);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.press(knob);
+    opened.drag_to(point(knob.x, knob.y - px(20.)));
+    for _ in 0..20 {
+        play_on(&mut opened, 4_800);
+    }
+    let held = shown_cutoff(&mut opened);
+    opened.release(point(knob.x, knob.y - px(20.)));
+    opened.settle();
+    let written = points(&mut opened);
+    // The line holds what the hand held over `tick`.
+    let holds = |tick: u64| {
+        let around = written
+            .windows(2)
+            .find(|pair| pair[0].0 <= tick && tick < pair[1].0);
+        around.is_some_and(|pair| pair[0].1 == held && pair[1].1 == held)
+    };
+    // The hand took it a quarter of the way into the first pass, and held it into the second.
+    assert!(holds(500) && holds(2_500), "{written:?}");
 }

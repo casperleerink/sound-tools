@@ -27,6 +27,8 @@ export interface Clock {
   readonly click: boolean;
   /** Whether the computer keys play notes, as a MIDI keyboard does. A switch of this machine, not saved; cmd-K turns it too. */
   readonly computerKeys: boolean;
+  /** Whether a drag of a knob or a fader that a lane moves writes into the lane while the piece plays, from where it is grabbed to where it is let go. Not saved. */
+  readonly writeAutomation: boolean;
   /** As `project.json` holds them: the time signatures and the tempo changes. */
   readonly tempo_map: Frozen<TempoMap>;
   /** As `project.json` holds them: the named parts of the piece, sorted by bar. */
@@ -41,6 +43,7 @@ export interface Clock {
   setRepeat(range: { from: number; to: number } | null): void;
   setClick(on: boolean): void;
   setComputerKeys(on: boolean): void;
+  setWriteAutomation(on: boolean): void;
   /**
    * Changes the tempo map and the sections: `change` gets a copy to edit, and what `project.json`
    * does not accept is refused whole. Updates of one `label` in a row are one undo step.
