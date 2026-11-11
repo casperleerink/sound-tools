@@ -1,7 +1,9 @@
 //! The plugin's own window in the plugin's own process, on macOS, where a view of one process
 //! cannot sit in a window of another.
 //!
-//! The process is an application with no Dock icon or menu bar, and its window a panel that takes
+//! The process becomes an application, with no Dock icon or menu bar, when the host first asks for
+//! the window: starting one costs a plugin's load time again, and most windows are never opened.
+//! Its window is a panel that takes
 //! the keyboard without making this process the active app, so Sound Tools keeps its menu bar.
 //! The panel floats over Sound Tools and hides with it: this process watches which app is in
 //! front. Everything the window hears that the host keeps, where it is and the keys the plugin
@@ -13,7 +15,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use gpui::{ActivationPolicy, App, Keystroke, WindowId};
-use objc2::runtime::{AnyObject, Bool};
+use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2::{class, msg_send};
 use sound_ui::{SpareKey as Spare, SpareKeys};
 
@@ -48,14 +50,46 @@ struct Windowed {
     owner: Option<WindowOwner>,
 }
 
-/// Serves the host in `application`, which opens the plugin's window when the host asks.
+/// Makes this process's shared application GPUI's, before the plugin loads: a plugin that makes
+/// one first makes a plain one, and GPUI cannot run that. No Dock icon, from the start, so a
+/// plugin's dialog can come to the front.
+pub(super) fn claim_application() {
+    let Some(class) = AnyClass::get(c"GPUIApplication") else {
+        return;
+    };
+    // SAFETY: AppKit's shared application, made on the main thread by the class GPUI registered
+    // for it.
+    unsafe {
+        let app: *mut AnyObject = msg_send![class, sharedApplication];
+        let _: Bool = msg_send![app, setActivationPolicy: ACCESSORY];
+    }
+}
+
+/// `NSApplicationActivationPolicyAccessory`.
+const ACCESSORY: isize = 1;
+
+/// Serves the host in `application`, from the request that asked for the window, `first`, on.
 /// Never returns: the process ends with the host, or with the host's quit.
 pub(super) fn serve(
     server: Server,
-    requests: smol::channel::Receiver<Received>,
+    first: Received,
+    received: std::sync::mpsc::Receiver<Received>,
     application: gpui::Application,
     parent: u32,
 ) -> ! {
+    let (sender, requests) = smol::channel::unbounded();
+    let forwarded = std::thread::Builder::new()
+        .name("plugin-requests-to-window".into())
+        .spawn(move || {
+            while let Ok(request) = received.recv() {
+                if sender.send_blocking(request).is_err() {
+                    break;
+                }
+            }
+        });
+    if forwarded.is_err() {
+        end_now();
+    }
     application.run(move |cx| {
         cx.set_activation_policy(ActivationPolicy::Accessory);
         let heard = Rc::new(RefCell::new(Heard::default()));
@@ -94,6 +128,8 @@ pub(super) fn serve(
         })
         .detach();
         cx.spawn(async move |cx| {
+            let (message, bytes) = first;
+            cx.update(|cx| serve_one(&windowed, message, bytes, cx));
             while let Ok((message, bytes)) = requests.recv().await {
                 cx.update(|cx| serve_one(&windowed, message, bytes, cx));
             }

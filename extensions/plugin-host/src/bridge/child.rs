@@ -92,19 +92,15 @@ pub fn serve(
         audio_thread: Some(audio_thread),
     };
     #[cfg(target_os = "macos")]
-    if let (Some(application), true) = (windows, *mode == *WINDOWS) {
-        let (sender, requests) = smol::channel::unbounded();
-        start_reader(reading, parent, move |received| {
-            sender.send_blocking(received).is_ok()
-        })?;
-        super::windows::serve(server, requests, application(), parent);
+    let windows = windows.filter(|_| *mode == *WINDOWS);
+    #[cfg(target_os = "macos")]
+    if windows.is_some() {
+        super::windows::claim_application();
     }
     #[cfg(not(target_os = "macos"))]
     let _plain = (windows, mode);
     let (sender, requests) = mpsc::channel();
-    start_reader(reading, parent, move |received| {
-        sender.send(received).is_ok()
-    })?;
+    start_reader(reading, parent, sender)?;
     loop {
         server
             .mapping
@@ -112,7 +108,14 @@ pub fn serve(
             .heartbeat
             .fetch_add(1, Ordering::Relaxed);
         match requests.recv_timeout(HEARTBEAT) {
-            Ok((message, bytes)) => {
+            Ok(received) => {
+                #[cfg(target_os = "macos")]
+                if let Some(application) = windows
+                    && matches!(received.0.request, Request::OpenWindow { .. })
+                {
+                    super::windows::serve(server, received, requests, application(), parent);
+                }
+                let (message, bytes) = received;
                 let reply = server.serve(message, bytes);
                 server.send(reply);
             }
@@ -142,7 +145,7 @@ pub(super) enum Reply {
 fn start_reader(
     mut control: UnixStream,
     parent: u32,
-    send: impl Fn(Received) -> bool + Send + 'static,
+    sender: mpsc::Sender<Received>,
 ) -> Result<(), String> {
     control
         .set_read_timeout(Some(PARENT_CHECK))
@@ -168,7 +171,7 @@ fn start_reader(
                     }
                     _ => None,
                 };
-                if !send((message, bytes)) {
+                if sender.send((message, bytes)).is_err() {
                     end_now();
                 }
             }
