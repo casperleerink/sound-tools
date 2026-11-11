@@ -373,7 +373,8 @@ fn float(parent: &ParentView) {
             return;
         }
         let _: () = msg_send![window, setLevel: FLOATING_LEVEL];
-        let _: () = msg_send![window, setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY];
+        let _: () =
+            msg_send![window, setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY];
         let _: () = msg_send![window, setHidesOnDeactivate: Bool::NO];
     }
 }
