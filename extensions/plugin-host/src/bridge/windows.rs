@@ -357,11 +357,13 @@ fn spare_key(key: Spare<'_>) -> SpareKey {
     }
 }
 
-/// The window floats over Sound Tools' own windows, on the Space it opened on and next to a main
-/// window in full screen. GPUI's panel that does not activate sits above every app and on every
-/// Space, which is for a menu, not a window.
+/// The window floats over Sound Tools' own windows, and is on every Space, a main window's in
+/// full screen too: macOS moves no window of another process along with Sound Tools'. It hides
+/// with Sound Tools, see [`follow`]. GPUI's panel that does not activate sits above every app,
+/// which is for a menu, not a window.
 fn float(parent: &ParentView) {
     const FLOATING_LEVEL: isize = 3;
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
     const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
     let view = parent.view.as_ptr().cast::<AnyObject>();
     // SAFETY: an `NSView` of a window this process just opened, on its main thread.
@@ -371,7 +373,7 @@ fn float(parent: &ParentView) {
             return;
         }
         let _: () = msg_send![window, setLevel: FLOATING_LEVEL];
-        let _: () = msg_send![window, setCollectionBehavior: FULL_SCREEN_AUXILIARY];
+        let _: () = msg_send![window, setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY];
         let _: () = msg_send![window, setHidesOnDeactivate: Bool::NO];
     }
 }
