@@ -1,9 +1,23 @@
 //! The scan's child process for the tests of this crate, which have no runtime: lists one
-//! bundle, one line of JSON per plugin. The runtime uses its own executable instead.
+//! bundle, one line of JSON per plugin. The runtime uses its own executable instead. Started
+//! with `plugin_host::PLAY_ARGUMENT`, it plays one plugin in a process of its own.
 
 use std::path::PathBuf;
 
 fn main() -> std::process::ExitCode {
+    // A plugin in a process of its own, as the runtime starts one with the same argument.
+    #[cfg(unix)]
+    {
+        let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+        if arguments
+            .first()
+            .is_some_and(|first| first == plugin_host::PLAY_ARGUMENT)
+        {
+            let Err(message) = plugin_host::serve_plugin(arguments.get(1..).unwrap_or_default());
+            eprintln!("{message}");
+            return std::process::ExitCode::FAILURE;
+        }
+    }
     let mut arguments = std::env::args_os().skip(1);
     let format = arguments
         .next()

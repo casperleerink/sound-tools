@@ -32,7 +32,7 @@ use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Requests};
 use crate::parameters::{Parameter, by_id, playable};
-use crate::processor::{Control, Started};
+use crate::processor::{Control, Laned, Player, PluginAudio};
 use crate::scan::ScannedPlugin;
 use crate::{Pin, PluginProblem, processor::not_ours};
 
@@ -545,7 +545,8 @@ impl LoadedPlugin for Vst3Plugin {
         &mut self,
         _config: PrepareConfig,
         pins: &[ParameterChange],
-    ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
+        laned: &Laned,
+    ) -> Option<Result<Box<dyn PluginAudio>, PluginProblem>> {
         Arc::get_mut(&mut self.live)?;
         // The old audio side's last reports reach the controller before its ring goes.
         self.take_reports();
@@ -589,7 +590,7 @@ impl LoadedPlugin for Vst3Plugin {
         self.edited = ends.edited;
         self.edits_pushed = 0;
         self.pushed_at.clear();
-        Some(Ok(Box::new(started)))
+        Some(Ok(Box::new(Player::new(Box::new(started), laned.clone()))))
     }
 }
 

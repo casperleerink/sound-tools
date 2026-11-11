@@ -28,7 +28,8 @@ use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Re
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
 use crate::parameters::{Parameter, Steps, by_id, playable};
 use crate::processor::{
-    Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
+    Control, EVENT_CAPACITY, Laned, Player, PluginAudio, PluginEvent, Started, copy_in, copy_out,
+    not_ours,
 };
 use crate::scan::ScannedPlugin;
 use crate::window::WindowSize;
@@ -588,7 +589,8 @@ impl LoadedPlugin for ClapPlugin {
         &mut self,
         config: PrepareConfig,
         pins: &[ParameterChange],
-    ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
+        laned: &Laned,
+    ) -> Option<Result<Box<dyn PluginAudio>, PluginProblem>> {
         // Deactivating needs the audio side back: clack refuses while it is still held.
         if self.instance.is_active() && self.instance.try_deactivate().is_err() {
             return None;
@@ -605,7 +607,7 @@ impl LoadedPlugin for ClapPlugin {
             // `pins` was every pin as the record has it now, so nothing older is kept.
             self.values = values;
             self.waiting.clear();
-            Box::new(started) as Box<dyn Started>
+            Box::new(Player::new(Box::new(started), laned.clone())) as Box<dyn PluginAudio>
         }))
     }
 }

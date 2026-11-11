@@ -272,20 +272,41 @@ function sources(): Now<Record<string, number>> {
 /** The sources of live values, for components of a view, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
 
+/** The keys that type a character other than a letter. */
+export const SYMBOL_KEYS = [
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "=", "[", "]", ";", "'", ",", ".", "/", "`", "\\"
+] as const;
+/** What the symbol keys type with shift. */
+export const SHIFTED_KEYS = [
+  "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "{", "}", ":", '"', "<", ">", "?", "~", "|"
+] as const;
 /** The keys of the computer keyboard, as the window names them. */
 export const PLAIN_KEYS = [
   "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
-  "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "=",
-  "[", "]", ";", "'", ",", ".", "/", "`", "\\", "space", "enter", "escape", "backspace", "delete",
+  "t", "u", "v", "w", "x", "y", "z", ...SYMBOL_KEYS, "space", "enter", "escape", "backspace", "delete",
   "tab", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "f1", "f2", "f3",
   "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"
 ] as const;
 /** A key of the computer keyboard by its name. */
 export type PlainKey = (typeof PLAIN_KEYS)[number];
+type SymbolKey = (typeof SYMBOL_KEYS)[number];
+type Held = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}`;
 /** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
-export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${PlainKey}`;
-/** The keys the app keeps: undo, new, open, quit, the panel, the computer keys, and tab. */
-export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "tab";
+export type KeyName = `${Held}${PlainKey}`;
+type ActionHeld = `${"" | "cmd-"}${"" | "alt-"}`;
+/**
+ * A key an action has, with cmd, alt and shift held first and in that order: `"space"`,
+ * `"shift-up"`, `"cmd-shift-z"`. `cmd` is ctrl on Windows and Linux, so there is no `ctrl-`: a
+ * key named here works on every system. A symbol key with shift is named by what it then
+ * types, with no shift: `"?"`, `"cmd-+"`. The app's own keys are none of an action's.
+ */
+export type ActionKey = Exclude<`${ActionHeld}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${ActionHeld}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`, AppKey>;
+/** An action by its tool and its name: `"song.record"`. The app's own are `"app.undo"`, `"app.redo"` and `"app.computer_keys"`. */
+export type ActionId = `${string}.${string}`;
+/** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */
+export type Shortcut = KeyName | ActionId;
+/** The keys the app keeps: undo, redo, new, open, quit, settings, the panel, the computer keys, and tab. */
+export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "cmd-shift-z" | "cmd-alt-z" | "cmd-," | "tab" | "shift-tab";
 
 /** An item of `openMenu`. */
 export interface MenuItem {
@@ -301,7 +322,7 @@ export interface MenuItem {
   /** A line above it, between it and the items before. */
   separator?: boolean;
   /** The keys that do it too, drawn at the end of its row. */
-  shortcut?: KeyName;
+  shortcut?: Shortcut;
 }
 
 /** A device `offers` gives. */

@@ -1,6 +1,6 @@
 //! The app on this machine, apart from its window: the projects it had open last, whether its
-//! left panel was open, the audio devices chosen, a start of the app again on another project,
-//! and the command line tool for agents.
+//! left panel was open, the audio devices chosen, the composer's own keys, a start of the app
+//! again on another project, and the command line tool for agents.
 //!
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
 //! write the last project, so a test cannot change what the app opens next.
@@ -33,6 +33,9 @@ const LEFT_PANEL_FILE: &str = "left-panel";
 /// change because it was opened on another computer.
 const AUDIO_DEVICES_FILE: &str = "audio-devices.json";
 
+/// How the composer last exported, for every project.
+const EXPORT_SETTINGS_FILE: &str = "export-settings.json";
+
 /// The agent programs the sidebar downloads, such as `claude/2.1.286/claude`.
 const AGENTS_FOLDER: &str = "agents";
 
@@ -43,6 +46,10 @@ const THREADS_FOLDER: &str = "agent/threads";
 /// How much the agent may do without asking, and its model. Out of every project, so the
 /// agent cannot give itself more access by editing a file there.
 const AGENT_SETTINGS_FILE: &str = "agent/settings.json";
+
+/// The composer's own keys for the actions of the app and of the tools, for every project. Never
+/// in a project, where an agent could change them under the composer.
+const SHORTCUTS_FILE: &str = "shortcuts.json";
 
 #[cfg(unix)]
 fn home() -> Result<PathBuf> {
@@ -203,6 +210,10 @@ pub fn left_panel_file(support: &Path) -> PathBuf {
     support.join(LEFT_PANEL_FILE)
 }
 
+pub fn export_settings_file(support: &Path) -> PathBuf {
+    support.join(EXPORT_SETTINGS_FILE)
+}
+
 /// Where the agent sidebar keeps the agent programs it downloads, one folder per version.
 pub fn agents_folder(support: &Path) -> PathBuf {
     support.join(AGENTS_FOLDER)
@@ -221,6 +232,11 @@ pub fn remember_left_panel(file: &Path, open: bool) -> Result<()> {
     }
     let word = if open { "open\n" } else { "closed\n" };
     std::fs::write(file, word).with_context(|| format!("could not write {}", file.display()))
+}
+
+/// Where the composer's own keys are kept.
+pub fn shortcuts_file(support: &Path) -> PathBuf {
+    support.join(SHORTCUTS_FILE)
 }
 
 /// Where the agent sidebar keeps the threads of every project, one folder per project.

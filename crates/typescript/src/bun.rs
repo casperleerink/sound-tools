@@ -125,6 +125,14 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
+    /// The key of some actions of its tool went down: its code runs them in this order until
+    /// one does it.
+    Action {
+        instance: Played<'a>,
+        actions: &'a [String],
+        #[serde(flatten)]
+        clock: Clock,
+    },
     /// A take one of its `recorder` children made, for its `onTake` to keep.
     Take {
         instance: Played<'a>,

@@ -109,3 +109,64 @@ fn a_project_without_timelines_has_no_end() {
     let harness = Harness::new();
     assert_eq!(harness.project.end(), None);
 }
+
+/// Runs `--render <file> <flags>` on the project, as the window's export and agents do, and
+/// reads the WAV it writes.
+fn render_with_flags(harness: &Harness, file: &str, flags: &[&str]) -> (hound::WavSpec, Vec<f32>) {
+    let output = tempfile::tempdir().unwrap();
+    let file = output.path().join(file);
+    let ran = std::process::Command::new(env!("CARGO_BIN_EXE_runtime"))
+        .arg(harness.project.root())
+        .arg("--render")
+        .arg(&file)
+        .args(flags)
+        .output()
+        .unwrap();
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let mut reader = hound::WavReader::open(&file).unwrap();
+    let spec = reader.spec();
+    let samples = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().map(Result::unwrap).collect(),
+        hound::SampleFormat::Int => (reader.samples::<i32>())
+            .map(|sample| sample.unwrap() as f32 / (1 << (spec.bits_per_sample - 1)) as f32)
+            .collect(),
+    };
+    (spec, samples)
+}
+
+/// At 44.1 kHz the engine plays the piece as on a device of that rate: as long, at its pitch.
+#[test]
+fn an_export_at_44_1_khz_has_the_length_and_the_pitch_of_the_piece() {
+    // An A, 440 Hz, for the two bars of the timeline: four seconds at 120 beats a minute.
+    let (synth, a) = (
+        synth(0.3),
+        clip(0, 2 * BAR_TICKS, &[(0, 2 * BAR_TICKS, 69)]),
+    );
+    let harness = Harness::rack(&[("instrument", &synth), ("a", &a)]);
+    let range = ["--from", "0", "--to", "7680", "--no-tail"];
+    let (spec, samples) = render_with_flags(
+        &harness,
+        "a.wav",
+        &[&range[..], &["--rate", "44100", "--depth", "24"]].concat(),
+    );
+    assert_eq!((spec.sample_rate, spec.bits_per_sample), (44_100, 24));
+    assert_eq!(samples.len(), 2 * 4 * 44_100);
+    let mut meter = sound_media::analysis::Meter::new(44_100, vec![]);
+    meter.push(&samples);
+    let note = meter.finish().pitch.unwrap().note;
+    assert!((note - 69.0).abs() < 0.05, "{note}");
+
+    let (_, samples) =
+        render_with_flags(&harness, "a.wav", &["--seconds", "1.5", "--rate", "44100"]);
+    assert_eq!(samples.len(), 2 * 66_150);
+
+    // With no flags, what an export always was.
+    let (spec, samples) = render_with_flags(&harness, "a.wav", &range);
+    assert_eq!(spec.sample_rate, 48_000);
+    assert_eq!(spec.sample_format, hound::SampleFormat::Float);
+    assert_eq!(samples.len(), 2 * 2 * BAR);
+}

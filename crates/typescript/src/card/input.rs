@@ -378,7 +378,8 @@ impl TypeScriptCard {
     /// here, or of one that went down while something else had the keys, such as the computer
     /// keys. A key that went down here comes up here, whatever is held by then. A key with
     /// cmd, ctrl, alt or fn only goes down, as macOS sends no up while cmd is held; one the
-    /// window binds, such as cmd-z, is the window's and never comes here.
+    /// window binds, such as cmd-z, is the window's and never comes here. A key that does
+    /// actions of its tool runs them as it goes down, and `onKey` hears nothing of it.
     fn key(&mut self, keystroke: &Keystroke, down: bool, repeat: bool, cx: &mut Context<Self>) {
         if down && keystroke.key == "escape" {
             if self.cancel_drag(cx) {
@@ -397,9 +398,24 @@ impl TypeScriptCard {
             cx.stop_propagation();
             return;
         }
-        let Some(info) = self.live.read(cx).info(self.card).filter(|info| info.keys) else {
+        let Some(info) = self.live.read(cx).info(self.card) else {
             return;
         };
+        let actions = match down {
+            true => crate::actions_on(&info.name, keystroke, cx),
+            false => Vec::new(),
+        };
+        if !actions.is_empty() {
+            if !repeat {
+                let id = self.id.clone();
+                self.live.update(cx, |live, cx| live.act(&id, &actions, cx));
+            }
+            cx.stop_propagation();
+            return;
+        }
+        if !info.keys {
+            return;
+        }
         let modifiers = keystroke.modifiers;
         let chord = modifiers.platform || modifiers.control || modifiers.alt || modifiers.function;
         let key = keystroke.key.clone();

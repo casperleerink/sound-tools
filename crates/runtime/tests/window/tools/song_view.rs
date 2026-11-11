@@ -6,8 +6,9 @@
 
 use gpui::{
     Bounds, ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
-    Pixels, Point, TestAppContext, point, px,
+    Pixels, Point, TestAppContext, VisualTestContext, point, px,
 };
+use runtime::window::export_settings::ExportSettings;
 use sound_core::Ticks;
 
 use super::song::open_song;
@@ -272,6 +273,80 @@ fn a_track_renders_onto_an_audio_track_under_it_with_its_fader_and_sends(cx: &mu
     assert_eq!(window.problems(), []);
 }
 
+/// "Export audio…" asks how first. MP3 chosen there names the file in the save panel, and the
+/// file written is an MP3 of the piece.
+#[gpui::test]
+fn export_audio_asks_how_and_writes_the_mp3_chosen(cx: &mut TestAppContext) {
+    let mut window = super::song::open_song(cx, 1, 2);
+    let program = env!("CARGO_BIN_EXE_runtime").into();
+    (window.cx).update(|_, cx| cx.set_global(sound_ui::RenderProgram(program)));
+    window.wait_for_bun();
+    let menu = window.until_found("project-menu");
+    window.click(menu);
+    window.pick("menu-export");
+
+    let screen = window.cx.update(|_, cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
+    });
+    let screen = screen.expect("the export settings did not open");
+    let mut screen = VisualTestContext::from_window(screen.into(), &window.cx.cx);
+    screen.update(|window, _| window.refresh());
+    screen.run_until_parked();
+    assert!(screen.debug_bounds("segment-24").is_some());
+    // Tab reaches the rows, as in the main window.
+    let focused = |screen: &mut VisualTestContext| screen.update(|window, cx| window.focused(cx));
+    let before = focused(&mut screen);
+    screen.simulate_keystrokes("tab");
+    assert_ne!(focused(&mut screen), before);
+    // Format, sample rate, bit depth and loudness, then Cancel: return there exports nothing.
+    screen.simulate_keystrokes("tab tab tab tab enter");
+    window.cx.run_until_parked();
+    assert!(!window.cx.did_prompt_for_new_path());
+    assert_eq!(window.cx.update(|_, cx| cx.windows().len()), 1);
+    let menu = window.until_found("project-menu");
+    window.click(menu);
+    window.pick("menu-export");
+    let screen = window.cx.update(|_, cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
+    });
+    let mut screen = VisualTestContext::from_window(screen.unwrap().into(), &window.cx.cx);
+    screen.update(|window, _| window.refresh());
+    screen.run_until_parked();
+    let mp3 = screen.debug_bounds("segment-mp3").unwrap().center();
+    screen.simulate_click(mp3, Modifiers::default());
+    screen.run_until_parked();
+    assert!(
+        screen.debug_bounds("segment-24").is_none(),
+        "an MP3 has no bit depth"
+    );
+    screen.simulate_keystrokes("enter");
+    window.cx.run_until_parked();
+    let windows = window.cx.update(|_, cx| cx.windows().len());
+    assert_eq!(windows, 1, "the export settings are still open");
+
+    assert!(window.cx.did_prompt_for_new_path());
+    let output = tempfile::tempdir().unwrap();
+    let file = output.path().join("piece.mp3");
+    window
+        .cx
+        .simulate_new_path_selection(|_| Some(file.clone()));
+    window.until("the export is done", |window| {
+        window.cx.has_pending_prompt()
+    });
+    assert_eq!(window.notice(), None);
+    let mut decoder = rusty_mp3::Mp3Decoder::new();
+    decoder.push(&std::fs::read(&file).unwrap());
+    decoder.flush();
+    let mut peak = 0.0_f32;
+    while let Ok(frame) = decoder.next_frame() {
+        peak = frame
+            .samples
+            .iter()
+            .fold(peak, |peak, sample| peak.max(sample.abs()));
+    }
+    assert!(peak > 0.01, "{peak}");
+}
+
 #[gpui::test]
 fn a_track_head_dragged_onto_another_goes_before_it(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 3, 2);
@@ -315,8 +390,8 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
     // Chosen, copied, and pasted at the playhead, the start, on its track.
     let clip = window.on_lane(BAR / 2, 1);
     window.click(clip);
-    window.cx.simulate_keystrokes("cmd-c");
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-c");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("the clip pasted", |window| window.has("song/t01/c00-2"));
     let pasted = window.record("song/t01/c00-2");
     assert_eq!(pasted["start"], 0);
@@ -816,7 +891,9 @@ fn notes_are_copied_and_pasted_in_the_editor(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     window.editor("t00/c00");
-    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window
+        .cx
+        .simulate_keystrokes("secondary-a secondary-c secondary-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Paste notes"));
@@ -840,7 +917,7 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     window.editor("t00/c00");
-    window.cx.simulate_keystrokes("cmd-a cmd-c");
+    window.cx.simulate_keystrokes("secondary-a secondary-c");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
@@ -861,14 +938,16 @@ fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut
     window.double_click(clip);
     window.editor("t00/c00");
     // A copy of every note a span on starts past the end of the clip.
-    window.cx.simulate_keystrokes("cmd-a cmd-d");
+    window.cx.simulate_keystrokes("secondary-a secondary-d");
     window.wait_for_bun();
     assert_eq!(notes(&mut window), count);
-    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window
+        .cx
+        .simulate_keystrokes("secondary-a secondary-c secondary-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
     window.cx.simulate_keystrokes("secondary-z");
     window.until("the paste undone", |window| notes(window) == count);
-    window.cx.simulate_keystrokes("cmd-c cmd-d");
+    window.cx.simulate_keystrokes("secondary-c secondary-d");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
@@ -982,7 +1061,7 @@ fn a_clip_copied_from_its_menu_is_pasted(cx: &mut TestAppContext) {
     window.pick("menu-1");
     window.wait_for_bun();
     window.click(clip);
-    window.cx.simulate_keystrokes("cmd-v");
+    window.cx.simulate_keystrokes("secondary-v");
     window.until("the clip pasted", |window| window.has("song/t01/c00-2"));
     assert_eq!(window.problems(), []);
 }
@@ -1004,7 +1083,9 @@ fn notes_pasted_into_a_clip_with_no_length_are_kept(cx: &mut TestAppContext) {
     let at = window.on_lane(BAR / 4, 0);
     window.double_click(at);
     window.editor("t00/c00");
-    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window
+        .cx
+        .simulate_keystrokes("secondary-a secondary-c secondary-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
 }
 
@@ -1366,7 +1447,7 @@ fn the_keys_choose_move_and_name_the_track_whose_panel_shows(cx: &mut TestAppCon
     // Enter names it.
     window.cx.simulate_keystrokes("enter");
     window.wait_for_bun();
-    window.cx.simulate_keystrokes("cmd-a");
+    window.cx.simulate_keystrokes("secondary-a");
     window.cx.simulate_input("Keys");
     window.cx.simulate_keystrokes("enter");
     window.until("the track named", |window| {

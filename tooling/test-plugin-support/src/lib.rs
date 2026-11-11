@@ -365,6 +365,24 @@ pub const LATE_LEVEL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_LATE_LEVEL";
 /// main thread, the VST 3 one by a parameter its block reports.
 pub const LEVEL_KEY: u8 = 7;
 
+/// A note on this key makes the plugin crash in its `process`, as a broken plugin does: the
+/// process it is in ends there. Only a host that plays it in a process of its own lives on, so
+/// only such a test plays it.
+pub const CRASH_KEY: u8 = 9;
+
+/// A note on this key makes the plugin hang in its `process`, for ever, as a plugin stuck in a
+/// loop does. Only a host that plays it in a process of its own can let go of it.
+pub const HANG_KEY: u8 = 10;
+
+/// A saved state that makes the plugin crash while it loads it: a test writes it into the
+/// state asset. The scan loads no state, so it lists the plugin as ever.
+pub const CRASH_STATE: &[u8] = b"crash as this loads";
+
+/// Makes the plugin's main thread hang for ever when it is asked for its state, as a plugin
+/// that waits for its licence server does. Only a host that plays it in a process of its own
+/// can let go of it.
+pub const HANG_SAVE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HANG_SAVE";
+
 /// A note on this key makes the VST 3 plugin's controller edit `Level` through the host on the
 /// main thread, the way its own window does under the composer's hand: one `beginEdit`, four
 /// values down to a quarter, one `endEdit`. VST 3 only: the CLAP plugin plays the key.
@@ -687,6 +705,13 @@ impl Tone {
     }
 
     pub fn note_on(&mut self, key: u8, velocity: f32) {
+        match key {
+            CRASH_KEY => std::process::abort(),
+            HANG_KEY => loop {
+                std::hint::spin_loop();
+            },
+            _ => {}
+        }
         let sounding = i32::from(key).saturating_add(self.semitones).clamp(0, 127);
         let frequency = 440.0 * ((sounding as f32 - 69.0) / 12.0).exp2();
         let voice = Voice {
@@ -819,6 +844,11 @@ impl Default for SavedState {
 /// The saved state of a test plugin: a magic number and the numbers of [`SavedState`]. A
 /// latency of 0 is left out, so a state from before the latency existed is written as it was.
 pub fn save_state(state: SavedState) -> Vec<u8> {
+    if std::env::var_os(HANG_SAVE_VARIABLE).is_some() {
+        loop {
+            std::thread::park();
+        }
+    }
     let mut bytes = Vec::with_capacity(20);
     bytes.extend_from_slice(&STATE_MAGIC);
     bytes.extend_from_slice(&state.semitones.to_le_bytes());
@@ -833,6 +863,10 @@ pub fn save_state(state: SavedState) -> Vec<u8> {
 /// What a saved state holds. `None` says the bytes are not one of ours. A state that is
 /// shorter than this one writes keeps the defaults for what it does not carry.
 pub fn load_state(bytes: &[u8]) -> Option<SavedState> {
+    if bytes == CRASH_STATE {
+        log("crash_as_it_loads", 0, 0);
+        std::process::abort();
+    }
     let rest = bytes.strip_prefix(&STATE_MAGIC)?;
     let number = |at: usize, fallback: i32| match rest.get(at..at + 4) {
         Some(four) => four.try_into().map(i32::from_le_bytes).ok(),

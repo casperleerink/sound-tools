@@ -2,7 +2,7 @@
 
 import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
 import { host } from "./host";
-import { AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Offers, PlainKey, View } from "./live";
+import { ActionKey, AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Offers, PlainKey, View } from "./live";
 import { Child } from "./nodes";
 import { Memory } from "./reactivity";
 import { Tools } from "./records";
@@ -68,9 +68,16 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    */
   view?: (view: View<ValuesOf<S>, I, M, K>) => Child;
   /**
-   * A key of the computer keyboard goes down or up: while its view shows at the top or after a
-   * click on its card, those `keys` names, else every plain key; and wherever the focus is, those
-   * `globalKeys` names.
+   * What it does on a key, by name: lowercase letters, digits, `_`. The composer sees them
+   * in the list of shortcuts and gives each the keys they want, which then replace `keys`. A key
+   * does them while its view shows at the top, after a click on its card, or from a card inside
+   * it that has no use for the key.
+   */
+  actions?: Record<string, Action<Context<ValuesOf<S>, I, M, K>>>;
+  /**
+   * A key that is held, such as one that plays a note, goes down or up: while its view shows at
+   * the top or after a click on its card, those `keys` names, else every plain key; and wherever
+   * the focus is, those `globalKeys` names. A key that does one of its `actions` does only that.
    */
   onKey?: (tool: Context<ValuesOf<S>, I, M, K>, key: Key) => void;
   /**
@@ -81,8 +88,8 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
   keys?: readonly KeyName[];
   /**
    * The keys `onKey` hears wherever the focus is, outside a text field, while its view is the
-   * whole window: `["space"]` to play and stop. The app keeps undo, opening, quitting and its
-   * panel; nothing else plays a key by itself.
+   * whole window. The app keeps undo, opening, quitting and its panel; nothing else plays a key
+   * by itself.
    */
   globalKeys?: readonly Exclude<KeyName, AppKey>[];
   /**
@@ -96,6 +103,22 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    * With no `onTake` a take keeps only its files.
    */
   onTake?: (tool: Context<ValuesOf<S>, I, M, K>, take: Take) => void;
+}
+
+/** Something a tool does, which a key does and the composer can give other keys. */
+export interface Action<C> {
+  /** What the composer reads in the list of shortcuts: "Play or stop". */
+  title: string;
+  /** The keys that do it until the composer picks others: `["delete", "backspace"]`, `["shift-up"]`. Shift is a key of its own: `"up"` does nothing on shift-up. A symbol key with shift is named by what it types: `"?"`. */
+  keys?: readonly ActionKey[];
+  /** Also wherever the focus is, outside a text field, while its view is the whole window. */
+  everywhere?: boolean;
+  /**
+   * Does it. `false` says there was nothing to do here, and the key goes on to the next action of
+   * the tool with that key, in the order `actions` has them: delete takes out the chosen notes,
+   * else the chosen clips.
+   */
+  run: (tool: C) => void | boolean | Promise<void>;
 }
 
 /**
@@ -446,7 +469,7 @@ export type Frozen<T> = T extends string | number | boolean | null | undefined
       ? { readonly [Key in keyof T]: Frozen<T[Key]> }
       : T;
 
-/** What all code of an instance gets: its view, `tick`, `onKey` and `onNotes`. */
+/** What all code of an instance gets: its view, `tick`, its `actions`, `onKey` and `onNotes`. */
 export interface Context<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
   extends Performer<I, K> {
   /** The record as it is now, every field at its default where the record leaves it out. */

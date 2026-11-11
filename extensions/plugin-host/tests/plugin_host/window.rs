@@ -44,7 +44,7 @@ fn times(log: &Path, call: &str) -> usize {
 
 fn open(format: PluginFormat, log: &Path) -> Harness {
     tell_the_plugin(Some(log), None);
-    let mut harness = Harness::new();
+    let mut harness = Harness::in_process();
     harness.add_track(record(format, "piano"), Vec::new());
     harness.play(512);
     harness
@@ -301,7 +301,7 @@ fn loading_a_vst3_plugin_makes_no_view_call_at_all() {
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     tell_the_plugin(Some(&log), None);
-    let mut harness = Harness::new();
+    let mut harness = Harness::in_process();
     harness.add_track(record(PluginFormat::Vst3, "piano"), Vec::new());
     harness.play(1024);
     harness.plugins.close(&mut harness.project);
@@ -527,7 +527,7 @@ fn window_calls_are_on_the_main_thread(format: PluginFormat, cx: &mut TestAppCon
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     tell_the_plugin(Some(&log), None);
-    let mut harness = Harness::new();
+    let mut harness = Harness::in_process();
     harness.add_track(record(format, "piano"), Vec::new());
     harness.project.engine().play();
 

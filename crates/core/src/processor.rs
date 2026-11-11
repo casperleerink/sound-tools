@@ -273,6 +273,8 @@ pub struct Ports {
     pub(crate) audio_inputs: usize,
     /// The audio inputs, by index, declared with [`Ports::side_audio_input`].
     pub(crate) side_audio_inputs: Vec<usize>,
+    /// The event inputs, by index, declared with [`Ports::automation_input_cut_by_processor`].
+    pub(crate) cut_by_processor: Vec<usize>,
     pub(crate) audio_outputs: usize,
     pub(crate) event_inputs: Vec<EventType>,
     pub(crate) event_outputs: Vec<EventType>,
@@ -310,6 +312,16 @@ impl Ports {
         self.out_of_order |= port.index != self.event_inputs.len();
         self.event_inputs.push(EventType::of::<E>());
         self
+    }
+
+    /// An automation input whose processor plays its block in the pieces the engine would cut
+    /// at this input's bends, itself, with [`automation_pieces`](crate::automation_pieces). The
+    /// engine then cuts the block only where the transport wraps or jumps, so a block is one
+    /// call: for a processor whose every call costs a round trip, a plugin in a process of its
+    /// own.
+    pub fn automation_input_cut_by_processor(mut self, port: EventInput<Automation>) -> Self {
+        self.cut_by_processor.push(port.index);
+        self.event_input(port)
     }
 
     pub fn event_output<E: Event>(mut self, port: EventOutput<E>) -> Self {
@@ -634,7 +646,12 @@ impl EventOutputs<'_> {
     /// full, for example its list of held notes. It shows up in
     /// `EngineStatus::event_overflows`, like an event that a full buffer dropped.
     pub fn count_dropped(&mut self) {
-        self.dropped.set(self.dropped.get() + 1);
+        self.count_dropped_many(1);
+    }
+
+    /// [`Self::count_dropped`] for `count` events at once.
+    pub fn count_dropped_many(&mut self, count: u64) {
+        self.dropped.set(self.dropped.get().saturating_add(count));
     }
 }
 

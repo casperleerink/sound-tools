@@ -53,6 +53,8 @@ type Request =
   | { type: "event"; card: number; node: number; kind: Parameters<typeof sdk.host.nodeEvent>[1]; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
+  /** The key of these actions of its tool went down: they run in this order until one does it. */
+  | ({ type: "action"; instance: Played; actions: string[] } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | ({ type: "take"; instance: Played } & Take & Clock)
   | { type: "drop"; card: number }
@@ -93,11 +95,11 @@ const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
 const KEYS = {
   name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, outputs: true, sound: true,
-  behaviour: true, children: true, memory: true, tick: true, view: true, onKey: true,
+  behaviour: true, children: true, memory: true, tick: true, view: true, actions: true, onKey: true,
   keys: true, globalKeys: true, onNotes: true, onTake: true,
 } satisfies Record<keyof Spec, true>;
 /** The keys the app keeps, on macOS and elsewhere: no tool takes them. */
-const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["tab"]);
+const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["cmd-shift-z", "cmd-alt-z", "cmd-,", "tab", "shift-tab"]);
 /** The most voices a sound plays at once. */
 const MAX_VOICES = 8;
 
@@ -157,7 +159,25 @@ function problemsOf(spec: Spec): string[] {
     }
     for (const key of spec.globalKeys ?? []) {
       if (APP_KEYS.includes(key)) {
-        problems.push(`globalKeys: ${key} is the app's: undo, new, open, quit, the panel, the computer keys and tab are`);
+        problems.push(`globalKeys: ${key} is the app's: undo, redo, new, open, quit, settings, the panel, the computer keys and tab are`);
+      }
+    }
+    if (spec.actions && spec.name === "app") {
+      problems.push("actions: the actions of `app` are the app's own, so give the tool another name");
+    }
+    for (const [name, action] of Object.entries(spec.actions ?? {})) {
+      if (!NAME.test(name)) {
+        problems.push(`actions: ${name} is no name; an action name is lowercase letters, digits and _, starting with a letter`);
+      }
+      if (!action.title?.trim()) {
+        problems.push(`actions.${name}: write its title, it is what the composer reads in the list of shortcuts`);
+      }
+      for (const key of action.keys ?? []) {
+        if (APP_KEYS.includes(key)) {
+          problems.push(`actions.${name}: ${key} is the app's and never reaches a tool: undo, redo, new, open, quit, settings, the panel, the computer keys and tab are`);
+        } else if (!sdk.host.isActionKey(key)) {
+          problems.push(`actions.${name}: ${key} is no key; name one as "a", "space", "shift-up" or "cmd-shift-c", with cmd, alt and shift first, in that order, and a symbol with shift by what it types, "?"; cmd is ctrl on Windows and Linux, so there is no ctrl-`);
+        }
       }
     }
     if (spec.children && !spec.behaviour) {
@@ -235,6 +255,7 @@ function described(spec: Spec, file: string) {
       keys: spec.onKey !== undefined,
       takes: spec.keys ?? null,
       global_keys: spec.globalKeys ?? [],
+      actions: Object.fromEntries(Object.entries(spec.actions ?? {}).map(([name, { title, keys = [], everywhere = false }]) => [name, { title, keys, everywhere }])),
       notes: spec.onNotes !== undefined,
       on_take: spec.onTake !== undefined,
       behaviour: spec.behaviour !== undefined,
@@ -891,7 +912,7 @@ function updater(instance: string) {
   };
 }
 
-/** What `tick`, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
+/** What `tick`, an action, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
 function contextOf<Extra extends object>(
   instance: string,
   spec: Spec,
@@ -914,7 +935,7 @@ function contextOf<Extra extends object>(
   }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
 }
 
-/** What every piece of code of an instance can do, in a view or in `tick`, `onKey`, `onNotes` and `onTake`. */
+/** What every piece of code of an instance can do, in a view or in `tick`, an action, `onKey`, `onNotes` and `onTake`. */
 function doers(instance: string, spec: Spec) {
   return {
     memory: memoryOf(instance, spec),
@@ -1325,6 +1346,20 @@ function handle(request: Request) {
       const { key: name, down, shift, alt, cmd, ctrl } = request;
       const key = { key: name, down, shift, alt, cmd, ctrl };
       run(request, [request.instance], "onKey", {}, (spec, tool) => spec.onKey?.(tool, key));
+      break;
+    }
+    case "action": {
+      // Until one does not say `false`. One that fails, or whose tool is gone, ends it too.
+      let passed = true;
+      for (const name of request.actions) {
+        if (!passed) break;
+        passed = false;
+        run(request, [request.instance], `action ${name}`, {}, (spec, tool) => {
+          const result = spec.actions?.[name]?.run(tool);
+          passed = result === false;
+          return result;
+        });
+      }
       break;
     }
     case "take": {

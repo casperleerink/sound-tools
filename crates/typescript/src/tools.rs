@@ -26,6 +26,8 @@ use sound_signals::{
     ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
+use sound_ui::shortcuts;
+
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
 use crate::feeds::played_name;
@@ -68,6 +70,9 @@ pub(crate) struct ToolInfo {
     /// The keys it hears wherever the focus is, while its view is the main view: `space`.
     #[serde(default)]
     pub global_keys: Vec<String>,
+    /// What it does on a key, by name, in the order its code gives them.
+    #[serde(default)]
+    pub actions: Named<ActionInfo>,
     /// It hears note events, `onNotes`: what reaches its `notes`.
     pub notes: bool,
     /// It keeps what its `recorder` children take, `onTake`.
@@ -77,6 +82,17 @@ pub(crate) struct ToolInfo {
     /// The tools of its children by name, when it names them. An empty map allows none.
     #[serde(default)]
     pub children: Option<Named<String>>,
+}
+
+/// Something a tool does on a key, as its code declares it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActionInfo {
+    pub title: String,
+    /// The keys that do it until the composer picks others.
+    pub keys: Vec<String>,
+    /// Its key does it wherever the focus is, while the view of its tool is the main view.
+    pub everywhere: bool,
 }
 
 /// What a tool is to a track, which goes in its `effects` or plays as its instrument.
@@ -91,6 +107,12 @@ pub(crate) enum ToolKind {
 /// Named things in the order the code gives them.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Named<T>(pub Vec<(String, T)>);
+
+impl<T> Default for Named<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Named<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -422,6 +444,36 @@ impl Named<Field> {
 }
 
 impl ToolInfo {
+    /// Whether a card or a page of it takes the keys: for `onKey`, or for its actions.
+    pub(crate) fn hears_keys(&self) -> bool {
+        self.keys || !self.actions.0.is_empty()
+    }
+
+    /// Whether its action `name` runs wherever the focus is.
+    pub(crate) fn acts_everywhere(&self, name: &str) -> bool {
+        let mut actions = self.actions.0.iter();
+        actions.any(|(action, info)| action == name && info.everywhere)
+    }
+
+    /// Its actions as the keymap of the window lists them. `None` for a tool with none.
+    pub(crate) fn shortcuts(&self) -> Option<shortcuts::Group> {
+        let actions = self
+            .actions
+            .0
+            .iter()
+            .map(|(name, action)| shortcuts::Action {
+                name: name.clone(),
+                title: action.title.clone(),
+                keys: action.keys.clone(),
+            });
+        let actions: Vec<_> = actions.collect();
+        (!actions.is_empty()).then(|| shortcuts::Group {
+            name: self.name.clone(),
+            title: self.title.clone(),
+            actions,
+        })
+    }
+
     /// What the tool is to a track: an effect when it has one voice whose sound reads what
     /// comes in, as a parent's does; else an instrument.
     pub(crate) fn tool_kind(&self) -> ToolKind {

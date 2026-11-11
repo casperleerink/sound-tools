@@ -342,7 +342,7 @@ async function trackMenu(page: Page, each: Child) {
   const keys = each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.tool === "timeline" || child.tool === "region").map((child) => `${each.name}/${child.name}`) : [];
   const renders = each.tool === "bus" ? [] : RENDER_ITEMS.map((item) => ({ ...item, disabled: keys.length === 0 }));
   const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation" },
-    { label: "Add automation…" }, ...renders, { label: "Delete", shortcut: "backspace" as const, separator: renders.length > 0 }];
+    { label: "Add automation…" }, ...renders, { label: "Delete", shortcut: "song.delete_track" as const, separator: renders.length > 0 }];
   const picked = await openMenu(items);
   const item = picked === null ? undefined : items[picked];
   if (item && "tail" in item) return renderToTrack(page, each.name, keys, item.tail);

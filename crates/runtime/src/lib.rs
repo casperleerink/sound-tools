@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use gpui::{App, AppContext as _, Context, Entity};
 use plugin_host::{
-    Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK,
-    WeakPlugins, default_search_paths,
+    Isolation, Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand,
+    VST_TRADEMARK, WeakPlugins, default_search_paths,
 };
 use sound_agent::{AgentSettings, Agents, AgentsPage, Sidebar};
 use sound_core::{
@@ -57,7 +57,7 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
     group: "Project",
-    when: "Run commands: check how your work sounds, read the whole piece, render WAVs or save templates",
+    when: "Run commands: check how your work sounds, read the whole piece, render audio or save templates",
     markdown: "# Inspect, measure, render and save from a command line
 
 Every form works while the project is open and changes no record.
@@ -65,12 +65,12 @@ Every form works while the project is open and changes no record.
 ```sh
 sound-tools . --inspect
 sound-tools . --analyze
-sound-tools . --render <wav>
+sound-tools . --render <file>
 ```
 
 - `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every instance with its record, the connections and the problems.
 - `--analyze` plays the piece and its tail offline, prints what it measures of the whole and writes the rest to a report file. Use it after a change, to check that it sounds as you meant.
-- `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
+- `--render` writes the piece as the file is named, `.wav` or `.mp3` (320 kbps), and prints its peak. A WAV is 48 kHz 32-bit float unless `--rate 44100` or `--depth 16` or `24` say otherwise. `--loudness streaming` (-14 LUFS) or `broadcast` (-23 LUFS) brings it there by gain alone, its true peak under -1 dB, and prints a `note:` when it cannot.
 
 `--analyze` and `--render` take the same options:
 
@@ -114,18 +114,25 @@ To check a vibrato or the tuning, solo the track and measure one held note with 
 When `sound-tools` is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
-/// The plugin host of one session: it scans this machine, keeps the plugins a project loads
-/// and saves their state. `read_only` is for `--inspect` and `--render`, which never write.
+/// The plugin host of one session that plays: it scans this machine, keeps the plugins a
+/// project loads and saves their state. Each plugin plays in a process of its own, so one that
+/// crashes costs its own slot; on macOS not yet in a window session, whose plugin windows
+/// still need the plugin in this process.
 ///
 /// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
 /// per bundle, so a plugin that crashes while it is looked at costs one bundle.
-pub fn plugins(read_only: bool) -> Result<Plugins> {
-    let loading = if read_only {
-        Loading::Only
-    } else {
-        Loading::AndSaving
-    };
+pub fn playing_plugins(in_window: bool) -> Result<Plugins> {
+    // Headless: what the plugin's process writes goes nowhere, as this process's own output
+    // is what its caller reads.
+    let isolated = !(in_window && cfg!(target_os = "macos"));
+    let loading = Loading::AndSaving(isolated.then(|| Isolation::new(!in_window)));
     with_cache(loading, ScanCache::of_this_machine())
+}
+
+/// The plugin host of `--render` and `--plugin-params`, which never write. Its plugins play in
+/// this process, which is already one of its own.
+pub fn read_only_plugins() -> Result<Plugins> {
+    with_cache(Loading::Only, ScanCache::of_this_machine())
 }
 
 /// The host `runtime --plugins` uses: it looks at every bundle again, whatever the cache of
@@ -143,8 +150,9 @@ pub fn plugins_for_inspecting() -> Result<Plugins> {
 
 /// How much of a plugin a host is for.
 enum Loading {
-    /// Loads a plugin and saves its state into the project.
-    AndSaving,
+    /// Loads a plugin and saves its state into the project, each in a process of its own when
+    /// it says how.
+    AndSaving(Option<Isolation>),
     /// Loads a plugin and never writes: `--render`.
     Only,
     /// Looks a plugin up and never loads one: `--inspect`, `--plugins`.
@@ -155,7 +163,8 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
     let scanner = ScanCommand::this_program()?;
     let paths = default_search_paths();
     Ok(match loading {
-        Loading::AndSaving => Plugins::new(paths, scanner, cache),
+        Loading::AndSaving(None) => Plugins::new(paths, scanner, cache),
+        Loading::AndSaving(Some(isolation)) => Plugins::isolated(paths, scanner, cache, isolation),
         Loading::Only => Plugins::read_only(paths, scanner, cache),
         Loading::None => Plugins::listing(paths, scanner, cache),
     })
@@ -521,7 +530,19 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// Opens the project without its lock, so it works next to a running runtime. The engine
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
-    let (control, engine) = Engine::new(OFFLINE);
+    open_read_only_at(folder, plugins, OFFLINE.sample_rate)
+}
+
+/// As [`open_read_only_with`], with the engine at `sample_rate`, as on a device of that rate.
+pub fn open_read_only_at(
+    folder: &Path,
+    plugins: Plugins,
+    sample_rate: u32,
+) -> Result<(Project, Engine)> {
+    let (control, engine) = Engine::new(EngineConfig {
+        sample_rate,
+        ..OFFLINE
+    });
     // A runtime that holds the project may be writing its log.
     let extensions = Extensions::load(folder, &tool_schemas()?, false);
     let (registry, extensions) = registry_of(plugins, extensions)?;

@@ -28,7 +28,7 @@ use sound_ui::components::device_card::{
 };
 use sound_ui::{
     DeviceLabel, DeviceOffer, Devices, FinishedTake, GlobalKeys, Loop, OfferGroup, Playhead,
-    Session, Takes, Views,
+    Session, Shortcuts, Takes, Views,
 };
 
 use crate::bun::{
@@ -227,10 +227,13 @@ fn start(
     let generation = Rc::new(Cell::new(0));
     let live = Live::start(extensions, session, &tools, &generation, watched, cx);
     let changed = live.read(cx).changed.clone();
-    // The keys the tool of the main view takes wherever the focus is.
+    // The keys the tool of the main view takes wherever the focus is: those of its actions that
+    // run everywhere, then its `globalKeys`.
     GlobalKeys::set(
         {
             let (live, session, tools) = (live.downgrade(), session.downgrade(), tools.clone());
+            // The keys that went down as an action, whose up its `onKey` does not hear.
+            let acted = RefCell::new(HashSet::new());
             move |key, cx| {
                 let (Some(live), Some(session)) = (live.upgrade(), session.upgrade()) else {
                     return false;
@@ -238,20 +241,27 @@ fn start(
                 let Some(main) = Views::main_instance(&session, cx) else {
                     return false;
                 };
-                let tool = session
-                    .read(cx)
-                    .project()
-                    .tool_of(&main)
-                    .map(str::to_string);
-                let takes = tool.is_some_and(|tool| {
-                    find(&tools.borrow(), &tool)
-                        .is_some_and(|info| info.global_keys.contains(&key.name))
-                });
-                // A key it took comes up to it whatever it takes now.
-                if key.down && (!takes || live.read(cx).shows_dialog(&main)) {
-                    return false;
-                }
                 let (name, modifiers) = (key.keystroke.key.clone(), key.keystroke.modifiers);
+                if key.down {
+                    let tool = session.read(cx).project().tool_of(&main);
+                    let info = tool.and_then(|tool| find(&tools.borrow(), tool).cloned());
+                    let Some(info) = info.filter(|_| !live.read(cx).shows_dialog(&main)) else {
+                        return false;
+                    };
+                    let mut actions = crate::actions_on(&info.name, key.keystroke, cx);
+                    actions.retain(|action| info.acts_everywhere(action));
+                    if !actions.is_empty() {
+                        acted.borrow_mut().insert(name);
+                        live.update(cx, |live, cx| live.act(&main, &actions, cx));
+                        return true;
+                    }
+                    if !info.global_keys.contains(&key.name) {
+                        return false;
+                    }
+                } else if acted.borrow_mut().remove(&name) {
+                    return true;
+                }
+                // A key it took comes up to it whatever it takes now.
                 live.update(cx, |live, cx| {
                     live.key(&main, &name, key.down, modifiers, cx)
                 });
@@ -393,6 +403,7 @@ impl Live {
             skipped,
             problems,
         } = extensions;
+        list_actions(&loaded, cx);
         *tools.borrow_mut() = loaded.into_iter().map(Rc::new).collect();
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
@@ -514,6 +525,13 @@ impl Live {
             _hearing: hearing,
         }
     }
+}
+
+/// Lists the actions of the tools that loaded in the keymap of the window, in place of those of
+/// the load before.
+fn list_actions(tools: &[ToolInfo], cx: &mut App) {
+    let groups = tools.iter().filter_map(ToolInfo::shortcuts).collect();
+    cx.default_global::<Shortcuts>().set_tool_groups(groups);
 }
 
 fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
@@ -1272,6 +1290,15 @@ impl Live {
         }
     }
 
+    /// Tells Bun what changed, for code that runs now: the session and the clock it runs with.
+    fn before_code(&mut self, cx: &mut Context<Self>) -> Option<(Entity<Session>, Clock)> {
+        let session = self.session.upgrade()?;
+        let clock = clock_of(&session, cx);
+        self.told_transport = Some(clock.transport);
+        self.tell(cx);
+        Some((session, clock))
+    }
+
     /// A key of the computer keyboard went down or up on a card of `id` that has the keys, or
     /// wherever the focus is for the main view of `id`.
     pub(crate) fn key(
@@ -1282,12 +1309,9 @@ impl Live {
         modifiers: gpui::Modifiers,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.session.upgrade() else {
+        let Some((session, clock)) = self.before_code(cx) else {
             return;
         };
-        let clock = clock_of(&session, cx);
-        self.told_transport = Some(clock.transport);
-        self.tell(cx);
         let request = Request::Key {
             instance: played(session.read(cx).project(), id),
             key,
@@ -1296,6 +1320,20 @@ impl Live {
             alt: modifiers.alt,
             cmd: modifiers.platform,
             ctrl: modifiers.control,
+            clock,
+        };
+        self.host.send(&request);
+    }
+
+    /// The key of `actions` of the tool of `id` went down: its code runs them in order until
+    /// one does it.
+    pub(crate) fn act(&mut self, id: &InstanceId, actions: &[String], cx: &mut Context<Self>) {
+        let Some((session, clock)) = self.before_code(cx) else {
+            return;
+        };
+        let request = Request::Action {
+            instance: played(session.read(cx).project(), id),
+            actions,
             clock,
         };
         self.host.send(&request);
@@ -2016,11 +2054,11 @@ impl Live {
         let name = name.to_string();
         cx.spawn(async move |live, cx| {
             let imported = match rendered.await {
-                Ok(left_out) => cx
+                Ok(rendered) => cx
                     .background_spawn(async move {
                         let imported = sound_media::import(&assets, &wav);
                         drop(folder);
-                        imported.map(|file| (file.asset.to_string(), left_out))
+                        imported.map(|file| (file.asset.to_string(), rendered.problems))
                     })
                     .await
                     .map_err(|error| error.to_string()),
@@ -2349,6 +2387,7 @@ impl Live {
         }));
         self.problems = problems;
         self.report(cx);
+        list_actions(&tools, cx);
         *self.tools.borrow_mut() = gone
             .into_iter()
             .chain(tools.into_iter().map(Rc::new))

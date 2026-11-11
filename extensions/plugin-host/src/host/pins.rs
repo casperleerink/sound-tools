@@ -122,7 +122,7 @@ impl Hosted {
     /// The pins a lane holds, with the value each plays, and their generation. `None` when
     /// blocks kept writing while it was read.
     fn held(&self) -> Option<(u64, BTreeMap<u32, f64>)> {
-        let (generation, held) = self.laned.read()?;
+        let (generation, held) = self.laned.laned().read()?;
         Some((generation, held.into_iter().collect()))
     }
 
@@ -207,14 +207,8 @@ impl Hosted {
     /// went in between moves the generation, and nothing is written this round.
     fn read_pins(&mut self) -> Vec<ParameterChange> {
         let before = self.held();
-        let mut values = Vec::new();
-        if self.plugin.sent_values_played() {
-            for id in self.pins.keys() {
-                if let Some(now) = self.plugin.value(*id) {
-                    values.push((*id, now));
-                }
-            }
-        }
+        let ids: Vec<u32> = self.pins.keys().copied().collect();
+        let values = self.plugin.read_pins(&ids).unwrap_or_default();
         let after = self.held();
         let laned: BTreeSet<u32> = match (&before, &after) {
             (Some((first, before)), Some((last, after))) if first == last => {

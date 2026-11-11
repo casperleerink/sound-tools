@@ -28,7 +28,7 @@ use crate::backend::{KeyDirection, PluginGui};
 use crate::host::WeakPlugins;
 
 /// In the plugin's own pixels: logical on macOS, physical on Windows.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowSize {
     pub width: u32,
     pub height: u32,

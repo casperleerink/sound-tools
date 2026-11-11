@@ -5,10 +5,13 @@
 //!
 //! - `default.png`: a new, empty project, with the ways to start one.
 //! - `new-project.png`: the templates a new project starts from.
+//! - `export-settings.png`: how a piece is exported, as "Export audio…" asks first.
 //! - `notices.png`: an error from an edit and an update that is ready, bottom right, and the
 //!   sign of a file that is not live beside the project menu.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `settings-audio.png`: the Audio section of Settings, with simulated devices.
+//! - `settings-shortcuts*.png`: the Shortcuts section, one action waiting for its key, and
+//!   the keys on an action of a tool.
 //! - `cards-*.png`: the card of every built-in device, see `snapshots/cards.rs`.
 //! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
@@ -17,8 +20,8 @@
 //! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
 //!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
 //!
-//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=history`, `=typescript`, `=look` or `=timeline` renders the default
-//! project and those alone.
+//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=history`, `=typescript`, `=look`, `=timeline` or `=menu` (the
+//! menu and Settings) renders the default project and those alone.
 
 // The shared helpers of the tests unwrap, as the other test crates allow.
 #![allow(clippy::unwrap_used)]
@@ -30,15 +33,17 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use gpui::{
-    AnyWindowHandle, AppContext, Entity, HeadlessAppContext, PlatformInput, WindowHandle, px, size,
+    AnyWindowHandle, AppContext, Entity, HeadlessAppContext, PlatformInput, WindowHandle, point,
+    px, size,
 };
 use plugin_host::{PluginFormat, WeakPlugins};
 use runtime::app::ChosenDevices;
+use runtime::window::export_settings::{self, ExportSettings};
 use runtime::window::new_project::{TemplatePicker, choose_template};
 use runtime::window::{DeviceAccess, DeviceList, Section, Shell};
 use runtime::{OFFLINE, views};
 use sound_core::{DeviceChoice, Engine, InstanceId, Ticks};
-use sound_ui::{Assets, Session};
+use sound_ui::{Assets, Session, Shortcuts, shortcuts};
 use tempfile::TempDir;
 
 use plugin_hosts::test_plugin_host;
@@ -297,11 +302,15 @@ fn main() -> Result<()> {
     if runs("takes") {
         look::takes::snapshots(&mut cx, &save)?;
     }
+    if only.as_deref() == Some("menu") {
+        return menu(&mut cx, opened, &save);
+    }
     if only.is_some() {
         return Ok(());
     }
 
     templates(&mut cx, &save)?;
+    export(&mut cx, &save)?;
     notices(&mut cx, &save)?;
     menu(&mut cx, opened, &save)?;
     Ok(())
@@ -317,6 +326,20 @@ fn templates(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
     let picker = picker.context("the templates did not open")?;
     save(cx, picker.into(), "new-project")?;
     cx.update_window(picker.into(), |_, window, _| window.remove_window())?;
+    cx.run_until_parked();
+    Ok(())
+}
+
+/// The export settings, as "Export audio…" opens them.
+fn export(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> {
+    cx.update(|cx| export_settings::choose("Export audio", Rc::new(|_, _| {}), cx));
+    cx.run_until_parked();
+    let screen = cx.update(|cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
+    });
+    let screen = screen.context("the export settings did not open")?;
+    save(cx, screen.into(), "export-settings")?;
+    cx.update_window(screen.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
     Ok(())
 }
@@ -423,6 +446,48 @@ fn menu(cx: &mut HeadlessAppContext, opened: Opened, save: &Save) -> Result<()> 
     })?;
     cx.run_until_parked();
     save(cx, opened.window.into(), "settings-audio")?;
+
+    cx.update(|cx| {
+        let action = |name: &str, title: &str, keys: &[&str]| shortcuts::Action {
+            name: name.to_string(),
+            title: title.to_string(),
+            keys: keys.iter().map(ToString::to_string).collect(),
+        };
+        let song = shortcuts::Group {
+            name: "song".to_string(),
+            title: "Song".to_string(),
+            actions: vec![
+                action("play", "Play or stop", &["space"]),
+                action("record", "Record", &["r"]),
+                action(
+                    "delete-notes",
+                    "Delete the chosen notes",
+                    &["delete", "backspace"],
+                ),
+                action("delete-clips", "Delete the chosen clips", &["delete"]),
+                action("duplicate", "Duplicate", &["cmd-d"]),
+            ],
+        };
+        let keymap = cx.default_global::<Shortcuts>();
+        keymap.set_tool_groups(vec![song]);
+        keymap.set_keys("app.agent", vec!["cmd-shift-a".to_string()])?;
+        keymap.set_keys("song.duplicate", Vec::new())?;
+        let shell = opened.window.read(cx)?;
+        let page = shell.settings().context("Settings did not open")?.clone();
+        page.update(cx, |page, cx| page.show(Section::Shortcuts, cx));
+        anyhow::Ok(())
+    })?;
+    cx.run_until_parked();
+    // Undo waits for its key, and the pointer is over an action with a key of the composer's.
+    look::click(&opened, point(px(700.), px(212.)), 1, cx)?;
+    look::pointer_to(&opened, point(px(700.), px(409.)), cx)?;
+    save(cx, opened.window.into(), "settings-shortcuts")?;
+    // Tab leaves Undo as it is and goes on through the rows and their buttons, to an action of
+    // the tool that was below the edge of the window.
+    for _ in 0..26 {
+        opened.key("tab", cx)?;
+    }
+    save(cx, opened.window.into(), "settings-shortcuts-tool")?;
     Ok(())
 }
 

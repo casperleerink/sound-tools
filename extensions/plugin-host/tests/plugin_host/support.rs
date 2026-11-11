@@ -279,12 +279,17 @@ fn apply_level(state: &Level, context: &mut BehaviourContext<'_>) -> Result<(), 
 pub(crate) struct Rack {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<(String, f32)>,
+    /// A frame of every sub-block and a value every lane bends to there, as a lane that moves
+    /// inside a block does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bend: Option<(usize, f32)>,
 }
 
 /// Plays steady lanes, as the lane player of a track does: every lane every block, at offset
-/// 0, also while the project does not play.
+/// 0, also while the project does not play. With a bend, every lane again at its frame.
 pub(crate) struct LanePlayer {
     lanes: Vec<Automation>,
+    bend: Option<(usize, f32)>,
 }
 
 impl LanePlayer {
@@ -292,7 +297,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Vec<Automation>;
+    type Update = (Vec<Automation>, Option<(usize, f32)>);
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -300,13 +305,20 @@ impl Processor for LanePlayer {
 
     fn prepare(&mut self, _config: &PrepareConfig) {}
 
-    fn update(&mut self, update: &mut Vec<Automation>) {
-        std::mem::swap(&mut self.lanes, update);
+    fn update(&mut self, update: &mut Self::Update) {
+        std::mem::swap(&mut self.lanes, &mut update.0);
+        self.bend = update.1;
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         for lane in &self.lanes {
             context.event_outputs.push(Self::OUTPUT, 0, *lane);
+        }
+        if let Some((frame, value)) = self.bend {
+            for lane in &self.lanes {
+                let bent = Automation { value, ..*lane };
+                context.event_outputs.push(Self::OUTPUT, frame, bent);
+            }
         }
     }
 }
@@ -347,8 +359,11 @@ fn play_lanes(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), Be
     for name in missing {
         context.problem(format!("no lane for {name}"));
     }
-    let player = context.processor("lanes", || LanePlayer { lanes: Vec::new() })?;
-    context.update(player, lanes)?;
+    let player = context.processor("lanes", || LanePlayer {
+        lanes: Vec::new(),
+        bend: None,
+    })?;
+    context.update(player, (lanes, state.bend))?;
     context.connect(OutputEndpoint::new(player, LanePlayer::OUTPUT).to(input))?;
     Ok(())
 }
@@ -587,6 +602,16 @@ pub(crate) fn scanner() -> ScanCommand {
     ScanCommand::new(env!("CARGO_BIN_EXE_plugin-scan"), [])
 }
 
+/// How the tests run a plugin in a process of its own: it writes what goes wrong where the test
+/// shows it, and a block may take long on a busy machine without counting as hung.
+pub(crate) fn isolation() -> plugin_host::Isolation {
+    let (block, hung_after) = (
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
+    );
+    plugin_host::Isolation::new(false).with_timeouts(block, hung_after, hung_after)
+}
+
 pub(crate) fn no_cache() -> ScanCache {
     ScanCache::none()
 }
@@ -663,8 +688,45 @@ pub(crate) struct Harness {
 }
 
 impl Harness {
+    /// Each plugin in a process of its own, as a project that plays has them.
     pub(crate) fn new() -> Self {
         Self::open(tempfile::tempdir().expect("a temporary folder"), true)
+    }
+
+    /// Each plugin in a process of its own, with these timeouts, for a test of a plugin that
+    /// hangs.
+    #[cfg(unix)]
+    pub(crate) fn isolated_with(isolation: plugin_host::Isolation) -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let search = vec![plugin_folder(folder.path())];
+        let plugins = Plugins::isolated(search, scanner(), no_cache(), isolation);
+        Self::with_plugins(folder, plugins)
+    }
+
+    /// Runs the behaviour of every record the host asked to, as whoever polls does.
+    #[cfg(unix)]
+    pub(crate) fn rebind_retries(&mut self) {
+        for instance in self.plugins.take_retries() {
+            self.project
+                .rebind(&instance)
+                .expect("the record runs again");
+        }
+    }
+
+    /// Each plugin in this process, as Windows has them, for a test of what only a plugin in
+    /// this process shows: its window, and the threads and instances its log counts.
+    pub(crate) fn in_process() -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let search = vec![plugin_folder(folder.path())];
+        Self::open_in_process_with_paths(folder, search)
+    }
+
+    pub(crate) fn open_in_process_with_paths(
+        folder: tempfile::TempDir,
+        search_paths: Vec<PathBuf>,
+    ) -> Self {
+        let plugins = Plugins::new(search_paths, scanner(), no_cache());
+        Self::with_plugins(folder, plugins)
     }
 
     /// What `--render` opens.
@@ -698,7 +760,7 @@ impl Harness {
         writes_state: bool,
     ) -> Self {
         let plugins = if writes_state {
-            Plugins::new(search_paths, scanner(), no_cache())
+            Plugins::isolated(search_paths, scanner(), no_cache(), isolation())
         } else {
             Plugins::read_only(search_paths, scanner(), no_cache())
         };

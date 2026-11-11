@@ -6,6 +6,8 @@
 //! and is an effect.
 
 mod backend;
+#[cfg(unix)]
+mod bridge;
 mod clap;
 mod host;
 #[cfg(target_os = "windows")]
@@ -31,7 +33,9 @@ use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 use crate::parameters::lane_of_pin;
 use crate::processor::{AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate};
 
-pub use host::{PluginProblem, Plugins, WeakPlugins};
+#[cfg(unix)]
+pub use bridge::{PLAY_ARGUMENT, remember_this_program, serve as serve_plugin};
+pub use host::{Isolation, PluginProblem, Plugins, WeakPlugins};
 pub use parameters::{
     MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, read_parameters,
 };

@@ -1,4 +1,4 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Child as Shapes, type Color, type Drag, type Dropped, type FilledStateOfTool, type KeyName, type Live, type Num, type Press } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Child as Shapes, type Color, type Drag, type Dropped, type FilledStateOfTool, type Live, type Num, type Press, type Shortcut } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
 import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
@@ -84,9 +84,9 @@ export const Timeline = ({ page }: { page: Page }) => {
   });
 
   // As the arrangement's: what the keys do, and a clip's name.
-  const CLIP_MENU: { label: string; command?: ClipCommand; tail?: boolean; exports?: true; shortcut?: KeyName; separator?: true }[] = [
-    { label: "Cut", command: "cut", shortcut: "cmd-x" }, { label: "Copy", command: "copy", shortcut: "cmd-c" }, { label: "Duplicate", command: "duplicate", shortcut: "cmd-d" },
-    { label: "Rename", separator: true }, { label: "Export notes…", exports: true }, ...RENDER_ITEMS, { label: "Delete", command: "delete", shortcut: "backspace", separator: true },
+  const CLIP_MENU: { label: string; command?: ClipCommand; tail?: boolean; exports?: true; shortcut?: Shortcut; separator?: true }[] = [
+    { label: "Cut", command: "cut", shortcut: "song.cut_clips" }, { label: "Copy", command: "copy", shortcut: "song.copy_clips" }, { label: "Duplicate", command: "duplicate", shortcut: "song.duplicate_clips" },
+    { label: "Rename", separator: true }, { label: "Export notes…", exports: true }, ...RENDER_ITEMS, { label: "Delete", command: "delete", shortcut: "song.delete_clips", separator: true },
   ];
   const itemMenu = async (key: string) => {
     if (!memory.selected.has(key)) choose(new Set([key]));
