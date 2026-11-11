@@ -982,7 +982,6 @@ pub(super) fn hearing_keys(
         ))
 }
 
-/// What one dropped file became.
 enum Dropped {
     File(String),
     Timelines(Vec<Value>),

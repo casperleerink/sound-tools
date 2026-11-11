@@ -558,7 +558,7 @@ pub struct Clip {
     /// The key pressure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pressure: Vec<Point<Amount>>,
-    /// The other controllers.
+    /// MIDI controllers by number, each played from its first point and held after.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub controllers: Controllers,
 }
@@ -645,7 +645,7 @@ impl Clip {
             && self.bend.is_empty()
             && self.mod_wheel.is_empty()
             && self.pressure.is_empty()
-            && self.controllers.is_empty())
+            && self.controllers.values().all(Vec::is_empty))
     }
 }
 

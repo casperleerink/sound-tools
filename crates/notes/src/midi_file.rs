@@ -20,9 +20,12 @@ use crate::{
 /// Ticks to a quarter note in a clip, and in a file this writes.
 const QUARTER: u64 = 960;
 
-/// Controllers whose meaning is in the order of their messages: bank select, and the parameter
-/// numbers with their data. A lane sends one value a block, so they are not imported.
-const IN_ORDER: [u8; 10] = [0, 32, 6, 38, 96, 97, 98, 99, 100, 101];
+/// Controllers whose meaning is in the order of their messages: bank select, the parameter
+/// numbers with their data, and the fine halves (32 to 63) that an instrument resets when their
+/// coarse half moves. A lane sends one value a block, so they are not imported.
+fn in_order(number: u8) -> bool {
+    matches!(number, 0 | 6 | 32..=63 | 96..=101)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MidiFileError {
@@ -36,7 +39,6 @@ pub enum MidiFileError {
     NoNotes,
 }
 
-/// Whether `bytes` start as a MIDI file does.
 pub fn is_midi_file(bytes: &[u8]) -> bool {
     bytes.starts_with(b"MThd")
 }
@@ -140,7 +142,7 @@ impl Part {
                         .push((tick, Pedal::nearest(i64::from(value.as_int()))));
                 }
                 Controller::MOD_WHEEL => self.mod_wheel.push((tick, amount(value))),
-                number if IN_ORDER.contains(&number) => {}
+                number if in_order(number) => {}
                 number => {
                     if let Ok(controller) = Controller::new(number) {
                         let lane = self.controllers.entry(controller).or_default();
@@ -192,7 +194,7 @@ impl Part {
         if self.notes.is_empty() {
             return None;
         }
-        self.notes.sort();
+        self.notes.sort_by_key(|note| (note.start, note.pitch));
         // A pedal that lifts where the part ends adds nothing: a clip lifts it there.
         self.pedal
             .retain(|(tick, value)| *tick < end || value.is_down());
@@ -291,7 +293,12 @@ fn lane<V: ExpressionValue>(steps: &[(Ticks, V)], end: Option<Ticks>) -> Vec<Poi
 /// value moved by a step of what a keyboard sends, with `bpm` and the time signature
 /// `beats`/`beat` at its start. A pedal still down at the end goes up on its last tick, as a
 /// take does.
-pub fn write(clip: &Clip, title: &str, bpm: f64, (beats, beat): (u8, u8)) -> Vec<u8> {
+pub fn write(
+    clip: &Clip,
+    title: &str,
+    bpm: f64,
+    (beats, beat): (u8, u8),
+) -> std::io::Result<Vec<u8>> {
     let length = clip.length.ticks();
     // Of one tick: the pedal and the lanes first, then the offs, then the ons, as a player
     // sends them.
@@ -325,7 +332,9 @@ pub fn write(clip: &Clip, title: &str, bpm: f64, (beats, beat): (u8, u8)) -> Vec
             value: u7::new(value),
         })
     };
+    // The pedal as it plays: the most pressed move of a tick wins.
     let mut pedal = clip.pedal.clone();
+    pedal.sort_by_key(|change| (change.start, change.value));
     if pedal.last().is_some_and(|change| change.value.is_down()) {
         pedal.push(PedalChange {
             start: Ticks(length.0 - 1),
@@ -399,11 +408,8 @@ pub fn write(clip: &Clip, title: &str, bpm: f64, (beats, beat): (u8, u8)) -> Vec
         tracks: vec![track.collect()],
     };
     let mut bytes = Vec::new();
-    // Writing into memory fails only past MIDI's 4 GB chunks, which no clip reaches.
-    if smf.write_std(&mut bytes).is_err() {
-        bytes.clear();
-    }
-    bytes
+    smf.write_std(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// A lane as steps for a file: its value at each tick where it moved by a step, and at its

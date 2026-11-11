@@ -192,7 +192,7 @@ fn a_dropped_midi_file_becomes_a_clip_or_a_track_for_each_part(cx: &mut TestAppC
         Length::new(Ticks(BAR)).unwrap(),
         vec![note(0, 60), note(960, 64)],
     );
-    let bytes = sound_notes::midi_file::write(&clip, "Riff", 120.0, (4, 4));
+    let bytes = sound_notes::midi_file::write(&clip, "Riff", 120.0, (4, 4)).unwrap();
     window.drop_midi("riff", &bytes, 1);
     window.until("the clip", |window| window.has("song/t01/clip"));
     let added = window.record("song/t01/clip");

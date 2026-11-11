@@ -165,9 +165,11 @@ fn a_file_as_other_programs_write_it_reads_into_its_parts() {
 
 /// At 19,200 ticks a quarter twenty of the file's ticks are one of ours: of two values on one
 /// tick the later stays, and a note of one tick at the very end makes its clip a tick longer.
+/// The fine half of a volume, which an instrument resets when the coarse half moves, is left out.
 #[test]
 fn a_fine_file_keeps_the_later_value_of_a_tick_and_every_note() {
     let events = track(&[
+        (0, b"\xB0\x27\x40"),
         (0, b"\xB0\x4A\x0A"),
         (1, b"\xB0\x4A\x14"),
         (199, b"\x90\x3C\x64"),
@@ -182,7 +184,10 @@ fn a_fine_file_keeps_the_later_value_of_a_tick_and_every_note() {
     assert_eq!(clip.notes, [note(10, 1, 60, 100)]);
     assert_eq!(clip.length.ticks(), Ticks(11));
     let brightness = Controller::new(74).unwrap();
-    assert_eq!(clip.controllers[&brightness], [point(0, amount(20))]);
+    assert_eq!(
+        clip.controllers,
+        BTreeMap::from([(brightness, vec![point(0, amount(20))])])
+    );
     clip.validate().unwrap();
 }
 
@@ -268,7 +273,7 @@ fn a_clip_written_as_a_file_reads_back_as_it_was() {
         ],
     )]);
 
-    let parts = read(&write(&clip, "Lead", 133.0, (7, 8)), "lead").unwrap();
+    let parts = read(&write(&clip, "Lead", 133.0, (7, 8)).unwrap(), "lead").unwrap();
     let [(title, back)] = &parts[..] else {
         panic!("one part");
     };
@@ -303,7 +308,7 @@ fn a_clip_is_written_as_it_sounds() {
         value: Pedal::new(127).unwrap(),
     }];
     clip.bend = vec![point(0, Bend::new(8191).unwrap())];
-    let bytes = write(&clip, "", 120.0, (4, 4));
+    let bytes = write(&clip, "", 120.0, (4, 4)).unwrap();
     // The bend rests where the clip ends, as it plays, for whatever plays the file.
     let smf = midly::Smf::parse(&bytes).unwrap();
     let mut at = 0;

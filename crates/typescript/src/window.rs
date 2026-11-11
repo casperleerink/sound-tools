@@ -2139,7 +2139,7 @@ impl Live {
             let written = match picked.await {
                 Ok(Ok(Some(file))) => cx
                     .background_spawn(async move {
-                        let bytes = sound_notes::midi_file::write(&clip, &title, bpm, signature);
+                        let bytes = sound_notes::midi_file::write(&clip, &title, bpm, signature)?;
                         std::fs::write(&file, bytes)
                     })
                     .await
