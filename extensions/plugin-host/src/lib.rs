@@ -169,6 +169,17 @@ pub struct PluginRecord {
     /// the plugin changes of it itself is written back here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: BTreeMap<u32, Pin>,
+    /// How much earlier what plays into the plugin plays, for a library whose notes start late
+    /// on purpose, such as the slide of a legato. Told to the engine as more latency.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub earlier_ms: u32,
+}
+
+/// The most [`PluginRecord::earlier_ms`] takes.
+pub const MAX_EARLIER_MS: u32 = 1000;
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -193,6 +204,7 @@ impl PluginRecord {
             plugin_id: plugin_id.to_string(),
             state_asset: StateAsset::new(state_asset).ok()?,
             parameters: BTreeMap::new(),
+            earlier_ms: 0,
         })
     }
 
@@ -227,6 +239,12 @@ impl State for PluginRecord {
             return Err(format!(
                 "parameters holds {} pins, and a plugin record holds at most {MAX_AUTOMATED}",
                 self.parameters.len()
+            ));
+        }
+        if self.earlier_ms > MAX_EARLIER_MS {
+            return Err(format!(
+                "earlier_ms is at most {MAX_EARLIER_MS}, not {}",
+                self.earlier_ms
             ));
         }
         Ok(())
@@ -268,6 +286,8 @@ fn apply(
     context.input(AUDIO_INPUT, InputEndpoint::new(node, HostedPlugin::INPUT));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(node, HostedPlugin::AUDIO));
     let config = context.prepare_config();
+    let earlier = state.earlier_ms.saturating_mul(config.sample_rate) / 1000;
+    context.update(node, HostedUpdate::Earlier(earlier))?;
     match plugins.open(context.id(), state, context.assets(), config, !made) {
         Ok(opened) => {
             let lanes = AutomatedPins::new(&opened.lanes);

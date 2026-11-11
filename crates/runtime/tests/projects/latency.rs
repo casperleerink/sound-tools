@@ -352,3 +352,32 @@ fn the_click_lines_up_with_a_track_with_latency() {
     // The click of beat 2 and the note on it start on the same frame.
     assert_eq!(onset(&heard, 20_000), Some(24_000));
 }
+
+/// What plays into a plugin that plays earlier sounds that much before its tick, and the track
+/// beside it does not move.
+#[test]
+fn a_plugin_that_plays_earlier_sounds_its_notes_that_much_early() {
+    let tracks = [
+        Track {
+            name: "early",
+            instrument_latency: 0,
+            effect_latency: None,
+            notes: &[(960, 240, 60, 100)],
+        },
+        Track {
+            name: "plain",
+            instrument_latency: 0,
+            effect_latency: None,
+            notes: &[(1920, 240, 60, 100)],
+        },
+    ];
+    let mut harness = project(PluginFormat::Clap, &tracks);
+    let record = test_plugin_of(PluginFormat::Clap, "early-instrument")
+        .replace(r#""state_asset""#, r#""earlier_ms": 100, "state_asset""#);
+    harness.write_and_apply("state/early/instrument.json", &record);
+    assert_eq!(harness.project.problems(), []);
+    let heard = harness.play(3 * 24_000);
+    // 100 ms are 4800 frames.
+    assert_eq!(onset(&heard, 0), Some(960 * TICK - 4_800));
+    assert_eq!(onset(&heard, 960 * TICK + 2_000), Some(1920 * TICK));
+}

@@ -156,3 +156,30 @@ fn a_pin_taken_off_under_a_drag_ends_the_drag(cx: &mut TestAppContext) {
     opened.release(knob);
     assert_eq!(pins(&mut opened), BTreeMap::new());
 }
+
+/// Play earlier is behind expand. A drag of it changes the record once, where it ends: each
+/// change moves when the notes reach the plugin, which while the song plays is a jump.
+#[gpui::test]
+fn play_earlier_changes_the_record_only_where_a_drag_ends(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let earlier = |opened: &mut Opened<'_>| {
+        opened.project(|project| {
+            let record = project.resolve::<PluginRecord>(&id(SLOT)).unwrap();
+            project.state(&record).unwrap().earlier_ms
+        })
+    };
+    assert_eq!(opened.find("knob-earlier"), None);
+    let expand = opened.control("card-rack/instrument-expand");
+    opened.click(expand);
+
+    let before = mark(&mut opened);
+    let knob = opened.control("knob-earlier");
+    let to = point(knob.x, knob.y - px(50.));
+    opened.press(knob);
+    opened.drag_to(to);
+    assert_eq!(earlier(&mut opened), 0);
+    opened.release(to);
+    // A quarter of the travel up to a second.
+    assert_eq!(earlier(&mut opened), 250);
+    one_undo_step(&mut opened, "Change Play earlier", &before);
+}

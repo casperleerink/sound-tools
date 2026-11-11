@@ -545,6 +545,9 @@ pub(crate) struct HostedPlugin {
     /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps
     /// what it heard, and telling a new one "at rest" once more costs nothing.
     controls: [Control; 4],
+    /// Frames of latency told to the engine on top of the plugin's own, with no delay behind
+    /// them: what plays into the plugin plays that much earlier.
+    earlier: u32,
 }
 
 /// What the control side sends.
@@ -553,6 +556,8 @@ pub(crate) enum HostedUpdate {
     Plugin(Option<Box<dyn PluginAudio>>, AutomatedPins),
     /// The record changed only its pins.
     Pins(AutomatedPins),
+    /// In frames, see [`HostedPlugin::earlier`]. Kept when the plugin changes.
+    Earlier(u32),
 }
 
 impl HostedPlugin {
@@ -567,6 +572,7 @@ impl HostedPlugin {
             audio: None,
             failed: false,
             controls: Control::REST,
+            earlier: 0,
         }
     }
 }
@@ -593,6 +599,10 @@ impl Processor for HostedPlugin {
                 }
                 return;
             }
+            HostedUpdate::Earlier(earlier) => {
+                self.earlier = *earlier;
+                return;
+            }
         };
         // The plugin that was here rides back inside the update, so it stops now, while this
         // is still the audio thread.
@@ -616,7 +626,8 @@ impl Processor for HostedPlugin {
     /// A plugin started again after its latency changed arrives in an update, which is when the
     /// engine reads this.
     fn latency(&self) -> u32 {
-        self.audio.as_ref().map_or(0, |audio| audio.latency())
+        let own = self.audio.as_ref().map_or(0, |audio| audio.latency());
+        own.saturating_add(self.earlier)
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {

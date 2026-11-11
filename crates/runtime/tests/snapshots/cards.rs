@@ -13,7 +13,8 @@
 //!   the E of C major pentatonic.
 //! - `cards-drums.png`, `cards-drums-expanded.png`: the Drum pad playing a beat.
 //! - `cards-sampler.png`, `cards-sampler-expanded.png`: the Sampler playing a file.
-//! - `cards-plugin.png`: the test plugin as the instrument and as an effect.
+//! - `cards-plugin.png`, `cards-plugin-expanded.png`: the test plugin as the instrument and as
+//!   an effect.
 
 use std::path::Path;
 
@@ -204,6 +205,8 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     let mut opened = Opened::open(cx, &rack_files(&children))?;
     opened.play_from(Ticks(0), cx)?;
     save(cx, opened.window.into(), "cards-plugin")?;
+    expand!(opened, cx, plugin_host::view::PluginView, "instrument");
+    save(cx, opened.window.into(), "cards-plugin-expanded")?;
     Ok(())
 }
 

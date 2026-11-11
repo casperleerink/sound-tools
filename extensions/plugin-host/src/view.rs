@@ -26,7 +26,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{Knob, KnobRange, milliseconds_readout, short};
 use sound_ui::components::popover::Side;
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
@@ -37,7 +37,9 @@ use sound_ui::{
 };
 
 use crate::parameters::lane_of_pin;
-use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlugins};
+use crate::{
+    MAX_EARLIER_MS, Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlugins,
+};
 
 /// The room at the left of the body, where the plain card has all of it.
 const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
@@ -165,6 +167,10 @@ pub struct PluginView {
     /// knob that goes away mid-drag sends no end, so the card ends the drag; so it does when
     /// the mapping changes, which the open drag would read wrongly.
     dragged: Option<(u32, Mapping)>,
+    /// Whether the card shows Play earlier. Interface state.
+    expanded: bool,
+    /// Where a drag of Play earlier is, which goes into the record only when it ends.
+    earlier_dragged: Option<f32>,
 }
 
 /// How the travel of the knob of a pin maps to values of the plugin.
@@ -245,9 +251,17 @@ impl PluginView {
             menu,
             laned: BTreeSet::new(),
             dragged: None,
+            expanded: false,
+            earlier_dragged: None,
         };
         view.ask_the_plugin(true, cx);
         view
+    }
+
+    /// Shows or hides Play earlier, as the expand icon does.
+    pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.expanded = expanded;
+        cx.notify();
     }
 
     fn record<'a>(&self, cx: &'a App) -> Option<&'a PluginRecord> {
@@ -440,6 +454,46 @@ impl PluginView {
             }
         };
         self.device.change(label, change, set, cx);
+    }
+
+    /// Every change moves when what plays into the plugin plays, which while the song plays is a
+    /// jump. So a drag shows its value and changes the record once, at its end.
+    fn change_earlier(&mut self, change: ValueChange, cx: &mut Context<Self>) {
+        let ms = match change {
+            ValueChange::Drag(ms) => {
+                self.earlier_dragged = Some(ms);
+                cx.notify();
+                return;
+            }
+            ValueChange::DragCancel => {
+                self.earlier_dragged = None;
+                cx.notify();
+                return;
+            }
+            ValueChange::DragEnd => match self.earlier_dragged.take() {
+                Some(ms) => ms,
+                None => return,
+            },
+            ValueChange::Set(ms) => ms,
+        };
+        let ms = (ms.round().max(0.) as u32).min(MAX_EARLIER_MS);
+        let set = |record: &mut PluginRecord, ms| record.earlier_ms = ms;
+        self.device
+            .change("Change Play earlier", ValueChange::Set(ms), set, cx);
+    }
+
+    fn earlier_knob(&self, record: &PluginRecord, cx: &mut Context<Self>) -> Knob {
+        let ms = self.earlier_dragged.unwrap_or(record.earlier_ms as f32);
+        Knob::new("earlier")
+            .label("Play earlier")
+            .readout(milliseconds_readout(ms.round()))
+            .range(KnobRange::linear(0., MAX_EARLIER_MS as f32))
+            .step(1.)
+            .value(ms)
+            .default_value(0.)
+            .on_change(weak_callback(cx, |view, change, cx| {
+                view.change_earlier(change, cx);
+            }))
     }
 
     /// Not an edit and no undo step: the host remembers the window on this computer only.
@@ -770,11 +824,15 @@ impl Render for PluginView {
                 None => column.span(top_span),
             });
         }
-        let card = match columns.is_empty() {
+        let card = match columns.is_empty() && !self.expanded {
             true => plain,
             false => self.frame.card(),
         };
-        let mut card = card.display(left(top, Some(detail)));
+        let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
+        let earlier = Column::new().top(self.earlier_knob(&record, cx));
+        let mut card = (card.display(left(top, Some(detail))))
+            .expand(self.expanded, expand)
+            .hidden_column(earlier);
         for column in columns {
             card = card.column(column);
         }
