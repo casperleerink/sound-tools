@@ -156,7 +156,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is kept as an asset.
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling. Rejected for app sound: a virtual device of our own, which needs a driver install.
 - A take goes to the `onTake` of its recorder's parent: what a take becomes, and where, is structure, which the project owns. Rejected: the recorder writing children itself.
-- A hand writes automation only into a lane that exists, while Write automation is on and the piece plays (touch): the lane lets go while the hand holds its number, and the drag is one undo step that leaves the device's record as it was (`crates/typescript/src/touch.rs`). Rejected: a take to `onTake`, two undo steps and a trip through Bun; recording on the audio thread, which would give the core lanes; latch and write modes.
+- A hand writes automation only into a lane that exists, while Write automation is on and the piece plays (touch): the lane lets go while the hand holds its number, and the drag is one undo step that leaves the device's record as it was (`crates/typescript/src/touch.rs`). It writes few points, on a 1/32 grid with three digits, so people and agents can read and edit the lane. Rejected: a take to `onTake` and a trip through Bun; recording on the audio thread, which would give the core lanes; latch and write modes; fitting curves to the hand.
 
 ## Built-in instruments and effects
 

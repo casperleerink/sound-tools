@@ -43,15 +43,23 @@ struct Record {
 #[schemars(rename = "Point")]
 struct LanePoint {
     tick: Ticks,
+    #[serde(serialize_with = "short")]
     value: f32,
     /// How the line bends from this point to the next, -1 to 1: 0 is straight, above 0 starts
     /// slow and ends fast, below 0 starts fast and ends slow.
-    #[serde(default, skip_serializing_if = "is_straight")]
+    #[serde(default, skip_serializing_if = "is_straight", serialize_with = "short")]
     curve: f32,
 }
 
 fn is_straight(curve: &f32) -> bool {
     *curve == 0.0
+}
+
+/// As the shortest decimal that reads back as the same `f32`: `0.1` and not
+/// `0.10000000149011612`, which JSON's numbers of 64 bits would write.
+fn short<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+    let shortest = value.to_string().parse().unwrap_or(f64::from(*value));
+    serializer.serialize_f64(shortest)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -151,15 +159,16 @@ fn record(state: &Value) -> Result<Record, String> {
     Ok(record)
 }
 
-/// How long a line takes to go back to what a lane had, after a hand that wrote into it lets go:
-/// a 1/32 note.
-const RETURN: Ticks = Ticks(120);
+/// What a hand writes lands on: a 1/32 note. A line takes one to go back to what a lane had,
+/// after the hand lets go.
+const GRID: u64 = 120;
 
 /// The lane of `state` with what a hand played written into it: `runs` of samples of rising
 /// ticks, each in the units of the number, spliced in turn into the line as the runs before
 /// left it. Each run keeps the line up to the tick before it, holds its last value, and goes
-/// back to the line that was there within [`RETURN`]. Samples the line passes close to on
-/// `travel`, the travel of the number, are dropped.
+/// back to the line that was there within a step of [`GRID`]. Samples land on the grid, and
+/// those the line passes close to on `travel`, the travel of the number, are dropped. Values
+/// have three significant digits, as a knob gives them.
 pub(crate) fn written(
     state: &Value,
     runs: &[Vec<(Ticks, f32)>],
@@ -173,6 +182,16 @@ pub(crate) fn written(
 }
 
 fn spliced(record: &Record, run: &[(Ticks, f32)], travel: ValueRange) -> Vec<LanePoint> {
+    // On the grid, the last sample of each step.
+    let mut snapped: Vec<(Ticks, f32)> = Vec::with_capacity(run.len());
+    for &(tick, value) in run {
+        let tick = Ticks((tick.0 + GRID / 2) / GRID * GRID);
+        match snapped.last_mut() {
+            Some((last, held)) if *last == tick => *held = value,
+            _ => snapped.push((tick, value)),
+        }
+    }
+    let run = &snapped;
     let (Some(&(first, _)), Some(&(last, held))) = (run.first(), run.last()) else {
         return record.points.clone();
     };
@@ -182,11 +201,11 @@ fn spliced(record: &Record, run: &[(Ticks, f32)], travel: ValueRange) -> Vec<Lan
     } else {
         last
     };
-    let end = Ticks(last.0 + RETURN.0);
+    let end = Ticks(last.0 + GRID);
     let at = |tick: Ticks| record.value_at(tick);
     let point = |tick: Ticks, value: f32| LanePoint {
         tick,
-        value,
+        value: travel.value(travel.position(value)),
         curve: 0.0,
     };
     let places: Vec<Point<f32>> = (run.iter())
@@ -220,7 +239,7 @@ fn spliced(record: &Record, run: &[(Ticks, f32)], travel: ValueRange) -> Vec<Lan
 
 /// How far, on the travel of its number from 0 to 1, a written line may pass from a sample it
 /// drops.
-const TOLERANCE: f32 = 0.005;
+const TOLERANCE: f32 = 0.02;
 
 impl Record {
     /// The value at `tick`, as the player plays it.
@@ -375,28 +394,23 @@ mod tests {
             .collect()
     }
 
-    /// A hand that holds 0.8 from tick 400 to 500 on a line from 0 to 1 over 1000 ticks: the line
+    /// A hand that holds 0.8 from tick 480 to 600 on a line from 0 to 1 over 1200 ticks: the line
     /// before it and after its return stays where it was, and the still hand is two points.
     #[test]
     fn a_run_goes_between_the_line_before_it_and_the_line_after_it() {
-        let lane = json!({"points": [{"tick": 0, "value": 0}, {"tick": 1000, "value": 1}]});
-        let still: Vec<(u64, f32)> = (400..=500).step_by(10).map(|tick| (tick, 0.8)).collect();
+        let lane = json!({"points": [{"tick": 0, "value": 0}, {"tick": 1200, "value": 1}]});
+        let still: Vec<(u64, f32)> = (480..=600).step_by(10).map(|tick| (tick, 0.8)).collect();
         let travel = ValueRange::linear(0., 1.);
         let state = written(&lane, &[run(&still)], travel).unwrap();
         let expected = [
             (0, 0.),
-            (399, 0.399),
-            (400, 0.8),
-            (500, 0.8),
-            (620, 0.62),
-            (1000, 1.),
+            (479, 0.399),
+            (480, 0.8),
+            (600, 0.8),
+            (720, 0.6),
+            (1200, 1.),
         ];
-        let points = points(&state);
-        assert_eq!(points.len(), expected.len(), "{points:?}");
-        for ((tick, value), (want_tick, want)) in points.iter().zip(expected) {
-            assert_eq!(*tick, want_tick, "{points:?}");
-            assert!((value - want).abs() < 1e-3, "{points:?}");
-        }
+        assert_eq!(points(&state), expected);
     }
 
     /// Two passes of a loop over the same ticks: the later one wins, its edge holds the first
@@ -405,27 +419,60 @@ mod tests {
     fn a_later_pass_of_a_loop_writes_over_an_earlier_one() {
         let lane = json!({"points": [{"tick": 0, "value": 0}]});
         let travel = ValueRange::linear(0., 1.);
-        let first = run(&[(100, 0.5), (300, 0.5)]);
-        let second = run(&[(200, 0.9), (250, 0.9)]);
+        let first = run(&[(120, 0.5), (480, 0.5)]);
+        let second = run(&[(240, 0.9), (360, 0.9)]);
         let state = written(&lane, &[first, second], travel).unwrap();
-        let points = points(&state);
         let expected = [
             (0, 0.),
-            (99, 0.),
-            (100, 0.5),
-            (199, 0.5),
-            (200, 0.9),
-            (250, 0.9),
+            (119, 0.),
+            (120, 0.5),
+            (239, 0.5),
+            (240, 0.9),
+            (360, 0.9),
+            (480, 0.5),
+            (600, 0.),
         ];
-        for ((tick, value), (want_tick, want)) in points.iter().zip(expected) {
-            assert_eq!(*tick, want_tick, "{points:?}");
-            assert!((value - want).abs() < 1e-6, "{points:?}");
-        }
-        // It goes back to the line the first pass left, which is on its own way back by then.
-        let back: Vec<_> = points.iter().skip(expected.len()).copied().collect();
-        let on_return = 0.5 * (1. - 70. / 120.);
-        assert_eq!(back.len(), 2, "{points:?}");
-        assert_eq!((back[0].0, back[1]), (370, (420, 0.)), "{points:?}");
-        assert!((back[0].1 - on_return).abs() < 1e-6, "{points:?}");
+        assert_eq!(points(&state), expected);
+    }
+
+    /// A hand that sweeps a cutoff from 125 Hz to 8 kHz and back once a bar for two bars,
+    /// sampled as the window polls, about every 16 ms: a few points on the 1/32 grid, with
+    /// three digits, that pass close to what it played.
+    #[test]
+    fn a_hand_writes_a_few_short_points_close_to_what_it_played() {
+        let lane = json!({"points": [{"tick": 0, "value": 1000, "curve": -0.7}], "scale": "log"});
+        let travel = ValueRange::logarithmic(20., 20_000.);
+        let hand: Vec<(u64, f32)> = (0..250)
+            .map(|index| {
+                let tick = 3840 + index * 31 + (index * 7) % 5;
+                let phase = (tick - 3840) as f64 / 3840. * std::f64::consts::TAU;
+                (tick, (1000. * 8f64.powf(phase.sin())) as f32)
+            })
+            .collect();
+        let state = written(&lane, &[run(&hand)], travel).unwrap();
+        let written = points(&state);
+        assert!(written.len() <= 20, "{state}");
+        // The point before the hand's first, which keeps the line before it, is off the grid.
+        assert!(
+            written
+                .iter()
+                .all(|(tick, _)| tick % 120 == 0 || *tick == 3839),
+            "{state}"
+        );
+        // No number longer than a tick: `4890` and not `4890.580810546875`. A curve it does not
+        // write stays as the file had it.
+        let text = state.to_string();
+        let runs = text.split(|char: char| !char.is_ascii_digit());
+        let longest = runs.map(str::len).max();
+        assert!(longest <= Some(5), "{text}");
+        assert_eq!(state["points"][0]["curve"], json!(-0.7), "{text}");
+        let lane = super::record(&state).unwrap();
+        let off = (hand.iter())
+            .map(|&(tick, value)| {
+                let line = travel.position(lane.value_at(Ticks(tick)));
+                (line - travel.position(value)).abs()
+            })
+            .fold(0f32, f32::max);
+        assert!(off < 0.05, "{off} {state}");
     }
 }
