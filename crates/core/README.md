@@ -1,8 +1,8 @@
 # sound-core
 
 The engine, the musical clock, the transport and the live project folder. Every extension is
-built on this crate. Extensions will more and more be written by an agent, so this guide gives
-the mental model and the rules that the types cannot enforce. The code documents each call.
+built on this crate. This guide gives the mental model and the rules that the types cannot
+enforce. The code documents each call.
 
 ## The two halves of an extension
 
@@ -48,12 +48,11 @@ by an agent during a drag applies at once, and the next move of the drag writes 
 - **The behaviour must accept any valid state.** Agents write files by hand, so it gets states
   your own interface never makes.
 - **Nothing on the audio thread may allocate, lock, do I/O, log or free heap memory.** Send
-  snapshots as an `Arc` and swap them in `update`. The engine carries the old one back to the
-  control thread, where it is dropped. The realtime sanitizer checks this in CI
-  (`RTSAN_ENABLE=1`).
-- **Extensions never depend on each other.** Two extensions that must agree share a small
-  contract crate, as `crates/notes` holds the note event and the port names. An owner finds a
-  child by port name, not by tool, so any tool with those ports fits.
+  snapshots as an `Arc` and swap them in `update`; the engine drops the old one on the control
+  thread.
+- **Extensions never depend on each other.** Two that must agree share a small contract crate,
+  as `crates/notes` holds the note event and the port names. An owner finds a child by port
+  name, not by tool, so any tool with those ports fits.
 - **Save musical time in ticks**, never seconds or frames. Keep runtime state such as phase and
   voices in the processor, never in the record.
 - **Name the field in every validation error.** An agent fixes its edit from that message. Keep

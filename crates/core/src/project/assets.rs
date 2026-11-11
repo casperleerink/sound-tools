@@ -1,7 +1,7 @@
 //! Project assets: files the project owns that are not records.
 //!
 //! A record is typed state the core reads, writes and undoes. An asset is opaque bytes that
-//! belong to an extension: a raw take, the state of a hosted plugin, later a sample. The core
+//! belong to an extension: a raw take, the state of a hosted plugin, a sample. The core
 //! never reads inside one. It gives the two safe ways to put bytes in the folder, and one
 //! validated name that a record can hold and that can never point outside `assets/`.
 
@@ -64,7 +64,7 @@ impl AssetName {
         })
     }
 
-    /// The same asset with `-<number>` after the name, for the numbering of [`Assets::create`].
+    /// The same asset with `-<number>` after the name.
     fn numbered(&self, number: u32) -> Self {
         Self {
             folder: self.folder.clone(),
@@ -137,8 +137,8 @@ impl Assets {
     /// Writes bytes under the first free name of `<name>-1`, `<name>-2` and so on, and gives
     /// the name it took.
     ///
-    /// The file is created and never opened, so nothing that is already there can be lost, also
-    /// not by two runtimes at once. Use this for an asset that must never be written over, such
+    /// A file that is already there is never opened, so nothing can be lost, also not by two
+    /// runtimes at once. Use this for an asset that must never be written over, such
     /// as a recorded performance.
     pub fn create(&self, name: &AssetName, bytes: &[u8]) -> Result<AssetName, AssetError> {
         self.create_first_free(name, (1..).map(|number| name.numbered(number)), bytes)

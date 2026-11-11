@@ -173,11 +173,6 @@ impl EngineEdit for Edit<'_> {
     }
 }
 
-/// What a behaviour works with while it applies the state of one instance.
-///
-/// Declare every processor, connection and port the instance needs, each time. What is not
-/// declared again is removed. What was declared before is kept, so processors keep their
-/// runtime state.
 /// The state a record holds: every change of the record holds a new one, so two stamps are
 /// equal while the record is unchanged. It keeps the state alive, so a stamp kept to compare
 /// with later never meets another state at the same address.
@@ -201,6 +196,11 @@ impl RecordStamp {
     }
 }
 
+/// What a behaviour works with while it applies the state of one instance.
+///
+/// Declare every processor, connection and port the instance needs, each time. What is not
+/// declared again is removed. What was declared before is kept, so processors keep their
+/// runtime state.
 pub struct BehaviourContext<'a> {
     id: &'a InstanceId,
     edit: &'a mut (dyn EngineEdit + 'a),
@@ -680,9 +680,9 @@ impl LeftOut {
 /// Which lines of `project.json` are left out because another line of the same port already
 /// carries their device channel. A connection to the device writes the channel it names and
 /// the one after it, so two lines of one port to channels next to each other overlap: the
-/// lower channel carries both and the other is left out. Deciding it here, by channel and not
-/// by the order of the file, is what makes a project of the first milestone, which has one
-/// line per device channel, sound the same whichever way round its lines are written.
+/// lower channel carries both and the other is left out. Deciding it by channel and not by
+/// the order of the file makes a project with one line per device channel sound the same
+/// whichever way round its lines are written.
 fn device_clashes(lines: &[(usize, Connection)]) -> BTreeMap<usize, LeftOut> {
     let mut by_channel: Vec<&(usize, Connection)> = lines.iter().collect();
     by_channel.sort_by_key(|(index, connection)| (device_channel(connection), *index));

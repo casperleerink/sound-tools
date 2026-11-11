@@ -43,9 +43,6 @@ pub(crate) const PROJECT_FILE_DOC: AgentDoc = AgentDoc {
 
 impl Project {
     /// The text of `AGENTS.md` for this project: the map.
-    ///
-    /// The time signatures are not copied into it: the map says how bars work and points at
-    /// `project.json`, where they are.
     pub fn agent_doc(&self) -> String {
         let mut tools = String::from("| Tool | Form |\n| --- | --- |\n");
         for (tool, definition) in self.registry.tools() {

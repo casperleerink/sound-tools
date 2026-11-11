@@ -2,8 +2,7 @@
 //! storage that follows every finished edit, a watcher for outside changes, and the binding
 //! that turns instance state into engine processors.
 //!
-//! The project lives on one thread, the control thread. Nothing here locks. `README.md` in
-//! this crate is the guide for extension authors.
+//! The project lives on one thread, the control thread. Nothing here locks.
 
 mod apply;
 mod assets;
@@ -156,12 +155,11 @@ pub struct Problem {
     pub message: String,
 }
 
-/// Where a state application comes from. The differences are small on purpose.
+/// Where a state application comes from.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Source {
     /// Opening the project: applying everything from empty. Also a change only in memory, see
-    /// [`Project::apply_in_memory`]: like loading, it writes nothing, derives nothing and is no
-    /// point.
+    /// [`Project::apply_in_memory`]: like loading, it writes nothing and is no point.
     Load,
     Interface,
     /// The files already hold this state: an outside change, undo, redo, cancel.
@@ -496,11 +494,9 @@ impl Project {
     /// Runs the behaviour of one instance again, with the record it already has.
     ///
     /// It is not an edit: nothing is written, nothing is undoable, and the record is untouched.
-    /// It is for when something outside the record is ready now that was not before: the plugin
-    /// scan found a plugin a record waited for, or a plugin asked to be loaded again; a Drum
-    /// pad's sounds finished rendering; a Sampler's instrument or a sample finished loading; an
-    /// asset folder a tool watches changed; the code of a project tool changed. A behaviour that
-    /// fails here leaves the instance as it was, as any failed group does.
+    /// It is for when something outside the record is ready now that was not before, such as a
+    /// plugin the scan found or a sample that finished loading. A behaviour that fails here
+    /// leaves the instance as it was, as any failed group does.
     ///
     /// `Ok(false)` says there is no such instance, which is what a record that went away while
     /// something waited for it looks like.
@@ -567,7 +563,7 @@ impl Project {
         let mut paths: Vec<PathBuf> = (live.iter()).map(|id| record_path(self, id)).collect();
         // Records of these tools that did not load: one waited for its tool, or the old check
         // or behaviour refused it. Not the whole folder: an outside edit the watcher has not
-        // delivered yet would apply here with no point and no derive, and then look like
+        // delivered yet would apply here with no point, and then look like
         // no change when it is delivered. A file that does not read keeps its problem.
         let state_folder = self.storage.state_folder();
         let not_loaded = (self.file_problems.keys())
@@ -631,8 +627,6 @@ impl Project {
                 path: storage::PROJECT_FILE.to_string(),
                 message,
             });
-        // What a behaviour said about its own instance while it ran. The record is
-        // live and untouched; part of what it asks for is not.
         files
             .chain(connections)
             .chain(self.instance_problems())

@@ -2,7 +2,6 @@
 //!
 //! Independent of GPUI, and of musical conventions such as tracks, clips and notes.
 //! Those belong to extensions.
-//! `README.md` in this crate is the guide for extension authors: processors and tools.
 
 mod apps;
 mod automation;

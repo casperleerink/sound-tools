@@ -2,8 +2,7 @@
 //!
 //! The file naming rule: the instance `a/b` of a tool that owns no children is the file
 //! `state/a/b.json`. The instance of a tool that owns children is the folder `state/a/b/` with
-//! its record in `instance.json` and its children next to it. The tool decides the form. The
-//! runtime never moves a record between the two.
+//! its record in `instance.json` and its children next to it. The tool decides the form.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -658,7 +657,6 @@ impl Storage {
         }
     }
 
-    /// See the free function of the same name below.
     fn write_atomically(&self, path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
         write_atomically(path, bytes).map_err(|source| self.io_error(path, source))
     }
