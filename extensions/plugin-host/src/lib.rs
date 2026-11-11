@@ -175,8 +175,9 @@ pub struct PluginRecord {
     pub earlier_ms: u32,
 }
 
-/// The most [`PluginRecord::earlier_ms`] takes.
-pub const MAX_EARLIER_MS: u32 = 1000;
+/// The most [`PluginRecord::earlier_ms`] takes: what the engine makes up for on a path that
+/// goes around the plugin, at 96 kHz.
+pub const MAX_EARLIER_MS: u32 = 500;
 
 fn is_zero(value: &u32) -> bool {
     *value == 0

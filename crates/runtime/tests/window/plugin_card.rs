@@ -179,7 +179,7 @@ fn play_earlier_changes_the_record_only_where_a_drag_ends(cx: &mut TestAppContex
     opened.drag_to(to);
     assert_eq!(earlier(&mut opened), 0);
     opened.release(to);
-    // A quarter of the travel up to a second.
-    assert_eq!(earlier(&mut opened), 250);
+    // A quarter of the travel up to half a second.
+    assert_eq!(earlier(&mut opened), 125);
     one_undo_step(&mut opened, "Change Play earlier", &before);
 }

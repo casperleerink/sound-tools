@@ -206,6 +206,10 @@ impl PluginView {
         cx.observe(&session, |view, _, cx| {
             view.ask_the_plugin(false, cx);
             view.end_a_drag_whose_knob_changed(cx);
+            // A plugin that stops under a drag takes the knob, and the drag's end, with it.
+            if view.parameters.is_none() {
+                view.earlier_dragged = None;
+            }
             cx.notify();
         })
         .detach();
@@ -474,7 +478,10 @@ impl PluginView {
                 Some(ms) => ms,
                 None => return,
             },
-            ValueChange::Set(ms) => ms,
+            ValueChange::Set(ms) => {
+                self.earlier_dragged = None;
+                ms
+            }
         };
         let ms = (ms.round().max(0.) as u32).min(MAX_EARLIER_MS);
         let set = |record: &mut PluginRecord, ms| record.earlier_ms = ms;
