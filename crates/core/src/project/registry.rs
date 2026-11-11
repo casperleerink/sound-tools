@@ -102,7 +102,7 @@ pub struct JsonToolDoc {
 /// opens the doc its task needs and no other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AgentDoc {
-    /// The file name under `agent-docs/`, without `.md`. Lowercase letters, digits and `-`.
+    /// The file name under `agent-docs/`, without `.md`. Lowercase letters, digits, `-` and `_`.
     pub name: &'static str,
     /// The heading the map lists the doc under. Groups follow the order of their first doc.
     pub group: &'static str,
@@ -155,7 +155,6 @@ impl RegisteredDoc {
 
 /// Not `Send`: a behaviour may keep control-side state that belongs to the thread the project
 /// lives on, such as the plugin instances of a host, which CLAP requires on the main thread.
-/// The project has always lived on one thread.
 type ErasedBehaviour =
     Box<dyn Fn(&dyn Any, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>;
 
@@ -208,7 +207,6 @@ impl Registry {
     pub fn new() -> Self {
         Self {
             tools: BTreeMap::new(),
-            // `project.json` is core, not an extension, so the core brings its doc itself.
             agent_docs: vec![RegisteredDoc::of(None, super::generated::PROJECT_FILE_DOC)],
             kept_out_of_history: Vec::new(),
         }
@@ -277,9 +275,8 @@ impl Registry {
         if !is_valid_name(doc.name) {
             return Err(RegistryError::InvalidAgentDocName(doc.name));
         }
-        // Two docs of one name would write over each other's file. The doc of `project.json`
-        // is in the list from the start, so its name is taken like any other. A tool of the
-        // project names its doc as itself.
+        // Two docs of one name would write over each other's file. A tool of the project names
+        // its doc as itself.
         let project_tool = self.tools.get(doc.name);
         if self.agent_docs.iter().any(|other| other.name == doc.name)
             || project_tool.is_some_and(|tool| tool.extension.is_none())

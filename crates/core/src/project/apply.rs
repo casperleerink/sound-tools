@@ -1,6 +1,6 @@
-//! The one state application: how a group of changes is staged, derived, bound to the engine
-//! and rolled back when any part of it fails. Interface edits, file changes, loading, undo,
-//! redo and cancel all end here.
+//! The one state application: how a group of changes is staged, bound to the engine and
+//! rolled back when any part of it fails. Interface edits, file changes, loading, undo, redo
+//! and cancel all end here.
 
 use std::collections::BTreeSet;
 
@@ -11,9 +11,8 @@ use super::storage::RecordOnDisk;
 use super::{Project, ProjectError, ProjectEvent, Source};
 
 impl Project {
-    /// The one state application. Interface edits, file changes, loading, undo, redo and
-    /// cancel all come through here. The group applies whole, as one engine batch, or not at
-    /// all. It writes nothing: the caller knows whether files need writing.
+    /// The group applies whole, as one engine batch, or not at all. It writes nothing: the
+    /// caller knows whether files need writing.
     pub(crate) fn apply(
         &mut self,
         changes: Vec<Change>,
@@ -87,7 +86,7 @@ impl Project {
                     self.check_tool(record.tool)?;
                     let owner = id.parent().and_then(|parent| self.instances.get(&parent));
                     let owner = owner.map(|owner| owner.tool);
-                    if let Some(message) = record.place.refuses(record.tool, &id, owner)
+                    if let Some(message) = record.place.refuses(record.tool, owner)
                         && id.parent().is_none_or(|_| owner.is_some())
                     {
                         return Err(ProjectError::WrongPlace { id, message });
