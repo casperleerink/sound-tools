@@ -194,9 +194,13 @@ fn write_beside(path: &Path, write: impl FnOnce(&mut File) -> Result<()>) -> Res
     };
     let mut builder = tempfile::Builder::new();
     builder.prefix(".export-");
-    // As `File::create` makes it: a file only its owner can read could not be shared.
+    // As the file it replaces was, or as `File::create` makes a new one: a temporary file is
+    // only its owner's to read.
     #[cfg(unix)]
-    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o644));
+    builder.permissions(match std::fs::metadata(path) {
+        Ok(replaced) => replaced.permissions(),
+        Err(_) => std::os::unix::fs::PermissionsExt::from_mode(0o644),
+    });
     let mut file = builder
         .tempfile_in(folder)
         .with_context(|| format!("could not write in {}", folder.display()))?;

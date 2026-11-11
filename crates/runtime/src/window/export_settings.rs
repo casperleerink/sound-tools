@@ -51,6 +51,7 @@ pub fn choose(title: &'static str, on_export: OnExport, cx: &mut App) {
                 settings,
                 on_export,
                 focus,
+                cancel: cx.focus_handle().tab_stop(true),
             }
         })
     });
@@ -92,6 +93,8 @@ pub struct ExportSettings {
     depth: Depth,
     on_export: OnExport,
     focus: FocusHandle,
+    /// Return there cancels.
+    cancel: FocusHandle,
 }
 
 impl ExportSettings {
@@ -103,10 +106,15 @@ impl ExportSettings {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.key == "enter" {
-            self.export(window, cx);
-            cx.stop_propagation();
+        if event.keystroke.key != "enter" {
+            return;
         }
+        if self.cancel.is_focused(window) {
+            window.remove_window();
+        } else {
+            self.export(window, cx);
+        }
+        cx.stop_propagation();
     }
 
     fn set_format(&mut self, format: Format) {
@@ -224,11 +232,13 @@ impl Render for ExportSettings {
             .child(
                 Button::new("export-cancel", "Cancel")
                     .variant(ButtonVariant::Ghost)
+                    .focus_handle(&self.cancel)
                     .on_click(|_, window, _| window.remove_window()),
             )
             .child(
                 Button::new("export-confirm", "Export…")
                     .variant(ButtonVariant::Primary)
+                    .tab_stop(true)
                     .on_click(cx.listener(|screen, _, window, cx| screen.export(window, cx))),
             );
         small_window_root()

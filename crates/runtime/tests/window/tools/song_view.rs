@@ -298,6 +298,20 @@ fn export_audio_asks_how_and_writes_the_mp3_chosen(cx: &mut TestAppContext) {
     let before = focused(&mut screen);
     screen.simulate_keystrokes("tab");
     assert_ne!(focused(&mut screen), before);
+    // Format, sample rate, bit depth and loudness, then Cancel: return there exports nothing.
+    screen.simulate_keystrokes("tab tab tab tab enter");
+    window.cx.run_until_parked();
+    assert!(!window.cx.did_prompt_for_new_path());
+    assert_eq!(window.cx.update(|_, cx| cx.windows().len()), 1);
+    let menu = window.until_found("project-menu");
+    window.click(menu);
+    window.pick("menu-export");
+    let screen = window.cx.update(|_, cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
+    });
+    let mut screen = VisualTestContext::from_window(screen.unwrap().into(), &window.cx.cx);
+    screen.update(|window, _| window.refresh());
+    screen.run_until_parked();
     let mp3 = screen.debug_bounds("segment-mp3").unwrap().center();
     screen.simulate_click(mp3, Modifiers::default());
     screen.run_until_parked();

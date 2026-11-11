@@ -578,11 +578,22 @@ fn render(
 /// project it may replace a file. Compared as resolved paths, so no spelling of the path gets
 /// past it.
 fn refuse_to_replace(folder: &Path, file: &Path) -> Result<()> {
-    // Either fails when nothing is there: a new file, or a folder that the render reports.
-    let (Ok(folder), Ok(file)) = (folder.canonicalize(), file.canonicalize()) else {
+    // Fails for a folder that is not there, which the render reports.
+    let (Ok(folder), true) = (folder.canonicalize(), file.symlink_metadata().is_ok()) else {
         return Ok(());
     };
-    if file.starts_with(folder) {
+    // Where the file is named, as a link is replaced itself, and where a link leads.
+    let parent = file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let named = (parent.unwrap_or(Path::new(".")).canonicalize().ok())
+        .zip(file.file_name())
+        .map(|(parent, name)| parent.join(name));
+    if [named, file.canonicalize().ok()]
+        .iter()
+        .flatten()
+        .any(|path| path.starts_with(&folder))
+    {
         bail!("That file is part of the project and is never written over: pick a new name.");
     }
     Ok(())
@@ -951,6 +962,10 @@ mod tests {
             assert!(render(&alias, &wav, Default::default(), &options, false).is_err());
         }
         assert_eq!(std::fs::read(folder.join("project.json")).unwrap(), b"{}");
+        // A link in the project is part of it, wherever it leads.
+        let link = folder.join("assets/audio/elsewhere.wav");
+        std::os::unix::fs::symlink(outside.path().join("elsewhere.wav"), &link).unwrap();
+        assert!(refuse_to_replace(&folder, &link).is_err());
         let new = folder.join("assets/audio/bass.wav");
         assert!(refuse_to_replace(&folder, &new).is_ok());
         let beside = outside.path().join("piece.wav");
