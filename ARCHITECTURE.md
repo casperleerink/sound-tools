@@ -142,6 +142,14 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Library samples are memory-mapped and read ahead off the audio thread. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
 - Library instruments download only when the composer asks, never for an agent's record: its guess must not spend hundreds of megabytes.
 
+## Export
+
+`crates/export`, `--render`.
+
+- The engine renders at the chosen rate, 44.1 or 48 kHz, as on a device of that rate. Rejected: resampling a 48 kHz render, code for what the engine already gives.
+- Loudness is gain alone, from a measure of the whole render, which waits in a temporary file. Its true peak stays 1 dB under full scale before encoding, the room an MP3 needs. Rejected: a limiter, which changes the sound; rendering twice, which a plugin may not repeat.
+- MP3 comes from a pure Rust encoder, pinned. Rejected: LAME (LGPL, C). No FLAC yet: the pure Rust encoder holds the whole file in memory.
+
 ## Recording
 
 - MIDI input and the computer keys have no tool and no record. Rejected: a tool of the project that plays from the keys, which the interface could delay.

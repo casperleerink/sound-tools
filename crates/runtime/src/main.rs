@@ -6,9 +6,9 @@
 //! runtime <project-folder>                                 run live in the window
 //! runtime <project-folder> --headless                      run live, commands from stdin
 //! runtime <project-folder> --inspect                       print a summary, open no device
-//! runtime <project-folder> --render <wav>                 render the project and its tail
-//! runtime <project-folder> --render <wav> --seconds <n>    render the first n seconds
-//! runtime <project-folder> --render <wav> --from <at> --to <at> [--no-tail]
+//! runtime <project-folder> --render <file>                render the project and its tail
+//! runtime <project-folder> --render <file> --seconds <n>   render the first n seconds
+//! runtime <project-folder> --render <file> --from <at> --to <at> [--no-tail]
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
 //! runtime <project-folder> --screenshot <png>              draw the window as it opens (macOS)
@@ -25,8 +25,10 @@
 //! one alone, or `--seconds`, and `--only <path>`, the one instance whose sound the device plays,
 //! which changes no file. `--no-tail` stops a range at its end. An analysis of a file takes times only.
 //!
-//! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
-//! progress bar of the window's export.
+//! A render writes a `.wav` or an `.mp3`, as the file is named, and takes `--rate 44100|48000`,
+//! `--depth 16|24|32` (a WAV) and `--loudness streaming|broadcast`: see [`sound_export`].
+//! With `--progress` at the end it also prints `progress: <percent>` lines, for the progress bar
+//! of the window's export.
 //!
 //! Only the first two forms start GPUI. Tests, CI and agents use the others. In
 //! `Sound Tools.app` and as the command line tool this program is called `sound-tools`.
@@ -50,7 +52,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
 use runtime::report::Timeline;
 use runtime::templates::{self, Keep};
-use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
+use runtime::{OFFLINE, open_or_create_with, open_read_only_at, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
 };
@@ -348,7 +350,7 @@ fn parse_seconds(text: &str) -> Result<f64> {
     }
 }
 
-/// What a render and an analysis play: the flags after `--render <wav>` or `--analyze`.
+/// What a render and an analysis play: the flags after `--render <file>` or `--analyze`.
 #[derive(Default)]
 struct Options {
     seconds: Option<f64>,
@@ -472,10 +474,14 @@ impl Options {
     }
 }
 
-/// Opens the project read-only, with `--only` heard alone, in memory.
-fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine, Plugins)> {
+/// Opens the project read-only at `sample_rate`, with `--only` heard alone, in memory.
+fn open_for_render(
+    folder: &Path,
+    options: &Options,
+    sample_rate: u32,
+) -> Result<(Project, Engine, Plugins)> {
     let plugins = runtime::read_only_plugins()?;
-    let (mut project, engine) = open_read_only_with(folder, plugins.clone())?;
+    let (mut project, engine) = open_read_only_at(folder, plugins.clone(), sample_rate)?;
     print_problems(&project);
     if let Some(only) = &options.only {
         runtime::listen_only(&mut project, only)?;
@@ -498,7 +504,7 @@ fn play(
     let problems = match *span {
         Span::Seconds(seconds) => {
             project.engine().play();
-            let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
+            let frames = (seconds * f64::from(engine.sample_rate())) as usize;
             runtime::render_into(project, engine, plugins, frames, write)?
         }
         Span::Range(from, to, tail) => {
@@ -519,37 +525,30 @@ fn print_event_overflows(project: &mut Project) -> Result<()> {
     Ok(())
 }
 
-/// Renders the span of `options` to `wav`. With `progress` it prints each whole percent of the
-/// span it reaches.
-fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Result<()> {
-    refuse_to_replace(folder, wav)?;
-    let (mut project, mut engine, plugins) = open_for_render(folder, options)?;
-    // Before the file is made, so a render that cannot happen leaves no empty file behind.
+/// Renders the span of `options` to `file`, as `settings` say. With `progress` it prints each
+/// whole percent of the span it reaches.
+fn render(
+    folder: &Path,
+    file: &Path,
+    settings: sound_export::Settings,
+    options: &Options,
+    progress: bool,
+) -> Result<()> {
+    refuse_to_replace(folder, file)?;
+    let mut export = sound_export::Export::new(settings)?;
+    let (mut project, mut engine, plugins) =
+        open_for_render(folder, options, export.sample_rate())?;
     let span = options.span(project.clock(), project.end())?;
-    let rate = f64::from(OFFLINE.sample_rate);
     let length = match span {
-        Span::Seconds(seconds) => (seconds * rate) as u64,
+        Span::Seconds(seconds) => (seconds * f64::from(engine.sample_rate())) as u64,
         Span::Range(from, to, _) => {
             let clock = project.clock();
             clock.frame_of(to).0.saturating_sub(clock.frame_of(from).0)
         }
     };
-    let mut writer = hound::WavWriter::create(
-        wav,
-        hound::WavSpec {
-            channels: OFFLINE.channels as u16,
-            sample_rate: OFFLINE.sample_rate,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        },
-    )?;
-    let mut peak = 0.0_f32;
     let (mut written, mut shown) = (0_u64, None);
     let write = |samples: &[f32]| {
-        for sample in samples {
-            peak = peak.max(sample.abs());
-            writer.write_sample(*sample)?;
-        }
+        export.push(samples)?;
         written += (samples.len() / OFFLINE.channels) as u64;
         // The tail has no known length, so it stays at 100.
         let percent = (written * 100 / length.max(1)).min(100);
@@ -560,13 +559,17 @@ fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Resul
         Ok(())
     };
     play(&mut project, &mut engine, &plugins, &span, write)?;
-    let frames = writer.len() / OFFLINE.channels as u32;
-    writer.finalize()?;
-    let seconds = f64::from(frames) / f64::from(OFFLINE.sample_rate);
+    let report = export.finish(file)?;
+    let seconds = report.frames as f64 / f64::from(engine.sample_rate());
+    let loudness = (report.loudness).map_or(String::new(), |lufs| format!(", {lufs:.1} LUFS"));
     println!(
-        "rendered {seconds:.2} s to {}, peak {peak:.4}",
-        wav.display()
+        "rendered {seconds:.2} s to {}, peak {:.4}{loudness}",
+        file.display(),
+        report.peak
     );
+    for note in report.notes {
+        println!("note: {note}");
+    }
     print_event_overflows(&mut project)
 }
 
@@ -574,12 +577,23 @@ fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Resul
 /// replaces one: records, recordings and imported files are never written over. Outside the
 /// project it may replace a file. Compared as resolved paths, so no spelling of the path gets
 /// past it.
-fn refuse_to_replace(folder: &Path, wav: &Path) -> Result<()> {
-    // Either fails when nothing is there: a new file, or a folder that the render reports.
-    let (Ok(folder), Ok(file)) = (folder.canonicalize(), wav.canonicalize()) else {
+fn refuse_to_replace(folder: &Path, file: &Path) -> Result<()> {
+    // Fails for a folder that is not there, which the render reports.
+    let (Ok(folder), true) = (folder.canonicalize(), file.symlink_metadata().is_ok()) else {
         return Ok(());
     };
-    if file.starts_with(folder) {
+    // Where the file is named, as a link is replaced itself, and where a link leads.
+    let parent = file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let named = (parent.unwrap_or(Path::new(".")).canonicalize().ok())
+        .zip(file.file_name())
+        .map(|(parent, name)| parent.join(name));
+    if [named, file.canonicalize().ok()]
+        .iter()
+        .flatten()
+        .any(|path| path.starts_with(&folder))
+    {
         bail!("That file is part of the project and is never written over: pick a new name.");
     }
     Ok(())
@@ -595,7 +609,7 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
     if path.is_file() {
         return analyze_file(path, options);
     }
-    let (mut project, mut engine, plugins) = open_for_render(path, options)?;
+    let (mut project, mut engine, plugins) = open_for_render(path, options, OFFLINE.sample_rate)?;
     let span = options.span(project.clock(), project.end())?;
     let clock = project.clock().clone();
     let timeline = match span {
@@ -763,7 +777,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -841,9 +855,11 @@ fn main() -> Result<()> {
         // The child of a plugin scan. It loads one bundle, which is why it is a process of
         // its own: a plugin that crashes while it is looked at costs this child and no more.
         [plugin_host::SCAN_ARGUMENT, format, bundle] => scan_one_bundle(format, Path::new(bundle)),
-        [folder, "--render", wav, options @ ..] => {
-            let options = Options::parse(options)?;
-            render(Path::new(folder), Path::new(wav), &options, progress)
+        [folder, "--render", file, flags @ ..] => {
+            let file = Path::new(file);
+            let (settings, flags) = sound_export::Settings::parse(file, flags)?;
+            let options = Options::parse(&flags)?;
+            render(Path::new(folder), file, settings, &options, progress)
         }
         [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
         [folder, "--save-template", name, flags @ ..] => {
@@ -938,14 +954,18 @@ mod tests {
             folder.join("assets/../project.json"),
         ];
         for wav in spellings {
-            let refused = render(&folder, &wav, &options, false).unwrap_err();
+            let refused = render(&folder, &wav, Default::default(), &options, false).unwrap_err();
             assert!(
                 refused.to_string().contains("never written over"),
                 "{refused}"
             );
-            assert!(render(&alias, &wav, &options, false).is_err());
+            assert!(render(&alias, &wav, Default::default(), &options, false).is_err());
         }
         assert_eq!(std::fs::read(folder.join("project.json")).unwrap(), b"{}");
+        // A link in the project is part of it, wherever it leads.
+        let link = folder.join("assets/audio/elsewhere.wav");
+        std::os::unix::fs::symlink(outside.path().join("elsewhere.wav"), &link).unwrap();
+        assert!(refuse_to_replace(&folder, &link).is_err());
         let new = folder.join("assets/audio/bass.wav");
         assert!(refuse_to_replace(&folder, &new).is_ok());
         let beside = outside.path().join("piece.wav");

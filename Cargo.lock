@@ -1809,7 +1809,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -5779,6 +5779,7 @@ dependencies = [
  "pitch-correction",
  "plugin-host",
  "reverb",
+ "rusty_mp3",
  "sampler",
  "saturator",
  "serde",
@@ -5788,6 +5789,7 @@ dependencies = [
  "sound-agent",
  "sound-core",
  "sound-dsp",
+ "sound-export",
  "sound-media",
  "sound-notes",
  "sound-typescript",
@@ -5875,6 +5877,12 @@ dependencies = [
  "tempfile",
  "wait-timeout",
 ]
+
+[[package]]
+name = "rusty_mp3"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eda7c6c82285d2bc3f1e6aded40ca6f7572fe9eec77f18fb10efc1d03aed3877"
 
 [[package]]
 name = "rustybuzz"
@@ -6387,6 +6395,18 @@ dependencies = [
  "schemars",
  "serde",
  "sound-core",
+]
+
+[[package]]
+name = "sound-export"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "hound",
+ "rusty_mp3",
+ "serde",
+ "sound-media",
+ "tempfile",
 ]
 
 [[package]]

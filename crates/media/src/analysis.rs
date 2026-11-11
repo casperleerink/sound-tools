@@ -117,8 +117,7 @@ pub struct Meter {
     /// The first row in which no block of 400 ms has ended yet, and the last such block.
     waiting_row: usize,
     last_momentary: Option<f64>,
-    oversampling: OversamplingFilters,
-    oversamplers: [Oversampler; CHANNELS],
+    oversampled: TruePeak,
     true_peak: (f32, u64),
     not_a_number: Option<u64>,
     spectrum: Spectrum,
@@ -162,8 +161,7 @@ impl Meter {
             max_momentary: 0.0,
             waiting_row: 0,
             last_momentary: None,
-            oversampling: OversamplingFilters::new(),
-            oversamplers: [Oversampler::new(); CHANNELS],
+            oversampled: TruePeak::new(),
             true_peak: (0.0, 0),
             not_a_number: None,
             spectrum: Spectrum::new(rate),
@@ -211,20 +209,7 @@ impl Meter {
     /// [`PEAK_DELAY`] before it, and the momentary loudness of the block it ends, if it ends one.
     fn hear(&mut self, values: [f32; CHANNELS]) -> (f64, f32, Option<f64>) {
         let (power, momentary) = self.momentary.push(values);
-        (power, self.oversampled_peak(values), momentary)
-    }
-
-    /// The highest sample at four times the rate, of the frame [`PEAK_DELAY`] before `values`.
-    fn oversampled_peak(&mut self, values: [f32; CHANNELS]) -> f32 {
-        let mut peak = 0.0_f32;
-        for (value, oversampler) in values.iter().zip(&mut self.oversamplers) {
-            let mut four = [0.0; Oversampler::FACTOR];
-            oversampler.up(&self.oversampling, &[*value], &mut four);
-            peak = four
-                .iter()
-                .fold(peak, |peak, sample| peak.max(sample.abs()));
-        }
-        peak
+        (power, self.oversampled.push(values), momentary)
     }
 
     /// A peak of `frame`, from the start: the row it is in and the whole.
@@ -347,7 +332,7 @@ impl Meter {
         }
         // The same for the oversampling: the peaks of the last frames are still in it.
         for late in frames..frames + PEAK_DELAY {
-            let peak = self.oversampled_peak([0.0; CHANNELS]);
+            let peak = self.oversampled.push([0.0; CHANNELS]);
             if let Some(frame) = late.checked_sub(PEAK_DELAY) {
                 self.add_peak(frame, peak);
             }
@@ -390,6 +375,102 @@ impl RowSums {
             width: (self.mid + self.side > SILENT_POWER)
                 .then(|| 100.0 * self.side / (self.mid + self.side)),
             pitch: self.pitches.measure(),
+        }
+    }
+}
+
+/// The highest sample at four times the rate, the peak between the samples.
+struct TruePeak {
+    filters: OversamplingFilters,
+    oversamplers: [Oversampler; CHANNELS],
+}
+
+impl TruePeak {
+    fn new() -> Self {
+        Self {
+            filters: OversamplingFilters::new(),
+            oversamplers: [Oversampler::new(); CHANNELS],
+        }
+    }
+
+    /// The highest oversampled sample of the frame [`PEAK_DELAY`] before `values`.
+    fn push(&mut self, values: [f32; CHANNELS]) -> f32 {
+        let mut peak = 0.0_f32;
+        for (value, oversampler) in values.iter().zip(&mut self.oversamplers) {
+            let mut four = [0.0; Oversampler::FACTOR];
+            oversampler.up(&self.filters, &[*value], &mut four);
+            peak = four
+                .iter()
+                .fold(peak, |peak, sample| peak.max(sample.abs()));
+        }
+        peak
+    }
+}
+
+/// The loudness of a whole stereo sound and its true peak, as [`Meter`] measures them, and
+/// nothing else: what a loudness normalization needs, cheap enough for a render of any length.
+pub struct LoudnessMeter {
+    momentary: Momentary,
+    blocks: usize,
+    windows: Vec<f64>,
+    oversampled: TruePeak,
+    peak: f32,
+}
+
+/// What [`LoudnessMeter`] measured. `None` is silence, or for the loudness a sound shorter than one
+/// block of 400 ms.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoudnessMeasures {
+    /// Gated, in LUFS.
+    pub integrated: Option<f64>,
+    /// In dBTP.
+    pub true_peak: Option<f64>,
+}
+
+impl LoudnessMeter {
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            momentary: Momentary::new(sample_rate),
+            blocks: 0,
+            windows: Vec::new(),
+            oversampled: TruePeak::new(),
+            peak: 0.0,
+        }
+    }
+
+    /// Measures `samples`, interleaved by channel, after what came before. They must be
+    /// finite.
+    pub fn push(&mut self, samples: &[f32]) {
+        for frame in samples.as_chunks::<CHANNELS>().0 {
+            self.hear(*frame);
+        }
+    }
+
+    fn hear(&mut self, values: [f32; CHANNELS]) {
+        if let (_, Some(momentary)) = self.momentary.push(values) {
+            self.blocks += 1;
+            if self.blocks >= BLOCKS_PER_WINDOW {
+                self.windows.push(momentary);
+            }
+        }
+        let sample_peak = values
+            .iter()
+            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+        self.peak = self
+            .peak
+            .max(sample_peak)
+            .max(self.oversampled.push(values));
+    }
+
+    pub fn finish(mut self) -> LoudnessMeasures {
+        // The peaks of the last frames are still in the oversampling.
+        for _ in 0..PEAK_DELAY {
+            let peak = self.oversampled.push([0.0; CHANNELS]);
+            self.peak = self.peak.max(peak);
+        }
+        LoudnessMeasures {
+            integrated: gated(&self.windows),
+            true_peak: decibels(f64::from(self.peak).powi(2)),
         }
     }
 }
@@ -723,6 +804,25 @@ mod tests {
         close(measures.integrated, -23.0, 0.1);
         // The whole row, not gated, has the silence and the quiet part in it.
         assert!(measures.rows[0].loudness.unwrap() < -26.0);
+    }
+
+    /// The meter of a normalization reads what `--analyze` reads, also for a burst at the very
+    /// end, whose peak is still in the oversampling.
+    #[test]
+    fn loudness_measures_as_the_meter_does() {
+        let loud = 10_f64.powf(-23.0 / 20.0);
+        let mut samples = sine(1_000.0, 0.01, 0.0, 3.0, 1.0);
+        samples.extend(sine(1_000.0, loud, 0.0, 5.0, 0.5));
+        samples.extend(&sine(12_000.0, 0.5, std::f64::consts::FRAC_PI_4, 1.0, 1.0)[..2 * 16]);
+        let mut loudness = LoudnessMeter::new(RATE);
+        for piece in samples.chunks(2 * 333) {
+            loudness.push(piece);
+        }
+        let loudness = loudness.finish();
+        let meter = measure(&samples, vec![]);
+        assert_eq!(loudness.integrated, meter.integrated);
+        assert_eq!(loudness.true_peak, meter.true_peak.map(|(peak, _)| peak));
+        close(loudness.true_peak, -6.02, 0.3);
     }
 
     /// A sine at a quarter of the rate, 45° off: every sample is at 0.707 of the top of the

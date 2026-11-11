@@ -11,6 +11,7 @@
 
 mod app_keys;
 pub mod audio_input;
+pub mod export_settings;
 mod history;
 pub mod live_input;
 pub mod new_project;
@@ -1270,6 +1271,9 @@ fn init(cx: &mut App) {
     bind_keys(cx);
     if let Some(support) = &support {
         crate::update::check_in_background(support, cx);
+        cx.set_global(export_settings::RememberedIn(
+            crate::app::export_settings_file(support),
+        ));
     }
     crate::agent_panel(support, cx).install(cx);
 }

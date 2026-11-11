@@ -2048,11 +2048,11 @@ impl Live {
         let name = name.to_string();
         cx.spawn(async move |live, cx| {
             let imported = match rendered.await {
-                Ok(left_out) => cx
+                Ok(rendered) => cx
                     .background_spawn(async move {
                         let imported = sound_media::import(&assets, &wav);
                         drop(folder);
-                        imported.map(|file| (file.asset.to_string(), left_out))
+                        imported.map(|file| (file.asset.to_string(), rendered.problems))
                     })
                     .await
                     .map_err(|error| error.to_string()),

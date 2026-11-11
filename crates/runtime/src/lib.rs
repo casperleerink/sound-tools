@@ -57,7 +57,7 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
     group: "Project",
-    when: "Run commands: check how your work sounds, read the whole piece, render WAVs or save templates",
+    when: "Run commands: check how your work sounds, read the whole piece, render audio or save templates",
     markdown: "# Inspect, measure, render and save from a command line
 
 Every form works while the project is open and changes no record.
@@ -65,12 +65,12 @@ Every form works while the project is open and changes no record.
 ```sh
 sound-tools . --inspect
 sound-tools . --analyze
-sound-tools . --render <wav>
+sound-tools . --render <file>
 ```
 
 - `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every instance with its record, the connections and the problems.
 - `--analyze` plays the piece and its tail offline, prints what it measures of the whole and writes the rest to a report file. Use it after a change, to check that it sounds as you meant.
-- `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
+- `--render` writes the piece as the file is named, `.wav` or `.mp3` (320 kbps), and prints its peak. A WAV is 48 kHz 32-bit float unless `--rate 44100` or `--depth 16` or `24` say otherwise. `--loudness streaming` (-14 LUFS) or `broadcast` (-23 LUFS) brings it there by gain alone, its true peak under -1 dB, and prints a `note:` when it cannot.
 
 `--analyze` and `--render` take the same options:
 
@@ -530,7 +530,19 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// Opens the project without its lock, so it works next to a running runtime. The engine
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
-    let (control, engine) = Engine::new(OFFLINE);
+    open_read_only_at(folder, plugins, OFFLINE.sample_rate)
+}
+
+/// As [`open_read_only_with`], with the engine at `sample_rate`, as on a device of that rate.
+pub fn open_read_only_at(
+    folder: &Path,
+    plugins: Plugins,
+    sample_rate: u32,
+) -> Result<(Project, Engine)> {
+    let (control, engine) = Engine::new(EngineConfig {
+        sample_rate,
+        ..OFFLINE
+    });
     // A runtime that holds the project may be writing its log.
     let extensions = Extensions::load(folder, &tool_schemas()?, false);
     let (registry, extensions) = registry_of(plugins, extensions)?;
