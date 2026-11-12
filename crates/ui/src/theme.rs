@@ -3,7 +3,8 @@ use gpui::{App, Global, Hsla, Rgba, rgb};
 /// The colours of the app. A view names a role, such as [`Theme::text_muted`] or
 /// [`Theme::fill`]: what a colour is for. The palette under the roles, a grey scale from the
 /// darkest background to the text and `alpha` to lift a surface, is what another theme changes.
-/// The hues are for what DESIGN.md gives each of them, and for marks such as a track's colour.
+/// A hue has one meaning, such as green for sound that moves, or is a mark such as a track's
+/// colour.
 #[derive(Clone, Debug)]
 pub struct Theme {
     gray_50: Hsla,
