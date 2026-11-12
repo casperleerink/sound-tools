@@ -541,6 +541,7 @@ impl SamplerView {
             ),
             Axis::fixed(TOP),
         )
+        .caption(ATTACK_KNOB.caption(state))
         .automated(attack_held)
         .on_change(weak_callback(
             cx,
@@ -568,6 +569,11 @@ impl SamplerView {
                 SUSTAIN.default,
             ),
         )
+        .caption(format!(
+            "{} · {}",
+            DECAY_KNOB.caption(state),
+            SUSTAIN_KNOB.caption(state)
+        ))
         .automated(corner_held)
         .on_change(weak_callback(
             cx,
@@ -692,16 +698,6 @@ impl SamplerView {
             .playhead(self.playing_at)
             .curve(curve)
             .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
-        // The select says the file. Expanded, the knobs of the envelope say its numbers.
-        let display = match self.expanded {
-            true => display,
-            false => display.caption(format!(
-                "A {} · D {} · S {}",
-                seconds_readout(state.attack_seconds),
-                seconds_readout(state.decay_seconds),
-                percent_readout(state.sustain),
-            )),
-        };
         let display = match state.looping {
             true => display.loop_start(
                 loop_start as f32,

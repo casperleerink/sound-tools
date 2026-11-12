@@ -107,11 +107,13 @@ fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Point<f3
 /// of the times and the sustain do. `on_change` hears which handle moved and how: the
 /// owner holds them to the ranges of its fields, since a handle may ask for one past an end.
 /// A handle that moves a value an automation lane moves, as `automated` says, does not drag.
-/// The owner adds the caption and any control above it.
+/// `readouts` are the four values as their knobs read them, which a handle says with their
+/// names while it is pointed at or dragged. The owner adds any control above the drawing.
 pub fn envelope_display(
     id: impl Into<ElementId>,
     time: KnobRange,
     (adsr, defaults, automated): (Adsr, Adsr, Adsr<bool>),
+    readouts: Adsr<String>,
     curves: [f32; 3],
     on_change: impl Fn((EnvelopeHandle, ValueChange<Point<f32>>), &mut Window, &mut App) + 'static,
 ) -> Display {
@@ -120,13 +122,23 @@ pub fn envelope_display(
     let on_change = std::rc::Rc::new(on_change);
     let handle = |which: EnvelopeHandle, name: &'static str, x: Axis, y: Axis| {
         let on_change = on_change.clone();
-        let held = match which {
-            EnvelopeHandle::Attack => automated.attack,
-            EnvelopeHandle::Decay => automated.decay || automated.sustain,
-            EnvelopeHandle::Release => automated.release,
+        let Adsr {
+            attack,
+            decay,
+            sustain,
+            release,
+        } = &readouts;
+        let (held, caption) = match which {
+            EnvelopeHandle::Attack => (automated.attack, format!("Attack {attack}")),
+            EnvelopeHandle::Decay => (
+                automated.decay || automated.sustain,
+                format!("Decay {decay} · Sustain {sustain}"),
+            ),
+            EnvelopeHandle::Release => (automated.release, format!("Release {release}")),
         };
         Handle::new(name, x, y)
             .automated(held)
+            .caption(caption)
             .on_change(move |change, window, cx| on_change((which, change), window, cx))
     };
     let attack = handle(
@@ -195,9 +207,6 @@ pub const DRAWN_AT: f32 = 48_000.;
 /// Points of a response across the display.
 const RESPONSE_POINTS: usize = 96;
 
-/// The scale under a response display: the decades of [`response_decades`].
-pub const RESPONSE_CAPTION: &str = "100 · 1k · 10k";
-
 /// Where a gain in dB is on a response display, from 0 at the bottom to 1 at the top.
 pub fn response_height(db: f32) -> f32 {
     let (bottom, top) = RESPONSE_DB;
@@ -241,11 +250,11 @@ pub fn resonance_travel(slope: FilterSlope) -> KnobRange {
     KnobRange::linear(-at_none / per_resonance, (1. - at_none) / per_resonance)
 }
 
-/// The places across of 100 Hz, 1 kHz and 10 kHz, the scale under a response display.
-pub fn response_decades() -> Vec<f32> {
-    [100., 1_000., 10_000.]
-        .map(|hz| RESPONSE_ACROSS.position(hz))
-        .to_vec()
+/// The scale of a response display, for [`Display::scale`]: 100 Hz, 1 kHz and 10 kHz, each at
+/// its place across.
+pub fn response_scale() -> [(f32, &'static str); 3] {
+    [(100., "100"), (1_000., "1k"), (10_000., "10k")]
+        .map(|(hz, word)| (RESPONSE_ACROSS.position(hz), word))
 }
 
 #[cfg(test)]

@@ -8,7 +8,6 @@
 
 use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
 use sound_core::Instance;
-use sound_ui::components::curves::RESPONSE_CAPTION;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::Display;
 use sound_ui::components::knob::{
@@ -99,11 +98,10 @@ impl VocoderView {
     }
 
     fn display(&self, state: &VocoderState) -> Display {
-        let grid = [100., 1_000., 10_000.].map(across).to_vec();
+        let scale = [(100., "100"), (1_000., "1k"), (10_000., "10k")];
         Display::new("display")
             .marks(bank(state.bands))
-            .grid(grid, Vec::new())
-            .caption(RESPONSE_CAPTION)
+            .scale(scale.map(|(hz, word)| (across(hz), word)))
     }
 }
 

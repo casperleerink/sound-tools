@@ -237,6 +237,7 @@ impl CompressorView {
         let y = Axis::fixed(LEVELS.up(threshold - reduction_db(state, threshold)));
         let automated = self.device.is_automated(THRESHOLD.field, cx);
         Handle::new("threshold", x, y)
+            .caption(THRESHOLD_KNOB.caption(state))
             .automated(automated)
             .on_change(weak_callback(
                 cx,
@@ -261,6 +262,7 @@ impl CompressorView {
         };
         let automated = self.device.is_automated(RATIO.field, cx);
         Handle::new("ratio", x, y)
+            .caption(RATIO_KNOB.caption(state))
             .hollow(true)
             .automated(automated)
             .on_change(weak_callback(

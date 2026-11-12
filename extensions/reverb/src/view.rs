@@ -185,7 +185,9 @@ impl ReverbView {
             parameter.default,
         );
         let automated = self.device.is_automated(parameter.field, cx);
-        let handle = Handle::new(id, x, Axis::fixed(height)).automated(automated);
+        let handle = Handle::new(id, x, Axis::fixed(height))
+            .caption(control.caption(state))
+            .automated(automated);
         handle.on_change(weak_callback(
             cx,
             move |view, change: ValueChange<Point<f32>>, cx| {
@@ -210,21 +212,12 @@ impl ReverbView {
         let pre_delay = self.time_handle("pre-delay", PRE_DELAY_KNOB, pre_delay, state, cx);
         let decay = (start + SHORTEST_TAIL, DECAY_ZONE, FLOOR);
         let decay = self.time_handle("decay", DECAY_KNOB, decay, state, cx);
-        let display = Display::new("display")
+        Display::new("display")
             .curve(tail)
             .marks(reflections)
             .dashed(highs)
             .handle(pre_delay.hollow(true))
-            .handle(decay);
-        // Expanded, the knobs of the two handles say their numbers.
-        if self.expanded {
-            return display;
-        }
-        display.caption(format!(
-            "Pre-delay {} · Decay {}",
-            milliseconds_readout(state.pre_delay_ms),
-            seconds_readout(state.decay_seconds),
-        ))
+            .handle(decay)
     }
 
     fn freeze(&self, state: &ReverbState, cx: &mut Context<Self>) -> Cell {

@@ -16,7 +16,7 @@ use gpui::{
 };
 use sound_core::Instance;
 use sound_ui::components::cell::Cell;
-use sound_ui::components::curves::{RESPONSE_CAPTION, response_decades};
+use sound_ui::components::curves::response_scale;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Display, INSET_HEIGHT, WIDTH};
 use sound_ui::components::knob::{short, signed};
@@ -128,8 +128,7 @@ impl AnalyzerView {
             (height(RED_FROM_DB), theme.red),
         ]
         .map(|(from, color)| (from, color.opacity(FILL_OPACITY)));
-        let decades = response_decades().into_iter();
-        let across = decades.map(|place| place * SPECTRUM_WIDTH).collect();
+        let scale = response_scale().map(|(place, word)| (place * SPECTRUM_WIDTH, word));
         let meter = Meter::new("level", self.metering.level())
             .length(INSET_HEIGHT - 2. * METER_INSET)
             .on_clear_clip(weak_action(cx, |view: &mut Self, cx| {
@@ -139,8 +138,8 @@ impl AnalyzerView {
         Display::new("spectrum")
             .curve(curve)
             .fill_bands(bands)
-            .grid(across, vec![height(-30.), height(-60.)])
-            .caption(RESPONSE_CAPTION)
+            .scale(scale)
+            .grid(Vec::new(), vec![height(-30.), height(-60.)])
             .child(
                 div()
                     .absolute()

@@ -25,8 +25,8 @@ use gpui::{Context, ElementId, Entity, Point, SharedString, Window, div, prelude
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::curves::{
-    Adsr as Times, EnvelopeHandle, RESPONSE_CAPTION, envelope_display, lfo_line, resonance_travel,
-    response_curve, response_decades, response_height, svf_gain,
+    Adsr as Times, EnvelopeHandle, envelope_display, lfo_line, resonance_travel, response_curve,
+    response_height, response_scale, svf_gain,
 };
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
@@ -149,6 +149,15 @@ impl<T> Control<T> {
             Some(off) if value == off => "Off".into(),
             _ => readout(self.unit, value),
         }
+    }
+
+    /// The name and the value in `of`, as the handle of a display says what it moves.
+    fn caption(&self, of: &T) -> String {
+        format!("{} {}", self.label, self.value_readout(of))
+    }
+
+    fn value_readout(&self, of: &T) -> String {
+        self.readout((self.parameter.get)(of))
     }
 
     /// A value as the parameter takes it: a handle may ask for one past its ends.
@@ -551,6 +560,7 @@ impl WavetableView {
         let automated = self.is_automated(object, POSITION.parameter.field, cx);
         let area = Handle::new(object.id("position-area"), Axis::fixed(0.5), travel)
             .area()
+            .caption(POSITION.caption(oscillator))
             .automated(automated)
             .on_change(weak_callback(
                 cx,
@@ -655,7 +665,15 @@ impl WavetableView {
         let y = Axis::new(travel, filter.resonance, RESONANCE.parameter.default);
         let automated = self.is_automated(object, CUTOFF.parameter.field, cx)
             || self.is_automated(object, RESONANCE.parameter.field, cx);
-        let handle = Handle::new(object.id("handle"), x, y).automated(automated);
+        let caption = format!(
+            "{} · {} · {}",
+            object.title,
+            CUTOFF.caption(filter),
+            RESONANCE.caption(filter)
+        );
+        let handle = Handle::new(object.id("handle"), x, y)
+            .caption(caption)
+            .automated(automated);
         handle.on_change(weak_callback(
             cx,
             move |view, change: ValueChange<Point<f32>>, cx| {
@@ -703,11 +721,10 @@ impl WavetableView {
                 true => response(&state.filter_2),
                 false => Vec::new(),
             })
-            .grid(response_decades(), Vec::new())
+            .scale(response_scale())
             .zero_line(response_height(0.))
             .handle(second)
             .handle(self.filter_handle(FILTER_1, &state.filter_1, cx))
-            .caption(RESPONSE_CAPTION)
             .control(routing)
     }
 
@@ -811,10 +828,17 @@ impl WavetableView {
             release: automated(&RELEASE),
         };
         let switch = Self::segments("envelope-shown", self.envelope, cx, Self::show_envelope);
+        let readouts = Times {
+            attack: ATTACK.value_readout(envelope),
+            decay: DECAY.value_readout(envelope),
+            sustain: SUSTAIN.value_readout(envelope),
+            release: RELEASE.value_readout(envelope),
+        };
         let display = envelope_display(
             "envelope-display",
             ATTACK.range(),
             (values, defaults, automated),
+            readouts,
             curves,
             on_change,
         )

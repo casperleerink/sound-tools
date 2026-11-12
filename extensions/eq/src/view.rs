@@ -17,7 +17,7 @@ use gpui::{
 };
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
-use sound_ui::components::curves::{DRAWN_AT, RESPONSE_ACROSS, RESPONSE_CAPTION, response_decades};
+use sound_ui::components::curves::{DRAWN_AT, RESPONSE_ACROSS, response_scale};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
@@ -274,8 +274,14 @@ impl EqView {
         let number = band + 1;
         let automated = (with_gain && self.is_automated(band, GAIN.field, cx))
             || self.is_automated(band, FREQUENCIES[band].field, cx);
+        let frequency = frequency_knob(band).caption(&settings);
+        let caption = match with_gain {
+            true => format!("{frequency} · {}", GAIN_KNOB.caption(&settings)),
+            false => frequency,
+        };
         Handle::new(SharedString::from(format!("band-{number}")), x, y)
             .label(number.to_string())
+            .caption(caption)
             .automated(automated)
             .hollow(band != self.selected)
             .dimmed(!settings.on)
@@ -301,9 +307,8 @@ impl EqView {
         let display = Display::new("display")
             .wide()
             .curve(curve(state))
-            .grid(response_decades(), Vec::new())
-            .zero_line(height_of(0.))
-            .caption(RESPONSE_CAPTION);
+            .scale(response_scale())
+            .zero_line(height_of(0.));
         // The selected handle last, so that it is on top of any other at its place.
         let order = (0..BANDS)
             .filter(|band| *band != self.selected)

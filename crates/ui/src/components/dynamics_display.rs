@@ -1,7 +1,7 @@
 //! The display of a device that turns a level down, the Compressor and the Gate: its transfer
 //! curve, the input across and the output up, so an untouched sound is the diagonal of the
 //! curve's part. The level now is a dot on the curve and the gain reduction a bar at the right
-//! edge, with a caption under it.
+//! edge, which the line under the display says in words while it moves or is pointed at.
 //!
 //! The owner draws its own curve and handles on [`Levels`], keeps a [`Reading`] from its meters
 //! and adds them with [`Levels::meters`].
@@ -9,7 +9,7 @@
 use gpui::{App, div, prelude::*, px};
 
 use crate::components::display::{Display, INSET_HEIGHT, WIDTH};
-use crate::components::knob::{KnobRange, short};
+use crate::components::knob::KnobRange;
 use crate::components::meter::GainReduction;
 use crate::theme::ActiveTheme;
 
@@ -63,7 +63,7 @@ impl Levels {
         }
     }
 
-    /// The dot of the level, where it comes out, the bar and the caption of the reduction.
+    /// The dot of the level, where it comes out, and the bar of the reduction with its words.
     /// `selector` names the dot for tests.
     pub fn meters(
         self,
@@ -94,10 +94,11 @@ impl Levels {
             .top(px(BAR_INSET))
             .right(px(BAR_INSET))
             .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
-        display
-            .caption(reduction_readout(reduction_db))
-            .children(level)
-            .child(bar)
+        let display = match GainReduction::says(reduction_db) {
+            (says, true) => display.caption(says),
+            (says, false) => display.pointed(says),
+        };
+        display.children(level).child(bar)
     }
 }
 
@@ -118,14 +119,6 @@ impl Default for Reading {
     }
 }
 
-/// The gain reduction under the display, to a tenth of a dB: `GR 0 dB`, `GR −6.8 dB`.
-fn reduction_readout(db: f32) -> String {
-    match db > 0. {
-        true => format!("GR {} dB", short(-db)),
-        false => "GR 0 dB".into(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,12 +127,6 @@ mod tests {
         bottom_db: -60.,
         top_db: 0.,
     };
-
-    #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(reduction_readout(0.0), "GR 0 dB");
-        assert_eq!(reduction_readout(6.8), "GR −6.8 dB");
-    }
 
     #[test]
     fn a_reading_of_silence_has_no_level_and_a_steady_one_does_not_move() {

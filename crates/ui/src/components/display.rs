@@ -1,8 +1,12 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
-//! sound, with a line under it on the value line of row 2 ([`Display::caption`]). A curve
-//! is drawn over a fill, or over bands of colour by height for a level ([`Display::fill_bands`]).
-//! A control such as a segmented control sits in a strip above the drawing
-//! ([`Display::control`]), so it lies over none of it.
+//! sound. A curve is drawn over a fill, or over bands of colour by height for a level
+//! ([`Display::fill_bands`]). A control such as a segmented control sits in a strip above the
+//! drawing ([`Display::control`]), so it lies over none of it.
+//!
+//! A display explains itself by what it draws: the marks of its scale stand faintly at their
+//! lines ([`Display::scale`]). The line under it, on the value line of row 2, is empty at rest.
+//! It says what moves ([`Display::caption`]), what the pointer is on ([`Display::pointed`]) and
+//! what a handle moves while that is pointed at or dragged ([`Handle::caption`]).
 //!
 //! A display is [`WIDTH`] wide, or [`WIDE_WIDTH`] for one that needs the room across: a file, the
 //! bands of an EQ. Both are whole columns of cells, so the cells of every card of a rack stand
@@ -30,9 +34,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Bounds, ContentMask, CursorStyle, Div, ElementId, ExternalPaths, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, SharedString, Window,
-    canvas, div, fill, point, prelude::*, px, size,
+    AnyElement, App, Bounds, ContentMask, CursorStyle, DispatchPhase, Div, ElementId, Entity,
+    ExternalPaths, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent, PathBuilder,
+    Pixels, Point, SharedString, Window, canvas, div, fill, point, prelude::*, px, size,
 };
 
 use crate::components::cell::{CELL_WIDTH, CONTROL_HEIGHT};
@@ -77,6 +81,11 @@ const INSET_GROUP: &str = "display-inset";
 const CORNER_STEPS: usize = 8;
 /// From the sides of the inset to the controls of its strip: as the air above and below them.
 const STRIP_PADDING: f32 = 6.;
+/// A mark of the scale: from its line to its word, and from the top of the drawing.
+const SCALE_GAP: f32 = 4.;
+const SCALE_TOP: f32 = 3.;
+/// The most a letter or a digit of a mark takes across.
+const SCALE_LETTER: f32 = 7.;
 
 /// One value a handle moves: where it is on a range, and what a double click sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,6 +139,7 @@ pub struct Handle {
     dimmed: bool,
     area: bool,
     automated: bool,
+    caption: Option<SharedString>,
     on_press: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     on_change: Option<ChangeHandler<HandleValues>>,
 }
@@ -145,9 +155,17 @@ impl Handle {
             dimmed: false,
             area: false,
             automated: false,
+            caption: None,
             on_press: None,
             on_change: None,
         }
+    }
+
+    /// What the line under the display says while the pointer is on the handle or drags it:
+    /// what it moves, by name and value, such as `Cutoff 1.2 kHz · Resonance 40%`.
+    pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
+        self.caption = Some(caption.into());
+        self
     }
 
     /// A number or a letter in the dot, which makes it 16 pt.
@@ -207,6 +225,8 @@ pub struct Display {
     curve: Vec<Point<f32>>,
     /// Vertical grid lines at these places across, horizontal ones at these places up.
     grid: (Vec<f32>, Vec<f32>),
+    /// The grid lines of [`Display::scale`], each at its place across with its word.
+    scale: Vec<(f32, SharedString)>,
     /// The 0 dB line, at this place up.
     zero: Option<f32>,
     /// Thin lines up from the bottom, each at a place across to a height.
@@ -222,6 +242,7 @@ pub struct Display {
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
+    pointed: Option<SharedString>,
     controls: Vec<AnyElement>,
     strip: bool,
     children: Vec<AnyElement>,
@@ -237,6 +258,7 @@ impl Display {
             width: WIDTH,
             curve: Vec::new(),
             grid: (Vec::new(), Vec::new()),
+            scale: Vec::new(),
             zero: None,
             marks: Vec::new(),
             dashed: Vec::new(),
@@ -246,6 +268,7 @@ impl Display {
             waveform: Waveform::default(),
             handles: Vec::new(),
             caption: None,
+            pointed: None,
             controls: Vec::new(),
             strip: false,
             children: Vec::new(),
@@ -307,6 +330,18 @@ impl Display {
     /// Grid lines: vertical ones at places across, horizontal ones at places up, 0 to 1.
     pub fn grid(mut self, across: Vec<f32>, up: Vec<f32>) -> Self {
         self.grid = (across, up);
+        self
+    }
+
+    /// The scale across: a grid line at each place, 0 to 1, with what it is in faint words at
+    /// its top, such as `1k` on a scale of frequencies.
+    pub fn scale(
+        mut self,
+        marks: impl IntoIterator<Item = (f32, impl Into<SharedString>)>,
+    ) -> Self {
+        self.scale = (marks.into_iter())
+            .map(|(across, word)| (across, word.into()))
+            .collect();
         self
     }
 
@@ -383,10 +418,17 @@ impl Display {
         self
     }
 
-    /// The line under the display, for what no control of the card says: its scale, a
-    /// reduction, or the numbers of handles whose knobs are behind expand.
+    /// The line under the display. A card at rest has none: give it while what it says
+    /// moves, such as how far a compressor turns the sound down now.
     pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
         self.caption = Some(caption.into());
+        self
+    }
+
+    /// What the line under the display says while the pointer is on the display, on no handle
+    /// that speaks, and there is no [`Display::caption`]: what the drawing shows at rest.
+    pub fn pointed(mut self, pointed: impl Into<SharedString>) -> Self {
+        self.pointed = Some(pointed.into());
         self
     }
 }
@@ -653,6 +695,42 @@ fn moved(axis: Axis, travel: &mut Travel, pointer: f32, fine: bool) -> f32 {
     }
 }
 
+/// Whether the pointer is on a handle that speaks, or drags it, wherever the pointer went
+/// since. Kept in element state under the handle, so it goes when the handle does.
+#[derive(Clone, Copy, Default)]
+struct Pointing {
+    on: bool,
+    drags: bool,
+}
+
+/// The key of what a handle keeps in element state. Under the id of the display, so that two
+/// displays with handles of one name, such as two filters in a rack, keep a drag and a focus
+/// each. A display draws before its element pushes its id, so the key names the display itself.
+fn handle_key(display: &ElementId, handle: &Handle) -> ElementId {
+    ElementId::NamedChild(Arc::new(display.clone()), handle.id.to_string().into())
+}
+
+/// Hears the end of the drag of a handle that speaks, as an element of no size: the line under
+/// the display then says it no longer, though nothing else is drawn again at a mouse up.
+fn drag_end_listener(pointing: Entity<Pointing>) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                let ends = phase == DispatchPhase::Capture && event.button == MouseButton::Left;
+                if ends && pointing.read(cx).drags {
+                    pointing.update(cx, |pointing, cx| {
+                        pointing.drags = false;
+                        cx.notify();
+                    });
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
+}
+
 /// The element of one handle, a dot in a larger target centred on its place.
 fn handle_element(
     display: &ElementId,
@@ -660,13 +738,11 @@ fn handle_element(
     hides_under_files: bool,
     (width, height): (f32, f32),
     (dot, ring): (Hsla, Hsla),
+    pointing: Option<Entity<Pointing>>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
-    // Under the id of the display, so that two displays with handles of one name, such as two
-    // filters in a rack, keep a drag and a focus each. A display draws before its element
-    // pushes its id, so the key names the display itself.
-    let key = ElementId::NamedChild(Arc::new(display.clone()), handle.id.to_string().into());
+    let key = handle_key(display, &handle);
     let state = window.use_keyed_state(key, cx, |_, cx| GestureState::new(cx));
     let focus_handle = state.read(cx).focus_handle.clone();
     let held = handle.automated;
@@ -695,6 +771,20 @@ fn handle_element(
     div()
         .id(handle.id)
         .debug_selector(move || format!("handle-{selector}"))
+        // A handle that speaks tells the display while the pointer is on it or drags it.
+        .when_some(pointing.clone(), |target, pointing| {
+            target
+                .on_hover({
+                    let pointing = pointing.clone();
+                    move |on, _, cx| {
+                        pointing.update(cx, |pointing, cx| {
+                            pointing.on = *on;
+                            cx.notify();
+                        });
+                    }
+                })
+                .child(drag_end_listener(pointing))
+        })
         .absolute()
         .map(|target| match area {
             true => target.top_0().left_0().w(px(width)).h(px(height)),
@@ -773,6 +863,9 @@ fn handle_element(
                     // it also stops GPUI giving the handle the focus, which escape needs, so the
                     // handle takes it itself.
                     if took {
+                        if let Some(pointing) = &pointing {
+                            pointing.update(cx, |pointing, _| pointing.drags = true);
+                        }
                         window.focus(&press_focus, cx);
                         cx.stop_propagation();
                     }
@@ -810,10 +903,12 @@ impl RenderOnce for Display {
             signal: theme.green,
         };
         let handle_colors = (theme.text(), theme.well());
-        let caption_color = theme.text_secondary();
+        let (caption_color, scale_color) = (theme.text_secondary(), theme.text_muted());
+        let (mut across, up) = self.grid;
+        across.extend(self.scale.iter().map(|(across, _)| *across));
         let drawing = Drawing {
             curve: self.curve,
-            grid: self.grid,
+            grid: (across, up),
             zero: self.zero,
             marks: self.marks,
             dashed: self.dashed,
@@ -835,14 +930,64 @@ impl RenderOnce for Display {
             false => 0.,
         };
         let size = (self.width, INSET_HEIGHT - strip);
+        let scale = self.scale.into_iter().map(|(across, word)| {
+            let line = across * self.width;
+            // After its line, or before it where the display ends too soon after it.
+            let fits = line + SCALE_GAP + word.chars().count() as f32 * SCALE_LETTER <= self.width;
+            div()
+                .absolute()
+                .top(px(SCALE_TOP))
+                .map(|mark| match fits {
+                    true => mark.left(px(line + SCALE_GAP)),
+                    false => mark.right(px(self.width - line + SCALE_GAP)),
+                })
+                .text_variant(TextVariant::Label)
+                .line_height(px(CAPTION_HEIGHT))
+                .whitespace_nowrap()
+                .child(typography::tabular_text(word, scale_color))
+        });
+        let scale: Vec<_> = scale.collect();
+        // Whether the pointer is on the display, for what it says at rest. Under its id, as
+        // the state of a handle is.
+        let key = ElementId::NamedChild(Arc::new(self.id.clone()), "pointed".into());
+        let on_inset = window.use_keyed_state(key, cx, |_, _| false);
+        // In the order they are drawn, the topmost last, each with its pointer if it speaks.
         let (areas, handles): (Vec<_>, Vec<_>) =
             self.handles.into_iter().partition(|handle| handle.area);
-        let mut element = |handle| {
-            let hides = self.takes_files;
-            handle_element(&self.id, handle, hides, size, handle_colors, window, cx)
+        let handles: Vec<_> = (areas.into_iter().chain(handles))
+            .map(|handle| {
+                let key = handle_key(&self.id, &handle);
+                let speaks = handle.caption.is_some();
+                let pointing =
+                    speaks.then(|| window.use_keyed_state(key, cx, |_, _| Pointing::default()));
+                (handle, pointing)
+            })
+            .collect();
+        // The handle a drag has speaks, or else the topmost under the pointer.
+        let speaking = |wanted: fn(Pointing) -> bool| {
+            let speaking = handles.iter().rev().find(|(_, pointing)| {
+                (pointing.as_ref()).is_some_and(|pointing| wanted(*pointing.read(cx)))
+            });
+            speaking.and_then(|(handle, _)| handle.caption.clone())
         };
-        let areas: Vec<_> = areas.into_iter().map(&mut element).collect();
-        let handles: Vec<_> = handles.into_iter().map(&mut element).collect();
+        let handle =
+            speaking(|pointing| pointing.drags).or_else(|| speaking(|pointing| pointing.on));
+        let caption = match (handle, self.caption) {
+            (Some(handle), Some(caption)) => Some(format!("{handle} · {caption}").into()),
+            (Some(says), None) | (None, Some(says)) => Some(says),
+            (None, None) => self.pointed.clone().filter(|_| *on_inset.read(cx)),
+        };
+        let handles = handles.into_iter().map(|(handle, pointing)| {
+            let (hides, colors) = (self.takes_files, handle_colors);
+            let area = handle.area;
+            let element =
+                handle_element(&self.id, handle, hides, size, colors, pointing, window, cx);
+            (area, element)
+        });
+        let (areas, handles): (Vec<_>, Vec<_>) = handles.partition(|(area, _)| *area);
+        let element = |(_, element)| element;
+        let areas: Vec<_> = areas.into_iter().map(element).collect();
+        let handles: Vec<_> = handles.into_iter().map(element).collect();
         let controls = (!self.controls.is_empty()).then(|| {
             div()
                 .absolute()
@@ -865,7 +1010,16 @@ impl RenderOnce for Display {
             .w(px(self.width))
             .child(
                 div()
+                    .id("inset")
                     .when(self.takes_files, |d| d.group(INSET_GROUP))
+                    .when(self.pointed.is_some(), |inset| {
+                        inset.on_hover(move |on, _, cx| {
+                            on_inset.update(cx, |on_inset, cx| {
+                                *on_inset = *on;
+                                cx.notify();
+                            });
+                        })
+                    })
                     .relative()
                     .h(px(INSET_HEIGHT))
                     .rounded(radius::MD)
@@ -879,6 +1033,7 @@ impl RenderOnce for Display {
                             .w_full()
                             .h(px(INSET_HEIGHT - strip))
                             .child(drawing)
+                            .children(scale)
                             .children(areas)
                             .children(self.children)
                             .children(handles),
@@ -894,10 +1049,13 @@ impl RenderOnce for Display {
                     .text_variant(TextVariant::Label)
                     .line_height(px(CAPTION_HEIGHT))
                     .whitespace_nowrap()
-                    .children(
-                        self.caption
-                            .map(|caption| typography::tabular_text(caption, caption_color)),
-                    ),
+                    .children(caption.map(|caption| {
+                        // For tests, which find the line by what it says: `caption-<words>`.
+                        let selector = caption.clone();
+                        div()
+                            .debug_selector(move || format!("caption-{selector}"))
+                            .child(typography::tabular_text(caption, caption_color))
+                    })),
             )
     }
 }
@@ -936,12 +1094,6 @@ impl TextDisplay {
 
     pub fn button(mut self, button: impl IntoElement) -> Self {
         self.button = Some(button.into_any_element());
-        self
-    }
-
-    /// The line under the display, as on [`Display::caption`].
-    pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
-        self.display = self.display.caption(caption);
         self
     }
 

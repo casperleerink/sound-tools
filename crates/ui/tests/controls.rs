@@ -100,9 +100,11 @@ impl Render for Controls {
             Axis::new(UNIT, self.sideways.value.x, 0.1),
             fixed,
         )
+        .caption("Sideways")
         .on_change(follow(cx, |view| &mut view.sideways));
         div().flex().gap(px(40.)).p(px(40.)).child(
             Display::new("display")
+                .pointed("At rest")
                 .handle(handle)
                 .handle(sideways)
                 .handle(still),
@@ -191,6 +193,39 @@ fn a_handle_drags_from_where_it_is_and_escape_puts_it_back(cx: &mut TestAppConte
         point(0.5, 0.5)
     );
     release(cx, beside, 1);
+}
+
+/// Whether the line under the display says `words`, as `caption-<words>`.
+fn says(cx: &mut VisualTestContext, words: &'static str) -> bool {
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    cx.debug_bounds(words).is_some()
+}
+
+#[gpui::test]
+fn the_line_under_a_display_speaks_only_of_what_is_pointed_at_or_dragged(cx: &mut TestAppContext) {
+    let (_, cx) = open(cx);
+    let sideways = bounds(cx, "handle-sideways").center();
+    let hover = |cx: &mut VisualTestContext, at| {
+        cx.simulate_mouse_move(at, None, Modifiers::default());
+        cx.run_until_parked();
+    };
+    hover(cx, point(px(5.), px(5.)));
+    assert!(!says(cx, "caption-At rest") && !says(cx, "caption-Sideways"));
+    // On the display and on no handle, then on the handle that speaks.
+    let beside = sideways - point(px(80.), px(0.));
+    hover(cx, beside);
+    assert!(says(cx, "caption-At rest"));
+    hover(cx, sideways);
+    assert!(says(cx, "caption-Sideways") && !says(cx, "caption-At rest"));
+    // The handle moves sideways only, so a drag up leaves it: it still speaks, until the
+    // button comes up.
+    press(cx, sideways, 1);
+    let above = sideways + point(px(20.), px(-40.));
+    drag_to(cx, above, false);
+    assert!(says(cx, "caption-Sideways"));
+    release(cx, above, 1);
+    assert!(says(cx, "caption-At rest") && !says(cx, "caption-Sideways"));
 }
 
 #[gpui::test]

@@ -79,7 +79,6 @@ fn clip_display(overview: Option<Arc<Overview>>) -> WaveformDisplay {
             true,
         ))
         .handle(handle("fade-out", across(fade_out), false))
-        .caption("2.1 s to 10.1 s of 14.6 s")
 }
 
 fn knob(id: &'static str, label: &'static str, value: f32, readout: &'static str) -> Knob {
@@ -118,9 +117,7 @@ fn displays(cx: &App) -> AnyElement {
                 .text_color(cx.theme().text_secondary())
                 .child("Select a clip."),
         );
-    let waiting = WaveformDisplay::new("waiting", None, 14.6)
-        .trim(2.1, 10.1)
-        .caption("2.1 s to 10.1 s of 14.6 s");
+    let waiting = WaveformDisplay::new("waiting", None, 14.6).trim(2.1, 10.1);
     block(
         "Waveform display, and the Clip card",
         cx,
@@ -178,13 +175,11 @@ fn sampler_display(overview: Option<Arc<Overview>>) -> WaveformDisplay {
             point(across(start + attack + decay), sustain * top),
             point(across(end), sustain * top),
         ])
-        .handle(handle("attack", across(start + attack), top))
-        .handle(handle(
-            "decay",
-            across(start + attack + decay),
-            sustain * top,
-        ))
-        .caption("A 2 ms · D 400 ms · S 55%")
+        .handle(handle("attack", across(start + attack), top).caption("Attack 2 ms"))
+        .handle(
+            handle("decay", across(start + attack + decay), sustain * top)
+                .caption("Decay 400 ms · Sustain 55%"),
+        )
 }
 
 fn choose_file() -> Button {
