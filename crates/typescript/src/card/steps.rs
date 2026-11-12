@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, BoxShadow, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
-    SharedString, Window, div, point, prelude::*, px,
+    AnyElement, App, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton, SharedString, Window,
+    div, prelude::*, px,
 };
 use serde_json::json;
 use sound_ui::components::cell::CELL_WIDTH;
@@ -82,7 +82,7 @@ impl RenderOnce for Steps {
         let last = self.on.len().saturating_sub(1);
         let at = state.read(cx).at.min(last);
         let theme = cx.theme();
-        let (lit, dark, plays, ring, label_color) = (
+        let (lit, dark, plays, focus, label_color) = (
             theme.text(),
             theme.fill_strong(),
             theme.green,
@@ -92,25 +92,18 @@ impl RenderOnce for Steps {
         let look = self.size.look();
         let on_turn = self.on_turn;
         let steps = self.on.iter().enumerate().map(|(step, on)| {
-            let focused = ring_shows && step == at;
+            // The ring of the keys wins over the ring of the step that plays.
+            let ring = match (ring_shows && step == at, self.playing == Some(step)) {
+                (true, _) => focus,
+                (false, true) => plays,
+                (false, false) => Hsla::transparent_black(),
+            };
             let square = div()
                 .size(px(look.square))
                 .rounded(radius::SM)
                 .bg(if *on { lit } else { dark })
                 .border_2()
-                .border_color(match self.playing == Some(step) {
-                    true => plays,
-                    false => Hsla::transparent_black(),
-                })
-                .when(focused, |square| {
-                    square.shadow(vec![BoxShadow {
-                        color: ring,
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(2.),
-                        inset: false,
-                    }])
-                });
+                .border_color(ring);
             let state = state.clone();
             div()
                 .id(("step", step))

@@ -881,7 +881,8 @@ impl Render for TypeScriptCard {
         let live = self.live.read(cx);
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
-        let hides_cells = matches!(&tree, Some(Ok(table)) if parts::hides_cells(table));
+        let hides_cells =
+            self.frame.is_some() && matches!(&tree, Some(Ok(table)) if parts::hides_cells(table));
         let playhead = *self.session.read(cx).playhead().read(cx);
         if self.parts(cx).body.animates {
             window.request_animation_frame();

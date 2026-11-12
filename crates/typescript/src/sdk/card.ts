@@ -71,7 +71,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         };
         cells.push(Cell({ label, children: Toggle({ dot: true, size: "sm", on: () => state[name] as boolean, onClick: turn }) }));
       } else if (field.kind === "choice") {
-        const options = field.options.map((option) => ({ value: option, label: String(option) }));
+        const options = field.options.map((option) => ({ value: option, label: words(String(option)) }));
         // More than a few side by side would make the card wide.
         const control = options.length > 3 ? Select({ field: name, size: "sm", options }) : SegmentedControl({ field: name, size: "sm", options });
         cells.push(Cell({ label, children: control }));

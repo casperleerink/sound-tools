@@ -66,7 +66,10 @@ impl Drawing<'_> {
             _ => DISPLAY_WIDTH,
         };
         let name = self.element_name("display", None, id);
-        let is_space = |slot: &usize| matches!(table.get(*slot), Some(entry) if matches!(entry.props, Props::Space(_)));
+        let is_space = |slot: &usize| {
+            let props = table.get(*slot).map(|entry| &entry.props);
+            matches!(props, Some(Props::Space(_)))
+        };
         let (spaces, controls): (Vec<usize>, Vec<usize>) =
             drawn(table, children).partition(is_space);
         // The drawing starts under the control, so the control lies over none of it.
