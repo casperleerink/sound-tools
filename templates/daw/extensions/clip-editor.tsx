@@ -297,7 +297,7 @@ const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "o
  * one and a paste need chosen notes. A paste goes to the playhead when it is inside the clip,
  * else right after the chosen notes, else to the start of the clip. A note added goes right
  * after the chosen ones, at the pitch of the last, so adding again makes a row to type the
- * values of; with none chosen, on the grid where a paste goes, at C4.
+ * values of, up to the end of the clip; with none chosen, on the grid where a paste goes, at C4.
  */
 export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   // Notes an undo or another tool took away are no longer chosen.
@@ -311,6 +311,7 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
   } else if (command === "add") {
     const last = picked().reduce<Note | undefined>((latest, note) => (latest && latest.start + latest.length >= note.start + note.length ? latest : note), undefined);
     const start = last ? last.start + last.length : inside ? snapped(playhead - clip.start, memory.snap) : 0;
+    if (start >= lengthOf(clip)) return false;
     const note = { start, length: memory.length, pitch: last?.pitch ?? 60, velocity: 100 };
     change("Add a note", (notes) => ({ notes: [...notes, note], chosen: new Set([notes.length]) }));
   } else if (command === "paste") {

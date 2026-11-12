@@ -233,8 +233,9 @@ export const songActions: Record<string, SongAction> = {
     const name = [...memory.selected][0]?.split("/")[0] ?? memory.track;
     if (name === null || children.find((child) => child.name === name)?.tool !== "track") return false;
     const start = memory.snap > 0 ? Math.floor(Math.round(clock.tick) / memory.snap) * memory.snap : Math.round(clock.tick);
-    const [from = 0, to = 4 * BEAT] = barStarts(clock.tempo_map.time_signatures, start + 1).slice(-2);
-    const added = addClip(tool, name, start, to - from);
+    const starts = barStarts(clock.tempo_map.time_signatures, start + 1);
+    const next = starts.findIndex((tick) => tick > start);
+    const added = addClip(tool, name, start, (starts[next] ?? 0) - (starts[next - 1] ?? 0) || 4 * BEAT);
     if (!added) return;
     memory.selected = new Set([added]);
     memory.track = name;

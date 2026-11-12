@@ -1331,6 +1331,31 @@ fn a_clip_added_in_three_four_is_as_long_as_its_bar(cx: &mut TestAppContext) {
     );
 }
 
+/// Shift-C in the first bar of a piece that changes to 3/4 and then to 6/8 later adds a clip as
+/// long as the bar the playhead is in, not as a bar of a later signature.
+#[gpui::test]
+fn the_key_adds_a_clip_as_long_as_the_bar_at_the_playhead(cx: &mut TestAppContext) {
+    let files = files_with(1, 0, "project.json", |project| {
+        let map = project["tempo_map"].as_object_mut().unwrap();
+        map.remove("time_signature");
+        let runs = serde_json::json!([
+            { "signature": "4/4", "bars": 2 },
+            { "signature": "3/4", "bars": 2 },
+            { "signature": "6/8", "bars": 1 },
+        ]);
+        map.insert("time_signatures".into(), runs);
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("shift-c");
+    window.until("the clip added", |window| window.has("song/t00/clip"));
+    let clip = window.record("song/t00/clip");
+    assert_eq!(
+        (clip["start"].as_u64(), clip["length"].as_u64()),
+        (Some(0), Some(4 * 960))
+    );
+}
+
 /// A pitch the editor shows of `clip` with no note at `tick`, near the middle of its notes.
 pub(super) fn free_pitch(clip: &serde_json::Value, tick: f32) -> u8 {
     let notes = clip["notes"].as_array().cloned().unwrap_or_default();
