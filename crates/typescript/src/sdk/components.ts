@@ -1,12 +1,12 @@
 // Components made of the blocks above.
 
-import { Arc, Button, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, Space, Text, Toggle } from "./drawing";
-import { Fields, Inputs, NumberField, Unit } from "./fields";
+import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, Space, Text } from "./drawing";
+import { Unit } from "./fields";
 import { Drawing } from "./host";
 import { Drag, DragResult, DragTurns, KeyName, Live, now, Num, Press } from "./live";
-import { Child, currentCard, element, For, Show, UiNode } from "./nodes";
+import { currentCard, element, Show, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
-import { Context, Key } from "./tools";
+import { Key } from "./tools";
 
 /** The view that draws now, for the components below, which read its record and fields. */
 function drawing(): Drawing {
@@ -60,8 +60,14 @@ const SWEEP = 0.75;
 /** Points of a drag for the whole range of a knob, as the window's. */
 const TRAVEL = 200;
 
+/** How a control reads its number: in a unit, a pan as `C`, `25L`, `100R`, or a pitch as its note, `C2` for 36. */
+type Reading = Unit | "pan" | "pitch";
+
+/** The unit a drag steps a number in: a pan and a pitch have none. */
+const unitOf = (reading?: Reading): Unit | undefined => (reading === "pan" || reading === "pitch" ? undefined : reading);
+
 /** How a knob spreads a number from `min` to `max`, as the window's knobs: on a log scale for `"hz"`. */
-const knobTravel = (min: number, max: number, unit?: Unit | "pan"): Travel => ({ min, max, scale: unit === "hz" && min > 0 ? "log" : "linear" });
+const knobTravel = (min: number, max: number, unit?: Reading): Travel => ({ min, max, scale: unit === "hz" && min > 0 ? "log" : "linear" });
 
 /** The value at `position` along a knob's `travel`, as `valueAt` puts it, worked out in the window. */
 function liveValueAt({ min, max, scale }: Travel, position: Live): Live {
@@ -107,7 +113,7 @@ export type KnobProps = ValueProps<number> & {
   min: number;
   max: number;
   default: number;
-  unit?: Unit | "pan";
+  unit?: Reading;
   played?: boolean;
   bipolar?: boolean;
   size?: "sm" | "md";
@@ -116,13 +122,14 @@ export type KnobProps = ValueProps<number> & {
 /**
  * A knob, as the app's knobs look, on a field, a number input or what code keeps, see
  * `ValueProps`. With `played` it moves with a lane. A double click puts it at `default`.
- * `bipolar` draws its arc from the top, as a pan's; `unit: "pan"` reads `C`, `25L`, `100R`.
+ * `bipolar` draws its arc from the top, as a pan's; `unit: "pan"` reads `C`, `25L`, `100R`, and
+ * `"pitch"` the note of a pitch, `C2` for 36.
  * `size: "sm"` is a 28-point dial without text.
  */
 export function Knob(props: KnobProps): UiNode {
   const { label, min, max, unit, bipolar } = props;
   const small = props.size === "sm";
-  const turns = { min, max, unit: unit === "pan" ? undefined : unit, default: props.default, label: label && `Change ${label.toLowerCase()}` };
+  const turns = { min, max, unit: unitOf(unit), default: props.default, label: label && `Change ${label.toLowerCase()}` };
   const { key, value, fraction, drag, onPress } = turned("knob", props, knobTravel(min, max, unit), turns, "y");
   const angle = () => fraction().times(SWEEP).minus(SWEEP / 2);
   const [centreX, centreY, radius, cap] = small ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
@@ -278,7 +285,7 @@ export type NumberBoxProps = Either<
   /** Points of a drag for one step of what code keeps: 10 when left out. */
   per?: number;
   /** How it shows the number, as a `Label` does. */
-  unit?: Unit | "pan" | TickUnit;
+  unit?: Reading | TickUnit;
   /** A field as it plays, see `now.value`. */
   played?: boolean;
   /** The undo step of a field: "Change <field>" when left out. */
@@ -294,9 +301,17 @@ export type NumberBoxProps = Either<
 /** The heights of `ControlSize`, for the controls drawn here. */
 const CONTROL_HEIGHT = { sm: 24, md: 28, lg: 32 } as const;
 
-/** A number that `text` says, or `null`: `-6 dB`, `2k` for 2000 in Hz, `-inf`. */
+/** The semitones of each note letter above C. */
+const SEMITONES = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 } as const;
+
+/** A number that `text` says, or `null`: `-6 dB`, `2k` for 2000 in Hz, `-inf`, `F#3` for a pitch. */
 function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null {
   const plain = text.trim().replace("−", "-");
+  const note = unit === "pitch" ? /^([a-g])([#b]?)(-?\d+)$/i.exec(plain) : null;
+  if (note) {
+    const [, letter = "c", accidental, octave] = note;
+    return SEMITONES[letter.toLowerCase() as keyof typeof SEMITONES] + (accidental === "#" ? 1 : accidental === "b" ? -1 : 0) + (Number(octave) + 1) * 12;
+  }
   if (/^-\s*inf/i.test(plain)) return -Infinity;
   const value = Number.parseFloat(plain);
   if (!Number.isFinite(value)) return null;
@@ -327,7 +342,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const text = { x, y: Math.round((height - textSize * 1.3) / 2), size: textSize, color: "text", align: props.align } as const;
   const shows = props.field !== undefined ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
   const shown = { ...text, text: shows, unit };
-  const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit | "pan");
+  const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Reading);
   const onPress = ({ clicks, button }: Press) => {
     if (button === "left" && clicks === 2) type(true);
   };
@@ -335,7 +350,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     if (field !== undefined) {
       return Space({
         key, width, height, cursor: "ns-resize", onPress,
-        drag: { y: { value: field, min: props.min, max: props.max, unit: valueUnit === "pan" ? undefined : valueUnit, label: props.label } },
+        drag: { y: { value: field, min: props.min, max: props.max, unit: unitOf(valueUnit), label: props.label } },
         children: [Label(shown)],
       });
     }
@@ -523,13 +538,18 @@ export function Slider({ field, played, ...props }: SliderProps): UiNode {
 export const Notice = ({ action, onDismiss, ...props }: { key?: string; message: Bind<string>; tone?: Bind<"error" | "warning" | "info">; progress?: Bind<number>; action?: { label: Bind<string>; onClick: () => void }; onDismiss?: () => void }): UiNode =>
   element("notice", { ...props, action: action?.label, onClick: action?.onClick, onClose: onDismiss }, []);
 
-const STEP = { size: 14, gap: 3 } as const;
-
-export type StepsProps = ValueProps<readonly number[]> & { key?: string; max?: number; playing?: string };
+export type StepsProps = ValueProps<readonly number[]> & {
+  key?: string;
+  max?: number;
+  playing?: string;
+  /** What the row is, at its left. Rows with a label, one over the other, line up. */
+  label?: string;
+};
 
 /**
- * A row of steps on a list of numbers, such as a `pattern` field, one per number: a click turns
- * a step on (to `max`, the item's max or 1 when left out) or off (to its min, or 0). `playing`
+ * A row of steps on a list of numbers, such as a `pattern` field, one per number, in groups of
+ * four: a click turns a step on (to `max`, the item's max or 1 when left out) or off (to its min,
+ * or 0). Tab reaches it: the arrows move along it, and space or enter turns a step. `playing`
  * names an output, as `now.value` does, whose value is the step that plays, which a green ring shows.
  */
 export function Steps(props: StepsProps): UiNode {
@@ -538,34 +558,18 @@ export function Steps(props: StepsProps): UiNode {
   const [off, on] = [item?.min ?? 0, props.max ?? item?.max ?? 1];
   const { get, set } = valueOf(props);
   const list = () => get() ?? [];
-  const isOn = (step: number) => (list()[step] ?? off) > off;
-  const pitch = STEP.size + STEP.gap;
-  return Space({
+  return element("steps", {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
-    width: () => Math.max(list().length * pitch - STEP.gap, 0),
-    height: STEP.size,
-    children: For({
-      each: () => list().map((_, step) => step),
-      children: (step) =>
-        Rect({
-          x: step * pitch,
-          y: 0,
-          width: STEP.size,
-          height: STEP.size,
-          radius: 3,
-          color: () => (isOn(step) ? "text" : "fill-strong"),
-          border: "green",
-          borderWidth: props.playing === undefined ? 0 : now.value(props.playing).floor().eq(step).times(2),
-          cursor: "pointer",
-          onPress: () => {
-            const wasOn = isOn(step);
-            const changed = [...untrack(list)];
-            changed[step] = wasOn ? off : on;
-            set(changed, wasOn ? "Turn a step off" : "Turn a step on");
-          },
-        }),
-    }),
-  });
+    label: props.label,
+    on: () => list().map((value) => value > off),
+    playing: props.playing === undefined ? undefined : now.value(props.playing),
+    onChange: (step: number) => {
+      const changed = [...untrack(list)];
+      const wasOn = (changed[step] ?? off) > off;
+      changed[step] = wasOn ? off : on;
+      set(changed, wasOn ? "Turn a step off" : "Turn a step on");
+    },
+  }, []);
 }
 
 export type MeterProps =
@@ -648,80 +652,4 @@ export function Pad(props: PadProps): UiNode {
 export function words(name: string): string {
   const spaced = name.replaceAll("_", " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-/** The view of a tool that has none. */
-export function defaultView(fields: Fields, inputs: Inputs = {}) {
-  return ({ state, update, send, openFile }: Context<Record<string, unknown>>): UiNode => {
-    const knobs: Child[] = [];
-    const rows: Child[] = [];
-    // Booleans and bangs share one row, so a card fits its room.
-    const buttons: Child[] = [];
-    const knob = (name: string, field: NumberField) =>
-      Knob({ field: name, label: field.label ?? words(name), min: field.min, max: field.max, default: field.default ?? field.min, unit: field.unit });
-    for (const [name, field] of Object.entries(fields)) {
-      const label = field.label ?? words(name);
-      if (field.kind === "number") {
-        knobs.push(knob(name, field));
-      } else if (field.kind === "list" && field.item.kind === "number") {
-        rows.push(Steps({ field: name }));
-      } else if (field.kind === "file") {
-        rows.push(
-          h("div", { style: { direction: "row", gap: "sm", align: "center" } },
-            Text({ variant: "label", children: label }),
-            Text({ variant: "label", tone: "muted", children: () => (state[name] as string) || "No sound" }),
-            Button({
-              label: "Choose…",
-              variant: "subtle",
-              size: "sm",
-              onClick: async () => {
-                const chosen = await openFile({ title: `Choose ${label.toLowerCase()}` });
-                if (chosen !== null) update(`Choose ${label.toLowerCase()}`, ({ state: next }) => {
-                  next[name] = chosen;
-                });
-              },
-            }),
-          ),
-        );
-      } else if (field.kind === "boolean") {
-        buttons.push(
-          Toggle({
-            label,
-            size: "sm",
-            on: () => state[name] as boolean,
-            onClick: () => {
-              const on = state[name] as boolean;
-              update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
-                next[name] = !on;
-              });
-            },
-          }),
-        );
-      } else if (field.kind === "choice") {
-        rows.push(
-          h("div", { style: { direction: "row", gap: "sm", align: "center" } },
-            Text({ variant: "label", children: label }),
-            SegmentedControl({ field: name, size: "sm", options: field.options.map((option) => ({ value: option, label: String(option) })) }),
-          ),
-        );
-      }
-    }
-    for (const [name, input] of Object.entries(inputs)) {
-      if (input.kind === "number") {
-        knobs.push(knob(name, input));
-      } else if (input.kind === "bang") {
-        buttons.push(Button({ label: input.label ?? words(name), variant: "subtle", size: "sm", onClick: () => (send as (input: string) => void)(name) }));
-      }
-    }
-    if (buttons.length > 0) {
-      rows.push(h("div", { style: { direction: "row", gap: "xs" } }, buttons));
-    }
-    // The rest goes beside the knobs, not under them: a card is no taller than its room.
-    return h(
-      "div",
-      { style: { direction: "row", gap: "lg" } },
-      h("div", { style: { direction: "row", gap: "sm" } }, knobs),
-      h("div", { style: { gap: "sm" } }, rows),
-    );
-  };
 }

@@ -77,11 +77,12 @@ export type Shape =
         /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
         | { kind: "arc"; x: Bind<Num>; y: Bind<Num>; radius: Bind<number>; from: Bind<Num>; to: Bind<Num>; color: Bind<Paint>; width?: Bind<number> }
         /**
-         * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, and a tick, such as
+         * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, a pitch as its
+         * note (`"pitch"`: `C2` for 36), and a tick, such as
          * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
          * Parts make one line in colours and weights of their own, such as a bar number then a name.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
@@ -303,14 +304,6 @@ export type ButtonProps = PointerEvents & Tip & {
 };
 
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
-
-/**
- * Shows its children in the window's title bar, in the middle of the room right of the project
- * menu, when this tool's view is the window's: the transport of a song. Anywhere else it shows
- * nothing.
- */
-export const TitleBar = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
-  element("div", { titleBar: true, style }, [children]);
 
 /** A step of the type scale: `display` is 24 points, `title` 16 medium, `heading` 14 medium, `body` 14 and `label` 12. */
 export type TextVariant = "display" | "title" | "heading" | "body" | "label";

@@ -22,6 +22,7 @@ A view and a component run once. A value that changes (a field, a child, an outp
 - What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a `timeline` child (`agent-docs/extensions-children.md`). For a rhythm the loop makes up, play ahead: `time` is the clock of the sound, in seconds, and `play` and `send` with `{ at }` happen on that sample:
 
   ```ts
+  memory: () => ({ next: 0 }),
   tick: ({ memory, time, play }) => {
     if (memory.next < time) memory.next = time; // after a pause, start from now
     while (memory.next < time + 0.1) {

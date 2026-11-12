@@ -62,7 +62,7 @@ export type {
 // the elements of a view: `div` and its `Style`, `Text`, `Space` and its shapes, `Button`, `Input`
 export {
   Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  Rect, Space, Text, TitleBar, Toggle, Wave
+  Rect, Space, Text, Toggle, Wave
 } from "./sdk/drawing";
 export type {
   ButtonProps, CardSelect, Color, ControlSize, DeviceCardProps, IconName, InputProps, Look, Paint,
@@ -71,13 +71,27 @@ export type {
 } from "./sdk/drawing";
 // controls made of them: `Knob`, `Fader`, `Select`, `Steps`, `Pad`
 export {
-  defaultView, Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, SegmentedControl, Select,
-  Slider, Steps, valueAt, words
+  Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, SegmentedControl, Select, Slider,
+  Steps, valueAt, words
 } from "./sdk/components";
 export type {
   FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, SegmentedControlProps,
   SelectOption, SelectProps, SliderProps, StepsProps, Travel, ValueProps
 } from "./sdk/components";
+// a view that fills the window: `Page`, `Panel` and `Transport`
+export {
+  Page, Panel, playPause, Transport
+} from "./sdk/page";
+export type {
+  PageProps, PanelProps, TransportProps
+} from "./sdk/page";
+// the parts of a device card: `Display`, `Controls` and `Cell`
+export {
+  Cell, Controls, defaultView, Display
+} from "./sdk/card";
+export type {
+  DisplayProps
+} from "./sdk/card";
 // what the runtime calls
 export {
   host

@@ -35,7 +35,7 @@ fn next_ops(bun: &Bun) -> Vec<Op> {
 }
 
 #[test]
-fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
+fn a_step_turned_sends_which_steps_are_on_and_nothing_else() {
     let program = bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let folder = tempfile::tempdir().unwrap();
     write_sdk(folder.path(), &[]).unwrap();
@@ -71,28 +71,28 @@ fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
         },
         clock,
     });
-    let steps: Vec<u64> = (next_ops(&bun).into_iter())
-        .filter_map(|op| match op {
-            Op::Create(id, Props::Shape(shape)) if shape.on_press == Some(true) => Some(id),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(steps.len(), 4);
+    let made = next_ops(&bun).into_iter().find_map(|op| match op {
+        Op::Create(id, Props::Steps(_)) => Some(id),
+        _ => None,
+    });
+    let steps = made.expect("a row of steps");
     bun.send(&Request::Event {
         card: 1,
-        node: steps[2],
-        kind: EventKind::Press,
-        payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
+        node: steps,
+        kind: EventKind::Change,
+        payload: json!(2),
         time: 0.0,
     });
     let ops = next_ops(&bun);
-    let [Op::Set(node, Change::Shape(change))] = ops.as_slice() else {
-        panic!("one change of one step: {ops:?}");
+    let [Op::Set(node, Change::Steps(change))] = ops.as_slice() else {
+        panic!("one change of the row: {ops:?}");
     };
-    assert_eq!(*node, steps[2]);
+    assert_eq!(*node, steps);
+    let on = "on: Some(Some([false, false, true, false]))";
+    let change = format!("{change:?}");
     assert!(
-        format!("{change:?}").contains("color: Some(Some(Fixed(Color("),
-        "{change:?}"
+        change.contains(on) && change.matches("Some").count() == 2,
+        "{change}"
     );
 }
 

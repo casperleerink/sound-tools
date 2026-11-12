@@ -73,6 +73,9 @@ pub(super) struct Drawing<'a> {
     pub(super) title_focus: Option<FocusHandle>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
     pub(super) lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
+    /// Whether its card shows the cells behind its expand icon. `None` for a page, which hides
+    /// none.
+    pub(super) expanded: Option<bool>,
     pub(super) card: WeakEntity<TypeScriptCard>,
     /// Which Bun made the nodes, whose ids start again with each.
     pub(super) generation: u64,
@@ -149,6 +152,10 @@ impl Drawing<'_> {
             Props::Segmented(props) => self.segmented(id, props),
             Props::Notice(props) => self.notice(id, props),
             Props::Overlay(props) => self.overlay(id, props, &entry.children),
+            Props::Display(props) => self.display(id, props, &entry.children),
+            Props::Controls => self.controls(&entry.children),
+            Props::Cell(_) => self.cell(slot),
+            Props::Steps(props) => self.steps(id, props),
             Props::Icon(IconProps { name, size, color }) => {
                 let color = color.map_or(self.cx.theme().text(), |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())

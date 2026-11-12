@@ -18,6 +18,7 @@ use sound_notes::{Pitch, Velocity};
 use crate::support::{Opened, id, open_files, open_folder, open_folder_watched, peak};
 
 mod actions;
+mod card_parts;
 mod edits;
 mod gestures;
 mod lists;

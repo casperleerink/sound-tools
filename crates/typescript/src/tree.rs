@@ -37,7 +37,7 @@ macro_rules! props {
         }
 
         impl $name {
-            fn apply(&mut self, change: $change) {
+            pub(crate) fn apply(&mut self, change: $change) {
                 $(if let Some(value) = change.$field {
                     self.$field = value;
                 })*
@@ -45,6 +45,10 @@ macro_rules! props {
         }
     };
 }
+
+mod parts;
+use parts::{CellChange, DisplayChange, StepsChange};
+pub(crate) use parts::{CellProps, DisplayProps, StepsProps};
 
 props! {
     DivProps / DivChange {
@@ -346,6 +350,11 @@ pub(crate) enum Props {
     Segmented(SegmentedProps),
     Notice(NoticeProps),
     Overlay(OverlayProps),
+    Display(DisplayProps),
+    /// The cells of a card: its children, two to a column.
+    Controls,
+    Cell(CellProps),
+    Steps(StepsProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -365,6 +374,10 @@ pub(crate) enum Change {
     Segmented(SegmentedChange),
     Notice(NoticeChange),
     Overlay(OverlayChange),
+    Display(DisplayChange),
+    Controls,
+    Cell(CellChange),
+    Steps(StepsChange),
     Marker,
 }
 
@@ -430,6 +443,13 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "segmented" => Props::Segmented(next(&mut seq, "props")?),
                         "notice" => Props::Notice(next(&mut seq, "props")?),
                         "overlay" => Props::Overlay(next(&mut seq, "props")?),
+                        "display" => Props::Display(next(&mut seq, "props")?),
+                        "cell" => Props::Cell(next(&mut seq, "props")?),
+                        "steps" => Props::Steps(next(&mut seq, "props")?),
+                        "controls" => {
+                            next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
+                            Props::Controls
+                        }
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -456,6 +476,13 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "segmented" => Change::Segmented(next(&mut seq, "props")?),
                         "notice" => Change::Notice(next(&mut seq, "props")?),
                         "overlay" => Change::Overlay(next(&mut seq, "props")?),
+                        "display" => Change::Display(next(&mut seq, "props")?),
+                        "cell" => Change::Cell(next(&mut seq, "props")?),
+                        "steps" => Change::Steps(next(&mut seq, "props")?),
+                        "controls" => {
+                            next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
+                            Change::Controls
+                        }
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -496,6 +523,10 @@ const FAMILIES: &[&str] = &[
     "segmented",
     "notice",
     "overlay",
+    "display",
+    "controls",
+    "cell",
+    "steps",
     "marker",
 ];
 
@@ -820,7 +851,8 @@ impl NodeTable {
                 },
                 _ => false,
             };
-            if matches!(entry.props, Props::Overlay(_))
+            // A display sizes the space in it.
+            if matches!(entry.props, Props::Overlay(_) | Props::Display(_))
                 || fades
                 || entry.children.iter().any(absolute)
             {
@@ -916,7 +948,10 @@ impl NodeTable {
                         (Props::Overlay(props), Change::Overlay(change)) => props.apply(change),
                         (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
-                        (Props::Marker, Change::Marker) => {}
+                        (Props::Display(props), Change::Display(change)) => props.apply(change),
+                        (Props::Cell(props), Change::Cell(change)) => props.apply(change),
+                        (Props::Steps(props), Change::Steps(change)) => props.apply(change),
+                        (Props::Marker, Change::Marker) | (Props::Controls, Change::Controls) => {}
                         _ => return Err(format!("a change of another kind of node for {id}")),
                     }
                     let after = uses_of(&entry.props);
@@ -1066,6 +1101,10 @@ fn uses_of(props: &Props) -> Uses {
         Props::Shape(shape) => shape.uses(),
         Props::Slider(SliderProps {
             value: Some(value), ..
+        })
+        | Props::Steps(StepsProps {
+            playing: Some(value),
+            ..
         }) => {
             let mut uses = Uses::default();
             value.add_uses(&mut uses);
@@ -1788,6 +1827,8 @@ pub(crate) enum Readout {
     Percent,
     /// A pan from -1 to 1: `C`, `25L`, `100R`.
     Pan,
+    /// A pitch as its note: `C2` for 36.
+    Pitch,
     Position,
     Time,
     Signature,
