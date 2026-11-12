@@ -168,7 +168,7 @@ fn a_handle_drags_from_where_it_is_and_escape_puts_it_back(cx: &mut TestAppConte
     assert!(view.read_with(cx, |view, _| view.handle.changes.is_empty()));
 
     // A tenth of the width right and a tenth of the height up.
-    let across = point(px(21.6), px(-11.8));
+    let across = point(px(24.8), px(-11.8));
     drag_to(cx, beside + across, false);
     let value = view.read_with(cx, |view, _| view.handle.value);
     assert!(

@@ -66,11 +66,11 @@ fn the_drum_pad_shows_its_pads_and_knobs(cx: &mut TestAppContext) {
         pad(&mut opened, 40),
         pad(&mut opened, 51),
     );
-    assert_eq!(rim.x - kick.x, px(83.));
+    assert_eq!(rim.x - kick.x, px(95.));
     assert_eq!(kick.y - snare_2.y, px(36.));
     assert!(ride.x > kick.x && ride.y < kick.y);
     let grid = opened.bounds("pad-36").unwrap();
-    assert_eq!((grid.size.width, grid.size.height), (px(79.), px(32.)));
+    assert_eq!((grid.size.width, grid.size.height), (px(91.), px(32.)));
     for shown in [
         "knob-volume_db",
         "knob-pitch_semitones",
@@ -80,16 +80,16 @@ fn the_drum_pad_shows_its_pads_and_knobs(cx: &mut TestAppContext) {
         assert!(opened.find(shown).is_some(), "{shown}");
     }
     assert_eq!(opened.find("sound"), None);
-    // The card is 480 pt, and 609 pt expanded, with Sound and Choke. Its header is inside
+    // The card is 544 pt, and 689 pt expanded, with Sound and Choke. Its header is inside
     // its border of 1 pt.
     let card = opened.bounds("card-rack/instrument-header").unwrap();
-    assert_eq!(card.size.width, px(480. - 2.));
+    assert_eq!(card.size.width, px(544. - 2.));
     let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     assert!(opened.find("sound").is_some());
     assert!(opened.find("toggle-choke").is_some());
     let card = opened.bounds("card-rack/instrument-header").unwrap();
-    assert_eq!(card.size.width, px(609. - 2.));
+    assert_eq!(card.size.width, px(689. - 2.));
     assert_eq!(opened.undo_label(), None);
 }
 

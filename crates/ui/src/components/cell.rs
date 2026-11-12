@@ -16,7 +16,7 @@ use crate::theme::ActiveTheme;
 use crate::typography;
 use crate::typography::{TextVariant, Typography};
 
-pub const CELL_WIDTH: f32 = 56.;
+pub const CELL_WIDTH: f32 = 64.;
 /// A row of cells. A card body has two.
 pub const ROW_HEIGHT: f32 = 72.;
 /// The room of the control at the top of a cell: the size of a knob.

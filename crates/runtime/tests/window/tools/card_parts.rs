@@ -2,6 +2,7 @@
 //! card, of which the first columns show and the rest wait behind its expand icon.
 
 use gpui::{TestAppContext, px};
+use sound_ui::components::cell::CELL_WIDTH;
 
 use super::gestures::press_key;
 use super::parts::page;
@@ -126,13 +127,13 @@ fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut T
         f32::from(window.bounds(selector).unwrap().origin.x)
     };
     let kind = f32::from(window.bounds("segmented-kind").unwrap().size.width);
-    let columns = (kind / 56.).ceil();
+    let columns = (kind / CELL_WIDTH).ceil();
     assert!(columns >= 2., "{kind}");
     let (a, b) = (
         left(&mut window, "space-knob-a"),
         left(&mut window, "space-knob-b"),
     );
-    assert_eq!(b - a, 56. * columns);
+    assert_eq!(b - a, CELL_WIDTH * columns);
 
     let expand = window.until_found("card-rig/box-expand");
     window.click(expand);

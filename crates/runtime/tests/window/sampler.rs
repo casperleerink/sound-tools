@@ -111,7 +111,7 @@ fn an_empty_sampler_shows_choose_file_and_expands(cx: &mut TestAppContext) {
     ] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
-    // The card is 536 pt, and 833 expanded: its header is as wide, inside a border of 1 pt.
+    // The card is 608 pt, and 945 expanded: its header is as wide, inside a border of 1 pt.
     let width = |opened: &mut Opened<'_>| {
         opened
             .bounds("card-rack/instrument-header")
@@ -119,11 +119,11 @@ fn an_empty_sampler_shows_choose_file_and_expands(cx: &mut TestAppContext) {
             .size
             .width
     };
-    assert_eq!(width(&mut opened), px(833. - 2.));
+    assert_eq!(width(&mut opened), px(945. - 2.));
     // The icon moved with the right edge.
     let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
-    assert_eq!(width(&mut opened), px(536. - 2.));
+    assert_eq!(width(&mut opened), px(608. - 2.));
 }
 
 #[gpui::test]
@@ -224,11 +224,11 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
         assert!(!opened.gesture_open());
         state(opened)
     };
-    // The file is 2 s over 328 pt: 33 pt is about 0.2 s.
+    // The file is 2 s over 376 pt: 38 pt is about 0.2 s.
     let after = drag(
         &mut opened,
         "handle-attack",
-        point(px(33.), px(0.)),
+        point(px(38.), px(0.)),
         "Change attack",
     );
     assert!((after.attack_seconds - 0.2).abs() < 0.02, "{after:?}");
@@ -243,14 +243,14 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     let after = drag(
         &mut opened,
         "handle-start",
-        point(px(16.4), px(0.)),
+        point(px(18.8), px(0.)),
         "Change start",
     );
     assert!((after.start_seconds - 0.1).abs() < 0.01, "{after:?}");
     let after = drag(
         &mut opened,
         "handle-end",
-        point(px(-82.), px(0.)),
+        point(px(-94.), px(0.)),
         "Change end",
     );
     let end = after.end_seconds.unwrap();
@@ -289,7 +289,7 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     let after = drag(
         &mut opened,
         "handle-loop-start",
-        point(px(82.), px(0.)),
+        point(px(94.), px(0.)),
         "Change loop start",
     );
     // From the start line, 0.1 s, half a second on.
