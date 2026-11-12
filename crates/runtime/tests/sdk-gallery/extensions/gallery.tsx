@@ -1,7 +1,7 @@
 import {
   adsr, Button, Cell, choice, Circle, Controls, DeviceCard, Dialog, Display, Fader, For, Fragment, h, Input, input, interval, Knob,
   Label, lowpass, Match, Meter, note, Notice, number, NumberBox, onCleanup, output, Pad, Page, Panel, Path, pattern, Popover, Rect,
-  SegmentedControl, Select, Show, sine, Slider, Space, Steps, Switch, Text, timeout, Toggle, tool, Transport, Wave,
+  SegmentedControl, Select, Show, sine, Slider, Space, Steps, Switch, Text, timeout, Toggle, tool, Wave,
   type Child, type Declaration, type Press, type Style,
 } from "./sdk";
 
@@ -98,7 +98,7 @@ tool({
       return <Text variant="label" style={{ color: "green" }}>Logs when it goes</Text>;
     };
     return (
-      <Page header={<Transport />}>
+      <Page>
         <div style={{ grow: true, direction: "row", gap: "lg" }}>
           <div style={{ grow: true, gap: "lg" }}>
             <div style={{ direction: "row", align: "start", gap: "lg" }}>

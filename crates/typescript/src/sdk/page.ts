@@ -10,10 +10,12 @@ import { Action, Frozen } from "./tools";
 
 export interface PageProps {
   /**
-   * What it shows in the window's title bar, side by side in the middle of the room right of the
-   * project menu: a `Transport`, the tool's own controls. A page that is not the window's shows none.
+   * What it shows in the window's title bar, in the middle of the room right of the project menu:
+   * a `Transport` when left out, so every tool plays, stops and has a tempo the same way; its own
+   * controls beside one, `<><Transport /><Button ... /></>`; or `false` for a tool with no use for
+   * the clock. A page that is not the window's shows none.
    */
-  header?: Child;
+  header?: Child | false;
   /** Its content reaches the edges of the window and does not scroll: one surface, such as a canvas or a timeline. */
   flush?: boolean;
   children?: Child;
@@ -27,7 +29,8 @@ export interface PageProps {
  * to what it needs: a `Space` its `height`.
  */
 export function Page({ header, children, flush }: PageProps): UiNode {
-  const bar = header === undefined ? null : element("div", { titleBar: true, style: { direction: "row", align: "center", gap: "md" } }, [header]);
+  const shown = header === undefined ? Transport() : header;
+  const bar = shown === false ? null : element("div", { titleBar: true, style: { direction: "row", align: "center", gap: "md" } }, [shown]);
   if (flush) return h("div", { style: { grow: true } }, bar, children);
   const content = element("div", { layout: "page", style: { grow: true, gap: "lg", justify: "center" } }, [children]);
   return h("div", { style: { grow: true } }, bar, h("div", { style: { grow: true, scroll: "y", padding: "xl" } }, content));

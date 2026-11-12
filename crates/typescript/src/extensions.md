@@ -108,10 +108,10 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): its `header` shows in the window's title bar, and the rest one under the other in the middle of the window, scrolling where it is too small. A `Panel` is a surface with a title, as wide as what is in it; panels side by side go in a `div` that is a row. What has `grow` takes the room that is left, a panel and the `Space` in it alike, so no code works out a size. `<Page flush>` is one surface to the window's edges, such as a canvas.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, or its own `header`, and the rest one under the other in the middle of the window, scrolling where it is too small. A `Panel` is a surface with a title, as wide as what is in it; panels side by side go in a `div` that is a row. What has `grow` takes the room that is left, a panel and the `Space` in it alike, so no code works out a size. `<Page flush>` is one surface to the window's edges, such as a canvas.
 
 ```tsx
-import { h, Knob, lowpass, now, number, Page, Panel, playing, saw, smooth, Space, type Style, tool, Transport, Wave } from "./sdk";
+import { h, Knob, lowpass, now, number, Page, Panel, playing, saw, smooth, Space, type Style, tool, Wave } from "./sdk";
 
 const knobs: Style = { direction: "row", gap: "md" };
 
@@ -129,7 +129,7 @@ tool({
     // The edges of the display, which grows with the window.
     const { right, bottom } = now.space("level");
     return (
-      <Page header={<Transport />}>
+      <Page>
         <Panel title="Drone" grow>
           <Space key="level" grow background="well" radius="md">
             <Wave x={0} y={0} width={right} height={bottom} list={now.history(now.devicePeak(), 240)} low={0} high={1} color="green" />
@@ -147,7 +147,7 @@ tool({
 
 ## The clock
 
-One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. A `Transport` in the header plays and stops it, sets its tempo, and gives its tool space to play and pause. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
+One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. The transport in a page's header plays and stops it, sets its tempo, and gives its tool space to play and pause: a sound that should stop with it follows `playing`. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
 
 ## Check your work
 
