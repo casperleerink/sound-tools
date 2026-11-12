@@ -71,8 +71,8 @@ export type {
 } from "./sdk/drawing";
 // controls made of them: `Knob`, `Fader`, `Select`, `Steps`, `Pad`
 export {
-  defaultView, Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, SegmentedControl, Select,
-  Slider, Steps, valueAt, words
+  Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, SegmentedControl, Select, Slider,
+  Steps, valueAt, words
 } from "./sdk/components";
 export type {
   FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, SegmentedControlProps,
@@ -85,6 +85,13 @@ export {
 export type {
   PageProps, PanelProps, TransportProps
 } from "./sdk/page";
+// the parts of a device card: `Display`, `Controls` and `Cell`
+export {
+  Cell, Controls, defaultView, Display
+} from "./sdk/card";
+export type {
+  DisplayProps
+} from "./sdk/card";
 // what the runtime calls
 export {
   host

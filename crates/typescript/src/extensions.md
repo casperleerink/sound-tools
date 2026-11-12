@@ -65,30 +65,29 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 Without `view`, it gets a control per number, boolean, choice, file, list of numbers, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card gives its view 144 points of height: more is cut off. It is as wide as it needs, at least 168. So put things side by side: a `Knob` with a label is 56 by 72, so two rows of knobs with no gap fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall.
+A card is a row: a `Display` of what the tool does to the sound, then `Controls`, its knobs and other controls in cells (`extensions/sdk/card.ts`). It shows the first columns of cells and keeps the rest behind its expand icon, so put first what matters most.
 
 Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `gap: "sm"`, `size="sm"` on a control, `<Text variant="label">` for text. `ThemeColor`, `Style` and `Text` in `extensions/sdk/drawing.ts` list the names.
 
 ```tsx
-import { Button, Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
+import { Button, Cell, Controls, Display, h, Knob, type Style, tool, Wave } from "./sdk";
 
-const column: Style = { gap: "sm" };
-const row: Style = { direction: "row", gap: "sm", align: "center" };
-const pad = { x: "bend", y: "drive" };
+const row: Style = { direction: "row" };
 
 tool({
   // name, title, when, doc, state, inputs and sound
-  view: ({ send }) => (
-    <div style={column}>
-      <div style={row}>
+  view: ({ now, send }) => (
+    <div style={row}>
+      <Display caption="Level">
+        <Wave x={0} y={0} width={1} height={1} list={now.history(now.value("level"), 120)} low={0} high={1} color="text" />
+      </Display>
+      <Controls>
         <Knob field="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
-        <Pad field={pad} size={72} />
-        <Meter value="level" />
-      </div>
-      <div style={row}>
-        <Steps field="steps" playing="step" />
-        <Button label="Hit" onClick={() => send("hit")} />
-      </div>
+        <Knob field="note" label="Note" min={24} max={60} default={36} unit="pitch" />
+        <Cell label="Drum">
+          <Button label="Hit" size="sm" variant="subtle" onClick={() => send("hit")} />
+        </Cell>
+      </Controls>
     </div>
   ),
 });

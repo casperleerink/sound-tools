@@ -200,7 +200,7 @@ impl NoteMessage {
 const SDK: &str = include_str!("sdk.ts");
 /// The modules `sdk.ts` names, by their path in `extensions/`. The runtime adds
 /// `sdk/records.ts`.
-const SDK_MODULES: [(&str, &str); 11] = [
+const SDK_MODULES: [(&str, &str); 12] = [
     ("sdk/fields.ts", include_str!("sdk/fields.ts")),
     ("sdk/notes.ts", include_str!("sdk/notes.ts")),
     ("sdk/sound.ts", include_str!("sdk/sound.ts")),
@@ -211,6 +211,7 @@ const SDK_MODULES: [(&str, &str); 11] = [
     ("sdk/drawing.ts", include_str!("sdk/drawing.ts")),
     ("sdk/components.ts", include_str!("sdk/components.ts")),
     ("sdk/page.ts", include_str!("sdk/page.ts")),
+    ("sdk/card.ts", include_str!("sdk/card.ts")),
     ("sdk/host.ts", include_str!("sdk/host.ts")),
 ];
 pub const HOST: &str = include_str!("host.ts");
