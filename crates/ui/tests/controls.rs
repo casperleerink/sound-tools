@@ -230,20 +230,27 @@ fn the_line_of_a_display_speaks_only_of_what_is_pointed_at_or_dragged(cx: &mut T
 }
 
 #[gpui::test]
-fn the_line_of_a_display_is_inside_it_and_never_over_the_handle_it_speaks_of(
-    cx: &mut TestAppContext,
-) {
+fn the_line_of_a_display_is_inside_it_and_over_no_handle(cx: &mut TestAppContext) {
     let (_, cx) = open(cx);
     let display = bounds(cx, "display");
-    for (handle, line) in [
+    let handles = [
+        "handle-handle",
+        "handle-sideways",
+        "handle-still",
+        "handle-low",
+    ];
+    for (speaks, line) in [
         ("handle-sideways", "caption-Sideways"),
         ("handle-low", "caption-Low"),
     ] {
-        let handle = bounds(cx, handle);
-        cx.simulate_mouse_move(handle.center(), None, Modifiers::default());
+        let at = bounds(cx, speaks).center();
+        cx.simulate_mouse_move(at, None, Modifiers::default());
         let line = bounds(cx, line);
         assert_eq!(display.intersect(&line), line, "the line is inside");
-        assert!(!line.intersects(&handle), "{line:?} is over {handle:?}");
+        for handle in handles {
+            let handle = bounds(cx, handle);
+            assert!(!line.intersects(&handle), "{line:?} is over {handle:?}");
+        }
     }
 }
 
