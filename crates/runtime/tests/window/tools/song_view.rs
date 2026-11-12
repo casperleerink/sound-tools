@@ -195,7 +195,7 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     });
     let name = window.until_found("div-name-track");
     window.click_with(name, MouseButton::Right);
-    window.pick("menu-6");
+    window.pick("menu-5");
     window.until("the track deleted", |window| !window.has("song/track"));
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Delete a track"));
@@ -238,7 +238,9 @@ fn a_track_renders_onto_an_audio_track_under_it_with_its_fader_and_sends(cx: &mu
     window.wait_for_bun();
     let name = window.until_found("div-name-t00");
     window.click_with(name, MouseButton::Right);
+    // Render to audio track…, then with the tail.
     window.pick("menu-4");
+    window.pick("menu-0");
     window.until("the render placed", |window| {
         window.has("song/audio-1/render")
     });
