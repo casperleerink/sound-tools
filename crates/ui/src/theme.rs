@@ -1,6 +1,9 @@
 use gpui::{App, Global, Hsla, Rgba, rgb};
 
-/// The colour tokens: a grey scale and the accent colours.
+/// The colours of the app. A view names a role, such as [`Theme::text_muted`] or
+/// [`Theme::fill`]: what a colour is for. The palette under the roles, a grey scale from the
+/// darkest background to the text and `alpha` to lift a surface, is what another theme changes.
+/// The hues are for what DESIGN.md gives each of them, and for marks such as a track's colour.
 #[derive(Clone, Debug)]
 pub struct Theme {
     pub gray_50: Hsla,
@@ -68,9 +71,83 @@ impl Theme {
         }
     }
 
-    /// The colour called `name`, such as `gray-700` or `green`, as tools of a project name them.
+    /// The window.
+    pub fn background(&self) -> Hsla {
+        self.gray_100
+    }
+
+    /// A card, a panel, a menu: what sits on the window.
+    pub fn surface(&self) -> Hsla {
+        self.gray_200
+    }
+
+    /// The display inside a card: darker than what it sits in.
+    pub fn well(&self) -> Hsla {
+        self.gray_50
+    }
+
+    /// A control at rest, or a quiet box.
+    pub fn fill(&self) -> Hsla {
+        self.alpha_at(0.05)
+    }
+
+    /// A fill under the pointer, and the track of a knob or a slider.
+    pub fn fill_strong(&self) -> Hsla {
+        self.alpha_at(0.10)
+    }
+
+    /// The row or the item that is chosen.
+    pub fn selected(&self) -> Hsla {
+        self.alpha_at(0.08)
+    }
+
+    /// A hairline between rows.
+    pub fn border(&self) -> Hsla {
+        self.alpha_at(0.05)
+    }
+
+    /// The outline of a field or a card.
+    pub fn border_strong(&self) -> Hsla {
+        self.alpha_at(0.10)
+    }
+
+    /// Text, and a value: the one bright line.
+    pub fn text(&self) -> Hsla {
+        self.gray_950
+    }
+
+    /// The label of a control.
+    pub fn text_secondary(&self) -> Hsla {
+        self.gray_800
+    }
+
+    /// A hint, a unit, an icon that is off. Under 4.5 : 1 on a card: not for what must be read there.
+    pub fn text_muted(&self) -> Hsla {
+        self.gray_700
+    }
+
+    /// Text on a bright fill, such as a primary button or a tooltip.
+    pub fn text_inverse(&self) -> Hsla {
+        self.gray_50
+    }
+
+    /// The colour called `name` as tools of a project name them: a role such as `text-muted`,
+    /// a hue such as `green`, or a step of the palette such as `gray-700`, which older tools use.
     pub fn named(&self, name: &str) -> Option<Hsla> {
         Some(match name {
+            "background" => self.background(),
+            "surface" => self.surface(),
+            "well" => self.well(),
+            "fill" => self.fill(),
+            "fill-strong" => self.fill_strong(),
+            "selected" => self.selected(),
+            "border" => self.border(),
+            "border-strong" => self.border_strong(),
+            "text" => self.text(),
+            "text-secondary" => self.text_secondary(),
+            "text-muted" => self.text_muted(),
+            "text-inverse" => self.text_inverse(),
+            "none" => gpui::transparent_black(),
             "gray-50" => self.gray_50,
             "gray-100" => self.gray_100,
             "gray-200" => self.gray_200,
