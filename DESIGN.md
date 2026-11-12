@@ -13,7 +13,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - A track's head shows its name and what plays it. Of its toggles only those that are on show, and all of them while the pointer is over it or it is chosen.
 - No toolbars and no tools: what the pointer is on decides what a drag does.
 - Chrome is one quiet menu on the project name, and the live input beside it.
-- Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind the expand icon of a card.
+- Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind expand.
 - Text in the window is for the composer, a musician, not for a programmer: no names of languages, programs, formats or files (TypeScript, Bun, JSON, `extensions/`). Something that cannot run says why in plain words (`This project does not load plugins.`); what to edit is for the agent docs.
 - Notices are quiet lines in the bottom right corner. Nothing blocks. Files that are not live are a sign beside the project menu, not a notice: they stay until fixed.
 - Accessible: visible focus rings for keyboard focus, labelled controls, full keyboard reach. This is a product requirement.
@@ -21,7 +21,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 ### One calm instrument
 
 - Every device shows what it does to the sound: a display at the left of its card, whose handles drag, and a few knobs at its right.
-- A display is never the only way to reach a value: every value a handle moves also has a knob, visible or behind expand. That knob is the path for the keys.
+- A display is never the only way to reach a value: every value a handle moves also has a knob, visible or behind expand, the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
 - One control per value. The tempo is a drag number in the transport; a mark in the ruler or the tempo lane selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
@@ -29,7 +29,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
 - Interface state that is about how the composer works (zoom, snap, the loop, expanded cards, shown lanes, open returns, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, its threads, the composer's own shortcuts, and how the last export was made.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
-- Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound, on the 24 pt grid of the other icons. A plugin shows a plug. The built-in instruments are one group; the built-in effects are grouped by what they do (Tone, Dynamics, Space, Mix), with the plugins last.
+- Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound. A plugin shows a plug. The instruments are one group; the effects are grouped by what they do (Tone, Dynamics, Space, Mix), plugins last.
 
 ### Colour
 
@@ -53,10 +53,11 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 ### Type and sizes
 
 - InterDisplay with tabular numbers for every number, so readouts and the transport do not jitter while playing. Five kinds of text and no other size: display 24, title 16 medium, heading 14 medium, body 14, label 12.
-- The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window, as the snapshot tests render.
+- The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window.
 - Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
-- One grid for devices: every card is the same height and whole columns wide, with two rows of cells of a control, a label line and a value line. A display is four columns wide, or six for a file or the bands of an EQ; a control that needs the room takes two. Cards grow wider, never taller, so a rack has a straight bottom and columns. Empty cells are fine.
-- Nothing lies over the drawing of a display: its control sits in a strip above it. A value line never holds a unit alone. A plugin draws itself in its own window, so its display holds the button that opens it.
+- One grid for devices: every card is the same height and whole columns wide, with two rows of cells: a control, a label line, a value line. A display is four columns wide, or six for a file or an EQ; a control that needs the room takes two. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
+- A card says each thing once: a switch carries its name and is lit while on, a control that says its value has no value line, and the line under a display says only what no control shows.
+- Nothing lies over the drawing of a display: its control sits in a strip above it. A plugin draws itself in its own window, so its display holds the button that opens it.
 - Hit targets are larger than what is drawn, for a trackpad.
 
 ## Using the app

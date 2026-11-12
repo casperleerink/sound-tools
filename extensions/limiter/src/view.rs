@@ -12,7 +12,7 @@
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent};
-use sound_ui::components::cell::{Cell, control_width};
+use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -49,8 +49,8 @@ const CEILING_KNOB: Control = Control::new(&CEILING, "Ceiling", "Change ceiling"
 const RELEASE_KNOB: Control =
     Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
 
-/// The value of a row of the lookahead select for each lookahead. The select says the number
-/// and the value line of its cell says it with its unit, as on the compressor.
+/// The value of a row of the lookahead select for each lookahead: its ms, which the row says
+/// with the unit.
 const LOOKAHEADS: [(Lookahead, &str); 3] = [
     (Lookahead::Off, "0"),
     (Lookahead::One, "1"),
@@ -94,16 +94,13 @@ impl LimiterView {
         })
         .detach();
         let lookahead = cx.new(|cx| {
-            let rows = LOOKAHEADS.map(|(_, label)| MenuItem::new(label, label));
-            let rows = vec![MenuEntry::Group(
-                MenuGroup::new().label("Lookahead, ms").items(rows),
-            )];
+            let rows = LOOKAHEADS.map(|(_, value)| MenuItem::new(value, format!("{value} ms")));
+            let rows = vec![MenuEntry::Group(MenuGroup::new().items(rows))];
             let shown = session.read(cx).project().state(&limiter);
             let shown = shown.map_or(Lookahead::One, |state| state.lookahead);
             DropdownMenu::new("Lookahead", rows, cx)
                 .selected(lookahead_value(shown))
                 .trigger(Trigger::Select)
-                .trigger_width(control_width(1))
                 .width(LOOKAHEAD_MENU_WIDTH)
                 .debug_name("lookahead")
         });
@@ -206,9 +203,7 @@ impl Render for LimiterView {
         let display = self
             .history
             .display("display", state.ceiling_db, handle, cx);
-        let lookahead = Cell::new(self.lookahead.clone())
-            .label("Lookahead")
-            .value(format!("{} ms", lookahead_value(state.lookahead)));
+        let lookahead = Cell::new(self.lookahead.clone()).label("Lookahead");
         self.frame
             .card()
             .display(display)

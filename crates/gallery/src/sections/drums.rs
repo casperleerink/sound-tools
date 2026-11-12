@@ -129,7 +129,7 @@ fn cards(cx: &mut App) -> AnyElement {
                             .label("Sound")
                             .value("Synthesized"),
                     )
-                    .bottom(Cell::new(Toggle::new("choke", "On", true)).label("Choke")),
+                    .bottom(Cell::switch(Toggle::new("choke", "Choke", true))),
             )
             .hidden_column(Column::new());
     block(

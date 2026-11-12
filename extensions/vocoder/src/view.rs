@@ -8,6 +8,7 @@
 
 use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
 use sound_core::Instance;
+use sound_ui::components::curves::RESPONSE_CAPTION;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::Display;
 use sound_ui::components::knob::{
@@ -78,15 +79,6 @@ fn bank(bands: f32) -> Vec<Point<f32>> {
         .collect()
 }
 
-/// The numbers under the display: `24 bands · +3 st`.
-fn caption(state: &VocoderState) -> String {
-    let bands = bands_readout(state.bands);
-    match state.formant.abs() < 0.05 {
-        true => format!("{bands} bands"),
-        false => format!("{bands} bands · {}", formant_readout(state.formant)),
-    }
-}
-
 pub struct VocoderView {
     device: DeviceEdit<VocoderState>,
     frame: CardFrame,
@@ -111,7 +103,7 @@ impl VocoderView {
         Display::new("display")
             .marks(bank(state.bands))
             .grid(grid, Vec::new())
-            .caption(caption(state))
+            .caption(RESPONSE_CAPTION)
     }
 }
 

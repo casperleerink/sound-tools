@@ -72,14 +72,6 @@ pub(super) fn playing(table: &Wavetable, position: f32) -> Vec<Point<f32>> {
     })
 }
 
-/// The frame at `position`, counted from 1, and how many frames the table has: what the line
-/// under the display says.
-pub(super) fn frame_number(table: &Wavetable, position: f32) -> (usize, usize) {
-    let count = table.frames();
-    let at = position.clamp(0., 1.) * count.saturating_sub(1) as f32;
-    (at.round() as usize + 1, count)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,13 +107,5 @@ mod tests {
                 assert!((0. ..=1.).contains(&place.x) && (0. ..=1.).contains(&place.y));
             }
         }
-    }
-
-    #[test]
-    fn the_frame_number_counts_from_one() {
-        let table = wavetable(Table::PulseWidth).unwrap();
-        let count = table.frames();
-        assert_eq!(frame_number(&table, 0.), (1, count));
-        assert_eq!(frame_number(&table, 1.), (count, count));
     }
 }

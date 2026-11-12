@@ -14,7 +14,7 @@
 
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent};
-use sound_ui::components::cell::{Cell, control_width};
+use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
@@ -76,8 +76,8 @@ const KNEE_KNOB: Control = Control::new(&KNEE, "Knee", "Change knee", decibels_r
 const MAKEUP_KNOB: Control = Control::new(&MAKEUP, "Makeup", "Change makeup", decibels_readout);
 const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
 
-/// The value of a row of the lookahead select for each lookahead. The select says the number
-/// and the value line of its cell says it with its unit: `10 ms` does not fit in the select.
+/// The value of a row of the lookahead select for each lookahead: its ms, which the row says
+/// with the unit.
 const LOOKAHEADS: [(Lookahead, &str); 3] = [
     (Lookahead::Off, "0"),
     (Lookahead::One, "1"),
@@ -155,16 +155,13 @@ impl CompressorView {
         })
         .detach();
         let lookahead = cx.new(|cx| {
-            let rows = LOOKAHEADS.map(|(_, label)| MenuItem::new(label, label));
-            let rows = vec![MenuEntry::Group(
-                MenuGroup::new().label("Lookahead, ms").items(rows),
-            )];
+            let rows = LOOKAHEADS.map(|(_, value)| MenuItem::new(value, format!("{value} ms")));
+            let rows = vec![MenuEntry::Group(MenuGroup::new().items(rows))];
             let shown = session.read(cx).project().state(&compressor);
             let shown = shown.map_or(Lookahead::Off, |state| state.lookahead);
             DropdownMenu::new("Lookahead", rows, cx)
                 .selected(lookahead_value(shown))
                 .trigger(Trigger::Select)
-                .trigger_width(control_width(1))
                 .width(LOOKAHEAD_MENU_WIDTH)
                 .debug_name("lookahead")
         });
@@ -318,11 +315,9 @@ impl Render for CompressorView {
             Column::new()
                 .top(knob(KNEE_KNOB, cx))
                 .bottom(knob(MAKEUP_KNOB, cx)),
-            Column::new().top(knob(MIX_KNOB, cx)).bottom(
-                Cell::new(self.lookahead.clone())
-                    .label("Lookahead")
-                    .value(format!("{} ms", lookahead_value(state.lookahead))),
-            ),
+            Column::new()
+                .top(knob(MIX_KNOB, cx))
+                .bottom(Cell::new(self.lookahead.clone()).label("Lookahead")),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self

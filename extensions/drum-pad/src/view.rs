@@ -471,8 +471,9 @@ impl gpui::Render for DrumPadView {
             .value(kind);
         let selected = self.selected;
         let on = pad.choke;
-        let choke = Toggle::new("choke", if on { "On" } else { "Off" }, on).on_change(
-            weak_callback(cx, move |view: &mut Self, on: bool, cx| {
+        let choke = Toggle::new("choke", "Choke", on).on_change(weak_callback(
+            cx,
+            move |view: &mut Self, on: bool, cx| {
                 let label = if on {
                     "Add to choke group"
                 } else {
@@ -480,11 +481,9 @@ impl gpui::Render for DrumPadView {
                 };
                 let set = move |state: &mut DrumPadState, on| state.pads[selected].choke = on;
                 view.device.change(label, ValueChange::Set(on), set, cx);
-            }),
-        );
-        let hidden = Column::new()
-            .top(sound)
-            .bottom(Cell::new(choke).label("Choke"));
+            },
+        ));
+        let hidden = Column::new().top(sound).bottom(Cell::switch(choke));
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame

@@ -75,18 +75,13 @@ const FEELS: [(Feel, &str, &str); 3] = [
     (Feel::Triplet, "triplet", "Triplet"),
 ];
 
-/// The time as the Time knob shows it: the note while it syncs, with `.` when dotted and `t`
-/// for a triplet, as in `1/8.` and `1/8t`, else the ms.
+/// The time as the Time knob shows it: the note while it syncs, else the ms. The feel is on the
+/// display, so the knob does not say it again.
 fn time_readout(state: &DelayState) -> String {
-    if !state.sync {
-        return milliseconds_readout(state.time_ms);
+    match state.sync {
+        true => state.division.name().to_string(),
+        false => milliseconds_readout(state.time_ms),
     }
-    let feel = match state.feel {
-        Feel::Straight => "",
-        Feel::Dotted => ".",
-        Feel::Triplet => "t",
-    };
-    format!("{}{feel}", state.division.name())
 }
 
 /// Where the repeats sit in the display, as places from 0 to 1, `y` up.
@@ -260,16 +255,10 @@ impl DelayView {
     }
 
     fn display(&self, state: &DelayState, cx: &mut Context<Self>) -> Display {
-        let caption = format!(
-            "Time {} · Feedback {}",
-            time_readout(state),
-            percent_readout(state.feedback),
-        );
         let display = Display::new("display")
             .curve(repeats(state))
             .marks([point(layout::LEFT, height_of(1.))])
             .handle(self.handle(state, cx))
-            .caption(caption)
             .strip();
         // A control that does nothing is not shown: the feel is only for a synced time.
         if !state.sync {
@@ -290,23 +279,22 @@ impl DelayView {
         display.control(feels)
     }
 
-    /// A switch in a cell, which says `On` or `Off`.
+    /// A switch in a cell.
     fn switch(
         &self,
         id: &'static str,
-        label: &'static str,
+        name: &'static str,
         undo_label: &'static str,
         on: bool,
         set: fn(&mut DelayState, bool),
         cx: &mut Context<Self>,
     ) -> Cell {
-        let text = if on { "On" } else { "Off" };
         let toggle =
-            Toggle::new(id, text, on).on_change(weak_callback(cx, move |view, on: bool, cx| {
+            Toggle::new(id, name, on).on_change(weak_callback(cx, move |view, on: bool, cx| {
                 view.device
                     .change(undo_label, ValueChange::Set(on), set, cx)
             }));
-        Cell::new(toggle).label(label)
+        Cell::switch(toggle)
     }
 }
 
@@ -348,12 +336,11 @@ impl Render for DelayView {
                 .bottom(knob(FEEDBACK_KNOB, cx)),
             Column::new().top(sync).bottom(knob(MIX_KNOB, cx)),
         ];
-        let hidden = [
-            Column::new()
-                .top(knob(LOW_CUT_KNOB, cx))
-                .bottom(knob(HIGH_CUT_KNOB, cx)),
-            Column::new().top(ping_pong),
-        ];
+        // `Ping-pong` does not fit in one column, so it is under the two cuts.
+        let hidden = [Column::new()
+            .top(knob(LOW_CUT_KNOB, cx))
+            .top(knob(HIGH_CUT_KNOB, cx))
+            .bottom(ping_pong.span(2))];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
@@ -386,8 +373,8 @@ mod tests {
             })
         };
         assert_eq!(at(true, Division::Eighth, Feel::Straight), "1/8");
-        assert_eq!(at(true, Division::Eighth, Feel::Dotted), "1/8.");
-        assert_eq!(at(true, Division::Sixteenth, Feel::Triplet), "1/16t");
+        assert_eq!(at(true, Division::Eighth, Feel::Dotted), "1/8");
+        assert_eq!(at(true, Division::Sixteenth, Feel::Triplet), "1/16");
         assert_eq!(at(false, Division::Eighth, Feel::Dotted), "330 ms");
     }
 

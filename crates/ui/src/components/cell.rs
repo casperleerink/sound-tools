@@ -1,9 +1,11 @@
 //! Cell: the place of one control on a device card. The control at the top, centred on the line
 //! of a knob's centre, then a label line and a value line, so every row of a card lines up.
 //!
-//! The value line reads what the control does not say in full: `1 ms` under a select that
-//! says `1`, `Low shelf` under one that shows a picture. It is empty under a control that says
-//! it all, such as `On`. A unit is never on a line alone.
+//! A cell says each thing once. The value line reads what the control does not say: `Low shelf`
+//! under a select that shows a picture. A control that says its value, such as a select on
+//! `10 ms`, has only its label, and one that says what it is has no line at all: a segmented
+//! control on `Clean`, or a switch, which carries its name ([`Cell::switch`]). A unit is never
+//! on a line alone.
 //!
 //! The knob is a cell of its own. `Cell` puts any other control into the same frame. A cell may
 //! span two columns for a control that needs the room; its lines are centred on the whole width.
@@ -12,6 +14,7 @@ use gpui::{
     AnyElement, App, Div, Hsla, SharedString, StyleRefinement, Window, div, prelude::*, px,
 };
 
+use crate::components::toggle::Toggle;
 use crate::theme::ActiveTheme;
 use crate::typography;
 use crate::typography::{TextVariant, Typography};
@@ -32,10 +35,15 @@ pub const fn control_width(columns: usize) -> f32 {
     columns as f32 * CELL_WIDTH - 8.
 }
 
+enum Control {
+    Any(AnyElement),
+    Switch(Box<Toggle>),
+}
+
 #[derive(IntoElement)]
 pub struct Cell {
     base: Div,
-    control: Option<AnyElement>,
+    control: Control,
     label: Option<SharedString>,
     value: Option<SharedString>,
     columns: usize,
@@ -43,9 +51,20 @@ pub struct Cell {
 
 impl Cell {
     pub fn new(control: impl IntoElement) -> Self {
+        Self::of(Control::Any(control.into_any_element()))
+    }
+
+    /// A switch of the device: a toggle whose word is its name, as wide as the control of its
+    /// cell whatever it says, so the switches of a card line up. A name that does not fit one
+    /// column takes two ([`Cell::span`]).
+    pub fn switch(toggle: Toggle) -> Self {
+        Self::of(Control::Switch(Box::new(toggle)))
+    }
+
+    fn of(control: Control) -> Self {
         Self {
             base: div(),
-            control: Some(control.into_any_element()),
+            control,
             label: None,
             value: None,
             columns: 1,
@@ -78,7 +97,11 @@ impl Styled for Cell {
 impl RenderOnce for Cell {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let width = CELL_WIDTH * self.columns as f32;
-        frame(self.base, self.control, self.label, self.value, width, cx)
+        let control = match self.control {
+            Control::Any(control) => control,
+            Control::Switch(toggle) => toggle.width(control_width(self.columns)).into_any_element(),
+        };
+        frame(self.base, Some(control), self.label, self.value, width, cx)
     }
 }
 
