@@ -1,4 +1,4 @@
-//! The card of the utility: the stereo image with the channels at its top and one handle for
+//! The card of the utility: the stereo image with the channels above it and one handle for
 //! gain and pan, then Gain, Width, Pan and Mute, and behind expand bass mono and the inverts of
 //! the two channels. The rack gives the view a [`CardFrame`]: the picker of the slot as the
 //! title, and the power and close icons.
@@ -32,10 +32,6 @@ use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Utility, UtilityState, WIDTH, mat
 
 /// The name the rack puts on the card of a utility.
 pub const NAME: &str = "Utility";
-
-/// The width of the display. With it and two columns of cells the card is 352 pt, as the
-/// filter and the reverb are.
-const DISPLAY_WIDTH: f32 = 200.;
 
 /// Registers the view of the `utility` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -285,13 +281,13 @@ impl UtilityView {
             decibels_readout(state.gain_db),
             pan_readout(state.pan)
         );
-        Display::new("display", DISPLAY_WIDTH)
+        Display::new("display")
             .curve(image(state))
             .grid([-1., 0., 1.].map(across).to_vec(), Vec::new())
             .zero_line(gain_axis().position(0.))
             .handle(self.handle(state, cx))
             .caption(caption)
-            .child(channels)
+            .control(channels)
     }
 }
 

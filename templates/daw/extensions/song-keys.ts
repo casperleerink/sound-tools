@@ -1,10 +1,10 @@
-import { playPause, type Action, type ActionKey, type FilledStateOfTool } from "./sdk";
+import { type Action, type ActionKey, type FilledStateOfTool } from "./sdk";
 import { noteCommand, type NoteCommand } from "./clip-editor";
 import { editPoints } from "./song-automation";
 import type { Song } from "./song";
 import { itemCommand, moveItems, placing, putTaken, take, type ClipCommand } from "./song-clips";
 import { BEAT, clamp, itemTool, ITEMS, rowsOf } from "./song-page";
-import { addTempoAtPlayhead, removeMark } from "./song-ruler";
+import { addSection, addSignatureNear, addTempoAtPlayhead, marksOf, removeMark } from "./song-ruler";
 import { askToDelete, toggleRecordingOf } from "./song-tracks";
 
 // What the song does on a key. The actions of one key are tried from the top: the notes of the
@@ -114,10 +114,44 @@ const toRow = (keys: readonly ActionKey[], title: string, step: -1 | 1) =>
     if (by !== undefined) memory.selected = moveItems(tool, state.order, memory.selected, 0, (row) => row + by, false);
   });
 
+/** Chooses the clip or region after or before the chosen one on its track; with none chosen, the first or the last of the chosen track, or of the first. */
+const clipStep = (keys: readonly ActionKey[], title: string, by: -1 | 1) =>
+  on(keys, title, ({ memory, children, state }) => {
+    const [chosen] = memory.selected;
+    const row = chosen?.split("/")[0] ?? memory.track ?? rowsOf(children, state.order)[0]?.name;
+    const owner = children.find((child) => child.name === row);
+    const items = (owner?.tool === "track" || owner?.tool === "tape" ? owner.children.flatMap((child) => (child.tool === "timeline" || child.tool === "region" ? [child] : [])) : [])
+      .sort((a, b) => a.state.start - b.state.start);
+    const at = items.findIndex((item) => `${row}/${item.name}` === chosen);
+    const next = items[at < 0 ? (by > 0 ? 0 : items.length - 1) : clamp(at + by, 0, items.length - 1)];
+    if (!next || !row) return false;
+    memory.selected = new Set([`${row}/${next.name}`]);
+    memory.track = row;
+    memory.point = null;
+    memory.mark = null;
+  });
+
+/** Goes to the mark of the ruler after or before the chosen one, or the playhead, and chooses it: delete then removes it, enter names a section. */
+const markStep = (keys: readonly ActionKey[], title: string, by: -1 | 1) =>
+  on(keys, title, ({ memory, clock }) => {
+    const marks = marksOf(clock);
+    const chosen = memory.mark;
+    const at = chosen ? marks.findIndex((mark) => mark.kind === chosen.kind && mark.tick === chosen.tick) : -1;
+    const next = at >= 0 ? marks[at + by] : by > 0 ? marks.find((mark) => mark.tick >= clock.tick) : marks.findLast((mark) => mark.tick <= clock.tick);
+    if (!next) return false;
+    memory.selected = new Set();
+    memory.point = null;
+    memory.mark = next;
+    clock.jump(next.tick);
+  });
+
 export const songActions: Record<string, SongAction> = {
-  play: playPause,
   record: on(["r"], "Record", (tool) => toggleRecordingOf(tool, tool.state.order)),
   add_tempo: on(["t"], "Add a tempo change at the playhead", ({ clock, memory }) => addTempoAtPlayhead(clock, memory)),
+  add_signature: on(["shift-t"], "Add a time signature change at the playhead", ({ clock, memory }) => addSignatureNear(clock, memory, clock.tick)),
+  add_section: on(["shift-s"], "Add a section at the playhead", ({ clock, memory }) => addSection(clock, memory, clock.tick)),
+  next_mark: markStep(["alt-shift-right"], "Go to the next section, tempo or time signature change", 1),
+  previous_mark: markStep(["alt-shift-left"], "Go to the section, tempo or time signature change before", -1),
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
@@ -172,6 +206,13 @@ export const songActions: Record<string, SongAction> = {
   move_track_up: trackStep(["alt-up"], "Move the track up", -1, true),
   move_track_down: trackStep(["alt-down"], "Move the track down", 1, true),
 
+  next_clip: clipStep(["alt-right"], "Choose the next clip", 1),
+  previous_clip: clipStep(["alt-left"], "Choose the clip before", -1),
+  clip_menu: on(["alt-enter"], "Open the menu of the chosen clip", ({ memory }) => {
+    const [chosen] = memory.selected;
+    if (chosen === undefined) return false;
+    memory.clipMenu = chosen;
+  }),
   delete_clips: clips(["backspace", "delete"], "Delete the chosen clips", "delete"),
   cut_clips: clips(["cmd-x"], "Cut the chosen clips", "cut"),
   copy_clips: clips(["cmd-c"], "Copy the chosen clips", "copy"),

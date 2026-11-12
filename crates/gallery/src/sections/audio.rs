@@ -8,9 +8,9 @@ use sound_ui::ActiveTheme;
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::device_card::{Column, DeviceCard, NARROW_CARD_WIDTH};
-use sound_ui::components::display::{Axis, Handle};
+use sound_ui::components::display::{Axis, Handle, TextDisplay};
 use sound_ui::components::knob::{Knob, KnobRange};
-use sound_ui::components::waveform_display::{FileDrop, NoFile, WaveformDisplay, place};
+use sound_ui::components::waveform_display::{FileDrop, WaveformDisplay, place};
 use sound_ui::{TextVariant, Typography};
 
 use super::rack::{block, sample};
@@ -62,7 +62,7 @@ fn clip_display(overview: Option<Arc<Overview>>) -> WaveformDisplay {
     let handle = |name: &'static str, x: f32, hollow| {
         Handle::new(name, Axis::fixed(x), Axis::fixed(up)).hollow(hollow)
     };
-    WaveformDisplay::new("clip-display", 312., overview, seconds)
+    WaveformDisplay::new("clip-display", overview, seconds)
         .trim(start, end)
         .on_start(|_, _, _| {})
         .on_end(|_, _, _| {})
@@ -119,7 +119,7 @@ fn displays(cx: &App) -> AnyElement {
                 .text_color(cx.theme().text_secondary())
                 .child("Select a clip."),
         );
-    let waiting = WaveformDisplay::new("waiting", 312., None, 14.6)
+    let waiting = WaveformDisplay::new("waiting", None, 14.6)
         .trim(2.1, 10.1)
         .caption("2.1 s to 10.1 s of 14.6 s");
     block(
@@ -168,7 +168,7 @@ fn sampler_display(overview: Option<Arc<Overview>>) -> WaveformDisplay {
     let across = |time: f32| place(time, seconds);
     let handle =
         |name: &'static str, x: f32, y: f32| Handle::new(name, Axis::fixed(x), Axis::fixed(y));
-    WaveformDisplay::new("sampler-display", 312., overview, seconds)
+    WaveformDisplay::new("sampler-display", overview, seconds)
         .trim(start, end)
         .on_start(|_, _, _| {})
         .on_end(|_, _, _| {})
@@ -234,14 +234,19 @@ fn sampler(cx: &App) -> AnyElement {
         DeviceCard::new("sampler-empty", title("Sampler"))
             .expand(false, |_, _, _| {})
             .display(
-                NoFile::new("empty-display", 312., "Drop an audio file here").button(choose_file()),
+                TextDisplay::new("empty-display")
+                    .wide()
+                    .message("Drop an audio file here")
+                    .button(choose_file()),
             ),
     );
     let dragged = knobs(
         DeviceCard::new("sampler-dragged", title("Sampler"))
             .expand(false, |_, _, _| {})
             .display(
-                NoFile::new("dragged-display", 312., "Drop an audio file here")
+                TextDisplay::new("dragged-display")
+                    .wide()
+                    .message("Drop an audio file here")
                     .button(choose_file())
                     .drop_file(FileDrop::new("Drop to load the file", |_, _, _| {}).shown(true)),
             ),

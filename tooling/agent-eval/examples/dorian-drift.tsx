@@ -1,4 +1,4 @@
-import { memo, abs, adsr, feedback, floor, h, number, lowpass, phasor, pow, rise, sin, smooth, tool, TAU, output, wrap, type Operand, type Signal, type Style, Knob, Text } from "./sdk";
+import { memo, abs, adsr, Controls, Display, feedback, floor, Fragment, h, Label, number, lowpass, phasor, pow, rise, sin, smooth, tool, TAU, output, wrap, type Operand, type Signal, Knob } from "./sdk";
 
 // D dorian over two octaves: degree 0 is D3, degree 14 is D5.
 const ROOT = 50;
@@ -10,11 +10,6 @@ const random = (count: Signal, seed: number): Signal =>
   wrap(sin(count.times(12.9898).plus(seed)).times(43758.5453));
 
 const saw = (hz: Operand): Signal => phasor(hz).times(2).minus(1);
-
-const column: Style = { gap: "sm" };
-const row: Style = { direction: "row", gap: "sm", align: "center" };
-const cell: Style = { width: 26, paddingY: "xs", radius: "md", align: "center", background: "fill", color: "text-secondary" };
-const lit: Style = { ...cell, background: "teal", color: "text-inverse" };
 
 tool({
   name: "dorian-drift",
@@ -78,21 +73,18 @@ tool({
     });
     const octave = () => Math.floor(pitch() / 12) - 1;
     return (
-      <div style={column}>
-        <div style={row}>
-          <Text variant="display" style={{ width: 64, color: "teal" }}>{() => `${name()}${octave()}`}</Text>
-          <div style={row}>
-            {DEGREES.map((degreeName) => (
-              <div style={() => (degreeName === name() ? lit : cell)}>{degreeName}</div>
-            ))}
-          </div>
-        </div>
-        <div style={row}>
-          <Knob field="density" label="Density" min={0} max={1} default={0.35} />
-          <Knob field="brightness" label="Brightness" min={0} max={1} default={0.4} />
-          <Knob field="level" label="Level" min={0} max={0.5} default={0.15} />
-        </div>
-      </div>
+      <>
+        <Display caption="D dorian">
+          <Label x={0.5} y={0.15} text={() => `${name()}${octave()}`} variant="display" align="center" />
+          <Label x={0.5} y={0.7} align="center"
+            text={() => DEGREES.map((degree) => ({ text: ` ${degree} `, color: degree === name() ? "text" : "text-muted" }))} />
+        </Display>
+        <Controls>
+          <Knob field="density" />
+          <Knob field="brightness" />
+          <Knob field="level" />
+        </Controls>
+      </>
     );
   },
 });

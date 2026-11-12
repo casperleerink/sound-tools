@@ -8,19 +8,16 @@
 //! ends in seconds, and hears the start and end handles.
 //!
 //! A display that takes a file dropped from the file manager has a [`FileDrop`]: while a file is
-//! dragged over it, the ring and a line that says what a drop does. [`NoFile`] is the display
-//! before there is a file: a line and a button in its middle.
+//! dragged over it, the ring and a line that says what a drop does.
 
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{
-    AnyElement, App, ElementId, ExternalPaths, Point, SharedString, Window, div, prelude::*, px,
-};
+use gpui::{App, ElementId, ExternalPaths, Point, SharedString, Window, div, prelude::*, px};
 use sound_media::{Info, Overview};
 
-use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT};
+use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT, WIDE_WIDTH};
 use crate::components::gesture::{ChangeHandler, ValueChange};
 use crate::components::knob::KnobRange;
 use crate::scale::radius;
@@ -33,7 +30,6 @@ const TRIM_HANDLE_RISE: f32 = 8.;
 #[derive(IntoElement)]
 pub struct WaveformDisplay {
     id: ElementId,
-    width: f32,
     overview: Option<Arc<Overview>>,
     /// How long the file is, in seconds: the width of the display.
     seconds: f32,
@@ -46,22 +42,15 @@ pub struct WaveformDisplay {
     curve: Vec<Point<f32>>,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
-    children: Vec<AnyElement>,
     drop: Option<FileDrop>,
 }
 
 impl WaveformDisplay {
-    /// A display of a file of `seconds`, `width` points wide. With no overview yet it shows no
-    /// waveform, and the rest as it is.
-    pub fn new(
-        id: impl Into<ElementId>,
-        width: f32,
-        overview: Option<Arc<Overview>>,
-        seconds: f32,
-    ) -> Self {
+    /// A wide display of a file of `seconds`. With no overview yet it shows no waveform, and
+    /// the rest as it is.
+    pub fn new(id: impl Into<ElementId>, overview: Option<Arc<Overview>>, seconds: f32) -> Self {
         Self {
             id: id.into(),
-            width,
             overview,
             seconds,
             start: 0.,
@@ -73,7 +62,6 @@ impl WaveformDisplay {
             curve: Vec::new(),
             handles: Vec::new(),
             caption: None,
-            children: Vec::new(),
             drop: None,
         }
     }
@@ -157,17 +145,10 @@ impl WaveformDisplay {
     }
 }
 
-/// Controls at the top of the display, as on [`Display`].
-impl ParentElement for WaveformDisplay {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
-    }
-}
-
 impl RenderOnce for WaveformDisplay {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         // One column per point of the display.
-        let columns = self.width.max(1.) as usize;
+        let columns = WIDE_WIDTH as usize;
         let peaks = self.overview.as_ref().map_or_else(Vec::new, |overview| {
             overview.columns(0., overview.seconds(), columns)
         });
@@ -193,7 +174,8 @@ impl RenderOnce for WaveformDisplay {
             .loop_start
             .as_ref()
             .map(|(seconds, _)| place(*seconds, self.seconds));
-        let display = Display::new(self.id, self.width)
+        let display = Display::new(self.id)
+            .wide()
             .waveform(peaks)
             .kept(start, end)
             .looped(looped)
@@ -211,11 +193,10 @@ impl RenderOnce for WaveformDisplay {
             Some(caption) => display.caption(caption),
             None => display,
         };
-        let display = match self.drop {
+        match self.drop {
             Some(drop) => display.takes_files(true).overlay(drop),
             None => display,
-        };
-        display.children(self.children)
+        }
     }
 }
 
@@ -278,65 +259,6 @@ impl RenderOnce for FileDrop {
             .when(!self.shown, |d| d.opacity(0.))
             .drag_over::<ExternalPaths>(|style, _, _, _| style.opacity(1.))
             .on_drop(move |paths: &ExternalPaths, window, cx| on_drop(paths.paths(), window, cx))
-    }
-}
-
-/// A display with no file yet: a line and a button in its middle, such as `Drop an audio file
-/// here` over `Choose file`. The button is the way from the keys.
-#[derive(IntoElement)]
-pub struct NoFile {
-    id: ElementId,
-    width: f32,
-    message: SharedString,
-    button: Option<AnyElement>,
-    drop: Option<FileDrop>,
-}
-
-impl NoFile {
-    pub fn new(id: impl Into<ElementId>, width: f32, message: impl Into<SharedString>) -> Self {
-        Self {
-            id: id.into(),
-            width,
-            message: message.into(),
-            button: None,
-            drop: None,
-        }
-    }
-
-    pub fn button(mut self, button: impl IntoElement) -> Self {
-        self.button = Some(button.into_any_element());
-        self
-    }
-
-    /// Takes a file dropped from the file manager, see [`FileDrop`].
-    pub fn drop_file(mut self, drop: FileDrop) -> Self {
-        self.drop = Some(drop);
-        self
-    }
-}
-
-impl RenderOnce for NoFile {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let middle = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(12.))
-            .text_variant(TextVariant::Label)
-            .line_height(px(14.))
-            .text_color(cx.theme().text_secondary())
-            .child(self.message)
-            .children(self.button);
-        let display = Display::new(self.id, self.width).overlay(middle);
-        match self.drop {
-            Some(drop) => display.overlay(drop),
-            None => display,
-        }
     }
 }
 

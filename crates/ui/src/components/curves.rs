@@ -107,10 +107,9 @@ fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Point<f3
 /// of the times and the sustain do. `on_change` hears which handle moved and how: the
 /// owner holds them to the ranges of its fields, since a handle may ask for one past an end.
 /// A handle that moves a value an automation lane moves, as `automated` says, does not drag.
-/// The owner adds the caption and any control at the top.
+/// The owner adds the caption and any control above it.
 pub fn envelope_display(
     id: impl Into<ElementId>,
-    width: f32,
     time: KnobRange,
     (adsr, defaults, automated): (Adsr, Adsr, Adsr<bool>),
     curves: [f32; 3],
@@ -156,7 +155,7 @@ pub fn envelope_display(
         ),
         Axis::fixed(BOTTOM),
     );
-    Display::new(id, width)
+    Display::new(id)
         .curve(envelope_curve(time, adsr, curves))
         .handle(attack)
         .handle(decay)

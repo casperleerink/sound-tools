@@ -71,6 +71,8 @@ pub(crate) struct TypeScriptCard {
     state: Option<(u64, Rc<Value>)>,
     /// The drag of the pointer, from its press until the answer to its end arrives.
     held: Option<Held>,
+    /// What a control of what code keeps has still to tell its code.
+    turning: Option<input::Turning>,
     /// The shape the pointer is over: the key of its space and its node.
     hovered: Option<(String, u64)>,
     /// The presses whose release its code hears, by node, with their button and what the
@@ -356,7 +358,7 @@ impl TypeScriptCard {
                 let parts = view.parts(cx);
                 let reads = |uses: &Uses| {
                     (uses.inside.iter())
-                        .filter_map(|name| view.id.child(name.split_once('.')?.0).ok())
+                        .filter_map(|name| view.id.child(crate::path::split(name).0?).ok())
                         .any(|inside| inside == *id)
                 };
                 let [body, title_bar, over] = [&parts.body, &parts.title_bar, &parts.over];
@@ -378,6 +380,7 @@ impl TypeScriptCard {
             |view, _, changed: &CardsChanged, window, cx| {
                 if changed.concerns(view.card) {
                     view.let_go_of_ended_drag(cx);
+                    view.tell_turns(false, cx);
                     view.sync(window, cx);
                     cx.notify();
                 }
@@ -437,6 +440,7 @@ impl TypeScriptCard {
             spaces: Rc::default(),
             state: None,
             held: None,
+            turning: None,
             hovered: None,
             pressed: Vec::new(),
             clicking: None,
@@ -488,6 +492,7 @@ impl TypeScriptCard {
         if self.let_go_of_ended_drag(cx) {
             cx.notify();
         }
+        self.tell_turns(false, cx);
         let Some(state) = self.state(cx) else {
             return;
         };
@@ -800,6 +805,7 @@ impl TypeScriptCard {
             title_focus,
             lifting: None,
             expanded: self.frame.as_ref().map(|_| self.expanded),
+            control_size: sound_ui::ControlSize::default(),
             card: self.handle.clone(),
             generation: live.generation(),
             cx,

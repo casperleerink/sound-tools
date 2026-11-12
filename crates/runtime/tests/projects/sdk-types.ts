@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Page, Path, rise, Select, text, Text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, alpha, audio, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, now, number, list, notes, NumberBox, output, Page, Path, rise, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, bang, Wave, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -533,14 +533,52 @@ Toggle({ label: "C", on: true, size: "xs" });
 // @ts-expect-error: a text is a step of the type scale.
 Text({ variant: "small", children: "No such step" });
 
-// A page keeps its content narrow, or is one surface to the window's edges.
+// A page lays out its content, or is one surface to the window's edges: it takes no width.
+Page({ flush: true });
+// @ts-expect-error: a part is as wide as what is in it, or grows.
 Page({ maxWidth: 720 });
-// @ts-expect-error: a page to the window's edges has no width to keep.
-Page({ flush: true, maxWidth: 720 });
 
-// A control names a `field`, or shows what code keeps and hears it with `onChange`.
+// A card's view gives its parts with no row around them. A wave needs no colour, and a label
+// takes a step of the type scale.
+tool({
+  name: "parts",
+  title: "Parts",
+  when: "A test",
+  doc: "A card of a display and a knob.",
+  state: { level: number({ min: 0, max: 1 }) },
+  view: ({ now }) => [
+    Display({ caption: "Level", children: [Wave({ x: 0, y: 0, width: 1, height: 1, list: now.history(now.value("level"), 120) }), Label({ x: 0, y: 0, text: "Level", variant: "heading", tone: "muted" })] }),
+    Controls({ children: Knob({ field: "level", min: 0, max: 1, default: 0 }) }),
+  ],
+});
+// @ts-expect-error: no step of the type scale is `small`.
+Label({ x: 0, y: 0, text: "C2", variant: "small" });
+// @ts-expect-error: a label has no size in points.
+Label({ x: 0, y: 0, text: "C2", size: 13 });
+
+// A control names a `field`, and takes its range, its label and its options from it: nothing else is needed.
+Knob({ field: "cutoff" });
+Slider({ field: "cutoff" });
+Fader({ field: "mix.gain_db", length: 100 });
+NumberBox({ field: "bpm", key: "bpm", width: 40 });
+SegmentedControl({ field: "mode" });
+Select({ field: "mode" });
+Steps({ field: "kick" });
+// Each can still be said, and a number inside a child's record is a field too.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
+Knob({ field: "kit.pads.36.volume_db", label: "Level", played: true });
+// Or it shows what code keeps and hears it with `onChange`, and then says its range or its options.
 Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0 });
+// @ts-expect-error: what code keeps has no field to tell its range.
+Knob({ value: () => 0.5, onChange: (value: number) => value });
+// @ts-expect-error: nor its options.
+SegmentedControl({ value: "a", onChange: (picked: string) => picked });
+// @ts-expect-error: a lane plays a field, not what code keeps.
+Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0, played: true });
+// One prop says how much text a knob shows.
+Knob({ field: "cutoff", text: "value" });
+// @ts-expect-error: a knob has no size.
+Knob({ field: "cutoff", size: "sm" });
 // @ts-expect-error: a value code keeps is no field name, and needs `onChange`.
 Select({ value: "velocity", options: lanes });
 // @ts-expect-error: a field or what code keeps, not both.
@@ -552,3 +590,12 @@ NumberBox({ field: "bpm", show: 120, key: "bpm", width: 40 });
 Path({ points: [[0, 0], [5, 0, 10, 10]], color: "#ffffff" });
 // @ts-expect-error: its first point is `[x, y]`.
 Path({ points: [[5, 0, 10, 10]], color: "#ffffff" });
+
+// Drawing by hand needs no cast: a number as a live value, points made in a loop, a colour that is a variable.
+const octaves: Live = Live.of(2).pow(now.value("pitch").over(12));
+const points: (readonly [Live, Live])[] = [];
+for (let place = 0; place <= 8; place++) points.push([octaves.times(place), octaves]);
+const marks = ["teal", "sky"] as const;
+for (const mark of marks) Path({ points, color: alpha(mark, 40), width: 2 });
+// @ts-expect-error: a colour is one of the theme.
+alpha("grey", 40);

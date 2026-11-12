@@ -111,7 +111,7 @@ fn an_empty_sampler_shows_choose_file_and_expands(cx: &mut TestAppContext) {
     ] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
-    // The card is 520 pt, and 817 expanded: its header is as wide, inside a border of 1 pt.
+    // The card is 608 pt, and 945 expanded: its header is as wide, inside a border of 1 pt.
     let width = |opened: &mut Opened<'_>| {
         opened
             .bounds("card-rack/instrument-header")
@@ -119,11 +119,11 @@ fn an_empty_sampler_shows_choose_file_and_expands(cx: &mut TestAppContext) {
             .size
             .width
     };
-    assert_eq!(width(&mut opened), px(817. - 2.));
+    assert_eq!(width(&mut opened), px(945. - 2.));
     // The icon moved with the right edge.
     let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
-    assert_eq!(width(&mut opened), px(520. - 2.));
+    assert_eq!(width(&mut opened), px(608. - 2.));
 }
 
 #[gpui::test]
@@ -224,11 +224,11 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
         assert!(!opened.gesture_open());
         state(opened)
     };
-    // The file is 2 s over 312 pt: 31 pt is about 0.2 s.
+    // The file is 2 s over 376 pt: 38 pt is about 0.2 s.
     let after = drag(
         &mut opened,
         "handle-attack",
-        point(px(31.), px(0.)),
+        point(px(38.), px(0.)),
         "Change attack",
     );
     assert!((after.attack_seconds - 0.2).abs() < 0.02, "{after:?}");
@@ -243,14 +243,14 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     let after = drag(
         &mut opened,
         "handle-start",
-        point(px(15.6), px(0.)),
+        point(px(18.8), px(0.)),
         "Change start",
     );
     assert!((after.start_seconds - 0.1).abs() < 0.01, "{after:?}");
     let after = drag(
         &mut opened,
         "handle-end",
-        point(px(-78.), px(0.)),
+        point(px(-94.), px(0.)),
         "Change end",
     );
     let end = after.end_seconds.unwrap();
@@ -289,7 +289,7 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     let after = drag(
         &mut opened,
         "handle-loop-start",
-        point(px(78.), px(0.)),
+        point(px(94.), px(0.)),
         "Change loop start",
     );
     // From the start line, 0.1 s, half a second on.
@@ -319,8 +319,8 @@ fn the_green_line_follows_the_last_note(cx: &mut TestAppContext) {
     opened.settle();
     let at = opened.cx.read(|cx| sampler.read(cx).playing_at()).unwrap();
     println!("after 0.5 s of a note at the root, the green line is at {at:.4} s");
-    // A column of the display is 2 s / 312 pt.
-    assert!((at - 0.5).abs() < 2. / 312., "{at}");
+    // A column of the display is 2 s / 328 pt.
+    assert!((at - 0.5).abs() < 2. / 328., "{at}");
     // Past the end of the 2 s file the note has ended, and the line is gone.
     opened.render(96_000);
     opened.settle();

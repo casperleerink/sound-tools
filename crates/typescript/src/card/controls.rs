@@ -27,7 +27,7 @@ use crate::tree::{
 
 use super::TypeScriptCard;
 use super::drawing::{Drawing, typing};
-use super::input::{Carried, Hears, placed, press_of};
+use super::input::{Carried, Hears, KeyTurned, placed, press_of};
 
 impl Drawing<'_> {
     /// A slider of the app, which turns its field or input as a knob's drag does.
@@ -41,11 +41,14 @@ impl Drawing<'_> {
             .bipolar(props.bipolar == Some(true))
             .when_some(props.default, Slider::default_value);
         let turns = props.field.clone().map(|field| tree::Turns {
-            value: field,
+            value: Some(field),
             min: Some(min),
             max: Some(max),
             unit: props.unit,
+            fader: false,
             travel: None,
+            step: None,
+            per: None,
             absolute: false,
             default: props.default,
             label: props.label.clone(),
@@ -69,7 +72,7 @@ impl Drawing<'_> {
         let selector = format!("segmented-{}", props.key.as_deref().unwrap_or_default());
         let control = SegmentedControl::new(ElementId::Name(name.into()), chosen)
             .options(options)
-            .size(props.size.unwrap_or_default())
+            .size(props.size.unwrap_or(self.control_size))
             .disabled(props.disabled == Some(true))
             .when(props.on_change == Some(true), |control| {
                 let card = self.card.clone();
@@ -223,7 +226,7 @@ impl Drawing<'_> {
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
-            .size(props.size.unwrap_or_default())
+            .size(props.size.unwrap_or(self.control_size))
             .when(hears.click, |toggle| toggle.on_click(self.clicked(id)))
             .when_some(props.color, |toggle, color| toggle.color(color.0))
             .when_some(
@@ -273,10 +276,9 @@ impl Drawing<'_> {
             .tab_stop(hears.click)
             .when(hears.click, |button| button.on_click(self.clicked(id)))
             .variant(variant)
-            .size(props.size.unwrap_or_default())
+            .size(props.size.unwrap_or(self.control_size))
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
-            .when_some(props.opacity, |button, opacity| button.opacity(opacity))
             .when_some(
                 tooltip_of(&props.tooltip, &props.shortcut, self.cx),
                 |mut button, tooltip| {
@@ -344,10 +346,10 @@ impl Drawing<'_> {
         match control.keys {
             Keys::Press => press_keys(wrap),
             Keys::Own => wrap,
-            Keys::Turn(turns) => {
+            Keys::Turn(turned) => {
                 wrap.on_key_down(self.listener(move |view, event: &KeyDownEvent, _, cx| {
                     if let Some(key) = ValueKey::of(&event.keystroke)
-                        && view.turn_by_key(&turns, key, cx)
+                        && view.turn_by_key(&turned, key, cx)
                     {
                         cx.stop_propagation();
                     }
@@ -496,10 +498,10 @@ pub(super) enum Keys {
     /// A button, a toggle, a select or a div that is a tab stop: enter clicks it, see
     /// [`press_keys`].
     Press,
-    /// A knob or a fader on a field: the arrows step it and backspace resets it, see
+    /// A knob or a fader: the arrows step what it turns and backspace resets it, see
     /// [`TypeScriptCard::turn_by_key`].
-    Turn(tree::Turns),
-    /// A div that is a tab stop for its own `keys` alone, such as a number of what code keeps.
+    Turn(KeyTurned),
+    /// A div that is a tab stop for its own `keys` alone, such as a row of steps.
     Own,
 }
 

@@ -1,5 +1,5 @@
 //! The card of the modulation: the LFO over two cycles, the left side as the line and the right
-//! side dashed, with the mode at its top; then Rate, Depth, Feedback and Mix, and behind expand
+//! side dashed, with the mode above it; then Rate, Depth, Feedback and Mix, and behind expand
 //! the spread. The rack gives the view a [`CardFrame`]: the picker of the slot as the title,
 //! and the close icon.
 //!
@@ -26,10 +26,6 @@ use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREA
 
 /// The name the rack puts on the card of a modulation.
 pub const NAME: &str = "Modulation";
-
-/// The width of the display. With it and two columns of cells the card is 352 pt, as wide as
-/// the filter.
-const DISPLAY_WIDTH: f32 = 200.;
 
 /// Points of each line across the display.
 const CURVE_POINTS: usize = 96;
@@ -88,9 +84,9 @@ mod layout {
     use sound_ui::components::knob::KnobRange;
 
     pub(super) const CYCLES: f32 = 2.;
-    /// The middle of the swing, and how far depth 1 reaches from it, under the mode at the top.
-    pub(super) const MIDDLE: f32 = 0.4;
-    pub(super) const SWING: f32 = 0.3;
+    /// The middle of the swing, and how far depth 1 reaches from it.
+    pub(super) const MIDDLE: f32 = 0.5;
+    pub(super) const SWING: f32 = 0.36;
     /// Where the depth handle sits across: the second peak of the left side, which the spread
     /// handle never reaches.
     pub(super) const DEPTH_AT: f32 = 0.625;
@@ -193,14 +189,14 @@ impl ModulationView {
         let spread = Axis::new(SPREAD_TRAVEL, state.spread, SPREAD.default);
         let height = Axis::fixed(peak(state.depth));
         let spread = self.handle("spread", SPREAD_KNOB, (spread, height), cx);
-        Display::new("display", DISPLAY_WIDTH)
+        Display::new("display")
             .curve(line(state.depth, 0.))
             .dashed(line(state.depth, 0.5 * state.spread))
             .zero_line(layout::MIDDLE)
             .handle(spread.hollow(true))
             .handle(depth)
             .caption(caption(state))
-            .child(modes)
+            .control(modes)
     }
 }
 

@@ -37,6 +37,7 @@ tool({
 - `name` may not be the name of a built-in tool.
 - `when` and `doc` are what the next agent reads. Say what the tool does to the sound and what each field does musically, also between its ends. The runtime adds where the record goes and a table of the fields.
 - A `sound` that reads `input` is an effect; one that does not makes its own: a drone, a generative part, or an instrument that plays its notes. `voices`, up to 8, runs it once per note, for chords.
+- An instrument that makes its own notes, a sequencer, follows the notes that reach it or goes on a track of its own: clips on its track would show and play nothing.
 
 ## The sound
 
@@ -63,32 +64,30 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 ## Its view
 
-Without `view`, it gets a control per number, boolean, choice, file, list of numbers, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
+Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is a row: a `Display` of what the tool does to the sound, then `Controls`, its knobs and other controls in cells (`extensions/sdk/card.ts`). It shows the first columns of cells and keeps the rest behind its expand icon, so put first what matters most.
+A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`: its knobs, and other controls in cells (`extensions/sdk/card.ts`). The window lays them out and keeps the columns after the first behind the card's expand icon, so put first what matters most.
 
-Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `gap: "sm"`, `size="sm"` on a control, `<Text variant="label">` for text. `ThemeColor`, `Style` and `Text` in `extensions/sdk/drawing.ts` list the names.
+A control with a `field` takes its range, default, unit and label from it. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `gap: "sm"`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
 
 ```tsx
-import { Button, Cell, Controls, Display, h, Knob, type Style, tool, Wave } from "./sdk";
-
-const row: Style = { direction: "row" };
+import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
 
 tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ now, send }) => (
-    <div style={row}>
+    <>
       <Display caption="Level">
-        <Wave x={0} y={0} width={1} height={1} list={now.history(now.value("level"), 120)} low={0} high={1} color="text" />
+        <Wave x={0} y={0} width={1} height={1} list={now.history(now.value("level"), 120)} low={0} high={1} />
       </Display>
       <Controls>
-        <Knob field="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
-        <Knob field="note" label="Note" min={24} max={60} default={36} unit="pitch" />
+        <Knob field="cutoff" />
+        <Knob field="note" unit="pitch" />
         <Cell label="Drum">
-          <Button label="Hit" size="sm" variant="subtle" onClick={() => send("hit")} />
+          <Button label="Hit" variant="subtle" onClick={() => send("hit")} />
         </Cell>
       </Controls>
-    </div>
+    </>
   ),
 });
 ```
@@ -109,10 +108,10 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): its `header` shows in the window's title bar, and the rest one under the other, scrolling where the window is too small. A `Panel` is a surface with a title; panels side by side go in a `div` that is a row. What has `grow` takes the room that is left, a panel and the `Space` in it alike, so no code works out a size. `<Page flush>` is one surface to the window's edges, such as a canvas.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, or its own `header`, and the rest one under the other in the middle of the window, scrolling where it is too small. A `Panel` is a surface with a title, as wide as what is in it; panels side by side go in a `div` that is a row. What has `grow` takes the room that is left, a panel and the `Space` in it alike, so no code works out a size. `<Page flush>` is one surface to the window's edges, such as a canvas.
 
 ```tsx
-import { h, Knob, lowpass, now, number, Page, Panel, playing, playPause, saw, smooth, Space, type Style, tool, Transport, Wave } from "./sdk";
+import { h, Knob, lowpass, now, number, Page, Panel, playing, saw, smooth, Space, type Style, tool, Wave } from "./sdk";
 
 const knobs: Style = { direction: "row", gap: "md" };
 
@@ -125,20 +124,19 @@ tool({
     pitch: number({ min: 30, max: 1000, default: 110, unit: "hz" }),
     tone: number({ min: 100, max: 8000, default: 800, unit: "hz" }),
   },
-  actions: { play: playPause },
   sound: ({ pitch, tone }) => lowpass(saw(pitch), tone).times(smooth(playing, 50)).times(0.3),
   view: () => {
     // The edges of the display, which grows with the window.
     const { right, bottom } = now.space("level");
     return (
-      <Page header={<Transport />}>
+      <Page>
         <Panel title="Drone" grow>
           <Space key="level" grow background="well" radius="md">
             <Wave x={0} y={0} width={right} height={bottom} list={now.history(now.devicePeak(), 240)} low={0} high={1} color="green" />
           </Space>
           <div style={knobs}>
-            <Knob field="pitch" label="Pitch" min={30} max={1000} default={110} unit="hz" />
-            <Knob field="tone" label="Tone" min={100} max={8000} default={800} unit="hz" />
+            <Knob field="pitch" />
+            <Knob field="tone" />
           </div>
         </Panel>
       </Page>
@@ -149,7 +147,7 @@ tool({
 
 ## The clock
 
-One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. A `Transport` in the header plays and stops it and sets its tempo; no key does unless a tool has an action for it, as `actions: { play: playPause }` gives space (`agent-docs/extensions-view.md`). `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
+One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. The transport in a page's header plays and stops it, sets its tempo, and gives its tool space to play and pause: a sound that should stop with it follows `playing`. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
 
 ## Check your work
 

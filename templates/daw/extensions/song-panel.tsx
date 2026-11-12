@@ -1,16 +1,24 @@
-import { Button, DeviceCard, For, Fragment, h, Icon, Knob, memo, Select, Show, Toggle, type CardSelect } from "./sdk";
+import { Button, DeviceCard, For, Fragment, h, Knob, memo, Select, Show, Text, Toggle, type CardSelect } from "./sdk";
 import { returnTitle, sendsOf, Volume } from "./song-mixer";
-import { colourOf, HEADER, inputOf, itemTool, muted, nameFrom, titleOf, type Page } from "./song-page";
+import { colourOf, HEADER, inputOf, itemTool, Mark, muted, nameFrom, titleOf, type Page } from "./song-page";
 import { freeName } from "./track";
 
 // What shows under the timeline for one track or return, its panel, and for the master.
 
 // The panel of the chosen track, as tall as a card and the room around it.
-/** A device card's height, and the panel's: its cards, 11 points above them and 12 under. */
+/** A device card's height, and the panel's: its cards, 12 points above them and under. */
 const CARD = 192;
-const RACK = CARD + 23;
+const RACK = CARD + 24;
 // The fader of the chosen track's panel.
-const PANEL_FADER = 113;
+const PANEL_FADER = 112;
+/** The top of a panel's first column: its mark, its name and its close button. */
+const TITLE = { height: 32, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm" } as const;
+/** A fader over its value, under the title. */
+const VOLUME = { align: "center", gap: "sm", paddingTop: "xs" } as const;
+/** The cards of a panel, side by side. */
+const CARDS = { grow: true, direction: "row", gap: "md", paddingX: "lg", paddingTop: "md", align: "start" } as const;
+/** A surface as tall as a device card and with its look, for what a panel shows beside them. */
+const SURFACE = { height: CARD, radius: "lg", background: "surface", borderColor: "border", borderWidth: 1, paddingX: "lg", keep: true } as const;
 /** Where on a track a sidechain takes its sound, and what its select says, as the arrangement's. */
 const TAPS = [["pre_fx", "Pre FX"], ["post_fx", "Post FX"], ["post_fader", "Post mixer"]] as const;
 type Tap = (typeof TAPS)[number][0];
@@ -19,7 +27,7 @@ type Tap = (typeof TAPS)[number][0];
 async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: string) {
   const { offers: offered, notes, here } = await offers(takes, { at });
   const items = offered.map(({ key, name, detail, group, icon, unavailable }) => ({ label: name, detail: detail ?? undefined, group, icon, checked: key === here, disabled: unavailable !== null }));
-  const picked = await openMenu(items, { notes, width: 280, maxHeight: 540 });
+  const picked = await openMenu(items, { notes, width: 280, maxHeight: 540, search: true });
   return picked === null ? undefined : offered[picked];
 }
 
@@ -112,31 +120,31 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
   const isReturn = () => row()?.tool === "bus";
   return (
     <div style={{ height: RACK, direction: "row", keep: true }}>
-      <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
-        <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
-          <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
-          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "text" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-          <Button key="close-panel" icon="x" variant="ghost" size="sm" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
+      <div style={{ width: HEADER - 1, keep: true, paddingTop: "md" }}>
+        <div style={TITLE}>
+          <Mark colour={() => (row() ? colourOf(row()!) : "blue")} />
+          <Text variant="heading" style={{ grow: true, truncate: true }}>{() => (row() ? titleOf(row()!) : name)}</Text>
+          <Button key="close-panel" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
         </div>
-        <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
-          <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
+        <div style={{ direction: "row", paddingLeft: "sm", gap: "lg" }}>
+          <div style={VOLUME}>
             {() => <Volume path={`${name}/mix`} length={PANEL_FADER} meter={memory.armed.has(name) ? { input: inputOf(row()) } : { of: `${name}/mix` }} />}
           </div>
-          <div style={{ align: "start" }}>
+          <div style={{ align: "center" }}>
             <Knob field={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
-            <div style={{ direction: "row", gap: 4, paddingTop: 6 }}>
+            <div style={{ direction: "row", gap: "xs", paddingTop: "sm" }}>
               <Toggle key={`panel-mute-${name}`} size="sm" label="M" tooltip="Mute" on={() => (row() ? muted(row()!) : false)} color="peach" onClick={() => toggleMute(name)} />
               <Show when={() => !isReturn()}>
                 {() => <Toggle key={`panel-solo-${name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />}
               </Show>
             </div>
-            <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: 14 }}><InputSelect page={page} name={name} /></div>}</Show>
-            <Show when={isReturn}>{() => <div style={{ paddingTop: 14 }}><PreFader page={page} name={name} /></div>}</Show>
+            <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: "md" }}><InputSelect page={page} name={name} /></div>}</Show>
+            <Show when={isReturn}>{() => <div style={{ paddingTop: "md" }}><PreFader page={page} name={name} /></div>}</Show>
           </div>
         </div>
       </div>
       <div style={{ width: 1, background: "border", keep: true }} />
-      <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 11, paddingRight: 16, align: "start", scroll: "x" }}>
+      <div key="rack" style={{ ...CARDS, scroll: "x" }}>
         {() =>
           row()?.tool === "tape" ? (
             <>
@@ -161,10 +169,8 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
             </div>
           )}
         </For>
-        <div key="add-effect" tabStop style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "fill" }, keep: true }} onClick={addEffect}
-          onDrop={({ carried }) => carried && moveBefore(carried, null)}>
-          <div style={{ fontSize: 14, weight: "medium", color: "text" }}>Add effect</div>
-          <Icon name="chevron-down" size={14} color="text-muted" />
+        <div key="add-effect" style={{ keep: true }} onDrop={({ carried }) => carried && moveBefore(carried, null)}>
+          <Button key="add-effect" label="Add effect" icon="plus" variant="ghost" color="text-secondary" size="lg" onClick={addEffect} />
         </div>
         <Show when={() => row()?.tool === "track" && returns().length > 0}>
           {() => (
@@ -181,11 +187,11 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
 
 /** The first card of an audio track while none of its regions is chosen, as a device card looks. */
 const EmptyClip = () => (
-  <div key="clip-empty" style={{ width: 88, height: CARD, radius: 10, background: "surface", borderColor: "border", borderWidth: 1, keep: true }}>
-    <div style={{ height: 32, direction: "row", align: "center", paddingLeft: 15 }}>
-      <div style={{ fontSize: 14, weight: "medium", color: "text" }}>Clip</div>
+  <div key="clip-empty" style={{ ...SURFACE, width: 120 }}>
+    <div style={{ height: 32, justify: "center" }}>
+      <Text variant="heading">Clip</Text>
     </div>
-    <div style={{ paddingX: 15, fontSize: 12, lineHeight: 14, color: "text-secondary" }}>Select a clip.</div>
+    <Text variant="label">Select a clip.</Text>
   </div>
 );
 /** The channels of the input an audio track records, each alone and then the pair. */
@@ -218,11 +224,11 @@ const Sends = ({ page, name }: { page: Page; name: string }) => {
   };
   const columns = memo(() => Array.from({ length: Math.ceil(sends().length / 2) }, (_, index) => index));
   return (
-    <div key="sends" style={{ height: CARD, radius: 10, background: "surface", borderColor: "border", borderWidth: 1, paddingX: 15, keep: true }}>
-      <div style={{ height: 32, direction: "row", align: "center" }}>
-        <div style={{ fontSize: 14, weight: "medium", color: "text" }}>Sends</div>
+    <div key="sends" style={SURFACE}>
+      <div style={{ height: 32, justify: "center" }}>
+        <Text variant="heading">Sends</Text>
       </div>
-      <div style={{ direction: "row", gap: 8 }}>
+      <div style={{ direction: "row", gap: "sm" }}>
         <For each={columns}>
           {(column) => (
             <div>
@@ -256,20 +262,20 @@ const PreFader = ({ page: { update, returns }, name }: { page: Page; name: strin
 /** The master's panel: its fader and meter, and its limiter. */
 export const MasterPanel = ({ page: { state, memory, update } }: { page: Page }) => (
   <div style={{ height: RACK, direction: "row", keep: true }}>
-    <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
-      <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
-        <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "text-secondary", keep: true }} />
-        <div style={{ grow: true, fontSize: 14, weight: "medium", color: "text" }}>Master</div>
-        <Button key="close-master" icon="x" variant="ghost" size="sm" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
+    <div style={{ width: HEADER - 1, keep: true, paddingTop: "md" }}>
+      <div style={TITLE}>
+        <Mark />
+        <Text variant="heading" style={{ grow: true }}>Master</Text>
+        <Button key="close-master" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
       </div>
-      <div style={{ direction: "row", paddingLeft: 8 }}>
-        <div style={{ align: "center", gap: 7, paddingTop: 5 }}>
+      <div style={{ direction: "row", paddingLeft: "sm" }}>
+        <div style={VOLUME}>
           <Volume path="master" length={PANEL_FADER} meter="device" />
         </div>
       </div>
     </div>
     <div style={{ width: 1, background: "border", keep: true }} />
-    <div style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 11, paddingRight: 16, align: "start" }}>
+    <div style={CARDS}>
       <DeviceCard path="limit" on={() => !state.limit_off} onPower={() => update(state.limit_off ? "Turn the limiter on" : "Turn the limiter off", (song) => (song.state.limit_off = !song.state.limit_off))} />
     </div>
   </div>

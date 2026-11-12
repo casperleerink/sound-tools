@@ -35,7 +35,7 @@ fn next_ops(bun: &Bun) -> Vec<Op> {
 }
 
 #[test]
-fn a_step_turned_sends_which_steps_are_on_and_nothing_else() {
+fn a_step_turned_sends_how_strong_the_steps_are_and_nothing_else() {
     let program = bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let folder = tempfile::tempdir().unwrap();
     write_sdk(folder.path(), &[]).unwrap();
@@ -88,7 +88,7 @@ fn a_step_turned_sends_which_steps_are_on_and_nothing_else() {
         panic!("one change of the row: {ops:?}");
     };
     assert_eq!(*node, steps);
-    let on = "on: Some(Some([false, false, true, false]))";
+    let on = "levels: Some(Some([0.0, 0.0, 1.0, 0.0]))";
     let change = format!("{change:?}");
     assert!(
         change.contains(on) && change.matches("Some").count() == 2,

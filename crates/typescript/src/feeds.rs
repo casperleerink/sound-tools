@@ -358,7 +358,9 @@ impl Feeds {
         kept.value
     }
 
-    /// The last `frames` values of `value` under `key`, one a frame, oldest first.
+    /// The last `frames` values of `value` under `key`, one a frame, oldest first. Before it
+    /// has that many, the first it has stands for the frames before it, so a wave of it moves
+    /// in from the right at the speed it keeps.
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {
         let mut histories = self.histories.borrow_mut();
         let (last, values) = histories.entry(key.to_string()).or_default();
@@ -368,7 +370,11 @@ impl Feeds {
             let over = values.len().saturating_sub(frames as usize);
             values.drain(..over);
         }
-        values.iter().copied().collect()
+        let missing = (frames as usize).saturating_sub(values.len());
+        let first = values.front().copied();
+        (first.into_iter().cycle().take(missing))
+            .chain(values.iter().copied())
+            .collect()
     }
 }
 
@@ -415,14 +421,14 @@ fn child_field(
     name: &str,
     records: &mut Records,
 ) -> Option<(f32, Option<ValueRange>)> {
-    let (child, field) = name.split_once('.')?;
+    let (Some(child), field) = crate::path::split(name) else {
+        return None;
+    };
     let child = id.child(child).ok()?;
     let range = project.automation(&child, field).map(|number| number.range);
-    let value = records
-        .of(project, &child)?
-        .get(field)
-        .and_then(Value::as_f64);
-    let value = value.map(|value| value as f32).or_else(|| {
+    let record = records.of(project, &child)?;
+    let value = crate::path::at(record, field).and_then(crate::tree::number_of);
+    let value = value.or_else(|| {
         let number = project.automation(&child, field)?;
         number.record
     })?;
@@ -448,12 +454,9 @@ fn played(
             .find(|(each, _)| **each == *number)
             .map(|(_, value)| value)
     };
-    let Some((path, number)) = name.split_once('.') else {
+    let (Some(path), number) = crate::path::split(name) else {
         let range = project.automation(id, name).map(|number| number.range);
-        let record = state
-            .get(name)
-            .and_then(Value::as_f64)
-            .map(|value| value as f32);
+        let record = crate::path::at(state, name).and_then(crate::tree::number_of);
         return Some((lane(id, name).or(record)?, range));
     };
     let inner = id.child(path).ok()?;

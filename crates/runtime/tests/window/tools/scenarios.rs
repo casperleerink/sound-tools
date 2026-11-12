@@ -129,7 +129,7 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
             window.measure(POLLS, |_, _| {})
         }
         Scenario::PlayingWithTheMixer => {
-            let toggle = window.until_found("button-mixer-toggle");
+            let toggle = window.until_found("toggle-mixer-toggle");
             window.click(toggle);
             window.until_found("div-mixer");
             window.away_from_tooltips();

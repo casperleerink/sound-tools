@@ -29,10 +29,6 @@ use crate::{Delay, DelayState, Division, FEEDBACK, Feel, HIGH_CUT, LOW_CUT, MIX,
 /// The name the rack puts on the card of a delay.
 pub const NAME: &str = "Delay";
 
-/// The width of the display. With it and two columns of cells the card is 352 pt, as wide as
-/// the Filter and the Reverb.
-const DISPLAY_WIDTH: f32 = 200.;
-
 /// Registers the view of the `delay` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(DelayView::new);
@@ -110,8 +106,8 @@ mod layout {
     pub(super) const SHORTEST_GAP: f32 = 0.03;
     /// How much further the first repeat is at the longest time.
     pub(super) const GAP_ZONE: f32 = 0.4;
-    /// Full level: under the feel at the top of the display.
-    pub(super) const TOP: f32 = 0.7;
+    /// Full level.
+    pub(super) const TOP: f32 = 0.88;
     /// Half the width of a repeat at its foot.
     pub(super) const HALF_WIDTH: f32 = 0.006;
     /// A repeat lower than this part of full level is not drawn.
@@ -269,11 +265,12 @@ impl DelayView {
             time_readout(state),
             percent_readout(state.feedback),
         );
-        let display = Display::new("display", DISPLAY_WIDTH)
+        let display = Display::new("display")
             .curve(repeats(state))
             .marks([point(layout::LEFT, height_of(1.))])
             .handle(self.handle(state, cx))
-            .caption(caption);
+            .caption(caption)
+            .strip();
         // A control that does nothing is not shown: the feel is only for a synced time.
         if !state.sync {
             return display;
@@ -290,7 +287,7 @@ impl DelayView {
                         .change("Change feel", ValueChange::Set(*feel), set, cx);
                 }
             }));
-        display.child(feels)
+        display.control(feels)
     }
 
     /// A switch in a cell, which says `On` or `Off`.

@@ -1,6 +1,9 @@
 //! Cell: the place of one control on a device card. The control at the top, centred on the line
-//! of a knob's centre, then a label line and a value line. A control with no value leaves its
-//! value line empty, so every row of a card lines up.
+//! of a knob's centre, then a label line and a value line, so every row of a card lines up.
+//!
+//! The value line reads what the control does not say in full: `1 ms` under a select that
+//! says `1`, `Low shelf` under one that shows a picture. It is empty under a control that says
+//! it all, such as `On`. A unit is never on a line alone.
 //!
 //! The knob is a cell of its own. `Cell` puts any other control into the same frame. A cell may
 //! span two columns for a control that needs the room; its lines are centred on the whole width.
@@ -13,7 +16,7 @@ use crate::theme::ActiveTheme;
 use crate::typography;
 use crate::typography::{TextVariant, Typography};
 
-pub const CELL_WIDTH: f32 = 56.;
+pub const CELL_WIDTH: f32 = 64.;
 /// A row of cells. A card body has two.
 pub const ROW_HEIGHT: f32 = 72.;
 /// The room of the control at the top of a cell: the size of a knob.
@@ -22,6 +25,12 @@ const LINE_TOP: f32 = 38.;
 const LINE_HEIGHT: f32 = 14.;
 /// The value line of a cell, from its top.
 pub const VALUE_LINE: f32 = LINE_TOP + LINE_HEIGHT + 2.;
+
+/// How wide a control with words on it is in a cell of `columns`, such as a select: the cell
+/// less a little air on each side, so its width does not follow its words.
+pub const fn control_width(columns: usize) -> f32 {
+    columns as f32 * CELL_WIDTH - 8.
+}
 
 #[derive(IntoElement)]
 pub struct Cell {

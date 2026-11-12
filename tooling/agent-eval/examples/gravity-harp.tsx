@@ -50,7 +50,7 @@ tool({
     root: choice({ options: ["C", "D", "E", "F", "G", "A"], default: "D" }),
     scale: choice({ options: ["major", "minor"], default: "minor" }),
     octave: choice({ options: [3, 4, 5], default: 4 }),
-    decay: number({ min: 0.3, max: 12, default: 4, label: "Decay (s)" }),
+    decay: number({ min: 0.3, max: 12, default: 4, label: "Decay" }),
     brightness: number({ min: 300, max: 12000, default: 3500, unit: "hz" }),
     space: number({ min: 0, max: 1, default: 0.35, unit: "percent" }),
     volume: number({ min: 0, max: 1, default: 0.5, unit: "percent" }),
@@ -170,7 +170,6 @@ tool({
       <div style={page}>
         <div style={row}>
           <Text variant="title">Gravity harp</Text>
-          <Text tone="muted">Click to drop a ball.</Text>
           <Button label="Clear" variant="subtle" onClick={() => (memory.balls = [])} />
         </div>
         <Space
@@ -188,12 +187,12 @@ tool({
           {options("Octave", "octave", [3, 4, 5])}
         </div>
         <div style={row}>
-          <Knob field="decay" label="Decay" min={0.3} max={12} default={4} />
-          <Knob field="brightness" label="Brightness" min={300} max={12000} default={3500} unit="hz" />
-          <Knob field="space" label="Space" min={0} max={1} default={0.35} unit="percent" />
-          <Knob field="volume" label="Volume" min={0} max={1} default={0.5} unit="percent" />
-          <Knob field="gravity" label="Gravity" min={150} max={2500} default={DEFAULTS.gravity} />
-          <Knob field="bounce" label="Bounce" min={0.2} max={0.95} default={DEFAULTS.bounce} />
+          <Knob field="decay" />
+          <Knob field="brightness" />
+          <Knob field="space" />
+          <Knob field="volume" />
+          <Knob field="gravity" />
+          <Knob field="bounce" />
         </div>
       </div>
     );

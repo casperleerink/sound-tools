@@ -14,10 +14,10 @@ use sound_dsp::LfoShape;
 use sound_ui::ActiveTheme;
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
-use sound_ui::components::cell::{Cell, ROW_HEIGHT};
+use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{Adsr, envelope_display, lfo_line};
 use sound_ui::components::device_card::{Column, DeviceCard, Section};
-use sound_ui::components::display::{Axis, Display, Handle};
+use sound_ui::components::display::{Axis, Display, Handle, TextDisplay};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
@@ -580,12 +580,12 @@ fn filter_card(state: &Entity<RackState>, index: usize, id: &'static str, cx: &A
         s.filter[0].follow(x_of(change));
         s.filter[1].follow(y_of(change));
     }));
-    let display = Display::new(("filter-display", index), 200.)
+    let display = Display::new(("filter-display", index))
         .curve(low_pass(cutoff, resonance))
         .grid(decades(), vec![0.45])
         .handle(handle)
         .caption("100 · 1k · 10k")
-        .child(
+        .control(
             SegmentedControl::new(("filter-type", index), segment)
                 .options([
                     ("low", "Low"),
@@ -685,21 +685,20 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
         percent(sustain),
         seconds(release)
     );
-    let display = Display::new("synth-display", 200.)
+    let display = Display::new("synth-display")
         .curve(curve)
         .handle(peak)
         .handle(corner)
         .handle(end)
         .caption(caption)
-        .child(
-            div().ml_auto().child(
-                SegmentedControl::new("waveform", "square")
-                    .options([("saw", "Saw"), ("square", "Square")]),
-            ),
+        .control(
+            SegmentedControl::new("waveform", "square")
+                .options([("saw", "Saw"), ("square", "Square")]),
         );
     DeviceCard::new("synth", div().ml(px(-8.)).child(title))
         .expand(false, |_, _, _| {})
         .display(display)
+        // A cell two columns wide under two cells of one.
         .column(
             Column::new()
                 .top(
@@ -709,19 +708,27 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
                         .label("Cutoff")
                         .readout("480 Hz"),
                 )
+                .top(
+                    Knob::new("synth-resonance")
+                        .value(0.4)
+                        .label("Resonance")
+                        .readout("40%"),
+                )
                 .bottom(
-                    Knob::new("synth-gain")
-                        .value(0.15)
-                        .label("Gain")
-                        .readout("15%"),
+                    Cell::new(
+                        SegmentedControl::new("character", "clean")
+                            .options([("clean", "Clean"), ("warm", "Warm")]),
+                    )
+                    .span(2)
+                    .label("Character"),
                 ),
         )
         .column(
             Column::new().top(
-                Knob::new("synth-resonance")
-                    .value(0.4)
-                    .label("Resonance")
-                    .readout("40%"),
+                Knob::new("synth-gain")
+                    .value(0.15)
+                    .label("Gain")
+                    .readout("15%"),
             ),
         )
 }
@@ -756,7 +763,7 @@ fn reverb_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
             s.reverb[1].follow(x_of(change).map(|x| x.max(0.1)));
         }),
     );
-    let display = Display::new("reverb-display", 200.)
+    let display = Display::new("reverb-display")
         .curve(curve)
         .handle(start)
         .handle(end)
@@ -826,16 +833,15 @@ fn sections_card() -> DeviceCard {
     let time = KnobRange::logarithmic(0.001, 10.);
     let envelope = envelope_display(
         "curved",
-        200.,
         time,
         (adsr, adsr, Adsr::default()),
         [0.5, 0.9, 0.8],
         |_, _, _| {},
     )
     .caption("A 20 ms · D 600 ms · S 40% · R 800 ms");
-    let lfo = Display::new("lfo", 200.)
-        .curve(lfo_line(LfoShape::Triangle, 2., 0.4, 0.28))
-        .zero_line(0.4)
+    let lfo = Display::new("lfo")
+        .curve(lfo_line(LfoShape::Triangle, 2., 0.5, 0.36))
+        .zero_line(0.5)
         .caption("1 Hz");
     let knob = |id: &'static str, label: &'static str, value: f32, readout: &'static str| {
         Knob::new(id).value(value).label(label).readout(readout)
@@ -855,36 +861,17 @@ fn sections_card() -> DeviceCard {
         )
 }
 
-fn plugin_card(cx: &App) -> DeviceCard {
-    let muted = cx.theme().text_secondary();
+fn plugin_card() -> DeviceCard {
+    let open = Button::new("open-window", "Open window")
+        .variant(ButtonVariant::Subtle)
+        .size(ControlSize::Md);
+    let display = TextDisplay::new("plugin-display")
+        .button(open)
+        .caption("CLAP · Surge Synth Team");
     DeviceCard::new("plugin", div().child("Surge XT"))
-        .expand(false, |_, _, _| {})
         .power(true, |_, _, _| {})
         .close(|_, _, _| {})
-        .w(px(200.))
-        .child(
-            div()
-                .relative()
-                .w_full()
-                .h(px(ROW_HEIGHT * 2.))
-                .flex()
-                .flex_col()
-                .items_start()
-                .child(
-                    Button::new("open-window", "Open window")
-                        .variant(ButtonVariant::Subtle)
-                        .size(ControlSize::Md),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(126.))
-                        .text_variant(TextVariant::Label)
-                        .line_height(px(14.))
-                        .text_color(muted)
-                        .child("CLAP · Surge Synth Team"),
-                ),
-        )
+        .display(display)
 }
 
 fn cards(state: &Entity<RackState>, cx: &App) -> AnyElement {
@@ -900,7 +887,7 @@ fn cards(state: &Entity<RackState>, cx: &App) -> AnyElement {
             ),
             sample("effect off", cx, filter_card(state, 1, "filter-off", cx)),
             sample("expanded, a hollow handle", cx, reverb_card(state, cx)),
-            sample("plugin", cx, plugin_card(cx)),
+            sample("plugin", cx, plugin_card()),
             sample(
                 "sections behind expand, curved envelope, LFO",
                 cx,

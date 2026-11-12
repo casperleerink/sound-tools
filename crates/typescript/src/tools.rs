@@ -50,6 +50,10 @@ pub(crate) struct ToolInfo {
     /// It has a sound of its own. A parent without one plays what its children send to its
     /// `audio` as it comes, with no stage of its own.
     pub sound: bool,
+    /// Its sound is silence whatever its record says: it moves numbers, as an LFO does, and is
+    /// no device a picker offers.
+    #[serde(default)]
+    pub silent: bool,
     /// The saved fields of its record, in the order the code gives them, which is the order
     /// of the knobs of its default view.
     pub fields: Named<Field>,
@@ -608,6 +612,21 @@ impl ToolInfo {
 
     pub(crate) fn field(&self, name: &str) -> Option<&Field> {
         self.fields.get(name)
+    }
+
+    /// The field at `path` in the record, see [`crate::path`]: `voices[2].detune` is the field
+    /// `detune` of the items of the list `voices`.
+    pub(crate) fn field_at(&self, path: &str) -> Option<&Field> {
+        let mut parts = crate::path::parts(path);
+        let mut field = self.fields.get(parts.next()?)?;
+        for part in parts {
+            field = match field {
+                Field::List { item, .. } if part.parse::<usize>().is_ok() => item,
+                Field::Object { fields } => fields.get(part)?,
+                _ => return None,
+            };
+        }
+        Some(field)
     }
 
     /// `state` with each field it leaves out at its default: the record as it plays, in the

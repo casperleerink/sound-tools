@@ -274,7 +274,7 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
 ) {
     let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
-    let toggle = window.until_found("button-mixer-toggle");
+    let toggle = window.until_found("toggle-mixer-toggle");
     window.press(toggle);
     window.release(toggle);
     let fader = window.space_at("fader-t01/mix.gain_db") + point(px(20.), px(80.));

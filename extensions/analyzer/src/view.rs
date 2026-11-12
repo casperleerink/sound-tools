@@ -18,7 +18,7 @@ use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{RESPONSE_CAPTION, response_decades};
 use sound_ui::components::device_card::{CardFrame, Column};
-use sound_ui::components::display::{Display, INSET_HEIGHT};
+use sound_ui::components::display::{Display, INSET_HEIGHT, WIDTH};
 use sound_ui::components::knob::{short, signed};
 use sound_ui::components::meter::Meter;
 use sound_ui::{
@@ -33,13 +33,11 @@ use crate::{Analyzer, AnalyzerState};
 /// The name the rack puts on the card of an analyzer.
 pub const NAME: &str = "Analyzer";
 
-/// The width of the display. With two columns of cells its card is 352 pt, as the limiter's.
-const DISPLAY_WIDTH: f32 = 200.;
 /// The meter at the right of the display, and the air around it.
 const METER_INSET: f32 = 6.;
 const METER_ROOM: f32 = 24.;
 /// The part of the width the spectrum takes; the meter has the rest.
-const SPECTRUM_WIDTH: f32 = (DISPLAY_WIDTH - METER_ROOM) / DISPLAY_WIDTH;
+const SPECTRUM_WIDTH: f32 = (WIDTH - METER_ROOM) / WIDTH;
 /// The fill is quieter than a meter: it sits under the line.
 const FILL_OPACITY: f32 = 0.45;
 /// Where the fill turns yellow and where it turns red, in dB.
@@ -138,7 +136,7 @@ impl AnalyzerView {
                 view.metering.clear_clip();
                 cx.notify();
             }));
-        Display::new("spectrum", DISPLAY_WIDTH)
+        Display::new("spectrum")
             .curve(curve)
             .fill_bands(bands)
             .grid(across, vec![height(-30.), height(-60.)])
@@ -158,13 +156,14 @@ fn height(db: f32) -> f32 {
     ((db - FLOOR_DB) / -FLOOR_DB).clamp(0., 1.)
 }
 
-/// A level as every readout shows a number, or a dash for silence.
-fn level(value: Option<f32>) -> String {
+/// A level as every readout shows a number, with its unit, or a dash for silence.
+fn level(value: Option<f32>, unit: &str) -> String {
     match value.filter(|value| value.is_finite() && *value > FLOOR_DB) {
-        Some(value) => short(value),
+        Some(value) => format!("{} {unit}", short(value)),
         None => "–".into(),
     }
 }
+
 /// A readout in the place of a control: 14 pt medium, as names are.
 fn readout(text: impl Into<SharedString>, cx: &Context<AnalyzerView>) -> Div {
     div()
@@ -193,18 +192,16 @@ impl Render for AnalyzerView {
             None => ("–".into(), String::new()),
         };
         let note = Cell::new(readout(name, cx)).label("Note").value(cents);
-        let loudness = Cell::new(readout(level(reading.loudness), cx))
-            .label("Loudness")
-            .value("LUFS");
+        // Two columns wide: `−14.2 LUFS` does not fit in one.
+        let loudness = Cell::new(readout(level(reading.loudness, "LUFS"), cx))
+            .span(2)
+            .label("Loudness");
         let [left, right] = self.metering.level().peak;
-        let peak = Cell::new(readout(level(Some(left.max(right))), cx))
-            .label("Peak")
-            .value("dB");
+        let peak = Cell::new(readout(level(Some(left.max(right)), "dB"), cx)).label("Peak");
         self.frame
             .card()
             .display(self.display(cx))
-            .column(Column::new().top(note).bottom(loudness))
-            .column(Column::new().top(peak))
+            .column(Column::new().top(note).top(peak).bottom(loudness))
             .into_any_element()
     }
 }

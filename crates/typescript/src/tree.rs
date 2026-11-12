@@ -82,7 +82,20 @@ props! {
         on_drop: bool,
         /// It shows in the window's title bar instead, when the tool's view is the window's.
         title_bar: bool,
+        /// A layout the window owns, in place of its style's.
+        layout: Layout,
     }
+}
+
+/// How the window lays out the children of a div that its parts make.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Layout {
+    /// The parts a card's view gives, side by side as the built-in cards have them.
+    Card,
+    /// The content of a page, one under the other: a part that does not grow is as wide as
+    /// what is in it, in the middle of the window.
+    Page,
 }
 
 props! {
@@ -152,8 +165,6 @@ props! {
         /// A pill, round at its ends.
         rounded: bool,
         disabled: bool,
-        /// Quieter than its look, 0 to 1.
-        opacity: f32,
         tooltip: String,
         /// The keys that do it too, `cmd-k`, drawn in its tooltip.
         shortcut: String,
@@ -315,6 +326,10 @@ props! {
         to: Reach,
         text: Words,
         unit: Readout,
+        /// The step of the type scale of a text, and how bright it is unless `color` says.
+        variant: TextVariant,
+        tone: Tone,
+        /// How thick the line of a wave is, in points.
         size: f32,
         align: Align,
         /// The values a wave draws, oldest first, and the values at its bottom and its top; the
@@ -733,6 +748,15 @@ impl NodeTable {
             _ => true,
         };
         takes || entry.children.iter().any(|child| self.holds_focus(*child))
+    }
+
+    /// Whether the node in `slot` takes the room left in its parent.
+    pub(crate) fn grows(&self, slot: usize) -> bool {
+        match self.get(slot).map(|entry| &entry.props) {
+            Some(Props::Div(div)) => div.style.as_ref().is_some_and(|style| style.grows()),
+            Some(Props::Space(space)) => space.grow == Some(true),
+            _ => false,
+        }
     }
 
     pub(crate) fn get(&self, slot: usize) -> Option<&Entry> {
@@ -1837,18 +1861,26 @@ pub(crate) enum Readout {
     Note,
 }
 
-/// A number a drag turns as it goes: a field of the record, or a live control.
+/// A number a drag turns as it goes: a field of the record, a live control, or what code keeps.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct Turns {
     /// What it turns, as `now.value` names it: a field, of an instance inside it as
-    /// `path.field`, or a number input.
-    pub value: String,
+    /// `path.field`, or a number input. `None` for what code keeps: its code hears how far each
+    /// drag and key moved it, and works out its value.
+    pub value: Option<String>,
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub unit: Option<Unit>,
+    /// It turns on the scale of a volume fader, in dB, whatever its ends.
+    #[serde(default)]
+    pub fader: bool,
     /// Points of pointer travel for the whole range.
     pub travel: Option<f32>,
+    /// It turns in whole steps of this size from where it was, `per` points of travel each,
+    /// and needs no range: a number box.
+    pub step: Option<f32>,
+    pub per: Option<f32>,
     #[serde(default)]
     pub absolute: bool,
     pub default: Option<f32>,
@@ -1864,32 +1896,27 @@ pub(crate) enum Turned<'a> {
         name: &'a str,
     },
     Input(&'a str),
-}
-
-impl Turned<'_> {
-    /// The input it is, as an owned name, or `None` for a field.
-    pub(crate) fn to_owned_input(self) -> Option<String> {
-        match self {
-            Self::Input(name) => Some(name.to_string()),
-            Self::Field { .. } => None,
-        }
-    }
+    /// What code keeps: its code hears each value.
+    Kept,
 }
 
 impl Turns {
     /// What it turns, for the tool `info`: a number input of that name, else a field.
     pub(crate) fn target(&self, info: Option<&ToolInfo>) -> Turned<'_> {
-        if let Some((child, name)) = self.value.rsplit_once('.') {
+        let Some(value) = &self.value else {
+            return Turned::Kept;
+        };
+        if let (Some(child), name) = crate::path::split(value) {
             return Turned::Field {
                 child: Some(child),
                 name,
             };
         }
-        match info.and_then(|info| info.input(&self.value)) {
-            Some(_) => Turned::Input(&self.value),
+        match info.and_then(|info| info.input(value)) {
+            Some(_) => Turned::Input(value),
             None => Turned::Field {
                 child: None,
-                name: &self.value,
+                name: value,
             },
         }
     }
@@ -1921,9 +1948,6 @@ pub(crate) struct Style {
     justify: Option<Justify>,
     background: Option<Color>,
     color: Option<Color>,
-    font_size: Option<f32>,
-    /// How far apart the lines of its text are, in points.
-    line_height: Option<f32>,
     radius: Option<Radius>,
     border_color: Option<Color>,
     border_width: Option<f32>,
@@ -2107,6 +2131,10 @@ impl Style {
 
     pub(crate) fn truncates(&self) -> bool {
         self.truncate
+    }
+
+    pub(crate) fn grows(&self) -> bool {
+        self.grow
     }
 
     pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
@@ -2294,12 +2322,6 @@ impl Style {
         if let Some(Color(color)) = self.color {
             element = element.text_color(color);
         }
-        if let Some(size) = self.font_size {
-            element = element.text_size(px(size));
-        }
-        if let Some(height) = self.line_height {
-            element = element.line_height(px(height));
-        }
         if let Some(Radius(radius)) = self.radius {
             element = element.rounded(px(radius));
         }
@@ -2343,12 +2365,6 @@ impl Style {
                 .text_ellipsis();
         }
         element
-    }
-}
-
-pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_json::Value) {
-    if let Some(fields) = state.as_object_mut() {
-        fields.insert(name.to_string(), value);
     }
 }
 

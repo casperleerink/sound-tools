@@ -1,4 +1,4 @@
-//! The card of the filter: the response curve with its handle and the type at its top, then
+//! The card of the filter: the response curve with its handle and the type above it, then
 //! Cutoff, Resonance, Drive and Mix, and behind expand the slope, the character and the LFO. The rack gives the
 //! view a [`CardFrame`]: the picker of the slot as the title, and the close icon.
 //!
@@ -32,9 +32,6 @@ use crate::{
 
 /// The name the rack puts on the card of a filter.
 pub const NAME: &str = "Filter";
-
-/// The width of the display. With it and two columns of cells the card is 352 pt.
-const DISPLAY_WIDTH: f32 = 200.;
 
 /// Registers the view of the `filter` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -156,13 +153,13 @@ impl FilterView {
                     view.device.change("Change filter type", change, set, cx);
                 }
             }));
-        Display::new("display", DISPLAY_WIDTH)
+        Display::new("display")
             .curve(response_curve(|hz| response(state, hz, DRAWN_AT)))
             .grid(response_decades(), Vec::new())
             .zero_line(response_height(0.))
             .handle(self.handle(state, cx))
             .caption(RESPONSE_CAPTION)
-            .child(types)
+            .control(types)
     }
 
     fn slope(&self, state: &FilterState, cx: &mut Context<Self>) -> Cell {
@@ -178,7 +175,10 @@ impl FilterView {
                     view.device.change("Change slope", change, set, cx);
                 }
             }));
-        Cell::new(slopes).label("Slope").value("dB / oct")
+        let value = SLOPES.iter().find(|(slope, ..)| *slope == state.slope);
+        let value = value.map_or_else(String::new, |(.., label)| format!("{label} dB/oct"));
+        // Its two segments are a little wider than one column.
+        Cell::new(slopes).span(2).label("Slope").value(value)
     }
 
     fn character(&self, state: &FilterState, cx: &mut Context<Self>) -> Cell {
@@ -227,7 +227,6 @@ impl Render for FilterView {
         ];
         let hidden = [
             Column::new()
-                .span(2)
                 .top(self.slope(&state, cx))
                 .bottom(self.character(&state, cx)),
             Column::new()

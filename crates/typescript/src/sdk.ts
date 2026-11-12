@@ -43,7 +43,7 @@ export {
 export type {
   ActionId, ActionKey, Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName,
   MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents,
-  Press, Section, Shortcut, SpaceValues, TakeList, TempoMap, View, WaveList
+  Press, Section, Shortcut, SpaceValues, TakeList, TempoMap, Turn, View, WaveList
 } from "./sdk/live";
 // what runs again when a value changes: `memo`, `signal`, `timeout`
 export {
@@ -61,13 +61,13 @@ export type {
 } from "./sdk/nodes";
 // the elements of a view: `div` and its `Style`, `Text`, `Space` and its shapes, `Button`, `Input`
 export {
-  Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
+  alpha, Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
   Rect, Space, Text, Toggle, Wave
 } from "./sdk/drawing";
 export type {
   ButtonProps, CardSelect, Color, ControlSize, DeviceCardProps, IconName, InputProps, Look, Paint,
-  PathPoint, Radius, Shape, SpaceProps, Spacing, Style, TextPart, TextProps, TextVariant, ThemeColor,
-  ToggleProps, Tone
+  PathPoint, PathPoints, Radius, Shape, SpaceProps, Spacing, Style, TextPart, TextProps, TextVariant,
+  ThemeColor, ToggleProps, Tone
 } from "./sdk/drawing";
 // controls made of them: `Knob`, `Fader`, `Select`, `Steps`, `Pad`
 export {
@@ -80,7 +80,7 @@ export type {
 } from "./sdk/components";
 // a view that fills the window: `Page`, `Panel` and `Transport`
 export {
-  Page, Panel, playPause, Transport
+  Page, Panel, Transport
 } from "./sdk/page";
 export type {
   PageProps, PanelProps, TransportProps

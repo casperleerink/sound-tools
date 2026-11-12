@@ -30,6 +30,9 @@ export type ThemeColor =
 /** A colour of the theme, or one at an opacity in percent, `"green/40"`. `#rrggbb` and `#rrggbbaa` are for what the theme cannot say. */
 export type Color = ThemeColor | `${ThemeColor}/${number}` | `#${string}`;
 
+/** `color` at an opacity in percent, as `"green/40"` writes it: for a colour that is a variable. */
+export const alpha = (color: ThemeColor | `#${string}`, percent: number): Color => `${color}/${percent}`;
+
 /** Room between things and inside them: 4, 8, 12, 16, 24 or 32 points. */
 export type Spacing = "xs" | "sm" | "md" | "lg" | "xl" | "2xl";
 /** How round a corner is: 4, 6 or 8 points, or `full`, round at its ends. */
@@ -59,8 +62,8 @@ interface Pointed extends PointerEvents {
 }
 
 /**
- * Something a space draws. Positions and sizes are in the units of the space; `radius`, `width`
- * of a line and `size` of text are in points.
+ * Something a space draws. Positions and sizes are in the units of the space; `radius` and the
+ * `width` of a line are in points.
  */
 export type Shape =
   /**
@@ -77,19 +80,23 @@ export type Shape =
         /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
         | { kind: "arc"; x: Bind<Num>; y: Bind<Num>; radius: Bind<number>; from: Bind<Num>; to: Bind<Num>; color: Bind<Paint>; width?: Bind<number> }
         /**
-         * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, a pitch as its
-         * note (`"pitch"`: `C2` for 36), and a tick, such as
-         * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
-         * Parts make one line in colours and weights of their own, such as a bar number then a name.
+         * Text at `x`, `y`, its top, in a step of the type scale as a `Text`: `variant` is `label`
+         * and `tone` that of its variant when left out, and a `color` wins over the tone. A live
+         * number shows as a readout in `unit`, a pitch as its note (`"pitch"`: `C2` for 36), and
+         * a tick, such as `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"`
+         * (the one there). Parts make one line in colours and weights of their own, such as a bar
+         * number then a name.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; variant?: TextVariant; tone?: Tone; color?: Bind<Paint>; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
-         * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
-         * the highest under each point, as a waveform. `level` scales them about the middle along
-         * it: `[x, factor]` from its left, straight between, so a waveform shows its gain and fades.
+         * its top (-1 and 1 when left out): a line `size` points thick, smooth for a history, or
+         * with `band` the lowest to the highest under each point, as a waveform. `text` when
+         * `color` is left out, as a value is; `green` is for sound that moves. `level` scales
+         * them about the middle along it: `[x, factor]` from its left, straight between, so a
+         * waveform shows its gain and fades.
          */
-        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
+        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color?: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
         /**
          * The notes a `recorder` records so far, `list` its `now.take`, as a clip draws its own: its
          * box spans the take from its start at the left to the playhead at the right, a line for
@@ -101,11 +108,14 @@ export type Shape =
          * wide, closed where its last point is its first: a fade's shade, a triangle, a curve. Give
          * them in the binding, `points={() => [...]}`, where TypeScript reads a list as points.
          */
-        | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
+        | { kind: "path"; points: Bind<PathPoints>; color: Bind<Paint>; width?: Bind<number> }
       ));
 
 /** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
 export type PathPoint = readonly [Num, Num] | readonly [Num, Num, Num, Num] | readonly [Num, Num, Num, Num, Num, Num];
+
+/** The points of a `Path`: it starts at an `[x, y]`. A list built in a loop is one of `[x, y]` points. */
+export type PathPoints = readonly [readonly [Num, Num], ...PathPoint[]] | readonly (readonly [Num, Num])[];
 
 /** A colour, or one between two by a live value: see `blend`. */
 export type Paint = Color | { mix: readonly [Color, Color]; by: Num };
@@ -167,7 +177,7 @@ export interface SpaceProps extends PointerEvents {
   radius?: Radius | number;
   /**
    * A drag from where no shape that hears the pointer is, such as a marquee. A space whose one
-   * drag turns a field, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
+   * drag turns one number, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
    */
   drag?: Drag;
   /** Files or a carried value let go on it, where in its units. */
@@ -299,8 +309,6 @@ export type ButtonProps = PointerEvents & Tip & {
   /** A pill, round at its ends. */
   rounded?: boolean;
   disabled?: Bind<boolean>;
-  /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
-  opacity?: number;
 };
 
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
@@ -359,9 +367,7 @@ export interface Style {
   justify?: "start" | "center" | "end" | "between";
   background?: Color;
   color?: Color;
-  /** The size, the line height and the weight of its text, for what the scale of `Text` cannot say. */
-  fontSize?: number;
-  lineHeight?: number;
+  /** The weight of its text, for the face of a control, which is medium at any size. */
   weight?: "normal" | "medium" | "semibold";
   radius?: Radius | number;
   borderColor?: Color;
