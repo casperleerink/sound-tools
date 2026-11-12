@@ -70,12 +70,14 @@ A card is a row: a `Display` of what the tool does to the sound, then `Controls`
 Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `gap: "sm"`, `size="sm"` on a control, `<Text variant="label">` for text. `ThemeColor`, `Style` and `Text` in `extensions/sdk/drawing.ts` list the names.
 
 ```tsx
-import { Button, Cell, Controls, Display, h, Knob, tool, Wave } from "./sdk";
+import { Button, Cell, Controls, Display, h, Knob, type Style, tool, Wave } from "./sdk";
+
+const row: Style = { direction: "row" };
 
 tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ now, send }) => (
-    <div style={{ direction: "row" }}>
+    <div style={row}>
       <Display caption="Level">
         <Wave x={0} y={0} width={1} height={1} list={now.history(now.value("level"), 120)} low={0} high={1} color="text" />
       </Display>

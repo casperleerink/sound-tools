@@ -154,7 +154,7 @@ tool({
 #[gpui::test]
 fn a_click_on_a_step_turns_it_on_through_its_code(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("row", STEPS));
-    let second = window.space("steps-steps") + point(px(17. + 7.), px(7.));
+    let second = window.until_found("step-1");
     window.press(second);
     window.release(second);
     window.until("the step to turn on", |window| {
@@ -298,21 +298,18 @@ tool({
 #[gpui::test]
 fn steps_on_what_code_keeps_grow_and_shrink_with_it(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("growing", GROWING));
-    let row = window.space("kept");
-    let width = |window: &mut Opened, steps: f32| {
-        window.bounds("space-kept").unwrap().size.width == px(steps * 17. - 3.)
-    };
     let four = window.control("div-four");
     window.click(four);
-    window.until("four steps", |window| width(window, 4.));
-    window.click(row + point(px(3. * 17. + 7.), px(7.)));
+    let fourth = window.until_found("step-3");
+    window.click(fourth);
     window.until("the fourth step to turn on", |window| {
         window.record("growing")["heard"] == "0001"
     });
     let two = window.control("div-two");
     window.click(two);
-    window.until("two steps", |window| width(window, 2.));
-    window.click(row + point(px(17. + 7.), px(7.)));
+    window.until("two steps", |window| window.find("step-2").is_none());
+    let second = window.until_found("step-1");
+    window.click(second);
     window.until("the second of two steps to turn on", |window| {
         window.record("growing")["heard"] == "01"
     });
