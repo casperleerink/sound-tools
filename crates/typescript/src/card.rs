@@ -800,6 +800,7 @@ impl TypeScriptCard {
             title_focus,
             lifting: None,
             expanded: self.frame.as_ref().map(|_| self.expanded),
+            control_size: sound_ui::ControlSize::default(),
             card: self.handle.clone(),
             generation: live.generation(),
             cx,

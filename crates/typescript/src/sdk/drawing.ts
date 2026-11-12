@@ -59,8 +59,8 @@ interface Pointed extends PointerEvents {
 }
 
 /**
- * Something a space draws. Positions and sizes are in the units of the space; `radius`, `width`
- * of a line and `size` of text are in points.
+ * Something a space draws. Positions and sizes are in the units of the space; `radius` and the
+ * `width` of a line are in points.
  */
 export type Shape =
   /**
@@ -77,19 +77,23 @@ export type Shape =
         /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
         | { kind: "arc"; x: Bind<Num>; y: Bind<Num>; radius: Bind<number>; from: Bind<Num>; to: Bind<Num>; color: Bind<Paint>; width?: Bind<number> }
         /**
-         * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, a pitch as its
-         * note (`"pitch"`: `C2` for 36), and a tick, such as
-         * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
-         * Parts make one line in colours and weights of their own, such as a bar number then a name.
+         * Text at `x`, `y`, its top, in a step of the type scale as a `Text`: `variant` is `label`
+         * and `tone` that of its variant when left out, and a `color` wins over the tone. A live
+         * number shows as a readout in `unit`, a pitch as its note (`"pitch"`: `C2` for 36), and
+         * a tick, such as `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"`
+         * (the one there). Parts make one line in colours and weights of their own, such as a bar
+         * number then a name.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; variant?: TextVariant; tone?: Tone; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
-         * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
-         * the highest under each point, as a waveform. `level` scales them about the middle along
-         * it: `[x, factor]` from its left, straight between, so a waveform shows its gain and fades.
+         * its top (-1 and 1 when left out): a line `size` points thick, smooth for a history, or
+         * with `band` the lowest to the highest under each point, as a waveform. `text` when
+         * `color` is left out, as a value is; `green` is for sound that moves. `level` scales
+         * them about the middle along it: `[x, factor]` from its left, straight between, so a
+         * waveform shows its gain and fades.
          */
-        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
+        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color?: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
         /**
          * The notes a `recorder` records so far, `list` its `now.take`, as a clip draws its own: its
          * box spans the take from its start at the left to the playhead at the right, a line for

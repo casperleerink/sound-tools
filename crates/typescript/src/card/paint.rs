@@ -4,8 +4,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, Corners, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString, TextAlign,
-    TextRun, Window, fill, outline, point, px, size,
+    App, Bounds, Corners, FontWeight, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString,
+    TextAlign, TextRun, Window, fill, outline, point, px, size,
 };
 use sound_ui::typography;
 
@@ -29,7 +29,7 @@ enum PaintedShape {
     Circle(Point<Pixels>, f32),
     Line(Point<Pixels>, Point<Pixels>, f32),
     Arc(Point<Pixels>, f32, (f32, f32), f32),
-    Text(Point<Pixels>, SharedString, Rc<[TextPart]>, f32, Align),
+    Text(Point<Pixels>, SharedString, Rc<[TextPart]>, (f32, FontWeight), Align),
     Wave(Bounds<Pixels>, Rc<Wave>),
     Notes(Bounds<Pixels>, Rc<Notes>),
     Path(Rc<[Bend<Point<Pixels>>]>, Option<f32>),
@@ -71,7 +71,7 @@ impl PaintedShape {
                     point(right + pad, bottom + pad),
                 )
             }
-            Self::Text(origin, text, _, font, align) => {
+            Self::Text(origin, text, _, (font, _), align) => {
                 let width = px(text.len() as f32 * font * 0.6);
                 let left = match align {
                     Align::Left => origin.x,
@@ -157,8 +157,12 @@ pub(super) fn prepaint(
                 text,
                 parts,
                 size,
+                weight,
                 align,
-            } => PaintedShape::Text(at((*x, *y)), text.clone(), parts.clone(), *size, *align),
+            } => {
+                let font = (*size, *weight);
+                PaintedShape::Text(at((*x, *y)), text.clone(), parts.clone(), font, *align)
+            }
             Geometry::Wave {
                 x,
                 y,
@@ -337,11 +341,11 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 window.paint_path(path, color);
             }
         }
-        PaintedShape::Text(origin, text, parts, font_size, align) => {
+        PaintedShape::Text(origin, text, parts, (font_size, font_weight), align) => {
             let run = |len: usize, color: Hsla, weight: Option<Weight>| TextRun {
                 len,
                 font: gpui::Font {
-                    weight: weight.map_or(gpui::FontWeight::NORMAL, Weight::font),
+                    weight: weight.map_or(*font_weight, Weight::font),
                     ..typography::ui_font()
                 },
                 color,
@@ -501,19 +505,29 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
         }
         return;
     }
-    let mut path = gpui::PathBuilder::stroke(px(wave.line));
     let middle = (wave.low + wave.high) / 2.0;
-    for column in 0..columns {
-        let value = under(column).first().copied().unwrap_or_default();
-        let factor = wave.level_at(column as f32 / (columns - 1).max(1) as f32);
-        let value = middle + (value - middle) * factor;
-        let at = point(x_of(column, columns), y_of(value));
-        if column == 0 {
-            path.move_to(at);
-        } else {
-            path.line_to(at);
+    let points: Vec<Point<Pixels>> = (0..columns)
+        .map(|column| {
+            let value = under(column).first().copied().unwrap_or_default();
+            let factor = wave.level_at(column as f32 / (columns - 1).max(1) as f32);
+            let value = middle + (value - middle) * factor;
+            point(x_of(column, columns), y_of(value))
+        })
+        .collect();
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return;
+    };
+    // A curve from the middle of one stretch to the middle of the next, bent at the point
+    // between them: a value that steps, as one read once a frame does, draws as a smooth line.
+    let mut path = gpui::PathBuilder::stroke(px(wave.line));
+    path.move_to(*first);
+    for pair in points.windows(2).skip(1) {
+        if let [bend, next] = pair {
+            let between = point((bend.x + next.x) / 2., (bend.y + next.y) / 2.);
+            path.curve_to(between, *bend);
         }
     }
+    path.line_to(*last);
     if let Ok(path) = path.build() {
         window.paint_path(path, color);
     }

@@ -1,5 +1,7 @@
-//! The parts of a device card a view names: a row of steps the keys move in, and the cells of a
-//! card, of which the first columns show and the rest wait behind its expand icon.
+//! The parts of a device card a view names: a row of steps the keys move in, and a card the
+//! window lays out, its display or its rows of steps at the left of its cells, of which the first
+//! columns show and the rest wait behind its expand icon. And a page, which plays on space when
+//! it shows a transport and puts a part that does not grow in its middle.
 
 use gpui::{TestAppContext, px};
 
@@ -70,13 +72,16 @@ fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on(
     assert_eq!(window.problems(), []);
 }
 
-/// A rig that shows the card of its box: a display, then a knob over a wide control, two more
-/// knobs, and two that do not fit beside a display.
-const RIG: &str = r#"import { Cell, choice, Controls, DeviceCard, Display, h, input, Knob, number, SegmentedControl, tool } from "./sdk";
+/// A rig that shows the cards of its box and of its beat. The box gives a display, then a knob
+/// over a wide control, two more knobs, and two that do not fit beside a display. The beat gives
+/// two rows of steps and five knobs, and the plain one has no view: a pattern, a list of pitches
+/// and a knob.
+const RIG: &str = r#"import { Cell, choice, Controls, DeviceCard, Display, h, input, Knob, list, number, pattern, SegmentedControl, Steps, tool } from "./sdk";
 
 const level = () => number({ min: 0, max: 1, default: 0.5 });
 const knob = (field: string) => h(Knob, { field, label: field, min: 0, max: 1, default: 0.5 });
 const kinds = [{ value: "cassette", label: "Cassette" }, { value: "reel", label: "Reel" }] as const;
+const row = () => pattern({ length: 4, min: 0, max: 1, default: 0 });
 
 const box = tool({
   name: "box",
@@ -85,41 +90,72 @@ const box = tool({
   doc: "A card of a display and six cells.",
   state: { a: level(), b: level(), c: level(), d: level(), e: level(), kind: choice({ options: ["cassette", "reel"], default: "cassette" }) },
   sound: () => input,
-  view: () =>
-    h("div", { style: { direction: "row" } },
-      h(Display, { caption: "Level" }),
-      h(Controls, {},
-        knob("a"),
-        h(Cell, { label: "Kind" }, h(SegmentedControl, { key: "kind", field: "kind", size: "sm", options: kinds })),
-        knob("b"), knob("c"), knob("d"), knob("e"),
-      ),
+  view: () => [
+    h(Display, { caption: "Level" }),
+    h(Controls, {},
+      knob("a"),
+      h(Cell, { label: "Kind" }, h(SegmentedControl, { key: "kind", field: "kind", options: kinds })),
+      knob("b"), knob("c"), knob("d"), knob("e"),
     ),
+  ],
+});
+
+const beat = tool({
+  name: "beat",
+  title: "Beat",
+  when: "A test",
+  doc: "A card of two rows of steps and five knobs.",
+  state: { kick: row(), hat: row(), f: level(), g: level(), i: level(), k: level(), l: level() },
+  sound: () => input,
+  view: () => [
+    h(Steps, { key: "kick", field: "kick" }),
+    h(Steps, { key: "hat", field: "hat" }),
+    h(Controls, {}, knob("f"), knob("g"), knob("i"), knob("k"), knob("l")),
+  ],
+});
+
+const plain = tool({
+  name: "plain",
+  title: "Plain",
+  when: "A test",
+  doc: "A card with no view of its own.",
+  state: { steps: row(), pitches: list(number({ min: 0, max: 127 }), { max: 4, default: [60, 62, 64, 65] }), j: level() },
+  sound: () => input,
 });
 
 tool({
   name: "rig",
   title: "Rig",
   when: "A test",
-  doc: "Shows the card of its box.",
+  doc: "Shows the cards of its children.",
   state: {},
-  children: { box },
+  children: { box, beat, plain },
   behaviour: () => ({ connections: [] }),
-  view: () => h("div", {}, DeviceCard({ path: "box" })),
+  view: () => h("div", {}, DeviceCard({ path: "box" }), DeviceCard({ path: "beat" }), DeviceCard({ path: "plain" })),
 });
 "#;
 
-#[gpui::test]
-fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut TestAppContext) {
+fn rig(cx: &mut TestAppContext) -> super::Opened<'_> {
     let files = [
         ONLY_THE_TOOL[0],
         ("state/rig/instance.json", r#"{"tool": "rig", "state": {}}"#),
         ("state/rig/box.json", r#"{"tool": "box", "state": {}}"#),
+        ("state/rig/beat.json", r#"{"tool": "beat", "state": {}}"#),
+        ("state/rig/plain.json", r#"{"tool": "plain", "state": {}}"#),
         ("extensions/rig.ts", RIG),
     ];
-    let mut window = open(cx, &files);
+    open(cx, &files)
+}
+
+#[gpui::test]
+fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut TestAppContext) {
+    let mut window = rig(cx);
     window.until_found("space-knob-c");
     window.wait_for_bun();
     assert_eq!(window.find("space-knob-d"), None);
+    // A control in a cell is the size of a card's with no size named.
+    let kind = window.bounds("segmented-kind").unwrap();
+    assert_eq!(kind.size.height, px(24.));
 
     // The wide control takes whole columns, and the knob over it sits in their middle.
     let left = |window: &mut super::Opened<'_>, selector: &str| {
@@ -143,5 +179,80 @@ fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut T
     window.until("the card to fold", |window| {
         window.find("space-knob-d").is_none()
     });
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
+fn rows_of_steps_stand_where_a_display_does_and_a_view_of_no_own_shows_them_for_a_pattern(
+    cx: &mut TestAppContext,
+) {
+    let mut window = rig(cx);
+    let kick = window.until_found("steps-kick");
+    let hat = window.until_found("steps-hat");
+    let knob = window.until_found("space-knob-f");
+    window.wait_for_bun();
+    // One over the other, at the left of the cells, of which two columns show as beside a
+    // display.
+    assert_eq!(kick.x, hat.x);
+    assert!(hat.y > kick.y && knob.x > kick.x, "{kick:?} {hat:?} {knob:?}");
+    assert!(window.find("space-knob-k").is_some());
+    assert_eq!(window.find("space-knob-l"), None);
+    assert!(window.find("card-rig/beat-expand").is_some());
+
+    // The default view: steps for the pattern, none for a list of numbers that is no pattern.
+    let steps = window.until_found("steps-steps-steps");
+    let knob = window.until_found("space-knob-j");
+    assert!(knob.x > steps.x);
+    assert_eq!(window.find("steps-steps-pitches"), None);
+    assert_eq!(window.problems(), []);
+}
+
+/// A page with a transport in its header and no action of its own: a panel as wide as what is
+/// in it, and after a click on that one that grows.
+const DRONE: &str = r#"import { h, Page, Panel, Show, tool, Transport } from "./sdk";
+
+tool({
+  name: "drone",
+  title: "Drone",
+  when: "A test",
+  doc: "A page with a transport.",
+  state: {},
+  memory: () => ({ grows: false }),
+  sound: () => 0,
+  view: ({ memory }) =>
+    h(Page, { header: h(Transport, {}) },
+      h(Show, { when: () => !memory.grows, fallback: () => h(Panel, { key: "wide", grow: true }, "Wide") },
+        () => h(Panel, { key: "small" }, h("div", { key: "inside", style: { width: 300, height: 100 }, onClick: () => { memory.grows = true; } }))),
+    ),
+});
+"#;
+
+#[gpui::test]
+fn a_page_with_a_transport_plays_on_space_and_keeps_a_small_panel_in_its_middle(
+    cx: &mut TestAppContext,
+) {
+    let mut window = page(cx, "drone", DRONE);
+    window.until_found("div-small");
+    window.wait_for_bun();
+    press_key(&mut window, "space");
+    window.until("space to play", |window| window.playing());
+    press_key(&mut window, "space");
+    window.until("space to pause", |window| !window.playing());
+
+    let viewport = window.cx.update(|window, _| window.viewport_size());
+    let top = window.bounds("div-transport").unwrap().bottom();
+    let small = window.bounds("div-small").unwrap();
+    // 300 and the padding and border of a panel.
+    assert_eq!(small.size.width, px(334.));
+    assert_eq!(small.center().x, viewport.width / 2.);
+    let (above, below) = (small.top() - top, viewport.height - small.bottom());
+    assert!((above - below).abs() < px(16.), "{above} {below}");
+
+    let inside = window.until_found("div-inside");
+    window.click(inside);
+    window.until_found("div-wide");
+    let wide = window.bounds("div-wide").unwrap();
+    assert_eq!(wide.size.width, viewport.width - px(48.));
+    assert!(wide.size.height > viewport.height / 2.);
     assert_eq!(window.problems(), []);
 }

@@ -12,7 +12,7 @@ use gpui::{
     prelude::*, px,
 };
 use serde_json::Value;
-use sound_ui::ActiveTheme;
+use sound_ui::{ActiveTheme, ControlSize};
 use sound_ui::components::icon::Icon;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::tooltip::Tooltip;
@@ -21,7 +21,7 @@ use sound_ui::focus::TabStop;
 use crate::feeds::Feeds;
 use crate::live::{DragNumbers, Sources, SpaceView};
 use crate::tools::ToolInfo;
-use crate::tree::{self, DivProps, IconProps, InputProps, NodeTable, Props, TextProps};
+use crate::tree::{self, DivProps, IconProps, InputProps, Layout, NodeTable, Props, TextProps};
 
 use super::controls::{Control, Keys};
 use super::input::{Hears, Hovers, hears_hover, listener};
@@ -76,6 +76,8 @@ pub(super) struct Drawing<'a> {
     /// Whether its card shows the cells behind its expand icon. `None` for a page, which hides
     /// none.
     pub(super) expanded: Option<bool>,
+    /// The size of a control that names none: small in a cell and in a display.
+    pub(super) control_size: ControlSize,
     pub(super) card: WeakEntity<TypeScriptCard>,
     /// Which Bun made the nodes, whose ids start again with each.
     pub(super) generation: u64,
@@ -203,10 +205,16 @@ impl Drawing<'_> {
                 carry,
                 on_drop,
                 title_bar,
+                layout,
             }) => {
                 if *title_bar == Some(true) && !std::mem::take(&mut self.in_title_bar) {
                     return div().into_any_element();
                 }
+                // On a page the parts of a card are a column, as any div's children.
+                if *layout == Some(Layout::Card) && self.expanded.is_some() {
+                    return self.card_row(&entry.children);
+                }
+                let centres = *layout == Some(Layout::Page);
                 let style = style.clone().unwrap_or_default();
                 let disabled = *disabled == Some(true);
                 let shown: Vec<usize> = (entry.children.iter())
@@ -303,6 +311,12 @@ impl Drawing<'_> {
                     }
                     children.push(match cut_text.take() {
                         Some(styled) => styled.into_any_element(),
+                        None if centres && !table.grows(*child) => div()
+                            .flex()
+                            .flex_none()
+                            .justify_center()
+                            .child(self.draw(*child))
+                            .into_any_element(),
                         None => self.draw(*child),
                     });
                 }

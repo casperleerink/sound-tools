@@ -121,13 +121,19 @@ export function list<const I extends Field | Fields>(
   return { kind: "list", item: field as ItemOf<I>, ...options };
 }
 
+/** The lists `pattern` made: the view of a tool that has none shows each as a row of steps. */
+const patterns = new WeakSet<Field>();
+export const isPattern = (field: Field): field is ListField<NumberField> => patterns.has(field);
+
 /** A row of `length` numbers, such as the steps of a sequence: a list that starts as `length` times `default`. */
 export function pattern(field: { length: number; min: number; max: number; default: number; label?: string }): ListField<NumberField> {
   const { length, min, max, label } = field;
   if (!Number.isInteger(length) || length < 1 || length > 1024) {
     throw new RangeError(`a pattern holds 1 to 1024 values, not ${length}`);
   }
-  return list(number({ min, max, default: field.default }), { max: length, label, default: Array<number>(length).fill(field.default) });
+  const made = list(number({ min, max, default: field.default }), { max: length, label, default: Array<number>(length).fill(field.default) });
+  patterns.add(made);
+  return made;
 }
 
 /** The fields of a `Note`, with their ranges. */
