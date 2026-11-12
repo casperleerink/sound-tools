@@ -34,7 +34,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no other workspace crate, which `tooling/workspace-rules` checks.
-- Three layers: the core knows no music; extensions build blocks in Rust through core hooks, and a block names no DAW idea; tools of the project, in TypeScript, own the structure (tracks, clips, a mixer layout, a transport bar, what play and record mean), so a project can change them. The app knows no extension but where it registers them.
+- Three layers: the core knows no music; extensions build blocks in Rust through core hooks, and a block names no DAW idea; tools of the project, in TypeScript, own the structure (tracks, clips, a mixer layout, what play and record mean), so a project can change them. The app knows no extension but where it registers them.
 - Tools find each other by port names, not by type, so a parent depends on no instrument, effect or plugin.
 - The core does own the musical clock, and nothing more musical: position, tempo map, play, pause, jump and a repeat range. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in a tool. Which key plays is a tool's choice, an action it declares; the app has only app and file actions.
 

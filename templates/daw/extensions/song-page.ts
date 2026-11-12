@@ -2,7 +2,7 @@ import { memo, now, type Color, type FilledStateOfTool } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import type { Song } from "./song";
 import { isMover, type track } from "./track";
-import { ticksAcross } from "./transport";
+import { ticksAcross } from "./song-time";
 
 // What the parts of the song's page share: its sizes and colours, what a row of the timeline
 // holds, and what the view works out once for all of them.

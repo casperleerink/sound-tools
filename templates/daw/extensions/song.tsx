@@ -1,10 +1,10 @@
-import { boolean, choice, Fragment, h, list, memo, Show, text, TitleBar, tool, untrack, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type ValuesOf } from "./sdk";
+import { boolean, choice, Fragment, h, list, memo, Page, Show, text, tool, Transport, untrack, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
 import { ClipEditor, type EditorMemory } from "./clip-editor";
 import type { Clipboard } from "./song-clips";
 import { songActions } from "./song-keys";
 import { Mixer } from "./song-mixer";
-import { BEAT, colourOf, COLOR, pageOf, titleOf } from "./song-page";
+import { BEAT, colourOf, pageOf, titleOf } from "./song-page";
 import { MasterPanel, Rack } from "./song-panel";
 import { Ruler, SectionName, type Mark } from "./song-ruler";
 import { TempoLane } from "./song-tempo";
@@ -12,7 +12,6 @@ import { ClipName, Timeline } from "./song-timeline";
 import { EmptySong, Heads, MasterRow, notesTrackOf, Returns, toggleRecordingOf } from "./song-tracks";
 import { tape } from "./tape";
 import { track } from "./track";
-import { Transport } from "./transport";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
 // of the chosen track, and a note editor for one clip.
@@ -163,10 +162,7 @@ export const song = tool({
     };
 
     return (
-      <div style={{ grow: true, background: COLOR.back }}>
-        <TitleBar>
-          <Transport clock={clock} record={{ on: () => memory.recording !== null, press: toggleRecording }} />
-        </TitleBar>
+      <Page flush header={<Transport record={{ on: () => memory.recording !== null, press: toggleRecording }} computerKeys writeAutomation />}>
         <div>
           <div style={{ direction: "row", gap: 8, align: "center" }}>
             <SectionName page={page} />
@@ -212,7 +208,7 @@ export const song = tool({
             </>
           );
         }}
-      </div>
+      </Page>
     );
   },
 });
