@@ -96,6 +96,9 @@ pub(crate) enum Layout {
     /// The content of a page, one under the other: a part that does not grow is as wide as
     /// what is in it, in the middle of the window.
     Page,
+    /// A cell of the controls by itself, which draws its own lines: a knob, with the field its
+    /// value is typed in.
+    Cell,
 }
 
 props! {

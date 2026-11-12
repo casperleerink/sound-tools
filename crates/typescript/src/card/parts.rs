@@ -11,7 +11,7 @@ use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::Section;
 use sound_ui::components::display::{self, Display};
 
-use crate::tree::{Axes, CellProps, DisplayProps, Mark, NodeTable, Props};
+use crate::tree::{Axes, CellProps, DisplayProps, Layout, Mark, NodeTable, Props};
 
 use super::drawing::Drawing;
 
@@ -194,6 +194,7 @@ impl Drawing<'_> {
         };
         let (control, label, value) = match &entry.props {
             Props::Space(_) => return self.draw(slot),
+            Props::Div(div) if div.layout == Some(Layout::Cell) => return self.draw(slot),
             Props::Cell(CellProps { label, value }) => {
                 let control = drawn(table, &entry.children).next();
                 (control, label.clone(), value.clone())

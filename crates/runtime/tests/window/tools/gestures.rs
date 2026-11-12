@@ -1287,3 +1287,81 @@ fn the_keys_step_and_type_a_number_its_code_keeps(cx: &mut TestAppContext) {
         window.record("tempo")["bpm"].as_f64() == Some(90.0)
     });
 }
+
+const SHARED: &str = r#"import { Controls, h, Knob, number, NumberBox, tool } from "./sdk";
+
+tool({
+  name: "shared",
+  title: "Shared",
+  when: "A test",
+  doc: "A share in a number box, and a pitch and a share on knobs, on a page that holds the keys first.",
+  state: {
+    mix: number({ min: 0, max: 1, default: 0.5 }),
+    pitch: number({ min: 24, max: 72, default: 45, unit: "pitch" }),
+    depth: number({ min: 0, max: 1, default: 0.25 }),
+  },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h("div", { style: { gap: "xl" } },
+    h(NumberBox, { key: "mix", field: "mix", width: 48 }),
+    h(Controls, {}, h(Knob, { field: "pitch" }), h(Knob, { field: "depth" }))),
+});
+"#;
+
+/// A number is typed as it reads. A share that shows `50%` opens on `50`, and `30` or `30%`
+/// is 0.3: it was 30, held at the top of the field.
+#[gpui::test]
+fn a_share_is_typed_as_the_percent_it_shows(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("shared", SHARED));
+    window.until_found("space-mix");
+    window.keys("tab");
+    press_key(&mut window, "enter");
+    window.until_found("div-mix-typed");
+    // It opens on what it shows: one more digit makes 505%, held at the top.
+    window.keys("right 5 enter");
+    window.until("past the top", |window| {
+        window.record("shared")["mix"].as_f64() == Some(1.0)
+    });
+    // The keys are back on the number: enter types it again.
+    press_key(&mut window, "enter");
+    window.until_found("div-mix-typed");
+    window.keys("cmd-a 3 0 % enter");
+    window.until("typed with its sign", |window| {
+        window.record("shared")["mix"].as_f64() == Some(0.3)
+    });
+}
+
+/// Enter on a knob types its value, and so does a click on the value: a note by its name, a
+/// share as its percent. One undo step, named as the knob's drag.
+#[gpui::test]
+fn enter_or_a_click_on_its_value_types_the_value_of_a_knob(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("shared", SHARED));
+    window.until_found("space-knob-pitch");
+    window.keys("tab tab");
+    press_key(&mut window, "enter");
+    window.until_found("div-knob-pitch-typed");
+    window.keys("cmd-a f # 2 enter");
+    window.until("the note typed", |window| {
+        window.record("shared")["pitch"].as_f64() == Some(42.0)
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change pitch"));
+    // The knob is back, and still turns with the keys.
+    window.until_found("space-knob-pitch");
+    let value = window.space("knob-depth") + point(px(32.), px(62.));
+    window.click(value);
+    window.until_found("div-knob-depth-typed");
+    window.keys("cmd-a 8 0 enter");
+    window.until("the share typed", |window| {
+        window.record("shared")["depth"].as_f64() == Some(0.8)
+    });
+    // A click on the dial types nothing, and a double click there still resets.
+    let dial = window.space("knob-depth") + point(px(32.), px(18.));
+    window.click(dial);
+    window.settle();
+    assert!(window.find("div-knob-depth-typed").is_none());
+    window.double_click(dial);
+    window.until("the default", |window| {
+        window.record("shared")["depth"].as_f64() == Some(0.25)
+    });
+}
