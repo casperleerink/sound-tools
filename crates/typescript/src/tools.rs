@@ -50,6 +50,10 @@ pub(crate) struct ToolInfo {
     /// It has a sound of its own. A parent without one plays what its children send to its
     /// `audio` as it comes, with no stage of its own.
     pub sound: bool,
+    /// Its sound is silence whatever its record says: it moves numbers, as an LFO does, and is
+    /// no device a picker offers.
+    #[serde(default)]
+    pub silent: bool,
     /// The saved fields of its record, in the order the code gives them, which is the order
     /// of the knobs of its default view.
     pub fields: Named<Field>,

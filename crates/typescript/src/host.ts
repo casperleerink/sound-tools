@@ -247,6 +247,7 @@ function described(spec: Spec, file: string) {
       voices: spec.voices ?? 1,
       input: sounds.some(([, graph]) => "Ok" in graph && readsInput(graph.Ok)),
       sound: spec.sound !== undefined,
+      silent: sounds.length > 0 && sounds.every(([, graph]) => "Ok" in graph && isSilent(graph.Ok)),
       fields: spec.state,
       inputs: Object.fromEntries(inputs.filter(([, input]) => input.kind !== "audio")),
       sound_inputs: inputs.filter(([, input]) => input.kind === "audio").map(([name]) => name),
@@ -269,6 +270,12 @@ function described(spec: Spec, file: string) {
 /** Whether a sound hears what comes in to its `audio`, so its tool has an audio input. */
 function readsInput(graph: Graph): boolean {
   return graph.nodes.some((node) => (node.op === "input" || node.op === "inputLeft" || node.op === "inputRight") && node.name === undefined);
+}
+
+/** Whether a sound is silence and nothing else: it moves numbers, as an LFO does. */
+function isSilent(graph: Graph): boolean {
+  const output = "mono" in graph.output ? graph.nodes[graph.output.mono] : undefined;
+  return graph.outputs.length === 0 && output?.op === "constant" && output.value === 0;
 }
 
 /** What `make` gives, or why it failed, as the runtime reads a `Result`. */
