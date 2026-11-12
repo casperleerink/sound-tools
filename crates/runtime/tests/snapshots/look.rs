@@ -138,6 +138,8 @@ fn header(row: f32) -> Point<Pixels> {
 pub(crate) const TOGGLES: f32 = 42.0;
 const ARM: f32 = 91.0;
 pub(crate) const LANES: f32 = 84.0;
+/// The mixer's toggle, at the end of the master's row.
+pub(crate) const MIXER_TOGGLE: f32 = 155.0;
 
 /// The arm toggle of the audio track `row` from the top, which shows once its header is clicked.
 fn arm(row: f32) -> Point<Pixels> {
@@ -313,7 +315,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
             ("bass/lane-cutoff.json", cutoff),
         ],
     )?;
-    click(&opened, point(px(32.), px(TOP + ROW + 41.)), 1, cx)?;
+    // The head of the bass shows its toggles, and the first of them its lanes.
+    click(&opened, header(1.), 1, cx)?;
+    click(&opened, point(px(LANES), px(TOP + ROW + TOGGLES)), 1, cx)?;
     save(cx, opened.window.into(), "look-lanes")?;
     // A click on the cutoff's lane adds a point there, chosen, and under the pointer it shows its
     // readout.
@@ -360,8 +364,8 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(60.), px(bottom - panel - 60.)), 1, cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-returns")?;
-    // The mixer's button at the right of the master's row: three tracks, then the returns.
-    click(&opened, point(px(1449.), px(684.)), 1, cx)?;
+    // The mixer's toggle at the end of the master's row: three tracks, then the returns.
+    click(&opened, point(px(MIXER_TOGGLE), px(684.)), 1, cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-mixer")?;
     drop(opened);
@@ -496,9 +500,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let limiter = json!({ "tool": "limiter", "state": { "ceiling_db": 0, "lookahead_ms": 0, "gain_db": 18 } });
     let mut opened = open(cx, &[("limit.json", limiter)])?;
     opened.play_from(Ticks(0), cx)?;
+    // The master's row, over the panel of the first track, which a song opens with.
     click(
         &opened,
-        point(px(HEADER / 2.), px(super::WINDOW_HEIGHT - 20.)),
+        point(px(HEADER / 2.), px(super::WINDOW_HEIGHT - 217. - 20.)),
         1,
         cx,
     )?;

@@ -171,7 +171,7 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     // Add track adds an instrument track; its chevron offers the other kinds.
-    let add = window.until_found("div-add-track");
+    let add = window.until_found("button-add-track");
     window.click(add);
     window.until("the track added", |window| window.has("song/track"));
     let mut parts = window.children_of("song/track");
@@ -369,6 +369,41 @@ fn a_track_head_dragged_onto_another_goes_before_it(cx: &mut TestAppContext) {
     });
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move a track"));
+}
+
+/// What a right-click does to a clip and to the ruler, from the keys alone: alt-right chooses
+/// the first clip of the track a song opens on and alt-enter opens its menu; shift-s adds a
+/// section at the playhead, and the key that goes to the next mark chooses it for delete.
+#[gpui::test]
+fn the_keys_reach_the_menu_of_a_clip_and_the_marks_of_the_ruler(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    // The menu opens where the pointer is.
+    window.show_toggles("t00");
+    window.cx.simulate_keystrokes("alt-right");
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("alt-enter");
+    window.pick("menu-3");
+    window.until_found("div-clip-name");
+    window.cx.simulate_input("Verse");
+    window.cx.simulate_keystrokes("enter");
+    window.until("the clip renamed", |window| {
+        window.record("song/t00/c00")["title"] == "Verse"
+    });
+
+    let sections = |window: &mut Opened<'_>| window.project_file()["sections"].clone();
+    window.cx.simulate_keystrokes("shift-s");
+    window.until_found("div-ruler-edit");
+    window.cx.simulate_keystrokes("enter");
+    window.until("a section", |window| {
+        sections(window) == serde_json::json!([{ "bar": 1, "name": "Section 1" }])
+    });
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("alt-shift-right backspace");
+    window.until("the section removed", |window| {
+        sections(window) == serde_json::json!([])
+    });
+    assert_eq!(window.problems(), []);
 }
 
 #[gpui::test]
@@ -828,7 +863,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     assert_eq!(region["start"], 2 * BAR);
     // Its waveform shows once its length is known: a click on it chooses it.
     let inside = window.on_lane(2 * BAR + 960, 2);
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     window.click(inside);
     // Its card opens in the panel of the audio track.
     window.until_found("card-song/audio-voice/region-header");
@@ -884,7 +919,7 @@ fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
     window.drop_sine();
     // A second at 120 bpm is two beats: its end, a little inside.
     let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     window.press(end);
     window.drag_to(end - point(px(5.), px(0.)));
     window.drag_to(end - point(px(960. * ACROSS), px(0.)));
@@ -1060,7 +1095,7 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     window.wait_for_bun();
     window.drop_sine();
     let end = window.on_lane(2 * BAR + 960, 2) - point(px(2.), px(0.));
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     window.press(end);
     window.drag_to(end - point(px(5.), px(0.)));
     window.drag_to(end - point(px(480. * ACROSS), px(0.)));
@@ -1207,7 +1242,7 @@ fn a_region_that_plays_its_whole_file_trims_no_further_out(cx: &mut TestAppConte
     window.wait_for_bun();
     window.drop_sine();
     let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     window.press(end);
     window.drag_to(end + point(px(5.), px(0.)));
     window.drag_to(end + point(px(960. * ACROSS), px(0.)));
@@ -1334,7 +1369,7 @@ fn the_card_of_a_chosen_region_turns_its_fade_in(cx: &mut TestAppContext) {
     window.wait_for_bun();
     window.drop_sine();
     let inside = window.on_lane(2 * BAR + 960, 2);
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     window.click(inside);
     let knob = window.control("knob-fade-in");
     window.drag(knob, knob - point(px(0.), px(60.)));
@@ -1382,7 +1417,7 @@ fn a_clip_added_after_the_song_opened_is_drawn_once_after_its_track_lays_out_aga
 fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let toggle = window.until_found("button-mixer-toggle");
+    let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
     window.until_found("div-strip-name-t01");
     // A track's head shows its panel in the mixer's place.
@@ -1392,10 +1427,10 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
     window.wait_for_bun();
     assert!(window.find("div-strip-name-t01").is_none());
     // The button shows the mixer again, and a second press shows nothing there.
-    let toggle = window.until_found("button-mixer-toggle");
+    let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
     window.until_found("div-strip-name-t01");
-    let toggle = window.until_found("button-mixer-toggle");
+    let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
     window.wait_for_bun();
     assert!(window.find("div-strip-name-t01").is_none());
@@ -1463,7 +1498,7 @@ fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
     window.until_found("div-sends");
     window.until_found("space-knob-t00/send-ret-a.gain_db");
     // The mixer's strip of a return shows the return's panel.
-    let toggle = window.until_found("button-mixer-toggle");
+    let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
     let strip = window.until_found("div-strip-name-ret-a");
     window.click(strip);
@@ -1555,9 +1590,9 @@ fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mu
         .collect();
     let mut window = super::open(cx, &files);
     window.wait_for_bun();
-    let toggle = window.until_found("button-mixer-toggle");
+    let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
-    let write = window.until_found("button-write-automation");
+    let write = window.until_found("toggle-write-automation");
     window.click(write);
     let session = window.session.clone();
     window.until("automation written", |window| {

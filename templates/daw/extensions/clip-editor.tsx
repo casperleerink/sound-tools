@@ -1,4 +1,4 @@
-import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, memo, now, quantize, Rect, Select, selector, signal, Space, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, memo, now, quantize, Rect, Select, selector, signal, Space, Text, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
@@ -392,7 +392,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     const top = () => (VELOCITY_BOTTOM - ((VELOCITY_BOTTOM - VELOCITY_TOP) * note.velocity) / 127) / LANE;
     return (
       <Rect x={() => note.start} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
-        moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "text" : blend(`${colour()}/70` as Color, "text", boxed(note)))}
+        moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "text" : blend(colour(), "text", boxed(note)))}
         cursor="ns-resize" drag={velocityDrag} onPress={pressNote(note)} />
     );
   };
@@ -427,7 +427,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
             ];
           }}
         </For>
-        <Label x={() => space.pointX.times(8).plus(points()[0]?.at ?? 0)} y={0.08} text={() => (points().length === 0 ? "Double-click to add a point" : "")} size={11} color="text-muted" />
+        <Label x={() => space.pointX.times(8).plus(points()[0]?.at ?? 0)} y={0.08} text={() => (points().length === 0 ? "Double-click to add a point" : "")} color="text-muted" />
       </>
     );
   };
@@ -456,11 +456,13 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
   return (
     <div style={{ height, keep: true }}>
       <div style={{ height: RULER, direction: "row", keep: true }}>
-        <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
-          <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
-          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "text" }}>{name}</div>
-          <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" opacity={0.6} tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
-          <Button key="close-editor" icon="x" variant="ghost" size="sm" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={onClose} />
+        <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true }}>
+          <div style={() => ({ width: 8, height: 8, radius: "full", keep: true, background: colour() })} />
+          <Text variant="heading" style={{ grow: true, truncate: true }}>{name}</Text>
+          <div style={{ direction: "row", keep: true }}>
+            <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
+            <Button key="close-editor" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={onClose} />
+          </div>
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}
@@ -468,7 +470,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
           <For each={() => bars().map((tick, index) => ({ tick, index }))}>
             {({ tick, index }) => [
               <Rect x={tick} y={RULER - 8} width={space.pointX} height={8} color="border-strong" />,
-              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} size={12} color="text-muted" />,
+              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} color="text-muted" />,
             ]}
           </For>
         </Space>
@@ -485,13 +487,13 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
               onPress={() => preview(pitch)} />
           ))}
           {pitches.filter((pitch) => pitch % 12 === 0).map((pitch) => (
-            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch)} text={`C${pitch / 12 - 1}`} size={12} color="text-muted" align="right" />
+            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch)} text={`C${pitch / 12 - 1}`} color="text-muted" align="right" />
           ))}
         </Space>
         <Rule />
         <Space key={key} grow height={roll} {...across} unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-BEAT, end()] as const, y: [0, 128] as const })}
           fit={{ x: [0, opening], before: 8, after: 96 }} scroll={{ y: middleRow }} drag={marqueeDrag} onPress={pressEmpty}>
-          {pitches.filter(isBlack).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="fill/2" />)}
+          {pitches.filter(isBlack).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="fill" opacity={0.4} />)}
           <For each={beats}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border" width={1} />}</For>
           <For each={lines}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border-strong" width={1} />}</For>
           <Rect x={length} y={0} width={1e6} height={128} color="background" />
@@ -501,12 +503,12 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
             return <For each={notes}>{NoteShapes({ move: moveDrag(snap), resize: resizeDrag(snap) })}</For>;
           }}
           <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
-            color="fill" border="text/20" borderWidth={1} radius={2} opacity={marquee.active} />
+            color="fill" border="border-strong" borderWidth={1} radius={2} opacity={marquee.active} />
         </Space>
       </div>
       <div style={{ height: 1, background: "border", keep: true }} />
       <div style={{ height: LANE, direction: "row", keep: true }}>
-        <div style={{ width: HEADER - 1, paddingLeft: 16, justify: "center", align: "start", keep: true }}>
+        <div style={{ width: HEADER - 1, paddingLeft: "lg", justify: "center", align: "start", keep: true }}>
           <Select<Lane> key="editor-lane-pick" size="sm" title="Lane" value={() => memory.lane} options={laneOptions} search menuWidth={220}
             onChange={(lane) => (memory.lane = lane)} />
         </div>

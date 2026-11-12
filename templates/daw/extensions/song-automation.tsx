@@ -1,6 +1,6 @@
-import { Circle, For, Fragment, h, Knob, Label, Line, memo, now, Path, positionOf, Rect, Select, Show, signal, Space, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Num, type Press } from "./sdk";
+import { Circle, For, Fragment, h, Icon, Knob, Label, Line, memo, now, Path, positionOf, Rect, Select, Show, signal, Space, Text, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Num, type Press } from "./sdk";
 import { bent, type AutomationPoint } from "./song-clips";
-import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
+import { clamp, COLOR, HEADER, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
 import { ENVELOPE, envelope, lfo, RATES, SHAPES } from "./lfo";
 import { freeName, splitTarget, type Mover } from "./track";
 
@@ -121,22 +121,24 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
     else if (picked === items.length - 1) removeLane(page, track, lane.lane);
   };
   return (
-    <div style={{ grow: true, minWidth: 0, gap: 2 }}>
-      <div key={`lane-name-${track}-${lane.lane}`} tooltip={() => laneName(page, track, lane.target, true)} style={{ fontSize: 12, color: "text-secondary", truncate: true }}
-        onPress={({ button }) => button === "right" && menu()}>
-        {() => laneName(page, track, lane.target)}
+    <div style={{ grow: true, minWidth: 0, align: "start", gap: "xs" }}>
+      <div key={`lane-name-${track}-${lane.lane}`} tabStop tooltip={() => laneName(page, track, lane.target, true)}
+        style={{ maxWidth: HEADER - 40, direction: "row", align: "center", gap: "xs", radius: "sm", hover: { background: "fill" } }}
+        onPress={({ button }) => button === "right" && menu()} onClick={({ button }) => button === "left" && menu()}>
+        <Text variant="label" style={{ truncate: true }}>{() => laneName(page, track, lane.target)}</Text>
+        <Icon name="chevron-down" size={12} color="text-muted" />
       </div>
       {() => {
         if (mover() === "lfo")
           return (
-            <div style={{ direction: "row", gap: 4 }}>
+            <div style={{ direction: "row", gap: "xs" }}>
               <Select key={`lfo-shape-${path}`} size="sm" field={`${path}.shape`} options={SHAPES.map((shape) => ({ value: shape, label: words(shape) }))} />
               <Select key={`lfo-rate-${path}`} size="sm" field={`${path}.rate`} options={RATES.map((rate) => ({ value: rate, label: rate }))} />
             </div>
           );
         if (mover() === "envelope")
           return (
-            <div style={{ direction: "row", gap: 4 }}>
+            <div style={{ direction: "row", gap: "xs" }}>
               {Object.entries(ENVELOPE).map(([field, { label, min, max, default: fallback, unit }]) => (
                 <Knob key={`env-${field}-${path}`} field={`${path}.${field}`} label={label} size="sm" bare min={min} max={max} default={fallback ?? min} unit={unit} />
               ))}
@@ -147,7 +149,7 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
         const { unit, times } = readoutOf(number);
         return (
           <Space key={`lane-value-${track}-${lane.lane}`} width={READOUT} height={16}>
-            <Label x={0} y={1} text={played.times(times)} unit={unit} size={12} color="text-muted" />
+            <Label x={0} y={0} text={played.times(times)} unit={unit} color="text-muted" />
           </Space>
         );
       }}
@@ -356,7 +358,7 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
     <>
       <Rect x={-1e6} y={top} width={2e6} height={1} color={COLOR.clear} cursor="crosshair" drag={drag} anchor={{ x: 0 }} onPress={pressLane} />
       <Rect x={-1e6} y={top} width={2e6} height={timeline.pointY} color="border" />
-      <Rect x={moved.startX.min(moved.x)} y={() => top() + 0.04} width={moved.dx.abs()} height={0.92} color="fill" border="text/20" borderWidth={1} radius={2}
+      <Rect x={moved.startX.min(moved.x)} y={() => top() + 0.04} width={moved.dx.abs()} height={0.92} color="fill" border="border-strong" borderWidth={1} radius={2}
         opacity={() => (erasing() ? moved.active : 0)} />
       <For each={points}>
         {(point, index) => {
@@ -416,8 +418,8 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
             return held.times(readout().times);
           };
           return [
-            <Circle x={x} y={y} radius={6} color="text" opacity={() => (chosen() ? 1 : 0)} />,
-            <Circle x={x} y={y} radius={() => (chosen() ? 4.5 : hovered().times(1.5).plus(3))} color={colour} />,
+            // Chosen, it is bright, as a chosen note is.
+            <Circle x={x} y={y} radius={() => (chosen() ? 4.5 : hovered().times(1.5).plus(3))} color={() => (chosen() ? "text" : colour())} />,
             <Circle key={key} x={x} y={y} radius={6} color={COLOR.clear} cursor="pointer" drag={drag} anchor={() => ({ x: point.tick })}
               onPress={({ alt, button }) => {
                 if (button !== "left") return;
@@ -432,7 +434,7 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
             // Its unit is known once the range of the number is.
             () => (
               <Label x={() => timeline.pointX.times(42).plus(x())} y={() => timeline.pointY.times(-7).plus(y())}
-                text={value} unit={readout().unit} size={12} color="text" align="center" opacity={shown} />
+                text={value} unit={readout().unit} color="text" align="center" opacity={shown} />
             ),
           ];
         }}

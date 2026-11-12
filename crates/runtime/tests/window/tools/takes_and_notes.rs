@@ -256,7 +256,7 @@ fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     let middle = window.on_lane(2 * BAR + 960, 2);
     window.click(middle);
     window.wait_for_bun();
@@ -302,7 +302,7 @@ fn alt_up_steps_a_chosen_regions_gain(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     let region = window.on_lane(2 * BAR + 960, 2);
     window.click(region);
     window.wait_for_bun();

@@ -1,5 +1,5 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
-import { ACROSS, barStarts, BEAT, COLOR, LEAD, RULER, type Page, type Runs } from "./song-page";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, Text, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
+import { ACROSS, barStarts, BEAT, COLOR, LEAD, RULER, tickOfBar, type Page, type Runs } from "./song-page";
 
 // The ruler: the sections on its top line; bars, time signatures and tempo changes on the line
 // under it; at its foot the repeat range.
@@ -29,15 +29,39 @@ const nearestBar = ({ starts }: Page, tick: number) => {
   return lines.reduce((best, start, index) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? index : best), 0) + 1;
 };
 /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
-function addSection(page: Page, tick: number) {
-  const { clock, memory, starts } = page;
-  const bar = nearestBar(page, tick);
+export function addSection(clock: Clock, memory: { editing: Editing }, tick: number) {
+  const { bar, tick: line } = barNear(clock, tick);
   if (!clock.sections.some((each) => each.bar === bar)) {
     clock.update("Add a section", (song) => {
       song.sections = [...song.sections, { bar, name: `Section ${song.sections.length + 1}` }].sort((a, b) => a.bar - b.bar);
     });
   }
-  memory.editing = { bar, tick: starts()[bar - 1] ?? 0 };
+  memory.editing = { bar, tick: line };
+}
+/** A section whose name is being typed: its bar, and the tick it starts at. */
+export type Editing = { bar: number; tick: number } | null;
+/** The bar whose line is nearest `tick`, from 1, and the tick it starts at. */
+function barNear(clock: Clock, tick: number) {
+  const lines = barStarts(clock.tempo_map.time_signatures, tick + 1);
+  const index = lines.reduce((best, start, at) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? at : best), 0);
+  return { bar: index + 1, tick: lines[index] ?? 0 };
+}
+/** A time signature change at the bar line nearest `tick`, chosen with the playhead on it, for the transport to change: none at bar 1, which the first one starts at. */
+export function addSignatureNear(clock: Clock, memory: { mark: Mark | null }, tick: number): boolean {
+  const { bar, tick: line } = barNear(clock, tick);
+  if (bar === 1) return false;
+  addSignature(clock, bar);
+  memory.mark = { kind: "signature", bar, tick: line };
+  clock.jump(line);
+  return true;
+}
+/** Every mark of the ruler, in time: the sections, the time signature changes and the tempo changes, each after the first. */
+export function marksOf(clock: Clock): Mark[] {
+  const runs = clock.tempo_map.time_signatures;
+  const sections = clock.sections.map(({ bar }) => ({ kind: "section" as const, bar, tick: tickOfBar(runs, bar) }));
+  const signatures = changeBars(runs).slice(1).map((bar) => ({ kind: "signature" as const, bar, tick: tickOfBar(runs, bar) }));
+  const tempos = clock.tempo_map.tempo_changes.filter((change) => change.tick > 0).map(({ tick }) => ({ kind: "tempo" as const, bar: barNear(clock, tick).bar, tick }));
+  return [...sections, ...signatures, ...tempos].sort((a, b) => a.tick - b.tick);
 }
 
 /**
@@ -50,7 +74,7 @@ export const pressTime = (page: Page, sections: boolean, mark?: Mark) => async (
   const { clock, memory, runs, starts, openMenu } = page;
   if (button !== "right") {
     memory.mark = null;
-    if (clicks === 2 && sections) addSection(page, x);
+    if (clicks === 2 && sections) addSection(clock, memory, x);
     else clock.jump(snapped(page, x));
     return;
   }
@@ -70,11 +94,8 @@ export const pressTime = (page: Page, sections: boolean, mark?: Mark) => async (
   if (picked === 0) {
     addTempo(clock, memory, tick);
     clock.jump(tick);
-  } else if (picked === 1) {
-    addSignature(clock, bar);
-    memory.mark = { kind: "signature", bar, tick: line };
-    clock.jump(line);
-  } else if (picked === 2) addSection(page, line);
+  } else if (picked === 1) addSignatureNear(clock, memory, line);
+  else if (picked === 2) addSection(clock, memory, line);
   else if (picked === 3 && removed) removeMark(clock, removed);
 };
 /** The tempo changes after the first, each with its mark. */
@@ -92,14 +113,15 @@ export const pressMark = (page: Page, mark: Mark) => (press: Press) => {
 export const Ruler = ({ page }: { page: Page }) => {
   const { memory, clock, runs, starts, end, timeline, playhead, handle } = page;
   const loop = now.drag("loop");
-  const chosen = (kind: Mark["kind"], bar: number) => (memory.mark?.kind === kind && memory.mark.bar === bar ? ("text-secondary" as const) : undefined);
+  const chosen = (kind: Mark["kind"], bar: number) => (memory.mark?.kind === kind && memory.mark.bar === bar ? ("text" as const) : undefined);
   // Each section from its bar line to the next one's.
   const sections = memo(() =>
     clock.sections.map((section, index) => ({ ...section, from: starts()[section.bar - 1] ?? end(), to: starts()[(clock.sections[index + 1]?.bar ?? Infinity) - 1] ?? end() })),
   );
   // Where each time signature starts, and the points its label takes: its bar and the signature.
+  // A song in one time signature shows none: the transport says it.
   const changes = memo(() =>
-    changeBars(runs()).flatMap((bar, index) => {
+    (runs().length > 1 ? changeBars(runs()) : []).flatMap((bar, index) => {
       const tick = starts()[bar - 1];
       const signature = runs()[index]?.signature ?? "4/4";
       return tick === undefined ? [] : [{ bar, tick, signature, width: widthOf([{ text: `${bar}  ` }, { text: signature, border: "text-secondary" }]) }];
@@ -120,7 +142,8 @@ export const Ruler = ({ page }: { page: Page }) => {
     const after = changes().find((change) => change.tick > tick);
     // The most bars between this number and the next that shows as far out as it does.
     const apart = index & -index;
-    let shows = timeline.pointX.le(((starts()[index + apart] ?? tick + apart * 4 * BEAT) - tick) / 40);
+    // Bar 1 shows however far out.
+    let shows = index === 0 ? timeline.pointX.ge(0) : timeline.pointX.le(((starts()[index + apart] ?? tick + apart * 4 * BEAT) - tick) / 40);
     if (before) shows = shows.times(timeline.pointX.le((tick - before.tick) / (before.width + GAP)));
     if (after) shows = shows.times(timeline.pointX.le((after.tick - tick) / (String(index + 1).length * 5.6 + GAP)));
     return shows;
@@ -141,7 +164,7 @@ export const Ruler = ({ page }: { page: Page }) => {
   // its body moves it, an edge moves that end, on the beats. Off, it keeps its range.
   const repeat = () => clock.repeat ?? memory.repeatRange;
   // A line with its two ends standing up, bright while it repeats.
-  const band = (): Color => (clock.repeat ? "text" : "text/20");
+  const band = (): Color => (clock.repeat ? "text" : "text-muted");
   const setRepeatRange = (from: number, to: number) => {
     if (to <= from) return;
     if (clock.repeat) clock.setRepeat({ from, to });
@@ -177,11 +200,11 @@ export const Ruler = ({ page }: { page: Page }) => {
           const left = timeline.left.max(section.from);
           const room = left.negate().plus(section.to).minus(timeline.pointX.times(4)).max(0);
           return [
-            <Rect x={section.from} y={0} width={timeline.pointX} height={LINE - 2} color="text/20" />,
+            <Rect x={section.from} y={0} width={timeline.pointX} height={LINE - 2} color="border-strong" />,
             <Group x={left} clip={{ width: room, height: LINE }}>
               <Rect x={0} y={0} width={room.min(timeline.pointX.times(widthOf([{ text: section.name }]) + 12))} height={LINE} color={COLOR.clear} cursor="pointer"
                 onPress={pressMark(page, { kind: "section", bar: section.bar, tick: section.from })} />
-              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "text", weight: "medium", border: chosen("section", section.bar) }]} size={12} />
+              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "text", weight: "medium", border: chosen("section", section.bar) }]} />
             </Group>,
           ];
         }}
@@ -190,13 +213,13 @@ export const Ruler = ({ page }: { page: Page }) => {
         {(tick, bar) => [
           <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="border-strong" />,
           () => (changes().some((change) => change.tick === tick) ? null : (
-            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} size={12} color="text-muted" opacity={() => numberShows(bar())} />
+            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} color="text-muted" opacity={() => numberShows(bar())} />
           )),
         ]}
       </For>
       <For each={changes}>
         {(change, index) => [
-          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} size={12} color="text-muted" opacity={() => changeShows(index())}
+          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} color="text-muted" opacity={() => changeShows(index())}
             text={() => [{ text: `${change.bar}  ` }, { text: change.signature, border: chosen("signature", change.bar) }]} />,
           change.bar > 1 ? (
             // No wider than its label shows: a hidden one hears no press.
@@ -207,7 +230,7 @@ export const Ruler = ({ page }: { page: Page }) => {
       </For>
       <For each={tempos}>
         {(change) => [
-          <Rect x={change.tick} y={RULER - 8} width={timeline.pointX} height={8} color={() => (tempoChosen(change.tick) ? "text" : "text/40")} />,
+          <Rect x={change.tick} y={RULER - 8} width={timeline.pointX} height={8} color={() => (tempoChosen(change.tick) ? "text" : "text-muted")} />,
           <Rect key={`ruler-tempo-${change.tick}`} x={timeline.pointX.times(-3).plus(change.tick)} y={LINE} width={timeline.pointX.times(7)} height={RULER - LINE}
             color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />,
         ]}
@@ -228,8 +251,8 @@ export const Ruler = ({ page }: { page: Page }) => {
           const text = `${bpmText(change.bpm)} bpm`;
           const shown = () => (tempoChosen(change.tick) ? 1 : now.hover(`ruler-tempo-${change.tick}`));
           return [
-            <Rect x={timeline.pointX.times(6).plus(change.tick)} y={LINE} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4} color="background" border="border-strong" borderWidth={1} opacity={shown} />,
-            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} size={12} color="text" opacity={shown} />,
+            <Rect x={timeline.pointX.times(6).plus(change.tick)} y={LINE} width={timeline.pointX.times(text.length * 6.8 + 12)} height={18} radius={4} color="background" border="border-strong" borderWidth={1} opacity={shown} />,
+            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} color="text" opacity={shown} />,
           ];
         }}
       </For>
@@ -249,6 +272,9 @@ export const Shades = ({ page: { clock, starts, end }, height }: { page: Page; h
   });
   return <For each={shaded}>{(part) => <Rect x={part.from} y={0} width={part.to - part.from} height={height} color="fill" />}</For>;
 };
+
+/** A name being typed, over the timeline: what it names, and its field. */
+export const NAMING = { direction: "row", gap: "sm", align: "center", paddingX: "sm", paddingBottom: "sm" } as const;
 
 /** The field to name the section being named, over the timeline. */
 export const SectionName = ({ page }: { page: Page }) => {
@@ -273,9 +299,9 @@ export const SectionName = ({ page }: { page: Page }) => {
         if (!editing) return null;
         const label = `Section at bar ${editing.bar}`;
         return (
-          <div key="ruler-edit" style={{ direction: "row", gap: 6, align: "center" }}>
-            <div style={{ fontSize: 11, color: COLOR.text }}>{label}</div>
-            <Input size="lg" key="ruler-edit-field" value={editedValue} width={100} focus onCommit={commitEdit} />
+          <div key="ruler-edit" style={NAMING}>
+            <Text variant="label" tone="muted">{label}</Text>
+            <Input key="ruler-edit-field" value={editedValue} width={100} focus onCommit={commitEdit} />
           </div>
         );
       }}
