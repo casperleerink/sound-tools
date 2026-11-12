@@ -283,6 +283,14 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
   const marquee = now.drag("note-marquee");
   const drawn = now.drag("velocity-draw");
   const roll = () => height() - RULER - LANE - 2;
+  const start = () => clip()?.start ?? 0;
+  // Where the piece plays, in the clip's ticks: its line covers the point right of it, as the timeline's.
+  const playhead = () => now.tick.minus(start()).plus(space.pointX.times(0.5));
+  /** One line through the ruler, the notes and the lane, `to` units tall, while the playhead is inside the clip. */
+  const Cursor = ({ to }: { to: number }) => (
+    <Line from={() => [playhead(), 0] as const} to={() => [playhead(), to] as const} color="text" width={1}
+      opacity={() => now.tick.ge(start()).times(now.tick.lt(start() + length()))} />
+  );
   // It opens on the clip: the middle of its notes in the middle of the roll, on a whole row, so no key's name is cut at its top.
   const [opening, middleRow] = untrack(() => {
     const pitches = notes().map((note) => note.pitch);
@@ -531,6 +539,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
               <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} color="text-muted" />,
             ]}
           </For>
+          <Cursor to={RULER} />
         </Space>
         {() => {
           const shown = said();
@@ -576,6 +585,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
           }}
           <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
             color="fill" border="border-strong" borderWidth={1} radius={2} opacity={marquee.active} />
+          <Cursor to={128} />
         </Space>
       </div>
       <div style={{ height: 1, background: "border", keep: true }} />
@@ -591,6 +601,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
             return lane === "velocity" ? <For each={notes}>{VelocityBar}</For> : <ExpressionLane lane={lane} />;
           }}
           <Line from={[drawn.startX, drawn.startY]} to={[drawn.startX.plus(drawn.dx.times(drawn.active)), drawn.startY.plus(drawn.dy.times(drawn.active))]} color="text" width={1} />
+          <Cursor to={1} />
         </Space>
       </div>
     </div>
