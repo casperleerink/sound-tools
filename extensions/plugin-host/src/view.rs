@@ -17,7 +17,6 @@ use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, SharedString, Task, Window, div, prelude::*, px,
 };
 use sound_core::{Instance, InstanceId, MAX_AUTOMATED, Project, ProjectEvent};
-use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -677,7 +676,7 @@ impl Render for PluginView {
             let button = Button::new("plugin-start-again", "Start again")
                 .debug_selector(|| "plugin-start-again".to_string())
                 .variant(ButtonVariant::Subtle)
-                .size(ControlSize::Md)
+                .on_card()
                 .focus_handle(&self.window_focus)
                 .on_click(cx.listener(|view, _, _, cx| {
                     if let Some(plugins) = view.plugins.upgrade() {
@@ -716,7 +715,7 @@ impl Render for PluginView {
                 Button::new("plugin-window", label)
                     .debug_selector(|| "plugin-window".to_string())
                     .variant(ButtonVariant::Subtle)
-                    .size(ControlSize::Md)
+                    .on_card()
                     .focus_handle(&self.window_focus)
                     .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx))),
             ),
