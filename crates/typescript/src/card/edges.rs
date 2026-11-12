@@ -14,7 +14,7 @@ use gpui::{
 
 use crate::tree::ScrollAxis;
 
-/// How long an edge fades, in points. Less of it waits, less of it fades.
+/// How long an edge fades at most, in points.
 const FADE: f32 = 24.;
 
 /// The edges a page paints over itself, by the name of what the div scrolls in.
@@ -48,7 +48,8 @@ impl Edge {
         }
     }
 
-    /// How strong it fades at its start and at its end: not at all where nothing waits.
+    /// How much of [`FADE`] it fades at its start and at its end: as much as waits there, so
+    /// nothing fades where nothing waits and the fade grows as the div scrolls away from an end.
     pub(super) fn fades(&self) -> [f32; 2] {
         self.waits.map(|waits| (waits / px(FADE)).clamp(0., 1.))
     }
@@ -59,31 +60,36 @@ impl Edge {
             ScrollAxis::X => room.width,
             ScrollAxis::Y => room.height,
         };
-        let long = px(FADE).min(along / 2.);
-        // The way the fade runs out, as an angle of a gradient: 0 is up, 90 to the right.
+        let [start, end] = (self.fades()).map(|fades| (px(FADE) * fades).min(along / 2.));
+        // Each from the edge it lies at, with the way it runs out as the angle of a gradient:
+        // 0 is up, 90 to the right.
         let sides = match self.axis {
             ScrollAxis::X => [
-                (origin, 90.),
-                (point(origin.x + along - long, origin.y), 270.),
+                (origin, size(start, room.height), 90.),
+                (
+                    point(origin.x + along - end, origin.y),
+                    size(end, room.height),
+                    270.,
+                ),
             ],
             ScrollAxis::Y => [
-                (origin, 180.),
-                (point(origin.x, origin.y + along - long), 0.),
+                (origin, size(room.width, start), 180.),
+                (
+                    point(origin.x, origin.y + along - end),
+                    size(room.width, end),
+                    0.,
+                ),
             ],
         };
         let mask = ContentMask { bounds: self.mask };
         window.with_content_mask(Some(mask), |window| {
-            for ((at, angle), strength) in sides.into_iter().zip(self.fades()) {
-                if strength <= 0. {
+            for (at, side, angle) in sides {
+                if side.width <= px(0.) || side.height <= px(0.) {
                     continue;
                 }
-                let side = match self.axis {
-                    ScrollAxis::X => size(long, room.height),
-                    ScrollAxis::Y => size(room.width, long),
-                };
                 let fade = linear_gradient(
                     angle,
-                    linear_color_stop(self.ground.opacity(strength), 0.),
+                    linear_color_stop(self.ground, 0.),
                     linear_color_stop(self.ground.opacity(0.), 1.),
                 );
                 window.paint_quad(fill(Bounds::new(at, side), fade));
