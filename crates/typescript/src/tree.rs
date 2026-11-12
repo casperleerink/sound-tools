@@ -887,6 +887,34 @@ impl NodeTable {
         false
     }
 
+    /// The colour under what the div in `slot` holds: the backgrounds of the divs it is in, down
+    /// to the first that lets nothing through, on the surface of an overlay it is in, else on
+    /// `under`.
+    pub(crate) fn ground(&self, slot: usize, under: Hsla, overlay: Hsla) -> Hsla {
+        let (mut ground, mut over) = (under, Vec::new());
+        let mut at = Some(slot);
+        while let Some(entry) = at.and_then(|slot| self.get(slot)) {
+            match &entry.props {
+                Props::Div(div) => {
+                    let background = div.style.as_ref().and_then(|style| style.background);
+                    if let Some(Color(color)) = background {
+                        over.push(color);
+                        if color.is_opaque() {
+                            break;
+                        }
+                    }
+                }
+                Props::Overlay(_) => {
+                    ground = overlay;
+                    break;
+                }
+                _ => {}
+            }
+            at = entry.parent;
+        }
+        over.into_iter().rev().fold(ground, Hsla::blend)
+    }
+
     /// The slot of the div that says `titleBar`.
     pub(crate) fn title_bar(&self) -> Option<usize> {
         let mut todo = vec![self.root?];

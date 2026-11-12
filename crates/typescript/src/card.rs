@@ -6,6 +6,7 @@
 
 mod controls;
 mod drawing;
+mod edges;
 mod input;
 mod paint;
 mod parts;
@@ -43,6 +44,7 @@ use crate::window::{CardsChanged, Live, Surface, state_of};
 
 use self::drawing::Drawing;
 pub use self::drawing::drawn_nodes;
+use self::edges::Edges;
 use self::input::{Held, Hovers, hearing_keys, hears_the_button};
 use self::placed::Placing;
 use self::shapes::SpaceIndex;
@@ -113,6 +115,8 @@ pub(crate) struct TypeScriptCard {
     parts: RefCell<Option<((u64, Option<usize>), Rc<Parts>)>>,
     /// The spaces of a page the layer over it draws, by node, with where the page laid them out.
     lifted: Rc<RefCell<HashMap<u64, Lifted>>>,
+    /// The soft edges of the divs of a page that scroll, which the layer over it paints.
+    edges: Edges,
     /// Where the page is in the window, which the layer over it draws from.
     origin: Rc<Cell<Point<Pixels>>>,
     /// Where each node that hears a press was last laid out, by node, so a menu its press opens
@@ -255,7 +259,10 @@ impl Render for Over {
         if card.parts(cx).over.animates {
             next_frame(&self.0, Drawn::Over, window);
         }
-        div().size_full().children(card.draw_over(window, cx))
+        div()
+            .size_full()
+            .children(card.draw_over(window, cx))
+            .child(edges::painted_over(card.edges.clone()))
     }
 }
 
@@ -458,6 +465,7 @@ impl TypeScriptCard {
             title_bar: None,
             parts: RefCell::default(),
             lifted: Rc::default(),
+            edges: Rc::default(),
             origin: Rc::default(),
             placed: Rc::default(),
             hovers: Rc::default(),
@@ -825,6 +833,7 @@ impl TypeScriptCard {
             takes_keys,
             title_focus,
             lifting: None,
+            edges: None,
             expanded: self.frame.as_ref().map(|_| self.expanded),
             control_size: sound_ui::ControlSize::default(),
             card: self.handle.clone(),
@@ -921,6 +930,7 @@ impl Render for TypeScriptCard {
                 // A space left out of this frame, as in a row scrolled out of view, is drawn
                 // nowhere.
                 self.lifted.borrow_mut().clear();
+                self.edges.borrow_mut().clear();
                 // A div left out of this frame, as a head scrolled out of view, is over nothing.
                 self.hovers.borrow_mut().placed.clear();
                 let placings = self
@@ -930,6 +940,7 @@ impl Render for TypeScriptCard {
                 placings.for_each(Placing::forget_room);
                 let mut drawing = self.drawing(state, &table, window, cx);
                 drawing.lifting = Some((&parts.lifted, &self.lifted));
+                drawing.edges = self.frame.is_none().then_some(&self.edges);
                 let body = match table.root() {
                     Some(root) => drawing.draw(root),
                     None => div().into_any_element(),
