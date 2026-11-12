@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use gpui::{FontWeight, Hsla, SharedString};
 use sound_ui::LiveNotes;
-use sound_ui::theme::Theme;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
 };
+use sound_ui::theme::Theme;
 
 use crate::live::{DragNumbers, Sources, SpaceView};
 use crate::tokens::{TextVariant, Tone, tone_of};

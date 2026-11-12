@@ -40,8 +40,8 @@ fn drawn<'a>(table: &'a NodeTable, children: &'a [usize]) -> impl Iterator<Item 
 
 /// How many cells of each `Controls` a card shows before its expand icon.
 fn shown_cells(table: &NodeTable) -> usize {
-    let display = (table.entries())
-        .any(|entry| matches!(entry.props, Props::Display(_) | Props::Steps(_)));
+    let display =
+        (table.entries()).any(|entry| matches!(entry.props, Props::Display(_) | Props::Steps(_)));
     2 * if display {
         COLUMNS_BESIDE_DISPLAY
     } else {

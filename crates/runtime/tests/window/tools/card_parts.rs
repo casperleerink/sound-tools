@@ -194,7 +194,10 @@ fn rows_of_steps_stand_where_a_display_does_and_a_view_of_no_own_shows_them_for_
     // One over the other, at the left of the cells, of which two columns show as beside a
     // display.
     assert_eq!(kick.x, hat.x);
-    assert!(hat.y > kick.y && knob.x > kick.x, "{kick:?} {hat:?} {knob:?}");
+    assert!(
+        hat.y > kick.y && knob.x > kick.x,
+        "{kick:?} {hat:?} {knob:?}"
+    );
     assert!(window.find("space-knob-k").is_some());
     assert_eq!(window.find("space-knob-l"), None);
     assert!(window.find("card-rig/beat-expand").is_some());
