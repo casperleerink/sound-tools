@@ -322,7 +322,7 @@ tool({
   behaviour: (): Declaration => ({ connections: [] }),
   view: () => h("div", null,
     h(Space, { key: "gain", width: 20, height: 100 },
-      h(Rect, { x: 0, y: 0, width: 10, height: now.value("tone.gain", { played: true }).times(100), color: "#7ee0a0" }),
+      h(Rect, { x: 0, y: 0, width: 10, height: now.value("tone.gain").times(100), color: "#7ee0a0" }),
     ),
   ),
 });

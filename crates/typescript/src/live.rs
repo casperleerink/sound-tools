@@ -8,7 +8,7 @@ use sound_core::ValueRange;
 
 use crate::feeds::Feeds;
 use crate::tools::{Input, ToolInfo};
-use crate::tree::{DragPart, Live, Num, SpacePart};
+use crate::tree::{DragPart, Live, Num, SpacePart, named};
 
 /// Where a drag is, in the units of its space, as `now.drag(id)` reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -125,8 +125,9 @@ impl Sources<'_> {
         played.copied().or(input.start())
     }
 
-    /// The number `name` of the instance: a field, else a number input, else an output.
-    fn own(&self, name: &str, played: bool, fraction: bool) -> f64 {
+    /// The number `name` of the instance: a field as it plays, else a number input, else an
+    /// output.
+    fn own(&self, name: &str, fraction: bool) -> f64 {
         let along = |value: f32, range: Option<ValueRange>| {
             let range = range.filter(|_| fraction);
             f64::from(range.map_or(value, |range| range.position(value)))
@@ -135,14 +136,13 @@ impl Sources<'_> {
             info.field_at(name).is_some()
         });
         if field {
-            let playing = played.then(|| self.feeds.played.get(name)).flatten();
             let record = || {
                 (
                     self.field(name).unwrap_or(0.0),
                     field_range(self.info, name),
                 )
             };
-            let (value, range) = playing.copied().unwrap_or_else(record);
+            let (value, range) = (self.feeds.played.get(name).copied()).unwrap_or_else(record);
             return along(value, range);
         }
         if let Some(value) = self.input(name) {
@@ -175,21 +175,23 @@ impl Sources<'_> {
             Live::Value {
                 name,
                 child: None,
-                played,
                 fraction,
-            } => self.own(name, *played, *fraction),
+            } => self.own(name, *fraction),
             Live::Value {
                 name,
                 child: Some(child),
-                played,
                 fraction,
             } => {
                 let named = format!("{child}.{name}");
-                let playing = played.then(|| self.feeds.played.get(&named)).flatten();
-                match playing.or_else(|| self.feeds.inside.get(&named)) {
+                let field =
+                    (self.feeds.played.get(&named)).or_else(|| self.feeds.inside.get(&named));
+                match field {
                     Some(field) => along(*field, *fraction),
                     None => self.watches.get(&named).copied().map_or(0.0, f64::from),
                 }
+            }
+            Live::Held { name, child } => {
+                truth(self.feeds.held.contains(&named(child.as_deref(), name)))
             }
             Live::Peak {
                 name,
@@ -343,7 +345,7 @@ mod tests {
         assert_eq!(sources.number(&other), 0.0);
         let lit = live(serde_json::json!({
             "op": "eq",
-            "a": { "op": "floor", "x": { "op": "value", "name": "step", "played": false, "fraction": false } },
+            "a": { "op": "floor", "x": { "op": "value", "name": "step", "fraction": false } },
             "b": 3,
         }));
         assert_eq!(sources.number(&lit), 1.0);

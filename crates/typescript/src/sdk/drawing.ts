@@ -82,27 +82,30 @@ export type Shape =
         /**
          * Text at `x`, `y`, its top, in a step of the type scale as a `Text`: `variant` is `label`
          * and `tone` that of its variant when left out, and a `color` wins over the tone. A live
-         * number shows as a readout in `unit`, a pitch as its note (`"pitch"`: `C2` for 36), and
+         * number shows as a readout in `unit`, see `Unit`, and
          * a tick, such as `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"`
          * (the one there). Parts make one line in colours and weights of their own, such as a bar
          * number then a name.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; variant?: TextVariant; tone?: Tone; color?: Bind<Paint>; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "position" | "time" | "signature" | "beats" | "note"; variant?: TextVariant; tone?: Tone; color?: Bind<Paint>; align?: "left" | "center" | "right" }
         /**
-         * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
-         * its top (-1 and 1 when left out): a line `size` points thick, smooth for a history, or
-         * with `band` the lowest to the highest under each point, as a waveform. `text` when
+         * The values of `list`, oldest at the left, `low` at the bottom and `high` at the top (-1
+         * and 1 when left out), across the whole of its space, or the box `x`, `y`, `width` and
+         * `height` say: a line `size` points thick, smooth for a history, or with `band` the
+         * lowest to the highest under each point, as a waveform. A line about zero lies on a
+         * hairline at zero, and a history that is not full yet is empty at its left. `text` when
          * `color` is left out, as a value is; `green` is for sound that moves. `level` scales
          * them about the middle along it: `[x, factor]` from its left, straight between, so a
          * waveform shows its gain and fades.
          */
-        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color?: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
+        | ({ kind: "wave"; list: Bind<WaveList>; color?: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> } & Box)
         /**
          * The notes a `recorder` records so far, `list` its `now.take`, as a clip draws its own: its
-         * box spans the take from its start at the left to the playhead at the right, a line for
-         * each note between the lowest pitch at its foot and the highest at its top, 12 apart at least.
+         * box, as a wave's, spans the take from its start at the left to the playhead at the right,
+         * a line for each note between the lowest pitch at its foot and the highest at its top, 12
+         * apart at least.
          */
-        | { kind: "notes"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<TakeList>; color: Bind<Paint> }
+        | ({ kind: "notes"; list: Bind<TakeList>; color: Bind<Paint> } & Box)
         /**
          * A shape through `points`, in order, filled, or with `width` its outline that many points
          * wide, closed where its last point is its first: a fade's shade, a triangle, a curve. Give
@@ -110,6 +113,14 @@ export type Shape =
          */
         | { kind: "path"; points: Bind<PathPoints>; color: Bind<Paint>; width?: Bind<number> }
       ));
+
+/** Where a wave or notes are in their space: each edge left out is that edge of what shows of the space. */
+interface Box {
+  x?: Bind<Num>;
+  y?: Bind<Num>;
+  width?: Bind<Num>;
+  height?: Bind<Num>;
+}
 
 /** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
 export type PathPoint = readonly [Num, Num] | readonly [Num, Num, Num, Num] | readonly [Num, Num, Num, Num, Num, Num];
@@ -336,6 +347,24 @@ export interface TextProps {
  * changes moves nothing after it. `<Text variant="label" tone="muted">{() => `${state.notes.length} notes`}</Text>`
  */
 export const Text = ({ children, variant = "body", ...props }: TextProps): UiNode => element("div", { variant, ...props }, [children]);
+
+export interface RowProps {
+  /** Names it for tests, `div-<key>`. */
+  key?: string;
+  /** The room between its parts: `md` when left out. */
+  gap?: Spacing;
+  /** Where its parts sit up and down: in its middle when left out, or as tall as it when it grows. */
+  align?: Style["align"];
+  /** Where its parts sit along it. */
+  justify?: Style["justify"];
+  /** Takes the room left in its parent. */
+  grow?: boolean;
+  children?: Child;
+}
+
+/** Parts side by side with one room between them: the knobs under a display, the panels of a page. */
+export const Row = ({ key, children, gap = "md", grow, align = grow ? undefined : "center", justify }: RowProps): UiNode =>
+  element("div", { key, style: { direction: "row", gap, align, justify, grow } }, [children]);
 
 /** How a `div` lays out and looks. A gap, a padding and a radius name a step of their scale; a number is points, for what the scale cannot say. */
 export interface Style {

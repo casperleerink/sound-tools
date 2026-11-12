@@ -32,7 +32,7 @@ use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::DropdownMenu;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::renders::{self, Part};
-use sound_ui::{ActiveTheme, ControlEdit, Session, Shortcuts, Waveforms, every_poll};
+use sound_ui::{ActiveTheme, ControlEdit, Playhead, Session, Shortcuts, Waveforms, every_poll};
 
 use crate::bun::PageSize;
 use crate::feeds::{Drawn, Feeds};
@@ -498,7 +498,7 @@ impl TypeScriptCard {
         };
         let parts = self.parts(cx);
         let session = self.session.read(cx);
-        let tick = session.playhead().read(cx).tick;
+        let playhead = *session.playhead().read(cx);
         let recording = session.recording().read(cx);
         let input = recording.input_levels();
         // A take grows with every poll while it records, as a held note does.
@@ -512,7 +512,8 @@ impl TypeScriptCard {
         };
         let feeds = &mut self.feeds;
         let mut changed = |uses, part| {
-            growing(uses) || feeds.changed(session, (&self.id, &state), (uses, part), tick, input)
+            growing(uses)
+                || feeds.changed(session, (&self.id, &state), (uses, part), playhead, input)
         };
         let body = changed(&parts.body, Drawn::Body);
         let title_bar =
@@ -541,8 +542,8 @@ impl TypeScriptCard {
         }
         if let Some(state) = self.state(cx) {
             let uses = self.live.read(cx).uses(self.card);
-            let tick = self.session.read(cx).playhead().read(cx).tick;
-            self.read_frame(&state, &uses, tick, cx);
+            let playhead = *self.session.read(cx).playhead().read(cx);
+            self.read_frame(&state, &uses, playhead, cx);
         }
         if title_bar {
             cx.emit(TitleBarChanged);
@@ -669,11 +670,12 @@ impl TypeScriptCard {
         &mut self,
         state: &Value,
         uses: &Uses,
-        tick: sound_core::Ticks,
+        playhead: Playhead,
         cx: &mut Context<Self>,
     ) {
         self.feeds.files.retain(|file, _| uses.files.contains(file));
         let assets = self.session.read(cx).project().assets().clone();
+        self.show_sounds(uses, cx);
         for file in &uses.files {
             let Ok(asset) = AudioAsset::new(file) else {
                 continue;
@@ -703,7 +705,26 @@ impl TypeScriptCard {
             .collect();
         let now = cx.background_executor().now();
         let session = self.session.read(cx);
-        (self.feeds).read(session, &self.id, state, uses, tick, now);
+        (self.feeds).read(session, &self.id, state, uses, playhead, now);
+    }
+
+    /// Asks its instance to keep each sound a wave of `uses` draws that nothing keeps yet: what
+    /// it plays, or a child of it that is no meter. Its behaviour then runs again, after this
+    /// frame.
+    fn show_sounds(&self, uses: &Uses, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let new = (uses.scopes.iter())
+            .filter(|name| crate::feeds::scope_of(project, &self.id, name).is_none())
+            .filter(|name| crate::tools::show_sound(project.assets(), &self.id, name))
+            .count();
+        if new > 0 {
+            let (session, id) = (self.session.clone(), self.id.clone());
+            cx.defer(move |cx| {
+                session.update(cx, |session, cx| {
+                    session.rebind(std::slice::from_ref(&id), cx)
+                });
+            });
+        }
     }
 
     /// The spaces the layer over the page draws, each where the page laid it out, from the
@@ -893,7 +914,7 @@ impl Render for TypeScriptCard {
         if self.parts(cx).body.animates {
             window.request_animation_frame();
         }
-        self.read_frame(&state, &uses, playhead.tick, cx);
+        self.read_frame(&state, &uses, playhead, cx);
         let body = match tree {
             Some(Ok(table)) => {
                 let parts = self.parts(cx);

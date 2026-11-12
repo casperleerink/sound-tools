@@ -23,8 +23,8 @@ export const returnTitle = ({ returns }: Page, send: string) =>
 /** The volume of the fader `path` over `meter`, as the window drew a strip's, and under it its gain, to drag or type. */
 export const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
   <>
-    <Fader field={`${path}.gain_db`} length={length} default={0} label="Change the volume" played meter={meter} />
-    <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" played max={6} label="Change the volume" width={56} size="sm" height={16} align="center" />
+    <Fader field={`${path}.gain_db`} length={length} default={0} label="Change the volume" meter={meter} />
+    <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label="Change the volume" width={56} size="sm" height={16} align="center" />
   </>
 );
 

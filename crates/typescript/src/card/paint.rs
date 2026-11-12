@@ -7,7 +7,7 @@ use gpui::{
     App, Bounds, Corners, FontWeight, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString,
     TextAlign, TextRun, Window, fill, outline, point, px, size,
 };
-use sound_ui::typography;
+use sound_ui::{ActiveTheme, typography};
 
 use crate::tree::{Align, Cursor, Weight};
 
@@ -323,7 +323,9 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 window.paint_path(path, color);
             }
         }
-        PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
+        PaintedShape::Wave(bounds, wave) => {
+            paint_wave(*bounds, wave, (color, cx.theme().border()), window);
+        }
         PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
         PaintedShape::Path(bends, outline) => {
             let mut path = match outline {
@@ -444,13 +446,17 @@ fn paint_notes(bounds: Bounds<Pixels>, notes: &Notes, color: Hsla, window: &mut 
 }
 
 /// Paints a wave across `bounds`: a line through one value per point, or a band from the lowest
-/// to the highest value under each point.
-fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Window) {
+/// to the highest value under each point. A line about zero lies on a hairline at zero, in
+/// `rule`, so silence and no values yet do not look alike. Where a value is no number, as
+/// before a history is full, nothing is drawn.
+fn paint_wave(
+    bounds: Bounds<Pixels>,
+    wave: &Wave,
+    (color, rule): (Hsla, Hsla),
+    window: &mut Window,
+) {
     let values = &wave.values;
     let columns = (f32::from(bounds.size.width).round() as usize).clamp(2, 4096);
-    if values.len() < 2 {
-        return;
-    }
     let span = wave.high - wave.low;
     let height = f32::from(bounds.size.height);
     let y_of = |value: f32| {
@@ -461,6 +467,16 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
         };
         bounds.origin.y + px(height * (1.0 - along.clamp(0.0, 1.0)))
     };
+    if !wave.band && wave.low < 0.0 && wave.low == -wave.high {
+        let zero = point(bounds.origin.x, y_of(0.0) - px(0.5));
+        window.paint_quad(fill(
+            Bounds::new(zero, size(bounds.size.width, px(1.0))),
+            rule,
+        ));
+    }
+    if values.len() < 2 {
+        return;
+    }
     let x_of = |column: usize, of: usize| {
         bounds.origin.x + bounds.size.width * (column as f32 / (of - 1).max(1) as f32)
     };
@@ -476,26 +492,37 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
         // outline is smooth.
         let middle = (wave.low + wave.high) / 2.0;
         let edges: Vec<(Pixels, Pixels, Pixels)> = (0..columns)
-            .map(|column| {
-                let under = under(column);
+            .filter_map(|column| {
+                let under = || {
+                    under(column)
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_finite())
+                };
+                under().next()?;
                 let fraction = (column as f32 + 0.5) / columns as f32;
                 let factor = wave.level_at(fraction);
                 let scaled = |value: f32| middle + (value - middle) * factor;
-                let low = scaled(under.iter().copied().fold(f32::INFINITY, f32::min));
-                let high = scaled(under.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+                let low = scaled(under().fold(f32::INFINITY, f32::min));
+                let high = scaled(under().fold(f32::NEG_INFINITY, f32::max));
                 let (top, bottom) = (y_of(high), y_of(low));
                 // At least a point thick, so silence shows as a line.
                 let thin = (px(1.0) - (bottom - top)).max(px(0.0)) / 2.0;
                 let x = bounds.origin.x + bounds.size.width * fraction;
-                (x, top - thin, bottom + thin)
+                Some((x, top - thin, bottom + thin))
             })
             .collect();
         let (Some(first), Some(last)) = (edges.first(), edges.last()) else {
             return;
         };
+        // To the edges of its box, from where its values start.
+        let left = match edges.len() == columns {
+            true => bounds.origin.x,
+            false => first.0,
+        };
         let right = bounds.origin.x + bounds.size.width;
         let mut shape = gpui::PathBuilder::fill();
-        shape.move_to(point(bounds.origin.x, first.1));
+        shape.move_to(point(left, first.1));
         for (x, top, _) in &edges {
             shape.line_to(point(*x, *top));
         }
@@ -504,7 +531,7 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
         for (x, _, bottom) in edges.iter().rev() {
             shape.line_to(point(*x, *bottom));
         }
-        shape.line_to(point(bounds.origin.x, first.2));
+        shape.line_to(point(left, first.2));
         shape.close();
         if let Ok(path) = shape.build() {
             window.paint_path(path, color);
@@ -513,16 +540,19 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
     }
     let middle = (wave.low + wave.high) / 2.0;
     let points: Vec<Point<Pixels>> = (0..columns)
-        .map(|column| {
-            let value = under(column).first().copied().unwrap_or_default();
+        .filter_map(|column| {
+            let value = (under(column).first().copied()).filter(|value| value.is_finite())?;
             let factor = wave.level_at(column as f32 / (columns - 1).max(1) as f32);
             let value = middle + (value - middle) * factor;
-            point(x_of(column, columns), y_of(value))
+            Some(point(x_of(column, columns), y_of(value)))
         })
         .collect();
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return;
     };
+    if points.len() < 2 {
+        return;
+    }
     // A curve from the middle of one stretch to the middle of the next, bent at the point
     // between them: a value that steps, as one read once a frame does, draws as a smooth line.
     let mut path = gpui::PathBuilder::stroke(px(wave.line));

@@ -3,7 +3,7 @@
 //! cables play them, and what eases from frame to frame.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use sound_core::{Clock, InstanceId, Peaks, Project, RecordStamp, Scope, Ticks, ValueRange};
 use sound_media::Overview;
-use sound_ui::{LiveNotes, PeaksReader, Session, SharedPeaks};
+use sound_ui::{LiveNotes, PeaksReader, Playhead, Session, SharedPeaks};
 
 use crate::meter;
 use crate::tree::{Ease, Uses};
@@ -78,6 +78,8 @@ pub(crate) struct Feeds {
     pub input: Vec<f32>,
     /// Numbers as they play, by the name the tree reads them by, with how their knob turns.
     pub played: HashMap<String, (f32, Option<ValueRange>)>,
+    /// Those of `played` a lane or a cable moves and holds, see [`lane_value`].
+    pub held: HashSet<String>,
     /// Fields of instances inside it, as `path.field`.
     pub inside: HashMap<String, (f32, Option<ValueRange>)>,
     /// The last frames of each scope the tree draws, oldest first, and how far it was read.
@@ -149,7 +151,7 @@ impl Feeds {
         id: &InstanceId,
         state: &Value,
         uses: &Uses,
-        tick: Ticks,
+        playhead: Playhead,
         now: Instant,
     ) {
         let started = *self.started.get_or_insert(now);
@@ -199,10 +201,15 @@ impl Feeds {
         self.inside = (uses.inside.iter())
             .filter_map(|name| Some((name.clone(), child_field(project, id, name, records)?)))
             .collect();
+        let at = Moment::of(session, playhead);
+        self.held.clear();
         self.played = (uses.played.iter())
             .filter_map(|name| {
-                let value = played(project, (id, state), name, tick, records)?;
-                Some((name.clone(), value))
+                let (value, range, held) = played(project, (id, state), name, at, records)?;
+                if held {
+                    self.held.insert(name.clone());
+                }
+                Some((name.clone(), (value, range)))
             })
             .collect();
         self.scopes.retain(|name, _| uses.scopes.contains(name));
@@ -234,7 +241,7 @@ impl Feeds {
         session: &Session,
         (id, state): (&InstanceId, &Value),
         (uses, part): (&Uses, Drawn),
-        tick: Ticks,
+        playhead: Playhead,
         input: &[f32],
     ) -> bool {
         if self.polled.0 != self.frame {
@@ -259,9 +266,12 @@ impl Feeds {
         let new_output =
             uses.output && (self.output_reader.as_ref()).is_none_or(|reader| !reader.is_silent());
         let records = &mut self.records;
+        let at = Moment::of(session, playhead);
         let new_played = (uses.played.iter()).any(|name| {
-            let now = played(project, (id, state), name, tick, records);
-            now.map(|(value, _)| value) != self.played.get(name).map(|(value, _)| *value)
+            let now = played(project, (id, state), name, at, records);
+            let before = self.played.get(name);
+            now.map(|(value, _, held)| (value, held))
+                != before.map(|(value, _)| (*value, self.held.contains(name)))
         });
         new_peaks || new_output || (uses.input && self.input != input) || new_played
     }
@@ -359,8 +369,8 @@ impl Feeds {
     }
 
     /// The last `frames` values of `value` under `key`, one a frame, oldest first. Before it
-    /// has that many, the first it has stands for the frames before it, so a wave of it moves
-    /// in from the right at the speed it keeps.
+    /// has that many, the frames before its first are no number, which a wave leaves empty: it
+    /// moves in from the right at the speed it keeps, and nothing reads as a value before it.
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {
         let mut histories = self.histories.borrow_mut();
         let (last, values) = histories.entry(key.to_string()).or_default();
@@ -371,8 +381,7 @@ impl Feeds {
             values.drain(..over);
         }
         let missing = (frames as usize).saturating_sub(values.len());
-        let first = values.front().copied();
-        (first.into_iter().cycle().take(missing))
+        (std::iter::repeat_n(f32::NAN, missing))
             .chain(values.iter().copied())
             .collect()
     }
@@ -409,9 +418,13 @@ fn shared_reader(key: &str, peaks: &Peaks) -> PeaksReader {
     })
 }
 
-/// The last sound of the `meter` at the path `name` inside the instance.
-fn scope_of(project: &Project, id: &InstanceId, name: &str) -> Option<Scope> {
-    project.scope(&id.child(name).ok()?, meter::LEVEL)
+/// The last sound at the path `name` inside the instance: what the `meter` there hears, else
+/// what the child there plays; with no path, what the instance plays. The instance keeps the
+/// last two once [`show_sound`](crate::tools::show_sound) asked for them.
+pub(crate) fn scope_of(project: &Project, id: &InstanceId, name: &str) -> Option<Scope> {
+    let meter = id.child(name).ok();
+    let heard = meter.and_then(|meter| project.scope(&meter, meter::LEVEL));
+    heard.or_else(|| project.scope(id, &crate::tools::scope_name(name)))
 }
 
 /// The field `path.field` of the record of an instance inside `id`, with how its knob turns.
@@ -435,29 +448,55 @@ fn child_field(
     Some((value, range))
 }
 
-/// The number `name` as it plays: of an instance inside it, `path.number`, what a cable plays
-/// into it, else what a lane plays, else its record; of the instance, what a lane plays, else its
-/// record.
+/// Where the piece plays, and whether a hand on a number a lane moves writes into the lane now.
+#[derive(Clone, Copy)]
+pub(crate) struct Moment {
+    tick: Ticks,
+    writes: bool,
+}
+
+impl Moment {
+    pub(crate) fn of(session: &Session, playhead: Playhead) -> Self {
+        Self {
+            tick: playhead.tick,
+            writes: session.writes_automation() && playhead.playing,
+        }
+    }
+}
+
+/// What a lane or a cable plays into the number `number` of `instance` now, and whether it
+/// holds its control: the lane decides the value, not the composer, unless a hand writes into
+/// the lane. `None` while nothing moves the number.
+pub(crate) fn lane_value(
+    project: &Project,
+    instance: &InstanceId,
+    number: &str,
+    at: Moment,
+) -> Option<(f32, bool)> {
+    let lanes = project.lanes(instance)?;
+    let mut values: Vec<(Arc<str>, f32)> = Vec::new();
+    lanes.values_at(at.tick, &mut values);
+    let (_, value) = values.into_iter().find(|(each, _)| **each == *number)?;
+    Some((value, !(at.writes && lanes.source(number).is_some())))
+}
+
+/// The number `name` as it plays, and whether what plays it holds it: of an instance inside
+/// it, `path.number`, what a cable plays into it, else what a lane plays, else its record; of
+/// the instance, what a lane plays, else its record.
 fn played(
     project: &Project,
     (id, state): (&InstanceId, &Value),
     name: &str,
-    tick: Ticks,
+    at: Moment,
     records: &mut Records,
-) -> Option<(f32, Option<ValueRange>)> {
-    let lane = |instance: &InstanceId, number: &str| {
-        let lanes = project.lanes(instance)?;
-        let mut values: Vec<(Arc<str>, f32)> = Vec::new();
-        lanes.values_at(tick, &mut values);
-        values
-            .into_iter()
-            .find(|(each, _)| **each == *number)
-            .map(|(_, value)| value)
-    };
+) -> Option<(f32, Option<ValueRange>, bool)> {
     let (Some(path), number) = crate::path::split(name) else {
         let range = project.automation(id, name).map(|number| number.range);
         let record = crate::path::at(state, name).and_then(crate::tree::number_of);
-        return Some((lane(id, name).or(record)?, range));
+        return match lane_value(project, id, name, at) {
+            Some((value, held)) => Some((value, range, held)),
+            None => Some((record?, range, false)),
+        };
     };
     let inner = id.child(path).ok()?;
     // The owner whose behaviour wires the cable keeps what it plays, by its child's name.
@@ -465,10 +504,9 @@ fn played(
     let cable = (project.watched(&owner, &played_name(&format!("{}.{number}", inner.name()))))
         .filter(|value| value.is_finite());
     let (record, range) = child_field(project, id, name, records)?;
-    Some((
-        cable.or_else(|| lane(&inner, number)).unwrap_or(record),
-        range,
-    ))
+    let lane = lane_value(project, &inner, number, at);
+    let value = cable.or(lane.map(|(value, _)| value)).unwrap_or(record);
+    Some((value, range, lane.is_some_and(|(_, held)| held)))
 }
 
 #[cfg(test)]

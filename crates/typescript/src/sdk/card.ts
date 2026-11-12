@@ -24,7 +24,7 @@ export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag"
  * are shapes, as a `Space`'s, in a space 1 wide and 1 tall whatever its size in points: `x` 0 is
  * its left and 1 its right, `y` 0 its top and 1 its bottom, a little inside its edges. It hears
  * the pointer as a `Space`.
- * `<Display caption="Level"><Wave x={0} y={0} width={1} height={1} list={...} /></Display>`
+ * `<Display caption="Level"><Wave list={now.scope()} /></Display>`
  */
 export const Display = ({ caption, control, wide, ...space }: DisplayProps): UiNode =>
   element("display", { caption, wide }, [control, Space(space)]);
@@ -73,7 +73,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
             next[name] = !on;
           });
         };
-        cells.push(Cell({ label, children: Toggle({ label: () => (state[name] ? "On" : "Off"), on: () => state[name] as boolean, onClick: turn }) }));
+        cells.push(Cell({ children: Toggle({ label, on: () => state[name] as boolean, onClick: turn }) }));
       } else if (field.kind === "choice") {
         const options = field.options.map((option) => ({ value: option, label: words(String(option)) }));
         // More than a few side by side would make the card wide.

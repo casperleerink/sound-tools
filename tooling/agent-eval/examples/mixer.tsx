@@ -38,7 +38,7 @@ function Fader({ name, child, level }: { name: string; child: string; level: (ch
 
 /** A pan knob that shows the pan as it plays, so a cable into it moves it. */
 function Pan({ name, child }: { name: string; child: string }) {
-  const angle = now.value(`${child}.pan`, { played: true, fraction: true }).minus(0.5).times(0.75);
+  const angle = now.value(`${child}.pan`, { fraction: true }).minus(0.5).times(0.75);
   return (
     <Space key={`pan-${name}`} width={40} height={36} cursor="ns-resize" drag={{ y: { value: `${child}.pan`, default: 0, label: "Change the pan" } }}>
       <Arc x={20} y={18} radius={12} from={-0.375} to={0.375} color="fill-strong" width={3} />
