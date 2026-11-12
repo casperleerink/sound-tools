@@ -25,6 +25,8 @@ function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
       top = only;
       if (made.length !== 1 || !only || only.family === "marker" || only.family === "text") {
         top = makeNode("div");
+        // The parts of a card, which the window puts side by side.
+        top.props.layout = "card";
         send(top);
         for (const child of made as Made[]) {
           (top.children ??= new Set()).add(child);

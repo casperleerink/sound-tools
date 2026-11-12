@@ -69,7 +69,7 @@ impl Drawing<'_> {
         let selector = format!("segmented-{}", props.key.as_deref().unwrap_or_default());
         let control = SegmentedControl::new(ElementId::Name(name.into()), chosen)
             .options(options)
-            .size(props.size.unwrap_or_default())
+            .size(props.size.unwrap_or(self.control_size))
             .disabled(props.disabled == Some(true))
             .when(props.on_change == Some(true), |control| {
                 let card = self.card.clone();
@@ -223,7 +223,7 @@ impl Drawing<'_> {
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
-            .size(props.size.unwrap_or_default())
+            .size(props.size.unwrap_or(self.control_size))
             .when(hears.click, |toggle| toggle.on_click(self.clicked(id)))
             .when_some(props.color, |toggle, color| toggle.color(color.0))
             .when_some(
@@ -273,7 +273,7 @@ impl Drawing<'_> {
             .tab_stop(hears.click)
             .when(hears.click, |button| button.on_click(self.clicked(id)))
             .variant(variant)
-            .size(props.size.unwrap_or_default())
+            .size(props.size.unwrap_or(self.control_size))
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
             .when_some(props.opacity, |button, opacity| button.opacity(opacity))

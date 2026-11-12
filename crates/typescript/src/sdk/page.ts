@@ -1,52 +1,45 @@
 // The parts of a view that fills the window: the page, the panels on it and the transport.
 
 import { Meter, NumberBox } from "./components";
-import { Button, Color, h, Label, Space, Style, Text } from "./drawing";
+import { Button, Color, h, Label, Space, Style, Text, Tone } from "./drawing";
+import { host } from "./host";
 import { Clock, Live, now, TempoMap } from "./live";
 import { Child, currentCard, element, UiNode } from "./nodes";
 import { Accessor, Bind } from "./reactivity";
 import { Action, Frozen } from "./tools";
 
-export type PageProps = {
+export interface PageProps {
   /**
    * What it shows in the window's title bar, side by side in the middle of the room right of the
    * project menu: a `Transport`, the tool's own controls. A page that is not the window's shows none.
    */
   header?: Child;
+  /** Its content reaches the edges of the window and does not scroll: one surface, such as a canvas or a timeline. */
+  flush?: boolean;
   children?: Child;
-} & (
-  | {
-      /** The widest its content gets, in points, in the middle of the window: 720 reads well for text. As wide as the window when left out. */
-      maxWidth?: number;
-      flush?: never;
-    }
-  | {
-      /** Its content reaches the edges of the window and does not scroll: one surface, such as a canvas or a timeline. */
-      flush: true;
-      maxWidth?: never;
-    }
-);
+}
 
 /**
  * The top of a view that fills the window: its content one under the other with the room of the
- * app around and between, scrolling down where the window is too small for it. A part with
- * `grow` takes the room that is left, down to what it needs: a `Space` its `height`.
+ * app around and between, scrolling down where the window is too small for it. A part is as wide
+ * as what is in it and sits in the middle of the window, so a page smaller than the window is in
+ * its middle. A part with `grow` is as wide as the window and takes the room that is left, down
+ * to what it needs: a `Space` its `height`.
  */
-export function Page({ header, children, flush, maxWidth }: PageProps): UiNode {
+export function Page({ header, children, flush }: PageProps): UiNode {
   const bar = header === undefined ? null : element("div", { titleBar: true, style: { direction: "row", align: "center", gap: "md" } }, [header]);
   if (flush) return h("div", { style: { grow: true } }, bar, children);
-  // A row, so the content grows to `maxWidth` across and sits in the middle of what is left.
-  const body: Style = { grow: true, scroll: "y", direction: "row", justify: "center", padding: "xl" };
-  return h("div", { style: { grow: true } }, bar, h("div", { style: body }, h("div", { style: { grow: true, maxWidth, gap: "lg" } }, children)));
+  const content = element("div", { layout: "page", style: { grow: true, gap: "lg", justify: "center" } }, [children]);
+  return h("div", { style: { grow: true } }, bar, h("div", { style: { grow: true, scroll: "y", padding: "xl" } }, content));
 }
 
 export interface PanelProps {
   /** Names it for tests, `div-<key>`. */
   key?: string;
   title?: Bind<string>;
-  /** Takes the room left in the page, or in the div it is in, with the other parts that grow. */
+  /** Takes the room left in the page, or in the div it is in, with the other parts that grow. As wide as its content when left out. */
   grow?: boolean;
-  /** In points, for one beside a panel that grows, such as a list: as wide as its content when left out. */
+  /** In points, for one whose content changes beside a panel that grows, such as a list. */
   width?: number;
   children?: Child;
 }
@@ -56,8 +49,8 @@ export const Panel = ({ key, title, grow, width, children }: PanelProps): UiNode
   h("div", { key, style: { grow, width, keep: width !== undefined, gap: "md", padding: "lg", radius: "lg", background: "surface", borderColor: "border", borderWidth: 1 } },
     title === undefined ? null : Text({ variant: "heading", children: title }), children);
 
-/** Space plays and pauses the piece, wherever the focus is: `actions: { play: playPause }`. Named `play`, its key shows on the transport's button. */
-export const playPause: Action<{ clock: Clock }> = {
+/** What a `Transport` gives its tool as the action `play`, which its button shows the key of. */
+const playPause: Action<{ clock: Clock }> = {
   title: "Play or pause",
   keys: ["space"],
   everywhere: true,
@@ -80,12 +73,12 @@ function signatureAt(runs: Frozen<TempoMap>["time_signatures"], tick: number): {
 }
 
 /** A readout of a tick of the clock as it moves, in the pill's text. */
-const clockText = (key: string, width: number, unit: "position" | "time", color: Color, text: Live = now.tick) =>
-  Space({ key, width, height: 18, children: Label({ x: 0, y: 0, text, unit, color, size: 14 }) });
+const clockText = (key: string, width: number, unit: "position" | "time", tone: Tone, text: Live = now.tick) =>
+  Space({ key, width, height: 18, children: Label({ x: 0, y: 0, text, unit, variant: "body", tone }) });
 
 /** A word of the pill `x` points into its room, such as the unit of the number before it. */
 const word = (key: string, width: number, x: number, text: string) =>
-  Space({ key, width, height: 18, children: Label({ x, y: 2, text, color: "text-muted", size: 12 }) });
+  Space({ key, width, height: 18, children: Label({ x, y: 2, text, tone: "muted" }) });
 
 export interface TransportProps {
   /** A record button: whether it records, and what a press does. An action of the tool named `record` shows its key on it. */
@@ -100,10 +93,13 @@ export interface TransportProps {
  * The transport of the piece, a pill for the `header` of a `Page`: play and pause, stop, where
  * the piece plays as a bar and a beat and as a time, the tempo and the time signature that play
  * there, which a drag up or down or a typed number changes as one undo step, the click and the
- * meter of what the device plays.
+ * meter of what the device plays. Space plays and pauses a tool that shows it, wherever the
+ * focus is: it gives the tool the action `play`, unless the tool has its own.
  */
 export function Transport({ record, computerKeys, writeAutomation }: TransportProps = {}): UiNode {
   const { clock, tool } = currentCard().drawn;
+  const spec = host.tools.get(tool);
+  if (spec && spec.actions?.play === undefined) spec.actions = { play: playPause, ...spec.actions };
   const pill: Style = {
     direction: "row", align: "center", gap: "md", height: 36, paddingLeft: "xs", paddingRight: "lg",
     radius: "full", background: "fill-strong", borderColor: "border-strong", borderWidth: 1, keep: true,
@@ -142,7 +138,7 @@ export function Transport({ record, computerKeys, writeAutomation }: TransportPr
       record && Button({ ...round, key: "record", icon: "circle", variant: () => (record.on() ? "solid" : "ghost"), color: "red", tooltip: "Record", shortcut: `${tool}.record`, onClick: record.press }),
     ),
     clockText("transport-position", 44, "position", "text"),
-    clockText("transport-time", 40, "time", "text-muted"),
+    clockText("transport-time", 40, "time", "muted"),
     h("div", { style: row },
       NumberBox({ key: "transport-tempo", width: 32, per: 2, min: 10, max: 1000, value: () => clock.bpm, onChange: setTempo, show: now.bpm.round() }),
       word("transport-bpm", 32, 0, "bpm"),

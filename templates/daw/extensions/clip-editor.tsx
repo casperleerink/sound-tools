@@ -427,7 +427,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
             ];
           }}
         </For>
-        <Label x={() => space.pointX.times(8).plus(points()[0]?.at ?? 0)} y={0.08} text={() => (points().length === 0 ? "Double-click to add a point" : "")} size={11} color="text-muted" />
+        <Label x={() => space.pointX.times(8).plus(points()[0]?.at ?? 0)} y={0.08} text={() => (points().length === 0 ? "Double-click to add a point" : "")} color="text-muted" />
       </>
     );
   };
@@ -468,7 +468,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
           <For each={() => bars().map((tick, index) => ({ tick, index }))}>
             {({ tick, index }) => [
               <Rect x={tick} y={RULER - 8} width={space.pointX} height={8} color="border-strong" />,
-              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} size={12} color="text-muted" />,
+              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} color="text-muted" />,
             ]}
           </For>
         </Space>
@@ -485,7 +485,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
               onPress={() => preview(pitch)} />
           ))}
           {pitches.filter((pitch) => pitch % 12 === 0).map((pitch) => (
-            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch)} text={`C${pitch / 12 - 1}`} size={12} color="text-muted" align="right" />
+            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch)} text={`C${pitch / 12 - 1}`} color="text-muted" align="right" />
           ))}
         </Space>
         <Rule />

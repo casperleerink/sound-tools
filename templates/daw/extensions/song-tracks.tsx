@@ -42,7 +42,7 @@ export const Heads = ({ page }: { page: Page }) => {
             <div style={{ grow: true, justify: "center", gap: 2, paddingLeft: 36, paddingRight: 8 }}>
               <div style={{ fontSize: 12, color: "text-secondary" }}>Tempo</div>
               <div style={{ direction: "row", align: "center", gap: 3 }}>
-                <Space key="tempo-value" width={28} height={16}><Label x={0} y={1} text={now.bpm.round()} size={12} color="text-muted" /></Space>
+                <Space key="tempo-value" width={28} height={16}><Label x={0} y={1} text={now.bpm.round()} color="text-muted" /></Space>
                 <div style={{ fontSize: 12, color: "text-muted" }}>bpm</div>
               </div>
             </div>

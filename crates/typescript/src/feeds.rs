@@ -358,7 +358,9 @@ impl Feeds {
         kept.value
     }
 
-    /// The last `frames` values of `value` under `key`, one a frame, oldest first.
+    /// The last `frames` values of `value` under `key`, one a frame, oldest first. Before it
+    /// has that many, the first it has stands for the frames before it, so a wave of it moves
+    /// in from the right at the speed it keeps.
     pub(crate) fn history(&self, key: &str, frames: u32, value: f64) -> Vec<f32> {
         let mut histories = self.histories.borrow_mut();
         let (last, values) = histories.entry(key.to_string()).or_default();
@@ -368,7 +370,11 @@ impl Feeds {
             let over = values.len().saturating_sub(frames as usize);
             values.drain(..over);
         }
-        values.iter().copied().collect()
+        let missing = (frames as usize).saturating_sub(values.len());
+        let first = values.front().copied();
+        (first.into_iter().cycle().take(missing))
+            .chain(values.iter().copied())
+            .collect()
     }
 }
 

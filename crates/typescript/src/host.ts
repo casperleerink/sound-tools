@@ -237,6 +237,8 @@ async function load() {
 function described(spec: Spec, file: string) {
   const inputs = Object.entries(spec.inputs ?? {});
   const sounds = combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))] as const);
+  // Before its actions are read: a `Transport` in its view gives it `play`.
+  const view = made(() => draw(spec));
   return {
     info: {
       name: spec.name,
@@ -262,7 +264,7 @@ function described(spec: Spec, file: string) {
       children: spec.children,
     },
     sounds,
-    view: made(() => draw(spec)),
+    view,
   };
 }
 

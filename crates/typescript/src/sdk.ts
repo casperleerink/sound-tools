@@ -80,7 +80,7 @@ export type {
 } from "./sdk/components";
 // a view that fills the window: `Page`, `Panel` and `Transport`
 export {
-  Page, Panel, playPause, Transport
+  Page, Panel, Transport
 } from "./sdk/page";
 export type {
   PageProps, PanelProps, TransportProps

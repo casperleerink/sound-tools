@@ -147,7 +147,7 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
         const { unit, times } = readoutOf(number);
         return (
           <Space key={`lane-value-${track}-${lane.lane}`} width={READOUT} height={16}>
-            <Label x={0} y={1} text={played.times(times)} unit={unit} size={12} color="text-muted" />
+            <Label x={0} y={1} text={played.times(times)} unit={unit} color="text-muted" />
           </Space>
         );
       }}
@@ -432,7 +432,7 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
             // Its unit is known once the range of the number is.
             () => (
               <Label x={() => timeline.pointX.times(42).plus(x())} y={() => timeline.pointY.times(-7).plus(y())}
-                text={value} unit={readout().unit} size={12} color="text" align="center" opacity={shown} />
+                text={value} unit={readout().unit} color="text" align="center" opacity={shown} />
             ),
           ];
         }}

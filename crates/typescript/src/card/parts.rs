@@ -1,11 +1,12 @@
 //! The parts of a device card a view names, drawn with what draws the built-in cards: the
-//! display at its left, and its cells in two rows, of which the first columns show and the rest
-//! wait behind the expand icon of the card.
+//! display at its left, or its rows of steps there, and its cells in two rows, of which the first
+//! columns show and the rest wait behind the expand icon of the card.
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ElementId, Empty, GlobalElementId, InspectorElementId,
     LayoutId, Pixels, SharedString, Size, Window, div, point, prelude::*, px, size,
 };
+use sound_ui::ControlSize;
 use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::Section;
 use sound_ui::components::display::{self, Display};
@@ -14,8 +15,11 @@ use crate::tree::{Axes, CellProps, DisplayProps, NodeTable, Props};
 
 use super::drawing::Drawing;
 
-/// The columns of cells a card shows before its expand icon: beside a display, as the built-in
-/// cards, and with no display.
+/// From the edges of a display to what its view draws in it, as the waveforms of the built-in
+/// cards keep: a line at 0 or 1 shows whole, and a handle there is not cut in half.
+const DISPLAY_MARGIN: f32 = 6.;
+/// The columns of cells a card shows before its expand icon: beside a display or rows of steps,
+/// as the built-in cards, and alone.
 const COLUMNS_BESIDE_DISPLAY: usize = 2;
 const COLUMNS_ALONE: usize = 4;
 
@@ -31,7 +35,8 @@ fn drawn<'a>(table: &'a NodeTable, children: &'a [usize]) -> impl Iterator<Item 
 
 /// How many cells of each `Controls` a card shows before its expand icon.
 fn shown_cells(table: &NodeTable) -> usize {
-    let display = (table.entries()).any(|entry| matches!(entry.props, Props::Display(_)));
+    let display =
+        (table.entries()).any(|entry| matches!(entry.props, Props::Display(_) | Props::Steps(_)));
     2 * if display {
         COLUMNS_BESIDE_DISPLAY
     } else {
@@ -48,6 +53,34 @@ pub(super) fn hides_cells(table: &NodeTable) -> bool {
 }
 
 impl Drawing<'_> {
+    /// The parts of a card side by side: its rows of steps one over the other where a display
+    /// is, then its display and its cells.
+    pub(super) fn card_row(&mut self, children: &[usize]) -> AnyElement {
+        let table = self.table;
+        let is_steps = |slot: &usize| {
+            let props = table.get(*slot).map(|entry| &entry.props);
+            matches!(props, Some(Props::Steps(_)))
+        };
+        let (steps, rest): (Vec<usize>, Vec<usize>) = drawn(table, children).partition(is_steps);
+        let rows = (!steps.is_empty()).then(|| {
+            (div().flex().flex_col().flex_none().justify_center())
+                .mr(px(display::GAP))
+                .children(steps.into_iter().map(|row| self.draw(row)))
+        });
+        (div().flex().flex_none().h(px(ROW_HEIGHT * 2.)))
+            .children(rows)
+            .children(rest.into_iter().map(|part| self.draw(part)))
+            .into_any_element()
+    }
+
+    /// Draws with the controls that name no size small, as a card has them.
+    fn small<T>(&mut self, draw: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::replace(&mut self.control_size, ControlSize::Sm);
+        let drawn = draw(self);
+        self.control_size = outer;
+        drawn
+    }
+
     pub(super) fn display(
         &mut self,
         id: u64,
@@ -64,17 +97,23 @@ impl Drawing<'_> {
         let (spaces, controls): (Vec<usize>, Vec<usize>) =
             drawn(table, children).partition(is_space);
         let (width, height) = Display::drawing_size(wide, !controls.is_empty());
+        let controls: Vec<AnyElement> = self.small(|drawing| {
+            (controls.into_iter())
+                .map(|control| drawing.draw(control))
+                .collect()
+        });
         let mut display = Display::new(ElementId::Name(name.into()))
             .when(wide, Display::wide)
             .when_some(props.caption.clone(), Display::caption);
         for control in controls {
-            display = display.control(self.draw(control));
+            display = display.control(control);
         }
         let space = (spaces.first()).and_then(|slot| Some((*slot, table.get(*slot)?)));
         if let Some((slot, entry)) = space
             && let Props::Space(space) = &entry.props
         {
-            // One unit is its whole width across and its whole height down.
+            // One unit is its whole width across and its whole height down, inside the margin.
+            let (width, height) = (width - 2. * DISPLAY_MARGIN, height - 2. * DISPLAY_MARGIN);
             let mut space = (**space).clone();
             (space.width, space.height, space.grow) = (Some(width), Some(height), None);
             space.unit = Some(Axes {
@@ -82,7 +121,10 @@ impl Drawing<'_> {
                 y: Some(height),
             });
             let drawing = self.space(slot, entry.id, &space, &entry.children);
-            display = display.child(div().absolute().left_0().top_0().child(drawing));
+            let placed = (div().absolute())
+                .left(px(DISPLAY_MARGIN))
+                .top(px(DISPLAY_MARGIN));
+            display = display.child(placed.child(drawing));
         }
         (div().flex_none().mr(px(display::GAP)).child(display)).into_any_element()
     }
@@ -90,6 +132,10 @@ impl Drawing<'_> {
     /// The cells of a card, two to a column. In a card the first columns show, and the rest
     /// after a hairline while the card is expanded; a page shows them all.
     pub(super) fn controls(&mut self, children: &[usize]) -> AnyElement {
+        self.small(|drawing| drawing.cells(children))
+    }
+
+    fn cells(&mut self, children: &[usize]) -> AnyElement {
         let table = self.table;
         let cells: Vec<usize> = drawn(table, children).collect();
         let shown = match self.expanded {

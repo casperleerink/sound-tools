@@ -4,13 +4,15 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{Hsla, SharedString};
+use gpui::{FontWeight, Hsla, SharedString};
 use sound_ui::LiveNotes;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
 };
+use sound_ui::theme::Theme;
 
 use crate::live::{DragNumbers, Sources, SpaceView};
+use crate::tokens::{TextVariant, Tone, tone_of};
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
@@ -98,6 +100,7 @@ pub(super) enum Geometry {
         /// Its parts by their length, with their own colour and weight; none for one part.
         parts: Rc<[TextPart]>,
         size: f32,
+        weight: FontWeight,
         align: Align,
     },
     Wave {
@@ -753,7 +756,17 @@ impl Placing<'_> {
         let mut color = match (hovered.then_some(shape.hover).flatten(), &shape.color) {
             (Some(hover), _) => hover.0,
             (None, Some(paint)) => self.paint(paint),
-            (None, None) => gpui::white(),
+            // A text in the tone of its step of the type scale, any other shape as a value.
+            (None, None) => {
+                let tone = match shape.kind {
+                    Some(ShapeKind::Text) => {
+                        let variant = shape.variant.unwrap_or(TextVariant::Label);
+                        shape.tone.unwrap_or(tone_of(variant))
+                    }
+                    _ => Tone::Text,
+                };
+                tone.color(&Theme::dark())
+            }
         };
         color.a *= opacity;
         Some(Showing {
@@ -848,7 +861,8 @@ impl Placing<'_> {
                         .collect(),
                     _ => Rc::new([]),
                 },
-                size: shape.size.unwrap_or(12.0),
+                size: shape.variant.unwrap_or(TextVariant::Label).size().into(),
+                weight: shape.variant.unwrap_or(TextVariant::Label).weight(),
                 align: shape.align.unwrap_or(Align::Left),
             },
             ShapeKind::Wave => {

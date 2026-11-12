@@ -261,8 +261,8 @@ export const Timeline = ({ page }: { page: Page }) => {
     /** What a handle makes while it is dragged, in a pill right of it `wide` points wide, as `title` and the value. */
     const readout = (x: Accessor<Live>, title: string, wide: number, value: Accessor<Live>, unit: "ms" | "db", held: Live) => [
       <Rect x={() => x().plus(point.times(10))} y={top - 2 / ROW} width={point.times(wide)} height={22 / ROW} radius={6} color="background" border="border-strong" borderWidth={1} opacity={held} />,
-      <Label x={() => x().plus(point.times(17))} y={top + 2 / ROW} text={title} size={12} color="text" opacity={held} />,
-      <Label x={() => x().plus(point.times(wide + 3))} y={top + 2 / ROW} text={value} unit={unit} size={12} color="text" align="right" opacity={held} />,
+      <Label x={() => x().plus(point.times(17))} y={top + 2 / ROW} text={title} color="text" opacity={held} />,
+      <Label x={() => x().plus(point.times(wide + 3))} y={top + 2 / ROW} text={value} unit={unit} color="text" align="right" opacity={held} />,
     ];
     // A fade's line shows while it has one, and while its handle drags one out.
     const shown = (ms: () => number, held: Live) => () => held.max(ms() > 0 ? 1 : 0);
@@ -390,7 +390,7 @@ export const Timeline = ({ page }: { page: Page }) => {
               <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="border" />
               <Label x={() => timeline.left.max(0).plus(timeline.pointX.times(12))} y={() => timeline.pointY.times(-7).plus(topOf(row()) + 0.5)}
                 text={() => (memory.recording !== null || clipsOf(each).length + regionsOf(each).length > 0 ? "" : each.tool === "tape" ? "Drop an audio file here" : "Double-click to add a clip")}
-                size={11} color="text-muted" />
+                color="text-muted" />
               {() => {
                 const snap = memory.snap;
                 return <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} snap={snap} />}</For>;

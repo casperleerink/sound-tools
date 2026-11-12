@@ -8,7 +8,7 @@ project. It prints one JSON line per run: whether the check passed, what it cost
 turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
-a storm drone played with an XY pad, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
+a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
 `extensions/` folder of a project to try it.
 """
 

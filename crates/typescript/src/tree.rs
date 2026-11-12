@@ -82,7 +82,20 @@ props! {
         on_drop: bool,
         /// It shows in the window's title bar instead, when the tool's view is the window's.
         title_bar: bool,
+        /// A layout the window owns, in place of its style's.
+        layout: Layout,
     }
+}
+
+/// How the window lays out the children of a div that its parts make.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Layout {
+    /// The parts a card's view gives, side by side as the built-in cards have them.
+    Card,
+    /// The content of a page, one under the other: a part that does not grow is as wide as
+    /// what is in it, in the middle of the window.
+    Page,
 }
 
 props! {
@@ -315,6 +328,10 @@ props! {
         to: Reach,
         text: Words,
         unit: Readout,
+        /// The step of the type scale of a text, and how bright it is unless `color` says.
+        variant: TextVariant,
+        tone: Tone,
+        /// How thick the line of a wave is, in points.
         size: f32,
         align: Align,
         /// The values a wave draws, oldest first, and the values at its bottom and its top; the
@@ -733,6 +750,15 @@ impl NodeTable {
             _ => true,
         };
         takes || entry.children.iter().any(|child| self.holds_focus(*child))
+    }
+
+    /// Whether the node in `slot` takes the room left in its parent.
+    pub(crate) fn grows(&self, slot: usize) -> bool {
+        match self.get(slot).map(|entry| &entry.props) {
+            Some(Props::Div(div)) => div.style.as_ref().is_some_and(|style| style.grows()),
+            Some(Props::Space(space)) => space.grow == Some(true),
+            _ => false,
+        }
     }
 
     pub(crate) fn get(&self, slot: usize) -> Option<&Entry> {
@@ -2107,6 +2133,10 @@ impl Style {
 
     pub(crate) fn truncates(&self) -> bool {
         self.truncate
+    }
+
+    pub(crate) fn grows(&self) -> bool {
+        self.grow
     }
 
     pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
