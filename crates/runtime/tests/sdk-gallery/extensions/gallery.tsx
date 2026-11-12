@@ -1,7 +1,7 @@
 import {
-  adsr, Button, choice, Circle, Dialog, Fader, For, h, Input, interval, Knob, Label, Match, Meter, note, Notice, number,
-  NumberBox, onCleanup, output, Pad, Path, Popover, Rect, SegmentedControl, Select, Show, sine, Slider, Space, Steps,
-  Switch, Text, timeout, Toggle, tool, type Child, type Press, type Style,
+  adsr, Button, Cell, choice, Circle, Controls, Dialog, Display, Fader, For, h, Input, interval, Knob, Label, Match, Meter,
+  note, Notice, number, NumberBox, onCleanup, output, Pad, Path, Popover, Rect, SegmentedControl, Select, Show, sine, Slider,
+  Space, Steps, Switch, Text, timeout, Toggle, tool, type Child, type Press, type Style,
 } from "./sdk";
 
 const card: Style = { width: 372, padding: "md", gap: "sm", radius: "lg", background: "fill" };
@@ -31,10 +31,11 @@ tool({
     cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
     level: number({ min: -30, max: 6, default: -6, unit: "db" }),
     mode: choice({ options: ["soft", "hard", "fold"], default: "hard" }),
+    step: number({ min: -1, max: 7, default: 2, integer: true }),
   },
   memory: () => ({
     log: [] as string[], count: 0, held: false, gain: 0.5, fader: 0, amount: 4, wave: "saw", pad: { x: 0.3, y: 0.7 },
-    steps: [1, 0, 0, 1], filter: "", popover: false, dialog: false, flash: false, part: false, repeats: 0,
+    steps: [1, 0, 0, 1], kick: [1, 0, 0, 0, 1, 0, 0, 0], hat: [0, 0, 1, 0, 0, 0, 1, 1], pitch: 36, filter: "", popover: false, dialog: false, flash: false, part: false, repeats: 0,
   }),
   sound: () => {
     output("gate", note.gate);
@@ -43,7 +44,8 @@ tool({
   onKey: ({ memory }, { key, down }) => {
     if (down) write(memory, `key ${key}`);
   },
-  view: ({ memory, play, send }) => {
+  view: ({ memory, now, play, send }) => {
+    const cutoff = now.value("cutoff", { fraction: true });
     const log = (line: string) => write(memory, line);
     const pointer = (what: string) => ({
       onPress: (press: Press) => log(`${what} press ${press.button}`),
@@ -228,6 +230,32 @@ tool({
               <Label x={300} y={2} text="closed" color="text-muted" />
             </Space>
           </Section>
+
+          <div style={{ ...card, width: 624 }}>
+            <Text variant="heading">The parts of a card</Text>
+            <div style={{ direction: "row", gap: "lg" }}>
+              <div style={{ direction: "row" }}>
+                <Display caption="A drag moves the cutoff" cursor="ew-resize" drag={{ x: { value: "cutoff", absolute: true } }}
+                  control={<SegmentedControl field="mode" size="sm" options={MODES} />}>
+                  <Path points={() => [[0, 0.5], [cutoff.times(0.8), 0.5], [cutoff, 0.25], [cutoff.plus(0.3), 1]]} color="text" width={1.5} />
+                  <Circle x={cutoff} y={0.25} radius={5} color="text" />
+                </Display>
+                <Controls>
+                  <Knob key="cell" field="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
+                  <Knob value={() => memory.pitch} onChange={(pitch) => { memory.pitch = Math.round(pitch); log(`pitch ${memory.pitch}`); }}
+                    label="Pitch" min={24} max={60} default={36} unit="pitch" />
+                  <Cell label="Wave" value={() => memory.wave}>
+                    <Select size="sm" value={() => memory.wave} options={WAVES} onChange={(wave) => { memory.wave = wave; }} />
+                  </Cell>
+                  <Cell label="Held"><Toggle dot size="sm" on={() => memory.held} /></Cell>
+                </Controls>
+              </div>
+              <div style={{ gap: "xs" }}>
+                <Steps size="md" label="Kick" playing="step" value={() => memory.kick} onChange={(kick) => { memory.kick = [...kick]; log(`kick ${kick.join("")}`); }} />
+                <Steps size="md" label="Hat" playing="step" value={() => memory.hat} onChange={(hat) => { memory.hat = [...hat]; }} />
+              </div>
+            </div>
+          </div>
         </div>
 
         <div style={{ ...card, width: 220, gap: "xs" }}>
