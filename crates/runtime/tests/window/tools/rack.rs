@@ -5,7 +5,7 @@ use gpui::{
     Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent,
     TestAppContext, TouchPhase, point, px,
 };
-use sound_ui::{Devices, Takes};
+use sound_ui::{Devices, Shortcuts, Takes};
 
 use super::gestures::press_key;
 use super::{Opened, open};
@@ -172,11 +172,23 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
 }
 
 /// An effect moves a step in its chain with no drag: from the menu of its title, which Move
-/// earlier and Move later lead, and by the keys that menu names, alt and an arrow, while its
-/// card has the focus. Each move is one undo step, and at an end of the chain it stays.
+/// earlier and Move later lead, and by the keys of two actions of the song, which Settings
+/// lists and which move the chosen effect by whatever keys the composer gave them. The menu of
+/// its title chooses an effect, and escape lets go. Each move is one undo step, and at an end
+/// of the chain it stays.
 #[gpui::test]
-fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys(cx: &mut TestAppContext) {
+fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys_of_its_actions(
+    cx: &mut TestAppContext,
+) {
     let mut window = open_rack(cx);
+    let listed = window.cx.read(|cx| {
+        let song = (cx.global::<Shortcuts>().groups()).find(|group| group.name == "song");
+        let names = song.map(|song| song.actions.iter().map(|action| action.name.clone()));
+        names.map(Iterator::collect::<Vec<_>>).unwrap_or_default()
+    });
+    for action in ["effect_earlier", "effect_later"] {
+        assert!(listed.iter().any(|name| name == action), "{listed:?}");
+    }
     let title = window.until_found("card-title-song/t00/chain/room");
     window.click(title);
     window.pick("menu-1");
@@ -186,30 +198,61 @@ fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys(cx: &mut TestAppCo
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move an effect"));
 
-    // Each effect's card is a tab stop: tab goes on until the reverb's, the last effect now,
-    // has the focus and alt and the arrow move it.
+    // Its menu chose the reverb: the keys the menu named move it.
     let before = window.record("song/t00/chain/room");
     let first = serde_json::json!(["room", "trim"]);
-    window.focus_the_window();
-    for _ in 0..60 {
-        press_key(&mut window, "tab");
-        press_key(&mut window, "alt-left");
-        window.wait_for_bun();
-        if window.chain_order() == first {
-            break;
-        }
-    }
-    assert_eq!(window.chain_order(), first);
-    // The first stays the first; the card kept the focus, so the other arrow takes it back.
+    press_key(&mut window, "alt-left");
+    window.until("the reverb earlier", |window| window.chain_order() == first);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Move an effect"));
+    // The first stays the first.
     press_key(&mut window, "alt-left");
     window.wait_for_bun();
     assert_eq!(window.chain_order(), first);
+
+    // The composer gives moving later another key: that key moves it, and the old one does not.
+    window.cx.update(|_, cx| {
+        let keys = vec!["shift-l".to_string()];
+        (cx.global_mut::<Shortcuts>()
+            .set_keys("song.effect_later", keys))
+        .unwrap();
+    });
     press_key(&mut window, "alt-right");
+    window.wait_for_bun();
+    assert_eq!(window.chain_order(), first);
+    press_key(&mut window, "shift-l");
     window.until("the reverb later again", |window| {
         window.chain_order() == serde_json::json!(["trim", "room"])
     });
+
+    // Escape lets go of it: the key then moves no effect.
+    press_key(&mut window, "escape");
+    window.wait_for_bun();
+    press_key(&mut window, "alt-left");
+    window.wait_for_bun();
+    assert_eq!(window.chain_order(), serde_json::json!(["trim", "room"]));
+
     // The keys turned no knob.
     assert_eq!(window.record("song/t00/chain/room"), before);
+
+    // An effect that is added is chosen: the key moves it at once.
+    let add = window.until_found("div-add-effect");
+    window.click(add);
+    let reverb = window.cx.update(|_, cx| {
+        (Devices::offered(Takes::Audio, cx).into_iter())
+            .filter(|offer| !offer.is_command())
+            .position(|offer| offer.name == "Reverb")
+    });
+    let item: &'static str = format!("menu-{}", reverb.unwrap()).leak();
+    let item = window.until_found(item);
+    window.click(item);
+    window.until("a reverb added", |window| {
+        window.chain_order() == serde_json::json!(["trim", "room", "reverb"])
+    });
+    press_key(&mut window, "alt-left");
+    window.until("the new reverb earlier", |window| {
+        window.chain_order() == serde_json::json!(["trim", "reverb", "room"])
+    });
     assert_eq!(window.problems(), []);
 }
 

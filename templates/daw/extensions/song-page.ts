@@ -240,6 +240,7 @@ export function pageOf(song: Song) {
     memory.selected = keys;
     memory.point = null;
     memory.mark = null;
+    memory.effect = null;
     memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? null;
     const spans = [...keys].flatMap((key) => {
       const start = itemAt(key)?.state.start;

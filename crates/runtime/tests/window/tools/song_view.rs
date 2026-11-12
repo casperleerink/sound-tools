@@ -1574,6 +1574,26 @@ fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
     window.until_found("toggle-pre-fader-ret-a");
 }
 
+/// What a send sends is typed at its number in its row of the panel, as the gain of a fader
+/// is: a double click, the number, enter. One undo step, named as the drag of its dial.
+#[gpui::test]
+fn what_a_send_sends_is_typed_in_its_row_of_the_panel(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let head = window.until_found("div-name-t00");
+    window.click(head);
+    let amount = window.until_found("space-gain-t00/send-ret-a");
+    window.double_click(amount);
+    window.until_found("div-gain-t00/send-ret-a-typed");
+    window.keys("secondary-a - 6 enter");
+    window.until("the send typed", |window| {
+        window.record("song/t00/send-ret-a")["gain_db"].as_f64() == Some(-6.0)
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change room"));
+    assert_eq!(window.problems(), []);
+}
+
 #[gpui::test]
 fn a_new_return_opens_the_returns(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 1, 1);

@@ -378,3 +378,41 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
     assert_eq!(window.undo_label().as_deref(), Some("Paste clips"));
     assert_eq!(window.problems(), []);
 }
+
+/// A clip and its notes from the keys alone: shift-c adds a clip of a bar at the playhead on
+/// the track a song opens on, chosen, cmd-down opens its notes, and n adds a note at C4, then
+/// one right after it. Each is one undo step.
+#[gpui::test]
+fn the_keys_add_a_clip_at_the_playhead_and_notes_in_a_row(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let ruler = window.space_at("ruler");
+    window.click(ruler + point(px(LEAD + (8 * BAR) as f32 * ACROSS), px(8.)));
+    window.until_playhead(8 * BAR);
+    window.cx.simulate_keystrokes("shift-c");
+    window.until("a clip added", |window| window.has("song/t00/clip"));
+    let clip = window.record("song/t00/clip");
+    assert_eq!(
+        (clip["start"].as_u64(), clip["length"].as_u64()),
+        (Some(8 * BAR), Some(BAR))
+    );
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Add a clip"));
+
+    window.cx.simulate_keystrokes("cmd-down");
+    window.until_found("space-editor-t00/clip");
+    let notes = |window: &mut Opened<'_>| window.record("song/t00/clip")["notes"].clone();
+    window.cx.simulate_keystrokes("n");
+    window.until("a note added", |window| {
+        notes(window)
+            == serde_json::json!([{ "start": 0, "length": 480, "pitch": 60, "velocity": 100 }])
+    });
+    window.cx.simulate_keystrokes("n");
+    window.until("a note after it", |window| {
+        notes(window)[1]
+            == serde_json::json!({ "start": 480, "length": 480, "pitch": 60, "velocity": 100 })
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Add a note"));
+    assert_eq!(window.problems(), []);
+}
