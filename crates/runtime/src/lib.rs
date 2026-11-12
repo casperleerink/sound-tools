@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use gpui::{App, AppContext as _, Context, Entity};
 use plugin_host::{
-    Isolation, Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand,
-    VST_TRADEMARK, WeakPlugins, default_search_paths,
+    Isolation, Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, WeakPlugins,
+    default_search_paths,
 };
 use sound_agent::{AgentSettings, Agents, AgentsPage, Sidebar};
 use sound_core::{
@@ -257,28 +257,14 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     analyzer::view::register(&mut views, &mut devices);
     sound_typescript::register_views(&mut views);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
-    // What the picker says under its offers: that the scan of this machine is still running,
-    // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
-    // Compatible Logo next to the term and the attribution where the logo does not fit; a menu
-    // row is such a place, so the attribution is what is shown. See `plugin_host::VST_TRADEMARK`.
+    // What the picker says under its offers: that the scan of this machine is still running.
     devices.notes({
         let plugins = plugins.clone();
         move || {
-            let Some(plugins) = plugins.upgrade() else {
-                return Vec::new();
-            };
-            let mut notes = Vec::new();
-            if plugins.scan_is_running() {
-                notes.push("Still looking for the plugins of this computer…".into());
-            }
-            let vst3 = plugins
-                .instruments()
-                .iter()
-                .any(|found| found.format == PluginFormat::Vst3);
-            if vst3 {
-                notes.push(VST_TRADEMARK.into());
-            }
-            notes
+            let scans = (plugins.upgrade()).is_some_and(|plugins| plugins.scan_is_running());
+            (scans.then(|| "Still looking for the plugins of this computer…".into()))
+                .into_iter()
+                .collect()
         }
     });
     // The scan runs on a thread of its own, so what the plugin host offers grows while a
