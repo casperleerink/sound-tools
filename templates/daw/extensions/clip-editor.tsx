@@ -1,4 +1,4 @@
-import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, Live, memo, now, quantize, Rect, Select, selector, signal, Space, Text, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, humanize, Input, Label, legato, Line, Live, memo, now, quantize, Rect, Select, selector, Show, signal, Space, Text, untrack, type Accessor, type Bind, type Child, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Num, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track, its title and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
@@ -213,6 +213,73 @@ const intoBeat = (tick: Live, runs: readonly BeatRun[]) =>
     return sum.plus(inside.times(tick.minus(run.from).mod(run.ticks)));
   }, Live.of(0));
 
+/** A whole note in ticks, which a length is said in parts of. */
+const WHOLE = 4 * BEAT;
+/** The note a length is said in, as the 16 of 3/16: the snap's (a quarter for a bar, a sixteenth for none), or the first finer one it is whole in, down to 1/64. */
+const valueOf = (length: number, snap: number) => {
+  const coarsest = WHOLE / Math.min(snap || BEAT / 4, BEAT);
+  return [4, 8, 16, 32, 64].find((value) => value >= coarsest && length % (WHOLE / value) === 0) ?? 64;
+};
+/** The ticks `text` says a note is long: `3/16`, or `3` of the note `value` it is said in now. */
+function lengthAt(text: string, value: number): number | null {
+  const [, count, under] = /^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+))?$/.exec(text) ?? [];
+  const ticks = Math.round((Number(count) * WHOLE) / (under ? Number(under) : value));
+  return Number.isFinite(ticks) && ticks >= BEAT / 16 ? ticks : null;
+}
+
+const PITCH_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+/** A pitch as the window says it, `C4` for 60, and the pitch `text` names, with `#` or `b`. */
+const pitchName = (pitch: number) => `${PITCH_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`;
+function pitchOf(text: string): number | null {
+  const [, letter, accidental, octave] = /^([a-g])([#b]?)\s*(-?\d+)$/i.exec(text) ?? [];
+  if (!letter) return null;
+  const pitch = PITCH_NAMES.indexOf(letter.toUpperCase()) + (accidental === "#" ? 1 : accidental === "b" ? -1 : 0) + (Number(octave) + 1) * 12;
+  return pitch >= 0 && pitch <= 127 ? pitch : null;
+}
+
+/** How many ticks a beat is long at a tick of the song. */
+const beatAt = (tick: number, runs: readonly BeatRun[]) => runs.findLast((run) => run.from <= tick)?.ticks ?? BEAT;
+/** The bar, the beat and the sixteenth, from 1, of a tick of a clip that starts at `start` in the song, whose bars start at `lines`. */
+function placeOf(tick: number, start: number, lines: readonly number[], runs: readonly BeatRun[]) {
+  const bar = Math.max(lines.findLastIndex((line) => line <= tick), 0);
+  const beat = beatAt(start + tick, runs);
+  const into = tick - (lines[bar] ?? 0);
+  return [bar + 1, Math.floor(into / beat) + 1, Math.floor((into % beat) / (BEAT / 4)) + 1] as const;
+}
+/** The tick of the clip that `text` names as `placeOf` says one, `6.2.1`: its beat and its sixteenth are 1 when left out. */
+function tickAt(text: string, start: number, lines: readonly number[], runs: readonly BeatRun[]): number | null {
+  if (!/^\d+(\.\d+){0,2}$/.test(text)) return null;
+  const [bar = 1, beat = 1, sixteenth = 1] = text.split(".").map(Number);
+  const line = lines[bar - 1];
+  return line === undefined || beat < 1 || sixteenth < 1 ? null : line + (beat - 1) * beatAt(start + line, runs) + ((sixteenth - 1) * BEAT) / 4;
+}
+
+// A label's digits are of one width, so what follows a live number is placed by how many it has.
+const [DIGIT, DOT] = [7.4, 3];
+/** How many digits a live number has that is whole and under 1000, by where it gets its second and its third. */
+const digitsOf = (value: Live, second: number, third: number) => value.ge(Math.min(second, 1e12)).plus(value.ge(Math.min(third, 1e12))).plus(1);
+
+/**
+ * A value of the head with the word that names it. A click on it, or enter while it has the
+ * focus, types it in its place: enter or leaving the field gives `commit` the text when it
+ * changed, escape leaves it as it was. Its shapes are made each time it shows again.
+ */
+const Typed = ({ name, word, width, text, commit, children }: { name: string; word: string; width: Bind<number>; text: Accessor<string>; commit: (typed: string) => void; children: () => Child }) => {
+  const [typing, type] = signal(false);
+  const done = (typed: string | null) => {
+    type(false);
+    if (typed !== null && typed.trim() !== untrack(text)) commit(typed.trim());
+  };
+  return (
+    <div key={`note-${name}`} tabStop onClick={() => type(true)} style={{ height: 24, direction: "row", align: "center", gap: "sm", paddingX: "xs", radius: "sm", hover: { background: "fill" }, keep: true }}>
+      <Text variant="label" tone="muted">{word}</Text>
+      <Show when={typing} fallback={() => <Space key={`note-${name}-value`} width={width} height={16} onClick={() => type(true)}>{children()}</Space>}>
+        {() => <Input key={`note-${name}-field`} value={text} width={untrack(() => (typeof width === "function" ? width() : width)) + 16} size="sm" focus onCommit={done} onCancel={() => done(null)} />}
+      </Show>
+    </div>
+  );
+};
+
 /** From the earliest start of `notes` to their latest end, and their earliest start. */
 function spanOf(notes: readonly Note[]) {
   const start = Math.min(...notes.map((note) => note.start));
@@ -303,38 +370,74 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
     const [first] = chosen;
     return first ? { note: chosen.reduce((earliest, note) => (note.start < earliest.start ? note : earliest), first), count: chosen.length } : null;
   });
+  const change = changer(memory, edit);
   /**
-   * What the chosen note is, in the head: its pitch, where it starts in the song as bar, beat and
-   * sixteenth, how many beats long it is and its velocity, each in a place of its own. Live, so
-   * it says where a drag has the note before it is let go.
+   * What the chosen note is, in the head, each said the same way, a word and its value: its
+   * pitch, where it starts in the song as bar, beat and sixteenth, how long it is in notes of
+   * the snap, and its velocity. Live, so it says where a drag has the note before it is let go.
+   * A click on one, or enter, types it: with several chosen, their pitches and starts move as
+   * far as the one it says, and their lengths and velocities become what is typed.
    */
-  const NoteReadout = ({ note, count, start, runs }: { note: Note; count: number; start: number; runs: readonly BeatRun[] }) => {
-    // `note` is a copy: a component reads no record.
+  const NoteReadout = () => {
+    // It is made once and reads the note as it changes, so a value keeps the keys after it is typed.
+    const note = () => said()?.note ?? { start: 0, length: BEAT, pitch: 60, velocity: 100 };
+    const [runs, lines] = [beats, bars];
     const [moving, resizing, louder] = [now.drag("note-move"), now.drag("note-resize"), now.drag("note-velocity")];
-    const at = moving.dx.plus(note.start).round().max(0).plus(start);
-    const long = resizing.dx.round().plus(note.length).max(BEAT / 16).over(BEAT);
-    const velocity = louder.dy.times((-127 * LANE) / (VELOCITY_BOTTOM - VELOCITY_TOP)).plus(note.velocity).clamp(1, 127).round();
-    // More than one chosen: how many, left of the first of them.
-    const left = count > 1 ? 80 : 12;
-    const word = (x: number, text: string, opacity?: Live) => <Label x={left + x} y={8} text={text} color="text-muted" opacity={opacity} />;
-    const value = (x: number, text: Live, unit?: "pitch" | "position", align?: "right") => <Label x={left + x} y={8} text={text} unit={unit} color="text" align={align} />;
+    const at = () => moving.dx.plus(note().start).round().max(0).plus(start());
+    const value = () => valueOf(note().length, memory.snap);
+    const long = () => resizing.dx.round().plus(note().length).max(BEAT / 16).over(WHOLE / value()).round();
+    // The second dot of the start and the slash of the length, after as many digits as the bar and the count have.
+    const tenth = (bar: number) => start() + (lines()[bar - 1] ?? Infinity);
+    const dot = () => digitsOf(at(), tenth(10), tenth(100)).plus(1).times(DIGIT).plus(DOT);
+    const slash = () => digitsOf(long(), 10, 100).times(DIGIT);
+    // As wide as the last bar of the clip needs, with its beat and its sixteenth.
+    const widest = () => String(placeOf(length() - 1, start(), lines(), runs())[0]).length;
+    const shown = (text: Accessor<Live>, unit?: "pitch" | "position", x: Bind<Num> = 0, align?: "right") => <Label x={x} y={0} text={text} unit={unit} color="text" align={align} />;
+    const mark = (text: Bind<string>, x: Bind<Num>) => <Label x={x} y={0} text={text} color="text" />;
+    const all = (next: (note: Note) => Note) => (notes: Note[], chosen: ReadonlySet<number>) => ({ notes: notes.map((each, index) => (chosen.has(index) ? next(each) : each)), chosen });
     return (
-      <Space key="note-readout" width={left + 246} height={RULER}>
-        {count > 1 ? <Label x={68} y={8} text={`${count} notes`} color="text-muted" align="right" /> : null}
-        {value(26, moving.dy.negate().plus(note.pitch).clamp(0, 127), "pitch", "right")}
-        {value(64, at, "position", "right")}
-        <Label x={left + 64} y={8} text="." color="text" />
-        {value(67, intoBeat(at, runs).over(BEAT / 4).plus(1))}
-        {value(120, long, undefined, "right")}
-        {word(124, "beat", long.eq(1))}
-        {word(124, "beats", long.ne(1))}
-        {word(166, "velocity")}
-        {value(216, velocity)}
-      </Space>
+      <div key="note-readout" style={{ direction: "row", align: "center", gap: "xs", paddingX: "sm", keep: true }}>
+        <Show when={() => (said()?.count ?? 0) > 1}>
+          {() => <Text variant="label" tone="muted" style={{ paddingRight: "xs" }}>{() => `${said()?.count} notes`}</Text>}
+        </Show>
+        <Typed name="pitch" word="Pitch" width={28} text={() => pitchName(note().pitch)}
+          commit={(typed) => {
+            const pitch = pitchOf(typed);
+            if (pitch !== null) change("Move notes", (notes, chosen) => moved(notes, chosen, 0, pitch - note().pitch, false));
+          }}>
+          {() => shown(() => moving.dy.negate().plus(note().pitch).clamp(0, 127), "pitch")}
+        </Typed>
+        <Typed name="start" word="Start" width={() => Math.ceil((widest() + 2) * DIGIT + 2 * DOT)} text={() => placeOf(note().start, start(), lines(), runs()).join(".")}
+          commit={(typed) => {
+            const tick = tickAt(typed, start(), lines(), runs());
+            if (tick !== null && tick >= 0 && tick < length()) change("Move notes", (notes, chosen) => moved(notes, chosen, tick - note().start, 0, false));
+          }}>
+          {() => [
+            shown(at, "position", dot, "right"),
+            mark(".", dot),
+            shown(() => intoBeat(at(), runs()).over(BEAT / 4).floor().plus(1), undefined, () => dot().plus(DOT)),
+          ]}
+        </Typed>
+        <Typed name="length" word="Length" width={36} text={() => `${Math.round((note().length * value()) / WHOLE)}/${value()}`}
+          commit={(typed) => {
+            const ticks = lengthAt(typed, value());
+            if (ticks === null) return;
+            memory.length = ticks;
+            change("Resize notes", all((each) => ({ ...each, length: ticks })));
+          }}>
+          {() => [shown(long, undefined, slash, "right"), mark(() => `/${value()}`, slash)]}
+        </Typed>
+        <Typed name="velocity" word="Velocity" width={24} text={() => String(note().velocity)}
+          commit={(typed) => {
+            const loud = /^\d+$/.test(typed) ? clamp(Number(typed), 1, 127) : null;
+            if (loud !== null) change("Change velocity", all((each) => ({ ...each, velocity: loud })));
+          }}>
+          {() => shown(() => louder.dy.times((-127 * LANE) / (VELOCITY_BOTTOM - VELOCITY_TOP)).plus(note().velocity).clamp(1, 127).round())}
+        </Typed>
+      </div>
     );
   };
 
-  const change = changer(memory, edit);
   // A drag is made once: the notes are drawn again with new ones when the grid changes.
   const moveDrag = (snap: number): Drag => ({
     id: "note-move",
@@ -543,10 +646,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
           </For>
           <Cursor to={RULER} />
         </Space>
-        {() => {
-          const shown = said();
-          return shown ? [<Rule />, <NoteReadout note={{ ...shown.note }} count={shown.count} start={clip()?.start ?? 0} runs={beats()} />] : null;
-        }}
+        <Show when={() => said() !== null}>{() => [<Rule />, <NoteReadout />]}</Show>
         <div style={{ direction: "row", align: "center", paddingX: "sm", keep: true }}>
           <Button key="editor-size" icon={() => (large() ? "chevron-down" : "chevron-up")} variant="ghost" size="sm" tooltip={() => (large() ? "Smaller" : "Larger")} shortcut="song.editor_size" onClick={onLarge} />
           <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />

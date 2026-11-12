@@ -12,6 +12,7 @@ use gpui::{
 use runtime::window::export_settings::ExportSettings;
 use sound_core::Ticks;
 
+use super::gestures::press_key;
 use super::song::open_song;
 use super::{Opened, write_sine};
 use crate::song::{ACROSS, BAR, HEADER, LEAD, song_files};
@@ -1761,23 +1762,105 @@ fn the_head_of_the_note_editor_says_a_note_only_while_one_is_chosen(cx: &mut Tes
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     let editor = window.editor("t00/c00");
-    assert!(window.find("space-note-readout").is_none());
+    assert!(window.find("div-note-readout").is_none());
     let note = editor.at(30., 60);
     window.click(note);
-    window.until_found("space-note-readout");
+    window.until_found("div-note-readout");
     // A key up, still held.
     window.press(note);
     window.drag_to(note - point(px(0.), px(EDITOR_ROW)));
-    assert!(window.find("space-note-readout").is_some());
+    assert!(window.find("div-note-readout").is_some());
     window.release(note - point(px(0.), px(EDITOR_ROW)));
     window.until("the note moved", |window| {
         window.record("song/t00/c00")["notes"][0]["pitch"] == 61
     });
-    window.until_found("space-note-readout");
+    window.until_found("div-note-readout");
     window.keys("escape");
     window.until("the note let go", |window| {
-        window.find("space-note-readout").is_none()
+        window.find("div-note-readout").is_none()
     });
+    assert_eq!(window.problems(), []);
+}
+
+/// A value in the head of the note editor is typed in its place: a click on it opens it, and so
+/// does enter while it has the focus. What is typed lands as one undo step, as the head says
+/// it: a pitch by its name, a start as bar, beat and sixteenth of the song, a length in notes.
+/// What it cannot read changes nothing.
+#[gpui::test]
+fn the_values_in_the_head_of_the_note_editor_are_typed(cx: &mut TestAppContext) {
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        let note = serde_json::json!({ "start": 0, "length": 960, "pitch": 60, "velocity": 100 });
+        // The clip starts at bar 2.
+        record["state"] = serde_json::json!({ "start": BAR, "length": BAR, "notes": [note] });
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR + BAR / 2, 0);
+    window.double_click(clip);
+    let editor = window.editor("t00/c00");
+    window.click(editor.at(30., 60));
+    let note = |window: &mut Opened| window.record("song/t00/c00")["notes"][0].clone();
+    let typing = |window: &mut Opened, value: &str| {
+        window.find(&format!("space-note-{value}-value")).is_none()
+    };
+
+    let velocity = window.until_found("space-note-velocity-value");
+    window.click(velocity);
+    window.until("the velocity opens", |window| typing(window, "velocity"));
+    window.cx.simulate_input("64");
+    window.keys("enter");
+    window.until("the velocity typed", |window| {
+        note(window)["velocity"] == 64
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change velocity"));
+    window.until_found("space-note-velocity-value");
+
+    // The pitch by its name, and the start as the song counts it: beat 3 of bar 2, two beats
+    // into the clip.
+    for (value, typed, field, lands) in [
+        ("pitch", "f#4", "pitch", 66),
+        ("start", "2.3", "start", 1920),
+        ("length", "3/16", "length", 720),
+    ] {
+        let at = window.until_found(&format!("space-note-{value}-value"));
+        window.click(at);
+        window.until("the value opens", |window| typing(window, value));
+        window.cx.simulate_input(typed);
+        window.keys("enter");
+        window.until(typed, |window| note(window)[field] == lands);
+    }
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Resize notes"));
+
+    // The keys reach the values too: they are the tab stops before the editor's three buttons
+    // and its lane picker, the last of the window, and enter opens the one with the focus.
+    window.focus_the_window();
+    for _ in 0..5 {
+        press_key(&mut window, "shift-tab");
+    }
+    press_key(&mut window, "enter");
+    window.until("the velocity opens by the keys", |window| {
+        typing(window, "velocity")
+    });
+    window.cx.simulate_input("90");
+    window.keys("enter");
+    window.until("the velocity typed again", |window| {
+        note(window)["velocity"] == 90
+    });
+
+    // A bar past the clip, and no pitch at all: the note stays.
+    let before = note(&mut window);
+    for (value, typed) in [("start", "9.1.1"), ("pitch", "loud")] {
+        let at = window.until_found(&format!("space-note-{value}-value"));
+        window.click(at);
+        window.until("the value opens", |window| typing(window, value));
+        window.cx.simulate_input(typed);
+        window.keys("enter");
+        window.until_found(&format!("space-note-{value}-value"));
+        window.wait_for_bun();
+    }
+    assert_eq!(note(&mut window), before);
     assert_eq!(window.problems(), []);
 }
 

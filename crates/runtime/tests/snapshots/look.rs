@@ -281,7 +281,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened = super::Opened::open(cx, &files)?;
     click(&opened, at(4 * BAR + 960, 2.), 2, cx)?;
     // The playhead is at bar 1, before the clip: the editor shows no cursor.
-    anyhow::ensure!(editor_cursor(&opened, cx)?.is_empty(), "a cursor outside the clip");
+    anyhow::ensure!(
+        editor_cursor(&opened, cx)?.is_empty(),
+        "a cursor outside the clip"
+    );
     // The piece plays inside the clip, at 6.3: the editor's cursor is on the note that sounds.
     opened.play_from(Ticks(5 * BAR + 1000), cx)?;
     let tick = cx.update(|cx| opened.session.read(cx).playhead().read(cx).tick.0);
@@ -599,7 +602,11 @@ fn editor_cursor(opened: &super::Opened, cx: &mut HeadlessAppContext) -> Result<
     // over its bars: nothing else is bright there.
     let top = super::WINDOW_HEIGHT - 352.;
     let rows = [top + 4., top + 36., super::WINDOW_HEIGHT - 54.];
-    let bright = |x: u32, y: f32| picture.get_pixel(x, (y * 2.) as u32).0[..3].iter().all(|part| *part > 200);
+    let bright = |x: u32, y: f32| {
+        picture.get_pixel(x, (y * 2.) as u32).0[..3]
+            .iter()
+            .all(|part| *part > 200)
+    };
     let from = ((HEADER + 2.) * 2.) as u32;
     Ok((from..picture.width())
         .filter(|x| rows.iter().all(|y| bright(*x, *y)))
