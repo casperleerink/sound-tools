@@ -169,7 +169,8 @@ fn paint_history(
                 size(px(bar), px(height - top)),
             );
             window.paint_quad(fill(body, green.opacity(LEVEL_TINT)));
-            let line = Bounds::new(body.origin, size(px(bar), px(LEVEL_LINE)));
+            // As wide as the step, so the tops of the columns join into one line.
+            let line = Bounds::new(body.origin, size(px(step), px(LEVEL_LINE)));
             window.paint_quad(fill(line, green));
         }
         // Narrower than the level and over it, so the two read apart where they meet under
