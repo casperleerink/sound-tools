@@ -126,7 +126,11 @@ impl Drawing<'_> {
                 .top(px(DISPLAY_MARGIN));
             display = display.child(placed.child(drawing));
         }
-        (div().flex_none().mr(px(display::GAP)).child(display)).into_any_element()
+        // In a card the gap is part of its grid; on a page the row it is in says the room.
+        (div().flex_none())
+            .when(self.expanded.is_some(), |room| room.mr(px(display::GAP)))
+            .child(display)
+            .into_any_element()
     }
 
     /// The cells of a card, two to a column. In a card the first columns show, and the rest

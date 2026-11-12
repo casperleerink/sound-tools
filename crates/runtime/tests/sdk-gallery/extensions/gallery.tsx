@@ -1,5 +1,5 @@
 import {
-  adsr, Button, Cell, choice, Circle, Controls, DeviceCard, Dialog, Display, Fader, For, Fragment, h, Input, input, interval, Knob,
+  adsr, boolean, Button, choice, Circle, Controls, DeviceCard, Dialog, Display, Fader, For, Fragment, h, Input, input, interval, Knob,
   Label, lowpass, Match, Meter, note, Notice, number, NumberBox, onCleanup, output, Pad, Page, Panel, Path, pattern, Popover, Rect,
   Row, SegmentedControl, Select, Show, sine, Slider, Space, Steps, Switch, Text, timeout, Toggle, tool, Wave,
   type Child, type Declaration, type Press, type Style,
@@ -16,18 +16,18 @@ const sweep = tool({
   name: "sweep",
   title: "Sweep",
   when: "You check how a card of the view SDK looks",
-  doc: "A low-pass filter. `cutoff` is where it closes, `resonance` how much it rings there, `drive` and `mix` how hard and how much of it plays.",
+  doc: "A low-pass filter. `cutoff` is where it closes, `resonance` how much it rings there, `drive` and `mix` how hard and how much of it plays, and `hold` keeps it open.",
   state: {
     cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
     resonance: number({ min: 0, max: 1, default: 0.2, unit: "percent" }),
     mode: choice({ options: ["soft", "hard", "fold"], default: "hard" }),
     wave: choice({ options: ["sine", "saw", "square"], default: "saw" }),
+    hold: boolean({ default: false }),
     drive: number({ min: 0, max: 1, default: 0.3, unit: "percent" }),
     mix: number({ min: 0, max: 1, default: 1, unit: "percent" }),
   },
-  memory: () => ({ held: false }),
   sound: ({ cutoff }) => lowpass(input, cutoff),
-  view: ({ memory, now }) => {
+  view: ({ now }) => {
     const cutoff = now.value("cutoff", { fraction: true });
     return (
       <>
@@ -39,10 +39,8 @@ const sweep = tool({
         <Controls>
           <Knob field="cutoff" />
           <Knob field="resonance" />
-          <Cell label="Wave">
-            <Select size="sm" field="wave" />
-          </Cell>
-          <Cell label="Hold"><Toggle dot on={() => memory.held} onClick={() => { memory.held = !memory.held; }} /></Cell>
+          <Select size="sm" field="wave" />
+          <Toggle field="hold" />
           <Knob field="drive" />
           <Knob field="mix" />
         </Controls>
@@ -61,7 +59,7 @@ tool({
   name: "gallery",
   title: "Gallery",
   when: "You check how every part of the view SDK looks and behaves",
-  doc: "A page as a view composes one, the card of its child `sweep`, and after them the components, styles, pointer events, overlays and timers of the view SDK that the other snapshots do not show. The log on the right shows what code hears, newest first; the pad under Pointer holds a note while it is pressed.",
+  doc: "A page as a view composes one, a panel of steps, the card of its child `sweep` and the same parts in a panel, and after them the components, styles, pointer events, overlays and timers of the view SDK that the other snapshots do not show. A log on the right shows what code hears, newest first, once there is something; the pad under Pointer holds a note while it is pressed.",
   state: {
     kick: pattern({ length: 8, min: 0, max: 1, default: 0 }),
     hat: pattern({ length: 8, min: 0, max: 1, default: 0 }),
@@ -102,14 +100,26 @@ tool({
             <div style={{ direction: "row", align: "start", gap: "lg" }}>
               <Panel title="Beat">
                 <Steps field="kick" playing="step" />
-                <Steps field="hat" playing="step" />
+                <Steps field="hat" playing="step" ownClock />
                 <Row gap="lg">
                   <Knob key="tone" field="cutoff" label="Tone" />
                   <Knob key="volume" field="level" />
-                  <SegmentedControl key="shape" field="mode" />
                 </Row>
               </Panel>
               <DeviceCard path="sweep" />
+              <Panel title="Scope">
+                <Row>
+                  <Display>
+                    <Wave list={now.scope()} color="green" />
+                  </Display>
+                  <Controls>
+                    <Knob key="scope-tone" field="cutoff" />
+                    <Knob key="scope-level" field="level" />
+                    <Select key="shape" field="mode" size="sm" />
+                    <NumberBox key="scope-step" field="step" width={32} size="sm" align="center" />
+                  </Controls>
+                </Row>
+              </Panel>
             </div>
             <div style={{ direction: "row", wrap: true, align: "start", gap: "lg" }}>
               <Section title="Field or kept">
@@ -282,17 +292,18 @@ tool({
                   <Label x={130} y={82} text="cubic" tone="muted" />
                   <Label x={338} y={2} text="closed" tone="text" align="right" />
                 </Space>
-                <Space key="scope" height={40} background="well" radius="md">
-                  <Wave list={now.scope()} color="green" />
-                </Space>
               </Section>
             </div>
           </div>
-          <Panel title="What code hears" width={220}>
-            <div style={{ gap: "xs" }}>
-              <For each={() => memory.log}>{(line) => <Text variant="label" tone="text">{line}</Text>}</For>
-            </div>
-          </Panel>
+          <Show when={() => memory.log.length > 0}>
+            {() => (
+              <Panel title="What code hears" width={220}>
+                <div style={{ gap: "xs" }}>
+                  <For each={() => memory.log}>{(line) => <Text variant="label" tone="text">{line}</Text>}</For>
+                </div>
+              </Panel>
+            )}
+          </Show>
         </div>
       </Page>
     );

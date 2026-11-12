@@ -67,9 +67,9 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`: its knobs, and other controls in cells (`extensions/sdk/card.ts`). The window lays them out and keeps the columns after the first behind the card's expand icon, so put first what matters most.
+A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most.
 
-A control with a `field` takes its range, default, unit and label from it, and shows what plays: while a lane moves the field, the lane's value. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
+A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
 
 ```tsx
 import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
@@ -109,10 +109,10 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, with the bars and the tempo only for a tool that plays in them, and the rest one under the other in the middle of the window, scrolling where it is too small. A `Panel` is a surface with a title, as wide as what is in it; parts side by side go in a `Row`. What has `grow` takes the room that is left, a panel and the `Space` in it alike, so no code works out a size. `<Page flush>` is one surface to the window's edges, such as a canvas.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; parts side by side go in a `Row`, as the `Display` and `Controls` of a card do. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
 
 ```tsx
-import { type Channel, type Color, h, Knob, lowpass, mtof, now, number, Page, Panel, playing, Row, saw, smooth, Space, tool, Wave } from "./sdk";
+import { type Channel, type Color, Controls, Display, h, Knob, lowpass, mtof, now, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
 
 // A colour kept in a list is a `Color`.
 const EARS: { channel: Channel; color: Color }[] = [{ channel: 0, color: "teal" }, { channel: 1, color: "mauve" }];
@@ -132,13 +132,15 @@ tool({
   },
   view: () => (
     <Page>
-      <Panel title="Drone" grow>
-        <Space grow background="well" radius="md">
-          {EARS.map(({ channel, color }) => <Wave list={now.scope({ channel })} color={color} />)}
-        </Space>
+      <Panel title="Drone">
         <Row>
-          <Knob field="pitch" />
-          <Knob field="tone" />
+          <Display>
+            {EARS.map(({ channel, color }) => <Wave list={now.scope({ channel })} color={color} />)}
+          </Display>
+          <Controls>
+            <Knob field="pitch" />
+            <Knob field="tone" />
+          </Controls>
         </Row>
       </Panel>
     </Page>
@@ -156,4 +158,4 @@ One clock plays the project: `clock` in a view, its handlers and `tick`, and `pl
 2. `problems.txt`, or `sound-tools . --inspect`, lists what is wrong under `extensions/<file>`: what does not load or build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
 3. `console.log` goes to `extensions/log.txt` while the window is open (the last lines since the tools started), and `--inspect` prints it.
 4. Use the tool as the composer will: write its record (`"state": {}` is its defaults) where a parent plays it, as the parent's doc says, such as in the `order` of a `chain`. Then measure it with `--analyze` (`agent-docs/inspect.md`).
-5. To see how it looks, `sound-tools . --screenshot screenshot.png` draws the window as the project opens, on macOS only; then read the picture. Add `--click x,y` for each click before it, in points from the window's top left, half the picture's pixels: a click on a track's name shows its cards. Use that one name, so each picture replaces the last.
+5. `sound-tools . --screenshot screenshot.png` draws the window as the project opens, on macOS only: read the picture. Add `--click x,y` for each click before it, in points from the window's top left, half the picture's pixels: a click on a track's name shows its cards. Add `--play 2` to draw it after the piece played 2 seconds: meters, scopes and steps as they are then. Use that one name, so each picture replaces the last.
