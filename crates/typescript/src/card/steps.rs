@@ -1,7 +1,7 @@
 //! Steps: a row of steps in groups of four, each lit as far up as it is strong, so a soft hit
 //! is not a full one. Tab reaches the row as one stop: left and right move along it, and space
 //! or enter turns the step they are on, which carries the focus ring. The step that plays has a
-//! green ring: sound is moving.
+//! green ring: sound is moving. A secondary row has none, so a stack of rows shows one ring.
 
 use std::rc::Rc;
 
@@ -29,8 +29,8 @@ const SQUARE: f32 = 20.;
 const SOFTEST: f32 = 0.2;
 const ACROSS: f32 = 24.;
 const DOWN: f32 = 24.;
-/// More air between two groups.
-const AIR: f32 = 4.;
+/// More air between two groups: half a step, so a beat shows without counting.
+const AIR: f32 = 12.;
 /// The room of a label: a name of two short words, and air before the steps.
 const LABEL: f32 = 80.;
 
@@ -76,9 +76,10 @@ impl RenderOnce for Steps {
             theme.text_secondary(),
         );
         let on_turn = self.on_turn;
+        let playing = self.playing.filter(|_| !self.secondary);
         let steps = self.levels.iter().enumerate().map(|(step, level)| {
             // The ring of the keys wins over the ring of the step that plays.
-            let ring = match (ring_shows && step == at, self.playing == Some(step)) {
+            let ring = match (ring_shows && step == at, playing == Some(step)) {
                 (true, _) => focus,
                 (false, true) => plays,
                 (false, false) => Hsla::transparent_black(),
@@ -102,7 +103,7 @@ impl RenderOnce for Steps {
                 .bg(fill)
                 .border_2()
                 .border_color(ring)
-                .when(self.playing == Some(step), |square| {
+                .when(playing == Some(step), |square| {
                     square.debug_selector(move || format!("step-{step}-playing"))
                 });
             let state = state.clone();
