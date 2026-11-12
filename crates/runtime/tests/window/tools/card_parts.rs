@@ -165,7 +165,7 @@ fn the_ring_is_on_the_step_the_playhead_is_in(cx: &mut TestAppContext) {
         window.cx.run_until_parked();
         let tick = (window.cx).read(|cx| session.read(cx).playhead().read(cx).tick.0);
         // On a line the playhead is at the next step and the sound has played only the last.
-        if tick % 240 == 0 {
+        if tick.is_multiple_of(240) {
             continue;
         }
         let step = tick / 240 % 16;
