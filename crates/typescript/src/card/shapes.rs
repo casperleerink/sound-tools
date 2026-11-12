@@ -861,8 +861,7 @@ impl Placing<'_> {
                         .collect(),
                     _ => Rc::new([]),
                 },
-                size: (shape.size)
-                    .unwrap_or(shape.variant.unwrap_or(TextVariant::Label).size().into()),
+                size: shape.variant.unwrap_or(TextVariant::Label).size().into(),
                 weight: shape.variant.unwrap_or(TextVariant::Label).weight(),
                 align: shape.align.unwrap_or(Align::Left),
             },

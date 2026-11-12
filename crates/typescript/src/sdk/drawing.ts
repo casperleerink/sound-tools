@@ -84,7 +84,7 @@ export type Shape =
          * (the one there). Parts make one line in colours and weights of their own, such as a bar
          * number then a name.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; variant?: TextVariant; tone?: Tone; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; variant?: TextVariant; tone?: Tone; color?: Bind<Paint>; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, smooth for a history, or

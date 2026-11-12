@@ -35,7 +35,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
               const after = next();
               return after ? <Line from={() => [after.tick, y()] as const} to={() => [after.tick, yOf()(after.bpm)] as const} color="text-secondary" width={1.5} /> : null;
             },
-            <Label x={timeline.pointX.times(5).plus(left)} y={() => (y() > 16 ? y() - 14 : y() + 3)} text={text} size={11} color="text-muted"
+            <Label x={timeline.pointX.times(5).plus(left)} y={() => (y() > 16 ? y() - 14 : y() + 3)} text={text} color="text-muted"
               opacity={() => left.negate().plus(next()?.tick ?? end()).ge(timeline.pointX.times(text.length * 5.2 + 12))} />,
           ];
         }}
@@ -56,7 +56,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
             <Circle x={change.tick} y={() => yOf()(change.bpm)} radius={3.5} color="text" opacity={() => (chosen(change.tick) ? 1 : 0)} />,
             <Rect x={timeline.pointX.times(8).plus(change.tick)} y={() => y() - 9} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4}
               color="background" border="border-strong" borderWidth={1} opacity={shown} />,
-            <Label x={timeline.pointX.times(14).plus(change.tick)} y={() => y() - 6} text={text} size={12} color="text" opacity={shown} />,
+            <Label x={timeline.pointX.times(14).plus(change.tick)} y={() => y() - 6} text={text} color="text" opacity={shown} />,
           ];
         }}
       </For>

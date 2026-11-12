@@ -553,6 +553,8 @@ tool({
 });
 // @ts-expect-error: no step of the type scale is `small`.
 Label({ x: 0, y: 0, text: "C2", variant: "small" });
+// @ts-expect-error: a label has no size in points.
+Label({ x: 0, y: 0, text: "C2", size: 13 });
 
 // A control names a `field`, or shows what code keeps and hears it with `onChange`.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });

@@ -181,7 +181,7 @@ export const Ruler = ({ page }: { page: Page }) => {
             <Group x={left} clip={{ width: room, height: LINE }}>
               <Rect x={0} y={0} width={room.min(timeline.pointX.times(widthOf([{ text: section.name }]) + 12))} height={LINE} color={COLOR.clear} cursor="pointer"
                 onPress={pressMark(page, { kind: "section", bar: section.bar, tick: section.from })} />
-              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "text", weight: "medium", border: chosen("section", section.bar) }]} size={12} />
+              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "text", weight: "medium", border: chosen("section", section.bar) }]} />
             </Group>,
           ];
         }}
@@ -190,13 +190,13 @@ export const Ruler = ({ page }: { page: Page }) => {
         {(tick, bar) => [
           <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="border-strong" />,
           () => (changes().some((change) => change.tick === tick) ? null : (
-            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} size={12} color="text-muted" opacity={() => numberShows(bar())} />
+            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} color="text-muted" opacity={() => numberShows(bar())} />
           )),
         ]}
       </For>
       <For each={changes}>
         {(change, index) => [
-          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} size={12} color="text-muted" opacity={() => changeShows(index())}
+          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} color="text-muted" opacity={() => changeShows(index())}
             text={() => [{ text: `${change.bar}  ` }, { text: change.signature, border: chosen("signature", change.bar) }]} />,
           change.bar > 1 ? (
             // No wider than its label shows: a hidden one hears no press.
@@ -229,7 +229,7 @@ export const Ruler = ({ page }: { page: Page }) => {
           const shown = () => (tempoChosen(change.tick) ? 1 : now.hover(`ruler-tempo-${change.tick}`));
           return [
             <Rect x={timeline.pointX.times(6).plus(change.tick)} y={LINE} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4} color="background" border="border-strong" borderWidth={1} opacity={shown} />,
-            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} size={12} color="text" opacity={shown} />,
+            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} color="text" opacity={shown} />,
           ];
         }}
       </For>

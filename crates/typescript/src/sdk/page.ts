@@ -50,7 +50,7 @@ export const Panel = ({ key, title, grow, width, children }: PanelProps): UiNode
     title === undefined ? null : Text({ variant: "heading", children: title }), children);
 
 /** What a `Transport` gives its tool as the action `play`, which its button shows the key of. */
-export const playPause: Action<{ clock: Clock }> = {
+const playPause: Action<{ clock: Clock }> = {
   title: "Play or pause",
   keys: ["space"],
   everywhere: true,

@@ -339,7 +339,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
   // The line of a label is 1.3 times its size.
-  const text = { x, y: Math.round((height - textSize * 1.3) / 2), size: textSize, color: "text", align: props.align } as const;
+  const text = { x, y: Math.round((height - textSize * 1.3) / 2), variant: size === "sm" ? "label" : "body", color: "text", align: props.align } as const;
   const shows = props.field !== undefined ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
   const shown = { ...text, text: shows, unit };
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Reading);
