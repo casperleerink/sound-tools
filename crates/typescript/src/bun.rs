@@ -1327,7 +1327,7 @@ mod tests {
         };
         let line = serde_json::json!({
             "type": "loaded",
-            "tools": [tool("good", "hz"), tool("bad", "seconds")],
+            "tools": [tool("good", "hz"), tool("bad", "furlongs")],
             "errors": [{ "file": "broken.ts", "message": "SyntaxError" }]
         });
         let Ok(Line::Loaded(loaded)) = serde_json::from_value(line) else {
@@ -1345,7 +1345,7 @@ mod tests {
         assert_eq!(files, ["broken.ts", "bad.ts"]);
         let message = &loaded.errors[1].message;
         assert!(
-            message.starts_with("tool bad: unknown variant `seconds`"),
+            message.starts_with("tool bad: unknown variant `furlongs`"),
             "{message}"
         );
     }

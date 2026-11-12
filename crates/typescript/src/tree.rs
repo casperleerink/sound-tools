@@ -1553,12 +1553,17 @@ pub(crate) enum Live {
     Elapsed,
     /// A number by its name: a field of the record, a number input or a number output of the
     /// sound; of the instance at the path `child` inside it, its field or its output.
+    /// A field reads as it plays: what a lane or a cable plays into it, else its record.
     Value {
         name: String,
         child: Option<String>,
-        /// A field as it plays: what a lane or a cable plays into it, else its record.
-        played: bool,
         fraction: bool,
+    },
+    /// 1 while a lane or a cable moves the field `name` and holds its control, see
+    /// [`Feeds::held`](crate::feeds::Feeds).
+    Held {
+        name: String,
+        child: Option<String>,
     },
     /// The loudest sample since the last frame: of a `meter` at a path inside, or of peaks
     /// an instance inside it keeps, as `path.name`.
@@ -1690,6 +1695,15 @@ pub(crate) enum Ease {
     Hold { seconds: f32 },
 }
 
+/// The name the feeds keep the number `name` under: of the instance at `child` inside it,
+/// `child.name`.
+pub(crate) fn named(child: Option<&str>, name: &str) -> String {
+    match child {
+        Some(child) => format!("{child}.{name}"),
+        None => name.to_string(),
+    }
+}
+
 impl Live {
     fn steady(&self) -> bool {
         match self {
@@ -1698,6 +1712,7 @@ impl Live {
             | Self::Bpm
             | Self::Elapsed
             | Self::Value { .. }
+            | Self::Held { .. }
             | Self::Peak { .. }
             | Self::DevicePeak { .. }
             | Self::Input { .. }
@@ -1734,25 +1749,16 @@ impl Live {
             Self::Peak { name, .. } => _ = uses.peaks.insert(name.clone()),
             Self::DevicePeak { .. } => uses.output = true,
             Self::Input { .. } => uses.input = true,
-            Self::Value {
-                name,
-                child,
-                played,
-                ..
-            } => {
-                let named = match child {
-                    Some(child) => format!("{child}.{name}"),
-                    None => name.clone(),
-                };
+            Self::Value { name, child, .. } => {
+                let named = named(child.as_deref(), name);
                 if child.is_some() {
                     uses.inside.insert(named.clone());
                 }
-                if *played {
-                    uses.played.insert(named);
-                }
+                uses.played.insert(named);
                 // It may be an output, which moves with the watches.
                 uses.watches = true;
             }
+            Self::Held { name, child } => _ = uses.played.insert(named(child.as_deref(), name)),
             Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
@@ -1840,19 +1846,19 @@ pub(crate) enum Axis {
     Y,
 }
 
-/// How text shows a live number: in a unit, or a tick as a place in the piece, as minutes and
-/// seconds, or as the time signature there.
+/// How text shows a live number: in a unit, or a tick of the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Readout {
+    Unit(Unit),
+    Tick(TickReadout),
+}
+
+/// How text shows a tick: as a place in the piece, as minutes and seconds, or as the time
+/// signature there.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Readout {
-    Hz,
-    Ms,
-    Db,
-    Percent,
-    /// A pan from -1 to 1: `C`, `25L`, `100R`.
-    Pan,
-    /// A pitch as its note: `C2` for 36.
-    Pitch,
+pub(crate) enum TickReadout {
     Position,
     Time,
     Signature,

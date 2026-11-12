@@ -5,15 +5,15 @@ import { Button, h, Label, Space, Style, Text, Toggle, Tone } from "./drawing";
 import { host } from "./host";
 import { Clock, Live, now, TempoMap } from "./live";
 import { Child, currentCard, element, UiNode } from "./nodes";
-import { Accessor, Bind } from "./reactivity";
+import { Accessor, Bind, untrack } from "./reactivity";
 import { Action, Frozen } from "./tools";
 
 export interface PageProps {
   /**
    * What it shows in the window's title bar, in the middle of the room right of the project menu:
-   * a `Transport` when left out, so every tool plays, stops and has a tempo the same way; its own
-   * controls beside one, `<><Transport /><Button ... /></>`; or `false` for a tool with no use for
-   * the clock. A page that is not the window's shows none.
+   * a `Transport` when left out, so every tool plays and stops the same way; its own controls
+   * beside one, `<><Transport /><Button ... /></>`; or `false` for a tool that always sounds. A
+   * page that is not the window's shows none.
    */
   header?: Child | false;
   /** Its content reaches the edges of the window and does not scroll: one surface, such as a canvas or a timeline. */
@@ -83,6 +83,22 @@ const clockText = (key: string, width: number, unit: "position" | "time", tone: 
 const word = (key: string, width: number, x: number, text: string) =>
   Space({ key, width, height: 18, children: Label({ x, y: 2, text, tone: "muted" }) });
 
+/** The built-in children that play in the bars of the piece. */
+const IN_TIME = ["timeline", "lane", "region", "recorder"];
+
+/** Whether `tool` plays in the bars of the piece: its sound reads `beat` or `bpm`, or a child its `children` name does, at any depth. */
+function inTime(tool: string, seen = new Set<string>()): boolean {
+  if (IN_TIME.includes(tool)) return true;
+  if (seen.has(tool)) return false;
+  seen.add(tool);
+  const children: Record<string, string> = host.tools.get(tool)?.children ?? {};
+  return host.readsBeat(tool) || Object.values(children).some((child) => inTime(child, seen));
+}
+
+/** The same of records: of children whose names only a record says. */
+const anyInTime = (children: readonly { tool: string; children?: unknown }[]): boolean =>
+  children.some((child) => inTime(child.tool) || anyInTime((child.children ?? []) as { tool: string }[]));
+
 export interface TransportProps {
   /** A record button: whether it records, and what a press does. An action of the tool named `record` shows its key on it. */
   record?: { on: Accessor<boolean>; press: () => void };
@@ -90,20 +106,28 @@ export interface TransportProps {
   computerKeys?: boolean;
   /** A switch for writing automation, for a tool whose lanes its knobs write into. */
   writeAutomation?: boolean;
+  /**
+   * Whether it shows the time of the piece: stop, the bar and the beat, the time, the tempo, the
+   * time signature and the metronome. When left out, a tool shows them that plays in the bars:
+   * its sound reads `beat` or `bpm`, or it has a child in time at any depth, a timeline, a lane, a
+   * region or a recorder. Say `time` for a tool whose code alone reads the clock.
+   */
+  time?: boolean;
 }
 
 /**
- * The transport of the piece, a pill for the `header` of a `Page`: play and pause, stop, where
- * the piece plays as a bar and a beat and as a time, the tempo and the time signature that play
- * there, which a drag up or down or a typed number changes as one undo step, the switches of
- * how the piece is played, and the meter of what the device plays. Space plays and pauses a tool
- * that shows it, wherever the focus is: it gives the tool the action `play`, unless the tool has
- * its own.
+ * The transport of the piece, a pill for the `header` of a `Page`: play and pause, and the meter
+ * of what the device plays. For a tool that plays in the bars, see `time`, also stop, where the
+ * piece plays as a bar and a beat and as a time, the tempo and the time signature that play
+ * there, which a drag up or down or a typed number changes as one undo step, and the metronome.
+ * Space plays and pauses a tool that shows it, wherever the focus is: it gives the tool the
+ * action `play`, unless the tool has its own.
  */
-export function Transport({ record, computerKeys, writeAutomation }: TransportProps = {}): UiNode {
-  const { clock, tool } = currentCard().drawn;
+export function Transport({ record, computerKeys, writeAutomation, time }: TransportProps = {}): UiNode {
+  const { clock, tool, children } = currentCard().drawn;
   const spec = host.tools.get(tool);
   if (spec && spec.actions?.play === undefined) spec.actions = { play: playPause, ...spec.actions };
+  const timed = time ?? (inTime(tool) || untrack(() => anyInTime(children)));
   const pill: Style = {
     direction: "row", align: "center", gap: "md", height: 36, paddingLeft: "xs", paddingRight: "lg",
     radius: "full", background: "fill-strong", borderColor: "border-strong", borderWidth: 1, keep: true,
@@ -132,21 +156,21 @@ export function Transport({ record, computerKeys, writeAutomation }: TransportPr
         ...round, key: "play", icon: () => (clock.playing ? "pause" : "play"), variant: () => (clock.playing ? "subtle" : "ghost"), color: "green",
         tooltip: () => (clock.playing ? "Pause" : "Play"), shortcut: `${tool}.play`, onClick: () => (clock.playing ? clock.pause() : clock.play()),
       }),
-      Button({ ...round, key: "stop", icon: "square", tooltip: "Stop", onClick: () => clock.stop() }),
+      timed && Button({ ...round, key: "stop", icon: "square", tooltip: "Stop", onClick: () => clock.stop() }),
       record && Button({ ...round, key: "record", icon: "circle", variant: () => (record.on() ? "solid" : "ghost"), color: "red", tooltip: "Record", shortcut: `${tool}.record`, onClick: record.press }),
     ),
-    clockText("transport-position", 44, "position", "text"),
-    clockText("transport-time", 40, "time", "muted"),
-    h("div", { style: row },
+    timed && clockText("transport-position", 44, "position", "text"),
+    timed && clockText("transport-time", 40, "time", "muted"),
+    timed && h("div", { style: row },
       NumberBox({ key: "transport-tempo", width: 32, per: 2, min: 10, max: 1000, value: () => clock.bpm, onChange: setTempo, show: now.bpm.round() }),
       word("transport-bpm", 32, 0, "bpm"),
     ),
-    h("div", { style: row },
+    timed && h("div", { style: row },
       NumberBox({ key: "transport-beats", width: 14, min: 1, max: 32, unit: "beats", value: () => signature().beats, onChange: (beats) => setSignature(beats, signature().note), show: now.tick }),
       word("transport-slash", 14, 3, "/"),
       NumberBox({ key: "transport-note", width: 14, values: NOTES, unit: "note", value: () => signature().note, onChange: (note) => setSignature(signature().beats, note), show: now.tick }),
     ),
-    h("div", { style: { ...row, gap: "xs" } },
+    (computerKeys || writeAutomation || timed) && h("div", { style: { ...row, gap: "xs" } },
       computerKeys && Toggle({
         key: "computer-keys", size: "sm", icon: "keyboard-music", on: () => clock.computerKeys, tooltip: "Play notes with the computer keys", shortcut: "app.computer_keys",
         onClick: () => clock.setComputerKeys(!clock.computerKeys),
@@ -156,7 +180,7 @@ export function Transport({ record, computerKeys, writeAutomation }: TransportPr
         key: "write-automation", size: "sm", icon: "automation", on: () => clock.writeAutomation, color: "red",
         tooltip: "Write automation: while it plays, moving a knob or a fader that has a lane records into the lane", onClick: () => clock.setWriteAutomation(!clock.writeAutomation),
       }),
-      Toggle({ key: "click", size: "sm", icon: "metronome", on: () => clock.click, tooltip: "Metronome", onClick: () => clock.setClick(!clock.click) }),
+      timed && Toggle({ key: "click", size: "sm", icon: "metronome", on: () => clock.click, tooltip: "Metronome", onClick: () => clock.setClick(!clock.click) }),
     ),
     // In a well, as a display: its bars show against it while nothing plays.
     h("div", { style: { justify: "center", height: 16, paddingX: "xs", radius: "sm", background: "well" } }, Meter({ key: "transport-meter", peaks: "device", horizontal: true })),

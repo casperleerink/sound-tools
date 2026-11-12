@@ -118,6 +118,8 @@ export const host = {
     return PLAIN_KEYS.includes(shifted as never) && !SYMBOL_KEYS.includes(shifted as never);
   },
   tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
+  /** Whether the sound of the tool `name` reads `beat` or `bpm`. The host says. */
+  readsBeat: (_name: string): boolean => false,
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
   mount,

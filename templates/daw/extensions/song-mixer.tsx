@@ -30,11 +30,11 @@ export const returnTitle = ({ returns }: Page, send: string) =>
 const VOLUME = "Change the volume";
 /** The volume of the fader `path` over `meter`, as the window drew a strip's. */
 const Level = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
-  <Fader field={`${path}.gain_db`} length={length} default={0} label={VOLUME} played meter={meter} />
+  <Fader field={`${path}.gain_db`} length={length} default={0} label={VOLUME} meter={meter} />
 );
 /** The gain of the fader `path`, to drag or type. */
 const Gain = ({ path, width, align }: { path: string; width: number; align?: "center" }) => (
-  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" played max={6} label={VOLUME} width={width} size="sm" height={16} align={align} />
+  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} max={6} label={VOLUME} width={width} size="sm" height={16} align={align} />
 );
 /** A fader and under it its gain, in a column. */
 export const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
@@ -46,7 +46,7 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
 
 /** What a dial plays, in words: it shows `when` its number says something, not where a dial rests. */
 const Reading = ({ field, unit, when }: { field: string; unit: "pan" | "db"; when: (value: Live) => Live }) => {
-  const value = now.value(field, { played: true });
+  const value = now.value(field);
   return (
     <Space width={SIDE} height={16}>
       <Label x={0} y={0} text={value} unit={unit} color="text" opacity={when(value)} />

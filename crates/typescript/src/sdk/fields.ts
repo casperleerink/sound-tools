@@ -3,8 +3,12 @@
 
 import { Param, Sample, SoundInput, Table } from "./sound";
 
-/** What a readout shows after the number. */
-export type Unit = "hz" | "ms" | "db" | "percent";
+/**
+ * How a number reads, on every control and in the tool's doc: `440 Hz`, `350 ms`, `1.5 s`,
+ * `-6 dB`, `50%` for 0.5, `-7 st`, `20 ct`, `2 oct`, a `"pitch"` as its note (`C2` for 36, with
+ * its cents where it is not whole, `D2 +30`), a `"pan"` from -1 to 1 as `C`, `25L`, `100R`.
+ */
+export type Unit = "hz" | "ms" | "seconds" | "db" | "percent" | "semitones" | "cents" | "octaves" | "pitch" | "pan";
 
 /**
  * A number from `min` to `max`. A sound that reads it hears it as a signal that glides, and a
@@ -17,7 +21,7 @@ export interface NumberField {
   /** `min` when left out. */
   default?: number;
   integer?: boolean;
-  /** `"hz"` turns on a log scale; `"percent"` still holds 0 to 1. */
+  /** `"hz"` also turns on a log scale. */
   unit?: Unit;
   /** What a view calls it. The field name, in words, when left out. */
   label?: string;

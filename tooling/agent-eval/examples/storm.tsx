@@ -16,8 +16,8 @@ tool({
     "`level` is the wind's loudness. `thunder` is how loud a thunderclap is next to the wind: 0 turns thunder off, 1 is a big, close clap. `thunder_decay` is how long the rumble rolls on.",
   ].join("\n"),
   state: {
-    level: number({ min: -30, max: 6, default: -10, unit: "db", label: "Level" }),
-    thunder: number({ min: 0, max: 1, default: 0.7, unit: "percent", label: "Thunder" }),
+    level: number({ min: -30, max: 6, default: -10, unit: "db" }),
+    thunder: number({ min: 0, max: 1, default: 0.7, unit: "percent" }),
     thunder_decay: number({ min: 500, max: 8000, default: 3000, unit: "ms", label: "Rumble" }),
   },
   inputs: {
@@ -81,7 +81,7 @@ tool({
     return (
       <>
         <Display caption="Dark to bright, calm to wild" cursor="crosshair" drag={{ x: { value: "tone", absolute: true }, y: { value: "wild", absolute: true } }}>
-          <Wave x={0} y={0} width={1} height={1} list={now.history(now.value("rumble"), 120)} low={0} high={1} color="green" />
+          <Wave list={now.history(now.value("rumble"), 120)} low={0} high={1} color="green" />
           <Circle x={tone} y={wild.negate().plus(1)} radius={5} color="text" />
         </Display>
         <Controls>
