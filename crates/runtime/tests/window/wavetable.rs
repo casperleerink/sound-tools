@@ -87,10 +87,10 @@ fn a_drag_on_the_wavetable_moves_the_position_as_one_undo_step(cx: &mut TestAppC
     opened.release(from - point(px(0.), px(10.)));
     assert!(!opened.gesture_open());
     let position = state(&mut opened).osc_1.position;
-    // 10 pt of a drawing 82 pt tall, under the table select, whose frames rise 40 % of it
+    // 10 pt of a drawing 108 pt tall, under the table select, whose frames rise 40 % of it
     // from first to last.
     assert!(
-        (position - (0.5 + 10. / (82. * 0.4))).abs() < 0.01,
+        (position - (0.5 + 10. / (108. * 0.4))).abs() < 0.01,
         "{position}"
     );
     assert_eq!(

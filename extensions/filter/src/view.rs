@@ -124,14 +124,7 @@ impl FilterView {
         let device = &self.device;
         let automated =
             device.is_automated(CUTOFF.field, cx) || device.is_automated(RESONANCE.field, cx);
-        let caption = format!(
-            "{} · {}",
-            CUTOFF_KNOB.caption(state),
-            RESONANCE_KNOB.caption(state)
-        );
-        let handle = Handle::new("cutoff-resonance", x, y)
-            .automated(automated)
-            .caption(caption);
+        let handle = Handle::new("cutoff-resonance", x, y).automated(automated);
         handle.on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {

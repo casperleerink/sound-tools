@@ -4,13 +4,18 @@
 //! drawing ([`Display::control`]), so it lies over none of it.
 //!
 //! A display explains itself by what it draws: the marks of its scale stand faintly at their
-//! lines ([`Display::scale`]). The line under it, on the value line of row 2, is empty at rest.
-//! It says what moves ([`Display::caption`]), what the pointer is on ([`Display::pointed`]) and
-//! what a handle moves while that is pointed at or dragged ([`Handle::caption`]).
+//! lines ([`Display::scale`]). Words come only while there is something to say, as one line
+//! inside it at its foot: what moves ([`Display::caption`]), and what a handle moves while that
+//! is pointed at or dragged ([`Handle::caption`]). The line never lies over a handle or the
+//! curve: where the middle of the foot is taken it stands at a side, or at the top.
 //!
-//! A display is [`WIDTH`] wide, or [`WIDE_WIDTH`] for one that needs the room across: a file, the
-//! bands of an EQ. Both are whole columns of cells, so the cells of every card of a rack stand
-//! in the same columns.
+//! What is bright is what the composer drags: the curve and its handles. What the sound does,
+//! a level, a history, a reduction, is one soft fill under at most one line
+//! ([`Display::columns`]).
+//!
+//! A display is as tall as the two rows of cells beside it, and [`WIDTH`] wide, or
+//! [`WIDE_WIDTH`] for one that needs the room across: a file, the bands of an EQ. Both are whole
+//! columns of cells, so the cells of every card of a rack stand in the same columns.
 //!
 //! The display is not only a picture: its handles drag. A [`Handle`] moves one or two values,
 //! sideways and up and down, each on a [`KnobRange`] across the width or the height of the
@@ -30,6 +35,7 @@
 //! A display can also show a waveform under its curve, with the part outside two lines shaded
 //! and a green line where the sound plays, see [`waveform_display`](super::waveform_display).
 
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -39,7 +45,7 @@ use gpui::{
     Pixels, Point, SharedString, Window, canvas, div, fill, point, prelude::*, px, size,
 };
 
-use crate::components::cell::{CELL_WIDTH, CONTROL_HEIGHT};
+use crate::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, ROW_HEIGHT};
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::knob::KnobRange;
 use crate::components::paint;
@@ -54,13 +60,17 @@ pub const GAP: f32 = 8.;
 /// Four columns of cells with the gap, and six.
 pub const WIDTH: f32 = 4. * CELL_WIDTH - GAP;
 pub const WIDE_WIDTH: f32 = 6. * CELL_WIDTH - GAP;
-pub const INSET_HEIGHT: f32 = 118.;
+pub const INSET_HEIGHT: f32 = 2. * ROW_HEIGHT;
 /// The strip of the controls above the drawing: as tall as the room of a knob, so a control in
 /// it is on the line of the knobs of the first row.
 pub const STRIP_HEIGHT: f32 = CONTROL_HEIGHT;
-/// From the inset to the line under it, which is on the value line of the second row.
-const CAPTION_GAP: f32 = 8.;
+/// The line at the foot of the inset: from its edge, and how tall its words and its plate are.
+const CAPTION_INSET: f32 = 6.;
 const CAPTION_HEIGHT: f32 = 14.;
+const CAPTION_PLATE: f32 = CAPTION_HEIGHT + 4.;
+const CAPTION_PADDING: f32 = 6.;
+/// What a letter of the line takes across, a little more than most do.
+const CAPTION_LETTER: f32 = 6.5;
 const CURVE_WIDTH: f32 = 1.5;
 /// A mark and a dashed line are thin, under the curve in weight.
 const THIN_WIDTH: f32 = 1.;
@@ -161,8 +171,9 @@ impl Handle {
         }
     }
 
-    /// What the line under the display says while the pointer is on the handle or drags it:
-    /// what it moves, by name and value, such as `Cutoff 1.2 kHz · Resonance 40%`.
+    /// What the line of the display says while the pointer is on the handle or drags it: what
+    /// it moves, by name and value, such as `Decay 400 ms · Sustain 55%`. Only for a value no
+    /// knob in view says: beside its knob a handle says nothing.
     pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
         self.caption = Some(caption.into());
         self
@@ -216,6 +227,8 @@ impl Handle {
     }
 }
 
+impl FluentBuilder for Handle {}
+
 #[derive(IntoElement)]
 pub struct Display {
     base: Div,
@@ -231,6 +244,8 @@ pub struct Display {
     zero: Option<f32>,
     /// Thin lines up from the bottom, each at a place across to a height.
     marks: Vec<Point<f32>>,
+    /// Soft columns up from the bottom, see [`Display::columns`].
+    columns: Vec<(Range<f32>, f32)>,
     /// A second line, dashed and not filled, from left to right.
     dashed: Vec<Point<f32>>,
     /// Quiet lines behind the curve.
@@ -242,7 +257,8 @@ pub struct Display {
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
-    pointed: Option<SharedString>,
+    /// How far from the right edge the line stands, see [`Display::caption_at_right`].
+    caption_right: Option<f32>,
     controls: Vec<AnyElement>,
     strip: bool,
     children: Vec<AnyElement>,
@@ -261,6 +277,7 @@ impl Display {
             scale: Vec::new(),
             zero: None,
             marks: Vec::new(),
+            columns: Vec::new(),
             dashed: Vec::new(),
             lines: Vec::new(),
             filled: true,
@@ -268,7 +285,7 @@ impl Display {
             waveform: Waveform::default(),
             handles: Vec::new(),
             caption: None,
-            pointed: None,
+            caption_right: None,
             controls: Vec::new(),
             strip: false,
             children: Vec::new(),
@@ -358,6 +375,13 @@ impl Display {
         self
     }
 
+    /// Soft columns up from the bottom, each from a place across to another and to a height, a
+    /// hairline apart: parts of the sound side by side, such as the bands of a vocoder.
+    pub fn columns(mut self, columns: impl IntoIterator<Item = (Range<f32>, f32)>) -> Self {
+        self.columns = columns.into_iter().collect();
+        self
+    }
+
     /// A second line, dashed and not filled, as points from left to right, such as how the
     /// highs of a reverb fall.
     pub fn dashed(mut self, points: impl IntoIterator<Item = Point<f32>>) -> Self {
@@ -380,7 +404,8 @@ impl Display {
 
     /// The fill in colours by height, as on a meter, instead of one quiet tint: each colour from
     /// its place up, 0 to 1, to the place of the next. So a colour is always at the same height,
-    /// such as the level of a spectrum.
+    /// such as the level of a spectrum. The line takes the colours too, at full strength: a
+    /// level is not the composer's to drag.
     pub fn fill_bands(mut self, bands: impl IntoIterator<Item = (f32, Hsla)>) -> Self {
         self.bands = bands.into_iter().collect();
         self
@@ -418,17 +443,17 @@ impl Display {
         self
     }
 
-    /// The line under the display. A card at rest has none: give it while what it says
-    /// moves, such as how far a compressor turns the sound down now.
+    /// The line at the foot of the display. A card at rest has none: give it while what it
+    /// says moves, such as how far a compressor turns the sound down now.
     pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
         self.caption = Some(caption.into());
         self
     }
 
-    /// What the line under the display says while the pointer is on the display, on no handle
-    /// that speaks, and there is no [`Display::caption`]: what the drawing shows at rest.
-    pub fn pointed(mut self, pointed: impl Into<SharedString>) -> Self {
-        self.pointed = Some(pointed.into());
+    /// The line stands at the right of the foot, `inset` from the edge, wherever the handles
+    /// are: beside what it speaks of there, such as the bar of a reduction.
+    pub fn caption_at_right(mut self, inset: f32) -> Self {
+        self.caption_right = Some(inset);
         self
     }
 }
@@ -449,7 +474,7 @@ struct Ink {
     grid: Hsla,
     zero: Hsla,
     thin: Hsla,
-    line: Hsla,
+    soft: Hsla,
     waveform: Hsla,
     shade: Hsla,
     tint: Hsla,
@@ -475,6 +500,7 @@ struct Drawing {
     grid: (Vec<f32>, Vec<f32>),
     zero: Option<f32>,
     marks: Vec<Point<f32>>,
+    columns: Vec<(Range<f32>, f32)>,
     dashed: Vec<Point<f32>>,
     lines: Vec<Vec<Point<f32>>>,
     filled: bool,
@@ -514,6 +540,7 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         grid: (across, up),
         zero,
         marks,
+        columns,
         dashed,
         lines,
         filled,
@@ -543,6 +570,13 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
                 ink.zero,
             );
         }
+        for (across, up) in columns {
+            let top = at(bounds, point(across.start, *up));
+            let bottom = at(bounds, point(across.end, 0.));
+            let width = (bottom.x - top.x - px(THIN_WIDTH)).max(px(THIN_WIDTH));
+            let area = Bounds::new(top, size(width, bottom.y - top.y));
+            window.paint_quad(fill(area, ink.soft));
+        }
         for mark in marks {
             let bottom = at(bounds, point(mark.x, 0.));
             let top = at(bounds, *mark);
@@ -554,7 +588,7 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         }
         for line in lines {
             if let Some(path) = stroke(bounds, line, LINE_WIDTH, None) {
-                window.paint_path(path, ink.line);
+                window.paint_path(path, ink.soft);
             }
         }
         let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
@@ -593,7 +627,14 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
             }
         }
         if let Some(stroke) = stroke(bounds, curve, CURVE_WIDTH, None) {
-            window.paint_path(stroke, ink.curve);
+            if bands.is_empty() {
+                window.paint_path(stroke, ink.curve);
+            } else {
+                let opaque: Vec<_> = (bands.iter())
+                    .map(|(from, color)| (*from, color.alpha(1.)))
+                    .collect();
+                paint_bands(bounds, &stroke, curve, &opaque, window);
+            }
         }
     });
 }
@@ -606,8 +647,8 @@ fn corner_rise(x: Pixels, width: Pixels) -> Pixels {
     px(radius - (radius * radius - (radius - inside).powi(2)).sqrt())
 }
 
-/// The area under the curve once per band, under a mask of the band's heights. A band above the
-/// curve has nothing to paint.
+/// The area under the curve, or its line, once per band, under a mask of the band's heights. A
+/// band above the curve has nothing to paint.
 fn paint_bands(
     bounds: Bounds<Pixels>,
     area: &gpui::Path<Pixels>,
@@ -695,6 +736,75 @@ fn moved(axis: Axis, travel: &mut Travel, pointer: f32, fine: bool) -> f32 {
     }
 }
 
+/// The side of the drawing the line of a display stands at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Side {
+    Middle,
+    Right,
+    Left,
+}
+
+/// Where the line of a display stands: at the top of the drawing or at its foot, and its side.
+type CaptionPlace = (bool, Side);
+
+/// In the order the line takes them: the foot before the top, the middle before the sides.
+const CAPTION_PLACES: [CaptionPlace; 6] = [
+    (false, Side::Middle),
+    (false, Side::Right),
+    (false, Side::Left),
+    (true, Side::Middle),
+    (true, Side::Right),
+    (true, Side::Left),
+];
+
+/// The first place where a line `plate` wide lies over nothing of `taken`: what the composer
+/// drags, as points of the drawing from its top left, each with the room it keeps clear. The
+/// middle of the foot when every place is taken.
+fn caption_place(
+    plate: f32,
+    (width, height): (f32, f32),
+    taken: &[(Point<f32>, f32)],
+) -> CaptionPlace {
+    let free = |(top, side): &CaptionPlace| {
+        let left = match side {
+            Side::Middle => (width - plate) / 2.,
+            Side::Right => width - CAPTION_INSET - plate,
+            Side::Left => CAPTION_INSET,
+        };
+        let above = match top {
+            true => CAPTION_INSET,
+            false => height - CAPTION_INSET - CAPTION_PLATE,
+        };
+        taken.iter().all(|(place, clear)| {
+            place.x < left - clear
+                || place.x > left + plate + clear
+                || place.y < above - clear
+                || place.y > above + CAPTION_PLATE + clear
+        })
+    };
+    (CAPTION_PLACES.into_iter().find(free)).unwrap_or(CAPTION_PLACES[0])
+}
+
+/// The curve as points a few points of the display apart, each with the room its line takes.
+fn along_curve(curve: &[Point<f32>], (width, height): (f32, f32)) -> Vec<(Point<f32>, f32)> {
+    const APART: f32 = 4.;
+    let place = |at: &Point<f32>| point(at.x * width, (1. - at.y) * height);
+    let between = curve.windows(2).flat_map(|ends| {
+        let (from, to) = (place(&ends[0]), place(&ends[1]));
+        let steps = ((to.x - from.x).hypot(to.y - from.y) / APART)
+            .ceil()
+            .max(1.) as usize;
+        (0..=steps).map(move |step| {
+            let part = step as f32 / steps as f32;
+            point(
+                from.x + (to.x - from.x) * part,
+                from.y + (to.y - from.y) * part,
+            )
+        })
+    });
+    between.map(|at| (at, CURVE_WIDTH)).collect()
+}
+
 /// Whether the pointer is on a handle that speaks, or drags it, wherever the pointer went
 /// since. Kept in element state under the handle, so it goes when the handle does.
 #[derive(Clone, Copy, Default)]
@@ -710,7 +820,7 @@ fn handle_key(display: &ElementId, handle: &Handle) -> ElementId {
     ElementId::NamedChild(Arc::new(display.clone()), handle.id.to_string().into())
 }
 
-/// Hears the end of the drag of a handle that speaks, as an element of no size: the line under
+/// Hears the end of the drag of a handle that speaks, as an element of no size: the line of
 /// the display then says it no longer, though nothing else is drawn again at a mouse up.
 fn drag_end_listener(pointing: Entity<Pointing>) -> impl IntoElement {
     canvas(
@@ -896,7 +1006,7 @@ impl RenderOnce for Display {
             grid: theme.border(),
             zero: theme.border_strong(),
             thin: theme.text().opacity(0.5),
-            line: theme.text().opacity(0.16),
+            soft: paint::soft_fill(theme),
             waveform: theme.text().opacity(0.3),
             shade: theme.well().opacity(0.72),
             tint: theme.selected(),
@@ -904,32 +1014,15 @@ impl RenderOnce for Display {
         };
         let handle_colors = (theme.text(), theme.well());
         let (caption_color, scale_color) = (theme.text_secondary(), theme.text_muted());
-        let (mut across, up) = self.grid;
-        across.extend(self.scale.iter().map(|(across, _)| *across));
-        let drawing = Drawing {
-            curve: self.curve,
-            grid: (across, up),
-            zero: self.zero,
-            marks: self.marks,
-            dashed: self.dashed,
-            lines: self.lines,
-            filled: self.filled,
-            bands: self.bands,
-            waveform: self.waveform,
-        };
-        let drawing = canvas(
-            |_, _, _| {},
-            move |bounds, (), window, _| paint_display(bounds, &drawing, ink, window),
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+        let plate = theme.well().opacity(0.85);
         let strip = match self.strip {
             true => STRIP_HEIGHT,
             false => 0.,
         };
         let size = (self.width, INSET_HEIGHT - strip);
+        let (mut across, up) = self.grid;
+        across.extend(self.scale.iter().map(|(across, _)| *across));
+        let grid = (across, up);
         let scale = self.scale.into_iter().map(|(across, word)| {
             let line = across * self.width;
             // After its line, or before it where the display ends too soon after it.
@@ -947,10 +1040,6 @@ impl RenderOnce for Display {
                 .child(typography::tabular_text(word, scale_color))
         });
         let scale: Vec<_> = scale.collect();
-        // Whether the pointer is on the display, for what it says at rest. Under its id, as
-        // the state of a handle is.
-        let key = ElementId::NamedChild(Arc::new(self.id.clone()), "pointed".into());
-        let on_inset = window.use_keyed_state(key, cx, |_, _| false);
         // In the order they are drawn, the topmost last, each with its pointer if it speaks.
         let (areas, handles): (Vec<_>, Vec<_>) =
             self.handles.into_iter().partition(|handle| handle.area);
@@ -972,11 +1061,76 @@ impl RenderOnce for Display {
         };
         let handle =
             speaking(|pointing| pointing.drags).or_else(|| speaking(|pointing| pointing.on));
-        let caption = match (handle, self.caption) {
+        let caption: Option<SharedString> = match (handle, self.caption) {
             (Some(handle), Some(caption)) => Some(format!("{handle} · {caption}").into()),
             (Some(says), None) | (None, Some(says)) => Some(says),
-            (None, None) => self.pointed.clone().filter(|_| *on_inset.read(cx)),
+            (None, None) => None,
         };
+        let caption = caption.map(|caption| {
+            let (top, side, inset) = match self.caption_right {
+                Some(inset) => (false, Side::Right, inset),
+                None => {
+                    let dots = (handles.iter().filter(|(handle, _)| !handle.area))
+                        .map(|(handle, _)| (handle.x.position(), handle.y.position()))
+                        .map(|(x, y)| (point(x * size.0, (1. - y) * size.1), HANDLE_TARGET / 2.));
+                    let taken: Vec<_> = dots.chain(along_curve(&self.curve, size)).collect();
+                    let plate =
+                        caption.chars().count() as f32 * CAPTION_LETTER + 2. * CAPTION_PADDING;
+                    let (top, side) = caption_place(plate, size, &taken);
+                    (top, side, CAPTION_INSET)
+                }
+            };
+            // For tests, which find the line by what it says: `caption-<words>`.
+            let selector = caption.clone();
+            let words = div()
+                .debug_selector(move || format!("caption-{selector}"))
+                .h(px(CAPTION_PLATE))
+                .px(px(CAPTION_PADDING))
+                .flex()
+                .items_center()
+                .rounded(radius::SM)
+                .bg(plate)
+                .text_variant(TextVariant::Label)
+                .line_height(px(CAPTION_HEIGHT))
+                .whitespace_nowrap()
+                .child(typography::tabular_text(caption, caption_color));
+            div()
+                .absolute()
+                .left_0()
+                .w_full()
+                .px(px(inset))
+                .map(|line| match top {
+                    true => line.top(px(CAPTION_INSET)),
+                    false => line.bottom(px(CAPTION_INSET)),
+                })
+                .flex()
+                .map(|line| match side {
+                    Side::Middle => line.justify_center(),
+                    Side::Right => line.justify_end(),
+                    Side::Left => line.justify_start(),
+                })
+                .child(words)
+        });
+        let drawing = Drawing {
+            curve: self.curve,
+            grid,
+            zero: self.zero,
+            marks: self.marks,
+            columns: self.columns,
+            dashed: self.dashed,
+            lines: self.lines,
+            filled: self.filled,
+            bands: self.bands,
+            waveform: self.waveform,
+        };
+        let drawing = canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| paint_display(bounds, &drawing, ink, window),
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         let handles = handles.into_iter().map(|(handle, pointing)| {
             let (hides, colors) = (self.takes_files, handle_colors);
             let area = handle.area;
@@ -1012,14 +1166,6 @@ impl RenderOnce for Display {
                 div()
                     .id("inset")
                     .when(self.takes_files, |d| d.group(INSET_GROUP))
-                    .when(self.pointed.is_some(), |inset| {
-                        inset.on_hover(move |on, _, cx| {
-                            on_inset.update(cx, |on_inset, cx| {
-                                *on_inset = *on;
-                                cx.notify();
-                            });
-                        })
-                    })
                     .relative()
                     .h(px(INSET_HEIGHT))
                     .rounded(radius::MD)
@@ -1036,26 +1182,10 @@ impl RenderOnce for Display {
                             .children(scale)
                             .children(areas)
                             .children(self.children)
-                            .children(handles),
+                            .children(handles)
+                            .children(caption),
                     )
                     .children(self.overlays),
-            )
-            .child(
-                div()
-                    .mt(px(CAPTION_GAP))
-                    .h(px(CAPTION_HEIGHT))
-                    .flex()
-                    .justify_center()
-                    .text_variant(TextVariant::Label)
-                    .line_height(px(CAPTION_HEIGHT))
-                    .whitespace_nowrap()
-                    .children(caption.map(|caption| {
-                        // For tests, which find the line by what it says: `caption-<words>`.
-                        let selector = caption.clone();
-                        div()
-                            .debug_selector(move || format!("caption-{selector}"))
-                            .child(typography::tabular_text(caption, caption_color))
-                    })),
             )
     }
 }
@@ -1134,5 +1264,28 @@ impl RenderOnce for TextDisplay {
             Some(drop) => display.overlay(drop),
             None => display,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIZE: (f32, f32) = (WIDTH, INSET_HEIGHT);
+
+    #[test]
+    fn the_line_takes_the_first_place_that_is_over_no_handle() {
+        let handle = |x: f32, y: f32| (point(x, y), HANDLE_TARGET / 2.);
+        assert_eq!(caption_place(100., SIZE, &[]), (false, Side::Middle));
+        // A handle up in the drawing is in no place of the line.
+        let high = [handle(WIDTH / 2., 60.)];
+        assert_eq!(caption_place(100., SIZE, &high), (false, Side::Middle));
+        let foot = [handle(WIDTH / 2., INSET_HEIGHT)];
+        assert_eq!(caption_place(100., SIZE, &foot), (false, Side::Right));
+        // A long line reaches the handle from either side of the foot, so it stands at the top,
+        // and beside a handle that is there.
+        assert_eq!(caption_place(180., SIZE, &foot), (true, Side::Middle));
+        let envelope = [handle(WIDTH / 2., INSET_HEIGHT), handle(30., 12.)];
+        assert_eq!(caption_place(180., SIZE, &envelope), (true, Side::Right));
     }
 }

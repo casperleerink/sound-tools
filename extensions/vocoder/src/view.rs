@@ -1,4 +1,4 @@
-//! The card of the vocoder: its bands across the spectrum, a line each, then Bands, Formant,
+//! The card of the vocoder: its bands side by side across the spectrum, then Bands, Formant,
 //! Release and Mix, and the sidechain picker, always shown: without a voice a vocoder does
 //! little. The rack gives the view a [`CardFrame`].
 //!
@@ -6,7 +6,9 @@
 //! goes through the session by [`DeviceEdit`]. A number that an automation lane of the track
 //! moves shows the value that plays and does not drag ([`Lanes`](sound_ui::Lanes)).
 
-use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
+use std::ops::Range;
+
+use gpui::{Context, Entity, Window, div, prelude::*};
 use sound_core::Instance;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::Display;
@@ -24,7 +26,7 @@ pub const NAME: &str = "Vocoder";
 const LEFT_HZ: f32 = 50.;
 const RIGHT_HZ: f32 = 20_000.;
 
-/// How high the line of a band reaches, 0 to 1.
+/// How high a band reaches, 0 to 1.
 const BAND_HEIGHT: f32 = 0.6;
 
 /// Registers the view of the `vocoder` tool, what a rack calls one and its offer in a picker.
@@ -64,17 +66,13 @@ fn across(hz: f32) -> f32 {
     (hz / LEFT_HZ).log2() / (RIGHT_HZ / LEFT_HZ).log2()
 }
 
-/// A line up from the bottom at the middle of each band.
-fn bank(bands: f32) -> Vec<Point<f32>> {
+/// Each band from its lowest to its highest place across.
+fn bank(bands: f32) -> Vec<(Range<f32>, f32)> {
     let bands = bands.round().max(1.);
     let step = (HIGHEST_HZ / LOWEST_HZ).powf(1. / bands);
+    let edge = |band: i32| across(LOWEST_HZ * step.powi(band));
     (0..bands as i32)
-        .map(|band| {
-            point(
-                across(LOWEST_HZ * step.powf(band as f32 + 0.5)),
-                BAND_HEIGHT,
-            )
-        })
+        .map(|band| (edge(band)..edge(band + 1), BAND_HEIGHT))
         .collect()
 }
 
@@ -100,7 +98,7 @@ impl VocoderView {
     fn display(&self, state: &VocoderState) -> Display {
         let scale = [(100., "100"), (1_000., "1k"), (10_000., "10k")];
         Display::new("display")
-            .marks(bank(state.bands))
+            .columns(bank(state.bands))
             .scale(scale.map(|(hz, word)| (across(hz), word)))
     }
 }

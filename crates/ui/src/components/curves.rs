@@ -2,7 +2,7 @@
 //! shape of an LFO and the response of the state variable filter of the SDK. Places are from
 //! 0 to 1 on the display, `y` up, as [`Display`] takes them.
 
-use gpui::{App, ElementId, Point, Window, point};
+use gpui::{App, ElementId, Point, Window, point, prelude::FluentBuilder};
 use sound_dsp::{EnvelopeCurves, FilterSlope, FilterType, Lfo, LfoShape, svf_response};
 
 use crate::components::display::{Axis, Display, Handle};
@@ -107,13 +107,14 @@ fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Point<f3
 /// of the times and the sustain do. `on_change` hears which handle moved and how: the
 /// owner holds them to the ranges of its fields, since a handle may ask for one past an end.
 /// A handle that moves a value an automation lane moves, as `automated` says, does not drag.
-/// `readouts` are the four values as their knobs read them, which a handle says with their
-/// names while it is pointed at or dragged. The owner adds any control above the drawing.
+/// `readouts` are the four values as their knobs read them, while those are out of view: a
+/// handle then says them with their names while it is pointed at or dragged. The owner adds any
+/// control above the drawing.
 pub fn envelope_display(
     id: impl Into<ElementId>,
     time: KnobRange,
     (adsr, defaults, automated): (Adsr, Adsr, Adsr<bool>),
-    readouts: Adsr<String>,
+    readouts: Option<Adsr<String>>,
     curves: [f32; 3],
     on_change: impl Fn((EnvelopeHandle, ValueChange<Point<f32>>), &mut Window, &mut App) + 'static,
 ) -> Display {
@@ -122,23 +123,27 @@ pub fn envelope_display(
     let on_change = std::rc::Rc::new(on_change);
     let handle = |which: EnvelopeHandle, name: &'static str, x: Axis, y: Axis| {
         let on_change = on_change.clone();
-        let Adsr {
-            attack,
-            decay,
-            sustain,
-            release,
-        } = &readouts;
-        let (held, caption) = match which {
-            EnvelopeHandle::Attack => (automated.attack, format!("Attack {attack}")),
-            EnvelopeHandle::Decay => (
-                automated.decay || automated.sustain,
-                format!("Decay {decay} · Sustain {sustain}"),
-            ),
-            EnvelopeHandle::Release => (automated.release, format!("Release {release}")),
+        let held = match which {
+            EnvelopeHandle::Attack => automated.attack,
+            EnvelopeHandle::Decay => automated.decay || automated.sustain,
+            EnvelopeHandle::Release => automated.release,
         };
+        let caption = readouts.as_ref().map(|readouts| {
+            let Adsr {
+                attack,
+                decay,
+                sustain,
+                release,
+            } = readouts;
+            match which {
+                EnvelopeHandle::Attack => format!("Attack {attack}"),
+                EnvelopeHandle::Decay => format!("Decay {decay} · Sustain {sustain}"),
+                EnvelopeHandle::Release => format!("Release {release}"),
+            }
+        });
         Handle::new(name, x, y)
             .automated(held)
-            .caption(caption)
+            .when_some(caption, Handle::caption)
             .on_change(move |change, window, cx| on_change((which, change), window, cx))
     };
     let attack = handle(

@@ -1,9 +1,16 @@
 //! Shapes that controls paint on a canvas: circles, rings, arcs and lines. Angles are in degrees,
 //! clockwise from the top, as on a dial.
 
+use crate::theme::Theme;
 use gpui::{
     BorderStyle, Bounds, Hsla, PathBuilder, Pixels, Point, Window, fill, outline, point, px, size,
 };
+
+/// The fill of what the sound does inside a display: a history, a reduction, the parts of a
+/// spectrum. Soft, so that only what the composer drags is bright there.
+pub(crate) fn soft_fill(theme: &Theme) -> Hsla {
+    theme.text().opacity(0.16)
+}
 
 /// The point at `angle` on a circle.
 pub(crate) fn on_circle(centre: Point<Pixels>, radius: f32, angle: f32) -> Point<Pixels> {

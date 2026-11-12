@@ -1,7 +1,7 @@
 //! The display of a device that turns a level down, the Compressor and the Gate: its transfer
 //! curve, the input across and the output up, so an untouched sound is the diagonal of the
-//! curve's part. The level now is a dot on the curve and the gain reduction a bar at the right
-//! edge, which the line under the display says in words while it moves or is pointed at.
+//! curve's part. The level now is a dot on the curve and the gain reduction a soft bar at the
+//! right edge, which the line of the display says in words while it turns the sound down.
 //!
 //! The owner draws its own curve and handles on [`Levels`], keeps a [`Reading`] from its meters
 //! and adds them with [`Levels::meters`].
@@ -94,11 +94,11 @@ impl Levels {
             .top(px(BAR_INSET))
             .right(px(BAR_INSET))
             .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
-        let display = match GainReduction::says(reduction_db) {
-            (says, true) => display.caption(says),
-            (says, false) => display.pointed(says),
-        };
-        display.children(level).child(bar)
+        display
+            .caption_at_right(BAR_ROOM)
+            .when_some(GainReduction::says(reduction_db), Display::caption)
+            .children(level)
+            .child(bar)
     }
 }
 

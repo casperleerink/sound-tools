@@ -123,12 +123,7 @@ fn cards(cx: &mut App) -> AnyElement {
         columns(DeviceCard::new("drum-pad-expanded", title("Drum pad")).expand(true, |_, _, _| {}))
             .hidden_column(
                 Column::new()
-                    .top(
-                        Cell::new(select)
-                            .span(2)
-                            .label("Sound")
-                            .value("Synthesized"),
-                    )
+                    .top(Cell::new(select).span(2).label("Sound"))
                     .bottom(Cell::switch(Toggle::new("choke", "Choke", true))),
             )
             .hidden_column(Column::new());

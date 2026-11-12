@@ -13,6 +13,7 @@ use gpui::{
     AnyElement, AnyView, App, Context, Div, Entity, FocusHandle, FontWeight, SharedString, Task,
     Window, div, prelude::*, px,
 };
+use plugin_host::VST_TRADEMARK;
 use sound_core::DeviceChoice;
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
@@ -229,6 +230,16 @@ impl SettingsPage {
                     .children(items),
             )
             .child(Shell::drag_region().flex_1())
+            // The pickers write "VST" in the rows of such plugins, so the app owes this line.
+            .child(
+                div()
+                    .flex_none()
+                    .px(px(22.))
+                    .pb(px(16.))
+                    .text_variant(TextVariant::Label)
+                    .text_color(muted)
+                    .child(VST_TRADEMARK),
+            )
     }
 
     fn audio(&self, cx: &mut Context<Self>) -> AnyElement {

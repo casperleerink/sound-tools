@@ -3,7 +3,8 @@
 //!
 //! - `cards-effects.png`: the Filter, the Compressor pressed by the chord and the EQ.
 //! - `cards-pointed.png`, `cards-pointed-playing.png`: the same with the pointer on a handle
-//!   of the Synth's envelope, and on the threshold of the Compressor as it turns down.
+//!   of the Synth's envelope, whose knobs are behind expand, and on a band of the EQ that its
+//!   knobs do not show.
 //! - `cards-effects-expanded.png`: the same three expanded.
 //! - `cards-dynamics.png`: the Saturator driven 18 dB into its tube curve, the Limiter pushing
 //!   the chord into a ceiling of -6 dB, and the Gate.
@@ -71,10 +72,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
         .collect();
     let opened = rack(cx, &effects)?;
     save(cx, opened.window.into(), "cards-effects")?;
-    // The corner of the Synth's envelope, the threshold of the Compressor, then off the cards.
+    // The corner of the Synth's envelope, the third band of the EQ, then off the cards.
     let pointed = [
-        (Some("cards-pointed"), (86., 154.)),
-        (Some("cards-pointed-playing"), (139., 549.)),
+        (Some("cards-pointed"), (86., 164.)),
+        (Some("cards-pointed-playing"), (274., 745.)),
         (None, (1000., 800.)),
     ];
     for (name, (x, y)) in pointed {
