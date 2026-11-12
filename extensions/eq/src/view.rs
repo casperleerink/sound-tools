@@ -38,9 +38,6 @@ use crate::{
 /// The name the rack puts on the card of an EQ.
 pub const NAME: &str = "EQ";
 
-/// The width of the display. With it and two columns of cells the card is 464 pt.
-const DISPLAY_WIDTH: f32 = 312.;
-
 /// The display shows gains from here to there, in dB: the ±15 dB of a band with room for its
 /// handle.
 const DISPLAY_DB: (f32, f32) = (-18., 18.);
@@ -301,7 +298,8 @@ impl EqView {
     }
 
     fn display(&self, state: &EqState, cx: &mut Context<Self>) -> Display {
-        let display = Display::new("display", DISPLAY_WIDTH)
+        let display = Display::new("display")
+            .wide()
             .curve(curve(state))
             .grid(response_decades(), Vec::new())
             .zero_line(height_of(0.))

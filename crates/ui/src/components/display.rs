@@ -1,7 +1,12 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
 //! sound, with the line of its numbers or its scale under it on the value line of row 2. A curve
 //! is drawn over a fill, or over bands of colour by height for a level ([`Display::fill_bands`]).
-//! Controls such as a segmented control go at its top as children.
+//! A control such as a segmented control sits in a strip above the drawing
+//! ([`Display::control`]), so it lies over none of it.
+//!
+//! A display is [`WIDTH`] wide, or [`WIDE_WIDTH`] for one that needs the room across: a file, the
+//! bands of an EQ. Both are whole columns of cells, so the cells of every card of a rack stand
+//! in the same columns.
 //!
 //! The display is not only a picture: its handles drag. A [`Handle`] moves one or two values,
 //! sideways and up and down, each on a [`KnobRange`] across the width or the height of the
@@ -12,8 +17,7 @@
 //! A handle may carry a number, such as the band of an EQ: its dot is then larger, with the
 //! number in it, and [`Handle::on_press`] hears every press on it, so that a click selects it.
 //! A handle may also be the whole display, with no dot ([`Handle::area`]): a drag anywhere on
-//! it moves the value, as the position of a wavetable moves. The controls at the top of the
-//! display stay above it. A handle that moves a number an automation lane moves shows where the
+//! it moves the value, as the position of a wavetable moves. A handle that moves a number an automation lane moves shows where the
 //! lane is and does not drag; the knob of that number carries the mark and says why.
 //!
 //! The display knows no device. The owner gives the curve as points on the display and the
@@ -31,15 +35,25 @@ use gpui::{
     canvas, div, fill, point, prelude::*, px, size,
 };
 
+use crate::components::cell::{CELL_WIDTH, CONTROL_HEIGHT};
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::knob::KnobRange;
 use crate::components::paint;
+use crate::components::waveform_display::FileDrop;
 use crate::scale::radius;
 use crate::theme::ActiveTheme;
 use crate::typography;
 use crate::typography::{TextVariant, Typography};
 
+/// Between a display and the first column of cells after it.
+pub const GAP: f32 = 8.;
+/// Four columns of cells with the gap, and six.
+pub const WIDTH: f32 = 4. * CELL_WIDTH - GAP;
+pub const WIDE_WIDTH: f32 = 6. * CELL_WIDTH - GAP;
 pub const INSET_HEIGHT: f32 = 118.;
+/// The strip of the controls above the drawing: as tall as the room of a knob, so a control in
+/// it is on the line of the knobs of the first row.
+pub const STRIP_HEIGHT: f32 = CONTROL_HEIGHT;
 /// From the inset to the line under it, which is on the value line of the second row.
 const CAPTION_GAP: f32 = 8.;
 const CAPTION_HEIGHT: f32 = 14.;
@@ -59,6 +73,10 @@ const HANDLE_TARGET: f32 = 18.;
 const WAVEFORM_MARGIN: f32 = 6.;
 /// The group of the inset of a display that takes files, which its handles hide under.
 const INSET_GROUP: &str = "display-inset";
+/// The lines that make a round corner of the fill.
+const CORNER_STEPS: usize = 8;
+/// From the sides of the inset to the controls of its strip: as the air above and below them.
+const STRIP_PADDING: f32 = 6.;
 
 /// One value a handle moves: where it is on a range, and what a double click sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -151,9 +169,8 @@ impl Handle {
         self
     }
 
-    /// A handle that is the whole display, with no dot: a drag anywhere on it moves what it
-    /// moves, from where that is. Under the controls at the top of the display and the other
-    /// handles.
+    /// A handle that is the whole drawing, with no dot: a drag anywhere on it moves what it
+    /// moves, from where that is. Under the other handles.
     pub fn area(mut self) -> Self {
         self.area = true;
         self
@@ -205,17 +222,19 @@ pub struct Display {
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
+    controls: Vec<AnyElement>,
+    strip: bool,
     children: Vec<AnyElement>,
     overlays: Vec<AnyElement>,
     takes_files: bool,
 }
 
 impl Display {
-    pub fn new(id: impl Into<ElementId>, width: f32) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             base: div(),
             id: id.into(),
-            width,
+            width: WIDTH,
             curve: Vec::new(),
             grid: (Vec::new(), Vec::new()),
             zero: None,
@@ -227,10 +246,41 @@ impl Display {
             waveform: Waveform::default(),
             handles: Vec::new(),
             caption: None,
+            controls: Vec::new(),
+            strip: false,
             children: Vec::new(),
             overlays: Vec::new(),
             takes_files: false,
         }
+    }
+
+    /// [`WIDE_WIDTH`] wide.
+    pub fn wide(mut self) -> Self {
+        self.width = WIDE_WIDTH;
+        self
+    }
+
+    /// A control in the strip above the drawing, from the left, such as the type of a filter.
+    /// With one, the drawing is [`STRIP_HEIGHT`] less tall.
+    pub fn control(mut self, control: impl IntoElement) -> Self {
+        self.controls.push(control.into_any_element());
+        self.strip = true;
+        self
+    }
+
+    /// Keeps the room of the strip while it holds no control, for a display whose control
+    /// comes and goes: its drawing then stays the size it is.
+    pub fn strip(mut self) -> Self {
+        self.strip = true;
+        self
+    }
+
+    /// The size of the drawing of a display, in points: the whole inset, or what a control
+    /// above it leaves.
+    pub fn drawing_size(wide: bool, has_control: bool) -> (f32, f32) {
+        let width = if wide { WIDE_WIDTH } else { WIDTH };
+        let strip = if has_control { STRIP_HEIGHT } else { 0. };
+        (width, INSET_HEIGHT - strip)
     }
 
     /// A display that takes a file dropped from the file manager: while a file is dragged over it,
@@ -340,7 +390,8 @@ impl Display {
     }
 }
 
-/// Controls at the top of the display, such as the type of a filter.
+/// More of the drawing, over the curve and under the handles: each child places itself in the
+/// drawing, absolutely.
 impl ParentElement for Display {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements);
@@ -472,12 +523,24 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
             }
             return;
         }
+        // The fill keeps inside the round corners at the bottom of the inset.
+        let floor = |x: Pixels| bounds.bottom() - corner_rise(x - bounds.left(), bounds.size.width);
         let mut area = PathBuilder::fill();
-        area.move_to(at(bounds, point(first.x, 0.)));
+        let start = at(bounds, point(first.x, 0.));
+        area.move_to(point(start.x, floor(start.x)));
         for place in curve {
-            area.line_to(at(bounds, *place));
+            let place = at(bounds, *place);
+            area.line_to(point(place.x, place.y.min(floor(place.x))));
         }
-        area.line_to(at(bounds, point(last.x, 0.)));
+        let end = at(bounds, point(last.x, 0.)).x;
+        area.line_to(point(end, floor(end)));
+        let steps = (0..=CORNER_STEPS).map(|step| step as f32 / CORNER_STEPS as f32);
+        let corner = px(f32::from(radius::MD));
+        let right = steps.clone().map(|part| bounds.right() - corner * part);
+        let left = steps.map(|part| bounds.left() + corner * (1. - part));
+        for x in right.chain(left).filter(|x| *x < end && *x > start.x) {
+            area.line_to(point(x, floor(x)));
+        }
         area.close();
         if let Ok(area) = area.build() {
             if bands.is_empty() {
@@ -490,6 +553,14 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
             window.paint_path(stroke, ink.curve);
         }
     });
+}
+
+/// How far the round corner of the inset is above its bottom edge, `x` from its left side: 0
+/// between the two corners.
+fn corner_rise(x: Pixels, width: Pixels) -> Pixels {
+    let radius = f32::from(radius::MD);
+    let inside = f32::from(x.min(width - x)).clamp(0., radius);
+    px(radius - (radius * radius - (radius - inside).powi(2)).sqrt())
 }
 
 /// The area under the curve once per band, under a mask of the band's heights. A band above the
@@ -758,7 +829,11 @@ impl RenderOnce for Display {
         .top_0()
         .left_0()
         .size_full();
-        let size = (self.width, INSET_HEIGHT);
+        let strip = match self.strip {
+            true => STRIP_HEIGHT,
+            false => 0.,
+        };
+        let size = (self.width, INSET_HEIGHT - strip);
         let (areas, handles): (Vec<_>, Vec<_>) =
             self.handles.into_iter().partition(|handle| handle.area);
         let mut element = |handle| {
@@ -767,21 +842,19 @@ impl RenderOnce for Display {
         };
         let areas: Vec<_> = areas.into_iter().map(&mut element).collect();
         let handles: Vec<_> = handles.into_iter().map(&mut element).collect();
-        // Over an area, a control at the top takes its own presses and not the area under it.
-        // A scroll still goes past it to the rack.
-        let controls: Vec<AnyElement> = match areas.is_empty() {
-            true => self.children,
-            false => self
-                .children
-                .into_iter()
-                .map(|control| {
-                    div()
-                        .block_mouse_except_scroll()
-                        .child(control)
-                        .into_any_element()
-                })
-                .collect(),
-        };
+        let controls = (!self.controls.is_empty()).then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h(px(STRIP_HEIGHT))
+                .px(px(STRIP_PADDING))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .children(self.controls)
+        });
 
         self.base
             .id(self.id)
@@ -796,20 +869,19 @@ impl RenderOnce for Display {
                     .h(px(INSET_HEIGHT))
                     .rounded(radius::MD)
                     .bg(inset)
-                    .child(drawing)
-                    .children(areas)
+                    .children(controls)
                     .child(
                         div()
                             .absolute()
-                            .top_0()
                             .left_0()
-                            .size_full()
-                            .p(px(6.))
-                            .flex()
-                            .items_start()
-                            .children(controls),
+                            .top(px(strip))
+                            .w_full()
+                            .h(px(INSET_HEIGHT - strip))
+                            .child(drawing)
+                            .children(areas)
+                            .children(self.children)
+                            .children(handles),
                     )
-                    .children(handles)
                     .children(self.overlays),
             )
             .child(
@@ -826,5 +898,88 @@ impl RenderOnce for Display {
                             .map(|caption| typography::tabular_text(caption, caption_color)),
                     ),
             )
+    }
+}
+
+/// A display with words in place of a drawing: a line, a button or both in its middle, such as
+/// `Drop an audio file here` over `Choose file`. The button is the way from the keys.
+#[derive(IntoElement)]
+pub struct TextDisplay {
+    display: Display,
+    message: Option<SharedString>,
+    button: Option<AnyElement>,
+    drop: Option<FileDrop>,
+}
+
+impl TextDisplay {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            display: Display::new(id),
+            message: None,
+            button: None,
+            drop: None,
+        }
+    }
+
+    /// [`WIDE_WIDTH`] wide.
+    pub fn wide(mut self) -> Self {
+        self.display = self.display.wide();
+        self
+    }
+
+    /// The line. A long one wraps inside the display.
+    pub fn message(mut self, message: impl Into<SharedString>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+
+    pub fn button(mut self, button: impl IntoElement) -> Self {
+        self.button = Some(button.into_any_element());
+        self
+    }
+
+    /// The line under the display, as on [`Display::caption`].
+    pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
+        self.display = self.display.caption(caption);
+        self
+    }
+
+    /// A control in the strip above the words, as on [`Display::control`].
+    pub fn control(mut self, control: impl IntoElement) -> Self {
+        self.display = self.display.control(control);
+        self
+    }
+
+    /// Takes a file dropped from the file manager, see [`FileDrop`].
+    pub fn drop_file(mut self, drop: FileDrop) -> Self {
+        self.drop = Some(drop);
+        self
+    }
+}
+
+impl RenderOnce for TextDisplay {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let middle = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .px(px(12.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(12.))
+            .text_variant(TextVariant::Label)
+            .line_height(px(CAPTION_HEIGHT))
+            .text_color(cx.theme().text_secondary())
+            .text_center()
+            .children(self.message)
+            .children(self.button);
+        let display = self.display.child(middle);
+        match self.drop {
+            Some(drop) => display.overlay(drop),
+            None => display,
+        }
     }
 }

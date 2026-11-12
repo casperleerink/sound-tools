@@ -12,7 +12,7 @@
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent};
-use sound_ui::components::cell::Cell;
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -50,7 +50,7 @@ const RELEASE_KNOB: Control =
     Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
 
 /// The value of a row of the lookahead select for each lookahead. The select says the number
-/// and its cell says `ms`, as on the compressor.
+/// and the value line of its cell says it with its unit, as on the compressor.
 const LOOKAHEADS: [(Lookahead, &str); 3] = [
     (Lookahead::Off, "0"),
     (Lookahead::One, "1"),
@@ -103,6 +103,7 @@ impl LimiterView {
             DropdownMenu::new("Lookahead", rows, cx)
                 .selected(lookahead_value(shown))
                 .trigger(Trigger::Select)
+                .trigger_width(control_width(1))
                 .width(LOOKAHEAD_MENU_WIDTH)
                 .debug_name("lookahead")
         });
@@ -207,7 +208,7 @@ impl Render for LimiterView {
             .display("display", state.ceiling_db, handle, cx);
         let lookahead = Cell::new(self.lookahead.clone())
             .label("Lookahead")
-            .value("ms");
+            .value(format!("{} ms", lookahead_value(state.lookahead)));
         self.frame
             .card()
             .display(display)

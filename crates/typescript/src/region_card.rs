@@ -12,7 +12,7 @@ use serde_json::Value;
 use sound_core::{Clock, InstanceId, ProjectEvent, Ticks};
 use sound_media::{Cached, Info};
 use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
-use sound_ui::components::display::{Axis, Handle};
+use sound_ui::components::display::{Axis, Handle, WIDE_WIDTH};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short, signed};
 use sound_ui::components::waveform_display::{
@@ -22,8 +22,6 @@ use sound_ui::{ActiveTheme, ControlEdit, Session, Views, Waveforms, weak_callbac
 
 use crate::region::{MAX_GAIN_DB, NAME, Record};
 
-/// The display, so the card is 32 + 312 + 8 + 2 x 56 = 464 pt, and 537 expanded.
-const DISPLAY_WIDTH: f32 = 312.;
 /// The gains a knob and a handle give: -48 to +24 dB. A record may say less.
 const GAIN_DB: (f32, f32) = (-48.0, MAX_GAIN_DB);
 const TRIM_LABEL: &str = "Trim a region";
@@ -182,7 +180,7 @@ impl RegionCard {
             return None;
         }
         let seconds = region.file_seconds_at(tick, clock);
-        let step = file.seconds() / f64::from(DISPLAY_WIDTH);
+        let step = file.seconds() / f64::from(WIDE_WIDTH);
         Some(((seconds / step).round() * step) as f32)
     }
 
@@ -321,21 +319,20 @@ impl RegionCard {
             seconds_label(length)
         );
         let file = *file;
-        let display =
-            WaveformDisplay::new("region-display", DISPLAY_WIDTH, overview, length as f32)
-                .trim(state.file_start_seconds as f32, end as f32)
-                .on_start(weak_callback(cx, move |card, change: ValueChange, cx| {
-                    card.change_start(change, file, &clock, cx);
-                }))
-                .on_end(weak_callback(cx, move |card, change: ValueChange, cx| {
-                    let set = |region: &mut Record, seconds: f32| {
-                        *region = with_file_end(region, &file, f64::from(seconds));
-                    };
-                    card.change(TRIM_LABEL, change, set, cx);
-                }))
-                .playhead(self.playing_at)
-                .curve(curve)
-                .caption(caption);
+        let display = WaveformDisplay::new("region-display", overview, length as f32)
+            .trim(state.file_start_seconds as f32, end as f32)
+            .on_start(weak_callback(cx, move |card, change: ValueChange, cx| {
+                card.change_start(change, file, &clock, cx);
+            }))
+            .on_end(weak_callback(cx, move |card, change: ValueChange, cx| {
+                let set = |region: &mut Record, seconds: f32| {
+                    *region = with_file_end(region, &file, f64::from(seconds));
+                };
+                card.change(TRIM_LABEL, change, set, cx);
+            }))
+            .playhead(self.playing_at)
+            .curve(curve)
+            .caption(caption);
         handles.into_iter().fold(display, WaveformDisplay::handle)
     }
 

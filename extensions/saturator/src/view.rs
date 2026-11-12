@@ -28,10 +28,6 @@ use crate::{Curve, DRIVE, MIX, OUTPUT, Saturator, SaturatorState, TONE, auto_gai
 /// The name the rack puts on the card of a saturator.
 pub const NAME: &str = "Saturator";
 
-/// The width of the display: room for the four curves at its top. With two columns of cells
-/// the card is 352 pt, as wide as the filter.
-const DISPLAY_WIDTH: f32 = 200.;
-
 /// Points of the curve across the display.
 const CURVE_POINTS: usize = 96;
 
@@ -169,7 +165,7 @@ impl SaturatorView {
                     view.device.change("Change curve", change, set, cx);
                 }
             }));
-        Display::new("display", DISPLAY_WIDTH)
+        Display::new("display")
             .curve(curve(state))
             // The sound as it came in, for the eye to hold the curve to.
             .dashed([point(0., 0.), point(1., 1.)])
@@ -180,7 +176,7 @@ impl SaturatorView {
             .zero_line(place(0.))
             .handle(self.handle(state, cx))
             .caption(auto_gain_readout(state))
-            .child(curves)
+            .control(curves)
     }
 }
 

@@ -12,7 +12,7 @@
 use gpui::{Context, Entity, Point, SharedString, Task, Window, div, point, prelude::*};
 use sound_core::Instance;
 use sound_notes::Pitch;
-use sound_ui::components::cell::Cell;
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
@@ -31,8 +31,6 @@ use crate::{
 /// The name the rack puts on the card of a pitch correction.
 pub const NAME: &str = "Pitch correction";
 
-/// The width of the display, as the filter's.
-const DISPLAY_WIDTH: f32 = 200.;
 /// The display reaches this far each side of the note moved to, in cents.
 const REACH_CENTS: f32 = 50.;
 /// How high the line of the voice and the block of the move reach, 0 to 1.
@@ -230,10 +228,11 @@ impl PitchCorrectionView {
         ))
     }
 
-    fn display(&self, choices: impl IntoElement) -> Display {
+    fn display(&self, key: Select, scale: Select) -> Display {
         let reading = self.reading;
-        let display = Display::new("display", DISPLAY_WIDTH)
-            .child(choices)
+        let display = Display::new("display")
+            .control(key)
+            .control(scale)
             .grid([0.25, 0.5, 0.75].to_vec(), Vec::new())
             .curve(moved(reading))
             .caption(caption(reading));
@@ -301,23 +300,26 @@ impl Render for PitchCorrectionView {
             |state, on| state.ignore_vibrato = on,
             cx,
         );
-        let choices = div().flex().gap_1().child(key).child(scale);
         let retune = Column::new()
             .top(knob(RETUNE_KNOB, cx))
             .bottom(knob(HUMANIZE_KNOB, cx));
+        // `Ignore vibrato` does not fit under a toggle in one column.
         let hidden = [
             Column::new()
-                .span(2)
-                .top(Cell::new(voice).span(2).label("Voice"))
-                .bottom(Cell::new(formants).label("Formants")),
+                .top(
+                    Cell::new(voice.trigger_width(control_width(2)))
+                        .span(2)
+                        .label("Voice"),
+                )
+                .bottom(Cell::new(vibrato).span(2).label("Ignore vibrato")),
             Column::new()
-                .top(knob(MIX_KNOB, cx))
-                .bottom(Cell::new(vibrato).label("Ignore vibrato")),
+                .top(Cell::new(formants).label("Formants"))
+                .bottom(knob(MIX_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = (self.frame.card())
             .expand(self.expanded, expand)
-            .display(self.display(choices))
+            .display(self.display(key, scale))
             .column(retune);
         hidden
             .into_iter()

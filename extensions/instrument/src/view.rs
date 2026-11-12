@@ -1,5 +1,5 @@
 //! The card of the synth in a rack: the envelope as a display whose handles drag, the waveform
-//! at the top of it, the main knobs and the character next to it and the envelope knobs behind
+//! above it, the main knobs and the character next to it and the envelope knobs behind
 //! expand. The rack
 //! gives the frame of the card, whose title says "Synth" and is where another instrument is
 //! picked.
@@ -68,9 +68,6 @@ const CHARACTERS: [(FilterCharacter, &str, &str); 2] = [
     (FilterCharacter::Warm, "warm", "Warm"),
 ];
 
-/// The width of the display: the synth card is 352 pt, with two columns of cells.
-const DISPLAY_WIDTH: f32 = 200.;
-
 pub struct SynthView {
     device: DeviceEdit<SynthState>,
     /// The title and the close icon the rack gives the card.
@@ -94,7 +91,7 @@ impl SynthView {
         }
     }
 
-    /// The envelope, with a handle at the end of each stage, and the waveform at its top. A
+    /// The envelope, with a handle at the end of each stage, and the waveform above it. A
     /// handle edits the field its knob edits, under the same name, and the corner after the
     /// decay moves the decay and the sustain in one undo step.
     fn display(&self, state: &SynthState, cx: &mut Context<Self>) -> Display {
@@ -147,14 +144,13 @@ impl SynthView {
         let time = ATTACK_KNOB.range();
         envelope_display(
             "envelope",
-            DISPLAY_WIDTH,
             time,
             (adsr, defaults, automated),
             straight,
             on_change,
         )
         .caption(caption)
-        .child(div().ml_auto().child(self.waveform(state, cx)))
+        .control(self.waveform(state, cx))
     }
 
     fn waveform(&self, state: &SynthState, cx: &mut Context<Self>) -> SegmentedControl {
@@ -215,14 +211,13 @@ impl Render for SynthView {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
+        // The character is the filter's, so it sits under the two knobs of the filter.
         let columns = [
             Column::new()
                 .top(knob(CUTOFF_KNOB, cx))
-                .bottom(knob(GAIN_KNOB, cx)),
-            Column::new()
-                .span(2)
                 .top(knob(RESONANCE_KNOB, cx))
                 .bottom(self.character(&state, cx)),
+            Column::new().top(knob(GAIN_KNOB, cx)),
         ];
         // Behind expand: the times and the level the handles of the display move, so the keys
         // reach every one of them. Read across as A, D, then S, R.

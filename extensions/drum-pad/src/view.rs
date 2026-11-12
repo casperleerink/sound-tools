@@ -25,7 +25,7 @@ use gpui::{
 use sound_core::{Instance, ProjectEvent};
 use sound_media::{Cached, Imported};
 use sound_notes::Velocity;
-use sound_ui::components::cell::{CELL_WIDTH, Cell};
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -55,15 +55,12 @@ pub const NAME: &str = "Drum pad";
 /// Pads across and up the grid.
 pub const COLUMNS: usize = 4;
 
-/// The grid: 4 pads of 72 across with 4 pt between them, 300 x 140, as a display of the card.
+/// The grid: 4 pads across and up with 4 pt between them, as wide as a wide display.
 pub const GRID_WIDTH: f32 = COLUMNS as f32 * PAD_WIDTH + (COLUMNS - 1) as f32 * PAD_GAP;
 pub const GRID_HEIGHT: f32 = COLUMNS as f32 * PAD_HEIGHT + (COLUMNS - 1) as f32 * PAD_GAP;
 
 /// How hard a press on a pad plays it.
 pub const PRESS_VELOCITY: u8 = 100;
-
-/// The width of the trigger of the Sound select, in its two cells.
-const SOUND_SELECT_WIDTH: f32 = 2. * CELL_WIDTH - 8.;
 
 /// How finely the card follows how loud a pad sounds: a card whose pads hold still asks for no
 /// frame.
@@ -149,7 +146,7 @@ impl DrumPadView {
         let sounds = cx.new(|cx| {
             DropdownMenu::new("Sound", Vec::new(), cx)
                 .trigger(Trigger::Select)
-                .trigger_width(SOUND_SELECT_WIDTH)
+                .trigger_width(control_width(2))
                 .width(200.)
                 .debug_name("sound")
         });
@@ -485,12 +482,9 @@ impl gpui::Render for DrumPadView {
                 view.device.change(label, ValueChange::Set(on), set, cx);
             }),
         );
-        let hidden = [
-            Column::new()
-                .top(sound)
-                .bottom(Cell::new(choke).label("Choke")),
-            Column::new(),
-        ];
+        let hidden = Column::new()
+            .top(sound)
+            .bottom(Cell::new(choke).label("Choke"));
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
@@ -500,10 +494,7 @@ impl gpui::Render for DrumPadView {
         let card = columns
             .into_iter()
             .fold(card, |card, column| card.column(column));
-        hidden
-            .into_iter()
-            .fold(card, |card, column| card.hidden_column(column))
-            .into_any_element()
+        card.hidden_column(hidden).into_any_element()
     }
 }
 

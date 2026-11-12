@@ -12,7 +12,7 @@ use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
 use sound_core::Instance;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
-use sound_ui::components::dynamics_display::{self, Levels, Reading};
+use sound_ui::components::dynamics_display::{Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{ParameterKnob, decibels_readout, milliseconds_readout};
 use sound_ui::{
@@ -160,7 +160,7 @@ impl GateView {
     }
 
     fn display(&self, state: &GateState, cx: &mut Context<Self>) -> Display {
-        let display = Display::new("display", dynamics_display::WIDTH)
+        let display = Display::new("display")
             .curve(curve(state))
             .grid(vec![LEVELS.across(state.threshold_db)], Vec::new())
             .handle(self.threshold_handle(state, cx));

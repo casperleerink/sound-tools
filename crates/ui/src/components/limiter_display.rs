@@ -11,14 +11,12 @@ use gpui::{
     App, Bounds, ElementId, Hsla, Pixels, Window, canvas, fill, point, prelude::*, px, size,
 };
 
-use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT};
+use crate::components::display::{Axis, Display, Handle};
 use crate::components::knob::{KnobRange, short};
 use crate::components::meter::GainReduction;
 use crate::theme::ActiveTheme;
 use sound_dsp::decibels;
 
-/// The width of the display. With two columns of cells its card is 352 pt.
-pub const WIDTH: f32 = 200.;
 /// Columns of the history, and the polls each one gathers: 50 columns of 80 ms, four seconds.
 pub const COLUMNS: usize = 50;
 pub const POLLS_PER_COLUMN: u32 = 5;
@@ -130,14 +128,13 @@ impl LimiterHistory {
         .absolute()
         .top_0()
         .left_0()
-        .w(px(WIDTH))
-        .h(px(INSET_HEIGHT));
+        .size_full();
         let caption = format!(
             "Ceiling {} dB · GR {}",
             short(ceiling_db),
             reduction_readout(self.reduction_now())
         );
-        Display::new(id, WIDTH)
+        Display::new(id)
             .curve([point(0., ceiling), point(1., ceiling)])
             .handle(handle)
             .caption(caption)

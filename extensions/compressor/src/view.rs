@@ -14,13 +14,13 @@
 
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent};
-use sound_ui::components::cell::Cell;
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::dynamics_display::{self, Levels, Reading};
+use sound_ui::components::dynamics_display::{Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     KnobRange, ParameterKnob, decibels_readout, milliseconds_readout, percent_readout, short,
@@ -77,7 +77,7 @@ const MAKEUP_KNOB: Control = Control::new(&MAKEUP, "Makeup", "Change makeup", de
 const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
 
 /// The value of a row of the lookahead select for each lookahead. The select says the number
-/// and its cell says `ms`: `10 ms` does not fit in a cell.
+/// and the value line of its cell says it with its unit: `10 ms` does not fit in the select.
 const LOOKAHEADS: [(Lookahead, &str); 3] = [
     (Lookahead::Off, "0"),
     (Lookahead::One, "1"),
@@ -164,6 +164,7 @@ impl CompressorView {
             DropdownMenu::new("Lookahead", rows, cx)
                 .selected(lookahead_value(shown))
                 .trigger(Trigger::Select)
+                .trigger_width(control_width(1))
                 .width(LOOKAHEAD_MENU_WIDTH)
                 .debug_name("lookahead")
         });
@@ -280,7 +281,7 @@ impl CompressorView {
     }
 
     fn display(&self, state: &CompressorState, cx: &mut Context<Self>) -> Display {
-        let display = Display::new("display", dynamics_display::WIDTH)
+        let display = Display::new("display")
             .curve(curve(state))
             .grid(vec![LEVELS.across(state.threshold_db)], Vec::new())
             .handle(self.threshold_handle(state, cx))
@@ -320,7 +321,7 @@ impl Render for CompressorView {
             Column::new().top(knob(MIX_KNOB, cx)).bottom(
                 Cell::new(self.lookahead.clone())
                     .label("Lookahead")
-                    .value("ms"),
+                    .value(format!("{} ms", lookahead_value(state.lookahead))),
             ),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
