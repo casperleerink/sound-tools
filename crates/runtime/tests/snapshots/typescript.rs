@@ -9,9 +9,10 @@
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
-//! - `typescript-gallery*.png`: the project `sdk-gallery`, a page of panels with the transport in
-//!   its header and the parts of the view SDK the other snapshots do not draw: with a div held
-//!   pressed, its popover open, its dialog open.
+//! - `typescript-gallery*.png`: the project `sdk-gallery`, a page with the transport in its
+//!   header that leads with a panel of steps and knobs and the card of a child, and under them
+//!   the parts of the view SDK the other snapshots do not draw: with a div held pressed, its
+//!   popover open, its dialog open.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
@@ -28,11 +29,15 @@ use sound_core::Ticks;
 
 use super::look::{LANES, TOGGLES, click, pointer_to};
 
-const GALLERY: [(&str, &str); 3] = [
+const GALLERY: [(&str, &str); 4] = [
     ("project.json", include_str!("../sdk-gallery/project.json")),
     (
-        "state/gallery.json",
-        include_str!("../sdk-gallery/state/gallery.json"),
+        "state/gallery/instance.json",
+        include_str!("../sdk-gallery/state/gallery/instance.json"),
+    ),
+    (
+        "state/gallery/sweep.json",
+        include_str!("../sdk-gallery/state/gallery/sweep.json"),
     ),
     (
         "extensions/gallery.tsx",
@@ -70,15 +75,15 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     };
     let opened = open_files(cx, &GALLERY)?;
     // The div "Press" held, then the popover and the dialog each opened by its button.
-    let press = point(px(858.), px(141.));
+    let press = point(px(470.), px(684.));
     mouse(&opened, cx, moved(press, None))?;
     mouse(&opened, cx, down(press))?;
     save(cx, opened.window.into(), "typescript-gallery")?;
     for (button, name) in [
-        (463., "typescript-gallery-popover"),
-        (535., "typescript-gallery-dialog"),
+        (851., "typescript-gallery-popover"),
+        (923., "typescript-gallery-dialog"),
     ] {
-        click(&opened, point(px(button), px(502.)), 1, cx)?;
+        click(&opened, point(px(button), px(366.)), 1, cx)?;
         save(cx, opened.window.into(), name)?;
     }
     drop(opened);
