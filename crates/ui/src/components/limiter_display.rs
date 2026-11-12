@@ -1,5 +1,5 @@
-//! The display of a limiter: the last four seconds of what it sent out, in green under the
-//! ceiling line, and how much it took, hanging from the top. The handle at the right end of the
+//! The display of a limiter: the last four seconds of what it sent out, as a green line over a
+//! quiet tint under the ceiling line, and how much it took, hanging from the top. The handle at the right end of the
 //! ceiling line drags the ceiling up and down.
 //!
 //! The owner keeps a [`LimiterHistory`], feeds it one reading per poll, and builds the display
@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use crate::components::display::{Axis, Display, Handle};
-use crate::components::knob::{KnobRange, short};
+use crate::components::knob::KnobRange;
 use crate::components::meter::GainReduction;
 use crate::theme::ActiveTheme;
 use sound_dsp::decibels;
@@ -22,6 +22,10 @@ pub const COLUMNS: usize = 50;
 pub const POLLS_PER_COLUMN: u32 = 5;
 /// Where the ceiling handle sits across the display.
 const HANDLE_ACROSS: f32 = 0.96;
+/// The level is a line with a tint under it: a sound held at the ceiling would else be a wall
+/// of green.
+const LEVEL_LINE: f32 = 1.5;
+const LEVEL_TINT: f32 = 0.16;
 
 /// One column of the history: the loudest the limiter sent out and the most it took, in dB,
 /// over its 80 ms.
@@ -107,8 +111,7 @@ impl LimiterHistory {
         )
     }
 
-    /// The history under the ceiling line, with its handle and the ceiling and the reduction
-    /// under it.
+    /// The history under the ceiling line, with its handle and the reduction under it.
     pub fn display(
         &self,
         id: impl Into<ElementId>,
@@ -129,11 +132,7 @@ impl LimiterHistory {
         .top_0()
         .left_0()
         .size_full();
-        let caption = format!(
-            "Ceiling {} dB · GR {}",
-            short(ceiling_db),
-            reduction_readout(self.reduction_now())
-        );
+        let caption = format!("GR {}", reduction_readout(self.reduction_now()));
         Display::new(id)
             .curve([point(0., ceiling), point(1., ceiling)])
             .handle(handle)
@@ -142,8 +141,8 @@ impl LimiterHistory {
     }
 }
 
-/// The bars of the history: the peaks in green on the scale of the ceiling line, and the
-/// reduction hanging from the top, 24 dB for the whole height.
+/// The bars of the history: the peaks as a green line on the scale of the ceiling line, tinted
+/// under it, and the reduction hanging from the top, 24 dB for the whole height.
 fn paint_history(
     bounds: Bounds<Pixels>,
     moments: &[Moment],
@@ -169,7 +168,9 @@ fn paint_history(
                 bounds.origin + point(px(x), px(top)),
                 size(px(bar), px(height - top)),
             );
-            window.paint_quad(fill(body, green));
+            window.paint_quad(fill(body, green.opacity(LEVEL_TINT)));
+            let line = Bounds::new(body.origin, size(px(bar), px(LEVEL_LINE)));
+            window.paint_quad(fill(line, green));
         }
         // Narrower than the level and over it, so the two read apart where they meet under
         // the ceiling.
