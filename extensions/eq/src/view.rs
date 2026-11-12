@@ -319,7 +319,7 @@ impl EqView {
         let number = band + 1;
         let toggle = Toggle::new(
             SharedString::from(format!("band-{number}-on")),
-            if on { "On" } else { "Off" },
+            format!("Band {number}"),
             on,
         )
         .on_change(weak_callback(cx, move |view, on: bool, cx| {
@@ -327,7 +327,7 @@ impl EqView {
             let set = move |state: &mut EqState, on| state.bands[band].on = on;
             view.device.change(label, ValueChange::Set(on), set, cx);
         }));
-        Cell::new(toggle).label(format!("Band {number}"))
+        Cell::switch(toggle)
     }
 }
 
