@@ -109,7 +109,7 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a knob with its label goes in `Controls` here too. A `StepGrid` takes its `Controls` as its last child. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a labelled knob goes in `Controls` here too. A `StepGrid` takes its `Controls` as its last child. `grow` is for a surface that needs the room, a canvas or a piano roll, not a picture of a sound. `<Page flush>` is one surface to the window's edges.
 
 ```tsx
 import { Controls, Display, type Drag, h, Knob, Line, lowpass, mtof, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
@@ -153,7 +153,7 @@ tool({
 
 ## The clock
 
-One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. The transport in a page's header plays and stops it and gives its tool space to play and pause. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
+One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. A page's transport plays and stops it, on space too. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
 
 ## Check your work
 
@@ -161,4 +161,4 @@ One clock plays the project: `clock` in a view, its handlers and `tick`, and `pl
 2. `problems.txt`, or `sound-tools . --inspect`, lists what is wrong under `extensions/<file>`: what does not load or build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
 3. `console.log` goes to `extensions/log.txt` while the window is open (the last lines since the tools started), and `--inspect` prints it.
 4. Use the tool as the composer will: write its record (`"state": {}` is its defaults) where a parent plays it, as the parent's doc says, such as in the `order` of a `chain`. Then measure it with `--analyze` (`agent-docs/inspect.md`).
-5. `sound-tools . --screenshot screenshot.png` draws the window as the project opens, on macOS only: read the picture. Add `--click x,y` for each click before it, in points from the window's top left, half the picture's pixels: a click on a track's name shows its cards. Add `--play 2` to draw it after the piece played 2 seconds: meters, scopes and steps as they are then. Use that one name, so each picture replaces the last.
+5. `sound-tools . --screenshot screenshot.png` draws the window as the project opens (the app's own window loads a changed tool by itself), on macOS only: read the picture. `--click x,y` clicks first, in points from the window's top left, half the picture's pixels: a track's name shows its cards. `--play 2` draws it after 2 seconds of play: its meters, scopes and steps then. Use that one name, so each picture replaces the last.
