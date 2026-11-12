@@ -1,7 +1,7 @@
 //! Toggle: a button that is on or off, such as M and S of a track or `Freeze` of a reverb. Its
-//! face is a word, a circle ([`Toggle::dot`]) or an icon ([`Toggle::icon`]). On, it may take a
-//! colour ([`Toggle::color`]): mute is peach and solo yellow, the one place a control fills with
-//! colour.
+//! face is a word, a circle ([`Toggle::dot`]) or an icon ([`Toggle::icon`]). The word is its
+//! name, never `On` or `Off`: it is lit while on. On, it may take a colour ([`Toggle::color`]):
+//! mute is peach and solo yellow, the one place a control fills with colour.
 //!
 //! Controlled: the caller gives `on` and hears the new state. A click toggles it, and so do
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
@@ -56,6 +56,7 @@ pub struct Toggle {
     on: bool,
     color: Option<Hsla>,
     size: ControlSize,
+    width: Option<f32>,
     disabled: bool,
     tab_stop: bool,
     tooltip: Option<Tooltip>,
@@ -71,6 +72,7 @@ impl Toggle {
             on,
             color: None,
             size: ControlSize::Sm,
+            width: None,
             disabled: false,
             tab_stop: true,
             tooltip: None,
@@ -117,6 +119,13 @@ impl Toggle {
     /// 24 pt unless told, as the controls of a card are.
     pub fn size(mut self, size: ControlSize) -> Self {
         self.size = size;
+        self
+    }
+
+    /// Makes a toggle of a word this wide whatever it says, so the switches of a card line up.
+    /// Else it is as wide as its word.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
 
@@ -183,7 +192,7 @@ impl RenderOnce for Toggle {
             Face::Icon { count, .. } if *count > 0 => None,
             Face::Dot | Face::Icon { .. } => Some(height),
             Face::Label(label) if label.chars().count() == 1 => Some(height + LETTER_EXTRA),
-            Face::Label(_) => None,
+            Face::Label(_) => self.width,
         };
         let on = self.on;
         let on_click = self.on_click.filter(|_| !disabled);
@@ -215,6 +224,7 @@ impl RenderOnce for Toggle {
             .text_variant(TextVariant::Label)
             .line_height(px(14.))
             .font_weight(FontWeight::MEDIUM)
+            .whitespace_nowrap()
             .text_color(text)
             .when(disabled, |d| d.opacity(0.4).cursor_not_allowed())
             .when_some(on_click, |d, on_click| {

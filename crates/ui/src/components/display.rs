@@ -1,5 +1,5 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
-//! sound, with the line of its numbers or its scale under it on the value line of row 2. A curve
+//! sound, with a line under it on the value line of row 2 ([`Display::caption`]). A curve
 //! is drawn over a fill, or over bands of colour by height for a level ([`Display::fill_bands`]).
 //! A control such as a segmented control sits in a strip above the drawing
 //! ([`Display::control`]), so it lies over none of it.
@@ -383,7 +383,8 @@ impl Display {
         self
     }
 
-    /// The line under the display: its numbers, `A 5 ms · D 350 ms`, or its scale.
+    /// The line under the display, for what no control of the card says: its scale, a
+    /// reduction, or the numbers of handles whose knobs are behind expand.
     pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
         self.caption = Some(caption.into());
         self
