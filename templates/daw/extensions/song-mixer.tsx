@@ -7,13 +7,12 @@ import { colourOf, lanesOf, Mark, mixOf, muted, rowLook, titleOf, type Child, ty
 const MIXER = 298;
 /** A strip: its fader, and beside it a column of what else it holds. */
 const [STRIP, SIDE] = [88, 44];
-/** A dial, and the line of a strip's name; a small toggle; the line of numbers under a fader, its gain and its pan. */
-const [DIAL, TOGGLE, NUMBERS] = [28, 24, 16];
-const [GAIN, PAN] = [50, 30];
+/** A dial, and the line of a strip's name; a small toggle; the line of a number, and how wide a gain is. */
+const [DIAL, TOGGLE, NUMBER, GAIN] = [28, 24, 16, 50];
 /** The shortest fader, as tall as the column beside it; with more sends than fit under it the mixer scrolls. */
-const SHORTEST = 96;
-/** What a strip holds over and under its fader and its sends: the room around it, its name and its numbers. */
-const AROUND = 52 + 4 + NUMBERS;
+const SHORTEST = DIAL + NUMBER + 2 * TOGGLE + 4;
+/** What a strip holds over and under its fader and its sends: the room around it, its name and its gain. */
+const AROUND = 52 + 4 + NUMBER;
 /** The strips of the tracks, of the returns or the master's, between the full-height lines. */
 const GROUP = { direction: "row", gap: "xs", paddingX: "sm", paddingTop: "sm", paddingBottom: "md", keep: true } as const;
 /** What a strip holds, one under the other; the names of the sends left of the strips line up with it. */
@@ -33,9 +32,9 @@ const VOLUME = "Change the volume";
 const Level = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
   <Fader field={`${path}.gain_db`} length={length} default={0} label={VOLUME} meter={meter} />
 );
-/** The gain of the fader `path`, to drag or type. */
-const Gain = ({ path, width, align, quiet }: { path: string; width: number; align?: "center" | "left"; quiet?: Bind<boolean> }) => (
-  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label={VOLUME} width={width} size="sm" height={16} align={align} quiet={quiet} />
+/** The gain of the fader `path`, to drag or type, as the undo step `label`. */
+export const Gain = ({ path, width, align, quiet, label = VOLUME }: { path: string; width: number; align?: "center" | "left" | "right"; quiet?: Bind<boolean>; label?: string }) => (
+  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label={label} width={width} size="sm" height={16} align={align} quiet={quiet} />
 );
 /** A fader and under it its gain, in a column. */
 export const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
@@ -48,12 +47,12 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
 /**
  * A strip per track, then behind a line the returns' and the master's, which stay in view while
  * the tracks' scroll under them; the master's limiter is in its panel. A strip is its name, its
- * fader over its meter with its pan, mute and solo beside it, and under the fader one line of
- * numbers, its gain and its pan; under them a dial per send, as a send takes the sound after
- * the fader. A return's name is said once, left of the row of its sends. At rest a strip says
- * only its gain and its pan where they are not where they rest; any number shows while its
- * control is touched or it moves. A click on a strip's name chooses it, a double click shows its
- * panel.
+ * fader over its meter with its pan, mute and solo beside it, and under them a dial per send, as
+ * a send takes the sound after the fader. A return's name is said once, left of the row of its
+ * sends. Each number stands at its control: the gain over its fader, where the handle rests,
+ * the pan under its dial, a send's beside its dial. At rest a strip says only its gain and its
+ * pan where they are not where they rest; any number shows while its control is touched or it
+ * moves. A click on a strip's name chooses it, a double click shows its panel.
  */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, children, rows, returns, chosenTrack, choose, openPanel, openMaster, toggleMute, toggleSolo } = page;
@@ -76,29 +75,31 @@ export const Mixer = ({ page }: { page: Page }) => {
           <Mark colour={each && (() => colourOf(each))} dim={() => each !== undefined && muted(each)} />
           <Text variant="label" tone="text" style={{ truncate: true }}>{() => (each ? titleOf(each) : "Master")}</Text>
         </div>
+        <div style={{ height: NUMBER, paddingX: "xs", keep: true }}>
+          <Gain path={path} width={GAIN} align="left" quiet={rests("gain_db")} />
+        </div>
         {() => {
           const length = fader();
           return (
             <div style={{ direction: "row", gap: "sm", paddingX: "xs", keep: true }}>
               <Level path={path} length={length} meter={each ? { of: path } : "device"} />
-              <div style={{ width: SIDE, height: length, gap: "xs" }}>
+              <div style={{ width: SIDE, height: length }}>
                 <Knob field={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar text="none" />
+                <Readout field={`${path}.pan`} unit="pan" width={DIAL} align="center" quiet={rests("pan")} />
                 <div style={{ grow: true }} />
                 {/* A strip without one keeps its room, so the toggles of all strips are on one line. */}
-                <div style={{ height: TOGGLE, keep: true }}>
-                  {each ? <Toggle key={`strip-mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
-                </div>
-                <div style={{ height: TOGGLE, keep: true }}>
-                  {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
+                <div style={{ gap: "xs", keep: true }}>
+                  <div style={{ height: TOGGLE, keep: true }}>
+                    {each ? <Toggle key={`strip-mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
+                  </div>
+                  <div style={{ height: TOGGLE, keep: true }}>
+                    {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
+                  </div>
                 </div>
               </div>
             </div>
           );
         }}
-        <div style={{ height: NUMBERS, direction: "row", paddingX: "xs", keep: true }}>
-          <Gain path={path} width={GAIN} align="left" quiet={rests("gain_db")} />
-          <Readout field={`${path}.pan`} unit="pan" width={PAN} align="right" quiet={rests("pan")} />
-        </div>
         {each && each.tool !== "bus" ? (
           <For each={sent}>
             {(back) => (
@@ -123,7 +124,7 @@ export const Mixer = ({ page }: { page: Page }) => {
         <Show when={() => sent().length > 0}>
           {() => (
             <div style={{ ...COLUMN, width: 72, paddingLeft: "lg", paddingTop: "sm" }}>
-              <div style={() => ({ height: DIAL + 4 + fader() + 4 + NUMBERS, keep: true })} />
+              <div style={() => ({ height: DIAL + 4 + NUMBER + 4 + fader(), keep: true })} />
               <For each={sent}>
                 {(back) => (
                   <div style={{ height: DIAL, justify: "center", keep: true }}>
