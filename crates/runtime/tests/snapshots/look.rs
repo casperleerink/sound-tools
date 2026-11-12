@@ -10,6 +10,8 @@
 //! - `look-note-drag.png`: that note dragged a beat later and two keys up, still held.
 //! - `look-editor-large.png`: the editor made large with its key.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
+//! - `look-own-notes.png`: the instrument of Track 1 is a tool of the project that plays its own
+//!   steps: its clips are dim, and the one under the pointer says why.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, under the pointer
 //!   with its readout.
@@ -47,6 +49,8 @@ use crate::song::{ACROSS, BAR, HEADER, LEAD, ROW, daw};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::CaptureWriter;
 
+#[path = "look_keys.rs"]
+pub(crate) mod keys;
 #[path = "look_takes.rs"]
 pub(crate) mod takes;
 #[path = "look_timeline.rs"]
@@ -54,6 +58,20 @@ pub(crate) mod timeline;
 
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
 const TOP: f32 = 48.0 + 44.0;
+
+/// An instrument that plays its own steps in time with the piece, and reads no note.
+const PULSE: &str = r#"import { beat, floor, h, pattern, playing, saw, Steps, tool } from "./sdk";
+
+tool({
+  name: "pulse",
+  title: "Pulse",
+  when: "A bass that plays its own steps",
+  doc: "Plays the sixteenths of `steps` at one pitch while the piece plays. It hears no notes.",
+  state: { steps: pattern({ length: 16, min: 0, max: 1, default: [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0] }) },
+  sound: ({ steps }) => saw(55).times(steps.at(floor(beat.times(4)).mod(16))).times(playing).times(0.2),
+  view: () => h(Steps, { field: "steps" }),
+});
+"#;
 
 /// The title of the first card of a track's panel.
 const PICKER: (f32, f32) = (230., 920. - 216. + 12. + 22.);
@@ -324,6 +342,18 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     )?;
     click(&opened, header(1.), 1, cx)?;
     save(cx, opened.window.into(), "look-track-panel")?;
+    drop(opened);
+
+    // Track 1 plays a tool of the project that makes its own notes: its clips do not sound.
+    let mut files = piece_files(&[(
+        "track-1/synth.json",
+        json!({ "tool": "pulse", "state": {} }),
+    )]);
+    files.push(("extensions/pulse.ts".to_string(), PULSE.to_string()));
+    let opened = super::Opened::open(cx, &files)?;
+    click(&opened, header(0.), 1, cx)?;
+    pointer_to(&opened, at(BAR / 2, 0.), cx)?;
+    save(cx, opened.window.into(), "look-own-notes")?;
     drop(opened);
 
     let filter = json!({ "tool": "filter", "state": {} });

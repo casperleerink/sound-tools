@@ -19,8 +19,9 @@
 //! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
 //! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
 //!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
+//! - `keys-*.png`: the DAW template worked with the keys alone, see `snapshots/look_keys.rs`.
 //!
-//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=history`, `=typescript`, `=look`, `=timeline` or `=menu` (the
+//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=history`, `=typescript`, `=look`, `=timeline`, `=keys` or `=menu` (the
 //! menu and Settings) renders the default project and those alone.
 
 // The shared helpers of the tests unwrap, as the other test crates allow.
@@ -304,6 +305,9 @@ fn main() -> Result<()> {
     }
     if runs("takes") {
         look::takes::snapshots(&mut cx, &save)?;
+    }
+    if runs("keys") {
+        look::keys::snapshots(&mut cx, &save)?;
     }
     if only.as_deref() == Some("menu") {
         return menu(&mut cx, opened, &save);
