@@ -20,8 +20,8 @@ tool({
   state: {
     sound: file({ label: "Sound" }),
     size: number({ min: 10, max: 1000, default: 120, unit: "ms", label: "Grain size" }),
-    density: number({ min: 1, max: 200, default: 30, unit: "hz", label: "Density" }),
-    position: number({ min: 0, max: 1, default: 0.5, unit: "percent", label: "Position" }),
+    density: number({ min: 1, max: 200, default: 30, unit: "hz" }),
+    position: number({ min: 0, max: 1, default: 0.5, unit: "percent" }),
     pitch_spread: number({ min: 0, max: 12, default: 0.5, label: "Pitch spread" }),
   },
   sound: ({ sound, size, density, position, pitch_spread }) => {

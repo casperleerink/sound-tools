@@ -1,4 +1,4 @@
-import { Arc, blend, Circle, For, Group, h, Label, Line, list, now, Rect, Space, text, Text, Toggle, tool, Wave, type Connection, type Declaration, type Live, type UtilityState } from "./sdk";
+import { Arc, blend, Circle, For, Group, h, Label, Line, list, now, Rect, Row, Space, text, Text, Toggle, tool, Wave, type Connection, type Declaration, type Live, type UtilityState } from "./sdk";
 
 // Each `tone` child is a strip: it plays through the utility `<name>-mix`, whose gain, pan and
 // mute the strip turns, into the utility `master`. The meter `<name>-meter` hears the mix.
@@ -109,20 +109,19 @@ export const mixer = tool({
           <Text variant="label">master</Text>
         </div>
         <div style={{ gap: "sm" }}>
-          <div style={{ direction: "row", gap: "sm", align: "center" }}>
+          <Row gap="sm">
             <Space width={16} height={16}>
               <Circle x={8} y={8} radius={5} color={blend("red/20", "red", now.elapsed.mod(1).lt(0.5))} />
             </Space>
             <Text variant="label">Live</Text>
-          </div>
+          </Row>
           <Text variant="label">Master, the last 20 ms</Text>
           <Space width={260} height={80} background="well" radius="sm">
-            <Line from={[0, 40]} to={[260, 40]} color="border-strong" width={1} />
-            <Wave x={0} y={0} width={260} height={80} list={now.scope("master-meter", { frames: 960 })} color="green" size={1.5} />
+            <Wave list={now.scope("master-meter", { frames: 960 })} color="green" size={1.5} />
           </Space>
           <Text variant="label">Master level, the last 4 s</Text>
           <Space width={260} height={60} background="well" radius="sm">
-            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} />
+            <Wave list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} />
           </Space>
           <Text variant="label">Device out</Text>
           <Space width={30} height={HEIGHT}>

@@ -136,14 +136,9 @@ impl Sources<'_> {
             info.field_at(name).is_some()
         });
         if field {
-            let record = || {
-                (
-                    self.field(name).unwrap_or(0.0),
-                    field_range(self.info, name),
-                )
-            };
-            let (value, range) = (self.feeds.played.get(name).copied()).unwrap_or_else(record);
-            return along(value, range);
+            let played = self.feeds.played.get(name).map(|(played, _)| *played);
+            let value = played.unwrap_or_else(|| self.field(name).unwrap_or(0.0));
+            return along(value, field_range(self.info, name));
         }
         if let Some(value) = self.input(name) {
             return along(value, input_range(self.info, name));

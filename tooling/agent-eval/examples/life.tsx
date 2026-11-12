@@ -1,4 +1,4 @@
-import { adsr, Button, h, Knob, number, note, sin, phasor, Space, TAU, Text, tool, type Press, type ShapeLiteral, type Style } from "./sdk";
+import { adsr, Button, h, Knob, number, note, Row, sin, phasor, Space, TAU, Text, tool, type Press, type ShapeLiteral, type Style } from "./sdk";
 
 const COLUMNS = 16;
 const ROWS = 8;
@@ -40,7 +40,6 @@ const step = (cells: boolean[][]) =>
   );
 
 const page: Style = { gap: "md", padding: "lg", align: "center" };
-const row: Style = { direction: "row", gap: "sm", align: "center" };
 
 tool({
   name: "life",
@@ -53,7 +52,7 @@ tool({
   state: {
     speed: number({ min: 0.5, max: 16, default: 4, unit: "hz", label: "Columns / s" }),
     evolve_every: number({ min: 1, max: 32, default: 8, label: "Evolve every" }),
-    ring: number({ min: 200, max: 6000, default: 2500, unit: "ms", label: "Ring" }),
+    ring: number({ min: 200, max: 6000, default: 2500, unit: "ms" }),
     brightness: number({ min: 0, max: 1, default: 0.4, label: "Brightness" }),
     gain: number({ min: 0, max: 1, default: 0.15, label: "Gain" }),
   },
@@ -122,19 +121,19 @@ tool({
         <Space width={WIDTH} height={HEIGHT} background="well" radius="md" onPress={toggle}>
           {shapes}
         </Space>
-        <div style={row}>
+        <Row gap="sm">
           <Button label={() => (memory.running ? "Pause" : "Play")} onClick={() => (memory.running = !memory.running)} />
           <Button label="Clear" variant="subtle" onClick={() => ((memory.cells = empty()), (memory.generation = 0))} />
           <Button label="Random" variant="subtle" onClick={randomize} />
           <Text variant="label">{() => `Generation ${memory.generation}`}</Text>
-        </div>
-        <div style={row}>
+        </Row>
+        <Row gap="sm">
           <Knob field="speed" />
           <Knob field="evolve_every" />
           <Knob field="ring" />
           <Knob field="brightness" />
           <Knob field="gain" />
-        </div>
+        </Row>
       </div>
     );
   },

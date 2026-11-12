@@ -2,9 +2,8 @@
 
 Read `agent-docs/extensions.md` first. The elements and their props are in `extensions/sdk/drawing.ts` and `extensions/sdk/components.ts`. All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`), which also asks the window things: `openMenu`, `confirm`, `openFile`, `render`, `openWindow` (a child's own window, such as a plugin's).
 
-- A control's `field` turns a field with no code, also a number inside a child's record: `"kit.pads.36.volume_db"`. `value` and `onChange` are what code keeps instead, such as `memory`; it hears each value of a drag, a step behind the pointer.
-- A dialog's OK reads what an `<Input>`'s `onChange` kept: a click on a button leaves the field the keys, so nothing commits.
-- A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses. `onRelease` hears the button go up wherever the pointer went: a note off.
+- A control's `field` may be a number inside a child's record: `"kit.pads.36.volume_db"`. `value` and `onChange` are what code keeps instead, such as `memory`.
+- A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.
 
 ## Values that change
 
@@ -12,9 +11,7 @@ A view and a component run once. A value that changes (a field, a child, an outp
 
 - `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. In a column that scrolls down, rows that are divs of a fixed `height` and hold nothing tab goes to draw only where they show: a long list costs what shows.
 - `<Show>`, `<Switch>`, `<Popover>` and `<Dialog>` make their part again each time it shows.
-- `timeout` and `interval` stop by themselves when what made them goes, such as a `Show` part.
-- `selector(() => memory.selected)` gives `isPicked(key)`, which changes only for the keys that come or go, so a click selects one note at the cost of one.
-- Set a field of `memory` to change it, from any code. Replace a `Set` or a `Map`; its type refuses `.add`.
+- `selector`, `timeout`, `interval` and `memory` have their docs in `extensions/sdk/reactivity.ts`.
 
 ## A control loop
 
