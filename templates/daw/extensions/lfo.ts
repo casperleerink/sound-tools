@@ -6,7 +6,7 @@ import { abs, adsr, beat, choice, cos, exp, log, max, note, number, output, tool
 
 export const RATES = ["1/1", "1/2", "1/4", "1/8", "1/16"] as const;
 /** The quarter notes of one cycle of each rate. */
-const BEATS: Record<(typeof RATES)[number], number> = { "1/1": 4, "1/2": 2, "1/4": 1, "1/8": 0.5, "1/16": 0.25 };
+export const BEATS: Record<(typeof RATES)[number], number> = { "1/1": 4, "1/2": 2, "1/4": 1, "1/8": 0.5, "1/16": 0.25 };
 export const SHAPES = ["sine", "triangle", "square", "saw"] as const;
 
 /** Wide enough for any number a lane moves: a frequency, a volume, a time or a share. */
@@ -18,6 +18,21 @@ function along(low: Signal, high: Signal, amount: Signal, scale: "linear" | "log
   if (scale === "linear") return low.plus(high.minus(low).times(amount));
   const [from, to] = [log(max(low, 1e-6)), log(max(high, 1e-6))];
   return exp(from.plus(to.minus(from).times(amount)));
+}
+
+/** How far each shape is from `low` to `high`, 0 to 1, at `phase` of its cycle, as the LFO's sound below plays it. */
+const WAVES: Record<(typeof SHAPES)[number], (phase: number) => number> = {
+  sine: (phase) => 0.5 - 0.5 * Math.cos(phase * 2 * Math.PI),
+  triangle: (phase) => 1 - Math.abs(phase * 2 - 1),
+  square: (phase) => (phase >= 0.5 ? 1 : 0),
+  saw: (phase) => phase,
+};
+/** What an LFO sends at `phase` of its cycle, 0 to 1, in numbers: the wave its lane draws. */
+export function lfoAt({ shape, low, high, scale }: { shape: (typeof SHAPES)[number]; low: number; high: number; scale: "linear" | "log" }, phase: number): number {
+  const amount = WAVES[shape](phase);
+  if (scale === "linear") return low + (high - low) * amount;
+  const [from, to] = [Math.log(Math.max(low, 1e-6)), Math.log(Math.max(high, 1e-6))];
+  return Math.exp(from + (to - from) * amount);
 }
 
 /** How an envelope moves: its times and its sustain, each with the name its knob shows. */
