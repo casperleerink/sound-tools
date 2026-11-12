@@ -1,6 +1,6 @@
-//! The card of the Drum pad: the 4 by 4 grid of pads as its display, then Volume, Pitch, Decay
-//! and Pan of the selected pad, and behind expand its Sound and whether it is in the choke
-//! group. The rack gives the view a [`CardFrame`], whose title says "Drum pad" and is where
+//! The card of the Drum pad: the 4 by 4 grid of pads as its display, then the Sound of the
+//! selected pad, which names the pad its knobs turn, with its Volume, Pitch, Decay and Pan,
+//! and behind expand whether it is in the choke group. The rack gives the view a [`CardFrame`], whose title says "Drum pad" and is where
 //! another instrument is picked.
 //!
 //! A press on a pad selects it and plays it. The grid is one tab stop: the arrows move the
@@ -113,7 +113,7 @@ pub fn pad_from_key(pad: usize, key: &str) -> Option<usize> {
 pub struct DrumPadView {
     device: DeviceEdit<DrumPadState>,
     frame: CardFrame,
-    /// Whether the card shows Sound and Choke. Interface state: not saved.
+    /// Whether the card shows Choke. Interface state: not saved.
     expanded: bool,
     /// The pad the knobs show, from 0. Interface state: not saved.
     selected: usize,
@@ -199,7 +199,7 @@ impl DrumPadView {
         }
     }
 
-    /// Shows or hides Sound and Choke, as the expand icon does.
+    /// Shows or hides Choke, as the expand icon does.
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
@@ -457,10 +457,6 @@ impl gpui::Render for DrumPadView {
         let pad = &state.pads[self.selected];
         let [volume, pitch, decay, pan] =
             knobs(self.selected).map(|control| self.knob(control, pad, cx));
-        let columns = [
-            Column::new().top(volume).bottom(decay),
-            Column::new().top(pitch).bottom(pan),
-        ];
         let kind = match pad.source {
             Source::Sound(_) => "Synthesized",
             Source::Sample(_) => "Sample",
@@ -469,6 +465,11 @@ impl gpui::Render for DrumPadView {
             .span(2)
             .label("Sound")
             .value(kind);
+        // The sound heads the knobs: it says which pad they turn.
+        let columns = [
+            Column::new().top(sound).bottom(pitch).bottom(decay),
+            Column::new().top(volume).bottom(pan),
+        ];
         let selected = self.selected;
         let on = pad.choke;
         let choke = Toggle::new("choke", "Choke", on).on_change(weak_callback(
@@ -483,7 +484,7 @@ impl gpui::Render for DrumPadView {
                 view.device.change(label, ValueChange::Set(on), set, cx);
             },
         ));
-        let hidden = Column::new().top(sound).bottom(Cell::switch(choke));
+        let hidden = Column::new().top(Cell::switch(choke));
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
