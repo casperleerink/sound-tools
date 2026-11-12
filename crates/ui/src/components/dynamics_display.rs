@@ -2,6 +2,7 @@
 //! curve, the input across and the output up, so an untouched sound is the diagonal of the
 //! curve's part. The level now is a dot on the curve and the gain reduction a soft bar at the
 //! right edge, which the line of the display says in words while it turns the sound down.
+//! The Limiter shows its reduction with the same bar ([`reduction`]).
 //!
 //! The owner draws its own curve and handles on [`Levels`], keeps a [`Reading`] from its meters
 //! and adds them with [`Levels::meters`].
@@ -16,12 +17,40 @@ use crate::theme::ActiveTheme;
 /// The room of the gain reduction bar at the right edge, in points.
 const BAR_ROOM: f32 = 18.;
 
-/// The curve takes this part of the width. The gain reduction bar has the rest.
-pub const CURVE_WIDTH: f32 = (WIDTH - BAR_ROOM) / WIDTH;
-
 /// The dot of the level and the bar of the gain reduction, in points.
 const LEVEL_DOT: f32 = 8.;
 const BAR_INSET: f32 = 6.;
+
+/// The curve takes this part of the width. The gain reduction bar has the rest.
+pub const CURVE_WIDTH: f32 = (WIDTH - BAR_ROOM) / WIDTH;
+
+/// The curve takes this part of the height: its top is the top of the bar, so the loudest
+/// level is a line inside the display and not its edge.
+pub const CURVE_HEIGHT: f32 = (INSET_HEIGHT - BAR_INSET) / INSET_HEIGHT;
+
+/// The travel of a level that drags up and down on `range`, over the whole height: the top of
+/// `range` is at [`CURVE_HEIGHT`], and the owner keeps what a drag gives inside `range`.
+pub fn travel_up(range: KnobRange) -> KnobRange {
+    KnobRange::linear(
+        range.min,
+        range.min + (range.max - range.min) / CURVE_HEIGHT,
+    )
+}
+
+/// The bar of the gain reduction at the right edge of `display`, and its words at the foot
+/// beside it while there is some.
+pub fn reduction(display: Display, reduction_db: f32) -> Display {
+    // In a place of its own: the bar positions itself relative to its own box.
+    let bar = div()
+        .absolute()
+        .top(px(BAR_INSET))
+        .right(px(BAR_INSET))
+        .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
+    display
+        .caption_at_right(BAR_ROOM)
+        .when_some(GainReduction::says(reduction_db), Display::caption)
+        .child(bar)
+}
 
 /// The levels the curve shows, in dBFS, from the bottom left to the top right.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,14 +60,19 @@ pub struct Levels {
 }
 
 impl Levels {
-    /// Where a level is up the display, from 0 at the bottom to 1 at the top.
-    pub fn up(self, db: f32) -> f32 {
+    /// Where a level is between the two ends, from 0 to 1.
+    fn part(self, db: f32) -> f32 {
         ((db - self.bottom_db) / (self.top_db - self.bottom_db)).clamp(0., 1.)
+    }
+
+    /// Where a level is up the display, from 0 at the bottom to [`CURVE_HEIGHT`].
+    pub fn up(self, db: f32) -> f32 {
+        CURVE_HEIGHT * self.part(db)
     }
 
     /// Where a level is across the display, from 0 at the left to [`CURVE_WIDTH`].
     pub fn across(self, db: f32) -> f32 {
-        CURVE_WIDTH * self.up(db)
+        CURVE_WIDTH * self.part(db)
     }
 
     /// The levels across the whole width, past the top of the curve too, for a handle that
@@ -88,17 +122,7 @@ impl Levels {
                 .rounded_full()
                 .bg(green)
         });
-        // In a place of its own: the bar positions itself relative to its own box.
-        let bar = div()
-            .absolute()
-            .top(px(BAR_INSET))
-            .right(px(BAR_INSET))
-            .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
-        display
-            .caption_at_right(BAR_ROOM)
-            .when_some(GainReduction::says(reduction_db), Display::caption)
-            .children(level)
-            .child(bar)
+        reduction(display.children(level), reduction_db)
     }
 }
 

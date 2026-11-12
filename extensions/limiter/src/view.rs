@@ -1,5 +1,5 @@
 //! The card of the limiter: the last four seconds of what the limiter sent out under the ceiling
-//! line and how much it took, then Gain and Release, Ceiling and Lookahead. Four controls fit, so
+//! line and how much it takes now, then Gain and Release, Ceiling and Lookahead. Four controls fit, so
 //! the card has nothing behind expand. The rack gives the view a [`CardFrame`]: the picker of the
 //! slot as the title, and the power and close icons.
 //!
@@ -166,8 +166,8 @@ impl LimiterView {
         }
     }
 
-    /// The most the limiter took in the last column of its display, in dB: what the line under
-    /// the display says.
+    /// The most the limiter took in the last column of its display, in dB: what the bar shows
+    /// and the line of the display says.
     pub fn reduction_db(&self) -> f32 {
         self.history.reduction_now()
     }
