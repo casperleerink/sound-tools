@@ -564,6 +564,18 @@ NumberBox({ field: "bpm", key: "bpm", width: 40 });
 SegmentedControl({ field: "mode" });
 Select({ field: "mode" });
 Steps({ field: "kick" });
+// A switch on a boolean field says the field's label and turns it; else it says its face and what it shows.
+Toggle({ field: "hold" });
+Toggle({ field: "hold", icon: "lock" });
+// @ts-expect-error: a field or `on`, not both.
+Toggle({ field: "hold", on: true });
+// @ts-expect-error: a switch on what code keeps has a face.
+Toggle({ on: true });
+// A control on a field is a cell of `Controls` by itself.
+Controls({ children: [Knob({ field: "cutoff" }), SegmentedControl({ field: "mode" }), Select({ field: "mode", size: "sm" }), Toggle({ field: "hold" })] });
+// The ring of the step that plays shows while the piece plays, unless the steps run on their own.
+Steps({ field: "kick", playing: "step" });
+Steps({ field: "kick", playing: "step", ownClock: true });
 // Each can still be said, and a number inside a child's record is a field too.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
 Knob({ field: "kit.pads.36.volume_db", label: "Level" });

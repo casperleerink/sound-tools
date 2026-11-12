@@ -4,7 +4,7 @@ import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, 
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
 import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, Turn } from "./live";
-import { currentCard, element, Show, UiNode } from "./nodes";
+import { asCell, currentCard, element, Show, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
@@ -111,10 +111,13 @@ function numberInput(tool: string, parts: readonly string[]): Field | undefined 
 const named = (name: string) => words(name.replace(new RegExp(`_(${NAMED_UNITS.join("|")}|percent)$`), ""));
 
 /** What a control calls the field at `path`: its own label, else its name in words. */
-const labelOf = (path: string, field = fieldOf(path)) => field?.label ?? named(partsOf(splitPath(path).name).at(-1) ?? path);
+export const labelOf = (path: string, field = fieldOf(path)) => field?.label ?? named(partsOf(splitPath(path).name).at(-1) ?? path);
+
+/** The label a control on a field has as a cell of `Controls`; one on what code keeps has none. */
+const cellLabel = (props: { field?: string }) => (props.field === undefined ? undefined : labelOf(props.field));
 
 /** A field, or what code keeps, as a control reads and sets it. A field's change is one undo step of `label`. */
-function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label?: string) => void } {
+export function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label?: string) => void } {
   if (props.field === undefined) {
     const { value, onChange } = props;
     return { get: () => read(value), set: (value) => onChange(value) };
@@ -509,7 +512,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
       children: [Label({ ...text, text: shows, unit })],
     });
   // Enter types a number. The arrows are the window's, as a knob's.
-  return h("div", { key: `${key}-keys`, keys: ["enter"], onKey: () => type(true), style: { radius: "sm", keep: true } }, Show({
+  return asCell(h("div", { key: `${key}-keys`, keys: ["enter"], onKey: () => type(true), style: { radius: "sm", keep: true } }, Show({
     when: typing,
     children: () => {
       const before = untrack(get);
@@ -522,7 +525,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
       return h("div", { key: `${key}-typed` }, input);
     },
     fallback: box,
-  }));
+  })), told.label);
 }
 
 /** A number field as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
@@ -606,7 +609,8 @@ export function Select<const T extends string | number | boolean | null>(props: 
   const style = { direction: "row", align: "center", gap: "xs", height: CONTROL_HEIGHT[size], paddingX: "sm", radius: "md", background: "fill", hover: { background: "fill-strong" } } as const;
   // Medium, as what the window's own controls say.
   const text = size === "sm" ? Text({ variant: "label", tone: "text", style: { weight: "medium" }, children: said }) : Text({ variant: "heading", children: said });
-  return h("div", { key: props.key, style, tabStop: true, onClick: open }, text, Icon({ name: "chevron-down", size: 12, color: "text-muted" }));
+  const node = h("div", { key: props.key, style, tabStop: true, onClick: open }, text, Icon({ name: "chevron-down", size: 12, color: "text-muted" }));
+  return asCell(node, cellLabel(props));
 }
 
 export type SegmentedControlProps<T> = Chosen<T, Pick<SelectOption<T>, "value" | "label">> & {
@@ -621,7 +625,7 @@ export type SegmentedControlProps<T> = Chosen<T, Pick<SelectOption<T>, "value" |
 export function SegmentedControl<const T extends string | number | boolean | null>(props: SegmentedControlProps<T>): UiNode {
   const { get, set } = valueOf(props);
   const options = optionsOf("SegmentedControl", props);
-  return element("segmented", {
+  const node = element("segmented", {
     key: props.key,
     size: props.size,
     options: () => options().map((option) => option.label),
@@ -635,6 +639,7 @@ export function SegmentedControl<const T extends string | number | boolean | nul
       if (option && option.value !== untrack(get)) set(option.value);
     },
   }, []);
+  return asCell(node, cellLabel(props));
 }
 
 export type SliderProps = { field: string; key?: string; min?: number; max?: number; default?: number; unit?: Unit; label?: string; bipolar?: boolean; width?: number };
@@ -646,10 +651,11 @@ export type SliderProps = { field: string; key?: string; min?: number; max?: num
  * `width` says.
  */
 export function Slider({ field, key, bipolar, width, ...props }: SliderProps): UiNode {
-  const { travel, turns, unranged } = numberOf("Slider", { ...props, field });
+  const { label, travel, turns, unranged } = numberOf("Slider", { ...props, field });
   if (!travel || travel.scale === "fader") throw unranged();
   const { min, max } = travel;
-  return element("slider", { key, bipolar, width, field, min, max, unit: turns.unit, default: turns.default, label: turns.label, value: now.value(field) }, []);
+  const node = element("slider", { key, bipolar, width, field, min, max, unit: turns.unit, default: turns.default, label: turns.label, value: now.value(field) }, []);
+  return asCell(node, label);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { bandpass, Button, Cell, Circle, clamp, Controls, db, Display, exp, feedback, Fragment, h, highpass, hold, Knob, number, lowpass, max, mix, noise, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, tool, bang, output, Wave } from "./sdk";
+import { bandpass, Button, Circle, clamp, Controls, db, Display, exp, feedback, Fragment, h, highpass, hold, Knob, number, lowpass, max, mix, noise, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, tool, bang, output, Wave } from "./sdk";
 
 /** A slow random wander from -1 to 1: a new target `hz` times a second, glided over `ms`. */
 const gust = (hz: Signal | number, ms: Signal | number): Signal =>
@@ -86,9 +86,7 @@ tool({
         </Display>
         <Controls>
           <Knob field="level" />
-          <Cell>
-            <Button label="Thunder" variant="subtle" onClick={() => send("strike")} />
-          </Cell>
+          <Button label="Thunder" variant="subtle" onClick={() => send("strike")} />
           <Knob field="thunder" />
           <Knob field="thunder_decay" />
           <Knob field="tone" />
