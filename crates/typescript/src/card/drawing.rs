@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{
     AnyElement, App, Bounds, Context, ElementId, Empty, Entity, FocusHandle, MouseButton, Pixels,
-    Point, ScrollHandle, SharedString, Size, StyledText, WeakEntity, Window, canvas, div,
+    Point, ScrollHandle, SharedString, Size, StyledText, TextRun, WeakEntity, Window, canvas, div,
     prelude::*, px,
 };
 use serde_json::Value;
@@ -65,6 +65,8 @@ pub(super) struct Drawing<'a> {
     pub(super) out_of_page: bool,
     /// Whether what it draws is inside a div with a tooltip.
     pub(super) under_tooltip: bool,
+    /// The run of the `Text` whose children it draws, for the tabular figures of their numbers.
+    pub(super) words: Option<TextRun>,
     /// Whether its page takes the keys: it hears them, or shows an overlay, for escape.
     pub(super) takes_keys: bool,
     /// The keys of what the page shows in the title bar, while the page hears keys.
@@ -120,7 +122,11 @@ impl Drawing<'_> {
         let id = entry.id;
         match &entry.props {
             Props::Text(TextProps { text }) => {
-                SharedString::from(text.clone().unwrap_or_default()).into_any_element()
+                let text = SharedString::from(text.clone().unwrap_or_default());
+                match &self.words {
+                    Some(run) => tabular(text, run).into_any_element(),
+                    None => text.into_any_element(),
+                }
             }
             Props::Space(space) => self.space(slot, id, space, &entry.children),
             // A shape outside a space, or a marker, draws nothing.
@@ -174,6 +180,8 @@ impl Drawing<'_> {
             Props::Div(DivProps {
                 key,
                 style,
+                variant,
+                tone,
                 on_press,
                 disabled,
                 cursor,
@@ -258,12 +266,20 @@ impl Drawing<'_> {
                     },
                     _ => None,
                 };
-                let mut cut_text = text.clone().map(StyledText::new);
+                let words = variant.map(|variant| {
+                    let tone = tone.unwrap_or(crate::tokens::tone_of(variant));
+                    style.run(variant, tone.color(self.cx.theme()))
+                });
+                let mut cut_text = text.clone().map(|text| match &words {
+                    Some(run) => tabular(text, run),
+                    None => StyledText::new(text),
+                });
                 let cut = text.zip(cut_text.as_ref().map(|styled| styled.layout().clone()));
                 let mut children: Vec<AnyElement> = Vec::new();
                 let mut hidden = None::<f32>;
                 let mut at = 0.0;
                 let under_tooltip = std::mem::replace(&mut self.under_tooltip, !own_tip);
+                let outer_words = std::mem::replace(&mut self.words, words.clone());
                 for (position, child) in shown.iter().enumerate() {
                     if let Some((heights, gap, showing)) = &rows {
                         let height = heights.get(position).copied().unwrap_or_default();
@@ -284,6 +300,7 @@ impl Drawing<'_> {
                     });
                 }
                 self.under_tooltip = under_tooltip;
+                self.words = outer_words;
                 if let Some(room) = hidden {
                     children.push(div().flex_none().h(px(room)).into_any_element());
                 }
@@ -300,6 +317,13 @@ impl Drawing<'_> {
                 if let Some(outer) = outer {
                     self.scroller = outer;
                 }
+                let base = match (variant, &words) {
+                    (Some(variant), Some(run)) => div()
+                        .text_size(variant.size())
+                        .font_weight(run.font.weight)
+                        .text_color(run.color),
+                    _ => div(),
+                };
                 let element = match follow {
                     // Its children move with the scroll of the spaces it follows, cut off at its
                     // edges: the heads of the rows of a timeline that scrolls. They lie over it,
@@ -320,9 +344,9 @@ impl Drawing<'_> {
                             .when(follow.x.is_none(), |inside| inside.w_full())
                             .when(follow.y.is_none(), |inside| inside.h_full())
                             .children(children);
-                        (style.apply(div(), disabled).overflow_hidden()).child(inside)
+                        (style.apply(base, disabled).overflow_hidden()).child(inside)
                     }
-                    None => style.apply(div(), disabled).children(children),
+                    None => style.apply(base, disabled).children(children),
                 };
                 // Tests find a div by its key.
                 let element = match key {
@@ -438,6 +462,12 @@ impl Drawing<'_> {
             .child(writes.absolute().size_full())
             .into_any_element()
     }
+}
+
+/// `text` in the font and colour of `run`, its numbers with tabular figures.
+fn tabular(text: SharedString, run: &TextRun) -> StyledText {
+    let runs = sound_ui::typography::tabular_runs(&text, run);
+    StyledText::new(text).with_runs(runs)
 }
 
 /// Whether a text field has the keys.

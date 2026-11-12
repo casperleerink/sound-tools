@@ -16,11 +16,13 @@ pub mod radius {
 }
 
 /// The height of a control. Controls of one size line up in a row.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ControlSize {
     /// 24 pt: a control of a device card.
     Sm,
     /// 28 pt.
+    #[default]
     Md,
     /// 32 pt: a field or a button of a page.
     Lg,

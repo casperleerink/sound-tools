@@ -122,7 +122,7 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
   };
   return (
     <div style={{ grow: true, minWidth: 0, gap: 2 }}>
-      <div key={`lane-name-${track}-${lane.lane}`} tooltip={() => laneName(page, track, lane.target, true)} style={{ fontSize: 12, color: "gray-800", truncate: true }}
+      <div key={`lane-name-${track}-${lane.lane}`} tooltip={() => laneName(page, track, lane.target, true)} style={{ fontSize: 12, color: "text-secondary", truncate: true }}
         onPress={({ button }) => button === "right" && menu()}>
         {() => laneName(page, track, lane.target)}
       </div>
@@ -130,8 +130,8 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
         if (mover() === "lfo")
           return (
             <div style={{ direction: "row", gap: 4 }}>
-              <Select key={`lfo-shape-${path}`} field={`${path}.shape`} options={SHAPES.map((shape) => ({ value: shape, label: words(shape) }))} />
-              <Select key={`lfo-rate-${path}`} field={`${path}.rate`} options={RATES.map((rate) => ({ value: rate, label: rate }))} />
+              <Select key={`lfo-shape-${path}`} size="sm" field={`${path}.shape`} options={SHAPES.map((shape) => ({ value: shape, label: words(shape) }))} />
+              <Select key={`lfo-rate-${path}`} size="sm" field={`${path}.rate`} options={RATES.map((rate) => ({ value: rate, label: rate }))} />
             </div>
           );
         if (mover() === "envelope")
@@ -147,7 +147,7 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
         const { unit, times } = readoutOf(number);
         return (
           <Space key={`lane-value-${track}-${lane.lane}`} width={READOUT} height={16}>
-            <Label x={0} y={1} text={played.times(times)} unit={unit} size={12} color="gray-700" />
+            <Label x={0} y={1} text={played.times(times)} unit={unit} size={12} color="text-muted" />
           </Space>
         );
       }}
@@ -256,8 +256,8 @@ const BandRow = ({ page, track, lane, row, colour }: RowProps) => {
   const [low, high] = [() => yOf(band().low), () => yOf(band().high)];
   return (
     <>
-      <Rect x={-1e6} y={top} width={2e6} height={page.timeline.pointY} color="alpha/5" />
-      <Rect x={-1e6} y={() => Math.min(low(), high())} width={2e6} height={() => Math.abs(low() - high())} color="alpha/5" />
+      <Rect x={-1e6} y={top} width={2e6} height={page.timeline.pointY} color="border" />
+      <Rect x={-1e6} y={() => Math.min(low(), high())} width={2e6} height={() => Math.abs(low() - high())} color="fill" />
       {edge("low")}
       {edge("high")}
     </>
@@ -355,8 +355,8 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
   return (
     <>
       <Rect x={-1e6} y={top} width={2e6} height={1} color={COLOR.clear} cursor="crosshair" drag={drag} anchor={{ x: 0 }} onPress={pressLane} />
-      <Rect x={-1e6} y={top} width={2e6} height={timeline.pointY} color="alpha/5" />
-      <Rect x={moved.startX.min(moved.x)} y={() => top() + 0.04} width={moved.dx.abs()} height={0.92} color="alpha/5" border="alpha/20" borderWidth={1} radius={2}
+      <Rect x={-1e6} y={top} width={2e6} height={timeline.pointY} color="border" />
+      <Rect x={moved.startX.min(moved.x)} y={() => top() + 0.04} width={moved.dx.abs()} height={0.92} color="fill" border="text/20" borderWidth={1} radius={2}
         opacity={() => (erasing() ? moved.active : 0)} />
       <For each={points}>
         {(point, index) => {
@@ -416,7 +416,7 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
             return held.times(readout().times);
           };
           return [
-            <Circle x={x} y={y} radius={6} color="gray-950" opacity={() => (chosen() ? 1 : 0)} />,
+            <Circle x={x} y={y} radius={6} color="text" opacity={() => (chosen() ? 1 : 0)} />,
             <Circle x={x} y={y} radius={() => (chosen() ? 4.5 : hovered().times(1.5).plus(3))} color={colour} />,
             <Circle key={key} x={x} y={y} radius={6} color={COLOR.clear} cursor="pointer" drag={drag} anchor={() => ({ x: point.tick })}
               onPress={({ alt, button }) => {
@@ -428,11 +428,11 @@ const PointsRow = ({ page, track, lane, row, colour, snap }: RowProps) => {
                 choose(point.tick);
               }} />,
             <Rect x={() => timeline.pointX.times(10).plus(x())} y={() => timeline.pointY.times(-11).plus(y())} width={timeline.pointX.times(64)} height={timeline.pointY.times(22)}
-              radius={6} color="gray-100" border="alpha/10" borderWidth={1} opacity={shown} />,
+              radius={6} color="background" border="border-strong" borderWidth={1} opacity={shown} />,
             // Its unit is known once the range of the number is.
             () => (
               <Label x={() => timeline.pointX.times(42).plus(x())} y={() => timeline.pointY.times(-7).plus(y())}
-                text={value} unit={readout().unit} size={12} color="gray-950" align="center" opacity={shown} />
+                text={value} unit={readout().unit} size={12} color="text" align="center" opacity={shown} />
             ),
           ];
         }}

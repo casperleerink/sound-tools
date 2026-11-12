@@ -30,12 +30,12 @@ export const TempoLane = ({ page }: { page: Page }) => {
           // Its tempo stays at the left edge while it holds past it, and shows where it fits.
           const left = timeline.left.max(change.tick);
           return [
-            <Line from={() => [change.tick, y()] as const} to={() => [next()?.tick ?? end(), y()] as const} color="gray-800" width={1.5} />,
+            <Line from={() => [change.tick, y()] as const} to={() => [next()?.tick ?? end(), y()] as const} color="text-secondary" width={1.5} />,
             () => {
               const after = next();
-              return after ? <Line from={() => [after.tick, y()] as const} to={() => [after.tick, yOf()(after.bpm)] as const} color="gray-800" width={1.5} /> : null;
+              return after ? <Line from={() => [after.tick, y()] as const} to={() => [after.tick, yOf()(after.bpm)] as const} color="text-secondary" width={1.5} /> : null;
             },
-            <Label x={timeline.pointX.times(5).plus(left)} y={() => (y() > 16 ? y() - 14 : y() + 3)} text={text} size={11} color="gray-700"
+            <Label x={timeline.pointX.times(5).plus(left)} y={() => (y() > 16 ? y() - 14 : y() + 3)} text={text} size={11} color="text-muted"
               opacity={() => left.negate().plus(next()?.tick ?? end()).ge(timeline.pointX.times(text.length * 5.2 + 12))} />,
           ];
         }}
@@ -46,17 +46,17 @@ export const TempoLane = ({ page }: { page: Page }) => {
             color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />
         )}
       </For>
-      <Line from={[playhead, 0]} to={[playhead, height]} color="gray-950" width={1} />
+      <Line from={[playhead, 0]} to={[playhead, height]} color="text" width={1} />
       <For each={marks}>
         {(change) => {
           const text = `${bpmText(change.bpm)} bpm`;
           const y = () => clamp(yOf()(change.bpm), 9, height - 9);
           const shown = () => (chosen(change.tick) ? 1 : now.hover(`tempo-${change.tick}`));
           return [
-            <Circle x={change.tick} y={() => yOf()(change.bpm)} radius={3.5} color="gray-950" opacity={() => (chosen(change.tick) ? 1 : 0)} />,
+            <Circle x={change.tick} y={() => yOf()(change.bpm)} radius={3.5} color="text" opacity={() => (chosen(change.tick) ? 1 : 0)} />,
             <Rect x={timeline.pointX.times(8).plus(change.tick)} y={() => y() - 9} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4}
-              color="gray-100" border="alpha/10" borderWidth={1} opacity={shown} />,
-            <Label x={timeline.pointX.times(14).plus(change.tick)} y={() => y() - 6} text={text} size={12} color="gray-950" opacity={shown} />,
+              color="background" border="border-strong" borderWidth={1} opacity={shown} />,
+            <Label x={timeline.pointX.times(14).plus(change.tick)} y={() => y() - 6} text={text} size={12} color="text" opacity={shown} />,
           ];
         }}
       </For>

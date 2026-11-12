@@ -1,4 +1,4 @@
-import { adsr, h, Knob, number, note, sin, phasor, Space, TAU, tool, type Press, type ShapeLiteral, type Style } from "./sdk";
+import { adsr, Button, h, Knob, number, note, sin, phasor, Space, TAU, Text, tool, type Press, type ShapeLiteral, type Style } from "./sdk";
 
 const COLUMNS = 16;
 const ROWS = 8;
@@ -39,9 +39,8 @@ const step = (cells: boolean[][]) =>
     }),
   );
 
-const page: Style = { gap: 12, padding: 16, align: "center" };
-const row: Style = { direction: "row", gap: 8, align: "center" };
-const button: Style = { paddingX: 12, paddingY: 6, radius: 6, background: "#2a2f3a", color: "#e5e7eb" };
+const page: Style = { gap: "md", padding: "lg", align: "center" };
+const row: Style = { direction: "row", gap: "sm", align: "center" };
 
 tool({
   name: "life",
@@ -88,7 +87,7 @@ tool({
     const shapes = () => {
       const shapes: ShapeLiteral[] = [];
       const column = Math.floor(memory.cursor);
-      shapes.push({ kind: "rect", x: column * CELL, y: 0, width: CELL, height: HEIGHT, color: "#1e293b" });
+      shapes.push({ kind: "rect", x: column * CELL, y: 0, width: CELL, height: HEIGHT, color: "fill-strong" });
       memory.cells.forEach((cells, c) =>
         cells.forEach((alive, r) => {
           const lit = alive && c === column;
@@ -99,12 +98,12 @@ tool({
             width: CELL - GAP,
             height: CELL - GAP,
             radius: 5,
-            color: lit ? "#fde68a" : alive ? "#38bdf8" : "#1f2937",
+            color: lit ? "yellow" : alive ? "sky" : "fill",
           });
         }),
       );
       const x = memory.cursor * CELL;
-      shapes.push({ kind: "line", from: [x, 0], to: [x, HEIGHT], color: "#fbbf24", width: 2 });
+      shapes.push({ kind: "line", from: [x, 0], to: [x, HEIGHT], color: "green", width: 2 });
       return shapes;
     };
 
@@ -120,16 +119,14 @@ tool({
 
     return (
       <div style={page}>
-        <Space width={WIDTH} height={HEIGHT} background="#0f172a" radius={6} onPress={toggle}>
+        <Space width={WIDTH} height={HEIGHT} background="well" radius="md" onPress={toggle}>
           {shapes}
         </Space>
         <div style={row}>
-          <div style={button} onClick={() => (memory.running = !memory.running)}>
-            {() => (memory.running ? "Pause" : "Play")}
-          </div>
-          <div style={button} onClick={() => ((memory.cells = empty()), (memory.generation = 0))}>Clear</div>
-          <div style={button} onClick={randomize}>Random</div>
-          <div style={{ color: "#94a3b8", fontSize: 12 }}>{() => `Generation ${memory.generation}`}</div>
+          <Button label={() => (memory.running ? "Pause" : "Play")} onClick={() => (memory.running = !memory.running)} />
+          <Button label="Clear" variant="subtle" onClick={() => ((memory.cells = empty()), (memory.generation = 0))} />
+          <Button label="Random" variant="subtle" onClick={randomize} />
+          <Text variant="label">{() => `Generation ${memory.generation}`}</Text>
         </div>
         <div style={row}>
           <Knob field="speed" label="Columns / s" min={0.5} max={16} default={4} unit="hz" />

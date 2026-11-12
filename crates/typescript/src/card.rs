@@ -790,6 +790,7 @@ impl TypeScriptCard {
             in_title_bar: false,
             out_of_page: false,
             under_tooltip: false,
+            words: None,
             takes_keys,
             title_focus,
             lifting: None,

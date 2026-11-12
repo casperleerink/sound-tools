@@ -32,7 +32,8 @@ thread_local! {
 }
 
 /// The type scale: every text is one of these.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TextVariant {
     /// 24 pt: the one line a page opens with.
     Display,

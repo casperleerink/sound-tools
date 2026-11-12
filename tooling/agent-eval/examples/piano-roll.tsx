@@ -1,4 +1,4 @@
-import { For, h, Label, Line, memo, notes, Rect, selector, Space, tool, type Accessor, type Drag, type Key, type Note, type Press } from "./sdk";
+import { For, h, Label, Line, memo, notes, Rect, selector, Space, Text, tool, type Accessor, type Drag, type Key, type Note, type Press } from "./sdk";
 
 const BEAT = 960;
 const BAR = 4 * BEAT;
@@ -12,12 +12,6 @@ const LANE = 72;
 // Points per tick at zoom 1: a beat is 96 points.
 const ACROSS = 0.1;
 const HANDLE = 90;
-
-const COLOR = {
-  back: "#121317", dark: "#17191e", bar: "#3a3e48", beat: "#23262d", note: "#a9b1ff", hover: "#c8cdff",
-  chosen: "#e9ebef", clear: "#00000000", playhead: "#7ee0a0", marquee: "#a9b1ff33", text: "#7c808c",
-  white: "#d8dbe2", black: "#2a2d35",
-} as const;
 
 // The drags a selected note follows.
 const [MOVES, RESIZES, MOVES_OR_RESIZES, VELOCITY] = [["move"], ["resize"], ["move", "resize"], ["velocity"]];
@@ -180,9 +174,9 @@ export const pianoRoll = tool({
       return [
         <Rect x={() => note.start} y={row} width={() => note.length} height={1} radius={2}
           moves={() => (picked() ? MOVES : undefined)} grows={() => (picked() ? RESIZES : undefined)}
-          color={() => (picked() ? COLOR.chosen : COLOR.note)} hover={() => (picked() ? undefined : COLOR.hover)} cursor="grab" drag={moveDrag} onPress={onPress} />,
+          color={() => (picked() ? "text" : "blue")} hover={() => (picked() ? undefined : "sky")} cursor="grab" drag={moveDrag} onPress={onPress} />,
         <Rect x={() => end() - handle()} y={row} width={handle} height={1} moves={() => (picked() ? MOVES_OR_RESIZES : undefined)}
-          color={COLOR.clear} cursor="ew-resize" drag={resizeDrag} onPress={onPress} anchor={() => ({ x: end() })} />,
+          color="none" cursor="ew-resize" drag={resizeDrag} onPress={onPress} anchor={() => ({ x: end() })} />,
       ];
     };
     const bar = (note: Note, index: Accessor<number>) => {
@@ -190,7 +184,7 @@ export const pianoRoll = tool({
       return (
         <Rect x={() => note.start} y={() => LANE - barHeight(note.velocity)} width={() => Math.min(note.length, 120)} height={LANE}
           moves={() => (picked() ? VELOCITY : undefined)}
-          color={() => (picked() ? COLOR.chosen : COLOR.note)} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
+          color={() => (picked() ? "text" : "blue")} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
       );
     };
     const across = { unit: { x: ACROSS, y: 1 }, extent: { x: [0, END] as const }, zoom: { x: [0.05, 8] as const } };
@@ -199,37 +193,37 @@ export const pianoRoll = tool({
     const beats = Array.from({ length: BARS * 4 }, (_, beat) => beat * BEAT).filter((tick) => tick % BAR !== 0);
 
     return (
-      <div style={{ gap: 1, background: COLOR.back }}>
+      <div style={{ gap: 1, background: "background" }}>
         <div style={{ direction: "row" }}>
           <div style={{ width: KEYS }} />
           <Space key="ruler" width={width} height={RULER} {...across} follow={{ x: "roll" }}>
-            {bars.map((tick) => <Line from={[tick, 10]} to={[tick, RULER]} color={COLOR.bar} width={1} />)}
-            {bars.slice(0, BARS).map((tick, bar) => <Label x={tick + 40} y={3} text={String(bar + 1)} size={10} color={COLOR.text} />)}
-            <Line from={[now.tick, 0]} to={[now.tick, RULER]} color={COLOR.playhead} width={2} />
+            {bars.map((tick) => <Line from={[tick, 10]} to={[tick, RULER]} color="border-strong" width={1} />)}
+            {bars.slice(0, BARS).map((tick, bar) => <Label x={tick + 40} y={3} text={String(bar + 1)} color="text-muted" />)}
+            <Line from={[now.tick, 0]} to={[now.tick, RULER]} color="green" width={2} />
           </Space>
         </div>
         <div style={{ direction: "row" }}>
           <Space key="keys" width={KEYS} height={height} unit={{ x: 1, y: ROW }} extent={{ y: [0, 128] }} scroll={{ y: 40 }} follow={{ y: "roll" }}>
             {rows.map((pitch) => (
-              <Rect x={0} y={rowOf(pitch) + 0.04} width={isBlack(pitch) ? 28 : KEYS} height={0.92} color={isBlack(pitch) ? COLOR.black : COLOR.white} />
+              <Rect x={0} y={rowOf(pitch) + 0.04} width={isBlack(pitch) ? 28 : KEYS} height={0.92} color={isBlack(pitch) ? "well" : "text"} />
             ))}
             {rows.filter((pitch) => pitch % 12 === 0).map((pitch) => (
-              <Label x={KEYS - 4} y={rowOf(pitch) + 0.1} text={`C${pitch / 12 - 1}`} size={9} color={COLOR.back} align="right" />
+              <Label x={KEYS - 4} y={rowOf(pitch) - 0.15} text={`C${pitch / 12 - 1}`} color="text-inverse" align="right" />
             ))}
           </Space>
-          <Space key="roll" width={width} height={height} background={COLOR.back} unit={{ x: ACROSS, y: ROW }} extent={{ x: [0, END], y: [0, 128] }}
+          <Space key="roll" width={width} height={height} background="background" unit={{ x: ACROSS, y: ROW }} extent={{ x: [0, END], y: [0, 128] }}
             zoom={{ x: [0.05, 8] }} scroll={{ y: 40 }} drag={marqueeDrag} onPress={pressEmpty}>
-            {rows.filter(isBlack).map((pitch) => <Rect x={0} y={rowOf(pitch)} width={END} height={1} color={COLOR.dark} />)}
-            {beats.map((tick) => <Line from={[tick, 0]} to={[tick, 128]} color={COLOR.beat} width={1} />)}
-            {bars.map((tick) => <Line from={[tick, 0]} to={[tick, 128]} color={COLOR.bar} width={1} />)}
+            {rows.filter(isBlack).map((pitch) => <Rect x={0} y={rowOf(pitch)} width={END} height={1} color="fill" />)}
+            {beats.map((tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border" width={1} />)}
+            {bars.map((tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border-strong" width={1} />)}
             <For each={() => state.notes}>{noteShapes}</For>
             <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
-              color={COLOR.marquee} opacity={marquee.active} />
-            <Line from={[now.tick, 0]} to={[now.tick, 128]} color={COLOR.playhead} width={2} />
+              color="lavender/20" opacity={marquee.active} />
+            <Line from={[now.tick, 0]} to={[now.tick, 128]} color="green" width={2} />
           </Space>
         </div>
         <div style={{ direction: "row" }}>
-          <div style={{ width: KEYS, padding: 4, color: COLOR.text, fontSize: 10 }}>Vel</div>
+          <div style={{ width: KEYS, padding: "xs" }}><Text variant="label" tone="muted">Vel</Text></div>
           <Space key="velocity" width={width} height={LANE} {...across} follow={{ x: "roll" }}>
             <For each={() => state.notes}>{bar}</For>
           </Space>

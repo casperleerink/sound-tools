@@ -53,7 +53,7 @@ function signatureAt(runs: Frozen<TempoMap>["time_signatures"], tick: number): {
 }
 
 /** A readout of a tick of the clock as it moves, in the pill's text. */
-function clockText(key: string, width: number, unit: "position" | "time", color: Color = "gray-950", text: Live = now.tick) {
+function clockText(key: string, width: number, unit: "position" | "time", color: Color = "text", text: Live = now.tick) {
   return <Space key={key} width={width} height={18}><Label x={0} y={0} text={text} unit={unit} color={color} size={14} /></Space>;
 }
 
@@ -71,7 +71,7 @@ export interface TransportRecord {
 export function Transport({ clock, record }: { clock: Clock; record: TransportRecord }) {
   const pill: Style = {
     direction: "row", align: "center", gap: 12, height: 36, paddingLeft: 4, paddingRight: 16,
-    radius: 18, background: "#292b30", borderColor: "alpha/10", borderWidth: 1, keep: true,
+    radius: 18, background: "fill-strong", borderColor: "border-strong", borderWidth: 1, keep: true,
   };
   const signature = () => signatureAt(clock.tempo_map.time_signatures, clock.tick);
   const setSignature = (beats: number, note: number) => {
@@ -91,35 +91,35 @@ export function Transport({ clock, record }: { clock: Clock; record: TransportRe
   };
   const toggle = (on: Accessor<boolean>) => ({
     variant: () => (on() ? "primary" : "ghost") as "primary" | "ghost",
-    color: () => (on() ? undefined : "gray-700") as Color,
+    color: () => (on() ? undefined : "text-muted") as Color,
   });
   return (
     <div key="transport" style={pill}>
       <div style={{ direction: "row", align: "center", gap: 4 }}>
-        <Button key="play" icon={() => (clock.playing ? "pause" : "play")} variant={() => (clock.playing ? "subtle" : "ghost")} color="green" size="sm" rounded
+        <Button key="play" icon={() => (clock.playing ? "pause" : "play")} variant={() => (clock.playing ? "subtle" : "ghost")} color="green" size="md" rounded
           tooltip={() => (clock.playing ? "Pause" : "Play")} shortcut="song.play" onClick={() => (clock.playing ? clock.pause() : clock.play())} />
-        <Button key="stop" icon="square" variant="ghost" size="sm" rounded tooltip="Stop" onClick={() => clock.stop()} />
-        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="sm" rounded tooltip="Record" shortcut="song.record" onClick={record.press} />
+        <Button key="stop" icon="square" variant="ghost" size="md" rounded tooltip="Stop" onClick={() => clock.stop()} />
+        <Button key="record" icon="circle" variant={() => (record.on() ? "solid" : "ghost")} color="red" size="md" rounded tooltip="Record" shortcut="song.record" onClick={record.press} />
       </div>
       {clockText("transport-position", 44, "position")}
-      {clockText("transport-time", 40, "time", "gray-700")}
+      {clockText("transport-time", 40, "time", "text-muted")}
       <div style={{ direction: "row", align: "center" }}>
         <NumberBox key="transport-tempo" width={32} per={2} min={10} max={1000}
           value={() => clock.bpm} onChange={setTempo} show={now.bpm.round()} />
-        <Space key="transport-bpm" width={32} height={18}><Label x={0} y={2} text="bpm" color="gray-700" size={12} /></Space>
+        <Space key="transport-bpm" width={32} height={18}><Label x={0} y={2} text="bpm" color="text-muted" size={12} /></Space>
       </div>
       <div style={{ direction: "row", align: "center" }}>
         <NumberBox key="transport-beats" width={14} min={1} max={32} unit="beats"
           value={() => signature().beats} onChange={(beats) => setSignature(beats, signature().note)} show={now.tick} />
-        <Space key="transport-slash" width={14} height={18}><Label x={3} y={2} text="/" color="gray-700" size={12} /></Space>
+        <Space key="transport-slash" width={14} height={18}><Label x={3} y={2} text="/" color="text-muted" size={12} /></Space>
         <NumberBox key="transport-note" width={14} values={NOTES} unit="note"
           value={() => signature().note} onChange={(note) => setSignature(signature().beats, note)} show={now.tick} />
       </div>
-      <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="sm" rounded tooltip="Play notes with the computer keys" shortcut="app.computer_keys"
+      <Button key="computer-keys" icon="keyboard-music" {...toggle(() => clock.computerKeys)} size="md" rounded tooltip="Play notes with the computer keys" shortcut="app.computer_keys"
         onClick={() => clock.setComputerKeys(!clock.computerKeys)} />
-      <Button key="write-automation" icon="automation" {...toggle(() => clock.writeAutomation)} size="sm" rounded tooltip="Write automation: while it plays, moving a knob or a fader that has a lane records into the lane"
+      <Button key="write-automation" icon="automation" {...toggle(() => clock.writeAutomation)} size="md" rounded tooltip="Write automation: while it plays, moving a knob or a fader that has a lane records into the lane"
         onClick={() => clock.setWriteAutomation(!clock.writeAutomation)} />
-      <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="sm" rounded tooltip="Metronome" onClick={() => clock.setClick(!clock.click)} />
+      <Button key="click" icon="metronome" {...toggle(() => clock.click)} size="md" rounded tooltip="Metronome" onClick={() => clock.setClick(!clock.click)} />
       <Meter key="transport-meter" peaks="device" horizontal />
     </div>
   );

@@ -272,6 +272,7 @@ impl TypeScriptCard {
         let input = cx.new(|cx| {
             let input = TextInput::new(cx)
                 .placeholder(placeholder)
+                .size(props.size.unwrap_or_default())
                 .disabled(disabled);
             match props.rows {
                 Some(rows) => input.multi_line(rows).enter_adds_line(),

@@ -175,15 +175,15 @@ export const song = tool({
         </div>
         <div style={{ direction: "row", grow: true }}>
           <Heads page={page} />
-          <div style={{ width: 1, background: "alpha/5", keep: true }} />
+          <div style={{ width: 1, background: "border", keep: true }} />
           <div style={{ grow: true }}>
             <Ruler page={page} />
-            <div style={{ height: 1, background: "alpha/5", keep: true }} />
+            <div style={{ height: 1, background: "border", keep: true }} />
             <Show when={() => memory.tempoLane}>
               {() => (
                 <>
                   <TempoLane page={page} />
-                  <div style={{ height: 1, background: "alpha/5", keep: true }} />
+                  <div style={{ height: 1, background: "border", keep: true }} />
                 </>
               )}
             </Show>
@@ -194,7 +194,7 @@ export const song = tool({
           </div>
         </div>
         <Show when={() => returns().length > 0}>{() => <Returns page={page} />}</Show>
-        <div style={{ height: 1, background: "alpha/5", keep: true }} />
+        <div style={{ height: 1, background: "border", keep: true }} />
         <MasterRow page={page} />
         {() => {
           const shown = memory.below;
@@ -207,7 +207,7 @@ export const song = tool({
           // The hairline under the master row is the top of what opens under it.
           return below === null ? null : (
             <>
-              <div style={{ height: 1, background: "alpha/5", keep: true }} />
+              <div style={{ height: 1, background: "border", keep: true }} />
               {below}
             </>
           );

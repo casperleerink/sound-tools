@@ -1,4 +1,4 @@
-import { type BangInput, type Color, type ShapeLiteral, type Style, Knob, Space, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
+import { type BangInput, type Color, type ShapeLiteral, type Style, Button, Knob, SegmentedControl, Space, Text, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
 
 // The page, in points.
 const WIDTH = 640;
@@ -8,11 +8,11 @@ const RADIUS = 7;
 // The strings, from the lowest note at the bottom to the highest at the top. They are staggered
 // so a ball that rolls off one falls on to another.
 const strings = [
-  { y: 365, x0: 40, x1: 600, color: "#f472b6" },
-  { y: 300, x0: 60, x1: 380, color: "#fb923c" },
-  { y: 240, x0: 300, x1: 580, color: "#facc15" },
-  { y: 180, x0: 70, x1: 310, color: "#4ade80" },
-  { y: 120, x0: 380, x1: 580, color: "#60a5fa" },
+  { y: 365, x0: 40, x1: 600, color: "pink" },
+  { y: 300, x0: 60, x1: 380, color: "peach" },
+  { y: 240, x0: 300, x1: 580, color: "yellow" },
+  { y: 180, x0: 70, x1: 310, color: "green" },
+  { y: 120, x0: 380, x1: 580, color: "blue" },
 ] as const satisfies readonly { y: number; x0: number; x1: number; color: Color }[];
 
 const plucks = ["pluck0", "pluck1", "pluck2", "pluck3", "pluck4"] as const;
@@ -32,10 +32,8 @@ type Memory = { balls: Ball[]; shake: number[]; time: number };
 
 const DEFAULTS = { gravity: 900, bounce: 0.7 };
 
-const page: Style = { gap: 10, padding: 12, background: "#0f1117" };
-const row: Style = { direction: "row", gap: 12, align: "center" };
-const button: Style = { paddingX: 10, paddingY: 5, radius: 6, background: "#2a2f3a", color: "#e5e7eb" };
-const picked: Style = { ...button, background: "#4f46e5" };
+const page: Style = { gap: "md", padding: "md", background: "background" };
+const row: Style = { direction: "row", gap: "md", align: "center" };
 
 tool({
   name: "gravity-harp",
@@ -137,7 +135,7 @@ tool({
     memory.balls = memory.balls.filter((ball) => ball.y < HEIGHT + 20 && (ball.age += dt) < 60);
   },
 
-  view: ({ state, memory, update }) => {
+  view: ({ memory }) => {
     // Made again whole each tick, as the balls fall.
     const shapes = () => {
       const shapes: ShapeLiteral[] = [];
@@ -152,8 +150,8 @@ tool({
           shapes.push({ kind: "line", from: last, to: point, color: string.color, width: 2 });
           last = point;
         }
-        shapes.push({ kind: "circle", x: string.x0, y: string.y, radius: 3, color: "#9ca3af" });
-        shapes.push({ kind: "circle", x: string.x1, y: string.y, radius: 3, color: "#9ca3af" });
+        shapes.push({ kind: "circle", x: string.x0, y: string.y, radius: 3, color: "text-muted" });
+        shapes.push({ kind: "circle", x: string.x1, y: string.y, radius: 3, color: "text-muted" });
       });
       for (const ball of memory.balls) {
         shapes.push({ kind: "circle", x: ball.x, y: ball.y, radius: RADIUS, color: ball.color });
@@ -161,42 +159,33 @@ tool({
       return shapes;
     };
 
-    const options = <T extends string | number>(label: string, field: "root" | "scale" | "octave", values: readonly T[], current: () => T) => (
-      <div style={row}>
-        <div style={{ color: "#9ca3af" }}>{label}</div>
-        {values.map((value) => (
-          <div
-            style={() => (value === current() ? picked : button)}
-            onClick={() => update(`${label} ${value}`, ({ state: s }) => void ((s as Record<string, unknown>)[field] = value))}
-          >
-            {value}
-          </div>
-        ))}
+    const options = (label: string, field: "root" | "scale" | "octave", values: readonly (string | number)[]) => (
+      <div style={{ direction: "row", gap: "sm", align: "center" }}>
+        <Text variant="label">{label}</Text>
+        <SegmentedControl field={field} options={values.map((value) => ({ value, label: String(value) }))} />
       </div>
     );
 
     return (
       <div style={page}>
         <div style={row}>
-          <div style={{ color: "#e5e7eb", fontSize: 18 }}>Gravity harp</div>
-          <div style={{ color: "#9ca3af" }}>Click to drop a ball.</div>
-          <div style={button} onClick={() => (memory.balls = [])}>
-            Clear
-          </div>
+          <Text variant="title">Gravity harp</Text>
+          <Text tone="muted">Click to drop a ball.</Text>
+          <Button label="Clear" variant="subtle" onClick={() => (memory.balls = [])} />
         </div>
         <Space
           width={WIDTH}
           height={HEIGHT}
-          background="#151821"
-          radius={6}
-          onPress={({ x, y }) => memory.balls.push({ x, y, vx: (Math.random() - 0.5) * 60, vy: 0, color: "#e5e7eb", age: 0 })}
+          background="well"
+          radius="md"
+          onPress={({ x, y }) => memory.balls.push({ x, y, vx: (Math.random() - 0.5) * 60, vy: 0, color: "text", age: 0 })}
         >
           {shapes}
         </Space>
         <div style={row}>
-          {options("Root", "root", ["C", "D", "E", "F", "G", "A"], () => state.root ?? "D")}
-          {options("Scale", "scale", ["major", "minor"], () => state.scale ?? "minor")}
-          {options("Octave", "octave", [3, 4, 5], () => state.octave ?? 4)}
+          {options("Root", "root", ["C", "D", "E", "F", "G", "A"])}
+          {options("Scale", "scale", ["major", "minor"])}
+          {options("Octave", "octave", [3, 4, 5])}
         </div>
         <div style={row}>
           <Knob field="decay" label="Decay" min={0.3} max={12} default={4} />
