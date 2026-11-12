@@ -444,6 +444,40 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     });
 }
 
+/// A sequencer whose pattern starts as a groove: its second step is on.
+const GROOVE: &str = r#"import { list, number, sine, tool } from "./sdk";
+
+tool({
+  name: "groove",
+  title: "Groove",
+  when: "A test",
+  doc: "A tone as loud as the second step of its pattern.",
+  state: { steps: list(number({ min: 0, max: 1 }), { max: 4, default: [0, 0.5, 0, 0] }) },
+  sound: ({ steps }) => sine(440).times(steps.at(1)),
+});
+"#;
+
+/// A list the record leaves out sounds as its default, as its view shows it: an instrument
+/// whose pattern starts as a groove is not silent until a step is clicked.
+#[gpui::test]
+fn a_sound_reads_the_default_of_a_list_its_record_leaves_out(cx: &mut TestAppContext) {
+    let project = EXPERIMENT[0].1.replace("keys", "groove");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/groove.json", r#"{"tool": "groove", "state": {}}"#),
+        ("extensions/groove.ts", GROOVE),
+    ];
+    let mut window = open(cx, &files);
+    window.until("the tone of the default", |window| {
+        window.loudest(4_800) > 0.4
+    });
+    let silent = r#"{"tool": "groove", "state": {"steps": [0, 0, 0, 0]}}"#;
+    crate::support::write_outside(&mut window, "state/groove.json", silent);
+    window.until("the record's own list", |window| {
+        window.loudest(4_800) == 0.0
+    });
+}
+
 #[gpui::test]
 fn a_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
     cx: &mut TestAppContext,

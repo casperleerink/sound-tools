@@ -980,11 +980,13 @@ impl Sounds {
         values
     }
 
-    /// The lists of `code` from `state`: a list of numbers as the record holds it, a file as its
-    /// sound, which is silence while it cannot be read.
+    /// The lists of `code` from `state`: a list of numbers as the record holds it, or the
+    /// field's default where the record leaves it out, and a file as its sound, which is
+    /// silence while it cannot be read.
     fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<List> {
         let list = |array: &ArraySpec| {
-            if let Some(Field::File { .. }) = self.info.field(&array.name) {
+            let field = self.info.field(&array.name);
+            if let Some(Field::File { .. }) = field {
                 let file = state
                     .get(&array.name)
                     .and_then(Value::as_str)
@@ -997,9 +999,9 @@ impl Sounds {
                 // Silent while it is read, or when it cannot be.
                 return (sound.ok().flatten()).map_or_else(silence, |sound| (*sound).clone());
             };
-            let items = state.get(&array.name).and_then(Value::as_array);
-            let numbers = items
-                .into_iter()
+            let default = || field.map(Field::default_value);
+            let items = (state.get(&array.name).cloned()).or_else(default);
+            let numbers = (items.as_ref().and_then(Value::as_array).into_iter())
                 .flatten()
                 .take(sound_signals::MAX_ARRAY_LENGTH);
             let numbers = numbers.map(|item| item.as_f64().map_or(array.default, |n| n as f32));
