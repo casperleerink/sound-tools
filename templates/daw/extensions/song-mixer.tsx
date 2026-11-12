@@ -52,7 +52,8 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
  * sends. Each number stands at its control: the gain over its fader, where the handle rests,
  * the pan under its dial, a send's beside its dial. At rest a strip says only its gain and its
  * pan where they are not where they rest; any number shows while its control is touched or it
- * moves. A click on a strip's name chooses it, a double click shows its panel.
+ * moves, and a click on it, or enter on its control, types it. A click on a strip's name chooses
+ * it, a double click shows its panel.
  */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, children, rows, returns, chosenTrack, choose, openPanel, openMaster, toggleMute, toggleSolo } = page;

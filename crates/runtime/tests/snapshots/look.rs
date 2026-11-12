@@ -23,6 +23,8 @@
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
 //! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
 //!   with its two sends, and the returns' and the master's strips at the right.
+//! - `look-mixer-typed.png`: the same, with the field a click on what the bass sends into Space
+//!   opens in its place.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
 //!   the test plugin, the menu of its card's title open, and the menu of its last effect's.
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
@@ -441,6 +443,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(MIXER_TOGGLE), px(684.)), 1, cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-mixer")?;
+    // What the bass sends into Space, beside its dial in the row of Space.
+    click(&opened, point(px(230.), px(861.)), 1, cx)?;
+    save(cx, opened.window.into(), "look-mixer-typed")?;
     drop(opened);
 
     // Five returns: the sends of the bass are one column of rows, all of them whole.

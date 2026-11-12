@@ -284,7 +284,7 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
 
 /**
  * A track's sends: a row for each return, its dial, the return's name and what it sends, which
- * a double click or enter types, one under the other in a column of the panel as its fader has
+ * a click, or enter on its dial, types, one under the other in a column of the panel as its fader has
  * one, right of its effects as a send takes the sound after them. Five rows fit, and it ends as far over the
  * window's edge as a card does; more scroll down, and the cut one fades.
  */
