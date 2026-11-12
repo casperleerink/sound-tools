@@ -175,10 +175,8 @@ impl FilterView {
                     view.device.change("Change slope", change, set, cx);
                 }
             }));
-        let value = SLOPES.iter().find(|(slope, ..)| *slope == state.slope);
-        let value = value.map_or_else(String::new, |(.., label)| format!("{label} dB/oct"));
         // Its two segments are a little wider than one column.
-        Cell::new(slopes).span(2).label("Slope").value(value)
+        Cell::new(slopes).span(2).label("Slope")
     }
 
     fn character(&self, state: &FilterState, cx: &mut Context<Self>) -> Cell {
@@ -198,7 +196,7 @@ impl FilterView {
                     view.device.change("Change character", change, set, cx);
                 }
             }));
-        Cell::new(characters).span(2).label("Character")
+        Cell::new(characters).span(2)
     }
 }
 
