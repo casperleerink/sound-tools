@@ -16,6 +16,8 @@ const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
 export const Timeline = ({ page }: { page: Page }) => {
   const { state, children, memory, update, clock, outputs, openMenu, exportNotes, rows, layout, tops, topOf, rowAt, starts, barOf, end, choose, clipAt, itemAt, lengthAt, editClips, timeline, playhead, handle } = page;
   const isPicked = selector(() => memory.selected);
+  /** The track that says how a clip is added: the first that takes clips, while the song has none. */
+  const hinted = memo(() => (rows().some((each) => clipsOf(each).length > 0) ? undefined : rows().find((each) => each.tool === "track")?.name));
   const openClip = (key: string) => {
     memory.below = { kind: "editor", clip: key };
     memory.notes = new Set();
@@ -191,13 +193,14 @@ export const Timeline = ({ page }: { page: Page }) => {
     const length = () => lengthOf(clip.state);
     const resizes = () => (picked() ? RESIZES : undefined);
     const startMoves = () => (picked() ? START_MOVES : undefined);
-    // Its notes as the window drew them: a line each, between its lowest and highest pitch.
+    const title = () => clip.state.title || "";
+    // Its notes as the window drew them: a line each, between its lowest and highest pitch, under its title while it has one.
     const miniature = memo(() => {
       const pitches = clip.state.notes.map((note) => note.pitch);
       const [lowest, highest] = [Math.min(...pitches), Math.max(...pitches)];
       const range = highest - lowest + 1;
       const shown = Math.max(range, 12);
-      const step = (ROW - 24) / shown;
+      const step = (ROW - (title() ? 38 : 24)) / shown;
       const height = clamp(step, 2, 4);
       const bottom = ROW - 12 - ((shown - range) / 2) * step;
       return { lowest, step, height, bottom };
@@ -221,6 +224,7 @@ export const Timeline = ({ page }: { page: Page }) => {
             color="fill" border={() => (picked() ? "text" : "border-strong")} borderWidth={1} opacity={dim}
             grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           {notes(dim)}
+          <Label x={timeline.pointX.times(8)} y={9 / ROW} text={title} color="text-secondary" opacity={dim} />
           <Rect x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
             anchor={() => ({ x: length() })} moves={resizes}
             drag={resizeDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
@@ -401,7 +405,7 @@ export const Timeline = ({ page }: { page: Page }) => {
             <>
               <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="border" />
               <Label x={() => timeline.left.max(0).plus(timeline.pointX.times(12))} y={() => timeline.pointY.times(-7).plus(topOf(row()) + 0.5)}
-                text={() => (memory.recording !== null || clipsOf(each).length + regionsOf(each).length > 0 ? "" : each.tool === "tape" ? "Drop an audio file here" : "Double-click to add a clip")}
+                text={() => (memory.recording !== null || clipsOf(each).length + regionsOf(each).length > 0 ? "" : each.tool === "tape" ? "Drop an audio file here" : hinted() === each.name ? "Double-click to add a clip" : "")}
                 color="text-muted" />
               {() => {
                 const snap = memory.snap;

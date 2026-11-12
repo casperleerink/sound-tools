@@ -2,9 +2,10 @@
 //! so the two can be compared side by side: `look-*.png`.
 //!
 //! - `look-empty.png`: a song with no tracks.
-//! - `look-piece.png`: the piece playing at 6.3, the second clip of the bass chosen.
+//! - `look-piece.png`: the piece playing at 6.3, the second clip of the bass chosen, which
+//!   shows the panel of the bass.
 //! - `look-sections.png`: the piece with an intro and a verse named on the ruler.
-//! - `look-editor.png`: the note editor on the first clip of the melody.
+//! - `look-editor.png`: the note editor on the first clip of the melody, which has a title.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, under the pointer
@@ -263,7 +264,15 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     save(cx, opened.window.into(), "look-sections")?;
     drop(opened);
 
-    let opened = open(cx, &[])?;
+    // The composer named the clip: it says so over its notes, and so does the editor's heading.
+    let mut files = piece_files(&[]);
+    let clip = "state/song/melody/clip-000.json";
+    if let Some((_, record)) = files.iter_mut().find(|(path, _)| path == clip) {
+        let mut file: Value = serde_json::from_str(record)?;
+        file["state"]["title"] = "Theme".into();
+        *record = file.to_string();
+    }
+    let opened = super::Opened::open(cx, &files)?;
     click(&opened, at(4 * BAR + 960, 2.), 2, cx)?;
     // Its sixth note, 79 from beat 6: the editor opens fitted, bar 5 eight points into its roll,
     // with 79 four and a half rows from the top of it.

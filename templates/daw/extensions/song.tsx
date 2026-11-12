@@ -164,6 +164,7 @@ export const song = tool({
             const row = rows().find((each) => each.name === trackName);
             return row ? titleOf(row) : trackName ?? "";
           }}
+          title={() => open()?.state.title || ""}
           colour={() => {
             const row = rows().find((each) => each.name === trackName);
             return row ? colourOf(row) : "blue";
