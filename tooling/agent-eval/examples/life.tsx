@@ -1,4 +1,4 @@
-import { adsr, Button, h, Knob, number, note, Row, sin, phasor, Space, TAU, Text, tool, type Press, type ShapeLiteral, type Style } from "./sdk";
+import { adsr, Button, Controls, h, Knob, number, note, Row, sin, phasor, Space, TAU, Text, tool, type Press, type ShapeLiteral, type Style } from "./sdk";
 
 const COLUMNS = 16;
 const ROWS = 8;
@@ -127,13 +127,13 @@ tool({
           <Button label="Random" variant="subtle" onClick={randomize} />
           <Text variant="label">{() => `Generation ${memory.generation}`}</Text>
         </Row>
-        <Row gap="sm">
+        <Controls>
           <Knob field="speed" />
           <Knob field="evolve_every" />
           <Knob field="ring" />
           <Knob field="brightness" />
           <Knob field="gain" />
-        </Row>
+        </Controls>
       </div>
     );
   },

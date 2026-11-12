@@ -576,6 +576,8 @@ Controls({ children: [Knob({ field: "cutoff" }), SegmentedControl({ field: "mode
 // The ring of the step that plays shows while the piece plays, unless the steps run on their own.
 Steps({ field: "kick", playing: "step" });
 Steps({ field: "kick", playing: "step", ownClock: true });
+// A row that changes the row over it is secondary: quieter, and without the ring.
+Steps({ field: "accents", playing: "step", secondary: true });
 // Each can still be said, and a number inside a child's record is a field too.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
 Knob({ field: "kit.pads.36.volume_db", label: "Level" });
@@ -626,6 +628,15 @@ for (const drone of drones) Wave({ list: now.scope(), color: drone.color });
 // @ts-expect-error: a colour of a list that says nothing is any text.
 for (const drone of [{ color: "mauve" }]) Wave({ list: now.scope(), color: drone.color });
 
+// A number from 0 to 1 reads as a percent with no unit said; the plain one is the one that says so.
+number({ min: 0, max: 1, default: 0.5 });
+number({ min: 0, max: 1, default: 0.5, unit: "plain" });
+const whole: { integer: true } = number({ min: 0, max: 1, integer: true, unit: "plain" });
+// @ts-expect-error: plain is said once, on the field, and no control says it again.
+Knob({ field: "seed", unit: "plain" });
+// @ts-expect-error: and it has one word.
+number({ min: 0, max: 1, unit: "none" });
+
 // A field says its unit, in music's own: a knob on it needs none.
 number({ min: -12, max: 12, unit: "semitones" });
 number({ min: 24, max: 84, unit: "pitch" });
@@ -642,8 +653,18 @@ Notes({ list: now.take("rec"), color: "text" });
 // @ts-expect-error: a scope is of sound, not of a number.
 Wave({ list: now.scope(3) });
 
+// A display says its scale: lines at places across, with a word where given, lines at places down and a zero line.
+Display({ scale: { x: [0.25, [0.5, "1k"]], y: [0.25, 0.75], zero: 0.5 } });
+Display({ scale: () => ({ zero: 0.5 }) });
+// @ts-expect-error: a mark is its place, then its word.
+Display({ scale: { x: [["1k", 0.5]] } });
+// @ts-expect-error: a line across has no word.
+Display({ scale: { y: [[0.5, "0 dB"]] } });
+// @ts-expect-error: one zero line.
+Display({ scale: { zero: [0.5] } });
+
 // A row of parts takes a gap of the scale and nothing of a style.
-Row({ gap: "lg", grow: true, children: [Knob({ field: "cutoff" }), Knob({ field: "level" })] });
+Row({ gap: "lg", grow: true, children: [Display({}), Controls({ children: [Knob({ field: "cutoff" }), Knob({ field: "level" })] })] });
 // @ts-expect-error: a gap of a row is a step of the scale.
 Row({ gap: 10 });
 // @ts-expect-error: a row is no div to style.

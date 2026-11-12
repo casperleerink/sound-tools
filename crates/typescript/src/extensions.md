@@ -50,7 +50,7 @@ Build it with the methods of `Signal` (`.plus`, `.times`...) and the functions o
 
 | Field | In `sound` |
 | --- | --- |
-| `number({ min, max, default?, integer?, unit? })`: `unit` is how every control reads it, `"hz"`, `"ms"`, `"db"`, `"percent"`, `"semitones"`, `"pitch"` | a `Signal` that glides; a lane or a cable moves it unless `integer` |
+| `number({ min, max, default?, integer?, unit? })`: `unit` is how every control reads it, `"hz"`, `"ms"`, `"db"`, `"semitones"`, `"pitch"`; from 0 to 1 it reads as a percent unless `unit: "plain"` | a `Signal` that glides; a lane or a cable moves it unless `integer` |
 | `boolean({ default })` | a `Signal`, 1 or 0 |
 | `choice({ options, default })` | the option itself: a change fades to the sound of that option over 10 ms |
 | `text({ default? })` | nothing |
@@ -67,9 +67,9 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most.
+A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most. Rows of steps that each have a knob: "A grid of steps" in `agent-docs/extensions-view.md`.
 
-A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
+A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale`, faint marks and a zero line, not with shapes of its own. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
 
 ```tsx
 import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
@@ -78,7 +78,7 @@ tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ now, send }) => (
     <>
-      <Display>
+      <Display scale={{ zero: 0.5 }}>
         <Wave list={now.scope()} color="green" />
       </Display>
       <Controls>
@@ -109,7 +109,7 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; parts side by side go in a `Row`, as the `Display` and `Controls` of a card do. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a knob with its label goes in `Controls` here too. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
 
 ```tsx
 import { type Channel, type Color, Controls, Display, h, Knob, lowpass, mtof, now, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";

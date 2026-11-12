@@ -1,6 +1,7 @@
 // The parts of a device card, as the app's own cards have them. A view gives its display, or
 // rows of `Steps` in its place, and then its controls, and the window lays the card out:
-// `<><Display>...</Display><Controls>...</Controls></>`.
+// `<><Display>...</Display><Controls>...</Controls></>`. A `Panel` of a page takes the same parts
+// in a `Row`.
 
 import { Knob, SegmentedControl, Select, Steps, words } from "./components";
 import { Button, SpaceProps, Space, Toggle } from "./drawing";
@@ -43,11 +44,13 @@ export const Display = ({ scale, caption, control, wide, ...space }: DisplayProp
   element("display", { scale, caption, wide }, [control, Space(space)]);
 
 /**
- * The cells of a card, in two rows, filled by column. A control on a `field` is a cell by
- * itself, with the field's label under it: a `Knob`, a `SegmentedControl`, a `Select`, a
- * `NumberBox`, a `Slider`, and a `Toggle`, which says its name itself. A card shows the first
- * columns, two beside a display or rows of steps, and keeps the rest behind its expand icon, so
- * the controls that matter most come first; a page shows them all.
+ * The one home of the controls of a card or a panel: its cells, in two rows, filled by column.
+ * A control on a `field` is a cell by itself, with the field's label under it: a `Knob`, a
+ * `SegmentedControl`, a `Select`, a `NumberBox`, a `Slider`, and a `Toggle`, which says its name
+ * itself. A card shows the first columns, two beside a display or rows of steps, and keeps the
+ * rest behind its expand icon, so the controls that matter most come first; a page shows them
+ * all. A knob with its label anywhere else, in a `Row` or straight in a `Panel` or a card, is a
+ * problem of the view.
  */
 export const Controls = ({ children }: { children?: Child }): UiNode => element("controls", {}, [children]);
 

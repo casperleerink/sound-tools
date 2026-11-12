@@ -1,4 +1,4 @@
-import { type BangInput, type Color, type ShapeLiteral, type Style, Button, Row, Knob, SegmentedControl, Space, Text, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
+import { type BangInput, type Color, type ShapeLiteral, type Style, Button, Controls, Row, Knob, SegmentedControl, Space, Text, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
 
 // The page, in points.
 const WIDTH = 640;
@@ -51,8 +51,8 @@ tool({
     octave: choice({ options: [3, 4, 5], default: 4 }),
     decay: number({ min: 0.3, max: 12, default: 4, label: "Decay" }),
     brightness: number({ min: 300, max: 12000, default: 3500, unit: "hz" }),
-    space: number({ min: 0, max: 1, default: 0.35, unit: "percent" }),
-    volume: number({ min: 0, max: 1, default: 0.5, unit: "percent" }),
+    space: number({ min: 0, max: 1, default: 0.35 }),
+    volume: number({ min: 0, max: 1, default: 0.5 }),
     gravity: number({ min: 150, max: 2500, default: DEFAULTS.gravity }),
     bounce: number({ min: 0.2, max: 0.95, default: DEFAULTS.bounce }),
   },
@@ -185,14 +185,14 @@ tool({
           {options("Scale", "scale", ["major", "minor"])}
           {options("Octave", "octave", [3, 4, 5])}
         </Row>
-        <Row>
+        <Controls>
           <Knob field="decay" />
           <Knob field="brightness" />
           <Knob field="space" />
           <Knob field="volume" />
           <Knob field="gravity" />
           <Knob field="bounce" />
-        </Row>
+        </Controls>
       </div>
     );
   },

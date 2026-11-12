@@ -17,7 +17,7 @@ tool({
   ].join("\n"),
   state: {
     level: number({ min: -30, max: 6, default: -10, unit: "db" }),
-    thunder: number({ min: 0, max: 1, default: 0.7, unit: "percent" }),
+    thunder: number({ min: 0, max: 1, default: 0.7 }),
     thunder_decay: number({ min: 500, max: 8000, default: 3000, unit: "ms", label: "Rumble" }),
   },
   inputs: {
