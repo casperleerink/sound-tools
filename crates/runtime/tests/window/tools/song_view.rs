@@ -1952,43 +1952,87 @@ fn the_returns_and_the_master_stay_in_view_when_the_tracks_do_not_fit(cx: &mut T
     assert!(strip_of(&mut window, "ret-a").right() < master.left());
 }
 
-/// A track's sends are one column of its panel however many returns the song has: more than
-/// fit scroll down, and the cut one fades.
-#[gpui::test]
-fn the_sends_of_a_panel_stay_one_column_that_scrolls(cx: &mut TestAppContext) {
+/// The song of one track, which sends into its first return `ret-a`, with a send into each
+/// return of `letters` too: its second, `ret-b`, and new ones.
+fn files_with_sends(letters: &[&str]) -> Vec<(String, String)> {
     let mut files = song_files(1, 1);
-    for letter in ["c", "d", "e"] {
-        let record = |tool: &str, state: serde_json::Value| {
-            serde_json::json!({ "tool": tool, "state": state }).to_string()
-        };
-        let bus = record("bus", serde_json::json!({ "title": letter }));
-        let fader = record("fader", serde_json::json!({}));
-        let chain = record("chain", serde_json::json!({}));
-        files.extend([
-            (format!("state/song/ret-{letter}/instance.json"), bus),
-            (format!("state/song/ret-{letter}/mix.json"), fader.clone()),
+    let record = |tool: &str, state: serde_json::Value| {
+        serde_json::json!({ "tool": tool, "state": state }).to_string()
+    };
+    for letter in letters {
+        files.push((
+            format!("state/song/t00/send-ret-{letter}.json"),
+            record("fader", serde_json::json!({})),
+        ));
+        if *letter == "b" {
+            continue;
+        }
+        for (path, tool, state) in [
             (
-                format!("state/song/ret-{letter}/chain/instance.json"),
-                chain,
+                "instance.json",
+                "bus",
+                serde_json::json!({ "title": letter }),
             ),
-            (format!("state/song/t00/send-ret-{letter}.json"), fader),
-        ]);
+            ("mix.json", "fader", serde_json::json!({})),
+            ("chain/instance.json", "chain", serde_json::json!({})),
+        ] {
+            files.push((
+                format!("state/song/ret-{letter}/{path}"),
+                record(tool, state),
+            ));
+        }
     }
-    let mut window = open_files(cx, &files);
+    files
+}
+
+/// How much the scrolling div `key` of the song's page fades at its start and its end.
+fn fades_of(window: &mut Opened, key: &str) -> Option<[f32; 2]> {
+    let shell = window.shell.clone();
+    (window.cx).update(|_, cx| {
+        let page = shell.read(cx).main_view().cloned().unwrap();
+        sound_typescript::soft_edges(&page, key, cx)
+    })
+}
+
+/// A track's sends are one column of its panel, a row each: five show whole, with no luck in
+/// where they are cut. More scroll down in a column as wide, and the cut one fades.
+#[gpui::test]
+fn the_sends_of_a_panel_show_five_whole_and_then_scroll(cx: &mut TestAppContext) {
+    // The song's own send, into its first return, and four more.
+    let mut window = open_files(cx, &files_with_sends(&["b", "c", "d", "e"]));
     window.wait_for_bun();
     window.until_found("div-sends");
-    // As wide as one of its knobs.
-    let knob = window.bounds("space-knob-t00/send-ret-a.gain_db").unwrap();
-    assert_eq!(
-        window.bounds("div-sends").unwrap().size.width,
-        knob.size.width
-    );
-    let shell = window.shell.clone();
-    let fades = (window.cx).update(|_, cx| {
-        let page = shell.read(cx).main_view().cloned().unwrap();
-        sound_typescript::soft_edges(&page, "sends", cx)
-    });
-    assert_eq!(fades, Some([0., 1.]));
+    let column = window.bounds("div-sends").unwrap();
+    assert_eq!(fades_of(&mut window, "sends"), Some([0., 0.]));
+    assert_eq!(window.problems(), []);
+    drop(window);
+
+    let mut window = open_files(cx, &files_with_sends(&["b", "c", "d", "e", "f", "g"]));
+    window.wait_for_bun();
+    window.until_found("div-sends");
+    let longer = window.bounds("div-sends").unwrap();
+    assert_eq!(longer.size.width, column.size.width);
+    assert_eq!(fades_of(&mut window, "sends"), Some([0., 1.]));
+    assert_eq!(window.problems(), []);
+}
+
+/// The mixer is tall enough for the send rows of two returns: both show whole, and it does not
+/// scroll.
+#[gpui::test]
+fn the_mixer_shows_the_sends_into_two_returns_whole(cx: &mut TestAppContext) {
+    let mut window = open_files(cx, &files_with_sends(&["b"]));
+    window.wait_for_bun();
+    strip_of(&mut window, "t00");
+    let mixer = window.bounds("div-mixer").unwrap();
+    for back in ["ret-a", "ret-b"] {
+        let dial = window.until_found(&format!("space-knob-t00/send-{back}.gain_db"));
+        let dial = Bounds::centered_at(dial, gpui::size(px(28.), px(28.)));
+        assert!(
+            dial.bottom() <= mixer.bottom(),
+            "{back}: {dial:?} {mixer:?}"
+        );
+    }
+    assert_eq!(fades_of(&mut window, "mixer"), Some([0., 0.]));
     assert_eq!(window.problems(), []);
 }
 

@@ -390,7 +390,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
     const tenth = (bar: number) => start() + (lines()[bar - 1] ?? Infinity);
     const dot = () => digitsOf(at(), tenth(10), tenth(100)).plus(1).times(DIGIT).plus(DOT);
     const slash = () => digitsOf(long(), 10, 100).times(DIGIT);
-    // As wide as the last bar of the clip needs, with its beat and its sixteenth.
+    // As wide as the last bar of the clip needs, with its beat and its sixteenth, and the room the other values have after them.
     const widest = () => String(placeOf(length() - 1, start(), lines(), runs())[0]).length;
     const shown = (text: Accessor<Live>, unit?: "pitch" | "position", x: Bind<Num> = 0, align?: "right") => <Label x={x} y={0} text={text} unit={unit} color="text" align={align} />;
     const mark = (text: Bind<string>, x: Bind<Num>) => <Label x={x} y={0} text={text} color="text" />;
@@ -407,7 +407,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
           }}>
           {() => shown(() => moving.dy.negate().plus(note().pitch).clamp(0, 127), "pitch")}
         </Typed>
-        <Typed name="start" word="Start" width={() => Math.ceil((widest() + 2) * DIGIT + 2 * DOT)} text={() => placeOf(note().start, start(), lines(), runs()).join(".")}
+        <Typed name="start" word="Start" width={() => Math.ceil((widest() + 2) * DIGIT + 2 * DOT) + 8} text={() => placeOf(note().start, start(), lines(), runs()).join(".")}
           commit={(typed) => {
             const tick = tickAt(typed, start(), lines(), runs());
             if (tick !== null && tick >= 0 && tick < length()) change("Move notes", (notes, chosen) => moved(notes, chosen, tick - note().start, 0, false));

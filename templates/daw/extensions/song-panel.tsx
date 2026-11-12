@@ -1,4 +1,4 @@
-import { Button, DeviceCard, For, Fragment, h, Knob, Select, Show, Text, Toggle, type Accessor, type CardSelect, type MenuItem } from "./sdk";
+import { Button, DeviceCard, For, Fragment, h, Knob, Readout, Select, Show, Text, Toggle, type Accessor, type CardSelect, type MenuItem } from "./sdk";
 import { returnTitle, sendsOf, Volume } from "./song-mixer";
 import { colourOf, HEADER, inputOf, itemTool, Mark, muted, nameFrom, titleOf, type Page } from "./song-page";
 import { freeName } from "./track";
@@ -11,6 +11,8 @@ const CARD = 192;
 const RACK = CARD + 24;
 // The fader of the chosen track's panel.
 const PANEL_FADER = 112;
+/** A send's row, how wide the return's name and what it sends are beside its dial, and how many rows show before they scroll. */
+const [SEND, SEND_NAME, SEND_AMOUNT, SENDS] = [32, 48, 44, 5];
 /** The top of a panel's first column: its mark, its name and its close button. */
 const TITLE = { height: 32, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm" } as const;
 /** A fader over its value, under the title. */
@@ -253,14 +255,27 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
   );
 };
 
-/** A track's sends: a knob for each return, one under the other, in a column of the panel as its fader has one, right of its effects as a send takes the sound after them. It stays as wide with any number of returns: more than fit scroll down. */
+/**
+ * A track's sends: a row for each return, its dial, the return's name and what it sends, one
+ * under the other in a column of the panel as its fader has one, right of its
+ * effects as a send takes the sound after them. Five rows fit, and it ends as far over the
+ * window's edge as a card does; more scroll down, and the cut one fades.
+ */
 const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accessor<string[]> }) => (
   <div style={{ paddingX: "lg", paddingTop: "md", keep: true }}>
     <div style={{ height: TITLE.height, justify: "center" }}>
       <Text variant="heading">Sends</Text>
     </div>
-    <div key="sends" style={{ height: RACK - 12 - TITLE.height, scroll: "y" }}>
-      <For each={sends}>{(send) => <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" />}</For>
+    <div key="sends" style={{ height: SENDS * SEND, scroll: "y" }}>
+      <For each={sends}>
+        {(send) => (
+          <div style={{ height: SEND, direction: "row", align: "center", gap: "sm", keep: true }}>
+            <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" text="none" />
+            <Text variant="label" style={{ width: SEND_NAME, truncate: true, keep: true }}>{returnTitle(page, send)}</Text>
+            <Readout field={`${name}/${send}.gain_db`} unit="db" width={SEND_AMOUNT} align="right" />
+          </div>
+        )}
+      </For>
     </div>
   </div>
 );

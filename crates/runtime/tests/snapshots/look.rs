@@ -16,7 +16,7 @@
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
 //! - `look-sidechain.png`: the panel of the bass with a filter and a compressor keyed by Track 1,
 //!   expanded with its sidechain picker.
-//! - `look-sends-many.png`: the panel of the bass in a song of five returns: its sends scroll.
+//! - `look-sends-many.png`: the panel of the bass in a song of five returns: a row for each send, all whole.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
 //! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
@@ -414,7 +414,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     save(cx, opened.window.into(), "look-mixer")?;
     drop(opened);
 
-    // Five returns: the sends of the bass stay one column, which scrolls.
+    // Five returns: the sends of the bass are one column of rows, all of them whole.
     let names = ["Space", "Echo", "Plate", "Room", "Tape"];
     let returns: Vec<(String, Value)> = (names.iter().zip('a'..))
         .flat_map(|(title, letter)| {
