@@ -380,7 +380,7 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
 }
 
 /// A clip and its notes from the keys alone: shift-c adds a clip of a bar at the playhead on
-/// the track a song opens on, chosen, cmd-down opens its notes, and n adds a note at C4, then
+/// the track a song opens on, chosen, enter opens its notes, and n adds a note at C4, then
 /// one right after it. Each is one undo step.
 #[gpui::test]
 fn the_keys_add_a_clip_at_the_playhead_and_notes_in_a_row(cx: &mut TestAppContext) {
@@ -399,7 +399,7 @@ fn the_keys_add_a_clip_at_the_playhead_and_notes_in_a_row(cx: &mut TestAppContex
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Add a clip"));
 
-    window.cx.simulate_keystrokes("cmd-down");
+    window.cx.simulate_keystrokes("enter");
     window.until_found("space-editor-t00/clip");
     let notes = |window: &mut Opened<'_>| window.record("song/t00/clip")["notes"].clone();
     window.cx.simulate_keystrokes("n");
