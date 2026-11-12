@@ -44,5 +44,5 @@ These are live values too (`Now` in `sdk/live.ts`):
 
 - `now.peak` of a `meter` child (`agent-docs/meter.md`), `now.devicePeak()` of what the device plays; `now.value(name)`, a field as it plays.
 - `.smooth`, `.fall` and `.hold` follow a value over frames, as a meter's bar and peak line do. `blend(from, to, by)` is a colour between two: `blend("red/20", "red", now.elapsed.mod(1).lt(0.5))` blinks.
-- `<Wave list>` draws `now.scope` (the sound the tool plays, or a child by its path), `now.history` (the last values of any live value), `now.file` (a file's waveform) or `now.take` (what a recorder records so far; `<Notes>` its notes), over its whole space unless it says a place.
+- `<Wave list>` draws `now.scope` (the sound the tool plays, or a child's by its path, as it is before its parent changes it), `now.history` (the last values of any live value), `now.file` (a file's waveform) or `now.take` (what a recorder records so far; `<Notes>` its notes), over its whole space unless it says a place.
 - A `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"` shows where the piece plays.

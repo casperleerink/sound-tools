@@ -1747,3 +1747,183 @@ fn a_lanes_menu_moves_its_number_with_an_lfo(cx: &mut TestAppContext) {
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
+
+/// The head of the note editor says the chosen note: its readout is there while a note is
+/// chosen, also while a drag holds it, and gone with the choice.
+#[gpui::test]
+fn the_head_of_the_note_editor_says_a_note_only_while_one_is_chosen(cx: &mut TestAppContext) {
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        let note = serde_json::json!({ "start": 0, "length": 960, "pitch": 60, "velocity": 100 });
+        record["state"] = serde_json::json!({ "start": 0, "length": BAR, "notes": [note] });
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    let editor = window.editor("t00/c00");
+    assert!(window.find("space-note-readout").is_none());
+    let note = editor.at(30., 60);
+    window.click(note);
+    window.until_found("space-note-readout");
+    // A key up, still held.
+    window.press(note);
+    window.drag_to(note - point(px(0.), px(EDITOR_ROW)));
+    assert!(window.find("space-note-readout").is_some());
+    window.release(note - point(px(0.), px(EDITOR_ROW)));
+    window.until("the note moved", |window| {
+        window.record("song/t00/c00")["notes"][0]["pitch"] == 61
+    });
+    window.until_found("space-note-readout");
+    window.keys("escape");
+    window.until("the note let go", |window| {
+        window.find("space-note-readout").is_none()
+    });
+    assert_eq!(window.problems(), []);
+}
+
+/// The line over the note editor drags it taller, a row of notes at a time; shift-enter makes
+/// it large and puts it back; a double click on the line makes it as it opens. How tall it is
+/// is the composer's view of the piece, no step of its history.
+#[gpui::test]
+fn the_note_editor_takes_more_of_the_window_by_its_line_and_its_key(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    window.editor("t00/c00");
+    let label = window.undo_label();
+    let roll = |window: &mut Opened| {
+        let roll = window.bounds("space-editor-t00/c00").unwrap();
+        f32::from(roll.size.height)
+    };
+    let line =
+        |window: &mut Opened| window.until_found("space-editor-divider") + point(px(300.), px(2.));
+    let opened = roll(&mut window);
+    let at = line(&mut window);
+    window.press(at);
+    window.drag_to(at - point(px(0.), px(3. * EDITOR_ROW)));
+    window.release(at - point(px(0.), px(3. * EDITOR_ROW)));
+    window.until("the editor taller", |window| {
+        roll(window) == opened + 3. * EDITOR_ROW
+    });
+    // The line moved up with it.
+    assert_eq!(line(&mut window), at - point(px(0.), px(3. * EDITOR_ROW)));
+
+    window.keys("shift-enter");
+    window.until("the editor large", |window| {
+        roll(window) > opened + 3. * EDITOR_ROW
+    });
+    // A track and the master stay over it.
+    let head = window.until_found("div-track-head-t00");
+    assert!(head.y < line(&mut window).y);
+    window.keys("shift-enter");
+    window.until("the editor put back", |window| {
+        roll(window) == opened + 3. * EDITOR_ROW
+    });
+
+    let at = line(&mut window);
+    window.double_click(at);
+    window.until("the editor as it opens", |window| roll(window) == opened);
+    assert_eq!(window.undo_label(), label);
+    assert_eq!(window.problems(), []);
+}
+
+/// The name of the strip of `name` in the mixer, once the mixer shows.
+fn strip_of(window: &mut Opened, name: &str) -> Bounds<Pixels> {
+    if window.find("div-mixer").is_none() {
+        let toggle = window.until_found("toggle-mixer-toggle");
+        window.click(toggle);
+    }
+    window.until_found(&format!("div-strip-name-{name}"));
+    window.bounds(&format!("div-strip-name-{name}")).unwrap()
+}
+
+/// The mixer has no gap: the returns stand right after the last track while the strips fit.
+#[gpui::test]
+fn the_returns_of_the_mixer_stand_right_after_the_last_track(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    // The last track is the audio track.
+    let last = strip_of(&mut window, "audio-voice");
+    let first_return = strip_of(&mut window, "ret-a");
+    assert!(
+        first_return.left() - last.right() < px(40.),
+        "{last:?} {first_return:?}"
+    );
+}
+
+/// With more tracks than fit, their strips scroll and the returns and the master stay in view.
+#[gpui::test]
+fn the_returns_and_the_master_stay_in_view_when_the_tracks_do_not_fit(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 40, 40);
+    window.wait_for_bun();
+    let master = strip_of(&mut window, "master");
+    let mixer = window.bounds("div-mixer").unwrap();
+    assert!(master.right() <= mixer.right(), "{master:?} {mixer:?}");
+    assert!(strip_of(&mut window, "ret-a").right() < master.left());
+}
+
+/// A track's sends are one column of its panel however many returns the song has: more than
+/// fit scroll down, and the cut one fades.
+#[gpui::test]
+fn the_sends_of_a_panel_stay_one_column_that_scrolls(cx: &mut TestAppContext) {
+    let mut files = song_files(1, 1);
+    for letter in ["c", "d", "e"] {
+        let record = |tool: &str, state: serde_json::Value| {
+            serde_json::json!({ "tool": tool, "state": state }).to_string()
+        };
+        let bus = record("bus", serde_json::json!({ "title": letter }));
+        let fader = record("fader", serde_json::json!({}));
+        let chain = record("chain", serde_json::json!({}));
+        files.extend([
+            (format!("state/song/ret-{letter}/instance.json"), bus),
+            (format!("state/song/ret-{letter}/mix.json"), fader.clone()),
+            (
+                format!("state/song/ret-{letter}/chain/instance.json"),
+                chain,
+            ),
+            (format!("state/song/t00/send-ret-{letter}.json"), fader),
+        ]);
+    }
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    window.until_found("div-sends");
+    // As wide as one of its knobs.
+    let knob = window.bounds("space-knob-t00/send-ret-a.gain_db").unwrap();
+    assert_eq!(
+        window.bounds("div-sends").unwrap().size.width,
+        knob.size.width
+    );
+    let shell = window.shell.clone();
+    let fades = (window.cx).update(|_, cx| {
+        let page = shell.read(cx).main_view().cloned().unwrap();
+        sound_typescript::soft_edges(&page, "sends", cx)
+    });
+    assert_eq!(fades, Some([0., 1.]));
+    assert_eq!(window.problems(), []);
+}
+
+/// The soft foot of the heads lies over them while more tracks wait under it, and a head under
+/// it still hears the pointer.
+#[gpui::test]
+fn a_head_under_the_soft_foot_of_the_track_list_still_opens_its_panel(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 40, 40);
+    window.wait_for_bun();
+    let foot = window.bounds("space-heads-foot").unwrap();
+    // On what its head says it plays, left of where its toggles show.
+    let at = point(foot.left() + px(30.), foot.center().y);
+    let under: Vec<String> = (0..40)
+        .map(|track| format!("t{track:02}"))
+        .filter(|name| {
+            let head = window.bounds(&format!("div-track-head-{name}"));
+            head.is_some_and(|head| head.contains(&at))
+        })
+        .collect();
+    let [name] = under.as_slice() else {
+        panic!("one head under the foot, not {under:?}");
+    };
+    let panel = format!("space-knob-{name}/send-ret-a.gain_db");
+    assert!(window.find(&panel).is_none());
+    window.click(at);
+    window.until_found(&panel);
+}

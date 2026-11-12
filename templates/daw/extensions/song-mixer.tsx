@@ -7,12 +7,13 @@ import { colourOf, lanesOf, Mark, mixOf, muted, rowLook, titleOf, type Child, ty
 const MIXER = 298;
 /** A strip: its fader, and beside it a column of what else it holds. */
 const [STRIP, SIDE] = [88, 44];
-/** A dial, and the line of a strip's name; a small toggle. */
-const [DIAL, TOGGLE] = [28, 24];
+/** A dial, and the line of a strip's name; a small toggle; the line of numbers under a fader, its gain and its pan. */
+const [DIAL, TOGGLE, NUMBERS] = [28, 24, 16];
+const [GAIN, PAN] = [50, 30];
 /** The shortest fader, as tall as the column beside it; with more sends than fit under it the mixer scrolls. */
-const SHORTEST = 128;
-/** What a strip holds over and under its fader and its sends: the room around it and its name. */
-const AROUND = 52;
+const SHORTEST = 96;
+/** What a strip holds over and under its fader and its sends: the room around it, its name and its numbers. */
+const AROUND = 52 + 4 + NUMBERS;
 /** The strips of the tracks, of the returns or the master's, between the full-height lines. */
 const GROUP = { direction: "row", gap: "xs", paddingX: "sm", paddingTop: "sm", paddingBottom: "md", keep: true } as const;
 /** What a strip holds, one under the other; the names of the sends left of the strips line up with it. */
@@ -33,7 +34,7 @@ const Level = ({ path, length, meter }: { path: string; length: number; meter: P
   <Fader field={`${path}.gain_db`} length={length} default={0} label={VOLUME} meter={meter} />
 );
 /** The gain of the fader `path`, to drag or type. */
-const Gain = ({ path, width, align, quiet }: { path: string; width: number; align?: "center"; quiet?: Bind<boolean> }) => (
+const Gain = ({ path, width, align, quiet }: { path: string; width: number; align?: "center" | "left"; quiet?: Bind<boolean> }) => (
   <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label={VOLUME} width={width} size="sm" height={16} align={align} quiet={quiet} />
 );
 /** A fader and under it its gain, in a column. */
@@ -45,13 +46,14 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
 );
 
 /**
- * A strip per track, which scroll, then the returns' and the master's, which stay at the right;
- * the master's limiter is in its panel. A strip is its name, its fader over its meter, and beside
- * that its pan, its gain, mute and solo, as a track's panel lays them out; under them a dial per
- * send, as a send takes the sound after the fader. A return's name is said once, left of the row
- * of its sends. At rest a strip says only its gain and its pan where they are not where they
- * rest; any number shows while its control is touched or it moves. A click on a strip's name
- * chooses it, a double click shows its panel.
+ * A strip per track, then behind a line the returns' and the master's, which stay in view while
+ * the tracks' scroll under them; the master's limiter is in its panel. A strip is its name, its
+ * fader over its meter with its pan, mute and solo beside it, and under the fader one line of
+ * numbers, its gain and its pan; under them a dial per send, as a send takes the sound after
+ * the fader. A return's name is said once, left of the row of its sends. At rest a strip says
+ * only its gain and its pan where they are not where they rest; any number shows while its
+ * control is touched or it moves. A click on a strip's name chooses it, a double click shows its
+ * panel.
  */
 export const Mixer = ({ page }: { page: Page }) => {
   const { state, children, rows, returns, chosenTrack, choose, openPanel, openMaster, toggleMute, toggleSolo } = page;
@@ -81,10 +83,8 @@ export const Mixer = ({ page }: { page: Page }) => {
               <Level path={path} length={length} meter={each ? { of: path } : "device"} />
               <div style={{ width: SIDE, height: length, gap: "xs" }}>
                 <Knob field={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar text="none" />
-                <Readout field={`${path}.pan`} unit="pan" width={SIDE} quiet={rests("pan")} />
                 <div style={{ grow: true }} />
-                <Gain path={path} width={SIDE} quiet={rests("gain_db")} />
-                {/* A strip without one keeps its room, so the gains of all strips are on one line. */}
+                {/* A strip without one keeps its room, so the toggles of all strips are on one line. */}
                 <div style={{ height: TOGGLE, keep: true }}>
                   {each ? <Toggle key={`strip-mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
                 </div>
@@ -95,6 +95,10 @@ export const Mixer = ({ page }: { page: Page }) => {
             </div>
           );
         }}
+        <div style={{ height: NUMBERS, direction: "row", paddingX: "xs", keep: true }}>
+          <Gain path={path} width={GAIN} align="left" quiet={rests("gain_db")} />
+          <Readout field={`${path}.pan`} unit="pan" width={PAN} align="right" quiet={rests("pan")} />
+        </div>
         {each && each.tool !== "bus" ? (
           <For each={sent}>
             {(back) => (
@@ -119,7 +123,7 @@ export const Mixer = ({ page }: { page: Page }) => {
         <Show when={() => sent().length > 0}>
           {() => (
             <div style={{ ...COLUMN, width: 72, paddingLeft: "lg", paddingTop: "sm" }}>
-              <div style={() => ({ height: DIAL + 4 + fader(), keep: true })} />
+              <div style={() => ({ height: DIAL + 4 + fader() + 4 + NUMBERS, keep: true })} />
               <For each={sent}>
                 {(back) => (
                   <div style={{ height: DIAL, justify: "center", keep: true }}>
@@ -130,7 +134,8 @@ export const Mixer = ({ page }: { page: Page }) => {
             </div>
           )}
         </Show>
-        <div key="strips" style={{ direction: "row", scroll: "x", grow: true }}>
+        {/* As wide as its strips while they fit, so the returns stand right after the last track; narrower, it scrolls. */}
+        <div key="strips" style={{ direction: "row", scroll: "x" }}>
           <div style={GROUP}>
             <For each={rows}>{(each) => <Strip each={each} />}</For>
           </div>

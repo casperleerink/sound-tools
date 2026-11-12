@@ -73,8 +73,8 @@ fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on(
     assert_eq!(window.problems(), []);
 }
 
-/// Two rows of steps that each name the step that plays: the first runs with the piece, the
-/// second on its own.
+/// Three rows of steps that each name the step that plays: the first runs with the piece, the
+/// second on its own, and so does the third, which only changes the others.
 const RINGS: &str = r#"import { h, number, pattern, Steps, tool } from "./sdk";
 
 const row = () => pattern({ length: 4, min: 0, max: 1, default: 0 });
@@ -84,12 +84,13 @@ tool({
   name: "rings",
   title: "Rings",
   when: "A test",
-  doc: "Two rows of steps with a ring on the step that plays.",
-  state: { timed: row(), free: row(), at: place(2), turn: place(1) },
+  doc: "Rows of steps with a ring on the step that plays.",
+  state: { timed: row(), free: row(), accents: row(), at: place(2), turn: place(1), third: place(3) },
   sound: () => 0,
   view: () => h("div", {},
     h(Steps, { field: "timed", playing: "at" }),
     h(Steps, { field: "free", playing: "turn", ownClock: true }),
+    h(Steps, { field: "accents", playing: "third", ownClock: true, secondary: true }),
   ),
 });
 "#;
@@ -106,6 +107,8 @@ fn the_ring_of_the_step_that_plays_shows_only_while_the_piece_plays(cx: &mut Tes
     window.start_playing();
     window.until_found("step-2-playing");
     assert!(window.find("step-1-playing").is_some());
+    // A secondary row has none: a stack of rows shows the step once.
+    assert_eq!(window.find("step-3-playing"), None);
     assert_eq!(window.problems(), []);
 }
 

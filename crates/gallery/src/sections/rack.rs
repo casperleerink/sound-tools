@@ -401,7 +401,7 @@ fn gain_reduction(cx: &App) -> AnyElement {
                 18. => "18 dB",
                 _ => "6.8 dB",
             };
-            sample(caption, cx, GainReduction::new(db))
+            sample(caption, cx, GainReduction::new(db).h(px(132.)))
         }),
     )
 }
@@ -574,11 +574,6 @@ fn filter_card(state: &Entity<RackState>, index: usize, id: &'static str, cx: &A
         Axis::new(CUTOFF, cutoff, 2_000.),
         Axis::new(PART, resonance, 0.5),
     )
-    .caption(format!(
-        "Cutoff {} · Resonance {}",
-        hertz(cutoff),
-        percent(resonance)
-    ))
     .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
         s.filter[0].follow(x_of(change));
         s.filter[1].follow(y_of(change));
@@ -836,7 +831,7 @@ fn sections_card() -> DeviceCard {
         "curved",
         time,
         (adsr, adsr, Adsr::default()),
-        readouts,
+        Some(readouts),
         [0.5, 0.9, 0.8],
         |_, _, _| {},
     );
@@ -865,9 +860,7 @@ fn plugin_card() -> DeviceCard {
     let open = Button::new("open-window", "Open window")
         .variant(ButtonVariant::Subtle)
         .on_card();
-    let display = TextDisplay::new("plugin-display")
-        .message("CLAP · Surge Synth Team")
-        .button(open);
+    let display = TextDisplay::new("plugin-display").button(open);
     DeviceCard::new("plugin", div().child("Surge XT"))
         .power(true, |_, _, _| {})
         .close(|_, _, _| {})

@@ -4,7 +4,7 @@ import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, 
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
 import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, touched, Turn } from "./live";
-import { asCell, currentCard, element, Show, UiNode } from "./nodes";
+import { asCell, currentCard, element, ownLines, Show, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
@@ -274,7 +274,7 @@ export type KnobProps = NumberValue & Quiet & {
   /** The field's own when left out. */
   unit?: Unit;
   bipolar?: boolean;
-  /** How much text it shows: its label and its value (`"all"`, when left out); its `"value"` alone, for knobs whose names a column beside them says once; or `"none"`, a 28-point dial that fits a row of controls. */
+  /** How much text it shows: its label and its value (`"all"`, when left out), as a cell of `Controls`, its home; its `"value"` alone, for a knob of a row that a line over the rows names once; or `"none"`, a 28-point dial that fits a row of controls. */
   text?: "all" | "value" | "none";
 };
 
@@ -301,7 +301,7 @@ export function Knob(props: KnobProps): UiNode {
     ...(said ? [Label({ x: centreX, y: 38, text: label, color: "text-secondary", align: "center" })] : []),
     Label({ x: centreX, y: said ? 54 : 38, text: value, unit, color: "text", align: "center", opacity: quietly(props.quiet, { field: props.field, key }) }),
   ];
-  return Space({
+  const knob = Space({
     key,
     width: dial ? 28 : 56,
     height: dial ? 28 : said ? 72 : 56,
@@ -318,6 +318,7 @@ export function Knob(props: KnobProps): UiNode {
       ...texts,
     ],
   });
+  return said ? ownLines(knob, props.field === undefined ? `the Knob ${JSON.stringify(label)}` : `<Knob field=${JSON.stringify(props.field)} />`) : knob;
 }
 
 /** How a number spreads over the travel of a knob, a fader or a lane, as `numbers` and a lane's `scale` say. */

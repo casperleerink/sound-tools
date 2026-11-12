@@ -3,7 +3,7 @@
 import { labelOf, SelectOption, valueOf } from "./components";
 import { Unit } from "./fields";
 import { Drag, Dropped, KeyName, Live, Num, PointerEvents, Shortcut, TakeList, WaveList } from "./live";
-import { Child, element, Region, UiNode } from "./nodes";
+import { Child, element, homeInControls, Region, UiNode } from "./nodes";
 import { Bind, setup, untrack } from "./reactivity";
 import type { Input as InputOfTool } from "./fields";
 import type { Notes as NotesOfSound } from "./sound";
@@ -377,9 +377,12 @@ export interface RowProps {
   children?: Child;
 }
 
-/** Parts side by side with one room between them: the knobs under a display, the panels of a page. */
-export const Row = ({ key, children, gap = "md", grow, align = grow ? undefined : "center", justify }: RowProps): UiNode =>
-  element("div", { key, style: { direction: "row", gap, align, justify, grow } }, [children]);
+/** Parts side by side with one room between them: the display and the controls of a panel, the panels of a page. Knobs with their labels are no parts of a row: they go in `Controls`. */
+export function Row({ key, children, gap = "md", grow, align = grow ? undefined : "center", justify }: RowProps): UiNode {
+  const row = element("div", { key, style: { direction: "row", gap, align, justify, grow } }, [children]);
+  homeInControls(row);
+  return row;
+}
 
 /** How a `div` lays out and looks. A gap, a padding and a radius name a step of their scale; a number is points, for what the scale cannot say. */
 export interface Style {

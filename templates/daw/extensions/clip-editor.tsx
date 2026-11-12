@@ -1,11 +1,11 @@
-import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, memo, now, quantize, Rect, Select, selector, signal, Space, Text, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, Live, memo, now, quantize, Rect, Select, selector, signal, Space, Text, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track, its title and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
 // expression lanes. Times are ticks from the clip's start.
 const BEAT = 960;
 // Rows of 12 points, keys 40 wide at the right of a header 176 wide, a ruler 32 tall and a lane 56.
-const ROW = 12;
+export const ROW = 12;
 const HEADER = 176;
 const KEYS = 40;
 const RULER = 32;
@@ -193,11 +193,25 @@ export interface EditorProps {
   /** Plays from a tick of the clip. */
   seek: (tick: number) => void;
   onClose: () => void;
-  height: number;
+  /** How tall it is, in points, and what its button for that does and says. */
+  height: Accessor<number>;
+  large: Accessor<boolean>;
+  onLarge: () => void;
+  /** From which tick of the song on a beat is how many ticks long, by the time signatures. */
+  beats: Accessor<readonly BeatRun[]>;
   openMenu: Context<unknown>["openMenu"];
   /** Whether what plays the track hears any MIDI controller, as a plugin does: the lane picker offers them all then. */
   hearsControllers: Accessor<boolean>;
 }
+
+export type BeatRun = { from: number; ticks: number };
+/** How far into its beat a tick of the song is. */
+const intoBeat = (tick: Live, runs: readonly BeatRun[]) =>
+  runs.reduce((sum, run, index) => {
+    const next = runs[index + 1];
+    const inside = next ? tick.ge(run.from).times(tick.lt(next.from)) : tick.ge(run.from);
+    return sum.plus(inside.times(tick.minus(run.from).mod(run.ticks)));
+  }, Live.of(0));
 
 /** From the earliest start of `notes` to their latest end, and their earliest start. */
 function spanOf(notes: readonly Note[]) {
@@ -256,7 +270,7 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
 }
 
 /** The editor: a header with the track, the clip's title, the ruler and its buttons, the notes, and the lane under them. */
-export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, preview, seek, onClose, height, openMenu, hearsControllers }: EditorProps) {
+export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, preview, seek, onClose, height, large, onLarge, beats, openMenu, hearsControllers }: EditorProps) {
   const isPicked = selector(() => memory.notes);
   const notes = () => clip()?.notes ?? [];
   const length = () => {
@@ -268,13 +282,49 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
   const space = now.space(key);
   const marquee = now.drag("note-marquee");
   const drawn = now.drag("velocity-draw");
-  const roll = height - RULER - LANE - 2;
+  const roll = () => height() - RULER - LANE - 2;
   // It opens on the clip: the middle of its notes in the middle of the roll, on a whole row, so no key's name is cut at its top.
   const [opening, middleRow] = untrack(() => {
     const pitches = notes().map((note) => note.pitch);
     const middle = pitches.length > 0 ? (Math.min(...pitches) + Math.max(...pitches)) / 2 : 60;
-    return [length(), Math.round(127 - middle + 0.5 - roll / ROW / 2)] as const;
+    return [length(), Math.round(127 - middle + 0.5 - roll() / ROW / 2)] as const;
   });
+  /** The note the head says: the earliest of the chosen ones, and how many are chosen. */
+  const said = memo(() => {
+    const chosen = notes().filter((note) => memory.notes.has(noteKey(note)));
+    const [first] = chosen;
+    return first ? { note: chosen.reduce((earliest, note) => (note.start < earliest.start ? note : earliest), first), count: chosen.length } : null;
+  });
+  /**
+   * What the chosen note is, in the head: its pitch, where it starts in the song as bar, beat and
+   * sixteenth, how many beats long it is and its velocity, each in a place of its own. Live, so
+   * it says where a drag has the note before it is let go.
+   */
+  const NoteReadout = ({ note, count, start, runs }: { note: Note; count: number; start: number; runs: readonly BeatRun[] }) => {
+    // `note` is a copy: a component reads no record.
+    const [moving, resizing, louder] = [now.drag("note-move"), now.drag("note-resize"), now.drag("note-velocity")];
+    const at = moving.dx.plus(note.start).round().max(0).plus(start);
+    const long = resizing.dx.round().plus(note.length).max(BEAT / 16).over(BEAT);
+    const velocity = louder.dy.times((-127 * LANE) / (VELOCITY_BOTTOM - VELOCITY_TOP)).plus(note.velocity).clamp(1, 127).round();
+    // More than one chosen: how many, left of the first of them.
+    const left = count > 1 ? 80 : 12;
+    const word = (x: number, text: string, opacity?: Live) => <Label x={left + x} y={8} text={text} color="text-muted" opacity={opacity} />;
+    const value = (x: number, text: Live, unit?: "pitch" | "position", align?: "right") => <Label x={left + x} y={8} text={text} unit={unit} color="text" align={align} />;
+    return (
+      <Space key="note-readout" width={left + 246} height={RULER}>
+        {count > 1 ? <Label x={68} y={8} text={`${count} notes`} color="text-muted" align="right" /> : null}
+        {value(26, moving.dy.negate().plus(note.pitch).clamp(0, 127), "pitch", "right")}
+        {value(64, at, "position", "right")}
+        <Label x={left + 64} y={8} text="." color="text" />
+        {value(67, intoBeat(at, runs).over(BEAT / 4).plus(1))}
+        {value(120, long, undefined, "right")}
+        {word(124, "beat", long.eq(1))}
+        {word(124, "beats", long.ne(1))}
+        {word(166, "velocity")}
+        {value(216, velocity)}
+      </Space>
+    );
+  };
 
   const change = changer(memory, edit);
   // A drag is made once: the notes are drawn again with new ones when the grid changes.
@@ -460,7 +510,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
   const Rule = () => <div style={{ width: 1, background: "border", keep: true }} />;
 
   return (
-    <div style={{ height, keep: true }}>
+    <div style={() => ({ height: height(), keep: true })}>
       <div style={{ height: RULER, direction: "row", keep: true }}>
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: "full", keep: true, background: colour() })} />
@@ -482,13 +532,18 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
             ]}
           </For>
         </Space>
+        {() => {
+          const shown = said();
+          return shown ? [<Rule />, <NoteReadout note={{ ...shown.note }} count={shown.count} start={clip()?.start ?? 0} runs={beats()} />] : null;
+        }}
         <div style={{ direction: "row", align: "center", paddingX: "sm", keep: true }}>
+          <Button key="editor-size" icon={() => (large() ? "chevron-down" : "chevron-up")} variant="ghost" size="sm" tooltip={() => (large() ? "Smaller" : "Larger")} shortcut="song.editor_size" onClick={onLarge} />
           <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
           <Button key="close-editor" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={onClose} />
         </div>
       </div>
       <div style={{ height: 1, background: "border", keep: true }} />
-      <div style={{ height: roll, direction: "row", keep: true }}>
+      <div style={() => ({ height: roll(), direction: "row", keep: true })}>
         <Space key={`${key}-keys`} width={HEADER - 1} height={roll} unit={{ y: ROW }} extent={{ y: [0, 128] }} scroll={{ y: middleRow }} follow={{ y: key }}>
           {WHITE_KEYS.map(({ pitch, low, high }) => (
             <Rect x={HEADER - 1 - KEYS} y={128 - high + 0.5 / ROW} width={KEYS} height={high - low - 1 / ROW} radius={2} color="fill-strong"

@@ -47,9 +47,9 @@ pub use scan::{
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "plugin-host";
 
-/// Steinberg's VST usage guidelines, section 15, ask for this in documentation and wherever the
-/// VST Compatible Logo does not fit, such as a menu row. "VST" is never stylized and is not in
-/// the product name.
+/// Steinberg's VST usage guidelines, section 15, ask for this in documentation and in an app
+/// that writes "VST" where the VST Compatible Logo does not fit, such as a menu row: once, in
+/// its settings. "VST" is never stylized and is not in the product name.
 pub const VST_TRADEMARK: &str =
     "VST is a registered trademark of Steinberg Media Technologies GmbH.";
 

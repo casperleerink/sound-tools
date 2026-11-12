@@ -265,7 +265,7 @@ impl Unit {
             Self::Ms => " ms",
             Self::Seconds => " s",
             Self::Db => " dB",
-            Self::Percent => " (0 to 1)",
+            Self::Percent => ", which reads as a percent",
             Self::Semitones => " semitones",
             Self::Cents => " cents",
             Self::Octaves => " octaves",

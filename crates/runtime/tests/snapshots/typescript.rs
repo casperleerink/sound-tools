@@ -9,10 +9,10 @@
 //!   as it plays: the SDK's transport on top, and a clip chosen after another was opened, so the
 //!   note editor shows the chosen one and its track's head is the chosen one.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
-//! - `typescript-gallery*.png`: the project `sdk-gallery`, a page with the transport in its
-//!   header that leads with a panel of steps and knobs and the card of a child, and under them
-//!   the parts of the view SDK the other snapshots do not draw: with a div held pressed, its
-//!   popover open, its dialog open.
+//! - `typescript-gallery*.png`: the project `sdk-gallery` as it plays, a page with the transport
+//!   in its header that leads with three tools to copy, a drum machine, the card of a child and
+//!   a drone, and under them the parts of the view SDK the other snapshots do not draw: with a
+//!   div held pressed, its popover open, its dialog open.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
@@ -73,17 +73,19 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
             first_mouse: false,
         })
     };
-    let opened = open_files(cx, &GALLERY)?;
-    // The div "Press" held, then the popover and the dialog each opened by its button.
-    let press = point(px(470.), px(684.));
+    let mut opened = open_files(cx, &GALLERY)?;
+    // The div "Press" held as the piece plays, then the popover and the dialog each opened by
+    // its button.
+    let press = point(px(470.), px(718.));
     mouse(&opened, cx, moved(press, None))?;
     mouse(&opened, cx, down(press))?;
+    play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-gallery")?;
     for (button, name) in [
         (851., "typescript-gallery-popover"),
         (923., "typescript-gallery-dialog"),
     ] {
-        click(&opened, point(px(button), px(366.)), 1, cx)?;
+        click(&opened, point(px(button), px(370.)), 1, cx)?;
         save(cx, opened.window.into(), name)?;
     }
     drop(opened);

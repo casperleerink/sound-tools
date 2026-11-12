@@ -67,10 +67,10 @@ fn the_drum_pad_shows_its_pads_and_knobs(cx: &mut TestAppContext) {
         pad(&mut opened, 51),
     );
     assert_eq!(rim.x - kick.x, px(95.));
-    assert_eq!(kick.y - snare_2.y, px(36.));
+    assert_eq!(kick.y - snare_2.y, px(37.));
     assert!(ride.x > kick.x && ride.y < kick.y);
     let grid = opened.bounds("pad-36").unwrap();
-    assert_eq!((grid.size.width, grid.size.height), (px(91.), px(32.)));
+    assert_eq!((grid.size.width, grid.size.height), (px(91.), px(33.)));
     // The Sound names the pad the knobs turn, so it shows with them.
     for shown in [
         "sound",

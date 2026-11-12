@@ -11,7 +11,7 @@ use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::Section;
 use sound_ui::components::display::{self, Display};
 
-use crate::tree::{Axes, CellProps, DisplayProps, NodeTable, Props};
+use crate::tree::{Axes, CellProps, DisplayProps, Mark, NodeTable, Props};
 
 use super::drawing::Drawing;
 
@@ -105,6 +105,23 @@ impl Drawing<'_> {
         let mut display = Display::new(ElementId::Name(name.into()))
             .when(wide, Display::wide)
             .when_some(props.caption.clone(), Display::caption);
+        // A place of the view's space, inside the margin, as a place of the whole drawing.
+        let across = |x: f32| (DISPLAY_MARGIN + x * (width - 2. * DISPLAY_MARGIN)) / width;
+        let up = |y: f32| 1. - (DISPLAY_MARGIN + y * (height - 2. * DISPLAY_MARGIN)) / height;
+        display = display.when_some(props.zero, |display, zero| display.zero_line(up(zero)));
+        if let Some(scale) = &props.scale {
+            let lines = scale.x.iter().filter_map(|mark| match mark {
+                Mark::Line(x) => Some(across(*x)),
+                Mark::Worded(..) => None,
+            });
+            let worded = scale.x.iter().filter_map(|mark| match mark {
+                Mark::Worded(x, word) => Some((across(*x), word.clone())),
+                Mark::Line(_) => None,
+            });
+            display = display
+                .grid(lines.collect(), scale.y.iter().map(|y| up(*y)).collect())
+                .scale(worded);
+        }
         for control in controls {
             display = display.control(control);
         }

@@ -83,6 +83,17 @@ export function tickOfBar(runs: Runs, bar: number): number {
   return tick;
 }
 
+/** From which tick on a beat is how many ticks long: one for each run of bars of one time signature. */
+export function beatRuns(runs: Runs): { from: number; ticks: number }[] {
+  const all = runs.length > 0 ? runs : [{ signature: "4/4", bars: 1 }];
+  let from = 0;
+  return all.map(({ signature, bars }) => {
+    const run = { from, ticks: (4 * BEAT) / (Number(signature.split("/")[1]) || 4) };
+    from += bars * ticksOfBar(signature);
+    return run;
+  });
+}
+
 /** A child of the song: a track, an audio track, a return, the master or its limiter. */
 export type Child = Song["children"][number];
 /** A track of the song as code reads it. */

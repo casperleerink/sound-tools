@@ -457,14 +457,7 @@ impl gpui::Render for DrumPadView {
         let pad = &state.pads[self.selected];
         let [volume, pitch, decay, pan] =
             knobs(self.selected).map(|control| self.knob(control, pad, cx));
-        let kind = match pad.source {
-            Source::Sound(_) => "Synthesized",
-            Source::Sample(_) => "Sample",
-        };
-        let sound = Cell::new(self.sounds.clone())
-            .span(2)
-            .label("Sound")
-            .value(kind);
+        let sound = Cell::new(self.sounds.clone()).span(2).label("Sound");
         // The sound heads the knobs: it says which pad they turn.
         let columns = [
             Column::new().top(sound).bottom(pitch).bottom(decay),

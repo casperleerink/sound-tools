@@ -151,15 +151,6 @@ impl<T> Control<T> {
         }
     }
 
-    /// The name and the value in `of`, as the handle of a display says what it moves.
-    fn caption(&self, of: &T) -> String {
-        format!("{} {}", self.label, self.value_readout(of))
-    }
-
-    fn value_readout(&self, of: &T) -> String {
-        self.readout((self.parameter.get)(of))
-    }
-
     /// A value as the parameter takes it: a handle may ask for one past its ends.
     fn clamp(&self, value: f32) -> f32 {
         value.clamp(self.parameter.min, self.parameter.max)
@@ -560,7 +551,6 @@ impl WavetableView {
         let automated = self.is_automated(object, POSITION.parameter.field, cx);
         let area = Handle::new(object.id("position-area"), Axis::fixed(0.5), travel)
             .area()
-            .caption(POSITION.caption(oscillator))
             .automated(automated)
             .on_change(weak_callback(
                 cx,
@@ -665,14 +655,9 @@ impl WavetableView {
         let y = Axis::new(travel, filter.resonance, RESONANCE.parameter.default);
         let automated = self.is_automated(object, CUTOFF.parameter.field, cx)
             || self.is_automated(object, RESONANCE.parameter.field, cx);
-        let caption = format!(
-            "{} · {} · {}",
-            object.title,
-            CUTOFF.caption(filter),
-            RESONANCE.caption(filter)
-        );
+        // Which of the two it is: its knobs say the rest.
         let handle = Handle::new(object.id("handle"), x, y)
-            .caption(caption)
+            .caption(object.title)
             .automated(automated);
         handle.on_change(weak_callback(
             cx,
@@ -828,17 +813,11 @@ impl WavetableView {
             release: automated(&RELEASE),
         };
         let switch = Self::segments("envelope-shown", self.envelope, cx, Self::show_envelope);
-        let readouts = Times {
-            attack: ATTACK.value_readout(envelope),
-            decay: DECAY.value_readout(envelope),
-            sustain: SUSTAIN.value_readout(envelope),
-            release: RELEASE.value_readout(envelope),
-        };
         let display = envelope_display(
             "envelope-display",
             ATTACK.range(),
             (values, defaults, automated),
-            readouts,
+            None,
             curves,
             on_change,
         )

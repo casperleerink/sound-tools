@@ -240,9 +240,7 @@ impl UtilityView {
         let y = Axis::new(layout::gain_axis(), state.gain_db, GAIN.default);
         let lanes = self.device.lanes.read(cx);
         let automated = lanes.is_automated(GAIN.field) || lanes.is_automated(PAN.field);
-        let caption = format!("{} · {}", GAIN_KNOB.caption(state), PAN_KNOB.caption(state));
         Handle::new("gain-pan", x, y)
-            .caption(caption)
             .dimmed(state.mute)
             .automated(automated)
             .on_change(weak_callback(

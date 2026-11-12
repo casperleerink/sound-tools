@@ -1,4 +1,4 @@
-import { Button, DeviceCard, For, Fragment, h, Knob, memo, Select, Show, Text, Toggle, type Accessor, type CardSelect } from "./sdk";
+import { Button, DeviceCard, For, Fragment, h, Knob, Select, Show, Text, Toggle, type Accessor, type CardSelect } from "./sdk";
 import { returnTitle, sendsOf, Volume } from "./song-mixer";
 import { colourOf, HEADER, inputOf, itemTool, Mark, muted, nameFrom, titleOf, type Page } from "./song-page";
 import { freeName } from "./track";
@@ -227,28 +227,17 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
   );
 };
 
-/** A track's sends: a knob for each return, two to a column, in a column of the panel as its fader has one, right of its effects as a send takes the sound after them. */
-const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accessor<string[]> }) => {
-  const columns = memo(() => Array.from({ length: Math.ceil(sends().length / 2) }, (_, index) => index));
-  return (
-    <div key="sends" style={{ paddingX: "lg", paddingTop: "md", keep: true }}>
-      <div style={{ height: TITLE.height, justify: "center" }}>
-        <Text variant="heading">Sends</Text>
-      </div>
-      <div style={{ direction: "row", gap: "sm" }}>
-        <For each={columns}>
-          {(column) => (
-            <div>
-              <For each={() => sends().slice(column * 2, column * 2 + 2)}>
-                {(send) => <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" />}
-              </For>
-            </div>
-          )}
-        </For>
-      </div>
+/** A track's sends: a knob for each return, one under the other, in a column of the panel as its fader has one, right of its effects as a send takes the sound after them. It stays as wide with any number of returns: more than fit scroll down. */
+const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accessor<string[]> }) => (
+  <div style={{ paddingX: "lg", paddingTop: "md", keep: true }}>
+    <div style={{ height: TITLE.height, justify: "center" }}>
+      <Text variant="heading">Sends</Text>
     </div>
-  );
-};
+    <div key="sends" style={{ height: RACK - 12 - TITLE.height, scroll: "y" }}>
+      <For each={sends}>{(send) => <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" />}</For>
+    </div>
+  </div>
+);
 /** Whether the sends into the return `name` take the sound before the tracks' faders. */
 const PreFader = ({ page: { update, returns }, name }: { page: Page; name: string }) => {
   const on = () => {

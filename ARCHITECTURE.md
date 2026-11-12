@@ -232,7 +232,8 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **One signals processor**; speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **A spectrum is a graph per bin** (`spectral`) on the same machine. Rejected: an op per effect, Rust for each new idea; bins as a list to loop over, a second way to write a sound.
 - **A view runs once, as in Solid**; only the ops of what changed cross to the window. Our own runtime in the SDK, so misuse is an error that says the fix. Rejected: a whole tree per change, as React (1 MB a click at 20,000 notes); Solid itself, a Babel transform in every project and DOM only.
-- **A field reads as it plays**, on every control and in `now.value`: a lane's number shows the lane and does not drag, as the window's knobs. Rejected: an option, which the shortest form left off, so a knob showed its record while a lane played.
+- **A field reads as it plays**, on every control and in `now.value`: a lane's number shows the lane and does not drag, as the window's knobs. Rejected: an option, which the shortest form left off.
+- **A number from 0 to 1 reads as a percent** unless its field says `plain`, and a knob with its label outside `Controls` fails its view. Rejected: laying that knob out for the author, which hides why.
 - **A view draws the sound of its tool or of a child with no meter**: the frame that first draws it asks the tool's behaviour for a tap. Rejected: a tap on every tool, which a song of many devices pays for.
 - **A page's transport shows the bars only for a tool that plays in them**: its sound reads `beat` or `bpm`, or a child it names is in time. Rejected: a prop per part.
 - **One import, `./sdk`, over modules by area**, so an agent reads one area. Rejected: `export *`, which makes the internals they share importable.

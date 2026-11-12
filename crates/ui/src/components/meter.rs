@@ -14,6 +14,7 @@ use gpui::{
 use sound_core::Scale;
 
 use crate::components::knob::short;
+use crate::components::paint;
 use crate::theme::ActiveTheme;
 
 /// The top of the scale.
@@ -333,8 +334,9 @@ impl RenderOnce for Meter {
     }
 }
 
-/// Gain reduction: a bar from the top down, 0 to 24 dB. It is not level, so it has none of the
-/// colours of a meter. The Compressor and the Limiter draw it inside their display.
+/// Gain reduction: a soft bar from the top down, 0 to 24 dB, with a line at its end. It is not
+/// level, so it has none of the colours of a meter, and not the composer's to drag, so it is not
+/// bright. The Compressor and the Gate draw it inside their display.
 #[derive(IntoElement)]
 pub struct GainReduction {
     base: Div,
@@ -348,17 +350,16 @@ impl GainReduction {
 
     pub fn new(db: f32) -> Self {
         Self {
-            base: div().w(px(5.)).h(px(118.)),
+            base: div().w(px(5.)),
             db,
         }
     }
 
-    /// The reduction in words, to a tenth of a dB, for the line under a display:
-    /// `Turned down 6.8 dB`. Whether that is a reduction worth a line: under a twentieth of a dB
-    /// it reads 0.
-    pub fn says(db: f32) -> (String, bool) {
+    /// The reduction in words, to a tenth of a dB, for the line of a display:
+    /// `Turned down 6.8 dB`. Under a twentieth of a dB there is nothing to say.
+    pub fn says(db: f32) -> Option<String> {
         let tenths = (db.max(0.) * 10.).round() / 10.;
-        (format!("Turned down {} dB", short(tenths)), tenths > 0.)
+        (tenths > 0.).then(|| format!("Turned down {} dB", short(tenths)))
     }
 }
 
@@ -371,7 +372,11 @@ impl Styled for GainReduction {
 impl RenderOnce for GainReduction {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (track, bar) = (theme.fill(), theme.text());
+        let (track, bar, end) = (
+            theme.fill(),
+            paint::soft_fill(theme),
+            theme.text_secondary(),
+        );
         let part = (self.db / Self::RANGE_DB).clamp(0., 1.);
         self.base
             .relative()
@@ -386,7 +391,8 @@ impl RenderOnce for GainReduction {
                     .left_0()
                     .w_full()
                     .h(gpui::relative(part))
-                    .bg(bar),
+                    .bg(bar)
+                    .when(part > 0., |bar| bar.border_b(px(1.5)).border_color(end)),
             )
     }
 }
@@ -397,14 +403,11 @@ mod tests {
 
     #[test]
     fn a_reduction_reads_in_words_to_a_tenth_of_a_decibel() {
-        assert_eq!(GainReduction::says(0.), ("Turned down 0 dB".into(), false));
+        assert_eq!(GainReduction::says(0.), None);
+        assert_eq!(GainReduction::says(0.04), None);
         assert_eq!(
-            GainReduction::says(0.04),
-            ("Turned down 0 dB".into(), false)
-        );
-        assert_eq!(
-            GainReduction::says(6.83),
-            ("Turned down 6.8 dB".into(), true)
+            GainReduction::says(6.83).as_deref(),
+            Some("Turned down 6.8 dB")
         );
     }
 

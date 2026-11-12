@@ -324,3 +324,101 @@ fn a_binding_that_reads_the_playhead_fails_with_what_to_do() {
     };
     assert!(error.contains("show it with now.tick"), "{error}");
 }
+
+const SHARES: &str = r#"import { number, tool } from "./sdk";
+
+tool({
+  name: "shares",
+  title: "Shares",
+  when: "A test",
+  doc: "Numbers from 0 to 1, and one that is not.",
+  state: {
+    share: number({ min: 0, max: 1, default: 0.5 }),
+    seed: number({ min: 0, max: 1, default: 0.5, unit: "plain" }),
+    on: number({ min: 0, max: 1, integer: true }),
+    turns: number({ min: 0, max: 4 }),
+  },
+  sound: () => 0,
+});
+"#;
+
+/// The ops of the view `mounted` mounts, or why it does not draw.
+fn first_ops(bun: &Bun) -> Result<Vec<Op>, String> {
+    loop {
+        match smol::block_on(bun.events().recv()) {
+            Ok(Event::Ops { ops, .. }) => return ops,
+            Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
+            Ok(_) => {}
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
+/// The shortest form of a share reads as the cards of the app read theirs: only the knob of
+/// `share` says a percent, in the view of a tool that has none.
+#[test]
+fn a_number_from_0_to_1_reads_as_a_percent_unless_its_field_says_plain() {
+    let bun = mounted("shares.ts", SHARES, "shares");
+    let ops = format!("{:?}", first_ops(&bun).unwrap());
+    // Its readout, and the drag that turns it.
+    assert_eq!(ops.matches("Percent").count(), 2, "{ops}");
+}
+
+const LOOSE: &str = r#"import { h, Knob, number, Row, tool } from "./sdk";
+
+tool({
+  name: "loose",
+  title: "Loose",
+  when: "A test",
+  doc: "A knob with its label in a row.",
+  state: { level: number({ min: 0, max: 1 }) },
+  sound: () => 0,
+  view: () => h(Row, {}, h(Knob, { field: "level" })),
+});
+"#;
+
+/// A knob that draws its label and value is a cell: in a row by hand it stands off the grid,
+/// so its view says where it goes. One that its row names is no cell.
+#[test]
+fn a_knob_with_its_label_in_a_row_is_told_to_go_in_controls() {
+    let bun = mounted("loose.ts", LOOSE, "loose");
+    let error = first_ops(&bun).unwrap_err();
+    assert!(
+        error.contains("put controls in Controls") && error.contains(r#"<Knob field="level" />"#),
+        "{error}"
+    );
+    let named = LOOSE.replace(
+        r#"{ field: "level" }"#,
+        r#"{ field: "level", text: "value" }"#,
+    );
+    let bun = mounted("loose.ts", &named, "loose");
+    assert!(first_ops(&bun).is_ok());
+}
+
+const SCALED: &str = r#"import { Display, h, tool } from "./sdk";
+
+tool({
+  name: "scaled",
+  title: "Scaled",
+  when: "A test",
+  doc: "A display with the marks of its scale.",
+  state: {},
+  sound: () => 0,
+  view: () => h(Display, { scale: { x: [0.25, [0.5, "1k"]], y: [0.75] }, zero: 0.5 }),
+});
+"#;
+
+#[test]
+fn a_display_gets_the_marks_of_its_scale() {
+    let bun = mounted("scaled.ts", SCALED, "scaled");
+    let display = (first_ops(&bun).unwrap().into_iter())
+        .find_map(|op| match op {
+            Op::Create(_, Props::Display(display)) => Some(display),
+            _ => None,
+        })
+        .expect("a display");
+    assert_eq!(
+        format!("{:?} {:?}", display.scale, display.zero),
+        r#"Some(Scale { x: [Line(0.25), Worded(0.5, "1k")], y: [0.75] }) Some(0.5)"#
+    );
+}

@@ -1,6 +1,7 @@
 // The parts of a device card, as the app's own cards have them. A view gives its display, or
 // rows of `Steps` in its place, and then its controls, and the window lays the card out:
-// `<><Display>...</Display><Controls>...</Controls></>`.
+// `<><Display>...</Display><Controls>...</Controls></>`. A `Panel` of a page takes the same parts
+// in a `Row`.
 
 import { Knob, SegmentedControl, Select, Steps, words } from "./components";
 import { Button, SpaceProps, Space, Toggle } from "./drawing";
@@ -10,8 +11,21 @@ import { Child, element, UiNode } from "./nodes";
 import { Bind } from "./reactivity";
 import { Context } from "./tools";
 
+/**
+ * The marks of a display's scale, faint behind its drawing as the app's own displays have them,
+ * at places from 0 to 1 as its shapes have them: a line up and down at each `x`, with a word at
+ * its top where it has one, `[0.5, "1k"]`, and a line across at each `y`.
+ */
+export interface DisplayScale {
+  x?: readonly (number | readonly [at: number, word: string])[];
+  y?: readonly number[];
+}
+
 export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag" | "onDrop" | "cursor" | "children"> & {
-  /** The quiet line under it, for what no control says: its numbers, `A 5 ms · D 350 ms`, or its scale. */
+  scale?: Bind<DisplayScale>;
+  /** The line of no change, a little brighter than a mark, at a place down from 0 to 1: 0.5 for a wave. */
+  zero?: Bind<number>;
+  /** A quiet line inside it, at its foot, for what no mark and no control says: `Turned down 3 dB`. */
   caption?: Bind<string>;
   /** A control above the drawing, such as a `SegmentedControl`. */
   control?: Child;
@@ -24,17 +38,19 @@ export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag"
  * are shapes, as a `Space`'s, in a space 1 wide and 1 tall whatever its size in points: `x` 0 is
  * its left and 1 its right, `y` 0 its top and 1 its bottom, a little inside its edges. It hears
  * the pointer as a `Space`.
- * `<Display caption="Level"><Wave list={now.scope()} /></Display>`
+ * `<Display zero={0.5}><Wave list={now.scope()} /></Display>`
  */
-export const Display = ({ caption, control, wide, ...space }: DisplayProps): UiNode =>
-  element("display", { caption, wide }, [control, Space(space)]);
+export const Display = ({ scale, zero, caption, control, wide, ...space }: DisplayProps): UiNode =>
+  element("display", { scale, zero, caption, wide }, [control, Space(space)]);
 
 /**
- * The cells of a card, in two rows, filled by column. A control on a `field` is a cell by
- * itself, with the field's label under it: a `Knob`, a `SegmentedControl`, a `Select`, a
- * `NumberBox`, a `Slider`, and a `Toggle`, which says its name itself. A card shows the first
- * columns, two beside a display or rows of steps, and keeps the rest behind its expand icon, so
- * the controls that matter most come first; a page shows them all.
+ * The one home of the controls of a card or a panel: its cells, in two rows, filled by column.
+ * A control on a `field` is a cell by itself, with the field's label under it: a `Knob`, a
+ * `SegmentedControl`, a `Select`, a `NumberBox`, a `Slider`, and a `Toggle`, which says its name
+ * itself. A card shows the first columns, two beside a display or rows of steps, and keeps the
+ * rest behind its expand icon, so the controls that matter most come first; a page shows them
+ * all. A knob with its label anywhere else, in a `Row` or straight in a `Panel` or a card, is a
+ * problem of the view.
  */
 export const Controls = ({ children }: { children?: Child }): UiNode => element("controls", {}, [children]);
 

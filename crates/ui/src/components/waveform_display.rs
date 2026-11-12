@@ -41,6 +41,7 @@ pub struct WaveformDisplay {
     playhead: Option<f32>,
     curve: Vec<Point<f32>>,
     handles: Vec<Handle>,
+    silent: bool,
     drop: Option<FileDrop>,
 }
 
@@ -60,8 +61,15 @@ impl WaveformDisplay {
             playhead: None,
             curve: Vec::new(),
             handles: Vec::new(),
+            silent: false,
             drop: None,
         }
+    }
+
+    /// The handles of the lines say nothing: for while their knobs are in view and say it.
+    pub fn silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
+        self
     }
 
     /// Takes a file dropped from the file manager, see [`FileDrop`].
@@ -119,7 +127,7 @@ impl WaveformDisplay {
     }
 
     /// The handle of a line at `value` seconds, `rise` points above the bottom, which moves it
-    /// sideways over the whole file. `says` is its name in the line under the display.
+    /// sideways over the whole file. `says` is its name in the line of the display.
     fn line_handle(
         &self,
         (name, says): (&'static str, &'static str),
@@ -132,7 +140,9 @@ impl WaveformDisplay {
         let y = Axis::fixed(rise / INSET_HEIGHT);
         Handle::new(name, x, y)
             .hollow(true)
-            .caption(format!("{says} {}", seconds_readout(value)))
+            .when(!self.silent, |handle| {
+                handle.caption(format!("{says} {}", seconds_readout(value)))
+            })
             .on_change(move |change: ValueChange<Point<f32>>, window, cx| {
                 on(change.map(|at| at.x), window, cx)
             })

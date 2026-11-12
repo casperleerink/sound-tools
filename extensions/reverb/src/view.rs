@@ -185,8 +185,11 @@ impl ReverbView {
             parameter.default,
         );
         let automated = self.device.is_automated(parameter.field, cx);
+        // Both knobs are behind expand.
         let handle = Handle::new(id, x, Axis::fixed(height))
-            .caption(control.caption(state))
+            .when(!self.expanded, |handle| {
+                handle.caption(control.caption(state))
+            })
             .automated(automated);
         handle.on_change(weak_callback(
             cx,

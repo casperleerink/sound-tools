@@ -7,6 +7,7 @@ import { Param, Sample, SoundInput, Table } from "./sound";
  * How a number reads, on every control and in the tool's doc: `440 Hz`, `350 ms`, `1.5 s`,
  * `-6 dB`, `50%` for 0.5, `-7 st`, `20 ct`, `2 oct`, a `"pitch"` as its note (`C2` for 36, with
  * its cents where it is not whole, `D2 +30`), a `"pan"` from -1 to 1 as `C`, `25L`, `100R`.
+ * A number from 0 to 1 is a `"percent"` without saying so.
  */
 export type Unit = "hz" | "ms" | "seconds" | "db" | "percent" | "semitones" | "cents" | "octaves" | "pitch" | "pan";
 
@@ -21,7 +22,7 @@ export interface NumberField {
   /** `min` when left out. */
   default?: number;
   integer?: boolean;
-  /** `"hz"` also turns on a log scale. */
+  /** `"hz"` also turns on a log scale. `number` gives one from 0 to 1 `"percent"`. */
   unit?: Unit;
   /** What a view calls it. The field name, in words, when left out. */
   label?: string;
@@ -92,11 +93,20 @@ export interface Note {
   velocity: number;
 }
 
-/** A whole number keeps `integer: true` in its type, so no lane or cable is typed to move it. */
-export function number(field: Omit<NumberField, "kind"> & { integer: true }): NumberField & { integer: true };
-export function number(field: Omit<NumberField, "kind">): NumberField;
-export function number(field: Omit<NumberField, "kind">): NumberField {
-  return { kind: "number", ...field };
+/** What `number` takes. `unit: "plain"` is for a number from 0 to 1 that is no share of a whole, such as a seed or a phase: it reads `0.5`, not `50%`. */
+type NumberOptions = Omit<NumberField, "kind" | "unit"> & { unit?: Unit | "plain" };
+
+/**
+ * A number field. From 0 to 1 it reads as a percent, as the app's own shares do, unless `unit`
+ * says another or `"plain"`. A whole number keeps `integer: true` in its type, so no lane or
+ * cable is typed to move it.
+ */
+export function number(field: NumberOptions & { integer: true }): NumberField & { integer: true };
+export function number(field: NumberOptions): NumberField;
+export function number({ unit, ...field }: NumberOptions): NumberField {
+  const share = field.min === 0 && field.max === 1 && !field.integer;
+  const read = unit === "plain" ? undefined : (unit ?? (share ? "percent" : undefined));
+  return { kind: "number", ...field, ...(read === undefined ? {} : { unit: read }) };
 }
 export const boolean = (field: Omit<BooleanField, "kind">): BooleanField => ({ kind: "boolean", ...field });
 export const choice = <const Option extends string | number>(field: {
@@ -135,7 +145,7 @@ export function pattern(field: { length: number; min: number; max: number; defau
   if (!Number.isInteger(length) || length < 1 || length > 1024) {
     throw new RangeError(`a pattern holds 1 to 1024 values, not ${length}`);
   }
-  const made = list(number({ min, max, default: field.default }), { max: length, label, default: Array<number>(length).fill(field.default) });
+  const made = list(number({ min, max, default: field.default, unit: "plain" }), { max: length, label, default: Array<number>(length).fill(field.default) });
   patterns.add(made);
   return made;
 }

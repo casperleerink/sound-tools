@@ -66,7 +66,7 @@ fn press(
 }
 
 /// Presses at `from` and moves to `to` with `modifiers` held, without letting go.
-fn hold(
+pub(super) fn hold(
     opened: &crate::Opened,
     from: Point<Pixels>,
     to: Point<Pixels>,
@@ -93,7 +93,7 @@ fn hold(
     Ok(())
 }
 
-fn release(
+pub(super) fn release(
     opened: &crate::Opened,
     at: Point<Pixels>,
     modifiers: Modifiers,

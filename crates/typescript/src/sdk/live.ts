@@ -237,7 +237,9 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    * The last sound the tool itself plays, or with a path what its child there plays, such as
    * `"bass"` or `"bass/synth"` (what a `meter` child hears), for a `Wave`: -1 to 1, the last
    * `frames` samples (2048 when left out, at most 8192), from where the sound rises through
-   * zero, so a steady tone stands still.
+   * zero, so a steady tone stands still. A child's is its sound before its parent changes it:
+   * a child its parent silences still draws a wave, so gate the sound in the child, where its
+   * picture should be flat while nothing is heard.
    */
   scope(options?: ScopeOptions): WaveList;
   scope(child: string, options?: ScopeOptions): WaveList;

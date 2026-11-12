@@ -720,10 +720,9 @@ impl Render for PluginView {
         } else {
             "Open window"
         };
-        // A control that does nothing is not shown: with no window the display says why. Over
-        // the button it says what no drawing can: the format of the plugin and who made it.
+        // A control that does nothing is not shown: with no window the display says why.
         let display = match has_window {
-            true => display.message(installed.detail()).button(
+            true => display.button(
                 Button::new("plugin-window", label)
                     .debug_selector(|| "plugin-window".to_string())
                     .variant(ButtonVariant::Subtle)
