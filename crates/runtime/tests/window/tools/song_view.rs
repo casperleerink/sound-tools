@@ -812,7 +812,7 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
             looped.range.end.0 / BAR,
         )
     };
-    // The repeat's bar is at the foot of the ruler, over bars 1 to 4 until it moves.
+    // The repeat's bar is at the foot of the ruler, once a drag over the ruler made one.
     let ruler = window.space_at("ruler");
     let on_bar =
         |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(38.));
@@ -826,8 +826,14 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
     };
     let bar = BAR as f32 * ACROSS;
 
+    // None yet: a click where the bar will be plays from there and repeats nothing.
     window.click(on_bar(2 * BAR, 0.));
+    window.wait_for_bun();
+    assert!(!looped(&mut window).0);
+    drag(&mut window, on_bar(0, 0.), 4. * bar);
     window.until("the repeat on", |window| looped(window) == (true, 0, 4));
+    // Its bar shows once the song heard of it.
+    window.wait_for_bun();
     window.click(on_bar(2 * BAR, 0.));
     window.until("the repeat off", |window| !looped(window).0);
     window.click(on_bar(2 * BAR, 0.));
