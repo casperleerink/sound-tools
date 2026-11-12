@@ -11,7 +11,8 @@
 //! runtime <project-folder> --render <file> --from <at> --to <at> [--no-tail]
 //!                                                          render a range and its tail
 //! runtime <project-folder> --analyze                       measure the project and its tail
-//! runtime <project-folder> --screenshot <png>              draw the window as it opens (macOS)
+//! runtime <project-folder> --screenshot <png> [--click x,y]...
+//!                                                          draw the window as it opens, or after clicks (macOS)
 //! runtime <project-folder> --save-template <name> [--with-content] [--replace]
 //!                                                          save the project as a template
 //! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
@@ -777,7 +778,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png> | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png> [--click <x>,<y>]... | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -866,11 +867,12 @@ fn main() -> Result<()> {
             save_template(Path::new(folder), name, flags)
         }
         #[cfg(target_os = "macos")]
-        [folder, "--screenshot", png] => {
-            runtime::screenshot::screenshot(Path::new(folder), Path::new(png))
+        [folder, "--screenshot", png, clicks @ ..] => {
+            let clicks = runtime::screenshot::parse_clicks(clicks)?;
+            runtime::screenshot::screenshot(Path::new(folder), Path::new(png), &clicks)
         }
         #[cfg(not(target_os = "macos"))]
-        [_, "--screenshot", _] => bail!("--screenshot works on macOS only"),
+        [_, "--screenshot", ..] => bail!("--screenshot works on macOS only"),
         _ => bail!(USAGE),
     }
 }
