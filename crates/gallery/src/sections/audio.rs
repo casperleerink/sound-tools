@@ -5,7 +5,6 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, Window, div, point, prelude::*, px};
 use sound_media::{Audio, Overview};
 use sound_ui::ActiveTheme;
-use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::device_card::{Column, DeviceCard, NARROW_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle, TextDisplay};
@@ -185,13 +184,13 @@ fn sampler_display(overview: Option<Arc<Overview>>) -> WaveformDisplay {
             across(start + attack + decay),
             sustain * top,
         ))
-        .caption("kalimba.wav · A 2 ms · D 400 ms · S 55%")
+        .caption("A 2 ms · D 400 ms · S 55%")
 }
 
 fn choose_file() -> Button {
     Button::new("choose-file", "Choose file")
         .variant(ButtonVariant::Subtle)
-        .size(ControlSize::Md)
+        .on_card()
 }
 
 fn sampler(cx: &App) -> AnyElement {

@@ -719,8 +719,7 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
                         SegmentedControl::new("character", "clean")
                             .options([("clean", "Clean"), ("warm", "Warm")]),
                     )
-                    .span(2)
-                    .label("Character"),
+                    .span(2),
                 ),
         )
         .column(
@@ -816,9 +815,7 @@ fn reverb_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
                     .readout("8 kHz"),
             ),
         )
-        .hidden_column(
-            Column::new().top(Cell::new(Toggle::new("freeze", "Off", false)).label("Freeze")),
-        )
+        .hidden_column(Column::new().top(Cell::switch(Toggle::new("freeze", "Freeze", false))))
 }
 
 /// A card with sections behind expand, each a display and its knobs: a curved envelope, as
@@ -841,8 +838,7 @@ fn sections_card() -> DeviceCard {
     .caption("A 20 ms · D 600 ms · S 40% · R 800 ms");
     let lfo = Display::new("lfo")
         .curve(lfo_line(LfoShape::Triangle, 2., 0.5, 0.36))
-        .zero_line(0.5)
-        .caption("1 Hz");
+        .zero_line(0.5);
     let knob = |id: &'static str, label: &'static str, value: f32, readout: &'static str| {
         Knob::new(id).value(value).label(label).readout(readout)
     };
@@ -864,7 +860,7 @@ fn sections_card() -> DeviceCard {
 fn plugin_card() -> DeviceCard {
     let open = Button::new("open-window", "Open window")
         .variant(ButtonVariant::Subtle)
-        .size(ControlSize::Md);
+        .on_card();
     let display = TextDisplay::new("plugin-display")
         .button(open)
         .caption("CLAP · Surge Synth Team");
