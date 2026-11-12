@@ -1,4 +1,4 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Show, Space, Text, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, memo, now, Rect, Show, Space, Text, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
 import { ACROSS, barStarts, BEAT, COLOR, HEADER, LEAD, ROW, RULER, tickOfBar, type Page, type Runs } from "./song-page";
 
 // The ruler: the sections on its top line; bars, time signatures and tempo changes on the line
@@ -16,6 +16,8 @@ function changeBars(runs: Runs): number[] {
 /** Where the line under the sections starts, and the points between two labels on it. */
 const LINE = 18;
 const GAP = 6;
+/** The playhead's dot: at the foot of the ruler, under its numbers, so it covers none of them. */
+const HEAD = RULER - 5;
 /** About how many points a label of 12 points takes. */
 const widthOf = (parts: readonly TextPart[]) => parts.reduce((width, part) => width + part.text.length * 5.6 + (part.border ? 2.5 : 0), 0);
 /** A tempo as the ruler and the tempo lane show it, to a tenth. */
@@ -261,8 +263,7 @@ export const Ruler = ({ page }: { page: Page }) => {
           ];
         }}
       </For>
-      <Line from={[playhead, LINE + 8]} to={[playhead, RULER - 1]} color="text" width={1} />
-      <Circle x={playhead} y={LINE + 8} radius={3.5} color="text" />
+      <Circle x={playhead} y={HEAD} radius={3.5} color="text" />
     </Space>
   );
 };
