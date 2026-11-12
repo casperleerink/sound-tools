@@ -373,6 +373,49 @@ fn a_drag_of_an_automated_cutoff_while_it_plays_writes_into_its_lane(cx: &mut Te
     assert!(opened.find("automated-cutoff_hz").is_some());
 }
 
+/// A value typed on the cutoff while automation is written and the piece plays is a drag that
+/// goes there and lets go at once: it lands in the lane where the piece played, the lane goes
+/// back to its line after, and the record keeps its cutoff. One undo step, named as the drag's.
+#[gpui::test]
+fn a_value_typed_on_an_automated_cutoff_while_it_plays_writes_into_its_lane(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open_active(cx);
+    let far = 64 * support::BAR;
+    automate(&mut opened, &[(0, 1_000.), (far, 1_000.)]);
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.set_writes_automation(true, cx);
+            session.engine().play();
+        });
+    });
+    play_on(&mut opened, 24_000);
+    let before = support::mark(&mut opened);
+    type_on(&mut opened, "knob-cutoff_hz", "2 kHz");
+    play_on(&mut opened, 4_800);
+    let playhead = (opened.cx).read(|cx| session.read(cx).playhead().read(cx).tick.0);
+    opened.keys("enter");
+    opened.settle();
+
+    let written = points(&mut opened);
+    let (first, last) = (written[0], written[written.len() - 1]);
+    assert_eq!((first, last), ((0, 1_000.), (far, 1_000.)), "{written:?}");
+    let typed: Vec<_> = (written.iter().copied())
+        .filter(|(_, value)| *value == 2_000.)
+        .collect();
+    assert!(!typed.is_empty(), "{written:?}");
+    assert!(
+        typed.iter().all(|(tick, _)| tick.abs_diff(playhead) <= 120),
+        "{written:?} at {playhead}"
+    );
+    assert_eq!(
+        state(&mut opened).cutoff_hz,
+        FilterState::default().cutoff_hz
+    );
+    support::one_undo_step(&mut opened, "Write automation", &before);
+}
+
 /// Escape during a drag that writes automation puts everything back: the lane has its points,
 /// there is no undo step, and the lane plays again.
 #[gpui::test]
