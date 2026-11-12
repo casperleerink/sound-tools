@@ -1,6 +1,6 @@
 # Design
 
-The design principles of the Sound Tools UI, and the rules of how it is used. What each click and key does is in the code of each view. Colours, sizes and components live in code: the theme and components in `crates/ui` (see [crates/ui/README.md](crates/ui/README.md)), and the gallery in `crates/gallery` shows every component in every state. Mockups drawn for review are in `docs/mockups/`.
+The design principles of the Sound Tools UI, and the rules of how it is used. Colours, sizes and components live in code: the theme and components in `crates/ui` (see [crates/ui/README.md](crates/ui/README.md)), and the gallery in `crates/gallery` shows every component in every state. Mockups drawn for review are in `docs/mockups/`.
 
 ## Principles
 
@@ -44,7 +44,7 @@ Each colour has one meaning:
 - Lavender: keyboard focus, the agent, and the ring where a drag or a dropped file lands.
 - Track colours: marks only. Dots, notes, velocity bars, the line of a bend, mod wheel, pressure or automation lane, the waveform of an audio clip. No control uses a track colour, because track colours include green, yellow, peach and red.
 
-A meter is the one place colour fills an area, because level is a signal. Otherwise only a toggle that is on is tinted, with its colour at low opacity.
+A meter is the one place colour fills an area, because level is a signal. Otherwise only a toggle that is on is tinted, with its colour at low opacity; off it is hollow.
 
 What is chosen has one look: a row takes the selected fill; on a canvas a box gets a bright outline and a small mark turns bright.
 
@@ -56,8 +56,8 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window.
 - Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
 - One grid for devices: every card is the same height and whole columns wide, with two rows of cells: a control, a label line, a value line. A display is four columns wide, or six for a file or an EQ; a control that needs the room takes two. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
-- A card says each thing once: a switch carries its name and is lit while on, a control that says its value has no value line, and the line under a display says only what no control shows.
-- Nothing lies over the drawing of a display: its control sits in a strip above it. A plugin draws itself in its own window, so its display holds the button that opens it.
+- A card says each thing once: a switch carries its name and is lit while on, a control that says its value has no value line, and the line under a display speaks only of what moves or is pointed at.
+- Only the faint marks of its scale lie over the drawing of a display: its control sits in a strip above it. A plugin draws itself in its own window, so its display holds the button that opens it.
 - Hit targets are larger than what is drawn, for a trackpad.
 
 ## Using the app
