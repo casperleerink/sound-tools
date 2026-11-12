@@ -1,5 +1,6 @@
 //! `--screenshot`: the window of a project as it opens, drawn offscreen to a PNG, the project's
-//! own TypeScript tools included, so an agent sees the cards and pages it builds.
+//! own TypeScript tools included, so an agent sees the cards and pages it builds. Each `--click`
+//! is a click before the picture, so it also sees what a click opens: a panel, a menu.
 //!
 //! It opens a copy of the folder, because opening a project writes into it. It plays no sound,
 //! since the engine runs offline, and writes nothing to the app's support folder: no agent
@@ -10,7 +11,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
-use gpui::{AppContext as _, Entity, HeadlessAppContext, px, size};
+use gpui::{
+    AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, point, px, size,
+};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
 use sound_core::Engine;
 use sound_ui::{Assets, POLL_INTERVAL, Session};
@@ -22,7 +26,21 @@ use crate::{OFFLINE, open_with_extensions, views};
 /// page with a control loop moves for a while, as it does when the app opens.
 const SETTLE: Duration = Duration::from_millis(500);
 
-pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
+/// The places of `--click x,y`, in points from the top left of the window, in order.
+pub fn parse_clicks(flags: &[&str]) -> Result<Vec<Point<Pixels>>> {
+    flags
+        .chunks(2)
+        .map(|flag| match flag {
+            ["--click", at] => at
+                .split_once(',')
+                .and_then(|(x, y)| Some(point(px(x.parse().ok()?), px(y.parse().ok()?))))
+                .with_context(|| format!("--click takes a place as x,y in points, not {at}")),
+            _ => bail!("--screenshot takes a file, then any number of --click x,y"),
+        })
+        .collect()
+}
+
+pub fn screenshot(project: &Path, png: &Path, clicks: &[Point<Pixels>]) -> Result<()> {
     if !project.join(crate::PROJECT_FILE).is_file() {
         bail!("{} is not a Sound Tools project", project.display());
     }
@@ -68,6 +86,10 @@ pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
     })?;
 
     settle(&mut cx, &mut engine, &session, &plugins);
+    for at in clicks {
+        click(&mut cx, window.into(), *at)?;
+        settle(&mut cx, &mut engine, &session, &plugins);
+    }
     // A capture is of the last frame. Some views place themselves by what the frame before
     // measured, such as the add track row, and the app always draws another frame.
     cx.update_window(window.into(), |_, window, _| window.refresh())?;
@@ -80,6 +102,39 @@ pub fn screenshot(project: &Path, png: &Path) -> Result<()> {
         "{}",
         cx.update(|cx| crate::problems(session.read(cx).project()))
     );
+    Ok(())
+}
+
+/// One click of the left button at `at`, as the pointer does it: it moves there first, so what
+/// shows on hover is there to be clicked.
+fn click(cx: &mut HeadlessAppContext, window: AnyWindowHandle, at: Point<Pixels>) -> Result<()> {
+    let (modifiers, button) = (Modifiers::default(), MouseButton::Left);
+    let events = [
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: at,
+            pressed_button: None,
+            modifiers,
+        }),
+        PlatformInput::MouseDown(MouseDownEvent {
+            position: at,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        }),
+        PlatformInput::MouseUp(MouseUpEvent {
+            position: at,
+            modifiers,
+            button,
+            click_count: 1,
+        }),
+    ];
+    for event in events {
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(event, cx);
+        })?;
+        cx.run_until_parked();
+    }
     Ok(())
 }
 
