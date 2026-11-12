@@ -398,7 +398,9 @@ fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
     let mut window = open_rack_of(cx, 16);
     let last = "card-title-song/t00/chain/fx15";
     assert!(window.find(last).is_none());
-    let rack = window.until_found("div-rack");
+    // Near its left edge: its middle, as wide as its cards are, lies under the track's sends.
+    window.until_found("div-rack");
+    let rack = window.bounds("div-rack").unwrap().origin + point(px(20.), px(20.));
     window.until(last, |window| {
         window.cx.simulate_event(ScrollEvent {
             position: rack,
