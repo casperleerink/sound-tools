@@ -542,8 +542,6 @@ export type StepsProps = ValueProps<readonly number[]> & {
   key?: string;
   max?: number;
   playing?: string;
-  /** `sm` when left out, for a pattern in a `Cell`; `md` for steps a trackpad hits. */
-  size?: "sm" | "md";
   /** What the row is, at its left. Rows with a label, one over the other, line up. */
   label?: string;
 };
@@ -562,7 +560,6 @@ export function Steps(props: StepsProps): UiNode {
   const list = () => get() ?? [];
   return element("steps", {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
-    size: props.size,
     label: props.label,
     on: () => list().map((value) => value > off),
     playing: props.playing === undefined ? undefined : now.value(props.playing),

@@ -245,8 +245,8 @@ tool({
                   </Controls>
                 </div>
                 <div style={{ gap: "xs" }}>
-                  <Steps size="md" label="Kick" playing="step" value={() => memory.kick} onChange={(kick) => { memory.kick = [...kick]; log(`kick ${kick.join("")}`); }} />
-                  <Steps size="md" label="Hat" playing="step" value={() => memory.hat} onChange={(hat) => { memory.hat = [...hat]; }} />
+                  <Steps label="Kick" playing="step" value={() => memory.kick} onChange={(kick) => { memory.kick = [...kick]; log(`kick ${kick.join("")}`); }} />
+                  <Steps label="Hat" playing="step" value={() => memory.hat} onChange={(hat) => { memory.hat = [...hat]; }} />
                 </div>
               </div>
             </Panel>

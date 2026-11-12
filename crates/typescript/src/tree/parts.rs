@@ -22,18 +22,7 @@ props! {
         on: Vec<bool>,
         /// The place of the step that plays now, or less than 0.
         playing: Num,
-        size: StepSize,
         label: String,
         on_change: bool,
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum StepSize {
-    /// A pattern in the row of a cell.
-    #[default]
-    Sm,
-    /// Steps a trackpad hits.
-    Md,
 }

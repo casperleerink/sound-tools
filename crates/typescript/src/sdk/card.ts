@@ -1,7 +1,7 @@
 // The parts of a device card: its display and its cells, as the app's own cards have them.
 
 import { Knob, SegmentedControl, Select, Steps, words } from "./components";
-import { Button, SpaceProps, Space, Toggle } from "./drawing";
+import { Button, h, SpaceProps, Space, Toggle } from "./drawing";
 import { Fields, Inputs, NumberField } from "./fields";
 import { PointerEvents } from "./live";
 import { Child, element, UiNode } from "./nodes";
@@ -46,6 +46,8 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
   return ({ state, update, send, openFile }: Context<Record<string, unknown>>): UiNode => {
     const knobs: Child[] = [];
     const cells: Child[] = [];
+    // Rows of steps, one over the other, at the left of the cells, where a card has its display.
+    const patterns: Child[] = [];
     const knob = (name: string, field: NumberField) =>
       Knob({ field: name, label: field.label ?? words(name), min: field.min, max: field.max, default: field.default ?? field.min, unit: field.unit });
     for (const [name, field] of Object.entries(fields)) {
@@ -53,7 +55,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
       if (field.kind === "number") {
         knobs.push(knob(name, field));
       } else if (field.kind === "list" && field.item.kind === "number") {
-        cells.push(Cell({ label, children: Steps({ field: name }) }));
+        patterns.push(Steps({ field: name, label }));
       } else if (field.kind === "file") {
         const choose = async () => {
           const chosen = await openFile({ title: `Choose ${label.toLowerCase()}` });
@@ -84,6 +86,8 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         cells.push(Cell({ children: Button({ label: input.label ?? words(name), variant: "subtle", size: "sm", onClick: () => (send as (input: string) => void)(name) }) }));
       }
     }
-    return Controls({ children: [knobs, cells] });
+    const controls = Controls({ children: [knobs, cells] });
+    if (patterns.length === 0) return controls;
+    return h("div", { style: { direction: "row", gap: "lg" } }, h("div", { style: { justify: "center" } }, patterns), controls);
   };
 }

@@ -14,7 +14,7 @@ use sound_ui::typography::{TextVariant, Typography};
 use sound_ui::{ActiveTheme, KeyboardFocus, radius};
 
 use crate::bun::EventKind;
-use crate::tree::{StepSize, StepsProps};
+use crate::tree::StepsProps;
 
 use super::controls::{Control, Keys};
 use super::drawing::Drawing;
@@ -24,32 +24,11 @@ const GROUP: usize = 4;
 
 /// The square of a step, and the room it takes with the air around it, which hears the pointer:
 /// larger than what is drawn, for a trackpad.
-struct Look {
-    square: f32,
-    across: f32,
-    down: f32,
-    /// More air between two groups.
-    air: f32,
-}
-
-impl StepSize {
-    fn look(self) -> Look {
-        match self {
-            Self::Sm => Look {
-                square: 14.,
-                across: 17.,
-                down: 18.,
-                air: 3.,
-            },
-            Self::Md => Look {
-                square: 20.,
-                across: 24.,
-                down: 24.,
-                air: 4.,
-            },
-        }
-    }
-}
+const SQUARE: f32 = 20.;
+const ACROSS: f32 = 24.;
+const DOWN: f32 = 24.;
+/// More air between two groups.
+const AIR: f32 = 4.;
 
 type Turn = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
@@ -65,7 +44,6 @@ struct Steps {
     id: ElementId,
     on: Vec<bool>,
     playing: Option<usize>,
-    size: StepSize,
     label: Option<SharedString>,
     on_turn: Option<Turn>,
 }
@@ -89,7 +67,6 @@ impl RenderOnce for Steps {
             theme.lavender,
             theme.text_secondary(),
         );
-        let look = self.size.look();
         let on_turn = self.on_turn;
         let steps = self.on.iter().enumerate().map(|(step, on)| {
             // The ring of the keys wins over the ring of the step that plays.
@@ -99,7 +76,7 @@ impl RenderOnce for Steps {
                 (false, false) => Hsla::transparent_black(),
             };
             let square = div()
-                .size(px(look.square))
+                .size(px(SQUARE))
                 .rounded(radius::SM)
                 .bg(if *on { lit } else { dark })
                 .border_2()
@@ -112,9 +89,9 @@ impl RenderOnce for Steps {
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .w(px(look.across))
-                .h(px(look.down))
-                .when(step > 0 && step % GROUP == 0, |room| room.ml(px(look.air)))
+                .w(px(ACROSS))
+                .h(px(DOWN))
+                .when(step > 0 && step % GROUP == 0, |room| room.ml(px(AIR)))
                 .when_some(on_turn.clone(), |room, on_turn| {
                     room.cursor_pointer()
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -198,7 +175,6 @@ impl Drawing<'_> {
             id: ElementId::Name(name.into()),
             on: props.on.clone().unwrap_or_default(),
             playing,
-            size: props.size.unwrap_or_default(),
             label: props.label.clone().map(SharedString::from),
             on_turn,
         };
