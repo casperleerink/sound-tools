@@ -17,7 +17,8 @@ use gpui::{
     prelude::*, px,
 };
 use sound_core::{Instance, InstanceId, MAX_AUTOMATED, Project, ProjectEvent};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::{CELL_WIDTH, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::{
     BODY_VALUE_LINE, CARD_PADDING, CardFrame, Column, PLAIN_CARD_WIDTH,
@@ -35,6 +36,7 @@ use sound_ui::{
     ActiveTheme, DeviceEdit, DeviceLabel, DeviceView, Devices, LaneNumber, Numbers, Session, Views,
     weak_callback,
 };
+use sound_ui::{TextVariant, Typography};
 
 use crate::parameters::lane_of_pin;
 use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlugins};
@@ -220,7 +222,7 @@ impl PluginView {
                 .width(260.)
                 .max_height(320.)
                 .debug_name("plugin-parameters");
-            menu.set_trigger_height(ButtonSize::Sm.height(), cx);
+            menu.set_trigger_height(ControlSize::Md.height(), cx);
             menu
         });
         cx.subscribe(&menu, |view, _, MenuPicked(value), cx| {
@@ -634,7 +636,7 @@ fn missing(id: u32, pin: &Pin, cx: &mut Context<PluginView>) -> AnyElement {
         .id(("missing", u64::from(id)))
         // For tests.
         .debug_selector(move || format!("missing-{id}"))
-        .text_size(px(12.))
+        .text_variant(TextVariant::Label)
         .line_height(px(14.))
         .text_color(peach)
         .child("Not found")
@@ -662,10 +664,10 @@ impl Render for PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return div().into_any_element();
         };
-        let muted = cx.theme().gray_800;
+        let muted = cx.theme().text_secondary();
         let line = |text: String| {
             div()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .line_height(px(14.))
                 .text_color(muted)
                 .child(text)
@@ -695,7 +697,7 @@ impl Render for PluginView {
             let button = Button::new("plugin-start-again", "Start again")
                 .debug_selector(|| "plugin-start-again".to_string())
                 .variant(ButtonVariant::Subtle)
-                .size(ButtonSize::Sm)
+                .size(ControlSize::Md)
                 .focus_handle(&self.window_focus)
                 .on_click(cx.listener(|view, _, _, cx| {
                     if let Some(plugins) = view.plugins.upgrade() {
@@ -739,7 +741,7 @@ impl Render for PluginView {
         let button = Button::new("plugin-window", label)
             .debug_selector(|| "plugin-window".to_string())
             .variant(ButtonVariant::Subtle)
-            .size(ButtonSize::Sm)
+            .size(ControlSize::Md)
             .disabled(!has_window)
             .focus_handle(&self.window_focus)
             .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx)));

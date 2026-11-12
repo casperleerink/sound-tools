@@ -2,11 +2,13 @@
 //! the split button.
 
 use gpui::{
-    Anchor, App, BoxShadow, Div, FontWeight, Stateful, anchored, deferred, div, hsla, point,
-    prelude::*, px,
+    Anchor, App, BoxShadow, Div, Stateful, anchored, deferred, div, hsla, point, prelude::*, px,
 };
 
+use crate::scale::ControlSize;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 /// Which side of the trigger the content opens on.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -24,8 +26,8 @@ pub enum Align {
     End,
 }
 
-/// Standard height of the small trigger buttons in this file.
-pub(crate) const TRIGGER_HEIGHT: f32 = 32.;
+/// The size of the trigger buttons of the overlays.
+pub(crate) const TRIGGER_SIZE: ControlSize = ControlSize::Lg;
 
 pub fn shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
@@ -42,11 +44,11 @@ pub fn surface(cx: &App) -> Div {
     let theme = cx.theme();
     div()
         .occlude()
-        .bg(theme.gray_200)
+        .bg(theme.surface())
         .border_1()
-        .border_color(theme.alpha_at(0.10))
-        .rounded(px(10.))
-        .text_color(theme.gray_950)
+        .border_color(theme.border_strong())
+        .rounded(radius::LG)
+        .text_color(theme.text())
         .shadow(shadow())
 }
 
@@ -94,15 +96,14 @@ pub(crate) fn trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .flex_none()
         .items_center()
         .gap(px(8.))
-        .h(px(TRIGGER_HEIGHT))
+        .h(px(TRIGGER_SIZE.height()))
         .px(px(12.))
-        .rounded(px(8.))
+        .rounded(TRIGGER_SIZE.radius())
         .border_1()
-        .border_color(theme.alpha_at(0.10))
-        .bg(theme.alpha_at(0.05))
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(theme.gray_950)
+        .border_color(theme.border_strong())
+        .bg(theme.fill())
+        .text_variant(TextVariant::Heading)
+        .text_color(theme.text())
         .cursor_pointer()
-        .hover(|s| s.bg(theme.alpha_at(0.10)))
+        .hover(|s| s.bg(theme.fill_strong()))
 }

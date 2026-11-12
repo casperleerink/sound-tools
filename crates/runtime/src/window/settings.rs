@@ -14,10 +14,13 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use sound_core::DeviceChoice;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::icon::Icon;
 use sound_ui::focus::TabStop;
+use sound_ui::radius;
 use sound_ui::{ActiveTheme, Session};
+use sound_ui::{TextVariant, Typography};
 
 #[cfg(doc)]
 use super::SettingsSlot;
@@ -70,9 +73,8 @@ fn column() -> Div {
 
 fn heading(section: Section, cx: &App) -> Div {
     div()
-        .text_size(px(20.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().gray_950)
+        .text_variant(TextVariant::Title)
+        .text_color(cx.theme().text())
         .child(section.name())
 }
 
@@ -169,16 +171,16 @@ impl SettingsPage {
     }
 
     fn sections(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().gray_700;
+        let muted = cx.theme().text_muted();
         let back = Button::new("settings-back", "Back")
             .icon("arrow-left")
             .debug_selector(|| "settings-back".to_string())
             .variant(ButtonVariant::GhostColor(muted))
-            .size(ButtonSize::Sm)
+            .size(ControlSize::Md)
             .focus_handle(&self.back)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseSettings), cx));
-        let (strong, tint) = (cx.theme().gray_950, cx.theme().alpha_at(0.05));
-        let chevron = cx.theme().gray_500;
+        let (strong, chevron) = (cx.theme().text(), cx.theme().text_muted());
+        let (selected_fill, hover) = (cx.theme().selected(), cx.theme().fill());
         let shown = self.agents.is_some().then_some(Section::Agents);
         let sections = shown
             .into_iter()
@@ -195,13 +197,12 @@ impl SettingsPage {
                 .w_full()
                 .h(px(32.))
                 .px(px(10.))
-                .rounded(px(8.))
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
+                .rounded(radius::LG)
+                .text_variant(TextVariant::Heading)
                 .cursor_pointer()
                 .map(|row| match selected {
-                    true => row.bg(tint).text_color(strong),
-                    false => row.text_color(muted).hover(move |row| row.bg(tint)),
+                    true => row.bg(selected_fill).text_color(strong),
+                    false => row.text_color(muted).hover(move |row| row.bg(hover)),
                 })
                 .child(Icon::new(section.icon()))
                 .child(div().flex_1().child(name))
@@ -216,7 +217,7 @@ impl SettingsPage {
             .w(px(LEFT_PANEL_WIDTH))
             .h_full()
             .border_r_1()
-            .border_color(cx.theme().alpha_at(0.05))
+            .border_color(cx.theme().border())
             .child(Shell::drag_region().flex_none().h(px(TOP_ROW_HEIGHT)))
             .child(
                 div()
@@ -233,15 +234,15 @@ impl SettingsPage {
     fn audio(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (strong, text, muted, faint, accent, hole, live) = (
-            theme.gray_950,
-            theme.gray_900,
-            theme.gray_700,
-            theme.gray_500,
+            theme.text(),
+            theme.text_secondary(),
+            theme.text_muted(),
+            theme.text_muted(),
             theme.lavender,
-            theme.gray_50,
+            theme.well(),
             theme.green,
         );
-        let border = theme.alpha_at(0.08);
+        let border = theme.border_strong();
         let intro = div()
             .text_color(muted)
             .child("System default follows your computer. Picking a device starts the app again.");
@@ -311,7 +312,7 @@ impl SettingsPage {
                                 .flex_none()
                                 .items_center()
                                 .gap(px(6.))
-                                .text_size(px(12.))
+                                .text_variant(TextVariant::Label)
                                 .text_color(muted)
                                 .child(div().size(px(6.)).rounded_full().bg(live))
                                 .child("In use"),
@@ -338,7 +339,7 @@ impl SettingsPage {
                 .px(px(20.))
                 .pt(px(20.))
                 .pb(px(8.))
-                .rounded(px(12.))
+                .rounded(radius::LG)
                 .border_1()
                 .border_color(border)
                 .child(

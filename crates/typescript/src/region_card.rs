@@ -420,7 +420,7 @@ impl Render for RegionCard {
         };
         let project = self.session.read(cx).project();
         let name = state.asset.to_string();
-        let muted = cx.theme().gray_800;
+        let muted = cx.theme().text_secondary();
         let quiet = |text: String| {
             div()
                 .min_w_0()

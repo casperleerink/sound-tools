@@ -9,7 +9,8 @@ use gpui::{
     Window, anchored, canvas, deferred, div, hsla, point, prelude::*, px,
 };
 use serde_json::{Value, json};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::gesture::ValueKey;
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::popover;
@@ -257,9 +258,9 @@ impl Drawing<'_> {
             (Some(ButtonLook::Primary) | None, _) => ButtonVariant::Primary,
         };
         let size = match props.size {
-            Some(ButtonSized::Xs) => ButtonSize::Xs,
-            Some(ButtonSized::Sm) => ButtonSize::Sm,
-            Some(ButtonSized::Md) | None => ButtonSize::Md,
+            Some(ButtonSized::Xs) => ControlSize::Sm,
+            Some(ButtonSized::Sm) => ControlSize::Md,
+            Some(ButtonSized::Md) | None => ControlSize::Lg,
         };
         let button = match (&props.label, &props.icon) {
             (Some(label), icon) => Button::new(ElementId::Name(name.into()), label.clone())

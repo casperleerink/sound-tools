@@ -814,10 +814,7 @@ impl TypeScriptCard {
         self.keep_spaces(spaces);
         self.feeds.drawn(Drawn::TitleBar);
         let theme = cx.theme();
-        let bar = div()
-            .text_size(px(12.))
-            .text_color(theme.gray_950)
-            .child(bar);
+        let bar = div().text_size(px(12.)).text_color(theme.text()).child(bar);
         // Out of the page, it hands the page the keys its controls do not keep, such as R to
         // record with Play focused, and lets go of them when the focus leaves it.
         let info = self.live.read(cx).info(self.card);
@@ -916,7 +913,7 @@ impl Render for TypeScriptCard {
             None => div().into_any_element(),
         };
         let theme = cx.theme();
-        let (text, background) = (theme.gray_950, theme.gray_100);
+        let (text, background) = (theme.text(), theme.background());
         // A click in what takes the keys gives them: the body of a card, a whole page.
         let keys = self.keys_of_page(cx);
         let focus = self.focus.clone();

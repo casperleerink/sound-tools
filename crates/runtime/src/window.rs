@@ -43,7 +43,8 @@ use sound_core::{
     ProjectEvent, StreamTiming,
 };
 use sound_typescript::{Extensions, FirstLoad};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
@@ -53,6 +54,7 @@ use sound_ui::{
     ActiveTheme, Assets, Devices, GlobalKeys, Session, Shortcuts, SpareKey, SpareKeys, Views,
     typography,
 };
+use sound_ui::{TextVariant, Typography};
 
 use audio_input::OpenInput;
 use history::HistoryPanel;
@@ -554,7 +556,7 @@ impl Shell {
 
     /// The tabs, and at their right what the Agent tab puts there.
     fn left_panel_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().gray_700;
+        let muted = cx.theme().text_muted();
         let tab = |id: &'static str, label: &'static str, tab: Tab, cx: &mut Context<Self>| {
             let variant = if self.tab == tab {
                 ButtonVariant::Subtle
@@ -564,7 +566,7 @@ impl Shell {
             Button::new(id, label)
                 .debug_selector(move || format!("left-panel-{id}"))
                 .variant(variant)
-                .size(ButtonSize::Sm)
+                .size(ControlSize::Md)
                 .on_click(cx.listener(move |shell, _, _, cx| shell.show_tab(tab, cx)))
         };
         let agent = self.left_panel.as_ref();
@@ -595,7 +597,7 @@ impl Shell {
             _ => self.history.clone().into(),
         };
         // The hairline of the window's other lines, so the edges weigh the same.
-        let hairline = cx.theme().alpha_at(0.05);
+        let hairline = cx.theme().border();
         Some(
             div()
                 .id("left-panel")
@@ -640,7 +642,7 @@ impl Shell {
                 Button::icon_only("left-panel", "panel-left")
                     .debug_selector(|| "left-panel-icon".to_string())
                     .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Sm)
+                    .size(ControlSize::Md)
                     .focus_handle(&self.left_panel_icon_focus)
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.open_or_close_left_panel(window, cx)
@@ -945,7 +947,7 @@ impl Shell {
         let button = |id: &'static str, icon: &'static str, area: WindowControlArea| {
             Button::icon_only(id, icon)
                 .variant(ButtonVariant::Ghost)
-                .size(ButtonSize::Sm)
+                .size(ControlSize::Md)
                 .window_control_area(area)
                 // So the drag region around it is not hit under it: the first area hit wins.
                 .occlude()
@@ -1005,7 +1007,7 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Shell, "window");
         let theme = cx.theme();
-        let (background, text) = (theme.gray_100, theme.gray_950);
+        let (background, text) = (theme.background(), theme.text());
         let screen = match &self.settings {
             Some(settings) => vec![
                 div()
@@ -1101,7 +1103,7 @@ impl Render for Shell {
             .bg(background)
             .text_color(text)
             .font(typography::ui_font())
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .children(screen)
             .child(self.notices(cx))
     }

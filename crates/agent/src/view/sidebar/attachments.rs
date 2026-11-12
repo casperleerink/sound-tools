@@ -11,8 +11,11 @@ use gpui::{
     prelude::*, px,
 };
 use sound_ui::ActiveTheme;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::icon::Icon;
+use sound_ui::radius;
+use sound_ui::{TextVariant, Typography};
 
 use super::Sidebar;
 use crate::{Attachment, Image, ImageFormat};
@@ -189,7 +192,7 @@ impl Sidebar {
             return None;
         }
         let theme = cx.theme();
-        let (fill, muted) = (theme.alpha_at(0.05), theme.gray_700);
+        let (fill, muted) = (theme.fill(), theme.text_muted());
         let chips = self
             .attachments
             .iter()
@@ -198,7 +201,7 @@ impl Sidebar {
                 let picture = match &attached.read.preview {
                     Some(preview) => img(preview.clone())
                         .size(px(20.))
-                        .rounded(px(4.))
+                        .rounded(radius::SM)
                         .object_fit(ObjectFit::Cover)
                         .into_any_element(),
                     None => Icon::new("paperclip")
@@ -214,21 +217,21 @@ impl Sidebar {
                     .h(px(28.))
                     .pl(px(6.))
                     .pr(px(2.))
-                    .rounded(px(8.))
+                    .rounded(radius::LG)
                     .bg(fill)
                     .child(picture)
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_variant(TextVariant::Label)
                             .child(attached.read.name.clone()),
                     )
                     .child(
                         Button::icon_only(("remove-attachment", index), "x")
                             .debug_selector(move || format!("agent-remove-attachment-{index}"))
                             .variant(ButtonVariant::Ghost)
-                            .size(ButtonSize::Xs)
+                            .size(ControlSize::Sm)
                             .focus_handle(&attached.remove)
                             .on_click(cx.listener(move |sidebar, _, window, cx| {
                                 sidebar.remove_attachment(index, window, cx);

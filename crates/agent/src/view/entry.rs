@@ -14,17 +14,15 @@ use sound_ui::ActiveTheme;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::focus::KeyboardFocus;
+use sound_ui::radius;
 use sound_ui::typography::MONO;
+use sound_ui::{TextVariant, Typography};
 
 use super::markdown::{Markdown, MarkdownText};
 use crate::conversation::{Step, Turn};
 use crate::{StepKind, StepOutcome, TurnOutcome};
 
-/// The text of the thread.
-const TEXT_SIZE: f32 = 15.;
-const LINE_HEIGHT: f32 = 22.;
-/// Meta lines and steps.
-const SMALL_TEXT_SIZE: f32 = 12.;
+/// The line height of meta lines and steps.
 const SMALL_LINE_HEIGHT: f32 = 16.;
 /// How long a new block of a streaming answer takes to fade in.
 const FADE_IN: Duration = Duration::from_millis(600);
@@ -36,13 +34,13 @@ const SHIMMER_WIDTH: f32 = 8.;
 /// The message, and below it the names of what it had attached: a saved thread keeps no
 /// pictures.
 pub(super) fn message(text: &str, attachments: &[String], cx: &App) -> AnyElement {
-    let muted = cx.theme().gray_700;
+    let muted = cx.theme().text_muted();
     let attached = attachments.iter().map(|name| {
         div()
             .flex()
             .items_center()
             .gap(px(6.))
-            .text_size(px(SMALL_TEXT_SIZE))
+            .text_variant(TextVariant::Label)
             .line_height(px(SMALL_LINE_HEIGHT))
             .text_color(muted)
             .child(Icon::new("paperclip").size(12.).flex_none())
@@ -63,10 +61,9 @@ pub(super) fn message(text: &str, attachments: &[String], cx: &App) -> AnyElemen
                 .gap(px(8.))
                 .max_w(relative(0.8))
                 .p(px(14.))
-                .rounded(px(12.))
-                .bg(cx.theme().alpha_at(0.05))
-                .text_size(px(TEXT_SIZE))
-                .line_height(px(LINE_HEIGHT))
+                .rounded(radius::LG)
+                .bg(cx.theme().fill())
+                .text_variant(TextVariant::Body)
                 .child(SharedString::from(text.to_string()))
                 .children(attached),
         )
@@ -75,8 +72,8 @@ pub(super) fn message(text: &str, attachments: &[String], cx: &App) -> AnyElemen
 
 pub(super) fn notice(text: &str, cx: &App) -> AnyElement {
     div()
-        .text_size(px(SMALL_TEXT_SIZE))
-        .text_color(cx.theme().gray_700)
+        .text_variant(TextVariant::Label)
+        .text_color(cx.theme().text_muted())
         .child(SharedString::from(text.to_string()))
         .into_any_element()
 }
@@ -109,13 +106,8 @@ pub(super) fn turn(
         .map(|step| title(step, name, cx))
         .collect();
     let theme = cx.theme();
-    let (muted, bright, dim, red, lavender) = (
-        theme.gray_700,
-        theme.gray_900,
-        theme.gray_600,
-        theme.red,
-        theme.lavender,
-    );
+    let (muted, bright, red, lavender) =
+        (theme.text_muted(), theme.text(), theme.red, theme.lavender);
     let meta = turn.end.as_ref().map(|end| {
         let (line, color, summary) = match &end.outcome {
             TurnOutcome::Completed => (
@@ -143,7 +135,7 @@ pub(super) fn turn(
             .flex()
             .items_start()
             .gap(px(4.))
-            .text_size(px(SMALL_TEXT_SIZE))
+            .text_variant(TextVariant::Label)
             .line_height(px(SMALL_LINE_HEIGHT))
             .text_color(color);
         let id = ElementId::from(("worked-for", index));
@@ -176,7 +168,7 @@ pub(super) fn turn(
             .debug_selector(move || format!("agent-steps-{index}"))
             .flex()
             .flex_col()
-            .text_size(px(SMALL_TEXT_SIZE))
+            .text_variant(TextVariant::Label)
             .line_height(px(SMALL_LINE_HEIGHT))
             // Text reaches 4.5 : 1 on the window; icons need only 3 : 1, so theirs are dimmer.
             .text_color(muted)
@@ -202,7 +194,7 @@ pub(super) fn turn(
                     .items_center()
                     .gap(px(6.))
                     .h(px(20.))
-                    .child(Icon::new(icon(&step.kind)).size(12.).color(dim))
+                    .child(Icon::new(icon(&step.kind)).size(12.).color(muted))
                     .child(words);
                 // A command under its words, as an approval shows it: its first line, under
                 // the words and not the icon.
@@ -215,8 +207,7 @@ pub(super) fn turn(
                         .pb(px(2.))
                         .truncate()
                         .font_family(MONO)
-                        // Menlo reads a size larger, as code does under the answer.
-                        .text_size(px(SMALL_TEXT_SIZE - 1.))
+                        .text_variant(TextVariant::Label)
                         .child(format!("{first}{more}"))
                 });
                 div().child(row).children(command)
@@ -259,14 +250,13 @@ pub(super) fn turn(
             .flex()
             .items_center()
             .gap(px(8.))
-            .text_size(px(TEXT_SIZE))
-            .line_height(px(LINE_HEIGHT))
+            .text_variant(TextVariant::Body)
             .child(mark)
             .child(shimmer(plain(line), lavender, bright))
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(SMALL_TEXT_SIZE))
+                    .text_variant(TextVariant::Label)
                     .text_color(muted)
                     .child(worked),
             )
@@ -300,7 +290,7 @@ pub(super) fn problems(
         .map(|problem| format!("{}: {}", name(&problem.path, cx), problem.message))
         .collect();
     let theme = cx.theme();
-    let (peach, muted, bright) = (theme.peach, theme.gray_800, theme.gray_900);
+    let (peach, muted, bright) = (theme.peach, theme.text_secondary(), theme.text());
     let chevron = if open {
         "chevron-down"
     } else {
@@ -319,7 +309,7 @@ pub(super) fn problems(
         .flex()
         .flex_col()
         .gap(px(4.))
-        .text_size(px(SMALL_TEXT_SIZE))
+        .text_variant(TextVariant::Label)
         .line_height(px(SMALL_LINE_HEIGHT))
         .child(
             div().flex().child(
@@ -360,13 +350,13 @@ pub(super) fn action(
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (muted, bright) = (theme.gray_700, theme.gray_900);
+    let (muted, bright) = (theme.text_muted(), theme.text());
     let line = tab_stop(div(), id.into(), window, cx)
         .debug_selector(move || format!("agent-{id}"))
         .flex()
         .items_center()
         .gap(px(4.))
-        .text_size(px(SMALL_TEXT_SIZE))
+        .text_variant(TextVariant::Label)
         .line_height(px(SMALL_LINE_HEIGHT))
         .text_color(muted)
         .cursor_pointer()
@@ -402,7 +392,7 @@ fn tab_stop(line: Div, id: ElementId, window: &mut Window, cx: &mut App) -> Stat
         .ml(px(-5.))
         .my(px(-1.))
         .px(px(4.))
-        .rounded(px(4.))
+        .rounded(radius::SM)
         .border_1()
         .border_color(border)
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {

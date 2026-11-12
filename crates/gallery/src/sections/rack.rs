@@ -7,12 +7,13 @@
 //! Every sample is live: its value is kept here and a drag, a key or a click changes it.
 
 use gpui::{
-    AnyElement, App, AppContext, Entity, FocusHandle, FontWeight, IntoElement, ParentElement,
-    Point, SharedString, Styled, Window, div, point, px,
+    AnyElement, App, AppContext, Entity, FocusHandle, IntoElement, ParentElement, Point,
+    SharedString, Styled, Window, div, point, px,
 };
 use sound_dsp::LfoShape;
 use sound_ui::ActiveTheme;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::{Cell, ROW_HEIGHT};
 use sound_ui::components::curves::{Adsr, envelope_display, lfo_line};
 use sound_ui::components::device_card::{Column, DeviceCard, Section};
@@ -28,6 +29,7 @@ use sound_ui::components::slider::Slider;
 use sound_ui::components::split_button::SplitButton;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::{TextVariant, Typography};
 
 use super::overlays::split_button;
 
@@ -221,15 +223,14 @@ pub(crate) fn block(
     cx: &App,
     samples: impl IntoIterator<Item = AnyElement>,
 ) -> AnyElement {
-    let text = cx.theme().gray_950;
+    let text = cx.theme().text();
     div()
         .flex()
         .flex_col()
         .gap(px(20.))
         .child(
             div()
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
+                .text_variant(TextVariant::Heading)
                 .text_color(text)
                 .child(title),
         )
@@ -246,14 +247,19 @@ pub(crate) fn block(
 
 /// A sample with the name of its state under it.
 pub(crate) fn sample(state: &'static str, cx: &App, element: impl IntoElement) -> AnyElement {
-    let muted = cx.theme().gray_700;
+    let muted = cx.theme().text_muted();
     div()
         .flex()
         .flex_col()
         .items_center()
         .gap(px(12.))
         .child(element)
-        .child(div().text_size(px(12.)).text_color(muted).child(state))
+        .child(
+            div()
+                .text_variant(TextVariant::Label)
+                .text_color(muted)
+                .child(state),
+        )
         .into_any_element()
 }
 
@@ -850,7 +856,7 @@ fn sections_card() -> DeviceCard {
 }
 
 fn plugin_card(cx: &App) -> DeviceCard {
-    let muted = cx.theme().gray_800;
+    let muted = cx.theme().text_secondary();
     DeviceCard::new("plugin", div().child("Surge XT"))
         .expand(false, |_, _, _| {})
         .power(true, |_, _, _| {})
@@ -867,13 +873,13 @@ fn plugin_card(cx: &App) -> DeviceCard {
                 .child(
                     Button::new("open-window", "Open window")
                         .variant(ButtonVariant::Subtle)
-                        .size(ButtonSize::Sm),
+                        .size(ControlSize::Md),
                 )
                 .child(
                     div()
                         .absolute()
                         .top(px(126.))
-                        .text_size(px(12.))
+                        .text_variant(TextVariant::Label)
                         .line_height(px(14.))
                         .text_color(muted)
                         .child("CLAP · Surge Synth Team"),
@@ -1032,7 +1038,7 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 cx,
                 Button::new("focus-solid", "Allow")
                     .variant(ButtonVariant::Solid(lavender))
-                    .size(ButtonSize::Sm)
+                    .size(ControlSize::Md)
                     .focus_handle(&solid),
             ),
         ],

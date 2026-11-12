@@ -1,17 +1,21 @@
-//! Foundation section: the palette, button, text input, kbd, indicator, empty state and notice,
+//! Foundation section: the tokens, button, text input, kbd, indicator, empty state and notice,
 //! with every variant, size and state.
 
 use gpui::{
-    AnyElement, App, AppContext, FontWeight, IntoElement, ParentElement, SharedString, Styled,
-    Window, div, px,
+    AnyElement, App, AppContext, Entity, FontWeight, IntoElement, ParentElement, SharedString,
+    Styled, Window, div, px,
 };
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::button::{Button, ButtonVariant};
+use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::kbd::Kbd;
 use sound_ui::components::notice::{Notice, NoticeTone};
-use sound_ui::components::text_input::{InputSize, TextInput};
-use sound_ui::{ActiveTheme, Theme};
+use sound_ui::components::segmented_control::SegmentedControl;
+use sound_ui::components::select::Select;
+use sound_ui::components::text_input::TextInput;
+use sound_ui::components::toggle::Toggle;
+use sound_ui::{ActiveTheme, ControlSize, TextVariant, Theme, Typography, radius};
 
 /// One component: a heading and its labelled rows.
 fn block(
@@ -19,14 +23,14 @@ fn block(
     cx: &App,
     rows: impl IntoIterator<Item = AnyElement>,
 ) -> impl IntoElement {
-    let muted = cx.theme().gray_700;
+    let muted = cx.theme().text_muted();
     div()
         .flex()
         .flex_col()
         .gap(px(16.))
         .child(
             div()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(title),
@@ -40,7 +44,7 @@ fn row(
     cx: &App,
     items: impl IntoIterator<Item = AnyElement>,
 ) -> AnyElement {
-    let muted = cx.theme().gray_600;
+    let muted = cx.theme().text_muted();
     div()
         .flex()
         .items_center()
@@ -49,7 +53,7 @@ fn row(
             div()
                 .w(px(96.))
                 .flex_none()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .text_color(muted)
                 .child(label.into()),
         )
@@ -69,7 +73,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let (lavender, green, red, peach) = (theme.lavender, theme.green, theme.red, theme.peach);
     let inputs = window.use_keyed_state("foundation-inputs", cx, |_, cx| {
         [
-            cx.new(|cx| TextInput::new(cx).placeholder("Small").size(InputSize::Sm)),
             cx.new(|cx| TextInput::new(cx).placeholder("Project name")),
             cx.new(|cx| TextInput::new(cx).placeholder("Disabled").disabled(true)),
             cx.new(|cx| {
@@ -100,15 +103,14 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             }),
         ]
     });
-    let [
-        text_sm,
-        text_md,
-        text_disabled,
-        long,
-        empty,
-        three_rows,
-        full,
-    ] = inputs.read(cx).clone();
+    let [text_md, text_disabled, long, empty, three_rows, full] = inputs.read(cx).clone();
+    let sized_inputs = window
+        .use_keyed_state("foundation-sized-inputs", cx, |_, cx| {
+            ControlSize::ALL
+                .map(|size| cx.new(|cx| TextInput::new(cx).placeholder("Input").size(size)))
+        })
+        .read(cx)
+        .clone();
     let boxed = |width: f32, input| {
         div()
             .w(px(width))
@@ -128,16 +130,16 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .clone();
 
     let sizes = [
-        ("xs", ButtonSize::Xs),
-        ("sm", ButtonSize::Sm),
-        ("md", ButtonSize::Md),
+        ("sm", ControlSize::Sm),
+        ("md", ControlSize::Md),
+        ("lg", ControlSize::Lg),
     ];
 
     div()
         .flex()
         .flex_col()
         .gap(px(48.))
-        .child(palette(cx))
+        .child(tokens(sized_inputs, cx))
         .child(block(
             "Button",
             cx,
@@ -278,7 +280,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             "Text input",
             cx,
             [
-                row("sizes", cx, [boxed(160., text_sm), boxed(240., text_md)]),
+                row("empty", cx, [boxed(240., text_md)]),
                 row("disabled", cx, [boxed(240., text_disabled)]),
                 row("long, scrolled", cx, [boxed(160., long)]),
                 row("multi-line", cx, [boxed(360., empty)]),
@@ -343,7 +345,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .text_size(px(12.))
+                        .text_variant(TextVariant::Label)
                         .child(
                             Indicator::new("i-pulse")
                                 .color(lavender)
@@ -407,55 +409,52 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         ))
 }
 
-/// The palette: every token with its hex value, the greys on the window and the colours with
-/// what they mean.
-fn palette(cx: &App) -> impl IntoElement {
+/// The tokens a view names: the colour roles and the hues with what they are for, the type
+/// variants, the corners, and the three control sizes with every control at each.
+fn tokens(sized_inputs: [Entity<TextInput>; 3], cx: &App) -> impl IntoElement {
     let theme: &Theme = cx.theme();
-    let (window, label) = (theme.gray_100, theme.gray_800);
+    let (window, outline) = (theme.background(), theme.border());
+    let (label, fill) = (theme.text_secondary(), theme.fill_strong());
     let swatch = |name: &'static str, color: gpui::Hsla, meaning: &'static str| {
-        let hex = gpui::Rgba::from(color);
-        let hex = format!(
-            "#{:02x}{:02x}{:02x}",
-            (hex.r * 255.).round() as u8,
-            (hex.g * 255.).round() as u8,
-            (hex.b * 255.).round() as u8
-        );
         div()
-            .w(px(96.))
+            .w(px(112.))
             .flex()
             .flex_col()
             .gap(px(4.))
             .child(
                 div()
                     .h(px(40.))
-                    .rounded(px(6.))
+                    .rounded(radius::MD)
                     .bg(color)
                     .border_1()
-                    .border_color(theme.alpha_at(0.06)),
+                    .border_color(outline),
             )
-            .child(div().text_size(px(12.)).child(name))
+            .child(div().text_variant(TextVariant::Label).child(name))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_variant(TextVariant::Label)
                     .text_color(label)
-                    .child(format!("{hex} {meaning}")),
+                    .child(meaning),
             )
             .into_any_element()
     };
-    let greys = [
-        ("gray-50", theme.gray_50, "inset"),
-        ("gray-100", theme.gray_100, "window"),
-        ("gray-200", theme.gray_200, "card"),
-        ("gray-300", theme.gray_300, "knob face"),
-        ("gray-400", theme.gray_400, ""),
-        ("gray-500", theme.gray_500, ""),
-        ("gray-600", theme.gray_600, "off"),
-        ("gray-700", theme.gray_700, "muted"),
-        ("gray-800", theme.gray_800, "labels"),
-        ("gray-900", theme.gray_900, ""),
-        ("gray-950", theme.gray_950, "values"),
-    ];
-    let colours = [
+    // By the names a tool of a project gives them, so a name that stops resolving shows here.
+    let roles = [
+        ("background", "the window"),
+        ("surface", "a card, a menu"),
+        ("well", "a display in a card"),
+        ("fill", "a control at rest"),
+        ("fill-strong", "under the pointer"),
+        ("selected", "the chosen row"),
+        ("border", "a hairline"),
+        ("border-strong", "an outline"),
+        ("text", "text, a value"),
+        ("text-secondary", "a label"),
+        ("text-muted", "a hint, off"),
+        ("text-inverse", "on a bright fill"),
+    ]
+    .map(|(name, meaning)| swatch(name, theme.named(name).unwrap_or(theme.red), meaning));
+    let hues = [
         ("green", theme.green, "sound"),
         ("yellow", theme.yellow, "hot, solo"),
         ("peach", theme.peach, "warn, mute"),
@@ -470,7 +469,8 @@ fn palette(cx: &App) -> impl IntoElement {
         ("pink", theme.pink, "track"),
         ("rosewater", theme.rosewater, "track"),
         ("flamingo", theme.flamingo, "track"),
-    ];
+    ]
+    .map(|(name, color, meaning)| swatch(name, color, meaning));
     let wrap = |items: Vec<AnyElement>| {
         div()
             .flex()
@@ -480,20 +480,87 @@ fn palette(cx: &App) -> impl IntoElement {
             .children(items)
             .into_any_element()
     };
-    block(
-        "Palette",
-        cx,
-        [
-            row(
-                "greys",
+    let variants = TextVariant::ALL.map(|variant| {
+        let name = format!("{variant:?}").to_lowercase();
+        let sample = format!("The quiet rule 120.00 · {}", f32::from(variant.size()));
+        row(
+            name,
+            cx,
+            [div().text_variant(variant).child(sample).into_any_element()],
+        )
+    });
+    let corner = |name: &'static str, radius: Option<gpui::Pixels>| {
+        let shape = div().size(px(40.)).bg(fill);
+        let shape = match radius {
+            Some(radius) => shape.rounded(radius),
+            None => shape.rounded_full(),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(4.))
+            .text_variant(TextVariant::Label)
+            .text_color(label)
+            .child(shape)
+            .child(name)
+            .into_any_element()
+    };
+    let options = [("low", "Low"), ("high", "High")];
+    let sizes = ControlSize::ALL.into_iter().zip(sized_inputs).enumerate();
+    let controls = sizes.map(|(ix, (size, input))| {
+        let name = format!("{size:?} {}", size.height()).to_lowercase();
+        row(
+            name,
+            cx,
+            [
+                Button::new(("size-button", ix), "Button")
+                    .variant(ButtonVariant::Subtle)
+                    .size(size)
+                    .into_any_element(),
+                Toggle::new(("size-toggle", ix), "Toggle", true)
+                    .size(size)
+                    .into_any_element(),
+                SegmentedControl::new(("size-segments", ix), "low")
+                    .options(options)
+                    .size(size)
+                    .into_any_element(),
+                Select::new(("size-select", ix), "low")
+                    .entries(vec![MenuEntry::Group(MenuGroup::new().items(
+                        options.map(|(value, label)| MenuItem::new(value, label)),
+                    ))])
+                    .size(size)
+                    .into_any_element(),
+                div().w(px(120.)).child(input).into_any_element(),
+            ],
+        )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(48.))
+        .child(block(
+            "Colour",
+            cx,
+            [
+                row("roles", cx, [wrap(roles.into())]),
+                row("hues", cx, [wrap(hues.into())]),
+            ],
+        ))
+        .child(block("Type", cx, variants))
+        .child(block(
+            "Corner",
+            cx,
+            [row(
+                "radius",
                 cx,
-                [wrap(greys.map(|(n, c, m)| swatch(n, c, m)).into())],
-            ),
-            row(
-                "colours",
-                cx,
-                [wrap(colours.map(|(n, c, m)| swatch(n, c, m)).into())],
-            ),
-        ],
-    )
+                [
+                    corner("sm 4", Some(radius::SM)),
+                    corner("md 6", Some(radius::MD)),
+                    corner("lg 8", Some(radius::LG)),
+                    corner("full", None),
+                ],
+            )],
+        ))
+        .child(block("Control size", cx, controls))
 }

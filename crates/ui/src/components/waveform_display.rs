@@ -23,7 +23,9 @@ use sound_media::{Info, Overview};
 use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT};
 use crate::components::gesture::{ChangeHandler, ValueChange};
 use crate::components::knob::KnobRange;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 /// The handles of the start and end lines sit this far above the bottom of the display.
 const TRIM_HANDLE_RISE: f32 = 8.;
@@ -264,14 +266,14 @@ impl RenderOnce for FileDrop {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(6.))
+            .rounded(radius::MD)
             .border(px(2.))
             .border_color(theme.lavender)
             // Opaque, so the line reads over a waveform.
-            .bg(theme.gray_100)
-            .text_size(px(12.))
+            .bg(theme.background())
+            .text_variant(TextVariant::Label)
             .line_height(px(14.))
-            .text_color(theme.gray_950)
+            .text_color(theme.text())
             .child(self.message)
             .when(!self.shown, |d| d.opacity(0.))
             .drag_over::<ExternalPaths>(|style, _, _, _| style.opacity(1.))
@@ -325,9 +327,9 @@ impl RenderOnce for NoFile {
             .items_center()
             .justify_center()
             .gap(px(12.))
-            .text_size(px(12.))
+            .text_variant(TextVariant::Label)
             .line_height(px(14.))
-            .text_color(cx.theme().gray_800)
+            .text_color(cx.theme().text_secondary())
             .child(self.message)
             .children(self.button);
         let display = Display::new(self.id, self.width).overlay(middle);

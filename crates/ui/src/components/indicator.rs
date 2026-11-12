@@ -80,7 +80,7 @@ impl Indicator {
 
 impl RenderOnce for Indicator {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let color = self.color.unwrap_or(cx.theme().gray_600);
+        let color = self.color.unwrap_or(cx.theme().text_muted());
         let size = self.size;
 
         let dot = div().size(px(size.dot())).rounded_full().bg(color);

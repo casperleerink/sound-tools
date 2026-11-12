@@ -40,7 +40,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::components::dropdown_menu::{
     self, DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
+use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 use rows::Row;
 
 /// Up or down from the caret.
@@ -178,33 +180,10 @@ fn install_bindings(cx: &mut App) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum InputSize {
-    Sm,
-    #[default]
-    Md,
-}
-
-impl InputSize {
-    fn height(self) -> f32 {
-        match self {
-            Self::Sm => 28.,
-            Self::Md => 32.,
-        }
-    }
-
-    fn radius(self) -> f32 {
-        match self {
-            Self::Sm => 6.,
-            Self::Md => 8.,
-        }
-    }
-
-    fn pad_x(self) -> f32 {
-        match self {
-            Self::Sm => 8.,
-            Self::Md => 10.,
-        }
+fn pad_x(size: ControlSize) -> f32 {
+    match size {
+        ControlSize::Sm | ControlSize::Md => 8.,
+        ControlSize::Lg => 10.,
     }
 }
 
@@ -256,7 +235,7 @@ pub struct TextInput {
     last_layout: Option<TextLayout>,
     last_bounds: Option<Bounds<Pixels>>,
     drag: Option<Drag>,
-    size: InputSize,
+    size: ControlSize,
     /// `Some(n)` wraps, grows up to `n` rows and then scrolls. `None` is one line.
     max_rows: Option<usize>,
     /// As tall as its box, see [`Self::fill`].
@@ -306,7 +285,7 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             drag: None,
-            size: InputSize::default(),
+            size: ControlSize::Lg,
             max_rows: None,
             fills: false,
             enter_adds_line: false,
@@ -335,7 +314,7 @@ impl TextInput {
         self
     }
 
-    pub fn size(mut self, size: InputSize) -> Self {
+    pub fn size(mut self, size: ControlSize) -> Self {
         self.size = size;
         self
     }
@@ -1399,7 +1378,7 @@ impl IntoElement for TextElement {
 }
 
 fn placeholder_color(cx: &App) -> Hsla {
-    cx.theme().gray_950.opacity(0.4)
+    cx.theme().text().opacity(0.4)
 }
 
 impl Element for TextElement {
@@ -1470,7 +1449,7 @@ impl Element for TextElement {
         // As macOS shows the selection of a field that lost the focus.
         let selection_color = match focused {
             true => theme.blue.opacity(0.25),
-            false => theme.alpha_at(0.10),
+            false => theme.selected(),
         };
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
@@ -1670,10 +1649,10 @@ impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (surface, border, border_active, text) = (
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.10),
-            theme.alpha_at(0.20),
-            theme.gray_950,
+            theme.fill(),
+            theme.border(),
+            theme.border_strong(),
+            theme.text(),
         );
         let focused = self.focus_handle.is_focused(window);
         let size = self.size;
@@ -1700,9 +1679,9 @@ impl Render for TextInput {
                 d.h(px(if bare { ROW_HEIGHT } else { size.height() }))
             })
             .when(!bare, |d| {
-                d.px(px(size.pad_x()))
+                d.px(px(pad_x(size)))
                     .py(px(pad_y))
-                    .rounded(px(size.radius()))
+                    .rounded(size.radius())
                     .bg(surface)
                     .border_1()
                     .border_color(border)
@@ -1710,7 +1689,7 @@ impl Render for TextInput {
             .flex()
             .flex_col()
             .text_color(text)
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .line_height(px(ROW_HEIGHT))
             .when(disabled, |d| d.opacity(0.4))
             .when(!disabled, |d| {

@@ -15,7 +15,9 @@ use gpui::{
 };
 
 use crate::components::icon::Icon;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 pub const PAD_WIDTH: f32 = 72.;
 pub const PAD_HEIGHT: f32 = 32.;
@@ -109,10 +111,10 @@ impl RenderOnce for Pad {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let (fill, border, selected, text) = (
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.10),
-            theme.gray_950,
-            theme.gray_950,
+            theme.fill(),
+            theme.border_strong(),
+            theme.text(),
+            theme.text(),
         );
         let sounding = theme
             .green
@@ -145,11 +147,11 @@ impl RenderOnce for Pad {
             .h(px(PAD_HEIGHT))
             .pl(px(INSET - 1.))
             .pr(px(INSET - 1.))
-            .rounded(px(6.))
+            .rounded(radius::MD)
             .bg(fill)
             .border_1()
             .border_color(if self.selected { selected } else { border })
-            .text_size(px(12.))
+            .text_variant(TextVariant::Label)
             .line_height(px(14.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(text)
@@ -161,7 +163,7 @@ impl RenderOnce for Pad {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .rounded(px(5.))
+                        .rounded(radius::MD - px(1.))
                         .bg(sounding),
                 )
             })

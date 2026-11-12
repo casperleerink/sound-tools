@@ -13,10 +13,12 @@ use gpui::{
 };
 
 use crate::focus::KeyboardFocus;
+use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
-/// A segment inside the track and its border.
-const SEGMENT_HEIGHT: f32 = 20.;
+/// The track's padding and its border, above and below a segment.
+const INSET: f32 = 2.;
 
 type ChangeHandler = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
 
@@ -32,6 +34,7 @@ pub struct SegmentedControl {
     options: Vec<(SharedString, SharedString)>,
     value: SharedString,
     marked: Vec<SharedString>,
+    size: ControlSize,
     disabled: bool,
     on_change: Option<ChangeHandler>,
 }
@@ -44,6 +47,7 @@ impl SegmentedControl {
             options: Vec::new(),
             value: value.into(),
             marked: Vec::new(),
+            size: ControlSize::Sm,
             disabled: false,
             on_change: None,
         }
@@ -64,6 +68,12 @@ impl SegmentedControl {
     /// The values whose option carries a dot.
     pub fn marked(mut self, values: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.marked = values.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// 24 pt unless told, as the controls of a card are.
+    pub fn size(mut self, size: ControlSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -105,12 +115,13 @@ impl RenderOnce for SegmentedControl {
 
         let theme = cx.theme();
         let (track, selected_bg, text, muted, ring) = (
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.10),
-            theme.gray_950,
-            theme.gray_800,
+            theme.fill(),
+            theme.fill_strong(),
+            theme.text(),
+            theme.text_secondary(),
             theme.lavender,
         );
+        let size = self.size;
         let value = self.value.clone();
         let on_change = self.on_change.filter(|_| !disabled);
         let on_key_down = on_change.clone().map(|on_change| {
@@ -154,10 +165,10 @@ impl RenderOnce for SegmentedControl {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .h(px(SEGMENT_HEIGHT))
+                    .h(px(size.height() - 2. * INSET))
                     .px(px(8.))
-                    .rounded(px(4.))
-                    .text_size(px(12.))
+                    .rounded(size.inner_radius())
+                    .text_variant(TextVariant::Label)
                     .line_height(px(14.))
                     .font_weight(FontWeight::MEDIUM)
                     .when(selected, |d| d.bg(selected_bg).text_color(text))
@@ -181,7 +192,7 @@ impl RenderOnce for SegmentedControl {
             .flex()
             .flex_none()
             .items_center()
-            // The border is there for the ring: 1 + 1 + 20 + 1 + 1 is the 24 pt of a control.
+            // The border is there for the ring: with the padding it is `INSET` on each side.
             .p(px(1.))
             .border_1()
             .border_color(if ring_shows {
@@ -189,7 +200,7 @@ impl RenderOnce for SegmentedControl {
             } else {
                 Hsla::transparent_black()
             })
-            .rounded(px(6.))
+            .rounded(size.radius())
             .bg(track)
             .when(disabled, |d| d.opacity(0.4).cursor_not_allowed())
             .when_some(on_key_down, |d, on_key_down| {

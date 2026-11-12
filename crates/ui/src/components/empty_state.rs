@@ -1,10 +1,9 @@
 //! EmptyState: centred title, one muted line of body text and an optional action element.
 
-use gpui::{
-    AnyElement, App, Div, FontWeight, SharedString, StyleRefinement, Window, div, prelude::*, px,
-};
+use gpui::{AnyElement, App, Div, SharedString, StyleRefinement, Window, div, prelude::*, px};
 
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 #[derive(IntoElement)]
 pub struct EmptyState {
@@ -39,7 +38,7 @@ impl Styled for EmptyState {
 impl RenderOnce for EmptyState {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (title_color, body_color) = (theme.gray_950, theme.gray_700);
+        let (title_color, body_color) = (theme.text(), theme.text_muted());
 
         self.base
             .flex()
@@ -51,15 +50,14 @@ impl RenderOnce for EmptyState {
             .text_center()
             .child(
                 div()
-                    .text_size(px(16.))
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_variant(TextVariant::Title)
                     .text_color(title_color)
                     .child(self.title),
             )
             .child(
                 div()
                     .mt(px(4.))
-                    .text_size(px(14.))
+                    .text_variant(TextVariant::Body)
                     .text_color(body_color)
                     .child(self.body),
             )

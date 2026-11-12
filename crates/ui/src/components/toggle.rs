@@ -17,10 +17,12 @@ use gpui::{
 use crate::components::icon::Icon;
 use crate::components::tooltip::Tooltip;
 use crate::focus::KeyboardFocus;
+use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
-pub const HEIGHT: f32 = 24.;
-pub const LETTER_WIDTH: f32 = 28.;
+/// How much wider than it is tall a toggle of one letter is.
+const LETTER_EXTRA: f32 = 4.;
 /// The circle of [`Toggle::dot`].
 const DOT: f32 = 10.;
 /// The glyph of [`Toggle::icon`].
@@ -53,6 +55,7 @@ pub struct Toggle {
     face: Face,
     on: bool,
     color: Option<Hsla>,
+    size: ControlSize,
     disabled: bool,
     tab_stop: bool,
     tooltip: Option<Tooltip>,
@@ -67,6 +70,7 @@ impl Toggle {
             face: Face::Label(label.into()),
             on,
             color: None,
+            size: ControlSize::Sm,
             disabled: false,
             tab_stop: true,
             tooltip: None,
@@ -107,6 +111,12 @@ impl Toggle {
     /// yellow for solo. Without one it is white.
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// 24 pt unless told, as the controls of a card are.
+    pub fn size(mut self, size: ControlSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -163,15 +173,16 @@ impl RenderOnce for Toggle {
 
         let theme = cx.theme();
         let (background, text) = match (self.on, self.color) {
-            (false, _) => (theme.alpha_at(0.05), theme.gray_800),
-            (true, None) => (theme.alpha_at(0.10), theme.gray_950),
+            (false, _) => (theme.fill(), theme.text_secondary()),
+            (true, None) => (theme.fill_strong(), theme.text()),
             (true, Some(color)) => (color.opacity(0.16), color),
         };
         let ring = theme.lavender;
+        let height = self.size.height();
         let width = match &self.face {
             Face::Icon { count, .. } if *count > 0 => None,
-            Face::Dot | Face::Icon { .. } => Some(HEIGHT),
-            Face::Label(label) if label.chars().count() == 1 => Some(LETTER_WIDTH),
+            Face::Dot | Face::Icon { .. } => Some(height),
+            Face::Label(label) if label.chars().count() == 1 => Some(height + LETTER_EXTRA),
             Face::Label(_) => None,
         };
         let on = self.on;
@@ -186,22 +197,22 @@ impl RenderOnce for Toggle {
             .flex_none()
             .items_center()
             .justify_center()
-            .h(px(HEIGHT))
+            .h(px(height))
             .map(|toggle| match width {
                 Some(width) => toggle.w(px(width)),
                 None if matches!(self.face, Face::Icon { .. }) => {
-                    toggle.pl(px((HEIGHT - GLYPH) / 2.)).pr(px(8.)).gap(px(4.))
+                    toggle.pl(px((height - GLYPH) / 2.)).pr(px(8.)).gap(px(4.))
                 }
                 None => toggle.px(px(10.)),
             })
-            .rounded(px(6.))
+            .rounded(self.size.radius())
             .bg(background)
             .border_1()
             .border_color(match ring_shows {
                 true => ring,
                 false => Hsla::transparent_black(),
             })
-            .text_size(px(12.))
+            .text_variant(TextVariant::Label)
             .line_height(px(14.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(text)

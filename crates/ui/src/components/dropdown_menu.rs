@@ -38,10 +38,13 @@ use gpui::{
 
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
-use crate::components::popover::{Align, Side, TRIGGER_HEIGHT, anchor, surface, trigger};
-use crate::components::text_input::{InputSize, TextInput};
+use crate::components::popover::{Align, Side, TRIGGER_SIZE, anchor, surface, trigger};
+use crate::components::text_input::TextInput;
 use crate::components::tooltip::Tooltip;
+use crate::scale::ControlSize;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 const ROW_HEIGHT: f32 = 32.;
 /// The most rows a search shows. See the module doc.
@@ -366,7 +369,7 @@ impl Styled for MenuList {
 impl RenderOnce for MenuList {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, line) = (theme.gray_700, theme.alpha_at(0.10));
+        let (muted, line) = (theme.text_muted(), theme.border_strong());
         let on_select = self.on_select;
         let submenu = self.submenu;
         let on_point = self.on_point;
@@ -481,7 +484,7 @@ impl RenderOnce for MenuList {
                                 div()
                                     .px(px(10.))
                                     .py(px(4.))
-                                    .text_size(px(12.))
+                                    .text_variant(TextVariant::Label)
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(muted)
                                     .child(label),
@@ -502,8 +505,8 @@ impl RenderOnce for MenuList {
                 .debug_selector(move || format!("menu-note-{note_ix}"))
                 .px(px(18.))
                 .py(px(6.))
-                .text_size(px(11.))
-                .line_height(px(15.))
+                .text_variant(TextVariant::Label)
+                .line_height(px(16.))
                 .text_color(muted)
                 .child(note)
         });
@@ -541,10 +544,10 @@ fn row(
 ) -> Stateful<Div> {
     let theme = cx.theme();
     let (muted, hover, text, tile) = (
-        theme.gray_700,
-        theme.alpha_at(0.10),
-        theme.gray_950,
-        theme.alpha_at(0.06),
+        theme.text_muted(),
+        theme.fill_strong(),
+        theme.text(),
+        theme.fill(),
     );
     let selector = item.value.clone();
     div()
@@ -558,9 +561,8 @@ fn row(
         .py(px(4.))
         .pl(px(if item.icon.is_some() { 6. } else { 10. }))
         .pr(px(8.))
-        .rounded(px(8.))
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
+        .rounded(radius::LG)
+        .text_variant(TextVariant::Heading)
         .when(item.disabled, |d| d.opacity(0.4))
         .when(!item.disabled, |d| {
             d.cursor_pointer()
@@ -575,7 +577,7 @@ fn row(
                     .items_center()
                     .justify_center()
                     .size(px(ICON_TILE))
-                    .rounded(px(6.))
+                    .rounded(radius::MD)
                     .bg(tile)
                     .child(Icon::new(name).size(16.).color(text)),
             )
@@ -592,7 +594,7 @@ fn row(
                     // and a row is as tall as it needs.
                     d.child(
                         div()
-                            .text_size(px(12.))
+                            .text_variant(TextVariant::Label)
                             .line_height(px(16.))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(muted)
@@ -673,12 +675,12 @@ pub enum Trigger {
     Outline,
     /// No border or fill, just a hover wash.
     Ghost,
-    /// A ghost on `alpha/5`, with a stronger wash under the pointer. For the project name.
+    /// A ghost on a fill, with a stronger wash under the pointer. For the project name.
     Subtle,
     /// The title of a device card: a ghost the height of the icons at the other end of the
     /// header, so the hover wash has the same air above and below as theirs.
     Title,
-    /// A 24 pt select on `alpha/5` that says what is picked, or the label while nothing is.
+    /// A 24 pt select on a fill that says what is picked, or the label while nothing is.
     Select,
     /// Only a chevron, 24 pt high and rounded on the right: the menu half of a split button.
     /// The label is its tooltip, since it shows no words.
@@ -687,21 +689,25 @@ pub enum Trigger {
     Pointer,
 }
 
-/// A select: 24 pt, 12 pt medium type, 6 pt corners, as a toggle or a segmented control.
-pub(crate) fn select_trigger(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
+/// A select: 12 pt medium type on a fill, as a toggle or a segmented control of its size.
+pub(crate) fn select_trigger(
+    id: impl Into<ElementId>,
+    size: ControlSize,
+    cx: &App,
+) -> Stateful<Div> {
     let theme = cx.theme();
-    let (background, hover, text) = (theme.alpha_at(0.05), theme.alpha_at(0.10), theme.gray_950);
+    let (background, hover, text) = (theme.fill(), theme.fill_strong(), theme.text());
     div()
         .id(id)
         .flex()
         .items_center()
         .gap(px(4.))
-        .h(px(24.))
+        .h(px(size.height()))
         .pl(px(8.))
         .pr(px(6.))
-        .rounded(px(6.))
+        .rounded(size.radius())
         .bg(background)
-        .text_size(px(12.))
+        .text_variant(TextVariant::Label)
         .line_height(px(14.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(text)
@@ -709,22 +715,21 @@ pub(crate) fn select_trigger(id: impl Into<ElementId>, cx: &App) -> Stateful<Div
         .hover(move |s| s.bg(hover))
 }
 
-/// The title of a card: 24 pt, 6 pt corners and `alpha/8` under the pointer, as the icons of
+/// The title of a card: 24 pt, 6 pt corners and a strong fill under the pointer, as the icons of
 /// the header. 14 pt medium, as a card title is.
 fn title_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
-    let (hover, text) = (theme.alpha_at(0.08), theme.gray_950);
+    let (hover, text) = (theme.fill_strong(), theme.text());
     div()
         .id(id)
         .flex()
         .items_center()
         .gap(px(4.))
-        .h(px(24.))
+        .h(px(ControlSize::Sm.height()))
         .pl(px(8.))
         .pr(px(6.))
-        .rounded(px(6.))
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
+        .rounded(ControlSize::Sm.radius())
+        .text_variant(TextVariant::Heading)
         .text_color(text)
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
@@ -732,15 +737,14 @@ fn title_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
 
 /// The chevron at the right of a split button, with the hover wash of its main half.
 fn chevron_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
-    let hover = cx.theme().alpha_at(0.05);
+    let hover = cx.theme().fill();
     div()
         .id(id)
         .flex()
         .items_center()
         .justify_center()
-        .h(px(24.))
-        .w(px(24.))
-        .rounded_r(px(6.))
+        .size(px(ControlSize::Sm.height()))
+        .rounded_r(ControlSize::Sm.radius())
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
 }
@@ -753,13 +757,12 @@ fn ghost_trigger(id: &'static str, fill: Hsla, hover: Hsla, cx: &App) -> Statefu
         .flex()
         .items_center()
         .gap(px(6.))
-        .h(px(TRIGGER_HEIGHT))
+        .h(px(TRIGGER_SIZE.height()))
         .px(px(8.))
-        .rounded(px(8.))
+        .rounded(TRIGGER_SIZE.radius())
         .bg(fill)
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().gray_950)
+        .text_variant(TextVariant::Heading)
+        .text_color(cx.theme().text())
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
 }
@@ -865,7 +868,7 @@ impl DropdownMenu {
         let input = cx.new(|cx| {
             let mut input = TextInput::new(cx)
                 .placeholder(placeholder.to_string())
-                .size(InputSize::Sm);
+                .size(ControlSize::Md);
             // Enter and escape are the field's own keys, so they come from it.
             let on_enter = menu.clone();
             input.set_on_submit(move |_, window, cx| {
@@ -1374,15 +1377,15 @@ impl Render for DropdownMenu {
         let trigger_element = match self.trigger {
             Trigger::Outline | Trigger::Pointer => trigger("dropdown-trigger", cx),
             Trigger::Ghost => {
-                let hover = cx.theme().alpha_at(0.05);
+                let hover = cx.theme().fill();
                 ghost_trigger("dropdown-trigger", Hsla::transparent_black(), hover, cx)
             }
             Trigger::Subtle => {
-                let (fill, hover) = (cx.theme().alpha_at(0.05), cx.theme().alpha_at(0.10));
+                let (fill, hover) = (cx.theme().fill(), cx.theme().fill_strong());
                 ghost_trigger("dropdown-trigger", fill, hover, cx)
             }
             Trigger::Title => title_trigger("dropdown-trigger", cx),
-            Trigger::Select => select_trigger("dropdown-trigger", cx),
+            Trigger::Select => select_trigger("dropdown-trigger", ControlSize::Sm, cx),
             Trigger::Chevron => chevron_trigger("dropdown-trigger", cx),
         };
         let (label, icon, chevron) = match self.trigger {
@@ -1402,8 +1405,8 @@ impl Render for DropdownMenu {
             Trigger::Chevron => (self.label.clone(), None, 12.),
         };
         let words = self.trigger != Trigger::Chevron;
-        let text = cx.theme().gray_950;
-        let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);
+        let text = cx.theme().text();
+        let (muted, ring) = (cx.theme().text_muted(), cx.theme().lavender);
 
         // A trigger in less room than its label, such as the title of a narrow card, gives way
         // and ends its label in an ellipsis. The chevron stays.

@@ -6,18 +6,18 @@ use gpui::{App, Global, Hsla, Rgba, rgb};
 /// The hues are for what DESIGN.md gives each of them, and for marks such as a track's colour.
 #[derive(Clone, Debug)]
 pub struct Theme {
-    pub gray_50: Hsla,
-    pub gray_100: Hsla,
-    pub gray_200: Hsla,
-    pub gray_300: Hsla,
-    pub gray_400: Hsla,
-    pub gray_500: Hsla,
-    pub gray_600: Hsla,
-    pub gray_700: Hsla,
-    pub gray_800: Hsla,
-    pub gray_900: Hsla,
-    pub gray_950: Hsla,
-    pub alpha: Hsla,
+    gray_50: Hsla,
+    gray_100: Hsla,
+    gray_200: Hsla,
+    gray_300: Hsla,
+    gray_400: Hsla,
+    gray_500: Hsla,
+    gray_600: Hsla,
+    gray_700: Hsla,
+    gray_800: Hsla,
+    gray_900: Hsla,
+    gray_950: Hsla,
+    alpha: Hsla,
     pub blue: Hsla,
     pub sapphire: Hsla,
     pub sky: Hsla,
@@ -178,8 +178,7 @@ impl Theme {
         })
     }
 
-    /// `alpha` at the given opacity, like Tailwind's `alpha/10`.
-    pub fn alpha_at(&self, opacity: f32) -> Hsla {
+    fn alpha_at(&self, opacity: f32) -> Hsla {
         let mut color = self.alpha;
         color.a = opacity;
         color
@@ -236,30 +235,50 @@ mod tests {
 
     /// 4.5 : 1 is the WCAG AA minimum for text under 18 pt, and every label here is 12 or 14 pt.
     #[test]
-    fn text_tokens_have_at_least_the_contrast_of_wcag_aa_on_their_surface() {
+    fn text_roles_have_at_least_the_contrast_of_wcag_aa_on_their_surface() {
         let theme = Theme::dark();
         let opaque = |color: Hsla| blend(color, color);
-        let window = opaque(theme.gray_100);
-        let card = opaque(theme.gray_200);
-        // A toggle that is off, or a segment that is not picked, on a card or on the window.
-        let off_on_card = blend(theme.gray_200, theme.alpha_at(0.05));
-        let off_on_window = blend(theme.gray_100, theme.alpha_at(0.05));
+        let (window, card) = (theme.background(), theme.surface());
         let cases = [
-            ("a control label on a card", theme.gray_800, card),
-            ("a value on a card", theme.gray_950, card),
-            ("muted text on the window", theme.gray_700, window),
-            ("an off toggle on a card", theme.gray_800, off_on_card),
-            ("an off toggle on the window", theme.gray_800, off_on_window),
+            ("a label on a card", theme.text_secondary(), opaque(card)),
+            ("a value on a card", theme.text(), opaque(card)),
+            (
+                "muted text on the window",
+                theme.text_muted(),
+                opaque(window),
+            ),
+            // A toggle that is off, or a segment that is not picked.
+            (
+                "a label on a fill on a card",
+                theme.text_secondary(),
+                blend(card, theme.fill()),
+            ),
+            (
+                "a label on a fill on the window",
+                theme.text_secondary(),
+                blend(window, theme.fill()),
+            ),
+            (
+                "a value on a strong fill on a card",
+                theme.text(),
+                blend(card, theme.fill_strong()),
+            ),
+            (
+                "a primary button",
+                theme.text_inverse(),
+                opaque(theme.text()),
+            ),
         ];
         for (what, text, background) in cases {
             let ratio = contrast(text, background);
             assert!(ratio >= 4.5, "{what}: {ratio:.2} : 1");
         }
-        // An icon needs 3 : 1 (WCAG 1.4.11). The power icon of a card that is off is `gray_700`.
-        let ratio = contrast(theme.gray_700, card);
-        assert!(ratio >= 3., "an off icon on a card: {ratio:.2} : 1");
-        assert!(contrast(theme.gray_600, card) < 3.);
-        // Why labels are not `gray_700`: on a card it is under the line.
-        assert!(contrast(theme.gray_700, card) < 4.5);
+        // An icon needs 3 : 1 (WCAG 1.4.11), and muted text on a card has that and no more:
+        // why a label there is `text_secondary`.
+        let muted_on_card = contrast(theme.text_muted(), opaque(card));
+        assert!(
+            (3. ..4.5).contains(&muted_on_card),
+            "{muted_on_card:.2} : 1"
+        );
     }
 }

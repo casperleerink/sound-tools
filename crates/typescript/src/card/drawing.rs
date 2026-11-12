@@ -144,7 +144,7 @@ impl Drawing<'_> {
             Props::Notice(props) => self.notice(id, props),
             Props::Overlay(props) => self.overlay(id, props, &entry.children),
             Props::Icon(IconProps { name, size, color }) => {
-                let color = color.map_or(self.cx.theme().gray_950, |color| color.0);
+                let color = color.map_or(self.cx.theme().text(), |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())
                     .size(size.unwrap_or(16.0))
                     .color(color)

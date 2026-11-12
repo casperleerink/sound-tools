@@ -3,14 +3,17 @@
 //! are off: a thread keeps its provider.
 
 use gpui::{
-    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent,
-    ScrollHandle, SharedString, Window, div, img, prelude::*, px, rgb,
+    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent, ScrollHandle,
+    SharedString, Window, div, img, prelude::*, px, rgb,
 };
 use sound_ui::ActiveTheme;
+use sound_ui::ControlSize;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::popover::{Align, Side, anchor, surface};
-use sound_ui::components::text_input::{Arrow, InputSize, TextInput};
+use sound_ui::components::text_input::{Arrow, TextInput};
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::radius;
+use sound_ui::{TextVariant, Typography};
 
 use crate::{Model, Provider};
 
@@ -86,7 +89,7 @@ impl ModelPicker {
         let search = cx.new(|cx| {
             TextInput::new(cx)
                 .placeholder("Search models")
-                .size(InputSize::Sm)
+                .size(ControlSize::Md)
                 .bare(true)
         });
         let weak = cx.weak_entity();
@@ -218,7 +221,7 @@ impl ModelPicker {
 
     fn rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (selected, hover) = (theme.alpha_at(0.10), theme.alpha_at(0.05));
+        let (selected, hover) = (theme.selected(), theme.fill());
         let (locked, ring) = (self.shown.locked, theme.lavender);
         let icons = self.shown.offered.iter().map(|offered| {
             let provider = offered.provider;
@@ -237,7 +240,7 @@ impl ModelPicker {
                 .items_center()
                 .justify_center()
                 .size(px(32.))
-                .rounded(px(8.))
+                .rounded(radius::LG)
                 .when(self.viewing == Some(provider), |rail| rail.bg(selected))
                 .when(off, |rail| rail.opacity(0.4))
                 .when(!off, |rail| {
@@ -274,7 +277,7 @@ impl ModelPicker {
             .gap(px(4.))
             .p(px(6.))
             .border_r_1()
-            .border_color(theme.alpha_at(0.10))
+            .border_color(theme.border_strong())
             .children(icons)
     }
 
@@ -287,7 +290,7 @@ impl ModelPicker {
 
     fn list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, strong, highlight) = (theme.gray_700, theme.gray_950, theme.alpha_at(0.10));
+        let (muted, strong, highlight) = (theme.text_muted(), theme.text(), theme.fill_strong());
         let viewing = self.viewing;
         let picked = self.offered(viewing).map(|offered| offered.picked.clone());
         let rows: Vec<_> = (self.listed(cx).into_iter().enumerate())
@@ -313,7 +316,7 @@ impl ModelPicker {
                     .gap(px(8.))
                     .px(px(10.))
                     .py(px(6.))
-                    .rounded(px(6.))
+                    .rounded(radius::MD)
                     .cursor_pointer()
                     .when(index == self.highlighted, |row| row.bg(highlight))
                     .hover(move |s| s.bg(highlight))
@@ -332,7 +335,7 @@ impl ModelPicker {
                             .children(second.map(|second| {
                                 div()
                                     .truncate()
-                                    .text_size(px(12.))
+                                    .text_variant(TextVariant::Label)
                                     .text_color(muted)
                                     .child(second)
                             })),
@@ -365,7 +368,7 @@ impl ModelPicker {
     }
 
     fn panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let border = cx.theme().alpha_at(0.10);
+        let border = cx.theme().border_strong();
         let search = div()
             .flex()
             .items_center()
@@ -374,12 +377,12 @@ impl ModelPicker {
             .h(px(40.))
             .border_b_1()
             .border_color(border)
-            .child(Icon::new("search").size(14.).color(cx.theme().gray_700))
+            .child(Icon::new("search").size(14.).color(cx.theme().text_muted()))
             .child(div().flex_1().child(self.search.clone()));
         surface(cx)
             .id("model-picker")
             .w(px(WIDTH))
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .flex()
             .on_mouse_down_out(cx.listener(|picker, _, window, cx| picker.close(window, cx)))
             // One provider needs no rail.
@@ -421,10 +424,10 @@ impl Render for ModelPicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (text, muted, ring, hover) = (
-            theme.gray_950,
-            theme.gray_700,
+            theme.text(),
+            theme.text_muted(),
             theme.lavender,
-            theme.alpha_at(0.05),
+            theme.fill(),
         );
         let logo = self.shown.current.map(|provider| logo(provider, 14.));
         let trigger = div()
@@ -437,12 +440,11 @@ impl Render for ModelPicker {
             .min_w_0()
             .h(px(32.))
             .px(px(8.))
-            .rounded(px(8.))
+            .rounded(radius::LG)
             .border_1()
             .border_color(gpui::transparent_black())
             .focus_visible(move |s| s.border_color(ring))
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
+            .text_variant(TextVariant::Heading)
             .text_color(text)
             .cursor_pointer()
             .hover(move |s| s.bg(hover))

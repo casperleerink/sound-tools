@@ -107,7 +107,7 @@ struct CardTitle {
 impl Render for CardTitle {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (hover, muted) = (theme.alpha_at(0.08), theme.gray_700);
+        let (hover, muted) = (theme.fill_strong(), theme.text_muted());
         let title = div()
             .id("card-title")
             .debug_selector({
@@ -124,7 +124,7 @@ impl Render for CardTitle {
             .rounded(px(6.))
             .text_size(px(14.))
             .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(theme.gray_950)
+            .text_color(theme.text())
             .child(div().min_w_0().truncate().child(self.name.clone()));
         match self.on_press.clone() {
             Some(on_press) => {

@@ -6,6 +6,7 @@ use gpui::{
     App, Context, FocusHandle, KeyBinding, ScrollHandle, Window, actions, div, prelude::*, px,
 };
 use sound_ui::{ActiveTheme, typography};
+use sound_ui::{TextVariant, Typography};
 
 /// `focus` shows one of each control that the keyboard reaches: tab gives each the focus in
 /// turn, and one window has one focus, so its snapshot is taken once per tab.
@@ -67,10 +68,10 @@ impl Render for Gallery {
             .track_scroll(&self.scroll)
             .overflow_y_scroll()
             .size_full()
-            .bg(theme.gray_100)
-            .text_color(theme.gray_950)
+            .bg(theme.background())
+            .text_color(theme.text())
             .font(typography::ui_font())
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .p(px(40.))
             .flex()
             .flex_col()

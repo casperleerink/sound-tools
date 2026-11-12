@@ -30,7 +30,8 @@ use std::path::PathBuf;
 use gpui::{AnyElement, Context, Entity, FocusHandle, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Changes, Instance, ProjectEvent};
 use sound_media::{Cached, Imported, Info};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::{CELL_WIDTH, Cell};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Handle};
@@ -496,7 +497,7 @@ impl SamplerView {
         let button = Button::new("choose-file", "Choose file")
             .debug_selector(|| "choose-file".to_string())
             .variant(ButtonVariant::Subtle)
-            .size(ButtonSize::Sm)
+            .size(ControlSize::Md)
             .focus_handle(&self.choose_focus)
             .on_click(cx.listener(|view, _, _, cx| view.choose_file(cx)));
         let drop = match has_sample {
@@ -626,7 +627,7 @@ impl SamplerView {
                 )
                 .debug_selector(|| "download".to_string())
                 .variant(ButtonVariant::Subtle)
-                .size(ButtonSize::Sm)
+                .size(ControlSize::Md)
                 .on_click(cx.listener(move |view, _, _, cx| view.download(entry, cx))),
             ),
             None => display,

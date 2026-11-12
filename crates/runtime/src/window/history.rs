@@ -22,7 +22,9 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::KeyboardFocus;
+use sound_ui::radius;
 use sound_ui::{ActiveTheme, Session, Shortcuts, Theme};
+use sound_ui::{TextVariant, Typography};
 
 use super::app_keys;
 
@@ -495,8 +497,7 @@ impl HistoryPanel {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
+                .text_variant(TextVariant::Heading)
                 .text_color(colors.text)
                 .child(card.line.title())
                 .into_any_element(),
@@ -510,7 +511,7 @@ impl HistoryPanel {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_variant(TextVariant::Label)
                     .text_color(colors.muted)
                     .child(ago(card.time, SystemTime::now())),
             )
@@ -526,7 +527,7 @@ impl HistoryPanel {
             .flex()
             .items_center()
             .gap(px(4.))
-            .text_size(px(12.))
+            .text_variant(TextVariant::Label)
             .text_color(colors.muted)
             .child("from")
             .child(dot(colors.lane(from.color), 6.))
@@ -576,7 +577,7 @@ impl HistoryPanel {
                     colors,
                     cx,
                 )
-                .rounded_t(px(8.))
+                .rounded_t(radius::LG)
                 .pt(px(12.))
                 .pb(px(8.))
                 .child(self.title(&open.card, colors))
@@ -618,7 +619,7 @@ impl HistoryPanel {
                                 .gap(px(8.))
                                 .h(px(28.))
                                 .px(px(8.))
-                                .rounded(px(4.))
+                                .rounded(radius::SM)
                                 .when(here, |row| row.bg(colors.current_row))
                                 .hover(|style| style.bg(colors.hover_row))
                                 .child(
@@ -626,14 +627,14 @@ impl HistoryPanel {
                                         .flex_1()
                                         .min_w_0()
                                         .truncate()
-                                        .text_size(px(13.))
+                                        .text_variant(TextVariant::Label)
                                         .text_color(if here { colors.text } else { colors.body })
                                         .child(change.label.clone()),
                                 )
                                 .child(
                                     div()
                                         .flex_none()
-                                        .text_size(px(12.))
+                                        .text_variant(TextVariant::Label)
                                         .text_color(colors.muted)
                                         .child(right),
                                 )
@@ -653,9 +654,9 @@ impl HistoryPanel {
                             .gap(px(6.))
                             .h(px(28.))
                             .px(px(8.))
-                            .rounded(px(4.))
+                            .rounded(radius::SM)
                             .hover(|style| style.bg(colors.hover_row))
-                            .text_size(px(12.))
+                            .text_variant(TextVariant::Label)
                             .text_color(colors.muted)
                             .child(dot(colors.lane(*color), 6.))
                             .child(
@@ -690,10 +691,10 @@ impl HistoryPanel {
                                 .items_center()
                                 .h(px(28.))
                                 .px(px(8.))
-                                .rounded(px(4.))
+                                .rounded(radius::SM)
                                 .hover(|style| style.bg(colors.hover_row))
                                 .tooltip(move |_, cx| tooltip.clone().view(cx))
-                                .text_size(px(12.))
+                                .text_variant(TextVariant::Label)
                                 .text_color(colors.muted)
                                 .child(words)
                                 .into_any_element(),
@@ -716,14 +717,14 @@ impl HistoryPanel {
                     .pt(px(4.))
                     .pb(px(10.))
                     .pl(px(32.))
-                    .text_size(px(12.))
+                    .text_variant(TextVariant::Label)
                     .text_color(colors.muted)
                     .hover(|style| style.text_color(colors.text))
                     .child("Show more changes")
             } else {
                 div().id("history-open-end").h(px(8.))
             };
-            let footer = card(footer).rounded_b(px(8.));
+            let footer = card(footer).rounded_b(radius::LG);
             if open.more {
                 keyed(Item::More, footer, &mut rows);
             } else {
@@ -749,7 +750,7 @@ impl HistoryPanel {
                 .mx(px(8.))
                 .px(px(12.))
                 .py(px(10.))
-                .rounded(px(8.))
+                .rounded(radius::LG)
                 .hover(|style| style.bg(colors.hover_row))
                 .child(self.title(card, colors))
                 .children(self.from(card, colors, cx));
@@ -773,8 +774,8 @@ impl HistoryPanel {
                 .mt(px(8.))
                 .px(px(12.))
                 .py(px(8.))
-                .rounded(px(8.))
-                .text_size(px(12.))
+                .rounded(radius::LG)
+                .text_variant(TextVariant::Label)
                 .text_color(colors.muted)
                 .hover(|style| style.text_color(colors.text))
                 .child(words);
@@ -791,7 +792,7 @@ fn label(text: &'static str, colors: &Colors) -> impl IntoElement {
         .px(px(20.))
         .pt(px(20.))
         .pb(px(6.))
-        .text_size(px(12.))
+        .text_variant(TextVariant::Label)
         .text_color(colors.muted)
         .child(text)
 }
@@ -945,12 +946,12 @@ impl Colors {
                 theme.flamingo,
                 theme.sapphire,
             ],
-            text: theme.gray_950,
-            body: theme.gray_800,
-            muted: theme.gray_700,
-            card: theme.alpha_at(0.04),
-            current_row: theme.alpha_at(0.06),
-            hover_row: theme.alpha_at(0.03),
+            text: theme.text(),
+            body: theme.text_secondary(),
+            muted: theme.text_muted(),
+            card: theme.fill(),
+            current_row: theme.selected(),
+            hover_row: theme.fill(),
             ring: theme.lavender,
         }
     }
@@ -999,7 +1000,7 @@ impl Render for HistoryPanel {
                     div()
                         .px(px(24.))
                         .py(px(16.))
-                        .text_size(px(13.))
+                        .text_variant(TextVariant::Body)
                         .text_color(colors.muted)
                         .child(message),
                 );
