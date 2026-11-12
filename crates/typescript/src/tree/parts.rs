@@ -1,4 +1,5 @@
-//! The parts of a device card a view names: its display, its cells and a row of steps.
+//! The parts of a device card a view names: its display, its cells, a row of steps and a grid
+//! of them.
 
 use serde::Deserialize;
 
@@ -51,5 +52,13 @@ props! {
         /// A row that changes another row, such as accents: quieter than a row of notes.
         secondary: bool,
         on_change: bool,
+    }
+}
+
+props! {
+    /// Rows of steps one under the other, then the controls of the whole of it beside them.
+    GridProps / GridChange {
+        /// What each column of the controls of its rows is, said once over the first row.
+        columns: Vec<String>,
     }
 }

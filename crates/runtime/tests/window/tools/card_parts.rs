@@ -70,6 +70,20 @@ fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on(
     window.undo();
     assert_eq!(window.record("sequence")["steps"], steps([0, 1, 1, 1]));
     assert_eq!(window.record("sequence")["heard"], 1);
+    // Up and down change how strong the step they are on is: a tenth, a fiftieth with shift.
+    // Each from what the record holds, also before the row drew the key before.
+    for key in ["down", "down", "shift-down"] {
+        press_key(&mut window, key);
+    }
+    window.until("the last step softer", |window| {
+        window.record("sequence")["steps"] == serde_json::json!([0, 1, 1, 0.78])
+    });
+    for key in ["left", "left", "left", "up"] {
+        press_key(&mut window, key);
+    }
+    window.until("the first step on, soft", |window| {
+        window.record("sequence")["steps"] == serde_json::json!([0.1, 1, 1, 0.78])
+    });
     assert_eq!(window.problems(), []);
 }
 
@@ -260,6 +274,50 @@ fn rows_of_steps_stand_where_a_display_does_and_a_view_of_no_own_shows_them_for_
 
 /// A page with a transport in its header and no action of its own: a panel as wide as what is
 /// in it, and after a click on that one that grows.
+/// A drum machine: two rows of steps of different lengths, each with its level, and a swing of
+/// the whole thing.
+const BEATS: &str = r#"import { Controls, h, Knob, number, pattern, StepGrid, Steps, tool } from "./sdk";
+
+const level = () => number({ min: 0, max: 1, default: 0.5 });
+
+tool({
+  name: "beats",
+  title: "Beats",
+  when: "A test",
+  doc: "Rows of steps with a knob each.",
+  state: {
+    kick: pattern({ length: 8, min: 0, max: 1, default: 0 }),
+    hat: pattern({ length: 4, min: 0, max: 1, default: 0 }),
+    kick_level: level(), hat_level: level(), swing: level(),
+  },
+  sound: () => 0,
+  view: () =>
+    h(StepGrid, { columns: ["Level"] },
+      h(Steps, { field: "kick" }, h(Knob, { field: "kick_level", text: "value" })),
+      h(Steps, { field: "hat" }, h(Knob, { field: "hat_level", text: "value" })),
+      h(Controls, {}, h(Knob, { field: "swing" }))),
+});
+"#;
+
+/// A grid of steps lines up what a view lined up by hand: the controls of rows of different
+/// lengths stand in one column, and the controls of the whole thing start level with the
+/// first row, under the line that names the columns.
+#[gpui::test]
+fn a_grid_of_steps_lines_up_the_controls_of_its_rows_and_of_the_whole(cx: &mut TestAppContext) {
+    let mut window = page(cx, "beats", BEATS);
+    window.until_found("space-knob-swing");
+    let mut bounds = |selector: &str| window.bounds(selector).unwrap();
+    let [kick, hat] = ["kick", "hat"].map(|drum| bounds(&format!("space-knob-{drum}_level")));
+    assert_eq!(kick.left(), hat.left());
+    assert!(hat.top() > kick.bottom());
+    let [row, swing] = [bounds("steps-steps-kick"), bounds("space-knob-swing")];
+    assert_eq!(swing.top(), kick.top());
+    assert_eq!(row.top(), kick.top());
+    assert!(swing.left() > kick.right());
+    // The names of the columns stand over the first row.
+    assert!(bounds("steps-steps-kick").top() > bounds("grid").top());
+}
+
 const DRONE: &str = r#"import { h, Page, Panel, Show, tool, Transport } from "./sdk";
 
 tool({

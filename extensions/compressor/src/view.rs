@@ -20,7 +20,7 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::dynamics_display::{Levels, Reading};
+use sound_ui::components::dynamics_display::{CURVE_HEIGHT, Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     KnobRange, ParameterKnob, decibels_readout, milliseconds_readout, percent_readout, short,
@@ -119,10 +119,13 @@ fn curve(state: &CompressorState) -> Vec<Point<f32>> {
 /// The ratio handle sits on the curve at its right end, at an input of 0 dBFS, where the output
 /// is `threshold (1 - 1 / ratio)`: a straight line in `1 / ratio` over the height. So the handle
 /// moves `1 / ratio`, and its travel is that line stretched over the height, from what puts it
-/// at the bottom to 1 at the top. `None` when the threshold is so close to 0 dBFS that the line
-/// above it has no length to drag.
+/// at the bottom to 1 at the top of the curve. `None` when the threshold is so close to 0 dBFS
+/// that the line above it has no length to drag.
 fn inverse_ratio_travel(threshold_db: f32) -> Option<KnobRange> {
-    (threshold_db < -1.).then(|| KnobRange::linear(1. - LEVELS.bottom_db / threshold_db, 1.))
+    (threshold_db < -1.).then(|| {
+        let lowest = 1. - LEVELS.bottom_db / threshold_db;
+        KnobRange::linear(lowest, lowest + (1. - lowest) / CURVE_HEIGHT)
+    })
 }
 
 pub struct CompressorView {

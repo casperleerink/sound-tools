@@ -12,6 +12,7 @@ use gpui::{
 use runtime::window::export_settings::ExportSettings;
 use sound_core::Ticks;
 
+use super::gestures::press_key;
 use super::song::open_song;
 use super::{Opened, write_sine};
 use crate::song::{ACROSS, BAR, HEADER, LEAD, song_files};
@@ -811,7 +812,7 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
             looped.range.end.0 / BAR,
         )
     };
-    // The repeat's bar is at the foot of the ruler, over bars 1 to 4 until it moves.
+    // The repeat's bar is at the foot of the ruler, once a drag over the ruler made one.
     let ruler = window.space_at("ruler");
     let on_bar =
         |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(38.));
@@ -825,8 +826,14 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
     };
     let bar = BAR as f32 * ACROSS;
 
+    // None yet: a click where the bar will be plays from there and repeats nothing.
     window.click(on_bar(2 * BAR, 0.));
+    window.wait_for_bun();
+    assert!(!looped(&mut window).0);
+    drag(&mut window, on_bar(0, 0.), 4. * bar);
     window.until("the repeat on", |window| looped(window) == (true, 0, 4));
+    // Its bar shows once the song heard of it.
+    window.wait_for_bun();
     window.click(on_bar(2 * BAR, 0.));
     window.until("the repeat off", |window| !looped(window).0);
     window.click(on_bar(2 * BAR, 0.));
@@ -1761,23 +1768,105 @@ fn the_head_of_the_note_editor_says_a_note_only_while_one_is_chosen(cx: &mut Tes
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     let editor = window.editor("t00/c00");
-    assert!(window.find("space-note-readout").is_none());
+    assert!(window.find("div-note-readout").is_none());
     let note = editor.at(30., 60);
     window.click(note);
-    window.until_found("space-note-readout");
+    window.until_found("div-note-readout");
     // A key up, still held.
     window.press(note);
     window.drag_to(note - point(px(0.), px(EDITOR_ROW)));
-    assert!(window.find("space-note-readout").is_some());
+    assert!(window.find("div-note-readout").is_some());
     window.release(note - point(px(0.), px(EDITOR_ROW)));
     window.until("the note moved", |window| {
         window.record("song/t00/c00")["notes"][0]["pitch"] == 61
     });
-    window.until_found("space-note-readout");
+    window.until_found("div-note-readout");
     window.keys("escape");
     window.until("the note let go", |window| {
-        window.find("space-note-readout").is_none()
+        window.find("div-note-readout").is_none()
     });
+    assert_eq!(window.problems(), []);
+}
+
+/// A value in the head of the note editor is typed in its place: a click on it opens it, and so
+/// does enter while it has the focus. What is typed lands as one undo step, as the head says
+/// it: a pitch by its name, a start as bar, beat and sixteenth of the song, a length in notes.
+/// What it cannot read changes nothing.
+#[gpui::test]
+fn the_values_in_the_head_of_the_note_editor_are_typed(cx: &mut TestAppContext) {
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        let note = serde_json::json!({ "start": 0, "length": 960, "pitch": 60, "velocity": 100 });
+        // The clip starts at bar 2.
+        record["state"] = serde_json::json!({ "start": BAR, "length": BAR, "notes": [note] });
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR + BAR / 2, 0);
+    window.double_click(clip);
+    let editor = window.editor("t00/c00");
+    window.click(editor.at(30., 60));
+    let note = |window: &mut Opened| window.record("song/t00/c00")["notes"][0].clone();
+    let typing = |window: &mut Opened, value: &str| {
+        window.find(&format!("space-note-{value}-value")).is_none()
+    };
+
+    let velocity = window.until_found("space-note-velocity-value");
+    window.click(velocity);
+    window.until("the velocity opens", |window| typing(window, "velocity"));
+    window.cx.simulate_input("64");
+    window.keys("enter");
+    window.until("the velocity typed", |window| {
+        note(window)["velocity"] == 64
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change velocity"));
+    window.until_found("space-note-velocity-value");
+
+    // The pitch by its name, and the start as the song counts it: beat 3 of bar 2, two beats
+    // into the clip.
+    for (value, typed, field, lands) in [
+        ("pitch", "f#4", "pitch", 66),
+        ("start", "2.3", "start", 1920),
+        ("length", "3/16", "length", 720),
+    ] {
+        let at = window.until_found(&format!("space-note-{value}-value"));
+        window.click(at);
+        window.until("the value opens", |window| typing(window, value));
+        window.cx.simulate_input(typed);
+        window.keys("enter");
+        window.until(typed, |window| note(window)[field] == lands);
+    }
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Resize notes"));
+
+    // The keys reach the values too: they are the tab stops before the editor's three buttons
+    // and its lane picker, the last of the window, and enter opens the one with the focus.
+    window.focus_the_window();
+    for _ in 0..5 {
+        press_key(&mut window, "shift-tab");
+    }
+    press_key(&mut window, "enter");
+    window.until("the velocity opens by the keys", |window| {
+        typing(window, "velocity")
+    });
+    window.cx.simulate_input("90");
+    window.keys("enter");
+    window.until("the velocity typed again", |window| {
+        note(window)["velocity"] == 90
+    });
+
+    // A bar past the clip, and no pitch at all: the note stays.
+    let before = note(&mut window);
+    for (value, typed) in [("start", "9.1.1"), ("pitch", "loud")] {
+        let at = window.until_found(&format!("space-note-{value}-value"));
+        window.click(at);
+        window.until("the value opens", |window| typing(window, value));
+        window.cx.simulate_input(typed);
+        window.keys("enter");
+        window.until_found(&format!("space-note-{value}-value"));
+        window.wait_for_bun();
+    }
+    assert_eq!(note(&mut window), before);
     assert_eq!(window.problems(), []);
 }
 
@@ -1863,43 +1952,87 @@ fn the_returns_and_the_master_stay_in_view_when_the_tracks_do_not_fit(cx: &mut T
     assert!(strip_of(&mut window, "ret-a").right() < master.left());
 }
 
-/// A track's sends are one column of its panel however many returns the song has: more than
-/// fit scroll down, and the cut one fades.
-#[gpui::test]
-fn the_sends_of_a_panel_stay_one_column_that_scrolls(cx: &mut TestAppContext) {
+/// The song of one track, which sends into its first return `ret-a`, with a send into each
+/// return of `letters` too: its second, `ret-b`, and new ones.
+fn files_with_sends(letters: &[&str]) -> Vec<(String, String)> {
     let mut files = song_files(1, 1);
-    for letter in ["c", "d", "e"] {
-        let record = |tool: &str, state: serde_json::Value| {
-            serde_json::json!({ "tool": tool, "state": state }).to_string()
-        };
-        let bus = record("bus", serde_json::json!({ "title": letter }));
-        let fader = record("fader", serde_json::json!({}));
-        let chain = record("chain", serde_json::json!({}));
-        files.extend([
-            (format!("state/song/ret-{letter}/instance.json"), bus),
-            (format!("state/song/ret-{letter}/mix.json"), fader.clone()),
+    let record = |tool: &str, state: serde_json::Value| {
+        serde_json::json!({ "tool": tool, "state": state }).to_string()
+    };
+    for letter in letters {
+        files.push((
+            format!("state/song/t00/send-ret-{letter}.json"),
+            record("fader", serde_json::json!({})),
+        ));
+        if *letter == "b" {
+            continue;
+        }
+        for (path, tool, state) in [
             (
-                format!("state/song/ret-{letter}/chain/instance.json"),
-                chain,
+                "instance.json",
+                "bus",
+                serde_json::json!({ "title": letter }),
             ),
-            (format!("state/song/t00/send-ret-{letter}.json"), fader),
-        ]);
+            ("mix.json", "fader", serde_json::json!({})),
+            ("chain/instance.json", "chain", serde_json::json!({})),
+        ] {
+            files.push((
+                format!("state/song/ret-{letter}/{path}"),
+                record(tool, state),
+            ));
+        }
     }
-    let mut window = open_files(cx, &files);
+    files
+}
+
+/// How much the scrolling div `key` of the song's page fades at its start and its end.
+fn fades_of(window: &mut Opened, key: &str) -> Option<[f32; 2]> {
+    let shell = window.shell.clone();
+    (window.cx).update(|_, cx| {
+        let page = shell.read(cx).main_view().cloned().unwrap();
+        sound_typescript::soft_edges(&page, key, cx)
+    })
+}
+
+/// A track's sends are one column of its panel, a row each: five show whole, with no luck in
+/// where they are cut. More scroll down in a column as wide, and the cut one fades.
+#[gpui::test]
+fn the_sends_of_a_panel_show_five_whole_and_then_scroll(cx: &mut TestAppContext) {
+    // The song's own send, into its first return, and four more.
+    let mut window = open_files(cx, &files_with_sends(&["b", "c", "d", "e"]));
     window.wait_for_bun();
     window.until_found("div-sends");
-    // As wide as one of its knobs.
-    let knob = window.bounds("space-knob-t00/send-ret-a.gain_db").unwrap();
-    assert_eq!(
-        window.bounds("div-sends").unwrap().size.width,
-        knob.size.width
-    );
-    let shell = window.shell.clone();
-    let fades = (window.cx).update(|_, cx| {
-        let page = shell.read(cx).main_view().cloned().unwrap();
-        sound_typescript::soft_edges(&page, "sends", cx)
-    });
-    assert_eq!(fades, Some([0., 1.]));
+    let column = window.bounds("div-sends").unwrap();
+    assert_eq!(fades_of(&mut window, "sends"), Some([0., 0.]));
+    assert_eq!(window.problems(), []);
+    drop(window);
+
+    let mut window = open_files(cx, &files_with_sends(&["b", "c", "d", "e", "f", "g"]));
+    window.wait_for_bun();
+    window.until_found("div-sends");
+    let longer = window.bounds("div-sends").unwrap();
+    assert_eq!(longer.size.width, column.size.width);
+    assert_eq!(fades_of(&mut window, "sends"), Some([0., 1.]));
+    assert_eq!(window.problems(), []);
+}
+
+/// The mixer is tall enough for the send rows of two returns: both show whole, and it does not
+/// scroll.
+#[gpui::test]
+fn the_mixer_shows_the_sends_into_two_returns_whole(cx: &mut TestAppContext) {
+    let mut window = open_files(cx, &files_with_sends(&["b"]));
+    window.wait_for_bun();
+    strip_of(&mut window, "t00");
+    let mixer = window.bounds("div-mixer").unwrap();
+    for back in ["ret-a", "ret-b"] {
+        let dial = window.until_found(&format!("space-knob-t00/send-{back}.gain_db"));
+        let dial = Bounds::centered_at(dial, gpui::size(px(28.), px(28.)));
+        assert!(
+            dial.bottom() <= mixer.bottom(),
+            "{back}: {dial:?} {mixer:?}"
+        );
+    }
+    assert_eq!(fades_of(&mut window, "mixer"), Some([0., 0.]));
     assert_eq!(window.problems(), []);
 }
 

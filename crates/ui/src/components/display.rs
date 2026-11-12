@@ -34,6 +34,8 @@
 //!
 //! A display can also show a waveform under its curve, with the part outside two lines shaded
 //! and a green line where the sound plays, see [`waveform_display`](super::waveform_display).
+//!
+//! A device with nothing to draw has no display: a [`ControlStrip`] takes its place.
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -257,7 +259,7 @@ pub struct Display {
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
-    /// How far from the right edge the line stands, see [`Display::caption_at_right`].
+    /// How far from the right edge the line stands there, see [`Display::caption_at_right`].
     caption_right: Option<f32>,
     controls: Vec<AnyElement>,
     strip: bool,
@@ -450,8 +452,8 @@ impl Display {
         self
     }
 
-    /// The line stands at the right of the foot, `inset` from the edge, wherever the handles
-    /// are: beside what it speaks of there, such as the bar of a reduction.
+    /// The line takes the right side first, `inset` from the edge: beside what it speaks of
+    /// there, such as the bar of a reduction.
     pub fn caption_at_right(mut self, inset: f32) -> Self {
         self.caption_right = Some(inset);
         self
@@ -758,17 +760,19 @@ const CAPTION_PLACES: [CaptionPlace; 6] = [
 ];
 
 /// The first place where a line `plate` wide lies over nothing of `taken`: what the composer
-/// drags, as points of the drawing from its top left, each with the room it keeps clear. The
-/// middle of the foot when every place is taken.
+/// drags, as points of the drawing from its top left, each with the room it keeps clear. With
+/// `at_right` the right side comes first, that far from the edge ([`Display::caption_at_right`]).
+/// The first place when every place is taken.
 fn caption_place(
     plate: f32,
     (width, height): (f32, f32),
     taken: &[(Point<f32>, f32)],
+    at_right: Option<f32>,
 ) -> CaptionPlace {
     let free = |(top, side): &CaptionPlace| {
         let left = match side {
             Side::Middle => (width - plate) / 2.,
-            Side::Right => width - CAPTION_INSET - plate,
+            Side::Right => width - at_right.unwrap_or(CAPTION_INSET) - plate,
             Side::Left => CAPTION_INSET,
         };
         let above = match top {
@@ -782,7 +786,11 @@ fn caption_place(
                 || place.y > above + CAPTION_PLATE + clear
         })
     };
-    (CAPTION_PLACES.into_iter().find(free)).unwrap_or(CAPTION_PLACES[0])
+    let right_first = [(false, Side::Right), (true, Side::Right)];
+    let right_first = right_first.into_iter().filter(|_| at_right.is_some());
+    let mut places = right_first.chain(CAPTION_PLACES).peekable();
+    let first = places.peek().copied();
+    places.find(free).or(first).unwrap_or(CAPTION_PLACES[0])
 }
 
 /// The curve as points a few points of the display apart, each with the room its line takes.
@@ -1067,18 +1075,15 @@ impl RenderOnce for Display {
             (None, None) => None,
         };
         let caption = caption.map(|caption| {
-            let (top, side, inset) = match self.caption_right {
-                Some(inset) => (false, Side::Right, inset),
-                None => {
-                    let dots = (handles.iter().filter(|(handle, _)| !handle.area))
-                        .map(|(handle, _)| (handle.x.position(), handle.y.position()))
-                        .map(|(x, y)| (point(x * size.0, (1. - y) * size.1), HANDLE_TARGET / 2.));
-                    let taken: Vec<_> = dots.chain(along_curve(&self.curve, size)).collect();
-                    let plate =
-                        caption.chars().count() as f32 * CAPTION_LETTER + 2. * CAPTION_PADDING;
-                    let (top, side) = caption_place(plate, size, &taken);
-                    (top, side, CAPTION_INSET)
-                }
+            let dots = (handles.iter().filter(|(handle, _)| !handle.area))
+                .map(|(handle, _)| (handle.x.position(), handle.y.position()))
+                .map(|(x, y)| (point(x * size.0, (1. - y) * size.1), HANDLE_TARGET / 2.));
+            let taken: Vec<_> = dots.chain(along_curve(&self.curve, size)).collect();
+            let width = caption.chars().count() as f32 * CAPTION_LETTER + 2. * CAPTION_PADDING;
+            let (top, side) = caption_place(width, size, &taken, self.caption_right);
+            let inset = match side {
+                Side::Right => self.caption_right.unwrap_or(CAPTION_INSET),
+                Side::Middle | Side::Left => CAPTION_INSET,
             };
             // For tests, which find the line by what it says: `caption-<words>`.
             let selector = caption.clone();
@@ -1227,12 +1232,6 @@ impl TextDisplay {
         self
     }
 
-    /// A control in the strip above the words, as on [`Display::control`].
-    pub fn control(mut self, control: impl IntoElement) -> Self {
-        self.display = self.display.control(control);
-        self
-    }
-
     /// Takes a file dropped from the file manager, see [`FileDrop`].
     pub fn drop_file(mut self, drop: FileDrop) -> Self {
         self.drop = Some(drop);
@@ -1267,6 +1266,70 @@ impl RenderOnce for TextDisplay {
     }
 }
 
+/// The place of a display on the card of a device with nothing to draw, such as a plugin, which
+/// draws itself in a window of its own. No inset: only the controls a strip would hold, on the
+/// line of the knobs beside them, and under them what is wrong, in words. Two controls of two
+/// cells each fill it.
+#[derive(IntoElement, Default)]
+pub struct ControlStrip {
+    controls: Vec<AnyElement>,
+    message: Option<SharedString>,
+}
+
+impl ControlStrip {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A control, after those it has.
+    pub fn control(mut self, control: impl IntoElement) -> Self {
+        self.controls.push(control.into_any_element());
+        self
+    }
+
+    /// The line under the controls. A long one wraps.
+    pub fn message(mut self, message: impl Into<SharedString>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+}
+
+impl RenderOnce for ControlStrip {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Under controls the words start on the label line of a cell. Alone, their first line
+        // is centred where the controls would be.
+        let above = match self.controls.is_empty() {
+            true => (STRIP_HEIGHT - CAPTION_HEIGHT) / 2.,
+            false => 2.,
+        };
+        let controls = (!self.controls.is_empty()).then(|| {
+            div()
+                .flex_none()
+                .h(px(STRIP_HEIGHT))
+                .flex()
+                .items_center()
+                .gap(px(GAP))
+                .children(self.controls)
+        });
+        let message = self.message.map(|message| {
+            div()
+                .pt(px(above))
+                .text_variant(TextVariant::Label)
+                .line_height(px(CAPTION_HEIGHT))
+                .text_color(cx.theme().text_secondary())
+                .child(message)
+        });
+        div()
+            .flex_none()
+            .w(px(WIDTH))
+            .h(px(INSET_HEIGHT))
+            .flex()
+            .flex_col()
+            .children(controls)
+            .children(message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1276,16 +1339,27 @@ mod tests {
     #[test]
     fn the_line_takes_the_first_place_that_is_over_no_handle() {
         let handle = |x: f32, y: f32| (point(x, y), HANDLE_TARGET / 2.);
-        assert_eq!(caption_place(100., SIZE, &[]), (false, Side::Middle));
+        assert_eq!(caption_place(100., SIZE, &[], None), (false, Side::Middle));
         // A handle up in the drawing is in no place of the line.
         let high = [handle(WIDTH / 2., 60.)];
-        assert_eq!(caption_place(100., SIZE, &high), (false, Side::Middle));
+        assert_eq!(
+            caption_place(100., SIZE, &high, None),
+            (false, Side::Middle)
+        );
         let foot = [handle(WIDTH / 2., INSET_HEIGHT)];
-        assert_eq!(caption_place(100., SIZE, &foot), (false, Side::Right));
+        assert_eq!(caption_place(100., SIZE, &foot, None), (false, Side::Right));
         // A long line reaches the handle from either side of the foot, so it stands at the top,
         // and beside a handle that is there.
-        assert_eq!(caption_place(180., SIZE, &foot), (true, Side::Middle));
+        assert_eq!(caption_place(180., SIZE, &foot, None), (true, Side::Middle));
         let envelope = [handle(WIDTH / 2., INSET_HEIGHT), handle(30., 12.)];
-        assert_eq!(caption_place(180., SIZE, &envelope), (true, Side::Right));
+        assert_eq!(
+            caption_place(180., SIZE, &envelope, None),
+            (true, Side::Right)
+        );
+        // Beside a bar at the right edge the right side comes first, the foot before the top.
+        let bar = Some(18.);
+        assert_eq!(caption_place(100., SIZE, &[], bar), (false, Side::Right));
+        let corner = [handle(WIDTH - 60., INSET_HEIGHT - 10.)];
+        assert_eq!(caption_place(100., SIZE, &corner, bar), (true, Side::Right));
     }
 }

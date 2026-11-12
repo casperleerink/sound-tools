@@ -7,6 +7,7 @@ use gpui::{
 };
 use sound_ui::{Devices, Takes};
 
+use super::gestures::press_key;
 use super::{Opened, open};
 use crate::song::{BAR, song_files};
 
@@ -167,6 +168,48 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
     window.undo();
     assert_eq!(window.chain_order(), serde_json::json!(["room", "trim"]));
     assert!(!window.has("song/t00/chain/reverb"));
+    assert_eq!(window.problems(), []);
+}
+
+/// An effect moves a step in its chain with no drag: from the menu of its title, which Move
+/// earlier and Move later lead, and by the keys that menu names, alt and an arrow, while its
+/// card has the focus. Each move is one undo step, and at an end of the chain it stays.
+#[gpui::test]
+fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys(cx: &mut TestAppContext) {
+    let mut window = open_rack(cx);
+    let title = window.until_found("card-title-song/t00/chain/room");
+    window.click(title);
+    window.pick("menu-1");
+    window.until("the reverb later", |window| {
+        window.chain_order() == serde_json::json!(["trim", "room"])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Move an effect"));
+
+    // Each effect's card is a tab stop: tab goes on until the reverb's, the last effect now,
+    // has the focus and alt and the arrow move it.
+    let before = window.record("song/t00/chain/room");
+    let first = serde_json::json!(["room", "trim"]);
+    window.focus_the_window();
+    for _ in 0..60 {
+        press_key(&mut window, "tab");
+        press_key(&mut window, "alt-left");
+        window.wait_for_bun();
+        if window.chain_order() == first {
+            break;
+        }
+    }
+    assert_eq!(window.chain_order(), first);
+    // The first stays the first; the card kept the focus, so the other arrow takes it back.
+    press_key(&mut window, "alt-left");
+    window.wait_for_bun();
+    assert_eq!(window.chain_order(), first);
+    press_key(&mut window, "alt-right");
+    window.until("the reverb later again", |window| {
+        window.chain_order() == serde_json::json!(["trim", "room"])
+    });
+    // The keys turned no knob.
+    assert_eq!(window.record("song/t00/chain/room"), before);
     assert_eq!(window.problems(), []);
 }
 

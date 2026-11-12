@@ -1,7 +1,7 @@
 // The parts of a device card, as the app's own cards have them. A view gives its display, or
 // rows of `Steps` in its place, and then its controls, and the window lays the card out:
 // `<><Display>...</Display><Controls>...</Controls></>`. A `Panel` of a page takes the same parts
-// in a `Row`.
+// in a `Row`, and rows of steps in a `StepGrid`.
 
 import { Knob, SegmentedControl, Select, Steps, words } from "./components";
 import { Button, SpaceProps, Space, Toggle } from "./drawing";
@@ -63,6 +63,22 @@ export const Controls = ({ children }: { children?: Child }): UiNode => element(
  */
 export const Cell = ({ children, ...props }: { label?: Bind<string>; value?: Bind<string>; children?: Child }): UiNode =>
   element("cell", props, [children]);
+
+export interface StepGridProps {
+  /** What each column of the controls of its rows is, said once over the first row: `["Level", "Tune"]`. */
+  columns?: readonly string[];
+  /** Its rows of `Steps`, then the `Controls` of the whole of it. */
+  children?: Child;
+}
+
+/**
+ * Rows of `Steps` one under the other, lined up: a drum machine, a sequence with its accents.
+ * A row holds its own controls, in columns at its right that `columns` names once, and
+ * `Controls` after the rows hold those of the whole thing, beside the rows and level with the
+ * first. It stands where a `Display` does, on a panel and on a card.
+ * `<StepGrid columns={["Level"]}><Steps field="kick"><Knob field="kick_level" text="value" /></Steps><Controls><Knob field="swing" /></Controls></StepGrid>`
+ */
+export const StepGrid = ({ columns, children }: StepGridProps): UiNode => element("grid", { columns }, [children]);
 
 /** The view of a tool that has none: a row of steps for each `pattern`, and a cell for each other field and input, the numbers first. */
 export function defaultView(fields: Fields, inputs: Inputs = {}) {

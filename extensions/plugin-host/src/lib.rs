@@ -41,7 +41,7 @@ pub use parameters::{
 };
 pub use scan::{
     SCAN_ARGUMENT, ScanCache, ScanCommand, ScanFailure, ScannedPlugin, default_search_paths,
-    scan_one_bundle,
+    one_per_plugin, scan_one_bundle,
 };
 
 /// The name to enable in `project.json`.
@@ -58,6 +58,8 @@ const PROCESSOR: &str = "plugin";
 const STATE_FOLDER: &str = "plugin-state";
 const STATE_EXTENSION: &str = "bin";
 
+/// In the order a picker prefers them for a plugin installed in both: CLAP gives a parameter in
+/// its own units, so a pin and a lane hold 1000 Hz, where VST 3 gives 0 to 1.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginFormat {

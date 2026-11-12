@@ -4,7 +4,7 @@ import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, 
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
 import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, touched, Turn } from "./live";
-import { asCell, currentCard, element, ownLines, Show, UiNode } from "./nodes";
+import { asCell, Child, currentCard, element, homeInControls, ownLines, Show, StepChange, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
@@ -278,36 +278,48 @@ export type KnobProps = NumberValue & Quiet & {
   text?: "all" | "value" | "none";
 };
 
+/** A cell of `Controls` and the room of a control at its top, as the window's: a knob is one cell. */
+const [CELL_WIDTH, CELL_CONTROL] = [64, 36];
+
 /**
  * A knob, as the app's knobs look: `<Knob field="cutoff" />`, or on what code keeps, see
  * `ValueProps`. Both turn as they are dragged, are a tab stop the arrows step, and go to
- * `default` on a double click or backspace. A field shows what plays: while a lane or a cable
- * moves it, the knob follows that, with a dot and a tooltip, and no drag turns it.
+ * `default` on a double click or backspace. Enter, or a click on its value, types the value as
+ * it reads: `F#2`, `440`, `50`. A field shows what plays: while a lane or a cable moves it, the
+ * knob follows that, with a dot and a tooltip, and no drag turns it.
  * `bipolar` draws its arc from the top, as a pan's. `quiet` hides its value, see `Quiet`.
  */
 export function Knob(props: KnobProps): UiNode {
-  const { label, unit, travel, turns, unranged } = numberOf("Knob", props);
+  const { field, label, unit, travel, turns, unranged } = numberOf("Knob", props);
   if (!travel || travel.scale === "fader") throw unranged();
   const { key, value, fraction, held, drag, onPress } = turned("knob", props, travel, turns, "y");
   const turn = (): Live => read(fraction).times(SWEEP).minus(SWEEP / 2);
   const dial = props.text === "none";
-  const [centreX, centreY, radius, cap] = dial ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
+  const [centreX, centreY, radius, cap] = dial ? [14, 14, 11, 7] : [CELL_WIDTH / 2, CELL_CONTROL / 2, 16.75, 10.5];
   const along = (distance: number) => () => {
     const radians = turn().times(2 * Math.PI);
     return [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
   };
   const said = label !== undefined && (props.text ?? "all") === "all";
-  const texts = dial ? [] : [
-    ...(said ? [Label({ x: centreX, y: 38, text: label, color: "text-secondary", align: "center" })] : []),
-    Label({ x: centreX, y: said ? 54 : 38, text: value, unit, color: "text", align: "center", opacity: quietly(props.quiet, { field: props.field, key }) }),
+  const [labelY, valueY] = said ? [38, 54] : [0, 38];
+  // Made with the knob each time it shows again, after its value was typed.
+  const texts = () => dial ? [] : [
+    ...(said ? [Label({ x: centreX, y: labelY, text: label, color: "text-secondary", align: "center" })] : []),
+    Label({ x: centreX, y: valueY, text: value, unit, color: "text", align: "center", opacity: quietly(props.quiet, { field: props.field, key }) }),
   ];
-  const knob = Space({
+  const [width, height] = dial ? [28, 28] : [CELL_WIDTH, valueY + 18];
+  const [typing, type] = signal(false);
+  const knob = (): UiNode => Space({
     key,
-    width: dial ? 28 : 56,
-    height: dial ? 28 : said ? 72 : 56,
+    width,
+    height,
     cursor: "ns-resize",
     drag,
     onPress,
+    // A click on its value types it; a drag from there still turns it.
+    onClick: dial ? undefined : ({ y }) => {
+      if (y >= valueY) type(true);
+    },
     children: [
       Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "fill-strong", width: 2.5 }),
       Arc({ x: centreX, y: centreY, radius, from: props.bipolar ? 0 : -SWEEP / 2, to: turn, color: "text", width: 2.5 }),
@@ -315,10 +327,27 @@ export function Knob(props: KnobProps): UiNode {
       Line({ from: along(cap / 3), to: along(cap * 0.76), color: "text", width: 2 }),
       // In the top right corner of the dial, clear of its arc.
       ...heldMark(held, centreX + radius - 2, centreY - radius + 2),
-      ...texts,
+      ...texts(),
     ],
   });
-  return said ? ownLines(knob, props.field === undefined ? `the Knob ${JSON.stringify(label)}` : `<Knob field=${JSON.stringify(props.field)} />`) : knob;
+  // A dial says no value, so none is typed on it.
+  if (dial) return knob();
+  const { get, set } = props.field === undefined ? valueOf(props) : numberAt(props.field, turns.label);
+  const [low, high] = [Math.min(travel.min, travel.max), Math.max(travel.min, travel.max)];
+  const taken = (number: number) => Math.min(Math.max(field?.integer ? Math.round(number) : number, low), high);
+  // The field stands where the dial is, over the label it keeps.
+  const typed = () => {
+    const before = untrack(get);
+    const done = (number: number | null) => {
+      type(false);
+      if (number !== null && taken(number) !== before) set(taken(number));
+    };
+    return h("div", { style: { width, height, align: "center", gap: 2 } },
+      h("div", { style: { height: CELL_CONTROL, justify: "center" } }, typedField(key, before, unit, width - 8, done)),
+      said ? Text({ variant: "label", children: label }) : null);
+  };
+  const node = element("div", { key: `${key}-keys`, layout: "cell", keys: ["enter"], onKey: () => type(true), style: { keep: true } }, [Show({ when: typing, children: typed, fallback: knob })]);
+  return said ? ownLines(node, props.field === undefined ? `the Knob ${JSON.stringify(label)}` : `<Knob field=${JSON.stringify(props.field)} />`) : node;
 }
 
 /** How a number spreads over the travel of a knob, a fader or a lane, as `numbers` and a lane's `scale` say. */
@@ -467,19 +496,48 @@ const CONTROL_HEIGHT = { sm: 24, md: 28, lg: 32 } as const;
 /** The semitones of each note letter above C. */
 const SEMITONES = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 } as const;
 
-/** A number that `text` says, or `null`: `-6 dB`, `2k` for 2000 in Hz, `-inf`, `F#3` for a pitch. */
+/** The notes of an octave, as a `"pitch"` reads them. */
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
+
+/** `value` with three decimals at most, as a field for typing shows it. */
+const short = (value: number) => String(Number(value.toFixed(3)));
+
+/**
+ * The number that `text` says as `unit` reads one, or `null`: `50` and `50%` are 0.5 of a
+ * percent, `2k` is 2000 Hz, `1.5 s` is 1500 ms, `F#3` is a pitch, `25L` a pan, and `-6 dB`
+ * and `-inf` what they say.
+ */
 function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null {
-  const plain = text.trim().replace("−", "-");
-  const note = unit === "pitch" ? /^([a-g])([#b]?)(-?\d+)$/i.exec(plain) : null;
+  const plain = text.trim().replace("−", "-").replace(/\s/g, "").toLowerCase();
+  const note = unit === "pitch" ? /^([a-g])([#b]?)(-?\d+)$/.exec(plain) : null;
   if (note) {
     const [, letter = "c", accidental, octave] = note;
-    return SEMITONES[letter.toLowerCase() as keyof typeof SEMITONES] + (accidental === "#" ? 1 : accidental === "b" ? -1 : 0) + (Number(octave) + 1) * 12;
+    return SEMITONES[letter as keyof typeof SEMITONES] + (accidental === "#" ? 1 : accidental === "b" ? -1 : 0) + (Number(octave) + 1) * 12;
   }
-  if (/^-\s*inf/i.test(plain)) return -Infinity;
+  if (plain.startsWith("-inf")) return -Infinity;
+  if (unit === "pan" && plain === "c") return 0;
   const value = Number.parseFloat(plain);
   if (!Number.isFinite(value)) return null;
-  return unit === "hz" && /\dk/i.test(plain.replace(/\s/g, "")) ? value * 1000 : value;
+  if (unit === "percent") return value / 100;
+  if (unit === "pan") return (plain.endsWith("l") ? -Math.abs(value) : value) / 100;
+  if (unit === "hz" && /\dk/.test(plain)) return value * 1000;
+  if (unit === "ms" && /\ds$/.test(plain)) return value * 1000;
+  if (unit === "seconds" && plain.endsWith("ms")) return value / 1000;
+  return value;
 }
+
+/** What the field for typing `value` opens on: the number as `unit` reads it, which `typedNumber` reads back. */
+function typedText(value: number, unit: NumberBoxProps["unit"]): string {
+  if (!Number.isFinite(value)) return "-inf";
+  if (unit === "percent") return short(value * 100);
+  if (unit === "pan") return value === 0 ? "C" : `${short(Math.abs(value) * 100)}${value < 0 ? "L" : "R"}`;
+  if (unit === "pitch" && Number.isInteger(value) && value >= 0) return `${NOTE_NAMES[value % 12]}${Math.floor(value / 12) - 1}`;
+  return short(value);
+}
+
+/** The field a number control shows in its place while its number is typed: `done` gets the number typed, or `null` for none. */
+const typedField = (key: string, value: number, unit: NumberBoxProps["unit"], width: number, done: (typed: number | null) => void, size: ControlSize = "sm"): UiNode =>
+  h("div", { key: `${key}-typed` }, Input({ value: typedText(value, unit), width, size, focus: true, onCommit: (text) => done(typedNumber(text, unit)), onCancel: () => done(null) }));
 
 /**
  * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
@@ -534,13 +592,10 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     when: typing,
     children: () => {
       const before = untrack(get);
-      const done = (typed: string | null) => {
+      return typedField(key, before, unit, width, (number) => {
         type(false);
-        const number = typed === null ? null : typedNumber(typed, unit);
         if (number !== null && taken(number) !== before) set(taken(number));
-      };
-      const input = Input({ value: Number.isFinite(before) ? String(Number(before.toFixed(3))) : "-inf", width, size, focus: true, onCommit: done, onCancel: () => done(null) });
-      return h("div", { key: `${key}-typed` }, input);
+      }, size);
     },
     fallback: box,
   })), told.label);
@@ -573,7 +628,7 @@ function numberAt(path: string, label?: string) {
       const found = field.get();
       return found === "-inf" ? -Infinity : typeof found === "number" ? found : Number.NaN;
     },
-    set: (number: number) => field.set(number === -Infinity ? "-inf" : Number(number.toFixed(3)), label),
+    set: (number: number) => field.set(number === -Infinity ? "-inf" : Number(short(number)), label),
   };
 }
 
@@ -713,15 +768,18 @@ export type StepsProps = ValueProps<readonly number[]> & {
   label?: string;
   /** A row that changes another row, such as accents or slides: it reads quieter than a row of notes. */
   secondary?: boolean;
+  /** The controls of this row, at its right, such as the level of a drum: a knob says `text="value"`, and the `columns` of its `StepGrid` name it. */
+  children?: Child;
 };
 
 /**
  * A row of steps on a list of numbers, such as a `pattern` field, one per number, in groups of
  * four. A step is lit as far up as it is strong, from the items' min, off, to their max (0 and 1
  * for what code keeps), so a soft hit shows as one. A click turns a step off, or on again as
- * strong as it was. Tab reaches it: the arrows move along it, and space or enter turns a step.
- * `playing` names an output, as `now.value` does, whose value is the step that plays, which a
- * green ring shows while the piece plays.
+ * strong as it was, and a drag up or down on a step changes how strong it is. Tab reaches it:
+ * left and right move along it, space or enter turns a step, and up and down change how strong
+ * it is. `playing` names an output, as `now.value` does, whose value is the step that plays,
+ * which a green ring shows while the piece plays.
  */
 export function Steps(props: StepsProps): UiNode {
   const field = props.field === undefined ? undefined : fieldOf(props.field);
@@ -734,21 +792,31 @@ export function Steps(props: StepsProps): UiNode {
   const step = props.playing === undefined ? undefined : now.value(props.playing);
   /** What each step held before it was turned off. Not saved: a view made again turns a step on at `on`. */
   const held = new Map<number, number>();
-  return element("steps", {
+  const row = element("steps", {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
     label: props.label ?? (props.field === undefined ? undefined : labelOf(props.field, field)),
     secondary: props.secondary,
     levels: () => list().map((value) => within((value - off) / (full - off))),
     // At rest a ring on the first step would read as a selection.
     playing: step && (props.ownClock ? step : () => (clock.playing ? step : undefined)),
-    onChange: (step: number) => {
+    onChange: ({ step, level, by }: StepChange) => {
       const changed = [...untrack(list)];
       const was = changed[step] ?? off;
+      const strength = within((was - off) / (full - off));
+      const to = by === undefined ? level : within((Math.round(strength / Math.abs(by)) + Math.sign(by)) * Math.abs(by));
+      if (to !== undefined) {
+        const value = off + to * (full - off);
+        changed[step] = item?.integer ? Math.round(value) : Number(short(value));
+        if (changed[step] !== was) set(changed, "Change a step");
+        return;
+      }
       if (was > off) held.set(step, was);
       changed[step] = was > off ? off : (held.get(step) ?? on);
       set(changed, was > off ? "Turn a step off" : "Turn a step on");
     },
-  }, []);
+  }, [props.children]);
+  homeInControls(row);
+  return row;
 }
 
 export type MeterProps =

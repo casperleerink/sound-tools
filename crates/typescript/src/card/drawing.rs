@@ -164,7 +164,8 @@ impl Drawing<'_> {
             Props::Display(props) => self.display(id, props, &entry.children),
             Props::Controls => self.controls(&entry.children),
             Props::Cell(_) => self.cell(slot),
-            Props::Steps(props) => self.steps(id, props),
+            Props::Steps(props) => self.steps(id, props, &entry.children),
+            Props::Grid(props) => self.grid(props, &entry.children),
             Props::Icon(IconProps { name, size, color }) => {
                 let color = color.map_or(self.cx.theme().text(), |color| color.0);
                 Icon::new(name.clone().unwrap_or_default())

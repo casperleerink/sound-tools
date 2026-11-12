@@ -80,7 +80,7 @@ fn a_step_turned_sends_how_strong_the_steps_are_and_nothing_else() {
         card: 1,
         node: steps,
         kind: EventKind::Change,
-        payload: json!(2),
+        payload: json!({ "step": 2 }),
         time: 0.0,
     });
     let ops = next_ops(&bun);
@@ -393,6 +393,17 @@ fn a_knob_with_its_label_in_a_row_is_told_to_go_in_controls() {
     );
     let bun = mounted("loose.ts", &named, "loose");
     assert!(first_ops(&bun).is_ok());
+    // A row of steps names its controls once, over the rows, as a row does.
+    let steps = "h(Steps, { value: [1], onChange: () => {} }, ";
+    let in_steps = LOOSE
+        .replace("h(Row, {}, ", steps)
+        .replace("Row,", "Steps,");
+    let bun = mounted("loose.ts", &in_steps, "loose");
+    assert!(
+        first_ops(&bun)
+            .unwrap_err()
+            .contains(r#"says text="value""#)
+    );
 }
 
 const SCALED: &str = r#"import { Display, h, tool } from "./sdk";

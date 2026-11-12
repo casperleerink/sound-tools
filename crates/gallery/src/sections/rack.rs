@@ -14,10 +14,10 @@ use sound_dsp::LfoShape;
 use sound_ui::ActiveTheme;
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
-use sound_ui::components::cell::Cell;
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::curves::{Adsr, envelope_display, lfo_line};
 use sound_ui::components::device_card::{Column, DeviceCard, Section};
-use sound_ui::components::display::{Axis, Display, Handle, TextDisplay};
+use sound_ui::components::display::{Axis, ControlStrip, Display, Handle};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
@@ -856,15 +856,40 @@ fn sections_card() -> DeviceCard {
         )
 }
 
+/// A plugin draws nothing on its card: a strip in the place of a display, then its pins.
 fn plugin_card() -> DeviceCard {
     let open = Button::new("open-window", "Open window")
         .variant(ButtonVariant::Subtle)
-        .on_card();
-    let display = TextDisplay::new("plugin-display").button(open);
+        .on_card()
+        .w(px(control_width(2)));
+    let parameters = Select::new("parameters", "")
+        .placeholder("Parameters")
+        .trigger_width(control_width(2));
+    let strip = ControlStrip::new().control(open).control(parameters);
+    let cutoff = Knob::new("plugin-cutoff")
+        .value(0.6)
+        .label("Cutoff")
+        .readout("1.2 kHz");
     DeviceCard::new("plugin", div().child("Surge XT"))
         .power(true, |_, _, _| {})
         .close(|_, _, _| {})
-        .display(display)
+        .display(strip)
+        .column(Column::new().top(cutoff))
+}
+
+/// What the card of a plugin says when the plugin cannot play.
+fn plugin_card_stopped() -> DeviceCard {
+    let again = Button::new("start-again", "Start again")
+        .variant(ButtonVariant::Subtle)
+        .on_card()
+        .w(px(control_width(2)));
+    let strip = ControlStrip::new()
+        .control(again)
+        .message("Surge XT stopped working.");
+    DeviceCard::new("plugin-stopped", div().child("Surge XT"))
+        .power(true, |_, _, _| {})
+        .close(|_, _, _| {})
+        .display(strip)
 }
 
 fn cards(state: &Entity<RackState>, cx: &App) -> AnyElement {
@@ -880,7 +905,8 @@ fn cards(state: &Entity<RackState>, cx: &App) -> AnyElement {
             ),
             sample("effect off", cx, filter_card(state, 1, "filter-off", cx)),
             sample("expanded, a hollow handle", cx, reverb_card(state, cx)),
-            sample("plugin", cx, plugin_card()),
+            sample("plugin, one parameter on the card", cx, plugin_card()),
+            sample("plugin that stopped", cx, plugin_card_stopped()),
             sample(
                 "sections behind expand, curved envelope, LFO",
                 cx,

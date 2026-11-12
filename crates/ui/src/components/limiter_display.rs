@@ -1,6 +1,7 @@
 //! The display of a limiter: the last four seconds of what it sent out, as a green line over a
-//! quiet tint under the ceiling line, and how much it took, a soft fill hanging from the top.
-//! The handle at the right end of the ceiling line drags the ceiling up and down.
+//! quiet tint under the ceiling line, and how much it takes now, the bar at the right edge that
+//! the Compressor and the Gate have. The handle at the right end of the ceiling line drags the
+//! ceiling up and down.
 //!
 //! The owner keeps a [`LimiterHistory`], feeds it one reading per poll, and builds the display
 //! from it when it renders, with a handle whose change it handles itself.
@@ -8,21 +9,19 @@
 use std::collections::VecDeque;
 
 use gpui::{
-    App, Bounds, ElementId, Hsla, Pixels, Window, canvas, fill, point, prelude::*, px, size,
+    App, Bounds, ElementId, Hsla, Pixels, Window, canvas, fill, point, prelude::*, px, relative,
+    size,
 };
 
 use crate::components::display::{Axis, Display, Handle};
+use crate::components::dynamics_display::{CURVE_WIDTH, reduction, travel_up};
 use crate::components::knob::KnobRange;
-use crate::components::meter::GainReduction;
-use crate::components::paint;
 use crate::theme::ActiveTheme;
 use sound_dsp::decibels;
 
 /// Columns of the history, and the polls each one gathers: 50 columns of 80 ms, four seconds.
 pub const COLUMNS: usize = 50;
 pub const POLLS_PER_COLUMN: u32 = 5;
-/// Where the ceiling handle sits across the display.
-const HANDLE_ACROSS: f32 = 0.96;
 /// The level is a line with a tint under it: a sound held at the ceiling would else be a wall
 /// of green.
 const LEVEL_LINE: f32 = 1.5;
@@ -54,10 +53,10 @@ pub struct LimiterHistory {
 
 impl LimiterHistory {
     /// A history drawn on the travel of the ceiling, from its lowest at the bottom of the
-    /// display to its highest at the top.
+    /// display to its highest at the top of the bar.
     pub fn new(ceiling: KnobRange) -> Self {
         Self {
-            ceiling,
+            ceiling: travel_up(ceiling),
             moments: VecDeque::new(),
             gathering: None,
             polls: 0,
@@ -96,7 +95,7 @@ impl LimiterHistory {
         true
     }
 
-    /// The largest reduction of the last column, for the line of the display.
+    /// The largest reduction of the last column, for the bar and the line of the display.
     pub fn reduction_now(&self) -> f32 {
         self.moments
             .back()
@@ -107,13 +106,12 @@ impl LimiterHistory {
     pub fn handle(&self, ceiling_db: f32, default_db: f32) -> Handle {
         Handle::new(
             "ceiling",
-            Axis::fixed(HANDLE_ACROSS),
+            Axis::fixed(CURVE_WIDTH),
             Axis::new(self.ceiling, ceiling_db, default_db),
         )
     }
 
-    /// The history under the ceiling line, with its handle, and the reduction in words while
-    /// the limiter takes some.
+    /// The history under the ceiling line, with its handle, and the reduction now.
     pub fn display(
         &self,
         id: impl Into<ElementId>,
@@ -123,64 +121,55 @@ impl LimiterHistory {
     ) -> Display {
         let range = self.ceiling;
         let ceiling = range.position(ceiling_db);
-        let theme = cx.theme();
-        let colors = (theme.green, paint::soft_fill(theme));
+        let green = cx.theme().green;
         let moments: Vec<Moment> = self.moments.iter().copied().collect();
         let history = canvas(
             |_, _, _| {},
-            move |bounds, (), window, _| paint_history(bounds, &moments, range, colors, window),
+            move |bounds, (), window, _| paint_history(bounds, &moments, range, green, window),
         )
         .absolute()
         .top_0()
         .left_0()
-        .size_full();
-        Display::new(id)
-            .curve([point(0., ceiling), point(1., ceiling)])
+        .w(relative(CURVE_WIDTH))
+        .h_full();
+        let display = Display::new(id)
+            .curve([point(0., ceiling), point(CURVE_WIDTH, ceiling)])
             .handle(handle)
-            .child(history)
-            .when_some(GainReduction::says(self.reduction_now()), Display::caption)
+            .child(history);
+        reduction(display, self.reduction_now())
     }
 }
 
 /// The history, its columns joined: the peaks as one green line on the scale of the ceiling
-/// line, tinted under it, and the reduction as one soft fill hanging from the top, 24 dB for the
-/// whole height.
+/// line, tinted under it. The newest column ends where the ceiling line does.
 fn paint_history(
     bounds: Bounds<Pixels>,
     moments: &[Moment],
     range: KnobRange,
-    (green, reduction): (Hsla, Hsla),
+    green: Hsla,
     window: &mut Window,
 ) {
     let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    // Clear of the round corner of the inset.
     let inset = 6.;
-    let step = (width - 2. * inset) / COLUMNS as f32;
-    // The newest column at the right, as time goes.
+    let step = (width - inset) / COLUMNS as f32;
     let first = COLUMNS - moments.len();
     for (index, moment) in moments.iter().enumerate() {
-        let x = inset + (first + index) as f32 * step;
         let up = match moment.peak_db.is_finite() {
             true => range.position(moment.peak_db),
             false => 0.,
         };
-        if up > 0. {
-            let top = height * (1. - up);
-            let body = Bounds::new(
-                bounds.origin + point(px(x), px(top)),
-                size(px(step), px(height - top)),
-            );
-            window.paint_quad(fill(body, green.opacity(LEVEL_TINT)));
-            let line = Bounds::new(body.origin, size(px(step), px(LEVEL_LINE)));
-            window.paint_quad(fill(line, green));
+        if up <= 0. {
+            continue;
         }
-        let down = (moment.reduction_db / GainReduction::RANGE_DB).clamp(0., 1.) * height;
-        if down > 0. {
-            let body = Bounds::new(
-                bounds.origin + point(px(x), px(0.)),
-                size(px(step), px(down)),
-            );
-            window.paint_quad(fill(body, reduction));
-        }
+        let (x, top) = (inset + (first + index) as f32 * step, height * (1. - up));
+        let body = Bounds::new(
+            bounds.origin + point(px(x), px(top)),
+            size(px(step), px(height - top)),
+        );
+        window.paint_quad(fill(body, green.opacity(LEVEL_TINT)));
+        let line = Bounds::new(body.origin, size(px(step), px(LEVEL_LINE)));
+        window.paint_quad(fill(line, green));
     }
 }
 

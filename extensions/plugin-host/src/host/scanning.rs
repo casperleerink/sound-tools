@@ -215,6 +215,17 @@ impl Plugins {
         Some(scanned.scan.find(format, plugin_id)?.name.clone())
     }
 
+    /// The key of the row a picker lists this plugin under, see [`crate::one_per_plugin`]: its own,
+    /// or that of its twin in the format a picker prefers. As cheap as
+    /// [`Self::installed_name`].
+    pub fn offer_key(&self, format: PluginFormat, plugin_id: &str) -> String {
+        let scan = &scanning(&self.0.scanned).scan;
+        match scan.find(format, plugin_id) {
+            Some(found) => found.listed(&scan.plugins).offer_key(),
+            None => PluginRecord::offer_key(format, plugin_id),
+        }
+    }
+
     pub fn installed(&self, format: PluginFormat, plugin_id: &str) -> Option<ScannedPlugin> {
         scanning(&self.0.scanned)
             .scan

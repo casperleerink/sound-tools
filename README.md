@@ -35,7 +35,7 @@ With no folder, `runtime` opens the last project, which it keeps in `~/.config/s
 
 Not on Linux:
 
-- Plugin windows. The card of a plugin has `Open window` greyed out and says why. The plugin plays, and its state is saved.
+- Plugin windows. The card of a plugin says why it has no `Open window`. The plugin plays, and its state is saved.
 - The snapshot tests. They render with Metal, so on Linux they only say so. The rest of the tests run.
 - **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
 

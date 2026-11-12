@@ -69,7 +69,10 @@ pub fn screenshot(project: &Path, png: &Path, before: &Before) -> Result<()> {
     if !project.join(crate::PROJECT_FILE).is_file() {
         bail!("{} is not a Sound Tools project", project.display());
     }
-    // The folder name is the project name in the window.
+    // The folder name is the project name in the window. `.` has none until it is the full path.
+    let project = &project
+        .canonicalize()
+        .with_context(|| format!("could not find {}", project.display()))?;
     let name = project
         .file_name()
         .context("the project folder has no name")?;

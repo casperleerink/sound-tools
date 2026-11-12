@@ -1,7 +1,7 @@
 import {
   adsr, beat, boolean, Button, choice, Circle, Controls, DeviceCard, Dialog, Display, Fader, floor, For, Fragment, h, Input, input, interval,
   Knob, Label, lowpass, Match, Meter, mtof, note, Notice, number, NumberBox, onCleanup, output, Pad, Page, Panel, Path, pattern, playing,
-  Popover, positionOf, Rect, Row, saw, SegmentedControl, Select, Show, sine, Slider, smooth, Space, Steps, Switch, Text, timeout, Toggle,
+  Popover, positionOf, Rect, Row, saw, SegmentedControl, Select, Show, sine, Slider, smooth, Space, StepGrid, Steps, Switch, Text, timeout, Toggle,
   tool, Wave,
   type Child, type Declaration, type Press, type Style,
 } from "./sdk";
@@ -110,22 +110,16 @@ tool({
         <div style={{ grow: true, gap: "lg" }}>
           <Row align="start">
             <Panel title="Drum machine">
-              <Row gap="lg" align="start">
-                <div style={{ gap: "sm" }}>
-                  <Row gap="lg" justify="end">
-                    <Text variant="label" style={{ width: 56, textAlign: "center" }}>Level</Text>
-                  </Row>
-                  {DRUMS.map((drum) => (
-                    <Row gap="lg">
-                      <Steps field={drum} playing="step" />
-                      <Knob field={`${drum}_level`} text="value" />
-                    </Row>
-                  ))}
-                </div>
+              <StepGrid columns={["Level"]}>
+                {DRUMS.map((drum) => (
+                  <Steps field={drum} playing="step">
+                    <Knob field={`${drum}_level`} text="value" />
+                  </Steps>
+                ))}
                 <Controls>
                   <Knob field="swing" />
                 </Controls>
-              </Row>
+              </StepGrid>
             </Panel>
             <DeviceCard path="sweep" />
             <Panel title="Drone">

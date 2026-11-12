@@ -59,13 +59,19 @@ pub struct ScannedPlugin {
 }
 
 impl ScannedPlugin {
-    /// The quiet line under its name in a picker, which tells two plugins of one name apart:
-    /// `CLAP · <maker>`.
-    pub fn detail(&self) -> String {
-        match self.vendor.is_empty() {
-            true => self.format.name().to_string(),
-            false => format!("{} · {}", self.format.name(), self.vendor),
-        }
+    /// Whether `other` is this plugin in another format: one name from one maker.
+    fn is_twin_of(&self, other: &Self) -> bool {
+        self.format != other.format && self.name == other.name && self.vendor == other.vendor
+    }
+
+    /// The plugin a picker lists for this one, of `plugins`: itself, or its twin in the format
+    /// that comes first, see [`PluginFormat`].
+    pub(crate) fn listed<'a>(&'a self, plugins: &'a [Self]) -> &'a Self {
+        let twins = plugins.iter().filter(|other| other.is_twin_of(self));
+        twins
+            .chain([self])
+            .min_by_key(|plugin| plugin.format)
+            .unwrap_or(self)
     }
 
     /// Whether the plugin says it plays notes, which puts it in the instrument picker. CLAP
@@ -87,6 +93,14 @@ impl ScannedPlugin {
     pub fn offer_key(&self) -> String {
         crate::PluginRecord::offer_key(self.format, &self.id)
     }
+}
+
+/// What a picker lists of `plugins`: one row per plugin, so the composer is never asked to
+/// choose a format. A plugin installed in two formats shows as the first of them. The other
+/// stays reachable where a format is a word already: a record names it, and it plays.
+pub fn one_per_plugin(plugins: Vec<ScannedPlugin>) -> Vec<ScannedPlugin> {
+    let listed = |plugin: &&ScannedPlugin| std::ptr::eq(plugin.listed(&plugins), *plugin);
+    plugins.iter().filter(listed).cloned().collect()
 }
 
 /// A bundle that could not be scanned, and why.
@@ -943,6 +957,36 @@ fn look_at(bundle: &Bundle, command: &ScanCommand, remembered: &[CachedBundle]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plugin(format: PluginFormat, name: &str, vendor: &str) -> ScannedPlugin {
+        ScannedPlugin {
+            format,
+            id: format!("{name}-{}", format.as_str()),
+            name: name.to_string(),
+            vendor: vendor.to_string(),
+            features: Vec::new(),
+            path: PathBuf::new(),
+        }
+    }
+
+    /// Only a plugin of the same name from the same maker is the same plugin, and only its
+    /// other format goes: two of one format are two plugins.
+    #[test]
+    fn a_picker_lists_a_plugin_in_two_formats_once_as_clap() {
+        use PluginFormat::{Clap, Vst3};
+        let scanned = vec![
+            plugin(Vst3, "Tone", "Sound Tools"),
+            plugin(Vst3, "Keys", "Sound Tools"),
+            plugin(Clap, "Tone", "Sound Tools"),
+            plugin(Vst3, "Tone", "Another Maker"),
+            plugin(Vst3, "Keys", "Sound Tools"),
+        ];
+        let listed = one_per_plugin(scanned.clone());
+        assert_eq!(listed, [&scanned[1..]].concat());
+        // The row of the one that is hidden is the row of its twin.
+        assert_eq!(scanned[0].listed(&scanned), &scanned[2]);
+        assert_eq!(scanned[3].listed(&scanned), &scanned[3]);
+    }
 
     /// A bundle as macOS lays one out, with the binary folder of this platform: the binary the
     /// `Info.plist` names, a helper next to it, and resources. Nothing in it is a plugin; these

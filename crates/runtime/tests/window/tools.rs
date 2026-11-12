@@ -313,13 +313,7 @@ impl Opened<'_> {
 
     /// Waits for pending records, watches and behaviour answers to reach the window.
     fn wait_for_bun(&mut self) {
-        self.until("Bun answered", |window| {
-            if !window.page_ready() {
-                return false;
-            }
-            window.poll_plugins();
-            window.page_ready()
-        });
+        self.until("Bun answered", |_| true);
     }
 
     /// Waits for the playhead to reach `tick`. A jump from code moves it only once the engine
@@ -332,17 +326,6 @@ impl Opened<'_> {
                 .read(|cx| session.read(cx).playhead().read(cx).tick)
                 == Ticks(tick)
         });
-    }
-
-    fn page_ready(&mut self) -> bool {
-        let shell = self.shell.clone();
-        self.cx.update(|_, cx| {
-            shell
-                .read(cx)
-                .main_view()
-                .cloned()
-                .is_none_or(|page| sound_typescript::page_ready(&page, cx))
-        })
     }
 
     fn focused(&mut self) -> FocusHandle {
@@ -369,12 +352,7 @@ impl Opened<'_> {
 
     /// Where the element of `selector` is, once the page drew it.
     fn until_found(&mut self, selector: &str) -> Point<Pixels> {
-        let mut found = None;
-        self.until(selector, |window| {
-            found = window.find(selector);
-            found.is_some()
-        });
-        found.unwrap()
+        self.control(selector)
     }
 
     /// The pointer over the name of the track `track`, until its header shows all its toggles.
@@ -441,6 +419,40 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     window.cx.simulate_event(KeyUpEvent { keystroke });
     window.until("the release of the key", |window| {
         window.loudest(480) == 0.0
+    });
+}
+
+/// A sequencer whose pattern starts as a groove: its second step is on.
+const GROOVE: &str = r#"import { pattern, sine, tool } from "./sdk";
+
+tool({
+  name: "groove",
+  title: "Groove",
+  when: "A test",
+  doc: "A tone as loud as the second step of its pattern.",
+  state: { steps: pattern({ length: 4, min: 0, max: 1, default: [0, 0.5, 0, 0] }) },
+  sound: ({ steps }) => sine(440).times(steps.at(1)),
+});
+"#;
+
+/// A list the record leaves out sounds as its default, as its view shows it: an instrument
+/// whose pattern starts as a groove is not silent until a step is clicked.
+#[gpui::test]
+fn a_sound_reads_the_default_of_a_list_its_record_leaves_out(cx: &mut TestAppContext) {
+    let project = EXPERIMENT[0].1.replace("keys", "groove");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/groove.json", r#"{"tool": "groove", "state": {}}"#),
+        ("extensions/groove.ts", GROOVE),
+    ];
+    let mut window = open(cx, &files);
+    window.until("the tone of the default", |window| {
+        window.loudest(4_800) > 0.4
+    });
+    let silent = r#"{"tool": "groove", "state": {"steps": [0, 0, 0, 0]}}"#;
+    crate::support::write_outside(&mut window, "state/groove.json", silent);
+    window.until("the record's own list", |window| {
+        window.loudest(4_800) == 0.0
     });
 }
 

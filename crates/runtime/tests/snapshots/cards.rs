@@ -16,7 +16,8 @@
 //!   the E of C major pentatonic.
 //! - `cards-drums.png`, `cards-drums-expanded.png`: the Drum pad playing a beat.
 //! - `cards-sampler.png`, `cards-sampler-expanded.png`: the Sampler playing a file.
-//! - `cards-plugin.png`: the test plugin as the instrument and as an effect.
+//! - `cards-plugin.png`: the test plugin as the instrument, with three of its parameters on the
+//!   card, and as an effect.
 
 use std::path::Path;
 
@@ -211,10 +212,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     save(cx, opened.window.into(), "cards-sampler-expanded")?;
     drop(opened);
 
-    let (piano, warmth) = (
-        test_plugin(PluginFormat::Clap, "piano"),
-        test_plugin(PluginFormat::Vst3, "warmth"),
-    );
+    // Three parameters on the card of the instrument: a knob, a list and a switch.
+    let pins = r#""state_asset": "piano", "parameters": {"0": {"name": "Cutoff", "value": 1000.0}, "1": {"name": "Wave", "value": 0.0}, "5": {"name": "Bright", "value": 1.0}}"#;
+    let piano = test_plugin(PluginFormat::Clap, "piano").replace(r#""state_asset": "piano""#, pins);
+    let warmth = test_plugin(PluginFormat::Vst3, "warmth");
     let chord = chord();
     let children = [
         ("instrument", piano.as_str()),

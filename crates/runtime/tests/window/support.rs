@@ -407,17 +407,33 @@ impl Opened<'_> {
         self.poll_plugins();
     }
 
-    /// Settles until `done` holds: Bun answers on a thread of its own, in real time.
+    /// Settles until `done` holds and Bun answered all it was told: Bun answers on a thread of
+    /// its own, in real time. A project that changed is not a page that was drawn again: Bun
+    /// says its edit before the new nodes, and a press on a node it replaced reaches nothing.
     pub(crate) fn until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
         let start = Instant::now();
+        let mut held = false;
         while start.elapsed() < PATIENCE {
             self.settle();
-            if done(self) {
+            held = done(self);
+            if held && self.page_ready() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("{what} did not happen within {PATIENCE:?}");
+        match held {
+            true => panic!("{what}, but Bun did not answer all it was told within {PATIENCE:?}"),
+            false => panic!("{what} did not happen within {PATIENCE:?}"),
+        }
+    }
+
+    /// Whether the page heard all Bun had to say, with nothing left for Bun to answer.
+    fn page_ready(&mut self) -> bool {
+        let shell = self.shell.clone();
+        self.cx.update(|_, cx| {
+            (shell.read(cx).main_view().cloned())
+                .is_none_or(|page| sound_typescript::page_ready(&page, cx))
+        })
     }
 
     /// One poll of the background work, which the runtime does on its own timer every 16 ms:
@@ -538,18 +554,12 @@ impl Opened<'_> {
     /// GPUI knows the bounds of what the last frame painted, and a cached view paints
     /// nothing, so this asks for a whole frame first. Waits for Bun to draw it.
     pub(crate) fn control(&mut self, selector: &str) -> Point<Pixels> {
-        let start = Instant::now();
-        loop {
-            if let Some(found) = self.find(selector) {
-                return found;
-            }
-            assert!(
-                start.elapsed() < PATIENCE,
-                "nothing on screen is called {selector}"
-            );
-            self.settle();
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        let mut found = None;
+        self.until(selector, |window| {
+            found = window.find(selector);
+            found.is_some()
+        });
+        found.unwrap()
     }
 
     /// Where a control is on screen, whole. `None` when it is not there.

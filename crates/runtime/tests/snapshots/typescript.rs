@@ -2,7 +2,7 @@
 //!
 //! - `typescript-mixer.png`: the mixer example of `tooling/agent-eval/examples` as five tones play:
 //!   meters, faders, a muted strip, the master's scope and the device output.
-//! - `typescript-song-mixer.png`: the same song with its mixer open.
+//! - `typescript-song-mixer.png`: the same song with its mixer open: two rows of sends, whole.
 //! - `typescript-song-lanes.png`: the same song with the automation lanes of its first track
 //!   showing under it: a bent line of its cutoff and an LFO of its volume.
 //! - `typescript-song.png`: the song of the DAW template (`templates/daw`), 12 tracks of 150 clips,
@@ -167,6 +167,13 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         "state/song/t00/lfo-mix-gain-db.json".to_string(),
         r#"{"tool": "lfo", "state": {"rate": "1/2", "low": -24, "high": -3}}"#.to_string(),
     ));
+    // Every track sends into the second return too, so the mixer shows two rows of sends.
+    for track in 0..12 {
+        files.push((
+            format!("state/song/t{track:02}/send-ret-b.json"),
+            r#"{"tool": "fader", "state": {"gain_db": -18}}"#.to_string(),
+        ));
+    }
     // A take of the voice, a region on its row from the second bar.
     files.push((
         "state/song/audio-voice/take.json".to_string(),

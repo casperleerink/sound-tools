@@ -107,6 +107,8 @@ pub(crate) struct TypeScriptCard {
     menu_overlay: Option<u64>,
     /// The text fields of its nodes, by node, with the text the field last showed or told.
     inputs: HashMap<u64, (Entity<TextInput>, String)>,
+    /// The text field that took the keys as it was made, and what had them before.
+    keys_before_field: Option<(u64, WeakFocusHandle)>,
     /// The nodes of its open popovers and dialogs, the last opened last.
     overlays: Vec<u64>,
     /// What had the keys before the first overlay opened, which gets them back when the last
@@ -476,6 +478,7 @@ impl TypeScriptCard {
             menu: None,
             menu_overlay: None,
             inputs: HashMap::new(),
+            keys_before_field: None,
             overlays: Vec::new(),
             focus_before_overlays: None,
             embedded: HashMap::new(),
