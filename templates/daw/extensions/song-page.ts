@@ -1,4 +1,4 @@
-import { memo, now, type Color, type FilledStateOfTool } from "./sdk";
+import { h, memo, now, type Accessor, type Color, type FilledStateOfTool, type Style } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import type { Song } from "./song";
 import { isMover, type track } from "./track";
@@ -12,11 +12,12 @@ const SHOWN = 64 * 4 * BEAT;
 const AFTER = 32 * 4 * BEAT;
 // Rows of 64 points, headers 176 wide, a ruler of two lines, and bar 1 eight points right of the
 // headers. The tempo lane under the ruler, while it shows, is as tall as the ruler's old one line.
+// The rows under the heads, of the returns and the master, are 40.
 export const ROW = 64;
 export const HEADER = 176;
 export const RULER = 44;
 export const TEMPO = 32;
-export const MASTER_ROW = 40;
+export const LOW_ROW = 40;
 // The row under a track's lanes that adds one.
 export const ADD_LANE = 40;
 // Points per tick at zoom 1: a bar is 96 points.
@@ -24,7 +25,19 @@ export const ACROSS = 0.025;
 // The ticks left of bar 1, eight points at zoom 1.
 export const LEAD = 320;
 
-export const COLOR = { back: "background", text: "text-muted", clear: "none" } as const;
+export const COLOR = { clear: "none" } as const;
+/** A row the composer chooses, a track's head, a return's or the master's: one look while it is chosen, and one under the pointer. */
+export const rowLook = (chosen: boolean): Pick<Style, "background" | "hover"> => (chosen ? { background: "selected" } : { hover: { background: "fill" } });
+/** How much of a muted track shows: its colour, its name and its clips. */
+export const DIM = 0.4;
+/** The dot before a name: of the colour of its track or return, dim while that is muted; hollow for the master, which has none. */
+export const Mark = ({ colour, dim }: { colour?: Accessor<Color>; dim?: Accessor<boolean> }) =>
+  h("div", {
+    style: () => ({
+      width: 8, height: 8, radius: "full", keep: true, opacity: dim?.() ? DIM : 1,
+      ...(colour ? { background: colour() } : { borderWidth: 1.5, borderColor: "text-secondary" }),
+    }),
+  });
 export const PALETTE = [
   { name: "Blue", colour: "blue" }, { name: "Peach", colour: "peach" }, { name: "Mauve", colour: "mauve" }, { name: "Teal", colour: "teal" },
   { name: "Green", colour: "green" }, { name: "Yellow", colour: "yellow" }, { name: "Pink", colour: "pink" }, { name: "Sky", colour: "sky" },
@@ -56,6 +69,18 @@ export function barStarts(runs: Runs, end: number): number[] {
     }
   });
   return starts;
+}
+
+/** The tick the bar `bar` starts at, from 1. */
+export function tickOfBar(runs: Runs, bar: number): number {
+  const all = runs.length > 0 ? runs : [{ signature: "4/4", bars: 1 }];
+  let [tick, at] = [0, 1];
+  all.forEach((run, index) => {
+    const bars = index === all.length - 1 ? bar - at : Math.min(run.bars, bar - at);
+    tick += bars * ticksOfBar(run.signature);
+    at += bars;
+  });
+  return tick;
 }
 
 /** A child of the song: a track, an audio track, a return, the master or its limiter. */
@@ -163,8 +188,13 @@ export function pageOf(song: Song) {
   const heightOf = (row: Row) => (row.add ? ADD_LANE / ROW : 1);
   const tops = memo(() => layout().reduce<number[]>((all, row, index) => [...all, (all[index] ?? 0) + heightOf(row)], [0]));
   const topOf = (index: number) => tops()[index] ?? 0;
-  /** The row at `y`, as its place in the layout. */
-  const rowAt = (y: number) => Math.max(tops().findIndex((top) => top > y) - 1, 0);
+  /** The row at `y`, as its place in the layout: none under the last. */
+  const rowAt = (y: number) => {
+    const next = tops().findIndex((top) => top > y);
+    return next < 0 ? -1 : Math.max(next - 1, 0);
+  };
+  /** How tall the returns show under the heads, while the song has any: the row that folds them, and open, a row each, four and a half before they scroll, which says there are more. */
+  const returnsHeight = () => (returns().length === 0 ? 0 : LOW_ROW + (memory.returnsOpen ? Math.min(returns().length, 4.5) * LOW_ROW : 0));
   const runs = () => clock.tempo_map.time_signatures;
   // As far as the song shows: past what it holds, and past where it repeats.
   const end = memo(() => {
@@ -206,7 +236,12 @@ export function pageOf(song: Song) {
   /** Shows the panel of the track `name` under the timeline, and gives it the keyboard. */
   const openPanel = (name: string) => {
     choose(new Set(), name);
-    memory.below = { kind: "track", name };
+    // One that shows already stays as it is, with its scroll and its cards.
+    if (panelOf() !== name) memory.below = { kind: "track", name };
+  };
+  /** Shows the master's panel under the timeline. */
+  const openMaster = () => {
+    if (memory.below?.kind !== "master") memory.below = { kind: "master" };
   };
   /** Changes the clips `keys` names, `track/clip`, in one undo step. */
   const editClips = (label: string, keys: Iterable<string>, change: (state: FilledStateOfTool<"timeline">) => void) =>
@@ -236,8 +271,8 @@ export function pageOf(song: Song) {
 
   // The window's own context, not a copy: it reads `time` anew each time.
   return Object.assign(song, {
-    rows, tracks, returns, strips, layout, tops, topOf, rowAt, runs, end, starts, barOf,
-    clipAt, panelOf, lengthAt, itemAt, choose, openPanel, editClips, toggleMute, toggleSolo,
+    rows, tracks, returns, strips, layout, tops, topOf, rowAt, returnsHeight, runs, end, starts, barOf,
+    clipAt, panelOf, lengthAt, itemAt, choose, openPanel, openMaster, editClips, toggleMute, toggleSolo,
     timeline, playhead, handle,
   });
 }

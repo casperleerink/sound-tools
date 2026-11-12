@@ -35,8 +35,9 @@ export const TempoLane = ({ page }: { page: Page }) => {
               const after = next();
               return after ? <Line from={() => [after.tick, y()] as const} to={() => [after.tick, yOf()(after.bpm)] as const} color="text-secondary" width={1.5} /> : null;
             },
+            // Not under the readout of its own change, while that shows.
             <Label x={timeline.pointX.times(5).plus(left)} y={() => (y() > 16 ? y() - 14 : y() + 3)} text={text} color="text-muted"
-              opacity={() => left.negate().plus(next()?.tick ?? end()).ge(timeline.pointX.times(text.length * 5.2 + 12))} />,
+              opacity={() => (chosen(change.tick) ? 0 : left.negate().plus(next()?.tick ?? end()).ge(timeline.pointX.times(text.length * 5.6 + 12)).times(now.hover(`tempo-${change.tick}`).negate().plus(1)))} />,
           ];
         }}
       </For>
@@ -54,7 +55,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
           const shown = () => (chosen(change.tick) ? 1 : now.hover(`tempo-${change.tick}`));
           return [
             <Circle x={change.tick} y={() => yOf()(change.bpm)} radius={3.5} color="text" opacity={() => (chosen(change.tick) ? 1 : 0)} />,
-            <Rect x={timeline.pointX.times(8).plus(change.tick)} y={() => y() - 9} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4}
+            <Rect x={timeline.pointX.times(8).plus(change.tick)} y={() => y() - 9} width={timeline.pointX.times(text.length * 6.8 + 12)} height={18} radius={4}
               color="background" border="border-strong" borderWidth={1} opacity={shown} />,
             <Label x={timeline.pointX.times(14).plus(change.tick)} y={() => y() - 6} text={text} color="text" opacity={shown} />,
           ];

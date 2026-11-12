@@ -430,7 +430,7 @@ export type NumberBoxProps = Either<
   /** The undo step of a field: "Change <its label>" when left out. */
   label?: string;
   width: number;
-  /** `md` when left out. A small one says its number in 12 points, the others in 14. */
+  /** `md` when left out. A small one says its number as a `label`, the others as `body` text. */
   size?: ControlSize;
   /** Its height in points where no size fits, such as a readout under a fader. */
   height?: number;
@@ -470,7 +470,8 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const [min, max] = [props.min ?? told.field?.min, props.max ?? told.field?.max];
   const step = props.step ?? (field === undefined || told.field?.integer ? 1 : undefined);
   const height = props.height ?? CONTROL_HEIGHT[size];
-  const textSize = size === "sm" ? 12 : 14;
+  // A small one says its number as a label, the others as body text: lines of 16 and 18 points.
+  const [variant, line] = size === "sm" ? (["label", 16] as const) : (["body", 18] as const);
   const label = props.label ?? told.turns.label;
   const { get, set } = field === undefined ? valueOf(props) : numberAt(field, label);
   const [typing, type] = signal(false);
@@ -483,8 +484,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     if (number !== untrack(get)) set(number);
   };
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
-  // The line of a label is 1.3 times its size.
-  const text = { x, y: Math.round((height - textSize * 1.3) / 2), variant: size === "sm" ? "label" : "body", color: "text", align: props.align } as const;
+  const text = { x, y: Math.round((height - line) / 2), variant, color: "text", align: props.align } as const;
   const shows = field !== undefined ? now.value(field, { played: props.played }) : props.show !== undefined ? Live.of(props.show) : () => Live.of(finite(get()));
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Reading);
   const stepped = step === undefined ? {} : { step, per: props.per };
@@ -577,7 +577,7 @@ export type SelectProps<T> = Chosen<T, SelectOption<T>> & {
   placeholder?: string;
   /** Of its list, in points: 160 when left out. */
   menuWidth?: number;
-  /** `md` when left out. A small one says it in 12 points, the others in 14. */
+  /** `md` when left out. A small one says it as a `label`, the others as a `heading`. */
   size?: ControlSize;
   /** A field above its list that keeps the options whose label holds what is typed. */
   search?: boolean;

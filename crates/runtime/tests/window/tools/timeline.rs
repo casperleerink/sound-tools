@@ -268,7 +268,7 @@ fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
     window.wait_for_bun();
     window.drop_sine();
     let inside = window.on_lane(2 * BAR + 960, 2);
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     window.click(inside);
     window.wait_for_bun();
     let alt = Modifiers {
@@ -305,7 +305,7 @@ fn clips_and_regions_are_chosen_copied_pasted_nudged_and_deleted_together(cx: &m
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
-    window.until_found("button-mixer-toggle");
+    window.until_found("toggle-mixer-toggle");
     // From empty space past the region, up and left over the second track's clip.
     let (from, to) = (window.on_lane(5 * BAR, 2), window.on_lane(BAR / 2, 1));
     window.press(from);

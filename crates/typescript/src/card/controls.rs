@@ -279,7 +279,6 @@ impl Drawing<'_> {
             .size(props.size.unwrap_or(self.control_size))
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
-            .when_some(props.opacity, |button, opacity| button.opacity(opacity))
             .when_some(
                 tooltip_of(&props.tooltip, &props.shortcut, self.cx),
                 |mut button, tooltip| {

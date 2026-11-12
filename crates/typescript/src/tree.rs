@@ -165,8 +165,6 @@ props! {
         /// A pill, round at its ends.
         rounded: bool,
         disabled: bool,
-        /// Quieter than its look, 0 to 1.
-        opacity: f32,
         tooltip: String,
         /// The keys that do it too, `cmd-k`, drawn in its tooltip.
         shortcut: String,
@@ -1950,9 +1948,6 @@ pub(crate) struct Style {
     justify: Option<Justify>,
     background: Option<Color>,
     color: Option<Color>,
-    font_size: Option<f32>,
-    /// How far apart the lines of its text are, in points.
-    line_height: Option<f32>,
     radius: Option<Radius>,
     border_color: Option<Color>,
     border_width: Option<f32>,
@@ -2326,12 +2321,6 @@ impl Style {
         }
         if let Some(Color(color)) = self.color {
             element = element.text_color(color);
-        }
-        if let Some(size) = self.font_size {
-            element = element.text_size(px(size));
-        }
-        if let Some(height) = self.line_height {
-            element = element.line_height(px(height));
         }
         if let Some(Radius(radius)) = self.radius {
             element = element.rounded(px(radius));

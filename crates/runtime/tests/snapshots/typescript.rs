@@ -27,7 +27,7 @@ use gpui::{
 };
 use sound_core::Ticks;
 
-use super::look::{LANES, TOGGLES, click, pointer_to};
+use super::look::{LANES, MIXER_TOGGLE, TOGGLES, click, pointer_to};
 
 const GALLERY: [(&str, &str); 4] = [
     ("project.json", include_str!("../sdk-gallery/project.json")),
@@ -190,9 +190,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, lane(3 * crate::song::BAR + 960, 4.5), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song")?;
-    // The mixer's button at the right of the master's row, over the editor: a strip per track
-    // and return, and the master's on the right, in place of the editor.
-    click(&opened, point(px(1449.), px(547.)), 1, cx)?;
+    // The mixer's toggle at the end of the master's row, over the editor: a strip per track
+    // and return, then the master's, in place of the editor.
+    click(&opened, point(px(MIXER_TOGGLE), px(547.)), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-mixer")?;
     // A track's head shows its panel in place of the mixer, and the automation of the first

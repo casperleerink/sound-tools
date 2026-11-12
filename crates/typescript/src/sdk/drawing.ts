@@ -309,8 +309,6 @@ export type ButtonProps = PointerEvents & Tip & {
   /** A pill, round at its ends. */
   rounded?: boolean;
   disabled?: Bind<boolean>;
-  /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
-  opacity?: number;
 };
 
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
@@ -369,9 +367,7 @@ export interface Style {
   justify?: "start" | "center" | "end" | "between";
   background?: Color;
   color?: Color;
-  /** The size, the line height and the weight of its text, for what the scale of `Text` cannot say. */
-  fontSize?: number;
-  lineHeight?: number;
+  /** The weight of its text, for the face of a control, which is medium at any size. */
   weight?: "normal" | "medium" | "semibold";
   radius?: Radius | number;
   borderColor?: Color;

@@ -1,9 +1,9 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Wave, type Accessor, type Child as Shapes, type Color, type Drag, type Dropped, type FilledStateOfTool, type Live, type Num, type Press, type Shortcut } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Text, untrack, Wave, type Accessor, type Child as Shapes, type Drag, type Dropped, type FilledStateOfTool, type Live, type Num, type Press, type Shortcut } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
 import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
-import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
-import { Shades } from "./song-ruler";
+import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, DIM, itemTool, LEAD, LOW_ROW, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
+import { NAMING, Shades } from "./song-ruler";
 import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./song-time";
@@ -104,6 +104,15 @@ export const Timeline = ({ page }: { page: Page }) => {
     }
     else if (item) memory.renamingClip = key;
   };
+  // The key that opens the menu of the chosen clips asks here, where the menu is.
+  memo(() => {
+    const key = memory.clipMenu;
+    if (key === null) return;
+    untrack(() => {
+      memory.clipMenu = null;
+      void itemMenu(key);
+    });
+  });
   /** A press on a clip or a region: a double click opens a clip's notes, and a region chosen alone shows its card in its track's panel. */
   const pressItem = (key: string) => ({ clicks, shift, cmd, button }: Press) => {
     const region = itemTool(children, key) === "region";
@@ -193,7 +202,7 @@ export const Timeline = ({ page }: { page: Page }) => {
       const bottom = ROW - 12 - ((shown - range) / 2) * step;
       return { lowest, step, height, bottom };
     });
-    const dim = () => (muted(each) ? 0.4 : 1);
+    const dim = () => (muted(each) ? DIM : 1);
     const notes = (opacity: () => Num) => (
       <For each={() => clip.state.notes}>
         {(note) => (
@@ -266,12 +275,14 @@ export const Timeline = ({ page }: { page: Page }) => {
     ];
     // A fade's line shows while it has one, and while its handle drags one out.
     const shown = (ms: () => number, held: Live) => () => held.max(ms() > 0 ? 1 : 0);
+    /** The shade over what a fade turns down: half as dark as the well. */
+    const shade = (ms: () => number, held: Live) => () => shown(ms, held)().times(0.5);
     const msOf = (ticks: Live) => ticks.times(60_000 / BEAT).over(now.bpm).max(0);
     const edge = 4 / ROW;
     return (
       <>
-        <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="well/50" opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
-        <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="well/50" opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
+        <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="well" opacity={shade(() => region.state.fade_in_ms, fadingIn.active)} />
+        <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="well" opacity={shade(() => region.state.fade_out_ms, fadingOut.active)} />
         <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="text" width={1.5} opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
         <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="text" width={1.5} opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
         {dot(fadeIn, false, fadeDrag("fade-in"), "ew-resize")}
@@ -290,7 +301,7 @@ export const Timeline = ({ page }: { page: Page }) => {
       <Group x={from} y={() => topOf(row())}>
         <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="background" />
         <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="fill" border="red" borderWidth={1} />
-        <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color={() => `${colourOf(each)}/85` as Color} />
+        <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color={() => colourOf(each)} />
         <Notes x={0} y={12 / ROW} width={width} height={(ROW - 24) / ROW} list={now.take(`${each.name}/rec`)} color={() => colourOf(each)} />
       </Group>
     );
@@ -321,7 +332,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     };
     const wave = (opacity: Num = 1) => (
       <Wave x={0} y={() => louder().times(-22 / ROW).plus(0.5)} width={width} height={() => louder().times(44 / ROW)} list={sound} band low={-1} high={1} level={level}
-        color={() => `${colourOf(each)}/85` as Color} opacity={opacity} />
+        color={() => colourOf(each)} opacity={opacity} />
     );
     const editRegion = (label: string, change: (state: FilledStateOfTool<"region">) => void) =>
       update(label, ({ children }) => {
@@ -374,7 +385,8 @@ export const Timeline = ({ page }: { page: Page }) => {
   };
 
   return (
-    <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, Math.max(tops().at(-1) ?? 0, 1)] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
+    // A row past the last, as the heads end with the row that adds a track.
+    <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, (tops().at(-1) ?? 0) + 1] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
       drag={marqueeDrag} onPress={pressTimeline} onDrop={dropOnTimeline}>
       <Shades page={page} height={1000} />
       <Rect x={-1e6} y={() => tops().at(-1) ?? 0} width={2e6} height={timeline.pointY} color="border" />
@@ -409,11 +421,20 @@ export const Timeline = ({ page }: { page: Page }) => {
         }
       </For>
       <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
-        color="fill" border="text/20" borderWidth={1} radius={2} opacity={marquee.active} />
+        color="fill" border="border-strong" borderWidth={1} radius={2} opacity={marquee.active} />
       <Line from={[playhead, 0]} to={[playhead, 1000]} color="text" width={1} />
     </Space>
   );
 };
+
+/** The timeline beside the returns and the master, which have no clips: its shades and the playhead go on to its foot. */
+export const TimelineFoot = ({ page }: { page: Page }) => (
+  <Space key="timeline-foot" height={() => page.returnsHeight() + LOW_ROW} unit={{ x: ACROSS }} extent={() => ({ x: [-LEAD, page.end()] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
+    follow={{ x: "timeline" }} onPress={() => page.choose(new Set())}>
+    <Shades page={page} height={1000} />
+    <Line from={[page.playhead, 0]} to={[page.playhead, 1000]} color="text" width={1} />
+  </Space>
+);
 
 /** The field to name the clip being named, over the timeline. */
 export const ClipName = ({ page }: { page: Page }) => {
@@ -424,9 +445,9 @@ export const ClipName = ({ page }: { page: Page }) => {
         const key = memory.renamingClip;
         if (!key) return null;
         return (
-          <div key="clip-name" style={{ direction: "row", gap: 6, align: "center" }}>
-            <div style={{ fontSize: 11, color: COLOR.text }}>Clip name</div>
-            <Input size="lg" key="clip-name-field" value={() => clipAt(key)?.state.title || clipAt(key)?.name || ""} width={140} focus
+          <div key="clip-name" style={NAMING}>
+            <Text variant="label" tone="muted">Clip name</Text>
+            <Input key="clip-name-field" value={() => clipAt(key)?.state.title || clipAt(key)?.name || ""} width={140} focus
               onCommit={(title) => {
                 memory.renamingClip = null;
                 editClips("Rename a clip", [key], (clip) => (clip.title = title));

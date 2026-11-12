@@ -626,11 +626,11 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
 }
 
 /// What a picker offers of the tools of `kind`: each one's record at its defaults. Not an owner,
-/// whose place is the top of the project.
+/// whose place is the top of the project, nor a tool whose sound is silence.
 fn offers(tools: &[Rc<ToolInfo>], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools
         .iter()
-        .filter(|info| kind(info.tool_kind()) && !info.behaviour);
+        .filter(|info| kind(info.tool_kind()) && !info.behaviour && !info.silent);
     tools
         .map(|info| {
             let tool = info.name.clone();

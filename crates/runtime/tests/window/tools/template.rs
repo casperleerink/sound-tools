@@ -15,7 +15,7 @@ fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     window.wait_for_bun();
 
     // A track from Add track.
-    let add = window.until_found("div-add-track");
+    let add = window.until_found("button-add-track");
     window.click(add);
     window.until("the track added", |window| window.has("song/track"));
     window.after_the_runs();
@@ -69,7 +69,8 @@ fn a_project_from_the_tools_only_of_a_daw_project_opens_its_empty_song(cx: &mut 
     window.wait_for_bun();
     assert!(!window.has("song/t00"));
 
-    let add = window.until_found("div-add-track");
+    // An empty song offers its first track over the timeline.
+    let add = window.until_found("button-empty-instrument");
     window.click(add);
     window.until("the track added", |window| window.has("song/track"));
     window.after_the_runs();
@@ -116,7 +117,7 @@ fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
     runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
     let mut window = open_folder(cx, folder);
     for name in ["song/ret-a", "song/ret-b", "song/ret-c"] {
-        let add = window.until_found("div-add-track-kind");
+        let add = window.until_found("button-add-track-kind");
         window.click(add);
         window.pick("menu-2");
         window.until(name, |window| window.has(name));
@@ -139,7 +140,7 @@ fn an_empty_project_starts_from_the_daw_template_in_place(cx: &mut TestAppContex
     let written = ["project.json", "state"].map(|path| window.path(path));
     window.edit(|project| project.apply_outside_changes(&written));
     window.code_changed();
-    window.until_found("div-add-track");
+    window.until_found("button-add-track");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
