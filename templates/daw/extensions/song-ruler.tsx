@@ -1,5 +1,5 @@
 import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, Text, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
-import { ACROSS, barStarts, BEAT, COLOR, LEAD, RULER, tickOfBar, type Page, type Runs } from "./song-page";
+import { ACROSS, barStarts, BEAT, COLOR, HEADER, LEAD, ROW, RULER, tickOfBar, type Page, type Runs } from "./song-page";
 
 // The ruler: the sections on its top line; bars, time signatures and tempo changes on the line
 // under it; at its foot the repeat range.
@@ -262,16 +262,46 @@ export const Ruler = ({ page }: { page: Page }) => {
   );
 };
 
-/** Every other part of the song from the second, the bars before the first section a part too: a shade lighter, `height` tall. */
-export const Shades = ({ page: { clock, starts, end }, height }: { page: Page; height: number }) => {
-  const shaded = memo(() => {
-    const edges = clock.sections.map((each) => starts()[each.bar - 1] ?? end());
-    if (edges[0] !== 0) edges.unshift(0);
-    edges.push(end());
-    return edges.slice(1, -1).flatMap((from, index) => (index % 2 === 0 ? [{ from, to: edges[index + 2]! }] : []));
-  });
+/** The parts of the song, the bars before the first section a part too: every other from the second is a shade lighter. */
+const partsOf = ({ clock, starts, end }: Page) => {
+  const edges = clock.sections.map((each) => starts()[each.bar - 1] ?? end());
+  if (edges[0] !== 0) edges.unshift(0);
+  edges.push(end());
+  return edges.slice(0, -1).map((from, index) => ({ from, to: edges[index + 1]!, shaded: index % 2 === 1 }));
+};
+/** The lighter parts of the song, `height` tall. */
+export const Shades = ({ page, height }: { page: Page; height: number }) => {
+  const shaded = memo(() => partsOf(page).filter((part) => part.shaded));
   return <For each={shaded}>{(part) => <Rect x={part.from} y={0} width={part.to - part.from} height={height} color="fill" />}</For>;
 };
+
+// The foot of the track list is soft while more tracks wait under it, as a div that scrolls
+// fades: the last points of what shows fade into the ground, in steps, as much as waits.
+const [FADE, STEP] = [24, 1];
+const STEPS = Array.from({ length: FADE / STEP }, (_, step) => step);
+const fading = ({ timeline, tops }: Page, step: number) => () =>
+  timeline.bottom.negate().plus((tops().at(-1) ?? 0) + 1).times(ROW / FADE).clamp(0, 1).times((step + 0.5) / STEPS.length);
+/** The soft foot of the timeline, over its rows: each part of the song fades into its own shade. */
+export const SoftFoot = ({ page }: { page: Page }) => {
+  const { timeline, end } = page;
+  const grounds = memo(() => [{ from: -1e6, to: 0, shaded: false }, ...partsOf(page), { from: end(), to: end() + 1e6, shaded: false }]);
+  return (
+    <For each={grounds}>
+      {(part) => STEPS.map((step) => (
+        <Rect x={part.from} y={timeline.bottom.minus(timeline.pointY.times(FADE - step * STEP))} width={part.to - part.from} height={timeline.pointY.times(STEP)}
+          color={part.shaded ? "fill" : "background"} opacity={fading(page, step)} />
+      ))}
+    </For>
+  );
+};
+/** The soft foot of the heads, which scroll with the timeline: it lies over them from the row under them, so no head is drawn through it. */
+export const HeadsFoot = ({ page }: { page: Page }) => (
+  <div style={{ absolute: { top: -FADE, left: 0, right: 0 }, height: FADE }}>
+    <Space key="heads-foot" height={FADE}>
+      {STEPS.map((step) => <Rect x={0} y={step * STEP} width={HEADER} height={STEP} color="background" opacity={fading(page, step)} />)}
+    </Space>
+  </div>
+);
 
 /** A name being typed, over the timeline: what it names, and its field. */
 export const NAMING = { direction: "row", gap: "sm", align: "center", paddingX: "sm", paddingBottom: "sm" } as const;

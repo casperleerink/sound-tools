@@ -7,6 +7,7 @@ import type { Song } from "./song";
 import { addLane, LaneHead, learnName, showLanes } from "./song-automation";
 import { copyOf } from "./song-clips";
 import { ADD_LANE, BEAT, colourOf, DIM, HEADER, inputOf, lanesOf, LOW_ROW, Mark, muted, PALETTE, ROW, rowLook, rowsOf, RULER, TEMPO, titleOf, type Child, type Page } from "./song-page";
+import { HeadsFoot } from "./song-ruler";
 import { tape } from "./tape";
 import { freeName, track } from "./track";
 
@@ -89,8 +90,11 @@ export const Heads = ({ page }: { page: Page }) => {
           )}
         </Show>
       </div>
-      <Show when={() => returns().length > 0}>{() => <Returns page={page} />}</Show>
-      <MasterRow page={page} />
+      <div style={{ keep: true }}>
+        <HeadsFoot page={page} />
+        <Show when={() => returns().length > 0}>{() => <Returns page={page} />}</Show>
+        <MasterRow page={page} />
+      </div>
     </div>
   );
 };

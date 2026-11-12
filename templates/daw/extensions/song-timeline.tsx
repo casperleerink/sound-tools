@@ -3,7 +3,7 @@ import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
 import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, DIM, itemTool, LEAD, LOW_ROW, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
-import { NAMING, Shades } from "./song-ruler";
+import { NAMING, Shades, SoftFoot } from "./song-ruler";
 import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEM, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./song-time";
@@ -424,6 +424,7 @@ export const Timeline = ({ page }: { page: Page }) => {
           )
         }
       </For>
+      <SoftFoot page={page} />
       <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
         color="fill" border="border-strong" borderWidth={1} radius={2} opacity={marquee.active} />
       <Line from={[playhead, 0]} to={[playhead, 1000]} color="text" width={1} />
