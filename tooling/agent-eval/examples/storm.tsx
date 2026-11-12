@@ -1,11 +1,10 @@
-import { bandpass, clamp, db, exp, feedback, h, highpass, hold, Knob, number, lowpass, max, Meter, mix, noise, Pad, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, type Style, tool, bang, output } from "./sdk";
+import { bandpass, Button, clamp, db, exp, feedback, h, highpass, hold, Knob, number, lowpass, max, Meter, mix, noise, Pad, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, type Style, tool, bang, output } from "./sdk";
 
 /** A slow random wander from -1 to 1: a new target `hz` times a second, glided over `ms`. */
 const gust = (hz: Signal | number, ms: Signal | number): Signal =>
   smooth(hold(noise(), rise(phasor(hz).minus(0.5))), ms);
 
-const row: Style = { direction: "row", gap: 8, align: "center" };
-const button: Style = { paddingX: 12, paddingY: 8, radius: 6, background: "#3a3350" };
+const row: Style = { direction: "row", gap: "sm", align: "center" };
 
 tool({
   name: "storm",
@@ -82,10 +81,8 @@ tool({
   view: ({ send }) => (
     <div style={row}>
       <Pad field={{ x: "tone", y: "wild" }} size={160} />
-      <div style={{ gap: 8 }}>
-        <div style={button} onClick={() => send("strike")}>
-          Thunder
-        </div>
+      <div style={{ gap: "sm" }}>
+        <Button label="Thunder" variant="subtle" onClick={() => send("strike")} />
         <Meter value="rumble" label="Rumble" />
         <Knob field="level" label="Level" min={-30} max={6} default={-10} unit="db" />
         <Knob field="thunder" label="Thunder" min={0} max={1} default={0.7} unit="percent" />

@@ -121,7 +121,7 @@ impl LimiterHistory {
         let range = self.ceiling;
         let ceiling = range.position(ceiling_db);
         let theme = cx.theme();
-        let colors = (theme.green, theme.gray_950);
+        let colors = (theme.green, theme.text());
         let moments: Vec<Moment> = self.moments.iter().copied().collect();
         let history = canvas(
             |_, _, _| {},

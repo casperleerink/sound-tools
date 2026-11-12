@@ -467,9 +467,9 @@ impl RenderOnce for Knob {
 
         let theme = cx.theme();
         let colors = DialColors {
-            track: theme.alpha_at(0.10),
-            value: theme.gray_950,
-            face: theme.gray_300,
+            track: theme.fill_strong(),
+            value: theme.text(),
+            face: theme.fill(),
             ring: ring_shows.then_some(theme.lavender),
         };
         let (value, range, bipolar) = (self.value, self.range, self.bipolar);

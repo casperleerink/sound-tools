@@ -21,16 +21,19 @@ use std::time::Instant;
 
 use gpui::{
     AnyElement, App, BoxShadow, Context, Entity, ExternalPaths, FocusHandle, Focusable, FollowMode,
-    FontWeight, Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions,
-    div, hsla, list, point, prelude::*, px,
+    Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions, div, hsla,
+    list, point, prelude::*, px,
 };
 use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, Paste, TextInput};
+use sound_ui::radius;
 use sound_ui::{ActiveTheme, OpenSettings};
+use sound_ui::{TextVariant, Typography};
 
 use self::attachments::Attached;
 use self::naming::Namer;
@@ -738,7 +741,7 @@ impl Sidebar {
     /// The question the agent waits on, as the last thing of the thread. Nothing is modal:
     /// music and editing go on while it waits.
     fn approval_row(&self, approval: &Approval, cx: &mut Context<Self>) -> AnyElement {
-        let (lavender, text) = (cx.theme().lavender, cx.theme().gray_950);
+        let (lavender, text) = (cx.theme().lavender, cx.theme().text());
         let answers = [
             ("allow", "Allow", ApprovalAnswer::Allow),
             (
@@ -761,7 +764,7 @@ impl Sidebar {
                     Button::new(id, label)
                         .debug_selector(move || format!("approval-{id}"))
                         .variant(variant)
-                        .size(ButtonSize::Sm)
+                        .size(ControlSize::Md)
                         .focus_handle(focus)
                         .on_click(cx.listener(move |sidebar, _, _, cx| sidebar.answer(answer, cx)))
                 });
@@ -770,7 +773,7 @@ impl Sidebar {
             .flex_col()
             .gap(px(12.))
             .p(px(14.))
-            .rounded(px(12.))
+            .rounded(radius::LG)
             .bg(lavender.opacity(0.06))
             .border_1()
             .border_color(lavender.opacity(0.3))
@@ -790,7 +793,7 @@ impl Sidebar {
         let back = Button::icon_only("instructions-back", "arrow-left")
             .debug_selector(|| "agent-instructions-back".to_string())
             .variant(ButtonVariant::Ghost)
-            .size(ButtonSize::Xs)
+            .size(ControlSize::Sm)
             .on_click(cx.listener(|sidebar, _, window, cx| {
                 sidebar.close_instructions(window, cx);
             }));
@@ -806,8 +809,7 @@ impl Sidebar {
                 .child(back)
                 .child(
                     div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
+                        .text_variant(TextVariant::Heading)
                         .child("Instructions"),
                 ),
         )
@@ -831,7 +833,7 @@ impl Sidebar {
         let open = Button::new("open-settings", "Open Settings")
             .debug_selector(|| "agent-open-settings".to_string())
             .variant(ButtonVariant::Primary)
-            .size(ButtonSize::Md)
+            .size(ControlSize::Lg)
             .focus_handle(&self.send_focus)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
         div()
@@ -849,8 +851,12 @@ impl Sidebar {
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
-        let (blue, stop, lavender) = (theme.blue, theme.gray_950, theme.lavender);
+        let (border, fill, divider) = (
+            theme.border_strong(),
+            theme.surface(),
+            theme.border_strong(),
+        );
+        let (blue, stop, lavender) = (theme.blue, theme.text(), theme.lavender);
         let working = self.conversation.is_working();
         let can_send =
             !self.input.read(cx).text().trim().is_empty() && self.attachments_reading == 0;
@@ -900,7 +906,7 @@ impl Sidebar {
                     .pt(px(14.))
                     .px(px(14.))
                     .pb(px(10.))
-                    .rounded(px(20.))
+                    .rounded(radius::LG)
                     .border_1()
                     .border_color(border)
                     .bg(fill)
@@ -926,7 +932,7 @@ impl Sidebar {
                             .child(div().flex_1())
                             .child(
                                 button
-                                    .size(ButtonSize::Md)
+                                    .size(ControlSize::Lg)
                                     .rounded(true)
                                     .focus_handle(&self.send_focus),
                             ),
@@ -949,8 +955,8 @@ impl Sidebar {
                 row.child(
                     div()
                         .flex_1()
-                        .text_size(px(14.))
-                        .text_color(cx.theme().gray_700)
+                        .text_variant(TextVariant::Body)
+                        .text_color(cx.theme().text_muted())
                         .child("This thread can't continue."),
                 )
             })
@@ -959,7 +965,7 @@ impl Sidebar {
                     .icon("plus")
                     .debug_selector(|| "agent-cannot-continue".to_string())
                     .variant(ButtonVariant::Subtle)
-                    .size(ButtonSize::Sm)
+                    .size(ControlSize::Md)
                     .focus_handle(&self.send_focus)
                     .on_click(cx.listener(|sidebar, _, window, cx| sidebar.new_thread(window, cx))),
             )
@@ -1008,7 +1014,7 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _rendering = sound_ui::renders::start(sound_ui::renders::Part::Sidebar, "agent");
-        let text = cx.theme().gray_950;
+        let text = cx.theme().text();
         let ready = self.ready_program(cx).is_some();
         let body = match &self.instructions {
             Some((editor, _)) => editor.clone().into_any_element(),

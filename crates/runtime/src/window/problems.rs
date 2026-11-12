@@ -5,9 +5,11 @@ use std::collections::BTreeSet;
 
 use gpui::{Context, MouseDownEvent, div, prelude::*, px};
 use sound_ui::ActiveTheme;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::popover::{Align, Side, anchor, surface};
 use sound_ui::names::file_name;
+use sound_ui::{TextVariant, Typography};
 
 use super::Shell;
 
@@ -22,7 +24,7 @@ impl Shell {
             return None;
         }
         let theme = cx.theme();
-        let (peach, muted) = (theme.peach, theme.gray_700);
+        let (peach, muted) = (theme.peach, theme.text_muted());
         let agent = (self.left_panel.as_ref()).is_some_and(|panel| panel.ask.is_some());
         let files = (problems.iter())
             .map(|problem| problem.path.as_str())
@@ -43,7 +45,7 @@ impl Shell {
             .debug_selector(|| "problems".to_string())
             .icon("triangle-alert")
             .variant(ButtonVariant::GhostColor(peach))
-            .size(ButtonSize::Sm)
+            .size(ControlSize::Md)
             .on_click(cx.listener(|shell, _, _, cx| {
                 shell.problems_open = !shell.problems_open;
                 cx.notify();
@@ -68,7 +70,7 @@ impl Shell {
                 cx.notify();
             }))
             .p(px(12.))
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .line_height(px(20.))
             .child(
                 div()
@@ -82,7 +84,7 @@ impl Shell {
                         Button::new("problems-ask", fix)
                             .debug_selector(|| "problems-ask".to_string())
                             .variant(ButtonVariant::Subtle)
-                            .size(ButtonSize::Xs)
+                            .size(ControlSize::Sm)
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.problems_open = false;
                                 shell.ask_to_fix(window, cx);

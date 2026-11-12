@@ -3,7 +3,9 @@
 
 use gpui::{App, Div, SharedString, StyleRefinement, Window, div, prelude::*, px};
 
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 #[derive(IntoElement)]
 pub struct Kbd {
@@ -78,7 +80,7 @@ pub(crate) fn key_label(key: &str) -> String {
 impl RenderOnce for Kbd {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (bg, border, text) = (theme.alpha_at(0.04), theme.alpha_at(0.05), theme.gray_900);
+        let (bg, border, text) = (theme.fill(), theme.border(), theme.text_secondary());
 
         let selector = self.shortcut.clone();
         self.base
@@ -95,11 +97,11 @@ impl RenderOnce for Kbd {
                     .h(px(16.))
                     .min_w(px(16.))
                     .px(px(3.))
-                    .rounded(px(4.))
+                    .rounded(radius::SM)
                     .border_1()
                     .border_color(border)
                     .bg(bg)
-                    .text_size(px(12.))
+                    .text_variant(TextVariant::Label)
                     .text_color(text)
                     .child(key_label(key))
             }))

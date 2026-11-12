@@ -168,11 +168,11 @@ impl MeterColors {
     fn of(cx: &App) -> Self {
         let theme = cx.theme();
         Self {
-            empty: theme.alpha_at(0.06),
+            empty: theme.fill(),
             green: theme.green,
             yellow: theme.yellow,
             red: theme.red,
-            peak: theme.gray_950,
+            peak: theme.text(),
         }
     }
 }
@@ -362,7 +362,7 @@ impl Styled for GainReduction {
 impl RenderOnce for GainReduction {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (track, bar) = (theme.alpha_at(0.06), theme.gray_950);
+        let (track, bar) = (theme.fill(), theme.text());
         let part = (self.db / Self::RANGE_DB).clamp(0., 1.);
         self.base
             .relative()

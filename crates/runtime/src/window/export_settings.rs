@@ -5,11 +5,12 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{App, Context, FocusHandle, Global, KeyDownEvent, Window, div, prelude::*, px};
+use gpui::{App, Context, FocusHandle, Global, KeyDownEvent, Window, div, prelude::*};
 use sound_export::{CEILING_DBTP, Depth, Format, Loudness, SampleRate, Settings};
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ActiveTheme, typography};
+use sound_ui::{TextVariant, Typography};
 
 use super::new_project::{small_window, small_window_root};
 
@@ -169,7 +170,7 @@ fn row<T: Copy + PartialEq + 'static>(
     set: fn(&mut ExportSettings, T),
     cx: &mut Context<ExportSettings>,
 ) -> impl IntoElement {
-    let muted = cx.theme().gray_800;
+    let muted = cx.theme().text_secondary();
     let value = choices.iter().find(|choice| choice.2 == chosen);
     let screen = cx.entity().downgrade();
     let control = SegmentedControl::new(label, value.map_or("", |choice| choice.0))
@@ -206,7 +207,7 @@ impl Render for ExportSettings {
             Format::Mp3 => Format::Mp3,
         };
         let theme = cx.theme();
-        let (background, text, muted) = (theme.gray_100, theme.gray_950, theme.gray_800);
+        let (background, text, muted) = (theme.background(), theme.text(), theme.text_secondary());
         let mut rows = div().flex().flex_col().gap_4();
         rows = rows.child(row("Format", format_choice, FORMATS, Self::set_format, cx));
         rows = rows.child(row("Sample rate", rate, RATES, Self::set_rate, cx));
@@ -252,13 +253,13 @@ impl Render for ExportSettings {
             .bg(background)
             .text_color(text)
             .font(typography::ui_font())
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .child(
                 div().flex().flex_col().gap_2().child(rows).child(
                     div()
                         .flex()
                         .justify_end()
-                        .text_size(px(12.))
+                        .text_variant(TextVariant::Label)
                         .text_color(muted)
                         .children(hint),
                 ),

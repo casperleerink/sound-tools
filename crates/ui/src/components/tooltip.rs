@@ -5,7 +5,9 @@ use gpui::{
 };
 
 use crate::components::kbd::{key_label, keys_of};
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 #[derive(Clone)]
 pub struct Tooltip {
@@ -44,9 +46,9 @@ fn kbd(key: SharedString, fg: Hsla, chip: Hsla) -> impl IntoElement {
         .h(px(16.))
         .min_w(px(16.))
         .px(px(4.))
-        .rounded(px(4.))
+        .rounded(radius::SM)
         .bg(chip)
-        .text_size(px(10.))
+        .text_variant(TextVariant::Label)
         .font_weight(FontWeight::MEDIUM)
         .text_color(fg)
         .child(key)
@@ -56,7 +58,7 @@ impl Render for Tooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         // An inverted surface: dark background, light text.
-        let (bg, fg) = (theme.gray_950, theme.gray_50);
+        let (bg, fg) = (theme.text(), theme.text_inverse());
         // Chips read as a tint of the foreground.
         let mut chip = fg;
         chip.a = 0.12;
@@ -73,9 +75,9 @@ impl Render for Tooltip {
                     .gap(px(6.))
                     .h(px(28.))
                     .px(px(10.))
-                    .rounded(px(8.))
+                    .rounded(radius::LG)
                     .bg(bg)
-                    .text_size(px(12.))
+                    .text_variant(TextVariant::Label)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
                     .child(self.text.clone())

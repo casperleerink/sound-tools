@@ -34,8 +34,10 @@ use gpui::{
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::knob::KnobRange;
 use crate::components::paint;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
 use crate::typography;
+use crate::typography::{TextVariant, Typography};
 
 pub const INSET_HEIGHT: f32 = 118.;
 /// From the inset to the line under it, which is on the value line of the second row.
@@ -648,8 +650,8 @@ fn handle_element(
                     .border(px(HANDLE_RING))
                     .border_color(border)
                     .font(typography::tabular())
-                    .text_size(px(10.))
-                    .line_height(px(10.))
+                    .text_variant(TextVariant::Label)
+                    .line_height(px(12.))
                     .font_weight(gpui::FontWeight::MEDIUM)
                     // The number is in the colour of the ring on a full dot, and of the dot on a
                     // hollow one: always the other of the two.
@@ -722,21 +724,21 @@ fn handle_element(
 impl RenderOnce for Display {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let inset = theme.gray_50.opacity(0.7);
+        let inset = theme.well().opacity(0.7);
         let ink = Ink {
-            curve: theme.gray_950,
-            fill: theme.alpha_at(0.05),
-            grid: theme.alpha_at(0.04),
-            zero: theme.alpha_at(0.08),
-            thin: theme.gray_950.opacity(0.5),
-            line: theme.alpha_at(0.16),
-            waveform: theme.alpha_at(0.30),
-            shade: theme.gray_50.opacity(0.72),
-            tint: theme.alpha_at(0.08),
+            curve: theme.text(),
+            fill: theme.fill(),
+            grid: theme.border(),
+            zero: theme.border_strong(),
+            thin: theme.text().opacity(0.5),
+            line: theme.text().opacity(0.16),
+            waveform: theme.text().opacity(0.3),
+            shade: theme.well().opacity(0.72),
+            tint: theme.selected(),
             signal: theme.green,
         };
-        let handle_colors = (theme.gray_950, theme.gray_50);
-        let caption_color = theme.gray_800;
+        let handle_colors = (theme.text(), theme.well());
+        let caption_color = theme.text_secondary();
         let drawing = Drawing {
             curve: self.curve,
             grid: self.grid,
@@ -792,7 +794,7 @@ impl RenderOnce for Display {
                     .when(self.takes_files, |d| d.group(INSET_GROUP))
                     .relative()
                     .h(px(INSET_HEIGHT))
-                    .rounded(px(6.))
+                    .rounded(radius::MD)
                     .bg(inset)
                     .child(drawing)
                     .children(areas)
@@ -816,7 +818,7 @@ impl RenderOnce for Display {
                     .h(px(CAPTION_HEIGHT))
                     .flex()
                     .justify_center()
-                    .text_size(px(12.))
+                    .text_variant(TextVariant::Label)
                     .line_height(px(CAPTION_HEIGHT))
                     .whitespace_nowrap()
                     .children(

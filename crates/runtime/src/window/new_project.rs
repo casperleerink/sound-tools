@@ -11,6 +11,7 @@ use gpui::{
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::focus::TabStop;
 use sound_ui::{ActiveTheme, typography};
+use sound_ui::{TextVariant, Typography};
 
 use crate::templates::{self, Choice, Saved};
 
@@ -152,7 +153,7 @@ impl TemplatePicker {
 impl Render for TemplatePicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, text, quiet) = (theme.gray_100, theme.gray_950, theme.gray_700);
+        let (background, text, quiet) = (theme.background(), theme.text(), theme.text_muted());
         let rows = self.choices.iter().enumerate().map(|(index, choice)| {
             let row = template_row(choice.name(), choice.description(), cx);
             let row = match choice {
@@ -187,8 +188,8 @@ impl Render for TemplatePicker {
             .bg(background)
             .text_color(text)
             .font(typography::ui_font())
-            .text_size(px(14.))
-            .child(div().text_size(px(16.)).child("Start from"))
+            .text_variant(TextVariant::Body)
+            .child(div().text_variant(TextVariant::Title).child("Start from"))
             .children(rows)
             .children((self.message.clone()).map(|message| div().text_color(quiet).child(message)))
     }
@@ -209,19 +210,19 @@ pub fn template_row(name: &str, description: &str, cx: &App) -> Stateful<Div> {
         .text_left()
         .rounded_md()
         .border_1()
-        .border_color(theme.gray_300)
-        .bg(theme.gray_50)
-        .hover(|row| row.bg(theme.gray_200))
+        .border_color(theme.border_strong())
+        .bg(theme.well())
+        .hover(|row| row.bg(theme.surface()))
         .cursor_pointer()
         .child(
             div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_variant(TextVariant::Heading)
                 .child(name.to_string()),
         )
         .child(
             div()
-                .text_color(theme.gray_700)
-                .text_size(px(13.))
+                .text_color(theme.text_muted())
+                .text_variant(TextVariant::Label)
                 .child(description.to_string()),
         )
 }

@@ -8,13 +8,16 @@ use gpui::{
     AnyElement, Context, FocusHandle, FontWeight, Keystroke, MouseDownEvent, ScrollHandle,
     SharedString, Subscription, Window, div, prelude::*, px,
 };
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::kbd::Kbd;
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::TabStop;
+use sound_ui::radius;
 use sound_ui::shortcuts::{self, Group, ShortcutsError};
 use sound_ui::{ActiveTheme, Shortcuts};
+use sound_ui::{TextVariant, Typography};
 
 use super::super::app_keys;
 use super::{Section, column, heading};
@@ -179,8 +182,8 @@ impl ShortcutList {
 
     fn row(&mut self, row: Row, last: bool, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let (text, muted, accent) = (theme.gray_900, theme.gray_700, theme.lavender);
-        let border = theme.alpha_at(0.08);
+        let (text, muted, accent) = (theme.text(), theme.text_muted(), theme.lavender);
+        let border = theme.border_strong();
         let focus = (self.rows.entry(row.id.clone()))
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
@@ -192,7 +195,7 @@ impl ShortcutList {
             let mut button = Button::icon_only(SharedString::from(selector.clone()), icon)
                 .debug_selector(move || selector)
                 .variant(ButtonVariant::GhostColor(muted))
-                .size(ButtonSize::Xs)
+                .size(ControlSize::Sm)
                 .tab_stop(true);
             (button.interactivity()).tooltip(move |_, cx| Tooltip::new(tooltip).view(cx));
             button
@@ -229,12 +232,15 @@ impl ShortcutList {
         let keys = match (waiting, row.keys.is_empty()) {
             (true, _) => {
                 let selector = format!("shortcut-waiting-{}", row.id);
-                (keys.text_size(px(12.)).text_color(accent))
+                (keys.text_variant(TextVariant::Label).text_color(accent))
                     .debug_selector(move || selector)
                     .font_weight(FontWeight::MEDIUM)
                     .child("Press a key")
             }
-            (false, true) => keys.text_size(px(12.)).text_color(muted).child("No key"),
+            (false, true) => keys
+                .text_variant(TextVariant::Label)
+                .text_color(muted)
+                .child("No key"),
             (false, false) => keys.children(row.keys.into_iter().map(Kbd::new)),
         };
         let hint = row.hint.map(|hint| {
@@ -242,7 +248,7 @@ impl ShortcutList {
             div()
                 .debug_selector(move || selector)
                 .truncate()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .text_color(muted)
                 .child(hint)
         });
@@ -258,7 +264,7 @@ impl ShortcutList {
             // Room for its focus ring around what it shows, which stays in line with the title.
             .mx(px(-8.))
             .px(px(8.))
-            .rounded(px(8.))
+            .rounded(radius::LG)
             .cursor_pointer()
             .child(
                 div()
@@ -282,7 +288,9 @@ impl ShortcutList {
                     .px(px(20.))
                     .border_x_1()
                     .border_color(border)
-                    .when(last, |card| card.pb(px(8.)).border_b_1().rounded_b(px(12.)))
+                    .when(last, |card| {
+                        card.pb(px(8.)).border_b_1().rounded_b(radius::LG)
+                    })
                     .child(
                         div()
                             .when(!last, |row| row.border_b_1().border_color(border))
@@ -301,7 +309,7 @@ impl ShortcutList {
 impl Render for ShortcutList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (strong, muted, border) = (theme.gray_950, theme.gray_700, theme.alpha_at(0.08));
+        let (strong, muted, border) = (theme.text(), theme.text_muted(), theme.border_strong());
         let (groups, unread) = match cx.try_global::<Shortcuts>() {
             Some(shortcuts) => {
                 let groups = shortcuts.groups();
@@ -344,7 +352,7 @@ impl Render for ShortcutList {
                 .px(px(20.))
                 .pt(px(20.))
                 .pb(px(2.))
-                .rounded_t(px(12.))
+                .rounded_t(radius::LG)
                 .border_t_1()
                 .border_x_1()
                 .border_color(border)

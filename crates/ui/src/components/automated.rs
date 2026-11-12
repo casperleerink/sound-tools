@@ -23,7 +23,7 @@ pub(crate) fn mark(left: f32, top: f32, cx: &App) -> Div {
         .top(px(top))
         .size(px(MARK))
         .rounded_full()
-        .bg(cx.theme().gray_800)
+        .bg(cx.theme().text_secondary())
 }
 
 /// The control with the tooltip of an automated value.

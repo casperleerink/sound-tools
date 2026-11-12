@@ -11,6 +11,7 @@ use gpui::{
 
 use crate::theme::ActiveTheme;
 use crate::typography;
+use crate::typography::{TextVariant, Typography};
 
 pub const CELL_WIDTH: f32 = 56.;
 /// A row of cells. A card body has two.
@@ -82,7 +83,7 @@ pub(crate) fn frame(
     cx: &App,
 ) -> Div {
     let theme = cx.theme();
-    let (label_color, value_color) = (theme.gray_800, theme.gray_950);
+    let (label_color, value_color) = (theme.text_secondary(), theme.text());
     base.relative()
         .flex_none()
         .w(px(width))
@@ -116,7 +117,7 @@ fn line(top: f32, width: f32, color: Hsla) -> Div {
         .flex()
         .justify_center()
         .h(px(LINE_HEIGHT))
-        .text_size(px(12.))
+        .text_variant(TextVariant::Label)
         .line_height(px(LINE_HEIGHT))
         .text_color(color)
         .whitespace_nowrap()

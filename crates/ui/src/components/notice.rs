@@ -12,9 +12,12 @@ use gpui::{
     prelude::*, px, relative,
 };
 
-use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::button::{Button, ButtonVariant};
 use crate::components::indicator::{Indicator, IndicatorSize};
+use crate::scale::ControlSize;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum NoticeTone {
@@ -104,13 +107,13 @@ impl RenderOnce for Notice {
         let dot = match self.tone {
             NoticeTone::Error => theme.red,
             NoticeTone::Warning => theme.peach,
-            NoticeTone::Info => theme.gray_500,
+            NoticeTone::Info => theme.text_muted(),
         };
-        let (track, bar) = (theme.alpha_at(0.10), theme.gray_900);
+        let (track, bar) = (theme.fill_strong(), theme.text());
         let (fill, border, text) = (
-            theme.gray_200.blend(theme.alpha_at(0.06)),
-            theme.alpha_at(0.10),
-            theme.gray_900,
+            theme.surface().blend(theme.fill()),
+            theme.border_strong(),
+            theme.text(),
         );
 
         // For tests, which find a notice by its id: `notice-<id>`. Nothing in a normal build.
@@ -129,11 +132,11 @@ impl RenderOnce for Notice {
             } else {
                 12.
             }))
-            .rounded(px(10.))
+            .rounded(radius::LG)
             .bg(fill)
             .border_1()
             .border_color(border)
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .line_height(px(20.))
             .text_color(text)
             // The dot sits on the first line, whatever the number of lines.
@@ -166,7 +169,7 @@ impl RenderOnce for Notice {
                 d.child(
                     action
                         .variant(ButtonVariant::Subtle)
-                        .size(ButtonSize::Xs)
+                        .size(ControlSize::Sm)
                         .focus_handle(&action_focus)
                         .mt(px(-2.)),
                 )
@@ -175,7 +178,7 @@ impl RenderOnce for Notice {
                 d.child(
                     Button::icon_only("notice-dismiss", "x")
                         .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Xs)
+                        .size(ControlSize::Sm)
                         .focus_handle(&dismiss_focus)
                         .mt(px(-2.))
                         .on_click(move |event, window, cx| on_dismiss(event, window, cx)),

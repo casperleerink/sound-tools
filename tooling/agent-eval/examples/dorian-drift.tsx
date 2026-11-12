@@ -1,4 +1,4 @@
-import { memo, abs, adsr, feedback, floor, h, number, lowpass, phasor, pow, rise, sin, smooth, tool, TAU, output, wrap, type Operand, type Signal, type Style, Knob } from "./sdk";
+import { memo, abs, adsr, feedback, floor, h, number, lowpass, phasor, pow, rise, sin, smooth, tool, TAU, output, wrap, type Operand, type Signal, type Style, Knob, Text } from "./sdk";
 
 // D dorian over two octaves: degree 0 is D3, degree 14 is D5.
 const ROOT = 50;
@@ -11,10 +11,10 @@ const random = (count: Signal, seed: number): Signal =>
 
 const saw = (hz: Operand): Signal => phasor(hz).times(2).minus(1);
 
-const column: Style = { gap: 8 };
-const row: Style = { direction: "row", gap: 8, align: "center" };
-const cell: Style = { width: 26, paddingY: 4, radius: 6, align: "center", background: "#2a2f3a", color: "#9ca3af" };
-const lit: Style = { ...cell, background: "#14b8a6", color: "#ffffff" };
+const column: Style = { gap: "sm" };
+const row: Style = { direction: "row", gap: "sm", align: "center" };
+const cell: Style = { width: 26, paddingY: "xs", radius: "md", align: "center", background: "fill", color: "text-secondary" };
+const lit: Style = { ...cell, background: "teal", color: "text-inverse" };
 
 tool({
   name: "dorian-drift",
@@ -80,7 +80,7 @@ tool({
     return (
       <div style={column}>
         <div style={row}>
-          <div style={{ fontSize: 28, width: 64, color: "#5eead4" }}>{() => `${name()}${octave()}`}</div>
+          <Text variant="display" style={{ width: 64, color: "teal" }}>{() => `${name()}${octave()}`}</Text>
           <div style={row}>
             {DEGREES.map((degreeName) => (
               <div style={() => (degreeName === name() ? lit : cell)}>{degreeName}</div>

@@ -1,4 +1,4 @@
-//! Select: the list of the [dropdown menu](super::dropdown_menu) behind a 24 pt trigger that
+//! Select: the list of the [dropdown menu](super::dropdown_menu) behind a trigger that
 //! says what is picked, as a controlled control on saved state. The owner gives the value on
 //! every render and hears the value picked, as with a segmented control, so a list of many
 //! selects, such as the routes of a matrix, keeps no menu per row in sync with the record.
@@ -19,6 +19,7 @@ use crate::components::dropdown_menu::{
 };
 use crate::components::icon::Icon;
 use crate::components::popover::{Align, Side, anchor, surface};
+use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
 
 type ChangeHandler = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
@@ -38,6 +39,7 @@ pub struct Select {
     /// What the trigger says while the value is none of the rows.
     placeholder: SharedString,
     entries: Vec<MenuEntry>,
+    size: ControlSize,
     trigger_width: Option<f32>,
     menu_width: f32,
     on_change: Option<ChangeHandler>,
@@ -51,6 +53,7 @@ impl Select {
             value: value.into(),
             placeholder: SharedString::default(),
             entries: Vec::new(),
+            size: ControlSize::Sm,
             trigger_width: None,
             menu_width: 200.,
             on_change: None,
@@ -64,6 +67,12 @@ impl Select {
 
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// 24 pt unless told, as the controls of a card are.
+    pub fn size(mut self, size: ControlSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -121,7 +130,7 @@ impl RenderOnce for Select {
             .find(|item| item.value == self.value)
             .map_or(self.placeholder.clone(), |item| item.label());
         let theme = cx.theme();
-        let (muted, ring) = (theme.gray_700, theme.lavender);
+        let (muted, ring) = (theme.text_muted(), theme.lavender);
         let trigger_width = self.trigger_width;
         let value = self.value.clone();
         let on_change = self.on_change;
@@ -209,7 +218,7 @@ impl RenderOnce for Select {
             .flex()
             .flex_none()
             .child(
-                select_trigger(self.id, cx)
+                select_trigger(self.id, self.size, cx)
                     .debug_selector(move || format!("select-{selector}"))
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .track_focus(&trigger_focus)

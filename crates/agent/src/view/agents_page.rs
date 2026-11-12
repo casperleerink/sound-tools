@@ -3,7 +3,9 @@
 
 use gpui::{Context, Entity, Focusable, Subscription, Window, div, prelude::*, px};
 use sound_ui::ActiveTheme;
-use sound_ui::components::text_input::{InputSize, TextInput};
+use sound_ui::ControlSize;
+use sound_ui::components::text_input::TextInput;
+use sound_ui::radius;
 
 use super::agents::Agents;
 use super::onboarding::{Onboarding, Setup, SetupAction};
@@ -23,7 +25,7 @@ pub struct AgentsPage {
 
 impl AgentsPage {
     pub fn new(agents: Entity<Agents>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let answer = cx.new(|cx| TextInput::new(cx).size(InputSize::Md));
+        let answer = cx.new(|cx| TextInput::new(cx).size(ControlSize::Lg));
         let weak = cx.weak_entity();
         answer.update(cx, |input, _| {
             input.set_on_submit(move |_, _, cx| {
@@ -37,7 +39,7 @@ impl AgentsPage {
         let search = cx.new(|cx| {
             TextInput::new(cx)
                 .placeholder("Search services")
-                .size(InputSize::Md)
+                .size(ControlSize::Lg)
         });
         let weak = cx.weak_entity();
         search.update(cx, |input, _| {
@@ -114,7 +116,7 @@ impl AgentsPage {
 impl Render for AgentsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, border) = (theme.gray_700, theme.alpha_at(0.08));
+        let (muted, border) = (theme.text_muted(), theme.border_strong());
         let query = self.search.read(cx).text().to_string();
         let agents = self.agents.read(cx);
         let looking = agents.is_finding().then_some("Looking for agents…");
@@ -147,7 +149,7 @@ impl Render for AgentsPage {
             .children(sections.into_iter().map(|section| {
                 div()
                     .p(px(20.))
-                    .rounded(px(12.))
+                    .rounded(radius::LG)
                     .border_1()
                     .border_color(border)
                     .child(section)

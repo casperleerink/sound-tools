@@ -11,6 +11,8 @@ use sound_agent::{
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::text_input::TextInput;
+use sound_ui::radius;
+use sound_ui::{TextVariant, Typography};
 
 /// The column of the Settings page, less its padding.
 const WIDTH: f32 = 560.;
@@ -250,7 +252,7 @@ fn pi_states(
 /// A heading, then the state on the background of the sidebar.
 fn sample(title: &'static str, onboarding: Onboarding, height: f32, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
-    let (muted, background, border) = (theme.gray_700, theme.gray_50, theme.alpha_at(0.10));
+    let (muted, background, border) = (theme.text_muted(), theme.well(), theme.border_strong());
     // Its own id, so the buttons of two states keep apart.
     div()
         .id(title)
@@ -259,7 +261,7 @@ fn sample(title: &'static str, onboarding: Onboarding, height: f32, cx: &App) ->
         .gap(px(12.))
         .child(
             div()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(title),
@@ -271,7 +273,7 @@ fn sample(title: &'static str, onboarding: Onboarding, height: f32, cx: &App) ->
                 .flex()
                 .flex_col()
                 .p(px(24.))
-                .rounded(px(12.))
+                .rounded(radius::LG)
                 .border_1()
                 .border_color(border)
                 .bg(background)

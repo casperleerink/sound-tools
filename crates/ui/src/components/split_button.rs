@@ -14,7 +14,9 @@ use crate::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuPicked, Trig
 use crate::components::icon::Icon;
 use crate::components::popover::Align;
 use crate::focus::KeyboardFocus;
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 /// The height of both halves.
 pub const HEIGHT: f32 = 24.;
@@ -126,9 +128,9 @@ impl Render for SplitButton {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (text, hover, line, ring) = (
-            theme.gray_800,
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.10),
+            theme.text_secondary(),
+            theme.fill(),
+            theme.border_strong(),
             theme.lavender,
         );
         let ring_shows = self.keyboard_focus.shows_ring(&self.main_focus, window);
@@ -153,13 +155,13 @@ impl Render for SplitButton {
             .pl(px(padding))
             .when(self.row.is_some(), |main| main.flex_1())
             .pr(px(10.))
-            .rounded_l(px(6.))
+            .rounded_l(radius::MD)
             .border_1()
             .border_color(match ring_shows {
                 true => ring,
                 false => Hsla::transparent_black(),
             })
-            .text_size(px(12.))
+            .text_variant(TextVariant::Label)
             .line_height(px(14.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(text)

@@ -5,11 +5,13 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, Window, div, point, prelude::*, px};
 use sound_media::{Audio, Overview};
 use sound_ui::ActiveTheme;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::device_card::{Column, DeviceCard, NARROW_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::knob::{Knob, KnobRange};
 use sound_ui::components::waveform_display::{FileDrop, NoFile, WaveformDisplay, place};
+use sound_ui::{TextVariant, Typography};
 
 use super::rack::{block, sample};
 
@@ -112,9 +114,9 @@ fn displays(cx: &App) -> AnyElement {
             div()
                 .min_w_0()
                 .flex_1()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .line_height(px(14.))
-                .text_color(cx.theme().gray_800)
+                .text_color(cx.theme().text_secondary())
                 .child("Select a clip."),
         );
     let waiting = WaveformDisplay::new("waiting", 312., None, 14.6)
@@ -189,7 +191,7 @@ fn sampler_display(overview: Option<Arc<Overview>>) -> WaveformDisplay {
 fn choose_file() -> Button {
     Button::new("choose-file", "Choose file")
         .variant(ButtonVariant::Subtle)
-        .size(ButtonSize::Sm)
+        .size(ControlSize::Md)
 }
 
 fn sampler(cx: &App) -> AnyElement {

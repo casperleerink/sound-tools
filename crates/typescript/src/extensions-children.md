@@ -72,12 +72,12 @@ tool({
     const launch = (chosen?: string) => {
       for (const loop of loops) send({ child: loop, number: "launch" }, loop === chosen ? 1 : 0);
     };
-    return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
+    return h("div", { style: { direction: "row", gap: "sm", padding: "lg" } },
       [...loops, undefined].map((loop) => {
         const plays = () => loop !== undefined && outputs[`${loop}.playing`] === 1;
         const waits = () => loop !== undefined && outputs[`${loop}.queued`] === 1;
         return h("div", {
-          style: () => ({ padding: 8, radius: 6, background: plays() ? "#7c3aed" : waits() ? "#4c1d95" : "#2a2f3a" }),
+          style: () => ({ padding: "sm", radius: "md", background: plays() ? "green/40" : waits() ? "fill-strong" : "fill" }),
           onClick: () => launch(loop),
         }, loop ?? "Stop");
       }),

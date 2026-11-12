@@ -4,13 +4,15 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, ClickEvent, Div, ElementId, FocusHandle, FontWeight, Hsla, Interactivity, SharedString,
+    App, ClickEvent, Div, ElementId, FocusHandle, Hsla, Interactivity, SharedString,
     StyleRefinement, Window, div, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
+use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
+use crate::typography::{TextVariant, Typography};
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum ButtonVariant {
@@ -26,59 +28,28 @@ pub enum ButtonVariant {
     GhostColor(Hsla),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum ButtonSize {
-    Xs,
-    Sm,
-    #[default]
-    Md,
+/// Outer horizontal padding; the label adds `label_pad_x` on each side.
+fn pad_x(size: ControlSize) -> f32 {
+    match size {
+        ControlSize::Sm => 2.,
+        ControlSize::Md => 6.,
+        ControlSize::Lg => 8.,
+    }
 }
 
-impl ButtonSize {
-    pub fn height(self) -> f32 {
-        match self {
-            Self::Xs => 24.,
-            Self::Sm => 28.,
-            Self::Md => 32.,
-        }
+/// The padding beside the label, and the gap between it and the icon.
+fn label_gap(size: ControlSize) -> f32 {
+    match size {
+        ControlSize::Sm | ControlSize::Md => 2.,
+        ControlSize::Lg => 4.,
     }
+}
 
-    fn radius(self) -> f32 {
-        match self {
-            Self::Xs => 6.,
-            Self::Sm | Self::Md => 8.,
-        }
-    }
-
-    /// Outer horizontal padding; the label adds `label_pad_x` on each side.
-    fn pad_x(self) -> f32 {
-        match self {
-            Self::Xs => 2.,
-            Self::Sm => 6.,
-            Self::Md => 8.,
-        }
-    }
-
-    fn label_pad_x(self) -> f32 {
-        match self {
-            Self::Xs | Self::Sm => 2.,
-            Self::Md => 4.,
-        }
-    }
-
-    fn gap(self) -> f32 {
-        match self {
-            Self::Xs | Self::Sm => 2.,
-            Self::Md => 4.,
-        }
-    }
-
-    /// Icons next to a label are always 16; icon-only buttons shrink to 14 at xs and sm.
-    fn icon_size(self, icon_only: bool) -> f32 {
-        match (self, icon_only) {
-            (Self::Xs | Self::Sm, true) => 14.,
-            _ => 16.,
-        }
+/// Icons next to a label are always 16; icon-only buttons shrink to 14 under 32 pt.
+fn icon_size(size: ControlSize, icon_only: bool) -> f32 {
+    match (size, icon_only) {
+        (ControlSize::Sm | ControlSize::Md, true) => 14.,
+        _ => 16.,
     }
 }
 
@@ -91,7 +62,7 @@ pub struct Button {
     label: Option<SharedString>,
     icon: Option<SharedString>,
     variant: ButtonVariant,
-    size: ButtonSize,
+    size: ControlSize,
     rounded: bool,
     disabled: bool,
     focus_handle: Option<FocusHandle>,
@@ -114,7 +85,7 @@ impl Button {
             label: Some(label.into()),
             icon: None,
             variant: ButtonVariant::default(),
-            size: ButtonSize::default(),
+            size: ControlSize::Lg,
             rounded: false,
             disabled: false,
             focus_handle: None,
@@ -136,7 +107,7 @@ impl Button {
         self
     }
 
-    pub fn size(mut self, size: ButtonSize) -> Self {
+    pub fn size(mut self, size: ControlSize) -> Self {
         self.size = size;
         self
     }
@@ -201,32 +172,26 @@ fn look(variant: ButtonVariant, cx: &App) -> Look {
     let clear = Hsla::transparent_black();
     let (bg, fg, border, hover_bg, hover_fg) = match variant {
         ButtonVariant::Primary => (
-            theme.gray_950,
-            theme.gray_50,
-            theme.gray_950,
-            theme.gray_900,
-            theme.gray_50,
+            theme.text(),
+            theme.text_inverse(),
+            theme.text(),
+            theme.text().opacity(0.85),
+            theme.text_inverse(),
         ),
         ButtonVariant::Subtle => (
-            theme.alpha_at(0.05),
-            theme.gray_950,
+            theme.fill(),
+            theme.text(),
             clear,
-            theme.alpha_at(0.10),
-            theme.gray_950,
+            theme.fill_strong(),
+            theme.text(),
         ),
-        ButtonVariant::Ghost => (
-            clear,
-            theme.gray_950,
-            clear,
-            theme.alpha_at(0.05),
-            theme.gray_950,
-        ),
+        ButtonVariant::Ghost => (clear, theme.text(), clear, theme.fill(), theme.text()),
         ButtonVariant::Solid(accent) => (
             accent,
-            theme.gray_50,
+            theme.text_inverse(),
             accent,
             accent.opacity(0.85),
-            theme.gray_50,
+            theme.text_inverse(),
         ),
         ButtonVariant::SubtleColor(accent) => (
             accent.opacity(0.10),
@@ -235,7 +200,7 @@ fn look(variant: ButtonVariant, cx: &App) -> Look {
             accent.opacity(0.20),
             accent,
         ),
-        ButtonVariant::GhostColor(accent) => (clear, accent, clear, accent, theme.gray_50),
+        ButtonVariant::GhostColor(accent) => (clear, accent, clear, accent, theme.text_inverse()),
     };
     Look {
         bg,
@@ -270,14 +235,14 @@ impl RenderOnce for Button {
         } = look(self.variant, cx);
         // A solid lavender button has the ring's colour already, so its focus is bright.
         let ring = if border == cx.theme().lavender {
-            cx.theme().gray_950
+            cx.theme().text()
         } else {
             cx.theme().lavender.opacity(0.4)
         };
         let size = self.size;
         let disabled = self.disabled;
         let icon_only = self.label.is_none();
-        let icon_size = size.icon_size(icon_only);
+        let icon_size = icon_size(size, icon_only);
 
         self.base
             .id(self.id)
@@ -285,28 +250,27 @@ impl RenderOnce for Button {
             .flex_none()
             .items_center()
             .justify_center()
-            .gap(px(size.gap()))
+            .gap(px(label_gap(size)))
             .h(px(size.height()))
             .map(|b| {
                 if icon_only {
                     b.w(px(size.height()))
                 } else {
-                    b.px(px(size.pad_x()))
+                    b.px(px(pad_x(size)))
                 }
             })
             .map(|b| {
                 if self.rounded {
                     b.rounded_full()
                 } else {
-                    b.rounded(px(size.radius()))
+                    b.rounded(size.radius())
                 }
             })
             .border_1()
             .border_color(border)
             .bg(bg)
             .text_color(fg)
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
+            .text_variant(TextVariant::Heading)
             .when(disabled, |b| b.opacity(0.4).cursor_not_allowed())
             .when(!disabled, |b| {
                 b.cursor_pointer()
@@ -324,7 +288,7 @@ impl RenderOnce for Button {
                 b.child(Icon::new(name).size(icon_size))
             })
             .when_some(self.label, |b, label| {
-                b.child(div().px(px(size.label_pad_x())).child(label))
+                b.child(div().px(px(label_gap(size))).child(label))
             })
             .when_some(self.on_click.filter(|_| !disabled), |b, f| {
                 b.on_click(move |event, window, cx| {

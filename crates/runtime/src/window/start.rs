@@ -16,6 +16,7 @@ use gpui::{
 use sound_ui::components::button::Button;
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::{ActiveTheme, typography};
+use sound_ui::{TextVariant, Typography};
 
 use super::{Opened, Starting};
 use crate::app::check_project_folder;
@@ -221,10 +222,10 @@ impl Render for StartView {
             .flex()
             .items_center()
             .justify_center()
-            .bg(theme.gray_100)
-            .text_color(theme.gray_950)
+            .bg(theme.background())
+            .text_color(theme.text())
             .font(typography::ui_font())
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .child(
                 EmptyState::new("Open a project", self.message.clone())
                     .max_w(px(START_WIDTH - 48.))

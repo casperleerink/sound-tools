@@ -1,9 +1,12 @@
-//! Font setup. Apply `ui_font()` on the window root; use `tabular()` on numbers, and
-//! `tabular_runs()` on text with numbers in it.
+//! The font and the type scale. Apply `ui_font()` on the window root; a text names a
+//! [`TextVariant`]. Use `tabular()` on numbers, and `tabular_runs()` on text with numbers in it.
 
 use std::sync::Arc;
 
-use gpui::{Font, FontFeatures, FontStyle, FontWeight, Hsla, SharedString, StyledText, TextRun};
+use gpui::{
+    Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, SharedString, Styled, StyledText,
+    TextRun, phi, px,
+};
 
 const FAMILY: &str = "Inter Display";
 pub const MONO: &str = "Menlo";
@@ -27,6 +30,61 @@ thread_local! {
         font(FontWeight::NORMAL, &["ss03", "cv01", "tnum", "lnum"]),
     ];
 }
+
+/// The type scale: every text is one of these.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextVariant {
+    /// 24 pt: the one line a page opens with.
+    Display,
+    /// 16 pt medium: the title of a page or a dialog.
+    Title,
+    /// 14 pt medium: the name of a card, a row or a group.
+    Heading,
+    /// 14 pt: what is read.
+    Body,
+    /// 12 pt: the label and the value of a control, a hint.
+    Label,
+}
+
+impl TextVariant {
+    pub const ALL: [Self; 5] = [
+        Self::Display,
+        Self::Title,
+        Self::Heading,
+        Self::Body,
+        Self::Label,
+    ];
+
+    pub const fn size(self) -> Pixels {
+        match self {
+            Self::Display => px(24.),
+            Self::Title => px(16.),
+            Self::Heading | Self::Body => px(14.),
+            Self::Label => px(12.),
+        }
+    }
+
+    pub const fn weight(self) -> FontWeight {
+        match self {
+            Self::Title | Self::Heading => FontWeight::MEDIUM,
+            Self::Display | Self::Body | Self::Label => FontWeight::NORMAL,
+        }
+    }
+}
+
+/// `.text_variant(..)` on any element: the size, the weight and the line height of a variant
+/// in one call, whatever the element is inside. The line height is 1.618 of the size, gpui's
+/// own; a control that centres one line in its height sets a tighter one after it.
+pub trait Typography: Styled {
+    fn text_variant(self, variant: TextVariant) -> Self {
+        self.text_size(variant.size())
+            .font_weight(variant.weight())
+            .line_height(phi())
+    }
+}
+
+impl<E: Styled> Typography for E {}
 
 /// InterDisplay with `ss03` and `cv01`, the app's default text font.
 pub fn ui_font() -> Font {

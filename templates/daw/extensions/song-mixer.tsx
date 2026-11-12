@@ -26,7 +26,7 @@ export const returnTitle = ({ returns }: Page, send: string) =>
 export const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
   <>
     <Fader field={`${path}.gain_db`} length={length} default={0} label="Change the volume" played meter={meter} />
-    <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" played max={6} label="Change the volume" width={56} height={16} size={12} align="center" />
+    <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" played max={6} label="Change the volume" width={56} size="sm" height={16} align="center" />
   </>
 );
 
@@ -37,7 +37,7 @@ export const Mixer = ({ page }: { page: Page }) => {
   const sent = memo(() => returns().filter((back) => rows().some((each) => sendsOf(each).includes(`send-${back.name}`))));
   /** What each row of knobs turns, said once at the left of the strips. */
   const Names = () => {
-    const name = (text: () => string) => <div style={{ height: KNOB, paddingTop: 10, fontSize: 12, color: "gray-700", truncate: true }}>{text}</div>;
+    const name = (text: () => string) => <div style={{ height: KNOB, paddingTop: 10, fontSize: 12, color: "text-muted", truncate: true }}>{text}</div>;
     return (
       <div style={{ width: NAMES, keep: true }}>
         <For each={sent}>{(back) => name(() => titleOf(back))}</For>
@@ -68,17 +68,17 @@ export const Mixer = ({ page }: { page: Page }) => {
           <Volume path={path} length={MIXER_FADER} meter={master ? "device" : { of: path }} />
         </div>
         <div style={{ height: 32, direction: "row", align: "center", gap: 4 }}>
-          {each ? <Toggle key={`strip-mute-${each.name}`} label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
-          {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
+          {each ? <Toggle key={`strip-mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
+          {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} /> : null}
         </div>
         <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tabStop
-          style={{ width: STRIP - 4, height: 22, paddingX: 4, radius: 6, direction: "row", align: "center", justify: "center", gap: 5, hover: { background: "alpha/5" } }}
+          style={{ width: STRIP - 4, height: 22, paddingX: 4, radius: 6, direction: "row", align: "center", justify: "center", gap: 5, hover: { background: "fill" } }}
           onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
           <div style={() => ({
             width: 6, height: 6, radius: 3, keep: true,
-            ...(each ? { background: muted(each) ? (`${colourOf(each)}/40` as Color) : colourOf(each) } : { borderWidth: 1, borderColor: "gray-800" }),
+            ...(each ? { background: muted(each) ? (`${colourOf(each)}/40` as Color) : colourOf(each) } : { borderWidth: 1, borderColor: "text-secondary" }),
           })} />
-          <div style={{ fontSize: 12, color: "gray-800", truncate: true }}>{() => (each ? titleOf(each) : "Master")}</div>
+          <div style={{ fontSize: 12, color: "text-secondary", truncate: true }}>{() => (each ? titleOf(each) : "Master")}</div>
         </div>
       </div>
     );
@@ -97,7 +97,7 @@ export const Mixer = ({ page }: { page: Page }) => {
           {() => (
             <>
               <div style={{ grow: true }} />
-              <div style={{ width: 1, background: "alpha/5", keep: true }} />
+              <div style={{ width: 1, background: "border", keep: true }} />
               <div style={GROUP}>
                 <For each={returns}>{(each) => <Strip each={each} />}</For>
               </div>
@@ -105,7 +105,7 @@ export const Mixer = ({ page }: { page: Page }) => {
           )}
         </Show>
       </div>
-      <div style={{ width: 1, background: "alpha/5", keep: true }} />
+      <div style={{ width: 1, background: "border", keep: true }} />
       <div style={GROUP}>
         <Strip master />
       </div>

@@ -42,7 +42,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     <Show when={picked}>
       {() => (
         <Group x={x} y={() => topOf(row())} clip={() => ({ width: width(), height: 1 })}>
-          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border="alpha/10" borderWidth={1} opacity={() => copying.times(dim())} />
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="fill" border="border-strong" borderWidth={1} opacity={() => copying.times(dim())} />
           {contents(copying)}
         </Group>
       )}
@@ -209,7 +209,7 @@ export const Timeline = ({ page }: { page: Page }) => {
         <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
-            color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
+            color="fill" border={() => (picked() ? "text" : "border-strong")} borderWidth={1} opacity={dim}
             grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           {notes(dim)}
           <Rect x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
@@ -255,14 +255,14 @@ export const Timeline = ({ page }: { page: Page }) => {
       onEnd: ({ dy }) => edit("Change gain", (state) => (state.gain_db = clamp(Math.round((Math.max(state.gain_db, GAIN_RANGE[0]) - dy * dbPerRow) * 10) / 10, GAIN_RANGE[0], GAIN_RANGE[1]))),
     };
     const dot = (x: Accessor<Live> | Live, hollow: boolean, drag: Drag, cursor: "ew-resize" | "ns-resize") => [
-      <Circle x={x} y={top} radius={5} color={hollow ? "gray-950" : "gray-50"} drag={drag} cursor={cursor} />,
-      <Circle x={x} y={top} radius={3.5} color={hollow ? "gray-50" : "gray-950"} drag={drag} cursor={cursor} />,
+      <Circle x={x} y={top} radius={5} color={hollow ? "text" : "well"} drag={drag} cursor={cursor} />,
+      <Circle x={x} y={top} radius={3.5} color={hollow ? "well" : "text"} drag={drag} cursor={cursor} />,
     ];
     /** What a handle makes while it is dragged, in a pill right of it `wide` points wide, as `title` and the value. */
     const readout = (x: Accessor<Live>, title: string, wide: number, value: Accessor<Live>, unit: "ms" | "db", held: Live) => [
-      <Rect x={() => x().plus(point.times(10))} y={top - 2 / ROW} width={point.times(wide)} height={22 / ROW} radius={6} color="gray-100" border="alpha/10" borderWidth={1} opacity={held} />,
-      <Label x={() => x().plus(point.times(17))} y={top + 2 / ROW} text={title} size={12} color="gray-950" opacity={held} />,
-      <Label x={() => x().plus(point.times(wide + 3))} y={top + 2 / ROW} text={value} unit={unit} size={12} color="gray-950" align="right" opacity={held} />,
+      <Rect x={() => x().plus(point.times(10))} y={top - 2 / ROW} width={point.times(wide)} height={22 / ROW} radius={6} color="background" border="border-strong" borderWidth={1} opacity={held} />,
+      <Label x={() => x().plus(point.times(17))} y={top + 2 / ROW} text={title} size={12} color="text" opacity={held} />,
+      <Label x={() => x().plus(point.times(wide + 3))} y={top + 2 / ROW} text={value} unit={unit} size={12} color="text" align="right" opacity={held} />,
     ];
     // A fade's line shows while it has one, and while its handle drags one out.
     const shown = (ms: () => number, held: Live) => () => held.max(ms() > 0 ? 1 : 0);
@@ -270,10 +270,10 @@ export const Timeline = ({ page }: { page: Page }) => {
     const edge = 4 / ROW;
     return (
       <>
-        <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="gray-50/50" opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
-        <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="gray-50/50" opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
-        <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="gray-950" width={1.5} opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
-        <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="gray-950" width={1.5} opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
+        <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="well/50" opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
+        <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="well/50" opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
+        <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="text" width={1.5} opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
+        <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="text" width={1.5} opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
         {dot(fadeIn, false, fadeDrag("fade-in"), "ew-resize")}
         {dot(fadeOut, false, fadeDrag("fade-out"), "ew-resize")}
         {dot(() => point.times(0).plus(width() / 2), true, gainDrag, "ns-resize")}
@@ -288,8 +288,8 @@ export const Timeline = ({ page }: { page: Page }) => {
     const width = now.tick.minus(from).max(1);
     return (
       <Group x={from} y={() => topOf(row())}>
-        <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="gray-100" />
-        <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border="red" borderWidth={1} />
+        <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="background" />
+        <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="fill" border="red" borderWidth={1} />
         <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color={() => `${colourOf(each)}/85` as Color} />
         <Notes x={0} y={12 / ROW} width={width} height={(ROW - 24) / ROW} list={now.take(`${each.name}/rec`)} color={() => colourOf(each)} />
       </Group>
@@ -360,7 +360,7 @@ export const Timeline = ({ page }: { page: Page }) => {
       <>
         <Original x={() => region.state.start} row={row} width={width} picked={chosen} contents={wave} />
         <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? MOVES : undefined)}>
-          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="fill" border={() => (chosen() ? "text" : "border-strong")} borderWidth={1}
             drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           {wave()}
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={pressItem(key)} cursor="ew-resize"
@@ -377,7 +377,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, Math.max(tops().at(-1) ?? 0, 1)] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
       drag={marqueeDrag} onPress={pressTimeline} onDrop={dropOnTimeline}>
       <Shades page={page} height={1000} />
-      <Rect x={-1e6} y={() => tops().at(-1) ?? 0} width={2e6} height={timeline.pointY} color="alpha/5" />
+      <Rect x={-1e6} y={() => tops().at(-1) ?? 0} width={2e6} height={timeline.pointY} color="border" />
       <For each={layout}>
         {({ each, lane, add }, row) =>
           add ? null : lane ? (
@@ -387,10 +387,10 @@ export const Timeline = ({ page }: { page: Page }) => {
             }
           ) : (
             <>
-              <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="alpha/5" />
+              <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="border" />
               <Label x={() => timeline.left.max(0).plus(timeline.pointX.times(12))} y={() => timeline.pointY.times(-7).plus(topOf(row()) + 0.5)}
                 text={() => (memory.recording !== null || clipsOf(each).length + regionsOf(each).length > 0 ? "" : each.tool === "tape" ? "Drop an audio file here" : "Double-click to add a clip")}
-                size={11} color="gray-700" />
+                size={11} color="text-muted" />
               {() => {
                 const snap = memory.snap;
                 return <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} snap={snap} />}</For>;
@@ -409,8 +409,8 @@ export const Timeline = ({ page }: { page: Page }) => {
         }
       </For>
       <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
-        color="alpha/5" border="alpha/20" borderWidth={1} radius={2} opacity={marquee.active} />
-      <Line from={[playhead, 0]} to={[playhead, 1000]} color="gray-950" width={1} />
+        color="fill" border="text/20" borderWidth={1} radius={2} opacity={marquee.active} />
+      <Line from={[playhead, 0]} to={[playhead, 1000]} color="text" width={1} />
     </Space>
   );
 };
@@ -426,7 +426,7 @@ export const ClipName = ({ page }: { page: Page }) => {
         return (
           <div key="clip-name" style={{ direction: "row", gap: 6, align: "center" }}>
             <div style={{ fontSize: 11, color: COLOR.text }}>Clip name</div>
-            <Input key="clip-name-field" value={() => clipAt(key)?.state.title || clipAt(key)?.name || ""} width={140} focus
+            <Input size="lg" key="clip-name-field" value={() => clipAt(key)?.state.title || clipAt(key)?.name || ""} width={140} focus
               onCommit={(title) => {
                 memory.renamingClip = null;
                 editClips("Rename a clip", [key], (clip) => (clip.title = title));

@@ -92,7 +92,7 @@ export const pressMark = (page: Page, mark: Mark) => (press: Press) => {
 export const Ruler = ({ page }: { page: Page }) => {
   const { memory, clock, runs, starts, end, timeline, playhead, handle } = page;
   const loop = now.drag("loop");
-  const chosen = (kind: Mark["kind"], bar: number) => (memory.mark?.kind === kind && memory.mark.bar === bar ? ("gray-800" as const) : undefined);
+  const chosen = (kind: Mark["kind"], bar: number) => (memory.mark?.kind === kind && memory.mark.bar === bar ? ("text-secondary" as const) : undefined);
   // Each section from its bar line to the next one's.
   const sections = memo(() =>
     clock.sections.map((section, index) => ({ ...section, from: starts()[section.bar - 1] ?? end(), to: starts()[(clock.sections[index + 1]?.bar ?? Infinity) - 1] ?? end() })),
@@ -102,7 +102,7 @@ export const Ruler = ({ page }: { page: Page }) => {
     changeBars(runs()).flatMap((bar, index) => {
       const tick = starts()[bar - 1];
       const signature = runs()[index]?.signature ?? "4/4";
-      return tick === undefined ? [] : [{ bar, tick, signature, width: widthOf([{ text: `${bar}  ` }, { text: signature, border: "gray-800" }]) }];
+      return tick === undefined ? [] : [{ bar, tick, signature, width: widthOf([{ text: `${bar}  ` }, { text: signature, border: "text-secondary" }]) }];
     }),
   );
   /** 1 while the label of the time signature change before leaves room for that at `index`. */
@@ -141,7 +141,7 @@ export const Ruler = ({ page }: { page: Page }) => {
   // its body moves it, an edge moves that end, on the beats. Off, it keeps its range.
   const repeat = () => clock.repeat ?? memory.repeatRange;
   // A line with its two ends standing up, bright while it repeats.
-  const band = (): Color => (clock.repeat ? "gray-900" : "alpha/20");
+  const band = (): Color => (clock.repeat ? "text" : "text/20");
   const setRepeatRange = (from: number, to: number) => {
     if (to <= from) return;
     if (clock.repeat) clock.setRepeat({ from, to });
@@ -177,26 +177,26 @@ export const Ruler = ({ page }: { page: Page }) => {
           const left = timeline.left.max(section.from);
           const room = left.negate().plus(section.to).minus(timeline.pointX.times(4)).max(0);
           return [
-            <Rect x={section.from} y={0} width={timeline.pointX} height={LINE - 2} color="alpha/20" />,
+            <Rect x={section.from} y={0} width={timeline.pointX} height={LINE - 2} color="text/20" />,
             <Group x={left} clip={{ width: room, height: LINE }}>
               <Rect x={0} y={0} width={room.min(timeline.pointX.times(widthOf([{ text: section.name }]) + 12))} height={LINE} color={COLOR.clear} cursor="pointer"
                 onPress={pressMark(page, { kind: "section", bar: section.bar, tick: section.from })} />
-              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "gray-950", weight: "medium", border: chosen("section", section.bar) }]} size={12} />
+              <Label x={timeline.pointX.times(6)} y={2} text={() => [{ text: section.name, color: "text", weight: "medium", border: chosen("section", section.bar) }]} size={12} />
             </Group>,
           ];
         }}
       </For>
       <For each={starts}>
         {(tick, bar) => [
-          <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="alpha/10" />,
+          <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="border-strong" />,
           () => (changes().some((change) => change.tick === tick) ? null : (
-            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} size={12} color="gray-700" opacity={() => numberShows(bar())} />
+            <Label x={timeline.pointX.times(6).plus(tick)} y={LINE + 3} text={String(bar() + 1)} size={12} color="text-muted" opacity={() => numberShows(bar())} />
           )),
         ]}
       </For>
       <For each={changes}>
         {(change, index) => [
-          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} size={12} color="gray-700" opacity={() => changeShows(index())}
+          <Label x={timeline.pointX.times(6).plus(change.tick)} y={LINE + 3} size={12} color="text-muted" opacity={() => changeShows(index())}
             text={() => [{ text: `${change.bar}  ` }, { text: change.signature, border: chosen("signature", change.bar) }]} />,
           change.bar > 1 ? (
             // No wider than its label shows: a hidden one hears no press.
@@ -207,7 +207,7 @@ export const Ruler = ({ page }: { page: Page }) => {
       </For>
       <For each={tempos}>
         {(change) => [
-          <Rect x={change.tick} y={RULER - 8} width={timeline.pointX} height={8} color={() => (tempoChosen(change.tick) ? "gray-950" : "alpha/40")} />,
+          <Rect x={change.tick} y={RULER - 8} width={timeline.pointX} height={8} color={() => (tempoChosen(change.tick) ? "text" : "text/40")} />,
           <Rect key={`ruler-tempo-${change.tick}`} x={timeline.pointX.times(-3).plus(change.tick)} y={LINE} width={timeline.pointX.times(7)} height={RULER - LINE}
             color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />,
         ]}
@@ -222,19 +222,19 @@ export const Ruler = ({ page }: { page: Page }) => {
         color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} onClick={toggleRepeat} />
       <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
         anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} onClick={toggleRepeat} />
-      <Rect x={loop.startX.min(loop.x)} y={RULER - 6} width={loop.dx.abs()} height={3} radius={1.5} color="gray-900" opacity={loop.active.times(loop.dx.abs().gt(0))} />
+      <Rect x={loop.startX.min(loop.x)} y={RULER - 6} width={loop.dx.abs()} height={3} radius={1.5} color="text" opacity={loop.active.times(loop.dx.abs().gt(0))} />
       <For each={tempos}>
         {(change) => {
           const text = `${bpmText(change.bpm)} bpm`;
           const shown = () => (tempoChosen(change.tick) ? 1 : now.hover(`ruler-tempo-${change.tick}`));
           return [
-            <Rect x={timeline.pointX.times(6).plus(change.tick)} y={LINE} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4} color="gray-100" border="alpha/10" borderWidth={1} opacity={shown} />,
-            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} size={12} color="gray-950" opacity={shown} />,
+            <Rect x={timeline.pointX.times(6).plus(change.tick)} y={LINE} width={timeline.pointX.times(text.length * 5.6 + 12)} height={18} radius={4} color="background" border="border-strong" borderWidth={1} opacity={shown} />,
+            <Label x={timeline.pointX.times(12).plus(change.tick)} y={LINE + 3} text={text} size={12} color="text" opacity={shown} />,
           ];
         }}
       </For>
-      <Line from={[playhead, LINE + 8]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
-      <Circle x={playhead} y={LINE + 8} radius={3.5} color="gray-950" />
+      <Line from={[playhead, LINE + 8]} to={[playhead, RULER - 1]} color="text" width={1} />
+      <Circle x={playhead} y={LINE + 8} radius={3.5} color="text" />
     </Space>
   );
 };
@@ -247,7 +247,7 @@ export const Shades = ({ page: { clock, starts, end }, height }: { page: Page; h
     edges.push(end());
     return edges.slice(1, -1).flatMap((from, index) => (index % 2 === 0 ? [{ from, to: edges[index + 2]! }] : []));
   });
-  return <For each={shaded}>{(part) => <Rect x={part.from} y={0} width={part.to - part.from} height={height} color="alpha/4" />}</For>;
+  return <For each={shaded}>{(part) => <Rect x={part.from} y={0} width={part.to - part.from} height={height} color="fill" />}</For>;
 };
 
 /** The field to name the section being named, over the timeline. */
@@ -275,7 +275,7 @@ export const SectionName = ({ page }: { page: Page }) => {
         return (
           <div key="ruler-edit" style={{ direction: "row", gap: 6, align: "center" }}>
             <div style={{ fontSize: 11, color: COLOR.text }}>{label}</div>
-            <Input key="ruler-edit-field" value={editedValue} width={100} focus onCommit={commitEdit} />
+            <Input size="lg" key="ruler-edit-field" value={editedValue} width={100} focus onCommit={commitEdit} />
           </div>
         );
       }}

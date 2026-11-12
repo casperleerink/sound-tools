@@ -11,8 +11,11 @@ use gpui::{
     Window, div, prelude::*, pulsating_between, px, relative,
 };
 use sound_ui::ActiveTheme;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::text_input::TextInput;
+use sound_ui::radius;
+use sound_ui::{TextVariant, Typography};
 
 use super::model_picker::logo;
 use crate::{
@@ -204,8 +207,14 @@ fn megabytes(bytes: u64) -> u64 {
 /// Most starts end signed in, so the thread takes the same place without a jump.
 pub(super) fn skeleton(cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let (bar, border, fill) = (theme.alpha_at(0.05), theme.alpha_at(0.10), theme.gray_200);
-    let line = |width: f32| div().h(px(12.)).w(relative(width)).rounded(px(6.)).bg(bar);
+    let (bar, border, fill) = (theme.fill(), theme.border_strong(), theme.surface());
+    let line = |width: f32| {
+        div()
+            .h(px(12.))
+            .w(relative(width))
+            .rounded(radius::MD)
+            .bg(bar)
+    };
     let thread = div()
         .flex_1()
         .flex()
@@ -214,7 +223,7 @@ pub(super) fn skeleton(cx: &App) -> AnyElement {
         .px(px(24.))
         .pt(px(8.))
         // A message: one line of text in the padding of its box.
-        .child(div().h(px(50.)).rounded(px(12.)).bg(bar))
+        .child(div().h(px(50.)).rounded(radius::LG).bg(bar))
         .child(
             div()
                 .flex()
@@ -235,7 +244,7 @@ pub(super) fn skeleton(cx: &App) -> AnyElement {
     let composer = div().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
         div()
             .h(px(COMPOSER_HEIGHT))
-            .rounded(px(20.))
+            .rounded(radius::LG)
             .border_1()
             .border_color(border)
             .bg(fill),
@@ -293,8 +302,8 @@ impl Buttons {
             .variant(variant)
             .focus_handle(&handle);
         let button = match wide {
-            true => button.size(ButtonSize::Md).w_full(),
-            false => button.size(ButtonSize::Sm),
+            true => button.size(ControlSize::Lg).w_full(),
+            false => button.size(ControlSize::Md),
         };
         match self.on_action.clone() {
             Some(on_action) => button
@@ -321,13 +330,13 @@ impl Buttons {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_color(cx.theme().gray_900)
+                    .text_color(cx.theme().text_secondary())
                     .child(reason.sentence),
             )
             .children(reason.details.map(|details| {
                 Button::new(id, label)
                     .variant(ButtonVariant::Subtle)
-                    .size(ButtonSize::Sm)
+                    .size(ControlSize::Md)
                     .on_click(move |_, window, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(details.clone()));
                         copied.write(cx, true);
@@ -346,7 +355,7 @@ impl Buttons {
         window: &mut Window,
         cx: &mut App,
     ) -> Shown {
-        let muted = cx.theme().gray_700;
+        let muted = cx.theme().text_muted();
         let (subtle, primary) = (ButtonVariant::Subtle, ButtonVariant::Primary);
         let SigningIn {
             page,
@@ -434,7 +443,7 @@ impl Buttons {
 /// A sentence, a code, a quieter line, then the controls and what goes under them.
 fn shown_element(shown: Shown, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let (text, muted, strong) = (theme.gray_900, theme.gray_700, theme.gray_950);
+    let (text, muted, strong) = (theme.text_secondary(), theme.text_muted(), theme.text());
     let column = |children: Vec<AnyElement>, gap: f32| {
         div()
             .flex()
@@ -457,7 +466,7 @@ fn shown_element(shown: Shown, cx: &App) -> AnyElement {
         )
         .children(shown.code.map(|code| {
             div()
-                .text_size(px(24.))
+                .text_variant(TextVariant::Display)
                 .line_height(px(32.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(strong)
@@ -511,7 +520,7 @@ impl Services {
     /// in a row of the list they could scroll out of view.
     fn panel(&self, buttons: &Buttons, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let theme = cx.theme();
-        let (strong, fill) = (theme.gray_950, theme.alpha_at(0.04));
+        let (strong, fill) = (theme.text(), theme.fill());
         let named = |id: &str| {
             (self.services.iter())
                 .find(|service| service.id == id)
@@ -545,7 +554,7 @@ impl Services {
                 .flex_col()
                 .gap(px(8.))
                 .p(px(16.))
-                .rounded(px(8.))
+                .rounded(radius::LG)
                 .bg(fill)
                 .child(
                     div()
@@ -560,7 +569,7 @@ impl Services {
 
     fn element(self, buttons: &Buttons, window: &mut Window, cx: &mut App) -> AnyElement {
         let theme = cx.theme();
-        let (muted, hairline) = (theme.gray_700, theme.alpha_at(0.08));
+        let (muted, hairline) = (theme.text_muted(), theme.border_strong());
         let query = self.search.as_ref().map_or("", |(_, query)| query.as_str());
         let (signed_in, mut others): (Vec<_>, Vec<_>) =
             (self.services.iter()).partition(|service| service.signed_in.is_some());
@@ -583,7 +592,7 @@ impl Services {
             .collect();
         let heading = |label: &'static str| {
             div()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(label)
@@ -642,7 +651,7 @@ impl Services {
         cx: &mut App,
     ) -> AnyElement {
         let theme = cx.theme();
-        let (muted, strong) = (theme.gray_700, theme.gray_950);
+        let (muted, strong) = (theme.text_muted(), theme.text());
         let id = &service.id;
         let steps = matches!(&self.panel, Some(Panel::Steps(signing_in, _)) if signing_in == id);
         let signing_out = self.signing_out.as_deref() == Some(id.as_str());
@@ -701,7 +710,7 @@ impl Services {
                             .child(div().text_color(strong).child(service.name.clone()))
                             .children(about.map(|about| {
                                 div()
-                                    .text_size(px(12.))
+                                    .text_variant(TextVariant::Label)
                                     .text_color(muted)
                                     .child(about.to_string())
                             })),
@@ -715,7 +724,7 @@ impl Services {
 impl RenderOnce for Onboarding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let strong = theme.gray_950;
+        let strong = theme.text();
         let name = self.provider.name();
         let buttons = Buttons {
             key: name.to_lowercase(),
@@ -860,7 +869,7 @@ impl RenderOnce for Onboarding {
                     window,
                     cx,
                 );
-                let muted = cx.theme().gray_700;
+                let muted = cx.theme().text_muted();
                 div()
                     .flex()
                     .flex_col()
@@ -900,7 +909,7 @@ impl RenderOnce for Onboarding {
             .items_start()
             .gap(px(12.))
             .w_full()
-            .text_size(px(14.))
+            .text_variant(TextVariant::Body)
             .line_height(px(20.))
             .child(
                 div()

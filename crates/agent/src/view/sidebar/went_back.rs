@@ -4,7 +4,9 @@
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use sound_core::{Line, PointId};
 use sound_ui::ActiveTheme;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
+use sound_ui::{TextVariant, Typography};
 
 use super::Sidebar;
 
@@ -50,7 +52,7 @@ impl Sidebar {
 
     pub(super) fn went_back_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let went_back = self.went_back.as_ref()?;
-        let muted = cx.theme().gray_700;
+        let muted = cx.theme().text_muted();
         let line = div()
             .debug_selector(|| "agent-went-back".to_string())
             .flex()
@@ -58,7 +60,7 @@ impl Sidebar {
             .gap(px(4.))
             .pl(px(14.))
             .pr(px(6.))
-            .text_size(px(12.))
+            .text_variant(TextVariant::Label)
             .text_color(muted)
             .child(
                 div()
@@ -71,7 +73,7 @@ impl Sidebar {
                 Button::icon_only("went-back-dismiss", "x")
                     .debug_selector(|| "agent-went-back-dismiss".to_string())
                     .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Xs)
+                    .size(ControlSize::Sm)
                     .focus_handle(&self.went_back_dismiss)
                     .on_click(cx.listener(|sidebar, _, _, cx| {
                         sidebar.went_back = None;

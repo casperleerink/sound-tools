@@ -59,14 +59,15 @@ export {
 export type {
   Child, OverlayProps, ShapeLiteral, UiNode
 } from "./sdk/nodes";
-// the elements of a view: `div` and its `Style`, `Space` and its shapes, `Button`, `Input`
+// the elements of a view: `div` and its `Style`, `Text`, `Space` and its shapes, `Button`, `Input`
 export {
   Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  Rect, Space, TitleBar, Toggle, Wave
+  Rect, Space, Text, TitleBar, Toggle, Wave
 } from "./sdk/drawing";
 export type {
-  ButtonProps, CardSelect, Color, DeviceCardProps, IconName, InputProps, Look, Paint, PathPoint,
-  Shape, SpaceProps, Style, TextPart, ThemeColor, ToggleProps
+  ButtonProps, CardSelect, Color, ControlSize, DeviceCardProps, IconName, InputProps, Look, Paint,
+  PathPoint, Radius, Shape, SpaceProps, Spacing, Style, TextPart, TextProps, TextVariant, ThemeColor,
+  ToggleProps, Tone
 } from "./sdk/drawing";
 // controls made of them: `Knob`, `Fader`, `Select`, `Steps`, `Pad`
 export {

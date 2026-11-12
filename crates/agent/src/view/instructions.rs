@@ -20,6 +20,8 @@ use gpui::{
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::text_input::TextInput;
+use sound_ui::radius;
+use sound_ui::{TextVariant, Typography};
 
 use crate::store::write_whole;
 
@@ -202,7 +204,7 @@ impl Focusable for InstructionsEditor {
 impl Render for InstructionsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (border, fill, muted) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_700);
+        let (border, fill, muted) = (theme.border_strong(), theme.surface(), theme.text_muted());
         div()
             .flex_1()
             .min_h_0()
@@ -214,7 +216,7 @@ impl Render for InstructionsEditor {
             .child(
                 div()
                     .px(px(12.))
-                    .text_size(px(13.))
+                    .text_variant(TextVariant::Body)
                     .text_color(muted)
                     .child(self.scope.explanation()),
             )
@@ -224,7 +226,7 @@ impl Render for InstructionsEditor {
                     .flex_1()
                     .min_h_0()
                     .p(px(14.))
-                    .rounded(px(20.))
+                    .rounded(radius::LG)
                     .border_1()
                     .border_color(border)
                     .bg(fill)

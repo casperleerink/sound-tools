@@ -4,6 +4,7 @@
 use gpui::{App, FontWeight, IntoElement, ParentElement, Styled, Window, div, px};
 use sound_agent::{Markdown, MarkdownText};
 use sound_ui::ActiveTheme;
+use sound_ui::{TextVariant, Typography};
 
 const ANSWER: &str = r#"## Bass filter
 
@@ -63,14 +64,14 @@ pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
 /// A heading, then the text on the background of the sidebar, 360 wide with its padding.
 fn sample(title: &'static str, source: &str, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
-    let (muted, background, border) = (theme.gray_700, theme.gray_50, theme.alpha_at(0.10));
+    let (muted, background, border) = (theme.text_muted(), theme.well(), theme.border_strong());
     div()
         .flex()
         .flex_col()
         .gap(px(12.))
         .child(
             div()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(title),

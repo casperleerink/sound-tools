@@ -33,7 +33,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 
 ### Colour
 
-Dark only. The greys run from the darkest background to the text colour, and one alpha scale (white at low opacity) makes fills, hovers and borders. The palette is our own: a public theme many apps wear is not an identity.
+Dark only. A view names what a colour is for, a role such as surface, fill, border or muted text, never a grey or an opacity, so the app is coherent and another theme is one table. The palette is our own: a public theme many apps wear is not an identity.
 
 Each colour has one meaning:
 
@@ -46,13 +46,13 @@ Each colour has one meaning:
 
 A meter is the one place colour fills an area, because level is a signal. Otherwise only a toggle that is on is tinted, with its colour at low opacity.
 
-Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/ui/src/theme.rs` checks the text tokens.
+Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/ui/src/theme.rs` checks the text roles.
 
 ### Type and sizes
 
-- InterDisplay with tabular numbers for every number, so readouts and the transport do not jitter while playing. Two sizes in the rack: 14 medium for titles and names, 12 for labels and values.
+- InterDisplay with tabular numbers for every number, so readouts and the transport do not jitter while playing. Five kinds of text and no other size: display 24, title 16 medium, heading 14 medium, body 14, label 12.
 - The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window. The snapshot tests render at that size.
-- An 8 pt layout grid, 4 pt inside controls.
+- Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
 - One grid for devices: every card is the same height, with two rows of fixed cells of a knob, a label line and a value line. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
 - Hit targets are larger than what is drawn, for a trackpad.
 

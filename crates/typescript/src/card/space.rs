@@ -182,7 +182,7 @@ impl Drawing<'_> {
             placed,
             pointed,
             background: space.background.map(|color| color.0),
-            radius: space.radius.unwrap_or(0.0),
+            radius: space.radius.map_or(0.0, |radius| radius.0),
             hears: Hears::of(space.on_press, space.on_release, space.on_click),
             drag: self.table.drag(space.drag).cloned(),
             cursor: space.cursor,

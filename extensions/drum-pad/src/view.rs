@@ -38,6 +38,7 @@ use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElemen
 use sound_ui::components::toggle::Toggle;
 use sound_ui::import;
 use sound_ui::lanes::object_of;
+use sound_ui::radius;
 use sound_ui::{
     ActiveTheme, DeviceEdit, DeviceView, Devices, KeyboardFocus, OfferGroup, Session, Views,
     every_poll, weak_callback,
@@ -433,7 +434,7 @@ impl DrumPadView {
                         .left(px(-3.))
                         .w(px(GRID_WIDTH + 6.))
                         .h(px(GRID_HEIGHT + 6.))
-                        .rounded(px(9.))
+                        .rounded(radius::MD + px(3.))
                         .border_1()
                         .border_color(ring),
                 )

@@ -31,6 +31,7 @@ use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
 use crate::renders::{self, Part};
+use crate::scale::radius;
 use crate::theme::ActiveTheme;
 
 pub const CARD_HEIGHT: f32 = 192.;
@@ -234,7 +235,7 @@ impl ParentElement for Section {
 
 impl RenderOnce for Section {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let hairline = cx.theme().alpha_at(0.06);
+        let hairline = cx.theme().border();
         div()
             .flex()
             .child(div().mx(px(HIDDEN_GAP)).w(px(1.)).h_full().bg(hairline))
@@ -368,7 +369,7 @@ impl ParentElement for DeviceCard {
     }
 }
 
-/// One icon of the header: a 24 pt target with a 12 pt glyph, `alpha/8` under the pointer.
+/// One icon of the header: a 24 pt target with a 12 pt glyph, a strong fill under the pointer.
 fn header_icon(
     card: &ElementId,
     name: &'static str,
@@ -389,7 +390,7 @@ fn header_icon(
         .keyboard_focus
         .shows_ring(&focus_handle, window);
     let theme = cx.theme();
-    let (hover, ring) = (theme.alpha_at(0.08), theme.lavender);
+    let (hover, ring) = (theme.fill_strong(), theme.lavender);
     // For tests, which find an icon by the card and its name: `<card>-power`.
     let card = card.clone();
     div()
@@ -400,7 +401,7 @@ fn header_icon(
         .items_center()
         .justify_center()
         .size(px(ICON_TARGET))
-        .rounded(px(6.))
+        .rounded(radius::MD)
         .border(px(BORDER))
         .border_color(match ring_shows {
             true => ring,
@@ -420,13 +421,12 @@ impl RenderOnce for DeviceCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let (background, border, text, hairline) = (
-            theme.gray_200,
-            theme.alpha_at(0.06),
-            theme.gray_950,
-            theme.alpha_at(0.06),
+            theme.surface(),
+            theme.border(),
+            theme.text(),
+            theme.border(),
         );
-        // Off is `gray-700`, the nearest grey with 3 : 1 on a card for an icon.
-        let (glyph, glyph_off) = (theme.gray_950, theme.gray_700);
+        let (glyph, glyph_off) = (theme.text(), theme.text_muted());
         let on = self.power.as_ref().is_none_or(|(is_on, _)| is_on(cx));
         let expanded = self.expand.as_ref().is_some_and(|(expanded, _)| *expanded);
 
@@ -513,7 +513,7 @@ impl RenderOnce for DeviceCard {
             .flex()
             .flex_col()
             .h(px(CARD_HEIGHT))
-            .rounded(px(10.))
+            .rounded(radius::LG)
             .bg(background)
             .border(px(BORDER))
             .border_color(border)

@@ -4,7 +4,8 @@
 //! list scrolls with two fingers inside the height of the card.
 
 use gpui::{Context, FontWeight, div, prelude::*, px};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::ControlSize;
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::ROW_HEIGHT;
 use sound_ui::components::device_card::Section;
 use sound_ui::components::gesture::ValueChange;
@@ -12,7 +13,9 @@ use sound_ui::components::icon::Icon;
 use sound_ui::components::knob::KnobRange;
 use sound_ui::components::slider::{self, Slider};
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::radius;
 use sound_ui::{ActiveTheme, typography};
+use sound_ui::{TextVariant, Typography};
 
 use super::WavetableView;
 use crate::{Destination, MAX_ROUTES, ROUTE_AMOUNT, Route, Source, WavetableState};
@@ -64,7 +67,7 @@ impl WavetableView {
 
     fn route(&self, index: usize, route: Route, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, text) = (theme.gray_700, theme.gray_950);
+        let (muted, text) = (theme.text_muted(), theme.text());
         let source = Self::select(
             ("route-source", index),
             route.source,
@@ -102,7 +105,7 @@ impl WavetableView {
         let remove = Button::icon_only(("route-remove", index), "x")
             .debug_selector(move || format!("route-remove-{index}"))
             .variant(ButtonVariant::Ghost)
-            .size(ButtonSize::Xs)
+            .size(ControlSize::Sm)
             .focus_handle(&self.remove_focus[index])
             .on_click(cx.listener(move |view, _, _, cx| {
                 let remove = |state: &mut WavetableState, ()| {
@@ -138,7 +141,7 @@ impl WavetableView {
                             .flex()
                             .justify_end()
                             .font(typography::tabular())
-                            .text_size(px(12.))
+                            .text_variant(TextVariant::Label)
                             .text_color(text)
                             .child(amount_readout(route.amount)),
                     ),
@@ -162,9 +165,9 @@ impl WavetableView {
             .collect();
         let theme = cx.theme();
         let (background, hover, muted, ring) = (
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.10),
-            theme.gray_800,
+            theme.fill(),
+            theme.fill_strong(),
+            theme.text_secondary(),
             theme.lavender,
         );
         // As quiet as a select, and the same size.
@@ -180,14 +183,14 @@ impl WavetableView {
                 .h(px(slider::HEIGHT))
                 .pl(px(6.))
                 .pr(px(8.))
-                .rounded(px(6.))
+                .rounded(radius::MD)
                 .border_1()
                 .border_color(gpui::Hsla::transparent_black())
                 .focus_visible(move |style| style.border_color(ring))
                 .bg(background)
                 .hover(move |style| style.bg(hover))
                 .cursor_pointer()
-                .text_size(px(12.))
+                .text_variant(TextVariant::Label)
                 .font_weight(FontWeight::MEDIUM)
                 .child(Icon::new("plus").size(12.).color(muted))
                 .child("Add route")

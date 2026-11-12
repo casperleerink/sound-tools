@@ -25,6 +25,7 @@ use sound_ui::{
     ActiveTheme, Devices, Metering, OfferGroup, POLL_INTERVAL, Session, Views, every_poll,
     typography, weak_action,
 };
+use sound_ui::{TextVariant, Typography};
 
 use crate::analysis::{Analysis, COLUMNS, FLOOR_DB, tuning};
 use crate::{Analyzer, AnalyzerState};
@@ -167,10 +168,10 @@ fn level(value: Option<f32>) -> String {
 /// A readout in the place of a control: 14 pt medium, as names are.
 fn readout(text: impl Into<SharedString>, cx: &Context<AnalyzerView>) -> Div {
     div()
-        .text_size(px(14.))
+        .text_variant(TextVariant::Body)
         .font(typography::tabular())
         .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().gray_950)
+        .text_color(cx.theme().text())
         .child(text.into())
 }
 

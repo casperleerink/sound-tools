@@ -4,12 +4,13 @@
 
 use gpui::{
     App, AppContext as _, Context, Entity, Focusable as _, PromptLevel, SharedString, Window, div,
-    prelude::*, px,
+    prelude::*,
 };
 use sound_ui::Session;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::focus::TabStop;
 use sound_ui::{ActiveTheme, typography};
+use sound_ui::{TextVariant, Typography};
 
 use super::new_project::{small_window, small_window_root, template_row};
 use crate::templates::{Keep, exists_in, save_in, saved_folder};
@@ -162,7 +163,7 @@ fn failed(
 impl Render for SaveTemplate {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, text, quiet) = (theme.gray_100, theme.gray_950, theme.gray_700);
+        let (background, text, quiet) = (theme.background(), theme.text(), theme.text_muted());
         let saving = self.saving;
         let picks = PICKS.map(|(everything, label, description)| {
             let row = template_row(label, description, cx);
@@ -187,8 +188,12 @@ impl Render for SaveTemplate {
             .bg(background)
             .text_color(text)
             .font(typography::ui_font())
-            .text_size(px(14.))
-            .child(div().text_size(px(16.)).child("Save as template"))
+            .text_variant(TextVariant::Body)
+            .child(
+                div()
+                    .text_variant(TextVariant::Title)
+                    .child("Save as template"),
+            )
             .child(self.name.clone())
             .children(picks)
             .children(message.map(|message: SharedString| div().text_color(quiet).child(message)))

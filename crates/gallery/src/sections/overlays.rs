@@ -12,7 +12,9 @@ use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, Me
 use sound_ui::components::popover::Align;
 use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::radius;
 use sound_ui::theme::ActiveTheme;
+use sound_ui::{TextVariant, Typography};
 
 /// Stateful overlays must be created once, so they live in a global.
 struct OverlaysState {
@@ -130,9 +132,9 @@ fn install(window: &mut Window, cx: &mut App) {
 
 fn heading(label: &'static str, cx: &App) -> impl IntoElement {
     div()
-        .text_size(px(12.))
+        .text_variant(TextVariant::Label)
         .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().gray_700)
+        .text_color(cx.theme().text_muted())
         .child(label)
 }
 
@@ -159,7 +161,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let (menu, search) = (state.menu.clone(), state.search.clone());
     let (split, split_open) = (state.split.clone(), state.split_open.clone());
     let theme = cx.theme();
-    let (border, text, hover) = (theme.alpha_at(0.10), theme.gray_950, theme.alpha_at(0.10));
+    let (border, text, hover) = (theme.border_strong(), theme.text(), theme.fill_strong());
 
     let tooltip = div()
         .id("tooltip")
@@ -167,10 +169,10 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .items_center()
         .h(px(32.))
         .px(px(12.))
-        .rounded(px(8.))
+        .rounded(radius::LG)
         .border_1()
         .border_color(border)
-        .text_size(px(14.))
+        .text_variant(TextVariant::Body)
         .text_color(text)
         .cursor_pointer()
         .hover(move |s| s.bg(hover))

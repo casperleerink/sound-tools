@@ -24,7 +24,7 @@ export const ACROSS = 0.025;
 // The ticks left of bar 1, eight points at zoom 1.
 export const LEAD = 320;
 
-export const COLOR = { back: "#121317", text: "#7c808c", clear: "#00000000" } as const;
+export const COLOR = { back: "background", text: "text-muted", clear: "none" } as const;
 export const PALETTE = [
   { name: "Blue", colour: "blue" }, { name: "Peach", colour: "peach" }, { name: "Mauve", colour: "mauve" }, { name: "Teal", colour: "teal" },
   { name: "Green", colour: "green" }, { name: "Yellow", colour: "yellow" }, { name: "Pink", colour: "pink" }, { name: "Sky", colour: "sky" },

@@ -120,8 +120,8 @@ impl RenderOnce for Slider {
             .shows_ring(&focus_handle, window);
         let theme = cx.theme();
         let colors = (
-            theme.alpha_at(0.10),
-            theme.gray_950,
+            theme.fill_strong(),
+            theme.text(),
             ring_shows.then_some(theme.lavender),
         );
         let position = self.range.position(self.value);

@@ -20,8 +20,10 @@ use gpui::{
 use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 
 use sound_ui::components::text_input::words;
+use sound_ui::radius;
 use sound_ui::typography::MONO;
 use sound_ui::{ActiveTheme, Theme};
+use sound_ui::{TextVariant, Typography};
 
 actions!(agent_markdown, [Copy]);
 
@@ -404,7 +406,7 @@ impl MarkdownText {
     /// the scroll offset of a code block and the clicks on a link are kept under this id.
     pub fn new(id: impl Into<ElementId>, markdown: Markdown) -> Self {
         Self {
-            base: div().text_size(px(15.)).line_height(px(22.)),
+            base: div().text_variant(TextVariant::Body),
             id: id.into(),
             markdown,
         }
@@ -708,14 +710,12 @@ impl Renderer {
         match block {
             Block::Paragraph(text) => self.inline(text),
             Block::Heading { size, text } => {
-                let (size, line_height) = match size {
-                    HeadingSize::Large => (18., 26.),
-                    HeadingSize::Small => (15., 22.),
+                let variant = match size {
+                    HeadingSize::Large => TextVariant::Title,
+                    HeadingSize::Small => TextVariant::Heading,
                 };
                 div()
-                    .text_size(px(size))
-                    .line_height(px(line_height))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_variant(variant)
                     .child(self.inline(text))
                     .into_any_element()
             }
@@ -729,8 +729,8 @@ impl Renderer {
                 .gap(px(12.))
                 .pl(px(12.))
                 .border_l(px(2.))
-                .border_color(self.theme.alpha_at(0.15))
-                .text_color(self.theme.gray_800)
+                .border_color(self.theme.border_strong())
+                .text_color(self.theme.text_secondary())
                 .children(self.blocks(blocks))
                 .into_any_element(),
             // A long line scrolls sideways rather than wraps. Up and down still scroll the
@@ -753,7 +753,7 @@ impl Renderer {
             Block::Rule => div()
                 .h(px(1.))
                 .my(px(4.))
-                .bg(self.theme.alpha_at(0.10))
+                .bg(self.theme.border_strong())
                 .into_any_element(),
         }
     }
@@ -762,12 +762,12 @@ impl Renderer {
         div()
             .px(px(12.))
             .py(px(8.))
-            .rounded(px(8.))
-            .bg(self.theme.alpha_at(0.05))
+            .rounded(radius::LG)
+            .bg(self.theme.fill())
             .font_family(MONO)
-            .text_size(px(13.))
+            .text_variant(TextVariant::Label)
             .line_height(px(20.))
-            .text_color(self.theme.gray_900)
+            .text_color(self.theme.text())
     }
 
     fn list(&mut self, first_number: Option<u64>, items: &[Vec<Block>]) -> AnyElement {
@@ -780,7 +780,7 @@ impl Renderer {
             .unwrap_or(0)
             + 1;
         let marker_width = 24. + 12. * digits.saturating_sub(2) as f32;
-        let muted = self.theme.gray_700;
+        let muted = self.theme.text_muted();
         div()
             .flex()
             .flex_col()
@@ -816,7 +816,7 @@ impl Renderer {
     /// wide columns share what is left and their cells wrap.
     fn table(&mut self, table: &Table) -> AnyElement {
         let columns = table.alignments.len();
-        let (head_fill, rule) = (self.theme.alpha_at(0.04), self.theme.alpha_at(0.10));
+        let (head_fill, rule) = (self.theme.fill(), self.theme.border_strong());
         let mut cells = Vec::new();
         for (row, contents) in table.rows.iter().enumerate() {
             for (column, (cell, alignment)) in contents.iter().zip(&table.alignments).enumerate() {
@@ -827,8 +827,10 @@ impl Renderer {
                     .when(row == 0, |cell| {
                         cell.bg(head_fill)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .when(column == 0, |cell| cell.rounded_tl(px(7.)))
-                            .when(column + 1 == columns, |cell| cell.rounded_tr(px(7.)))
+                            .when(column == 0, |cell| cell.rounded_tl(radius::LG - px(1.)))
+                            .when(column + 1 == columns, |cell| {
+                                cell.rounded_tr(radius::LG - px(1.))
+                            })
                     })
                     .when(row > 0, |cell| cell.border_t_1().border_color(rule))
                     // Aligned by layout, not by text: gpui finds the letter under the pointer
@@ -851,15 +853,15 @@ impl Renderer {
             .grid_cols_max_content(u16::try_from(columns).unwrap_or(u16::MAX))
             .border_1()
             .border_color(rule)
-            .rounded(px(8.))
-            .text_size(px(13.))
+            .rounded(radius::LG)
+            .text_variant(TextVariant::Label)
             .line_height(px(20.))
             .children(cells)
             .into_any_element()
     }
 
     fn inline(&mut self, inline: &Inline) -> AnyElement {
-        let (code_fill, underline) = (self.theme.alpha_at(0.08), self.theme.gray_600);
+        let (code_fill, underline) = (self.theme.fill_strong(), self.theme.text_muted());
         let segments = inline.spans.iter().map(|span| {
             let style = &span.style;
             let highlight = HighlightStyle {

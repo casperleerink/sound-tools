@@ -197,7 +197,7 @@ impl Render for Carried {
             .py(px(4.))
             .rounded(px(6.))
             .bg(theme.lavender)
-            .text_color(theme.gray_950)
+            .text_color(theme.text())
             .text_size(px(12.))
             .child(self.0.clone())
     }
