@@ -9,7 +9,7 @@ use gpui::{
     Window, anchored, canvas, deferred, div, hsla, point, prelude::*, px,
 };
 use serde_json::{Value, json};
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::gesture::ValueKey;
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::popover;
@@ -21,8 +21,8 @@ use sound_ui::{ActiveTheme, Shortcuts, shortcuts};
 
 use crate::bun::EventKind;
 use crate::tree::{
-    self, ButtonLook, ButtonProps, ButtonSized, NoticeProps, NoticeToned, OverlayProps, Props,
-    SegmentedProps, SliderProps, ToggleProps,
+    self, ButtonLook, ButtonProps, NoticeProps, NoticeToned, OverlayProps, Props, SegmentedProps,
+    SliderProps, ToggleProps,
 };
 
 use super::TypeScriptCard;
@@ -256,11 +256,6 @@ impl Drawing<'_> {
             (Some(ButtonLook::Ghost), None) => ButtonVariant::Ghost,
             (Some(ButtonLook::Primary) | None, _) => ButtonVariant::Primary,
         };
-        let size = match props.size {
-            Some(ButtonSized::Xs) => ButtonSize::Xs,
-            Some(ButtonSized::Sm) => ButtonSize::Sm,
-            Some(ButtonSized::Md) | None => ButtonSize::Md,
-        };
         let button = match (&props.label, &props.icon) {
             (Some(label), icon) => Button::new(ElementId::Name(name.into()), label.clone())
                 .when_some(icon.clone(), |button, icon| button.icon(icon)),
@@ -276,7 +271,7 @@ impl Drawing<'_> {
             .tab_stop(hears.click)
             .when(hears.click, |button| button.on_click(self.clicked(id)))
             .variant(variant)
-            .size(size)
+            .size(props.size.unwrap_or_default().button())
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
             .when_some(props.opacity, |button, opacity| button.opacity(opacity))

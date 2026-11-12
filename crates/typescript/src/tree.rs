@@ -10,6 +10,7 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{Error, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
+use crate::tokens::{ControlSize, Radius, Spacing, TextVariant, Tone};
 use crate::tools::{ToolInfo, Unit};
 
 /// A value whose change may set it, unset it with `null`, or leave it out.
@@ -50,6 +51,9 @@ props! {
         /// Keeps the state of the element.
         key: String,
         style: Box<Style>,
+        /// A text of the type scale, and how bright it is.
+        variant: TextVariant,
+        tone: Tone,
         on_press: bool,
         on_release: bool,
         on_click: bool,
@@ -85,6 +89,8 @@ props! {
         value: String,
         placeholder: String,
         width: f32,
+        /// Read when it is made.
+        size: ControlSize,
         /// It takes the keys when it is made.
         focus: bool,
         disabled: bool,
@@ -138,7 +144,7 @@ props! {
         variant: ButtonLook,
         /// The accent of a `solid`, `subtle` or `ghost` look.
         color: Color,
-        size: ButtonSized,
+        size: ControlSize,
         /// A pill, round at its ends.
         rounded: bool,
         disabled: bool,
@@ -163,6 +169,8 @@ props! {
         dot: bool,
         on: bool,
         color: Color,
+        /// Not drawn yet: the toggle of `sound_ui` has one height, 24 points.
+        size: ControlSize,
         disabled: bool,
         tooltip: String,
         /// The keys that do it too, `cmd-k`, drawn in its tooltip.
@@ -203,6 +211,8 @@ props! {
         key: String,
         options: Vec<String>,
         chosen: i64,
+        /// Not drawn yet: the segmented control of `sound_ui` has one height, 24 points.
+        size: ControlSize,
         disabled: bool,
         on_change: bool,
     }
@@ -245,14 +255,6 @@ pub(crate) enum ButtonLook {
     Solid,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ButtonSized {
-    Xs,
-    Sm,
-    Md,
-}
-
 props! {
     /// A surface that draws shapes in units of its own, scrolls and zooms, and hears the pointer.
     SpaceProps / SpaceChange {
@@ -269,7 +271,7 @@ props! {
         fit: Fit,
         follow: Follow,
         background: Color,
-        radius: f32,
+        radius: Radius,
         on_press: bool,
         on_release: bool,
         on_click: bool,
@@ -1858,14 +1860,14 @@ impl Turns {
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct Style {
     direction: Option<Direction>,
-    gap: Option<f32>,
-    padding: Option<f32>,
-    padding_x: Option<f32>,
-    padding_y: Option<f32>,
-    padding_left: Option<f32>,
-    padding_right: Option<f32>,
-    padding_top: Option<f32>,
-    padding_bottom: Option<f32>,
+    gap: Option<Spacing>,
+    padding: Option<Spacing>,
+    padding_x: Option<Spacing>,
+    padding_y: Option<Spacing>,
+    padding_left: Option<Spacing>,
+    padding_right: Option<Spacing>,
+    padding_top: Option<Spacing>,
+    padding_bottom: Option<Spacing>,
     width: Option<f32>,
     height: Option<f32>,
     min_width: Option<f32>,
@@ -1883,13 +1885,11 @@ pub(crate) struct Style {
     font_size: Option<f32>,
     /// How far apart the lines of its text are, in points.
     line_height: Option<f32>,
-    radius: Option<f32>,
+    radius: Option<Radius>,
     border_color: Option<Color>,
     border_width: Option<f32>,
     /// Its children scroll along this axis where they do not fit its size.
     scroll: Option<ScrollAxis>,
-    /// `tabular`: digits of one width, so a number that changes does not move what follows.
-    font: Option<FontKind>,
     weight: Option<Weight>,
     text_align: Option<Place>,
     opacity: Option<f32>,
@@ -1944,16 +1944,20 @@ pub(crate) struct Insets {
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FontKind {
-    Tabular,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum Weight {
     Normal,
     Medium,
     Semibold,
+}
+
+impl Weight {
+    pub(crate) fn font(self) -> gpui::FontWeight {
+        match self {
+            Self::Normal => gpui::FontWeight::NORMAL,
+            Self::Medium => gpui::FontWeight::MEDIUM,
+            Self::Semibold => gpui::FontWeight::SEMIBOLD,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -1987,8 +1991,8 @@ enum Justify {
     Between,
 }
 
-/// `#rrggbb`, `#rrggbbaa`, or a colour of the app's theme by name, such as `gray-700`, with an
-/// opacity in percent after a slash: `alpha/10`, `#a9b1ff/70`.
+/// `#rrggbb`, `#rrggbbaa`, or a colour of the app's theme by name, such as `text-muted`, with an
+/// opacity in percent after a slash: `green/40`, `#a9b1ff/70`.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
 pub(crate) struct Color(pub(crate) Hsla);
@@ -1998,7 +2002,7 @@ impl TryFrom<String> for Color {
 
     fn try_from(text: String) -> Result<Self, String> {
         let wrong = || {
-            format!("{text:?} is not a colour such as \"#ff8800\", \"gray-700\" or \"alpha/10\"")
+            format!("{text:?} is not a colour such as \"#ff8800\", \"text-muted\" or \"green/40\"")
         };
         let (name, percent) = match text.split_once('/') {
             Some((name, percent)) => (name, Some(percent)),
@@ -2045,6 +2049,21 @@ impl Style {
             ..Style::default()
         };
         lines.apply(element, false)
+    }
+
+    /// The run of a text of `variant` in `tone`, unless the style names its own colour or weight.
+    pub(crate) fn run(&self, variant: TextVariant, tone: Hsla) -> gpui::TextRun {
+        gpui::TextRun {
+            len: 0,
+            font: gpui::Font {
+                weight: self.weight.map_or(variant.weight(), Weight::font),
+                ..sound_ui::typography::ui_font()
+            },
+            color: self.color.map_or(tone, |color| color.0),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
     }
 
     pub(crate) fn truncates(&self) -> bool {
@@ -2100,7 +2119,7 @@ impl Style {
         if self.shadow {
             element = element.shadow(sound_ui::components::popover::shadow());
             // Rounded here too, or the shadow of a scrolling div has square corners.
-            if let Some(radius) = self.radius {
+            if let Some(Radius(radius)) = self.radius {
                 element = element.rounded(px(radius));
             }
         }
@@ -2167,12 +2186,12 @@ impl Style {
         }
         match self.direction {
             Some(Direction::Row) => None,
-            Some(Direction::Column) | None => Some(self.gap.unwrap_or(0.0)),
+            Some(Direction::Column) | None => Some(self.gap.map_or(0.0, |gap| gap.0)),
         }
     }
 
     pub(crate) fn padding_top(&self) -> f32 {
-        (self.padding_top.or(self.padding_y).or(self.padding)).unwrap_or(0.0)
+        (self.padding_top.or(self.padding_y).or(self.padding)).map_or(0.0, |padding| padding.0)
     }
 
     /// Its layout and look, `disabled` or not.
@@ -2182,28 +2201,28 @@ impl Style {
             Some(Direction::Row) => element.flex_row(),
             Some(Direction::Column) | None => element.flex_col(),
         };
-        if let Some(gap) = self.gap {
+        if let Some(Spacing(gap)) = self.gap {
             element = element.gap(px(gap));
         }
-        if let Some(padding) = self.padding {
+        if let Some(Spacing(padding)) = self.padding {
             element = element.p(px(padding));
         }
-        if let Some(padding) = self.padding_x {
+        if let Some(Spacing(padding)) = self.padding_x {
             element = element.px(px(padding));
         }
-        if let Some(padding) = self.padding_y {
+        if let Some(Spacing(padding)) = self.padding_y {
             element = element.py(px(padding));
         }
-        if let Some(padding) = self.padding_left {
+        if let Some(Spacing(padding)) = self.padding_left {
             element = element.pl(px(padding));
         }
-        if let Some(padding) = self.padding_right {
+        if let Some(Spacing(padding)) = self.padding_right {
             element = element.pr(px(padding));
         }
-        if let Some(padding) = self.padding_top {
+        if let Some(Spacing(padding)) = self.padding_top {
             element = element.pt(px(padding));
         }
-        if let Some(padding) = self.padding_bottom {
+        if let Some(Spacing(padding)) = self.padding_bottom {
             element = element.pb(px(padding));
         }
         match self.scroll {
@@ -2242,7 +2261,7 @@ impl Style {
         if let Some(height) = self.line_height {
             element = element.line_height(px(height));
         }
-        if let Some(radius) = self.radius {
+        if let Some(Radius(radius)) = self.radius {
             element = element.rounded(px(radius));
         }
         if let Some(Color(color)) = self.border_color {
@@ -2251,15 +2270,9 @@ impl Style {
         if let Some(width) = self.border_width {
             element = element.border(px(width));
         }
-        if let Some(FontKind::Tabular) = self.font {
-            element = element.font(sound_ui::typography::tabular());
+        if let Some(weight) = self.weight {
+            element = element.font_weight(weight.font());
         }
-        element = match self.weight {
-            Some(Weight::Normal) => element.font_weight(gpui::FontWeight::NORMAL),
-            Some(Weight::Medium) => element.font_weight(gpui::FontWeight::MEDIUM),
-            Some(Weight::Semibold) => element.font_weight(gpui::FontWeight::SEMIBOLD),
-            None => element,
-        };
         element = match self.text_align {
             Some(Place::Start) => element.text_left(),
             Some(Place::Center) => element.text_center(),
@@ -2330,9 +2343,19 @@ mod tests {
     #[test]
     fn a_colour_of_the_theme_or_of_a_track_takes_an_opacity() {
         let alpha = |text: &str| Color::try_from(text.to_string()).map(|color| color.0.a);
-        assert_eq!(alpha("alpha/10"), Ok(0.1));
+        assert_eq!(alpha("green/40"), Ok(0.4));
         assert_eq!(alpha("#a9b1ff/70"), Ok(0.7));
         assert!(alpha("#a9b1ff/x").is_err());
+    }
+
+    /// The types of the SDK name roles only, but a tool written before them names steps of the
+    /// grey scale and white at an opacity.
+    #[test]
+    fn a_tool_written_before_the_roles_still_draws_its_greys() {
+        let theme = sound_ui::theme::Theme::dark();
+        let drawn = |text: &str| Color::try_from(text.to_string()).map(|color| color.0);
+        assert_eq!(drawn("gray-700"), Ok(theme.gray_700));
+        assert_eq!(drawn("alpha/10"), Ok(theme.alpha_at(0.1)));
     }
 
     #[test]

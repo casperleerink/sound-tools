@@ -14,15 +14,28 @@ export type Input = InputOfTool;
 export type Notes = NotesOfSound;
 
 /**
- * A colour of the app's theme, as the window draws its own controls. Gray goes from the window's
- * background, `gray-50`, to text, `gray-950`; a card is `gray-200`. `alpha` is white, so
- * `alpha/10` lifts a surface off whatever is under it.
+ * A colour of the app's theme, by what it is for. `background` is the window, `surface` a card
+ * or a panel on it, `well` a display inside a card. `fill` is a control at rest or a quiet box,
+ * `fill-strong` one under the pointer and the track of a knob, `selected` the row that is chosen.
+ * `border` is a hairline between rows, `border-strong` the outline of a field. `text` is text
+ * and a value, `text-secondary` a label, `text-muted` a hint or a unit, `text-inverse` text on a
+ * bright fill. A hue means one thing: `green` sound that moves, `yellow` solo, `peach` a warning
+ * and mute, `red` record and errors, `lavender` the keyboard focus. The other hues are marks,
+ * such as the colour of a track.
  */
 export type ThemeColor =
-  | "gray-50" | "gray-100" | "gray-200" | "gray-300" | "gray-400" | "gray-500" | "gray-600" | "gray-700" | "gray-800" | "gray-900" | "gray-950"
-  | "alpha" | "blue" | "sapphire" | "sky" | "teal" | "green" | "yellow" | "peach" | "red" | "maroon" | "mauve" | "pink" | "lavender" | "rosewater" | "flamingo";
-/** `#rrggbb`, `#rrggbbaa`, a colour of the theme, or one at an opacity in percent: `"alpha/10"`, `"#a9b1ff/70"`. */
-export type Color = `#${string}` | ThemeColor | `${ThemeColor}/${number}`;
+  | "background" | "surface" | "well" | "fill" | "fill-strong" | "selected" | "border" | "border-strong"
+  | "text" | "text-secondary" | "text-muted" | "text-inverse" | "none"
+  | "blue" | "sapphire" | "sky" | "teal" | "green" | "yellow" | "peach" | "red" | "maroon" | "mauve" | "pink" | "lavender" | "rosewater" | "flamingo";
+/** A colour of the theme, or one at an opacity in percent, `"green/40"`. `#rrggbb` and `#rrggbbaa` are for what the theme cannot say. */
+export type Color = ThemeColor | `${ThemeColor}/${number}` | `#${string}`;
+
+/** Room between things and inside them: 4, 8, 12, 16, 24 or 32 points. */
+export type Spacing = "xs" | "sm" | "md" | "lg" | "xl" | "2xl";
+/** How round a corner is: 4, 6 or 8 points, or `full`, round at its ends. */
+export type Radius = "sm" | "md" | "lg" | "full";
+/** How tall a control is: 24, 28 or 32 points. Controls of one size line up in a row. */
+export type ControlSize = "sm" | "md" | "lg";
 
 /** What a shape the pointer reaches can do. */
 interface Pointed extends PointerEvents {
@@ -150,7 +163,7 @@ export interface SpaceProps extends PointerEvents {
    */
   follow?: { x?: string; y?: string };
   background?: Bind<Color>;
-  radius?: number;
+  radius?: Radius | number;
   /**
    * A drag from where no shape that hears the pointer is, such as a marquee. A space whose one
    * drag turns a field, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
@@ -175,6 +188,8 @@ export interface InputProps {
   placeholder?: string;
   /** In points; 160 when left out. */
   width?: number;
+  /** `md` when left out. Read when it is made. */
+  size?: ControlSize;
   /** It takes the keys when it is made, with its text selected. */
   focus?: boolean;
   disabled?: Bind<boolean>;
@@ -263,6 +278,8 @@ export type ToggleProps = (
   key?: string;
   on: Bind<boolean>;
   color?: Bind<Color>;
+  /** `md` when left out. */
+  size?: ControlSize;
   disabled?: Bind<boolean>;
 };
 
@@ -276,8 +293,8 @@ export type ButtonProps = PointerEvents & Tip & {
   /** `primary` when left out. `solid`, `subtle` and `ghost` take `color` as their accent. */
   variant?: Bind<"primary" | "subtle" | "ghost" | "solid">;
   color?: Bind<Color>;
-  /** 24, 28 or 32 points tall; `md` when left out. */
-  size?: "xs" | "sm" | "md";
+  /** `md` when left out. */
+  size?: ControlSize;
   /** A pill, round at its ends. */
   rounded?: boolean;
   disabled?: Bind<boolean>;
@@ -295,18 +312,42 @@ export const Button = (props: ButtonProps): UiNode => element("button", { ...pro
 export const TitleBar = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
   element("div", { titleBar: true, style }, [children]);
 
-/** How a `div` lays out and looks. Numbers are points. */
+/** A step of the type scale: `display` is 24 points, `title` 16 medium, `heading` 14 medium, `body` 14 and `label` 12. */
+export type TextVariant = "display" | "title" | "heading" | "body" | "label";
+/** How bright a text is: `text`, `secondary` as the label of a control, `muted` as a hint or a unit. */
+export type Tone = "text" | "secondary" | "muted";
+
+export interface TextProps {
+  /** Names it for tests, `div-<key>`. */
+  key?: string;
+  /** `body` when left out. */
+  variant?: Bind<TextVariant>;
+  /** `secondary` for a `label` and `text` for the others when left out. A `color` of its `style` wins: a hue, or `text-inverse` on a bright fill. */
+  tone?: Bind<Tone>;
+  /** Where it sits and how it is cut: `grow`, `width`, `textAlign`, `truncate`. */
+  style?: Bind<Style>;
+  tooltip?: Bind<string>;
+  children?: Child;
+}
+
+/**
+ * Text in a size of the type scale. Its numbers have digits of one width, so a number that
+ * changes moves nothing after it. `<Text variant="label" tone="muted">{() => `${state.notes.length} notes`}</Text>`
+ */
+export const Text = ({ children, variant = "body", ...props }: TextProps): UiNode => element("div", { variant, ...props }, [children]);
+
+/** How a `div` lays out and looks. A gap, a padding and a radius name a step of their scale; a number is points, for what the scale cannot say. */
 export interface Style {
   /** How children line up. A div is a column unless this says `row`. */
   direction?: "row" | "column";
-  gap?: number;
-  padding?: number;
-  paddingX?: number;
-  paddingY?: number;
-  paddingLeft?: number;
-  paddingRight?: number;
-  paddingTop?: number;
-  paddingBottom?: number;
+  gap?: Spacing | number;
+  padding?: Spacing | number;
+  paddingX?: Spacing | number;
+  paddingY?: Spacing | number;
+  paddingLeft?: Spacing | number;
+  paddingRight?: Spacing | number;
+  paddingTop?: Spacing | number;
+  paddingBottom?: Spacing | number;
   width?: number;
   height?: number;
   minWidth?: number;
@@ -325,17 +366,15 @@ export interface Style {
   justify?: "start" | "center" | "end" | "between";
   background?: Color;
   color?: Color;
+  /** The size, the line height and the weight of its text, for what the scale of `Text` cannot say. */
   fontSize?: number;
-  /** How far apart the lines of its text are, in points: 14 under 12-point text, as a card's note. */
   lineHeight?: number;
-  radius?: number;
+  weight?: "normal" | "medium" | "semibold";
+  radius?: Radius | number;
   borderColor?: Color;
   borderWidth?: number;
   /** Its children scroll along this axis where they do not fit its size, as a long rack does. */
   scroll?: "x" | "y";
-  /** `tabular`: digits of one width, so a number that changes does not move what follows. */
-  font?: "tabular";
-  weight?: "normal" | "medium" | "semibold";
   textAlign?: "start" | "center" | "end";
   /** 0 to 1. */
   opacity?: number;

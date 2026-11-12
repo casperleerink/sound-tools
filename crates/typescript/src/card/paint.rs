@@ -4,8 +4,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString, TextAlign, TextRun,
-    Window, fill, outline, point, px, size,
+    App, Bounds, Corners, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString, TextAlign,
+    TextRun, Window, fill, outline, point, px, size,
 };
 use sound_ui::typography;
 
@@ -216,7 +216,8 @@ pub(super) fn paint(
     cx: &mut App,
 ) {
     if let Some(background) = frame.background {
-        window.paint_quad(fill(bounds, background).corner_radii(px(frame.radius)));
+        let corners = Corners::all(px(frame.radius)).clamp_radii_for_quad_size(bounds.size);
+        window.paint_quad(fill(bounds, background).corner_radii(corners));
     }
     if let Some(cursor) = frame.cursor {
         window.set_cursor_style(cursor.style(), hitbox);
@@ -340,11 +341,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
             let run = |len: usize, color: Hsla, weight: Option<Weight>| TextRun {
                 len,
                 font: gpui::Font {
-                    weight: match weight {
-                        None | Some(Weight::Normal) => gpui::FontWeight::NORMAL,
-                        Some(Weight::Medium) => gpui::FontWeight::MEDIUM,
-                        Some(Weight::Semibold) => gpui::FontWeight::SEMIBOLD,
-                    },
+                    weight: weight.map_or(gpui::FontWeight::NORMAL, Weight::font),
                     ..typography::ui_font()
                 },
                 color,

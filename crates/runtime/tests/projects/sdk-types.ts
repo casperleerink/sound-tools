@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Path, rise, Select, text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Path, rise, Select, text, Text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -514,11 +514,24 @@ Toggle({ icon: "automation", count: 2, tooltip: "Automation", on: true });
 Toggle({ icon: "automation", label: "Automation", on: true });
 
 // A look takes only what a look changes, even from a `Style`.
-const look: Look = { background: "alpha/10" };
+const look: Look = { background: "fill-strong" };
 const sized = { width: 120, background: "red" } satisfies Style;
 // @ts-expect-error: a width is no part of a look.
 const sizedLook: Look = sized;
 h("div", { style: { hover: look, pressed: sizedLook } });
+
+// A view names a role, a hue or a step of a scale: a step of grey or a size no scale has is refused.
+h("div", { style: { background: "fill", color: "text-muted", gap: "sm", padding: 3, radius: "full" } });
+// @ts-expect-error: a step of the grey scale is no role.
+h("div", { style: { color: "gray-700" } });
+// @ts-expect-error: white at an opacity is no role.
+h("div", { style: { background: "alpha/10" } });
+// @ts-expect-error: no gap is `huge`.
+h("div", { style: { gap: "huge" } });
+// @ts-expect-error: a control is `sm`, `md` or `lg`.
+Toggle({ label: "C", on: true, size: "xs" });
+// @ts-expect-error: a text is a step of the type scale.
+Text({ variant: "small", children: "No such step" });
 
 // A control names a `field`, or shows what code keeps and hears it with `onChange`.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });

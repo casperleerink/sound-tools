@@ -1,6 +1,6 @@
 // Components made of the blocks above.
 
-import { Arc, Button, Circle, Color, h, Icon, IconName, Input, Label, Line, Rect, Space, Style, Toggle } from "./drawing";
+import { Arc, Button, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, Space, Text, Toggle } from "./drawing";
 import { Fields, Inputs, NumberField, Unit } from "./fields";
 import { Drawing } from "./host";
 import { Drag, DragResult, DragTurns, KeyName, Live, now, Num, Press } from "./live";
@@ -132,8 +132,8 @@ export function Knob(props: KnobProps): UiNode {
   };
   const named = label !== undefined && !props.bare;
   const texts = small ? [] : [
-    ...(named ? [Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" })] : []),
-    Label({ x: centreX, y: named ? 54 : 38, text: value, unit, color: "gray-950", size: 12, align: "center" }),
+    ...(named ? [Label({ x: centreX, y: 38, text: label, color: "text-secondary", align: "center" })] : []),
+    Label({ x: centreX, y: named ? 54 : 38, text: value, unit, color: "text", align: "center" }),
   ];
   return Space({
     key,
@@ -143,10 +143,10 @@ export function Knob(props: KnobProps): UiNode {
     drag,
     onPress,
     children: [
-      Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "alpha/10", width: 2.5 }),
-      Arc({ x: centreX, y: centreY, radius, from: bipolar ? 0 : -SWEEP / 2, to: angle, color: "gray-950", width: 2.5 }),
-      Circle({ x: centreX, y: centreY, radius: cap, color: "gray-300" }),
-      Line({ from: along(cap / 3), to: along(cap * 0.76), color: "gray-950", width: 2 }),
+      Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "fill-strong", width: 2.5 }),
+      Arc({ x: centreX, y: centreY, radius, from: bipolar ? 0 : -SWEEP / 2, to: angle, color: "text", width: 2.5 }),
+      Circle({ x: centreX, y: centreY, radius: cap, color: "fill-strong" }),
+      Line({ from: along(cap / 3), to: along(cap * 0.76), color: "text", width: 2 }),
       ...texts,
     ],
   });
@@ -223,10 +223,10 @@ function levelBars(peaks: Peaks, length: number, box: Box, side: number, thickne
     const peak = faderLevel(level).hold(1.5).fall(0.5).times(length);
     const at = side + channel * (thickness + gap);
     return [
-      Rect({ ...box(0, length, at, thickness), color: "alpha/5" }),
+      Rect({ ...box(0, length, at, thickness), color: "fill" }),
       Rect({ ...box(0, bar.min(hot), at, thickness), color: "green" }),
       Rect({ ...box(hot, bar.minus(hot).max(0), at, thickness), color: "yellow" }),
-      Rect({ ...box(peak.minus(1), 1, at, thickness), color: "gray-950", opacity: peak.gt(0.01 * length) }),
+      Rect({ ...box(peak.minus(1), 1, at, thickness), color: "text", opacity: peak.gt(0.01 * length) }),
     ];
   });
 }
@@ -245,8 +245,8 @@ export function Fader(props: FaderProps): UiNode {
   const bars = meter === undefined ? [] : levelBars(meter, length, along(horizontal, length), 8, 5, 2);
   const at = () => fraction().times(length).minus(3);
   const handle = horizontal
-    ? Rect({ x: at, y: 0, width: 6, height: 28, radius: 3, color: "gray-950" })
-    : Rect({ x: 0, y: () => at().negate().plus(length - 6), width: 28, height: 6, radius: 3, color: "gray-950" });
+    ? Rect({ x: at, y: 0, width: 6, height: 28, radius: 3, color: "text" })
+    : Rect({ x: 0, y: () => at().negate().plus(length - 6), width: 28, height: 6, radius: 3, color: "text" });
   return Space({
     key,
     width: horizontal ? length : 28,
@@ -284,13 +284,15 @@ export type NumberBoxProps = Either<
   /** The undo step of a field: "Change <field>" when left out. */
   label?: string;
   width: number;
-  /** 18 points when left out. */
+  /** `md` when left out. A small one says its number in 12 points, the others in 14. */
+  size?: ControlSize;
+  /** Its height in points where no size fits, such as a readout under a fader. */
   height?: number;
-  /** Of its text, 14 points when left out. */
-  size?: number;
-  color?: Color;
   align?: "left" | "center" | "right";
 };
+
+/** The heights of `ControlSize`, for the controls drawn here. */
+const CONTROL_HEIGHT = { sm: 24, md: 28, lg: 32 } as const;
 
 /** A number that `text` says, or `null`: `-6 dB`, `2k` for 2000 in Hz, `-inf`. */
 function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null {
@@ -308,8 +310,9 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
  * it: enter types, and the arrows step it.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
-  const { key, unit, width, values, field } = props;
-  const height = props.height ?? 18;
+  const { key, unit, width, values, field, size = "md" } = props;
+  const height = props.height ?? CONTROL_HEIGHT[size];
+  const textSize = size === "sm" ? 12 : 14;
   const per = props.per ?? 10;
   const step = props.step ?? 1;
   const { get, set } = field === undefined ? valueOf(props) : numberField(field, props.label);
@@ -320,7 +323,8 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     values ? values.reduce((best, each) => (Math.abs(each - number) < Math.abs(best - number) ? each : best), values[0] ?? number)
     : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
-  const text = { x, y: 0, size: props.size ?? 14, color: props.color ?? "gray-950", align: props.align } as const;
+  // The line of a label is 1.3 times its size.
+  const text = { x, y: Math.round((height - textSize * 1.3) / 2), size: textSize, color: "text", align: props.align } as const;
   const shows = props.field !== undefined ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
   const shown = { ...text, text: shows, unit };
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit | "pan");
@@ -379,7 +383,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     if (next !== undefined && next !== get()) set(next);
   };
   const keys: KeyName[] = field === undefined ? ["up", "down", "enter"] : ["enter"];
-  return h("div", { key: `${key}-keys`, tabStop: field === undefined, keys, onKey, style: { radius: 4, keep: true } }, Show({
+  return h("div", { key: `${key}-keys`, tabStop: field === undefined, keys, onKey, style: { radius: "sm", keep: true } }, Show({
     when: typing,
     children: () => {
       const before = untrack(get);
@@ -388,7 +392,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
         const number = typed === null ? null : typedNumber(typed, unit);
         if (number !== null && taken(number) !== before) set(taken(number));
       };
-      const input = Input({ value: Number.isFinite(before) ? String(Number(before.toFixed(3))) : "-inf", width, focus: true, onCommit: done, onCancel: () => done(null) });
+      const input = Input({ value: Number.isFinite(before) ? String(Number(before.toFixed(3))) : "-inf", width, size, focus: true, onCommit: done, onCancel: () => done(null) });
       return h("div", { key: `${key}-typed` }, input);
     },
     fallback: box,
@@ -444,22 +448,17 @@ export type SelectProps<T> = ValueProps<T> & {
   placeholder?: string;
   /** Of its list, in points: 160 when left out. */
   menuWidth?: number;
-  /** `"md"` says it in 13 points; 12 when left out, as a select of a card. */
-  size?: "sm" | "md";
+  /** `md` when left out. A small one says it in 12 points, the others in 14. */
+  size?: ControlSize;
   /** A field above its list that keeps the options whose label holds what is typed. */
   search?: boolean;
 };
-
-const TRIGGER = {
-  sm: { style: { direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: { background: "alpha/10" } }, text: 12 },
-  md: { style: { direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: { background: "alpha/10" } }, text: 13 },
-} as const satisfies Record<string, { style: Style; text: number }>;
 
 /** Shows the option `value` is and opens the list of `options` under it, as the window's selects. */
 export function Select<const T extends string | number | boolean | null>(props: SelectProps<T>): UiNode {
   const { openMenu } = drawing();
   const { get, set } = valueOf(props);
-  const look = TRIGGER[props.size ?? "sm"];
+  const size = props.size ?? "md";
   const said = () => {
     const value = get();
     return read(props.options).find((option) => option.value === value)?.label ?? props.placeholder ?? String(value);
@@ -471,16 +470,18 @@ export function Select<const T extends string | number | boolean | null>(props: 
     const option = picked === null ? undefined : options[picked];
     if (option && option.value !== value) set(option.value);
   };
-  return h("div", { key: props.key, style: look.style, tabStop: true, onClick: open },
-    h("div", { style: { fontSize: look.text, weight: "medium", color: "gray-950" } }, said),
-    Icon({ name: "chevron-down", size: 12, color: "gray-700" }),
-  );
+  const style = { direction: "row", align: "center", gap: "xs", height: CONTROL_HEIGHT[size], paddingX: "sm", radius: "md", background: "fill", hover: { background: "fill-strong" } } as const;
+  // Medium, as what the window's own controls say.
+  const text = size === "sm" ? Text({ variant: "label", tone: "text", style: { weight: "medium" }, children: said }) : Text({ variant: "heading", children: said });
+  return h("div", { key: props.key, style, tabStop: true, onClick: open }, text, Icon({ name: "chevron-down", size: 12, color: "text-muted" }));
 }
 
 export type SegmentedControlProps<T> = ValueProps<T> & {
   /** Names it for tests: `segmented-<key>`, and each option `segment-<place>`. */
   key?: string;
   options: Bind<readonly Pick<SelectOption<T>, "value" | "label">[]>;
+  /** `md` when left out. */
+  size?: ControlSize;
   disabled?: Bind<boolean>;
 };
 
@@ -490,6 +491,7 @@ export function SegmentedControl<const T extends string | number | boolean | nul
   const options = () => read(props.options);
   return element("segmented", {
     key: props.key,
+    size: props.size,
     options: () => options().map((option) => option.label),
     chosen: () => {
       const value = get();
@@ -528,7 +530,7 @@ export type StepsProps = ValueProps<readonly number[]> & { key?: string; max?: n
 /**
  * A row of steps on a list of numbers, such as a `pattern` field, one per number: a click turns
  * a step on (to `max`, the item's max or 1 when left out) or off (to its min, or 0). `playing`
- * names an output, as `now.value` does, whose value is the step that plays, which lights up.
+ * names an output, as `now.value` does, whose value is the step that plays, which a green ring shows.
  */
 export function Steps(props: StepsProps): UiNode {
   const field = props.field !== undefined ? drawing().fields[props.field] : undefined;
@@ -551,8 +553,8 @@ export function Steps(props: StepsProps): UiNode {
           width: STEP.size,
           height: STEP.size,
           radius: 3,
-          color: () => (isOn(step) ? "lavender" : "alpha/10"),
-          border: "gray-950",
+          color: () => (isOn(step) ? "text" : "fill-strong"),
+          border: "green",
           borderWidth: props.playing === undefined ? 0 : now.value(props.playing).floor().eq(step).times(2),
           cursor: "pointer",
           onPress: () => {
@@ -586,11 +588,11 @@ export function Meter(props: MeterProps): UiNode {
     width: 8,
     height: 64,
     children: [
-      Rect({ x: 0, y: 0, width: 8, height: 64, radius: 2, color: "alpha/5" }),
+      Rect({ x: 0, y: 0, width: 8, height: 64, radius: 2, color: "fill" }),
       Rect({ x: 0, y: () => level().negate().plus(64), width: 8, height: level, radius: 2, color: "green" }),
     ],
   });
-  return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: "gray-800", fontSize: 11 } }, props.label));
+  return h("div", { style: { align: "center", gap: "xs" } }, bar, props.label && Text({ variant: "label", children: props.label }));
 }
 
 /** The bars of `peaks` with the light at their loud end, as `Meter` draws them. */
@@ -616,8 +618,8 @@ export type PadProps = { key?: string; size?: number } & Either<{ field: { x: st
 /** A square to play with the pointer: across moves `x` and up moves `y`. */
 export function Pad(props: PadProps): UiNode {
   const size = props.size ?? 120;
-  const look = { width: size, height: size, background: "alpha/5", radius: 6, cursor: "crosshair" } as const;
-  const dot = (x: Bind<Num>, y: Bind<Num>) => Circle({ x, y, radius: 5, color: "gray-950" });
+  const look = { width: size, height: size, background: "fill", radius: "md", cursor: "crosshair" } as const;
+  const dot = (x: Bind<Num>, y: Bind<Num>) => Circle({ x, y, radius: 5, color: "text" });
   if (props.field !== undefined) {
     const { x, y } = props.field;
     return Space({
@@ -665,13 +667,13 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         rows.push(Steps({ field: name }));
       } else if (field.kind === "file") {
         rows.push(
-          h("div", { style: { direction: "row", gap: 8, align: "center" } },
-            label,
-            h("div", { style: { color: "gray-700" } }, () => (state[name] as string) || "No sound"),
+          h("div", { style: { direction: "row", gap: "sm", align: "center" } },
+            Text({ variant: "label", children: label }),
+            Text({ variant: "label", tone: "muted", children: () => (state[name] as string) || "No sound" }),
             Button({
               label: "Choose…",
               variant: "subtle",
-              size: "xs",
+              size: "sm",
               onClick: async () => {
                 const chosen = await openFile({ title: `Choose ${label.toLowerCase()}` });
                 if (chosen !== null) update(`Choose ${label.toLowerCase()}`, ({ state: next }) => {
@@ -685,6 +687,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         buttons.push(
           Toggle({
             label,
+            size: "sm",
             on: () => state[name] as boolean,
             onClick: () => {
               const on = state[name] as boolean;
@@ -696,9 +699,9 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         );
       } else if (field.kind === "choice") {
         rows.push(
-          h("div", { style: { direction: "row", gap: 8, align: "center" } },
-            h("div", { style: { color: "gray-700" } }, label),
-            SegmentedControl({ field: name, options: field.options.map((option) => ({ value: option, label: String(option) })) }),
+          h("div", { style: { direction: "row", gap: "sm", align: "center" } },
+            Text({ variant: "label", children: label }),
+            SegmentedControl({ field: name, size: "sm", options: field.options.map((option) => ({ value: option, label: String(option) })) }),
           ),
         );
       }
@@ -711,14 +714,14 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
       }
     }
     if (buttons.length > 0) {
-      rows.push(h("div", { style: { direction: "row", gap: 4 } }, buttons));
+      rows.push(h("div", { style: { direction: "row", gap: "xs" } }, buttons));
     }
     // The rest goes beside the knobs, not under them: a card is no taller than its room.
     return h(
       "div",
-      { style: { direction: "row", gap: 16 } },
-      h("div", { style: { direction: "row", gap: 8 } }, knobs),
-      h("div", { style: { gap: 8 } }, rows),
+      { style: { direction: "row", gap: "lg" } },
+      h("div", { style: { direction: "row", gap: "sm" } }, knobs),
+      h("div", { style: { gap: "sm" } }, rows),
     );
   };
 }
