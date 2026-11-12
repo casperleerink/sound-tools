@@ -7,6 +7,7 @@
 mod controls;
 mod drawing;
 mod edges;
+mod in_view;
 mod input;
 mod paint;
 mod parts;
@@ -194,6 +195,14 @@ pub fn soft_edges(page: &AnyView, key: &str, cx: &App) -> Option<[f32; 2]> {
     let page = page.clone().downcast::<Page>().ok()?;
     let edges = page.read(cx).0.read(cx).edges.borrow();
     edges.get(key).map(edges::Edge::fades)
+}
+
+/// Where the div of `key` that scrolls on the page `page` shows what it scrolls, in the window.
+#[cfg(feature = "test-support")]
+pub fn scroll_room(page: &AnyView, key: &str, cx: &App) -> Option<Bounds<Pixels>> {
+    let page = page.clone().downcast::<Page>().ok()?;
+    let edges = page.read(cx).0.read(cx).edges.borrow();
+    edges.get(key).map(edges::Edge::room)
 }
 
 /// Whether the page has a text node that says `text`, for tests waiting for a view change.
@@ -851,7 +860,7 @@ impl TypeScriptCard {
             scrolls: &self.scrolls,
             scrolled_cards: self.scrolled_cards.clone(),
             button_down: self.button_down.get(),
-            scroller: None,
+            scrollers: Vec::new(),
             in_title_bar: false,
             out_of_page: false,
             under_tooltip: false,
