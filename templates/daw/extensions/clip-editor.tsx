@@ -448,11 +448,13 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
         color="none" cursor="ew-resize" drag={drags.resize} onPress={onPress} anchor={() => ({ x: note.start + note.length })} />,
     ];
   };
+  // The bar of a chosen note goes along in time while its note is dragged, to where the note lands.
+  const moving = now.drag("note-move");
   const VelocityBar = (note: Note) => {
     const picked = memo(() => isPicked(noteKey(note)));
     const top = () => (VELOCITY_BOTTOM - ((VELOCITY_BOTTOM - VELOCITY_TOP) * note.velocity) / 127) / LANE;
     return (
-      <Rect x={() => note.start} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
+      <Rect x={() => (picked() ? moving.dx.plus(note.start).max(0) : note.start)} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
         moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "text" : blend(colour(), "text", boxed(note)))}
         cursor="ns-resize" drag={velocityDrag} onPress={pressNote(note)} />
     );
