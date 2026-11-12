@@ -22,7 +22,7 @@
 //! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
 //!   with its two sends, and the returns' and the master's strips at the right.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
-//!   the test plugin, the menu of its card's title open, and the menu of Add effect.
+//!   the test plugin, the menu of its card's title open, and the menu of its last effect's.
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
 //!   region of the voice chosen, and the panel of the voice: its region's card, a compressor and
 //!   a reverb.
@@ -55,9 +55,8 @@ pub(crate) mod timeline;
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
 const TOP: f32 = 48.0 + 44.0;
 
-/// The title of the first card of a track's panel, and its Add effect after a plugin's card.
+/// The title of the first card of a track's panel.
 const PICKER: (f32, f32) = (230., 920. - 216. + 12. + 22.);
-const ADD_EFFECT: (f32, f32) = (441., 920. - 216. + 12. + 16.);
 
 /// The middle of `row` at `tick` on the timeline.
 fn at(tick: u64, row: f32) -> Point<Pixels> {
@@ -487,10 +486,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         .collect();
     let opened = super::Opened::open(cx, &files)?;
     click(&opened, header(0.), 1, cx)?;
-    // Add effect after three cards of a plugin, 200 points each and 12 apart.
+    // The title of the third card: a plugin's card with nothing picked is 160 points wide,
+    // and 12 from the next.
     click(
         &opened,
-        point(px(ADD_EFFECT.0 + 2. * 212.), px(ADD_EFFECT.1)),
+        point(px(PICKER.0 + 2. * 172.), px(PICKER.1)),
         1,
         cx,
     )?;
