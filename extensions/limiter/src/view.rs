@@ -18,7 +18,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{ParameterKnob, decibels_readout, milliseconds_readout};
+use sound_ui::components::knob::{ParameterKnob, Unit};
 use sound_ui::components::limiter_display::LimiterHistory;
 use sound_ui::{
     DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, every_poll, weak_callback,
@@ -44,10 +44,10 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<LimiterState>;
 
-const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", decibels_readout);
-const CEILING_KNOB: Control = Control::new(&CEILING, "Ceiling", "Change ceiling", decibels_readout);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::DECIBELS);
+const CEILING_KNOB: Control = Control::new(&CEILING, "Ceiling", "Change ceiling", Unit::DECIBELS);
 const RELEASE_KNOB: Control =
-    Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
+    Control::new(&RELEASE, "Release", "Change release", Unit::MILLISECONDS);
 
 /// The value of a row of the lookahead select for each lookahead: its ms, which the row says
 /// with the unit.

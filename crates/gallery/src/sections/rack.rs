@@ -20,7 +20,7 @@ use sound_ui::components::device_card::{Column, DeviceCard, Section};
 use sound_ui::components::display::{Axis, ControlStrip, Display, Handle};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{Knob, KnobRange, Typed, short};
 use sound_ui::components::limiter_display::{COLUMNS, LimiterHistory, POLLS_PER_COLUMN};
 use sound_ui::components::meter::{GainReduction, Level, Meter};
 use sound_ui::components::segmented_control::SegmentedControl;
@@ -312,7 +312,8 @@ fn knobs(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .range(CUTOFF)
                     .default_value(2_000.)
                     .label("Cutoff")
-                    .readout(hertz(values[0])),
+                    .readout(hertz(values[0]))
+                    .typed(Typed::Hertz),
             ),
             sample(
                 "bipolar",
@@ -322,7 +323,8 @@ fn knobs(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .bipolar(true)
                     .default_value(0.)
                     .label("Pan")
-                    .readout(pan(values[1])),
+                    .readout(pan(values[1]))
+                    .typed(Typed::Pan),
             ),
             sample(
                 "start",
@@ -330,7 +332,8 @@ fn knobs(state: &Entity<RackState>, cx: &App) -> AnyElement {
                 knob(2, "drive")
                     .range(KnobRange::linear(0., 24.))
                     .label("Drive")
-                    .readout(format!("{} dB", short(values[2]))),
+                    .readout(format!("{} dB", short(values[2])))
+                    .typed(Typed::Number),
             ),
             sample(
                 "end",
@@ -338,7 +341,8 @@ fn knobs(state: &Entity<RackState>, cx: &App) -> AnyElement {
                 knob(3, "mix")
                     .range(PART)
                     .label("Mix")
-                    .readout(percent(values[3])),
+                    .readout(percent(values[3]))
+                    .typed(Typed::Per(100.)),
             ),
             sample(
                 "disabled",

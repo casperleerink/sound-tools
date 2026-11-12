@@ -167,6 +167,10 @@ impl<V: Copy + PartialEq + 'static> GestureState<V> {
             drag: None,
         }
     }
+
+    pub(crate) fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
 }
 
 /// A mouse press on the control. A double click reports `reset` when it is another value, any

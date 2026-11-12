@@ -32,7 +32,7 @@ use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
-    Knob, KnobRange, decibels_readout, hertz_readout, pan_readout, percent_readout,
+    Knob, KnobRange, Typed, decibels_readout, hertz_readout, pan_readout, percent_readout,
     seconds_readout, signed,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
@@ -97,6 +97,19 @@ fn readout(unit: Unit, value: f32) -> String {
         Unit::Decibels => decibels_readout(value),
         Unit::Pan => pan_readout(value),
         Unit::Count => format!("{value}"),
+    }
+}
+
+/// How a value typed on a knob of `unit` is read.
+fn typed(unit: Unit) -> Typed {
+    match unit {
+        Unit::Part => Typed::Per(100.),
+        Unit::Hertz => Typed::Hertz,
+        Unit::Seconds => Typed::Seconds,
+        Unit::Pan => Typed::Pan,
+        Unit::Octaves | Unit::Semitones | Unit::Cents | Unit::Decibels | Unit::Count => {
+            Typed::Number
+        }
     }
 }
 
@@ -454,6 +467,7 @@ impl WavetableView {
             .bipolar(parameter.min < 0.)
             .label(control.label)
             .readout(control.readout(value))
+            .typed(typed(control.unit))
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let label = object.undo("Change", control.noun);
                 let set = |state: &mut WavetableState, value| {

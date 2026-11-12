@@ -25,7 +25,7 @@ pub const ROW_HEIGHT: f32 = 72.;
 /// The room of the control at the top of a cell: the size of a knob.
 pub const CONTROL_HEIGHT: f32 = 36.;
 const LINE_TOP: f32 = 38.;
-const LINE_HEIGHT: f32 = 14.;
+pub(crate) const LINE_HEIGHT: f32 = 14.;
 /// The value line of a cell, from its top.
 pub const VALUE_LINE: f32 = LINE_TOP + LINE_HEIGHT + 2.;
 

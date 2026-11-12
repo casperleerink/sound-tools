@@ -38,10 +38,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, seconds_readout,
-    semitones_readout,
-};
+use sound_ui::components::knob::{Knob, KnobRange, ParameterKnob, Typed, Unit, seconds_readout};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::waveform_display::{
     FileDrop, WaveformDisplay, clamped_end, clamped_start, place,
@@ -92,15 +89,20 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the view on a number with a fixed range.
 type Control = ParameterKnob<SamplerState>;
 
-const ROOT_KNOB: Control = Control::new(&ROOT, "Root", "Change root", note_readout);
-const TUNE_KNOB: Control = Control::new(&TUNE, "Tune", "Change tune", semitones_readout).bipolar();
+const ROOT_KNOB: Control = Control::new(
+    &ROOT,
+    "Root",
+    "Change root",
+    Unit::new(note_readout, Typed::Note),
+);
+const TUNE_KNOB: Control = Control::new(&TUNE, "Tune", "Change tune", Unit::SEMITONES).bipolar();
 const VELOCITY_KNOB: Control =
-    Control::new(&VELOCITY, "Velocity", "Change velocity", percent_readout);
-const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", seconds_readout);
-const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", decibels_readout);
-const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", seconds_readout);
-const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
-const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", percent_readout);
+    Control::new(&VELOCITY, "Velocity", "Change velocity", Unit::PERCENT);
+const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", Unit::SECONDS);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::DECIBELS);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::SECONDS);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", Unit::SECONDS);
+const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", Unit::PERCENT);
 
 /// A note number by its name: `C4`, `C#4`.
 fn note_readout(note: f32) -> String {
@@ -432,6 +434,7 @@ impl SamplerView {
             .default_value(0.)
             .label("Start")
             .readout(seconds(state.start_seconds))
+            .typed(Typed::Seconds)
             .disabled(file.is_none())
             .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
                 let set = |state: &mut SamplerState, value: f32| {
@@ -445,6 +448,7 @@ impl SamplerView {
             .default_value(length as f32)
             .label("End")
             .readout(seconds(end))
+            .typed(Typed::Seconds)
             .disabled(file.is_none())
             .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
                 if let Some(file) = file {
@@ -469,6 +473,7 @@ impl SamplerView {
             .default_value(state.start_seconds as f32)
             .label("Loop start")
             .readout(seconds_readout(loop_start as f32))
+            .typed(Typed::Seconds)
             .disabled(file.is_none() || !state.looping)
             .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
                 let set = |state: &mut SamplerState, value: f32| {

@@ -17,9 +17,7 @@ use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    Knob, KnobRange, ParameterKnob, hertz_readout, milliseconds_readout, percent_readout,
-};
+use sound_ui::components::knob::{Knob, KnobRange, ParameterKnob, Unit, milliseconds_readout};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
@@ -44,13 +42,12 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<DelayState>;
 
-const TIME_KNOB: Control = Control::new(&TIME, "Time", "Change time", milliseconds_readout);
+const TIME_KNOB: Control = Control::new(&TIME, "Time", "Change time", Unit::MILLISECONDS);
 const FEEDBACK_KNOB: Control =
-    Control::new(&FEEDBACK, "Feedback", "Change feedback", percent_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
-const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", hertz_readout);
-const HIGH_CUT_KNOB: Control =
-    Control::new(&HIGH_CUT, "High cut", "Change high cut", hertz_readout);
+    Control::new(&FEEDBACK, "Feedback", "Change feedback", Unit::PERCENT);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
+const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", Unit::HERTZ);
+const HIGH_CUT_KNOB: Control = Control::new(&HIGH_CUT, "High cut", "Change high cut", Unit::HERTZ);
 
 /// While it syncs, the Time knob steps through the divisions, by their place in
 /// [`Division::ALL`].

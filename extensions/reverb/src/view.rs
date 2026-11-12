@@ -17,9 +17,7 @@ use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    ParameterKnob, hertz_readout, milliseconds_readout, percent_readout, seconds_readout,
-};
+use sound_ui::components::knob::{ParameterKnob, Unit};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
@@ -46,22 +44,21 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<ReverbState>;
 
-const SIZE_KNOB: Control = Control::new(&SIZE, "Size", "Change size", percent_readout);
-const DAMPING_KNOB: Control = Control::new(&DAMPING, "Damping", "Change damping", percent_readout);
-const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", percent_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
-const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", hertz_readout);
-const HIGH_CUT_KNOB: Control =
-    Control::new(&HIGH_CUT, "High cut", "Change high cut", hertz_readout);
+const SIZE_KNOB: Control = Control::new(&SIZE, "Size", "Change size", Unit::PERCENT);
+const DAMPING_KNOB: Control = Control::new(&DAMPING, "Damping", "Change damping", Unit::PERCENT);
+const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", Unit::PERCENT);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
+const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", Unit::HERTZ);
+const HIGH_CUT_KNOB: Control = Control::new(&HIGH_CUT, "High cut", "Change high cut", Unit::HERTZ);
 const DIFFUSION_KNOB: Control =
-    Control::new(&DIFFUSION, "Diffusion", "Change diffusion", percent_readout);
+    Control::new(&DIFFUSION, "Diffusion", "Change diffusion", Unit::PERCENT);
 const PRE_DELAY_KNOB: Control = Control::new(
     &PRE_DELAY,
     "Pre-delay",
     "Change pre-delay",
-    milliseconds_readout,
+    Unit::MILLISECONDS,
 );
-const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", Unit::SECONDS);
 
 /// Where the decay sits in its display, as places from 0 to 1, `y` up.
 ///

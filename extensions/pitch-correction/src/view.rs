@@ -19,7 +19,7 @@ use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{ParameterKnob, milliseconds_readout, percent_readout, signed};
+use sound_ui::components::knob::{ParameterKnob, Unit, signed};
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
@@ -57,10 +57,10 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<PitchCorrectionState>;
 
-const RETUNE_KNOB: Control = Control::new(&RETUNE, "Retune", "Change retune", milliseconds_readout);
+const RETUNE_KNOB: Control = Control::new(&RETUNE, "Retune", "Change retune", Unit::MILLISECONDS);
 const HUMANIZE_KNOB: Control =
-    Control::new(&HUMANIZE, "Humanize", "Change humanize", percent_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+    Control::new(&HUMANIZE, "Humanize", "Change humanize", Unit::PERCENT);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
 
 /// The words the composer sees for each option of a choice.
 const KEYS: [(Key, &str); 12] = [
