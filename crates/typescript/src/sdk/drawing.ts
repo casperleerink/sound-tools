@@ -416,7 +416,7 @@ export interface Style {
   radius?: Radius | number;
   borderColor?: Color;
   borderWidth?: number;
-  /** Its children scroll along this axis where they do not fit its size, as a long rack does. */
+  /** Its children scroll along this axis where they do not fit its size, as a long rack does. On each side where more waits they fade into what is under them. */
   scroll?: "x" | "y";
   textAlign?: "start" | "center" | "end";
   /** 0 to 1. */
