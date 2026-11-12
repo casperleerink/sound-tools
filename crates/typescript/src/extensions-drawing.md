@@ -22,11 +22,11 @@ view: ({ state, memory, update, now }) => {
     <Space key="roll" width={800} height={400} {...roll}>
       <For each={() => state.notes}>
         {(note, index) => (
-          <Rect x={() => note.start} y={() => 127 - note.pitch} width={() => note.length} height={1} color="#a9b1ff"
+          <Rect x={() => note.start} y={() => 127 - note.pitch} width={() => note.length} height={1} color="blue"
             moves={() => (isPicked(index()) ? ["move"] : undefined)} drag={drag} onPress={() => { memory.selected = new Set([index()]); }} />
         )}
       </For>
-      <Line from={[now.tick, 0]} to={[now.tick, 128]} color="#7ee0a0" width={2} />
+      <Line from={[now.tick, 0]} to={[now.tick, 128]} color="green" width={2} />
     </Space>
   );
 },
@@ -43,6 +43,6 @@ view: ({ state, memory, update, now }) => {
 These are live values too (`Now` in `sdk/live.ts`):
 
 - `now.peak` of a `meter` child (`agent-docs/meter.md`), `now.devicePeak()` of the tool itself; `now.value(name, { played: true })`, a field as a lane or a cable plays it.
-- `.smooth`, `.fall` and `.hold` follow a value over frames, as a meter's bar and peak line do. `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
+- `.smooth`, `.fall` and `.hold` follow a value over frames, as a meter's bar and peak line do. `blend(from, to, by)` is a colour between two: `blend("red/20", "red", now.elapsed.mod(1).lt(0.5))` blinks.
 - `<Wave list>` draws `now.scope` (a meter's last sound), `now.history` (the last values of any live value), `now.file` (a file's waveform) or `now.take` (what a recorder records so far; `<Notes>` its notes).
 - A `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"` shows where the piece plays.

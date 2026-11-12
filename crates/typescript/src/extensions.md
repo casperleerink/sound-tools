@@ -65,13 +65,15 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 Without `view`, it gets a control per number, boolean, choice, file, list of numbers, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card gives its view 144 points of height: more is cut off. It is as wide as it needs, at least 168. So put things side by side: a `Knob` with a label is 56 by 72, so two rows of knobs with no gap fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
+A card gives its view 144 points of height: more is cut off. It is as wide as it needs, at least 168. So put things side by side: a `Knob` with a label is 56 by 72, so two rows of knobs with no gap fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall.
+
+Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `gap: "sm"`, `size="sm"` on a control, `<Text variant="label">` for text. `ThemeColor`, `Style` and `Text` in `extensions/sdk/drawing.ts` list the names.
 
 ```tsx
 import { Button, Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
 
-const column: Style = { gap: 8 };
-const row: Style = { direction: "row", gap: 8, align: "center" };
+const column: Style = { gap: "sm" };
+const row: Style = { direction: "row", gap: "sm", align: "center" };
 const pad = { x: "bend", y: "drive" };
 
 tool({
@@ -142,7 +144,7 @@ tool({
   // Positions from 0 to 1, scaled by the room as it is now.
   view: ({ memory, size }) => (
     <Space grow onPress={({ x, y }) => memory.balls.push({ x: x / size.width, y: y / size.height, speed: 0 })}>
-      {() => memory.balls.map((ball) => <Circle x={ball.x * size.width} y={ball.y * size.height} radius={5} color="#60a5fa" />)}
+      {() => memory.balls.map((ball) => <Circle x={ball.x * size.width} y={ball.y * size.height} radius={5} color="blue" />)}
     </Space>
   ),
 });
