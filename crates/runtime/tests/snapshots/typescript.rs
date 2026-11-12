@@ -9,8 +9,9 @@
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
-//! - `typescript-gallery*.png`: the project `sdk-gallery`, the parts of the view SDK the other
-//!   snapshots do not draw: with a div held pressed, its popover open, its dialog open.
+//! - `typescript-gallery*.png`: the project `sdk-gallery`, a page of panels with the transport in
+//!   its header and the parts of the view SDK the other snapshots do not draw: with a div held
+//!   pressed, its popover open, its dialog open.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
@@ -69,15 +70,15 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     };
     let opened = open_files(cx, &GALLERY)?;
     // The div "Press" held, then the popover and the dialog each opened by its button.
-    let press = point(px(833.), px(119.));
+    let press = point(px(858.), px(141.));
     mouse(&opened, cx, moved(press, None))?;
     mouse(&opened, cx, down(press))?;
     save(cx, opened.window.into(), "typescript-gallery")?;
     for (button, name) in [
-        (442., "typescript-gallery-popover"),
-        (514., "typescript-gallery-dialog"),
+        (463., "typescript-gallery-popover"),
+        (535., "typescript-gallery-dialog"),
     ] {
-        click(&opened, point(px(button), px(438.)), 1, cx)?;
+        click(&opened, point(px(button), px(502.)), 1, cx)?;
         save(cx, opened.window.into(), name)?;
     }
     drop(opened);

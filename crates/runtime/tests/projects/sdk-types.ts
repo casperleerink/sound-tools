@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Path, rise, Select, text, Text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, audio, h, highpass, input, Knob, lowpass, number, list, notes, NumberBox, output, Page, Path, rise, Select, text, Text, Toggle, tool, bang, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -532,6 +532,11 @@ h("div", { style: { gap: "huge" } });
 Toggle({ label: "C", on: true, size: "xs" });
 // @ts-expect-error: a text is a step of the type scale.
 Text({ variant: "small", children: "No such step" });
+
+// A page keeps its content narrow, or is one surface to the window's edges.
+Page({ maxWidth: 720 });
+// @ts-expect-error: a page to the window's edges has no width to keep.
+Page({ flush: true, maxWidth: 720 });
 
 // A control names a `field`, or shows what code keeps and hears it with `onChange`.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });

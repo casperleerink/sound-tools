@@ -6,7 +6,7 @@ import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, itemTool, LEAD, muted, r
 import { Shades } from "./song-ruler";
 import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
-import { secondsBetween, ticksAcross } from "./transport";
+import { secondsBetween, ticksAcross } from "./song-time";
 
 // The timeline: the clips of each track and the regions of each audio track in time, a take while
 // it records, and the lanes of automation under a track that shows them.

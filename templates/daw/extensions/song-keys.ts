@@ -1,4 +1,4 @@
-import type { Action, ActionKey, FilledStateOfTool } from "./sdk";
+import { playPause, type Action, type ActionKey, type FilledStateOfTool } from "./sdk";
 import { noteCommand, type NoteCommand } from "./clip-editor";
 import { editPoints } from "./song-automation";
 import type { Song } from "./song";
@@ -115,7 +115,7 @@ const toRow = (keys: readonly ActionKey[], title: string, step: -1 | 1) =>
   });
 
 export const songActions: Record<string, SongAction> = {
-  play: { title: "Play or pause", keys: ["space"], everywhere: true, run: ({ clock }) => (clock.playing ? clock.pause() : clock.play()) },
+  play: playPause,
   record: on(["r"], "Record", (tool) => toggleRecordingOf(tool, tool.state.order)),
   add_tempo: on(["t"], "Add a tempo change at the playhead", ({ clock, memory }) => addTempoAtPlayhead(clock, memory)),
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),

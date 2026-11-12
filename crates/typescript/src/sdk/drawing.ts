@@ -304,14 +304,6 @@ export type ButtonProps = PointerEvents & Tip & {
 
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
 
-/**
- * Shows its children in the window's title bar, in the middle of the room right of the project
- * menu, when this tool's view is the window's: the transport of a song. Anywhere else it shows
- * nothing.
- */
-export const TitleBar = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
-  element("div", { titleBar: true, style }, [children]);
-
 /** A step of the type scale: `display` is 24 points, `title` 16 medium, `heading` 14 medium, `body` 14 and `label` 12. */
 export type TextVariant = "display" | "title" | "heading" | "body" | "label";
 /** How bright a text is: `text`, `secondary` as the label of a control, `muted` as a hint or a unit. */

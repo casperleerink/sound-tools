@@ -7,7 +7,7 @@ import { adopted, batch, isRead, listener, Owner, readFields, reconcile, root, r
 import { Context, Key, ToolSpec } from "./tools";
 
 /** What the components of a card read while it is made. */
-export type Drawing = { fields: Fields } & Pick<Context<Record<string, unknown>>, "state" | "children" | "update" | "openMenu">;
+export type Drawing = { fields: Fields; /** The name of its tool. */ tool: string } & Pick<Context<Record<string, unknown>>, "state" | "children" | "update" | "openMenu" | "clock">;
 
 /** Makes the nodes of a card: `draw` runs once. The window gets them with `takeOps`. */
 function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
