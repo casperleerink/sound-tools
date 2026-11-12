@@ -35,7 +35,7 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
  * its fader. A press on a name shows its panel.
  */
 export const Mixer = ({ page }: { page: Page }) => {
-  const { state, memory, rows, returns, openPanel, toggleMute, toggleSolo } = page;
+  const { state, rows, returns, openPanel, openMaster, toggleMute, toggleSolo } = page;
   /** The returns some strip sends to, in their order: a row of knobs each, so they line up across the tracks. */
   const sent = memo(() => returns().filter((back) => rows().some((each) => sendsOf(each).includes(`send-${back.name}`))));
   const Strip = ({ each }: { each?: Child }) => {
@@ -44,7 +44,7 @@ export const Mixer = ({ page }: { page: Page }) => {
       <div style={{ width: STRIP, align: "center", keep: true }}>
         <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tabStop
           style={{ width: STRIP, height: 28, paddingX: "xs", radius: "md", direction: "row", align: "center", justify: "center", gap: "xs", ...rowLook(false) }}
-          onClick={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
+          onClick={() => (each ? openPanel(each.name) : openMaster())}>
           <Mark colour={each && (() => colourOf(each))} dim={() => each !== undefined && muted(each)} />
           <Text variant="label" tone="text" style={{ truncate: true }}>{() => (each ? titleOf(each) : "Master")}</Text>
         </div>

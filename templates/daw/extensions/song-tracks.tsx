@@ -204,11 +204,11 @@ const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
 };
 
 /** The master's row: a press shows its panel; the toggle at its end shows the mixer. */
-const MasterRow = ({ page: { memory } }: { page: Page }) => (
+const MasterRow = ({ page: { memory, openMaster } }: { page: Page }) => (
   <>
     <Hairline />
     <div key="master-row" tabStop style={() => ({ height: LOW_ROW - 1, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true, ...rowLook(memory.below?.kind === "master") })}
-      onClick={() => (memory.below = { kind: "master" })}>
+      onClick={openMaster}>
       <Mark />
       <Text variant="heading" style={{ grow: true }}>Master</Text>
       <Toggle key="mixer-toggle" size="sm" icon="sliders-horizontal" tooltip={() => (memory.below?.kind === "mixer" ? "Hide the mixer" : "Show the mixer")}

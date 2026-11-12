@@ -1,6 +1,6 @@
 import { Circle, For, Fragment, h, Icon, Knob, Label, Line, memo, now, Path, positionOf, Rect, Select, Show, signal, Space, Text, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Num, type Press } from "./sdk";
 import { bent, type AutomationPoint } from "./song-clips";
-import { clamp, COLOR, HEADER, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
+import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
 import { ENVELOPE, envelope, lfo, RATES, SHAPES } from "./lfo";
 import { freeName, splitTarget, type Mover } from "./track";
 
@@ -121,9 +121,9 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
     else if (picked === items.length - 1) removeLane(page, track, lane.lane);
   };
   return (
-    <div style={{ grow: true, minWidth: 0, align: "start", gap: "xs" }}>
+    <div style={{ grow: true, minWidth: 0, gap: "xs" }}>
       <div key={`lane-name-${track}-${lane.lane}`} tabStop tooltip={() => laneName(page, track, lane.target, true)}
-        style={{ maxWidth: HEADER - 40, direction: "row", align: "center", gap: "xs", radius: "sm", hover: { background: "fill" } }}
+        style={{ direction: "row", align: "center", gap: "xs", radius: "sm", hover: { background: "fill" } }}
         onPress={({ button }) => button === "right" && menu()} onClick={({ button }) => button === "left" && menu()}>
         <Text variant="label" style={{ truncate: true }}>{() => laneName(page, track, lane.target)}</Text>
         <Icon name="chevron-down" size={12} color="text-muted" />
@@ -145,7 +145,8 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
             </div>
           );
         const number = known();
-        if (!number) return null;
+        // Its line is there before its number is known, so the name does not move when it comes.
+        if (!number) return <div style={{ height: 16 }} />;
         const { unit, times } = readoutOf(number);
         return (
           <Space key={`lane-value-${track}-${lane.lane}`} width={READOUT} height={16}>

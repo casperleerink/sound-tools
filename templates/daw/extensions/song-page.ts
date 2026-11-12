@@ -236,7 +236,12 @@ export function pageOf(song: Song) {
   /** Shows the panel of the track `name` under the timeline, and gives it the keyboard. */
   const openPanel = (name: string) => {
     choose(new Set(), name);
-    memory.below = { kind: "track", name };
+    // One that shows already stays as it is, with its scroll and its cards.
+    if (panelOf() !== name) memory.below = { kind: "track", name };
+  };
+  /** Shows the master's panel under the timeline. */
+  const openMaster = () => {
+    if (memory.below?.kind !== "master") memory.below = { kind: "master" };
   };
   /** Changes the clips `keys` names, `track/clip`, in one undo step. */
   const editClips = (label: string, keys: Iterable<string>, change: (state: FilledStateOfTool<"timeline">) => void) =>
@@ -267,7 +272,7 @@ export function pageOf(song: Song) {
   // The window's own context, not a copy: it reads `time` anew each time.
   return Object.assign(song, {
     rows, tracks, returns, strips, layout, tops, topOf, rowAt, returnsHeight, runs, end, starts, barOf,
-    clipAt, panelOf, lengthAt, itemAt, choose, openPanel, editClips, toggleMute, toggleSolo,
+    clipAt, panelOf, lengthAt, itemAt, choose, openPanel, openMaster, editClips, toggleMute, toggleSolo,
     timeline, playhead, handle,
   });
 }
