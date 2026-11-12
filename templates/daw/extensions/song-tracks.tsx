@@ -184,9 +184,9 @@ const Returns = ({ page }: { page: Page }) => {
   );
 };
 const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
-  const { memory, panelOf, openPanel, toggleMute } = page;
+  const { memory, chosenTrack, openPanel, toggleMute } = page;
   return (
-    <div key={`return-${each.name}`} tabStop style={() => ({ height: LOW_ROW, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true, ...rowLook(panelOf() === each.name) })}
+    <div key={`return-${each.name}`} tabStop style={() => ({ height: LOW_ROW, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true, ...rowLook(chosenTrack() === each.name) })}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
       <Mark colour={() => colourOf(each)} dim={() => muted(each)} />

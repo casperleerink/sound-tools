@@ -6,7 +6,8 @@
 
 use gpui::{
     Bounds, ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
-    Pixels, Point, TestAppContext, VisualTestContext, point, px,
+    Pixels, Point, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, VisualTestContext, point,
+    px,
 };
 use runtime::window::export_settings::ExportSettings;
 use sound_core::Ticks;
@@ -1439,6 +1440,43 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
     assert!(window.find("button-close-panel").is_none());
 }
 
+/// A click on a strip's name chooses its track and the mixer stays; a double click shows the
+/// track's panel in the mixer's place, and the mixer comes back scrolled as it was.
+#[gpui::test]
+fn a_click_on_a_strip_chooses_its_track_and_a_double_click_shows_its_panel(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_song(cx, 16, 16);
+    window.wait_for_bun();
+    let toggle = window.until_found("toggle-mixer-toggle");
+    window.click(toggle);
+    let unscrolled = window.until_found("div-strip-name-t01");
+    window.cx.simulate_event(ScrollEvent {
+        position: unscrolled,
+        delta: ScrollDelta::Pixels(point(px(-40.), px(0.))),
+        touch_phase: TouchPhase::Moved,
+        ..Default::default()
+    });
+    let mut strip = unscrolled;
+    window.until("the strips scrolled", |window| {
+        strip = window.find("div-strip-name-t01").unwrap_or(unscrolled);
+        strip != unscrolled
+    });
+    assert!(window.find("toggle-mute-t01").is_none());
+    window.click(strip);
+    // Its head shows all its toggles, as the chosen track's does, and the mixer is still there.
+    window.until_found("toggle-mute-t01");
+    assert_eq!(window.find("div-strip-name-t01"), Some(strip));
+    assert!(window.find("button-close-panel").is_none());
+    window.double_click(strip);
+    window.until_found("button-close-panel");
+    window.wait_for_bun();
+    assert!(window.find("div-strip-name-t01").is_none());
+    let toggle = window.until_found("toggle-mixer-toggle");
+    window.click(toggle);
+    assert_eq!(window.until_found("div-strip-name-t01"), strip);
+}
+
 /// One selection: a click on a clip of another track shows that track's panel in place of the
 /// one that showed, and while the editor is open, the notes of the clip that is clicked.
 #[gpui::test]
@@ -1525,7 +1563,7 @@ fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
     let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
     let strip = window.until_found("div-strip-name-ret-a");
-    window.click(strip);
+    window.double_click(strip);
     window.until_found("toggle-pre-fader-ret-a");
 }
 
