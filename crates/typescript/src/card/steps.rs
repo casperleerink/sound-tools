@@ -101,7 +101,10 @@ impl RenderOnce for Steps {
                 .rounded(radius::SM)
                 .bg(fill)
                 .border_2()
-                .border_color(ring);
+                .border_color(ring)
+                .when(self.playing == Some(step), |square| {
+                    square.debug_selector(move || format!("step-{step}-playing"))
+                });
             let state = state.clone();
             div()
                 .id(("step", step))

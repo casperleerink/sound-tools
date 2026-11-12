@@ -11,7 +11,7 @@ import { Bind } from "./reactivity";
 import { Context } from "./tools";
 
 export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag" | "onDrop" | "cursor" | "children"> & {
-  /** The quiet line under it: its numbers, `A 5 ms · D 350 ms`, or its scale. */
+  /** The quiet line under it, for what no control says: its numbers, `A 5 ms · D 350 ms`, or its scale. */
   caption?: Bind<string>;
   /** A control above the drawing, such as a `SegmentedControl`. */
   control?: Child;
@@ -30,18 +30,20 @@ export const Display = ({ caption, control, wide, ...space }: DisplayProps): UiN
   element("display", { caption, wide }, [control, Space(space)]);
 
 /**
- * The cells of a card, in two rows, filled by column: a `Knob` is a cell, and any other control
- * goes in a `Cell`. A card shows the first columns, two beside a display or rows of steps, and
- * keeps the rest behind its expand icon, so the controls that matter most come first.
+ * The cells of a card, in two rows, filled by column. A control on a `field` is a cell by
+ * itself, with the field's label under it: a `Knob`, a `SegmentedControl`, a `Select`, a
+ * `NumberBox`, a `Slider`, and a `Toggle`, which says its name itself. A card shows the first
+ * columns, two beside a display or rows of steps, and keeps the rest behind its expand icon, so
+ * the controls that matter most come first; a page shows them all.
  */
 export const Controls = ({ children }: { children?: Child }): UiNode => element("controls", {}, [children]);
 
 /**
- * A cell of `Controls` for a control that is no knob: a `SegmentedControl`, a `Toggle`, a
- * `Button`, a `Select` or a `NumberBox`. A control in a cell is the size of a card's by itself;
- * the last two still say `size="sm"`. `label` and `value` are the lines a knob has under it;
- * `value` reads what the control does not say itself, such as `1 ms` under a select that says
- * `1`, and never a unit alone. It is as many columns wide as its control needs.
+ * A cell of `Controls` for what has no field: a `Button`, or a control on what code keeps. A
+ * control in a cell is the size of a card's by itself; a `Select` and a `NumberBox` still say
+ * `size="sm"`. `label` and `value` are the lines a knob has under it; `value` reads what the
+ * control does not say itself, and never a unit alone. It is as many columns wide as its
+ * control needs.
  */
 export const Cell = ({ children, ...props }: { label?: Bind<string>; value?: Bind<string>; children?: Child }): UiNode =>
   element("cell", props, [children]);
@@ -67,18 +69,10 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
         };
         cells.push(Cell({ label, value: () => (state[name] as string) || "No sound", children: Button({ label: "Choose…", variant: "subtle", onClick: choose }) }));
       } else if (field.kind === "boolean") {
-        const turn = () => {
-          const on = state[name] as boolean;
-          update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
-            next[name] = !on;
-          });
-        };
-        cells.push(Cell({ children: Toggle({ label, on: () => state[name] as boolean, onClick: turn }) }));
+        cells.push(Toggle({ field: name }));
       } else if (field.kind === "choice") {
-        const options = field.options.map((option) => ({ value: option, label: words(String(option)) }));
         // More than a few side by side would make the card wide.
-        const control = options.length > 3 ? Select({ field: name, size: "sm", options }) : SegmentedControl({ field: name, options });
-        cells.push(Cell({ label, children: control }));
+        cells.push(field.options.length > 3 ? Select({ field: name, size: "sm" }) : SegmentedControl({ field: name }));
       }
     }
     for (const [name, input] of Object.entries(inputs)) {

@@ -184,9 +184,9 @@ const Returns = ({ page }: { page: Page }) => {
   );
 };
 const ReturnRow = ({ page, each }: { page: Page; each: Child }) => {
-  const { memory, panelOf, openPanel, toggleMute } = page;
+  const { memory, chosenTrack, openPanel, toggleMute } = page;
   return (
-    <div key={`return-${each.name}`} tabStop style={() => ({ height: LOW_ROW, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true, ...rowLook(panelOf() === each.name) })}
+    <div key={`return-${each.name}`} tabStop style={() => ({ height: LOW_ROW, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true, ...rowLook(chosenTrack() === each.name) })}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
       <Mark colour={() => colourOf(each)} dim={() => muted(each)} />
@@ -276,8 +276,10 @@ async function addTrack({ children, memory, update, openMenu, rows, tracks, retu
   });
   if (picked === 2) memory.returnsOpen = true;
 }
-/** A clip's and a track's menu: with the tail, what reverbs and releases sound after the end, or without. */
-export const RENDER_ITEMS = [{ label: "Render to audio track", tail: true, separator: true }, { label: "Render to audio track, no tail", tail: false }] as const;
+/** The item of a clip's and a track's menu that renders: it asks about the tail next. */
+export const RENDER_ITEM = { label: "Render to audio track…", renders: true, separator: true } as const;
+/** What a render asks: with the tail, what reverbs and releases sound after the end, or without. */
+const TAILS = [{ label: "With the tail", detail: "Reverbs and releases ring out after the end" }, { label: "Without the tail", detail: "Cut where the last clip ends" }].map((item) => ({ ...item, group: "Render to audio track" }));
 /**
  * Why `each` cannot render onto an audio track, or `undefined` when it can: an envelope that
  * moves its volume or a send hears its notes, which the audio track would not have.
@@ -288,11 +290,14 @@ export function cannotRender(each: Child | undefined): string | undefined {
     (target.startsWith("mix.") || target.startsWith("send-")) && each.children.some((child) => child.name === lane && child.tool === "envelope"));
   return enveloped ? "An envelope moves its volume or a send" : undefined;
 }
-/** Renders the clips and regions `keys` of the track `name`, from the first to the last, after its effects and before its fader, onto a new audio track under it that takes its fader, sends, their automation, its solo and what it keys after its fader, and mutes `name`: the song sounds as before. */
-export async function renderToTrack({ update, render, rows, itemAt, lengthAt }: Page, name: string, keys: readonly string[], tail: boolean) {
+/** Asks about the tail, then renders the clips and regions `keys` of the track `name`, from the first to the last, after its effects and before its fader, onto a new audio track under it that takes its fader, sends, their automation, its solo and what it keys after its fader, and mutes `name`: the song sounds as before. */
+export async function renderToTrack({ update, render, rows, itemAt, lengthAt, openMenu }: Page, name: string, keys: readonly string[]) {
   const source = rows().find((each) => each.name === name);
   const starts = keys.flatMap((key) => itemAt(key)?.state.start ?? []);
   if (!source || starts.length === 0) return;
+  const picked = await openMenu(TAILS, { width: 280 });
+  if (picked === null) return;
+  const tail = picked === 0;
   const [from, to] = [Math.min(...starts), Math.max(...keys.map((key) => (itemAt(key)?.state.start ?? 0) + lengthAt(key)))];
   const title = titleOf(source);
   const asset = await render(`${name}/chain`, { from, to, tail, name: title });
@@ -328,12 +333,12 @@ async function trackMenu(page: Page, each: Child) {
   const lanesShown = memory.lanes.has(each.name);
   const keys = each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.tool === "timeline" || child.tool === "region").map((child) => `${each.name}/${child.name}`) : [];
   const why = cannotRender(each);
-  const renders = each.tool === "bus" ? [] : RENDER_ITEMS.map((item) => ({ ...item, disabled: keys.length === 0 || why !== undefined, detail: why }));
+  const renders = each.tool === "bus" ? [] : [{ ...RENDER_ITEM, disabled: keys.length === 0 || why !== undefined, detail: why }];
   const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation" },
     { label: "Add automation…" }, ...renders, { label: "Delete", shortcut: "song.delete_track" as const, separator: renders.length > 0 }];
   const picked = await openMenu(items);
   const item = picked === null ? undefined : items[picked];
-  if (item && "tail" in item) return renderToTrack(page, each.name, keys, item.tail);
+  if (item && "renders" in item) return renderToTrack(page, each.name, keys);
   if (picked === 0) memory.renaming = each.name;
   else if (picked === 1) {
     const colour = await openMenu(PALETTE.map(({ name, colour }) => ({ label: name, checked: colourOf(each) === colour })));

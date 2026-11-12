@@ -4,12 +4,13 @@ Read `agent-docs/extensions.md` first. The elements and their props are in `exte
 
 - A control's `field` may be a number inside a child's record: `"kit.pads.36.volume_db"`. `value` and `onChange` are what code keeps instead, such as `memory`.
 - A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.
+- `quiet` on a `Knob`, a `NumberBox` or a `Readout` shows its number only while a control of its field is touched or it moves, so a row of them at rest repeats no number.
 
 ## Values that change
 
 A view and a component run once. A value that changes (a field, a child, an output, `clock.playing`, `memory`, `size`) goes in a function, which the window runs again when what it read changes; only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the view fails with an error that says how. A handler reads values as it runs, so it needs no function around them.
 
-- `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. In a column that scrolls down, rows that are divs of a fixed `height` and hold nothing tab goes to draw only where they show: a long list costs what shows.
+- `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. In a column that scrolls down, rows that are divs of a fixed `height` and hold nothing tab goes to draw only where they show.
 - `<Show>`, `<Switch>`, `<Popover>` and `<Dialog>` make their part again each time it shows.
 - `selector`, `timeout`, `interval` and `memory` have their docs in `extensions/sdk/reactivity.ts`.
 

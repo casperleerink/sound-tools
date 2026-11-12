@@ -4,7 +4,7 @@ import { LaneRow } from "./song-automation";
 import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, DIM, itemTool, LEAD, LOW_ROW, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
 import { NAMING, Shades } from "./song-ruler";
-import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEMS, renderToTrack } from "./song-tracks";
+import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEM, renderToTrack } from "./song-tracks";
 import { freeName } from "./track";
 import { secondsBetween, ticksAcross } from "./song-time";
 
@@ -86,20 +86,20 @@ export const Timeline = ({ page }: { page: Page }) => {
   });
 
   // As the arrangement's: what the keys do, and a clip's name.
-  const CLIP_MENU: { label: string; command?: ClipCommand; tail?: boolean; exports?: true; shortcut?: Shortcut; separator?: true }[] = [
+  const CLIP_MENU: { label: string; command?: ClipCommand; renders?: true; exports?: true; shortcut?: Shortcut; separator?: true }[] = [
     { label: "Cut", command: "cut", shortcut: "song.cut_clips" }, { label: "Copy", command: "copy", shortcut: "song.copy_clips" }, { label: "Duplicate", command: "duplicate", shortcut: "song.duplicate_clips" },
-    { label: "Rename", separator: true }, { label: "Export notes…", exports: true }, ...RENDER_ITEMS, { label: "Delete", command: "delete", shortcut: "song.delete_clips", separator: true },
+    { label: "Rename", separator: true }, { label: "Export notes…", exports: true }, RENDER_ITEM, { label: "Delete", command: "delete", shortcut: "song.delete_clips", separator: true },
   ];
   const itemMenu = async (key: string) => {
     if (!memory.selected.has(key)) choose(new Set([key]));
-    const menu = CLIP_MENU.filter(({ command, tail }) => command || tail !== undefined || itemTool(children, key) === "timeline");
+    const menu = CLIP_MENU.filter(({ command, renders }) => command || renders || itemTool(children, key) === "timeline");
     const row = key.split("/")[0]!;
     const why = cannotRender(rows().find((each) => each.name === row));
-    const items = menu.map(({ label, shortcut, separator, tail }) => ({ label, shortcut, separator, ...(tail !== undefined && why ? { disabled: true, detail: why } : {}) }));
+    const items = menu.map(({ label, shortcut, separator, renders }) => ({ label, shortcut, separator, ...(renders && why ? { disabled: true, detail: why } : {}) }));
     const picked = await openMenu(items, { width: 240 });
     const item = picked === null ? undefined : menu[picked];
     if (item?.command) itemCommand(item.command, state.order, page);
-    else if (item?.tail !== undefined) renderToTrack(page, row, [...memory.selected].filter((each) => each.startsWith(`${row}/`)), item.tail);
+    else if (item?.renders) renderToTrack(page, row, [...memory.selected].filter((each) => each.startsWith(`${row}/`)));
     else if (item?.exports) {
       const track = rows().find((each) => each.name === row);
       void exportNotes(key, { name: clipAt(key)?.state.title || (track ? titleOf(track) : row) });

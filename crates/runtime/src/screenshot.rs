@@ -1,6 +1,8 @@
 //! `--screenshot`: the window of a project as it opens, drawn offscreen to a PNG, the project's
 //! own TypeScript tools included, so an agent sees the cards and pages it builds. Each `--click`
-//! is a click before the picture, so it also sees what a click opens: a panel, a menu.
+//! is a click before the picture, so it also sees what a click opens: a panel, a menu. `--play`
+//! then plays the piece for some seconds, so it sees what moves: meters, scopes, the step that
+//! plays.
 //!
 //! It opens a copy of the folder, because opening a project writes into it. It plays no sound,
 //! since the engine runs offline, and writes nothing to the app's support folder: no agent
@@ -26,21 +28,44 @@ use crate::{OFFLINE, open_with_extensions, views};
 /// page with a control loop moves for a while, as it does when the app opens.
 const SETTLE: Duration = Duration::from_millis(500);
 
-/// The places of `--click x,y`, in points from the top left of the window, in order.
-pub fn parse_clicks(flags: &[&str]) -> Result<Vec<Point<Pixels>>> {
-    flags
-        .chunks(2)
-        .map(|flag| match flag {
-            ["--click", at] => at
-                .split_once(',')
-                .and_then(|(x, y)| Some(point(px(x.parse().ok()?), px(y.parse().ok()?))))
-                .with_context(|| format!("--click takes a place as x,y in points, not {at}")),
-            _ => bail!("--screenshot takes a file, then any number of --click x,y"),
-        })
-        .collect()
+/// What happens between the window opening and the picture.
+#[derive(Debug, Default, PartialEq)]
+pub struct Before {
+    /// The places of `--click x,y`, in points from the top left of the window, in order.
+    clicks: Vec<Point<Pixels>>,
+    /// How long the piece plays after the clicks, from `--play <seconds>`.
+    play: Option<Duration>,
 }
 
-pub fn screenshot(project: &Path, png: &Path, clicks: &[Point<Pixels>]) -> Result<()> {
+impl Before {
+    pub fn parse(flags: &[&str]) -> Result<Self> {
+        let mut before = Self::default();
+        for flag in flags.chunks(2) {
+            match flag {
+                ["--click", at] => before.clicks.push(
+                    at.split_once(',')
+                        .and_then(|(x, y)| Some(point(px(x.parse().ok()?), px(y.parse().ok()?))))
+                        .with_context(|| {
+                            format!("--click takes a place as x,y in points, not {at}")
+                        })?,
+                ),
+                ["--play", seconds] => {
+                    let played = seconds.parse().ok().filter(|seconds| *seconds > 0.0);
+                    let seconds: f32 = played.with_context(|| {
+                        format!("--play takes seconds, such as 2, not {seconds}")
+                    })?;
+                    before.play = Some(Duration::try_from_secs_f32(seconds)?);
+                }
+                _ => bail!(
+                    "--screenshot takes a file, then any number of --click x,y and a --play <seconds>"
+                ),
+            }
+        }
+        Ok(before)
+    }
+}
+
+pub fn screenshot(project: &Path, png: &Path, before: &Before) -> Result<()> {
     if !project.join(crate::PROJECT_FILE).is_file() {
         bail!("{} is not a Sound Tools project", project.display());
     }
@@ -85,10 +110,16 @@ pub fn screenshot(project: &Path, png: &Path, clicks: &[Point<Pixels>]) -> Resul
         })
     })?;
 
-    settle(&mut cx, &mut engine, &session, &plugins);
-    for at in clicks {
+    let mut run =
+        |cx: &mut HeadlessAppContext, time| run(cx, &mut engine, &session, &plugins, time);
+    run(&mut cx, Time::Real(SETTLE));
+    for at in &before.clicks {
         click(&mut cx, window.into(), *at)?;
-        settle(&mut cx, &mut engine, &session, &plugins);
+        run(&mut cx, Time::Real(SETTLE));
+    }
+    if let Some(time) = before.play {
+        cx.update(|cx| session.update(cx, |session, _| session.engine().play()));
+        run(&mut cx, Time::Played(time));
     }
     // A capture is of the last frame. Some views place themselves by what the frame before
     // measured, such as the add track row, and the app always draws another frame.
@@ -138,19 +169,33 @@ fn click(cx: &mut HeadlessAppContext, window: AnyWindowHandle, at: Point<Pixels>
     Ok(())
 }
 
-/// Runs the window for [`SETTLE`] as the app does, in polls of real time: the engine offline,
-/// the background work of the extensions, the timers, and Bun.
-fn settle(
+/// How long the window runs: in real time, which Bun answers in, or until the engine played
+/// that much, which a poll on a busy machine takes longer for.
+#[derive(Clone, Copy)]
+enum Time {
+    Real(Duration),
+    Played(Duration),
+}
+
+/// Runs the window for `time` as the app does, in polls of real time: the engine offline, the
+/// background work of the extensions, the timers, and Bun.
+fn run(
     cx: &mut HeadlessAppContext,
     engine: &mut Engine,
     session: &Entity<Session>,
     plugins: &Plugins,
+    time: Time,
 ) {
     let frames = (OFFLINE.sample_rate as f32 * POLL_INTERVAL.as_secs_f32()) as usize;
     let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
     let mut scanned = plugins.scan_generation();
     let started = Instant::now();
-    while started.elapsed() < SETTLE {
+    let mut played = Duration::ZERO;
+    while match time {
+        Time::Real(time) => started.elapsed() < time,
+        Time::Played(time) => played < time,
+    } {
+        played += POLL_INTERVAL;
         drum_pad::wait_for_sounds();
         cx.update(|cx| crate::window::tick(session, plugins, &mut scanned, cx));
         engine.process_block(&mut buffer);
@@ -182,4 +227,29 @@ fn copy_folder(from: &Path, to: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clicks_and_a_time_to_play_combine_and_what_is_no_place_or_time_is_refused() {
+        let before = Before::parse(&["--click", "10,20.5", "--play", "1.5", "--click", "3,4"]);
+        let expected = Before {
+            clicks: vec![point(px(10.), px(20.5)), point(px(3.), px(4.))],
+            play: Some(Duration::from_millis(1500)),
+        };
+        assert_eq!(before.unwrap(), expected);
+        let refused: [&[&str]; 5] = [
+            &["--play", "0"],
+            &["--play", "soon"],
+            &["--play"],
+            &["--click", "3"],
+            &["--wait", "2"],
+        ];
+        for flags in refused {
+            assert!(Before::parse(flags).is_err(), "{flags:?}");
+        }
+    }
 }

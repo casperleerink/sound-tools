@@ -1,6 +1,6 @@
 // What a card draws.
 
-import { SelectOption } from "./components";
+import { labelOf, SelectOption, valueOf } from "./components";
 import { Unit } from "./fields";
 import { Drag, Dropped, KeyName, Live, Num, PointerEvents, Shortcut, TakeList, WaveList } from "./live";
 import { Child, element, Region, UiNode } from "./nodes";
@@ -288,24 +288,39 @@ export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<
 /** The tooltip of a button or a toggle, and the keys that do it too, drawn in it. */
 type Tip = { tooltip?: Bind<string>; shortcut?: never } | { tooltip: Bind<string>; shortcut: Shortcut };
 
-/**
- * A switch of the app: a letter (`label`), an `icon` with a `count` after it, or a `dot`.
- * Coloured while `on`, `color` when given; its code turns it in `onClick`.
- */
-export type ToggleProps = (
+/** What a switch shows: a letter or a name (`label`), an `icon` with a `count` after it, or a `dot`. */
+type Face =
   | { label: Bind<string>; icon?: never; count?: never; dot?: never }
   | { icon: Bind<IconName>; count?: Bind<number>; label?: never; dot?: never }
-  | { dot: true; label?: never; icon?: never; count?: never }
-) & PointerEvents & Tip & {
+  | { dot: true; label?: never; icon?: never; count?: never };
+
+/**
+ * A switch of the app, coloured while it is on, `color` when given. On a boolean `field` it
+ * says the field's label unless it has another face, and a click turns the field as one undo
+ * step: `<Toggle field="hold" />`. Or it shows `on`, and its code turns it in `onClick`.
+ */
+export type ToggleProps = (
+  | ({ field: string; on?: never } & (Face | { [Key in "label" | "icon" | "count" | "dot"]?: never }))
+  | ({ on: Bind<boolean>; field?: never } & Face & PointerEvents)
+) & Tip & {
   key?: string;
-  on: Bind<boolean>;
   color?: Bind<Color>;
   /** `md` when left out. */
   size?: ControlSize;
   disabled?: Bind<boolean>;
 };
 
-export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
+export function Toggle(props: ToggleProps): UiNode {
+  if (props.field === undefined) return element("toggle", { ...props }, []);
+  const { field, ...look } = props;
+  const [{ get, set }, name] = [valueOf<boolean>({ field }), labelOf(field)];
+  const turn = () => {
+    const on = untrack(get);
+    set(!on, `Turn ${name.toLowerCase()} ${on ? "off" : "on"}`);
+  };
+  const named = look.icon === undefined && look.dot === undefined ? { label: look.label ?? name } : {};
+  return element("toggle", { key: `toggle-${field}`, ...look, ...named, on: get, onClick: turn }, []);
+}
 
 /** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
 export type ButtonProps = PointerEvents & Tip & {
@@ -401,7 +416,7 @@ export interface Style {
   radius?: Radius | number;
   borderColor?: Color;
   borderWidth?: number;
-  /** Its children scroll along this axis where they do not fit its size, as a long rack does. */
+  /** Its children scroll along this axis where they do not fit its size, as a long rack does. On each side where more waits they fade into what is under them. */
   scroll?: "x" | "y";
   textAlign?: "start" | "center" | "end";
   /** 0 to 1. */

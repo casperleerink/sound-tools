@@ -40,14 +40,17 @@ export interface PanelProps {
   /** Names it for tests, `div-<key>`. */
   key?: string;
   title?: Bind<string>;
-  /** Takes the room left in the page, or in the div it is in, with the other parts that grow. As wide as its content when left out. */
+  /** Takes the room left in the page, or in the div it is in, with the other parts that grow: for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. As wide as its content when left out. */
   grow?: boolean;
   /** In points, for one whose content changes beside a panel that grows, such as a list. */
   width?: number;
   children?: Child;
 }
 
-/** A surface on a page, as a card looks, its content one under the other: side by side in a `div` that is a row. */
+/**
+ * A surface on a page, as a card looks, its content one under the other. The parts of a card go
+ * in it side by side: `<Panel title="Drone"><Row><Display>...</Display><Controls>...</Controls></Row></Panel>`.
+ */
 export const Panel = ({ key, title, grow, width, children }: PanelProps): UiNode =>
   h("div", { key, style: { grow, width, keep: width !== undefined, gap: "md", padding: "lg", radius: "lg", background: "surface", borderColor: "border", borderWidth: 1 } },
     title === undefined ? null : Text({ variant: "heading", children: title }), children);
@@ -119,7 +122,8 @@ export interface TransportProps {
  * The transport of the piece, a pill for the `header` of a `Page`: play and pause, and the meter
  * of what the device plays. For a tool that plays in the bars, see `time`, also stop, where the
  * piece plays as a bar and a beat and as a time, the tempo and the time signature that play
- * there, which a drag up or down or a typed number changes as one undo step, and the metronome.
+ * there, which a drag up or down or a typed number changes as one undo step, and the metronome:
+ * a page adds no tempo control of its own.
  * Space plays and pauses a tool that shows it, wherever the focus is: it gives the tool the
  * action `play`, unless the tool has its own.
  */

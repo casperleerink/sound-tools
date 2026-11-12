@@ -19,7 +19,7 @@ use sound_media::{Info, Overview};
 
 use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT, WIDE_WIDTH};
 use crate::components::gesture::{ChangeHandler, ValueChange};
-use crate::components::knob::KnobRange;
+use crate::components::knob::{KnobRange, seconds_readout};
 use crate::scale::radius;
 use crate::theme::ActiveTheme;
 use crate::typography::{TextVariant, Typography};
@@ -41,7 +41,6 @@ pub struct WaveformDisplay {
     playhead: Option<f32>,
     curve: Vec<Point<f32>>,
     handles: Vec<Handle>,
-    caption: Option<SharedString>,
     drop: Option<FileDrop>,
 }
 
@@ -61,7 +60,6 @@ impl WaveformDisplay {
             playhead: None,
             curve: Vec::new(),
             handles: Vec::new(),
-            caption: None,
             drop: None,
         }
     }
@@ -120,16 +118,11 @@ impl WaveformDisplay {
         self
     }
 
-    pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
-        self.caption = Some(caption.into());
-        self
-    }
-
     /// The handle of a line at `value` seconds, `rise` points above the bottom, which moves it
-    /// sideways over the whole file.
+    /// sideways over the whole file. `says` is its name in the line under the display.
     fn line_handle(
         &self,
-        name: &'static str,
+        (name, says): (&'static str, &'static str),
         (value, default): (f32, f32),
         rise: f32,
         on: ChangeHandler<f32>,
@@ -137,11 +130,12 @@ impl WaveformDisplay {
         let range = KnobRange::linear(0., self.seconds.max(f32::MIN_POSITIVE));
         let x = Axis::new(range, value, default);
         let y = Axis::fixed(rise / INSET_HEIGHT);
-        Handle::new(name, x, y).hollow(true).on_change(
-            move |change: ValueChange<Point<f32>>, window, cx| {
+        Handle::new(name, x, y)
+            .hollow(true)
+            .caption(format!("{says} {}", seconds_readout(value)))
+            .on_change(move |change: ValueChange<Point<f32>>, window, cx| {
                 on(change.map(|at| at.x), window, cx)
-            },
-        )
+            })
     }
 }
 
@@ -159,16 +153,18 @@ impl RenderOnce for WaveformDisplay {
         let signal = self.playhead.map(|seconds| place(seconds, self.seconds));
         let mut handles = Vec::new();
         if let Some(on) = self.on_start.clone() {
-            handles.push(self.line_handle("start", (self.start, 0.), TRIM_HANDLE_RISE, on));
+            let start = ("start", "Start");
+            handles.push(self.line_handle(start, (self.start, 0.), TRIM_HANDLE_RISE, on));
         }
         if let Some(on) = self.on_end.clone() {
             let values = (self.end, self.seconds);
-            handles.push(self.line_handle("end", values, TRIM_HANDLE_RISE, on));
+            handles.push(self.line_handle(("end", "End"), values, TRIM_HANDLE_RISE, on));
         }
         // At the top, clear of the start handle when the loop starts at the start.
         if let Some((seconds, on)) = self.loop_start.clone() {
             let rise = INSET_HEIGHT - TRIM_HANDLE_RISE;
-            handles.push(self.line_handle("loop-start", (seconds, self.start), rise, on));
+            let loop_start = ("loop-start", "Loop start");
+            handles.push(self.line_handle(loop_start, (seconds, self.start), rise, on));
         }
         let looped = self
             .loop_start
@@ -189,10 +185,6 @@ impl RenderOnce for WaveformDisplay {
             .chain(handles)
             .filter(|_| !shown)
             .fold(display, Display::handle);
-        let display = match self.caption {
-            Some(caption) => display.caption(caption),
-            None => display,
-        };
         match self.drop {
             Some(drop) => display.takes_files(true).overlay(drop),
             None => display,

@@ -240,7 +240,9 @@ impl UtilityView {
         let y = Axis::new(layout::gain_axis(), state.gain_db, GAIN.default);
         let lanes = self.device.lanes.read(cx);
         let automated = lanes.is_automated(GAIN.field) || lanes.is_automated(PAN.field);
+        let caption = format!("{} · {}", GAIN_KNOB.caption(state), PAN_KNOB.caption(state));
         Handle::new("gain-pan", x, y)
+            .caption(caption)
             .dimmed(state.mute)
             .automated(automated)
             .on_change(weak_callback(
@@ -274,7 +276,7 @@ impl UtilityView {
             }));
         Display::new("display")
             .curve(image(state))
-            .grid([-1., 0., 1.].map(across).to_vec(), Vec::new())
+            .scale([(-1., "L"), (0., "C"), (1., "R")].map(|(place, word)| (across(place), word)))
             .zero_line(gain_axis().position(0.))
             .handle(self.handle(state, cx))
             .control(channels)

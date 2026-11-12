@@ -51,6 +51,53 @@ tool({
 });
 "#;
 
+/// A fader with the number of its field quiet beside it, and a knob whose own value is quiet.
+const QUIET: &str = r#"import { Fader, h, Knob, number, Readout, tool } from "./sdk";
+
+tool({
+  name: "quiet",
+  title: "Quiet",
+  when: "Never",
+  doc: "Numbers that show when their control is touched, on a page that holds the keys first.",
+  state: { level: number({ min: 0, max: 1, default: 0.5 }), tone: number({ min: 0, max: 1, default: 0.5 }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () =>
+    h("div", { style: { direction: "row", gap: 40 } },
+      h(Fader, { field: "level", length: 100, min: 0, max: 1 }),
+      h(Readout, { field: "level", width: 40, quiet: true }),
+      h(Knob, { field: "tone", quiet: true })),
+});
+"#;
+
+#[gpui::test]
+fn a_quiet_number_shows_while_the_pointer_or_the_keys_are_on_a_control_of_its_field(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_project(cx, &project("quiet", QUIET));
+    let fader = window.space("fader-level") + point(px(14.), px(50.));
+    let touched = |window: &mut Opened, field: &str| {
+        // A draw reads it.
+        window.find("space-fader-level");
+        sound_typescript::shown_by_live_values(&format!("touched:{field}")).unwrap()
+    };
+    assert_eq!(touched(&mut window, "level"), 0.);
+    // The fader says no number: the pointer on it shows the one beside it.
+    window.hover(fader);
+    assert_eq!(touched(&mut window, "level"), 1.);
+    assert_eq!(touched(&mut window, "tone"), 0.);
+    window.hover(fader + point(px(30.), px(0.)));
+    assert_eq!(touched(&mut window, "level"), 0.);
+    // Tab goes to the fader, then to the knob.
+    window.keys("tab");
+    assert_eq!(touched(&mut window, "level"), 1.);
+    window.keys("tab");
+    assert_eq!(
+        [touched(&mut window, "level"), touched(&mut window, "tone")],
+        [0., 1.]
+    );
+}
+
 #[gpui::test]
 fn a_knob_of_a_page_turns_its_field_as_it_drags_as_one_undo_step_and_asks_bun_for_nothing(
     cx: &mut TestAppContext,

@@ -297,8 +297,8 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 1);
     window.wait_for_bun();
     window.click_with(clip, MouseButton::Right);
-    // Cut, copy, duplicate, rename, export the notes, render with and without the tail, delete.
-    let delete = window.until_found("menu-7");
+    // Cut, copy, duplicate, rename, export the notes, render, delete.
+    let delete = window.until_found("menu-6");
     window.click(delete);
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));
     window.wait_for_bun();
@@ -398,7 +398,9 @@ fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
     let mut window = open_rack_of(cx, 16);
     let last = "card-title-song/t00/chain/fx15";
     assert!(window.find(last).is_none());
-    let rack = window.until_found("div-rack");
+    // Near its left edge: its middle, as wide as its cards are, lies under the track's sends.
+    window.until_found("div-rack");
+    let rack = window.bounds("div-rack").unwrap().origin + point(px(20.), px(20.));
     window.until(last, |window| {
         window.cx.simulate_event(ScrollEvent {
             position: rack,

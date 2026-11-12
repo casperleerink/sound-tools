@@ -33,8 +33,8 @@ pub const NAME: &str = "Pitch correction";
 
 /// The display reaches this far each side of the note moved to, in cents.
 const REACH_CENTS: f32 = 50.;
-/// What the three lines of the display stand for, across that reach.
-const SCALE_CAPTION: &str = "−25 · 0 · +25 ct";
+/// The three lines of the display across that reach, and what each stands for.
+const SCALE: [(f32, &str); 3] = [(0.25, "−25"), (0.5, "0"), (0.75, "+25 ct")];
 /// How high the line of the voice and the block of the move reach, 0 to 1.
 const HEARD_HEIGHT: f32 = 0.8;
 const MOVE_HEIGHT: f32 = 0.55;
@@ -104,19 +104,23 @@ fn name(note: f32) -> String {
     Pitch::nearest(note.round() as i64).name()
 }
 
-/// The line under the display: `A3 −32 ct → A3 · +30 ct`, or the scale of its lines while no
-/// note is heard.
-fn caption(reading: Reading) -> String {
+/// The line under the display while a note is heard: `A3 −32 ct → A3 · +30 ct`. A note sung
+/// in tune is its name alone.
+fn caption(reading: Reading) -> Option<String> {
     if reading.heard <= 0. {
-        return SCALE_CAPTION.into();
+        return None;
     }
     let off = ((reading.heard - reading.heard.round()) * 100.).round();
-    let heard = format!("{} {} ct", name(reading.heard), signed(off));
+    let heard = match off == 0. {
+        true => name(reading.heard),
+        false => format!("{} {} ct", name(reading.heard), signed(off)),
+    };
     if reading.target <= 0. {
-        return heard;
+        return Some(heard);
     }
     let moved = (reading.correction * 100.).round();
-    format!("{heard} → {} · {} ct", name(reading.target), signed(moved))
+    let target = name(reading.target);
+    Some(format!("{heard} → {target} · {} ct", signed(moved)))
 }
 
 /// Where a pitch `cents` from the note moved to is across the display, 0 to 1.
@@ -234,9 +238,12 @@ impl PitchCorrectionView {
         let display = Display::new("display")
             .control(key)
             .control(scale)
-            .grid([0.25, 0.5, 0.75].to_vec(), Vec::new())
-            .curve(moved(reading))
-            .caption(caption(reading));
+            .scale(SCALE)
+            .curve(moved(reading));
+        let display = match caption(reading) {
+            Some(caption) => display.caption(caption),
+            None => display,
+        };
         match reading.heard > 0. && reading.target > 0. {
             true => {
                 let sung = across((reading.heard - reading.target) * 100.);
@@ -342,12 +349,18 @@ mod tests {
             target: 57.,
             correction: 0.3,
         };
-        assert_eq!(caption(reading), "A3 −32 ct → A3 · +30 ct");
+        assert_eq!(caption(reading).as_deref(), Some("A3 −32 ct → A3 · +30 ct"));
         let unmoved = Reading {
             target: 0.,
             ..reading
         };
-        assert_eq!(caption(unmoved), "A3 −32 ct");
-        assert_eq!(caption(Reading::default()), SCALE_CAPTION);
+        assert_eq!(caption(unmoved).as_deref(), Some("A3 −32 ct"));
+        assert_eq!(caption(Reading::default()), None);
+        let in_tune = Reading {
+            heard: 65.,
+            target: 64.,
+            correction: -1.,
+        };
+        assert_eq!(caption(in_tune).as_deref(), Some("F4 → E4 · −100 ct"));
     }
 }

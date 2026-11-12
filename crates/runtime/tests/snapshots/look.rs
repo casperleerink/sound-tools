@@ -283,7 +283,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         &opened,
         point(
             px(HEADER + 1. + 8. + 5160. * across),
-            px(920. - 352. + 33. + 60.),
+            px(920. - 352. + 33. + 54.),
         ),
         1,
         cx,
@@ -341,7 +341,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     drop(opened);
 
     let bus = |title: &str, colour: &str| json!({ "tool": "bus", "state": { "title": title, "colour": colour } });
-    let send = |gain_db: f32| json!({ "tool": "fader", "state": { "gain_db": gain_db } });
+    let send = |gain_db: Value| json!({ "tool": "fader", "state": { "gain_db": gain_db } });
     let fader = json!({ "tool": "fader", "state": {} });
     let reverb =
         json!({ "tool": "reverb", "state": { "decay_seconds": 2.4, "size": 0.6, "mix": 1.0 } });
@@ -361,18 +361,18 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
                 "ret-b/chain/instance.json",
                 json!({ "tool": "chain", "state": {} }),
             ),
-            ("bass/send-ret-a.json", send(-12.)),
-            ("bass/send-ret-b.json", send(-18.)),
-            // What the mixer says in words only away from where a dial rests: a pan off the
-            // middle, and not a send that is silent.
+            ("bass/send-ret-a.json", send(json!(-12.))),
+            ("bass/send-ret-b.json", send(json!(-18.))),
+            // What the mixer says in words at rest: only a number away from where its dial
+            // rests, as a pan off the middle. The other tracks send nothing yet, as new ones.
             (
                 "track-1/mix.json",
                 json!({ "tool": "fader", "state": { "pan": -0.3 } }),
             ),
-            (
-                "track-1/send-ret-a.json",
-                json!({ "tool": "fader", "state": { "gain_db": "-inf" } }),
-            ),
+            ("track-1/send-ret-a.json", send(json!("-inf"))),
+            ("track-1/send-ret-b.json", send(json!("-inf"))),
+            ("melody/send-ret-a.json", send(json!("-inf"))),
+            ("melody/send-ret-b.json", send(json!("-inf"))),
         ],
     )?;
     let bottom = super::WINDOW_HEIGHT - 40.;

@@ -24,6 +24,7 @@ use crate::tools::ToolInfo;
 use crate::tree::{self, DivProps, IconProps, InputProps, Layout, NodeTable, Props, TextProps};
 
 use super::controls::{Control, Keys};
+use super::edges::{Edges, soft_edges};
 use super::input::{Hears, Hovers, hears_hover, listener};
 use super::shapes::SpaceIndex;
 use super::sync::Embedded;
@@ -43,6 +44,8 @@ pub(super) struct Drawing<'a> {
     pub(super) laid_out: Rc<RefCell<HashMap<String, SpaceView>>>,
     pub(super) drag: Option<(String, DragNumbers)>,
     pub(super) hovered: Option<(String, u64)>,
+    pub(super) touched: Vec<String>,
+    pub(super) control_focus: &'a RefCell<HashMap<String, (FocusHandle, Vec<String>)>>,
     pub(super) table: &'a NodeTable,
     pub(super) feeds: &'a Feeds,
     pub(super) indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
@@ -73,6 +76,9 @@ pub(super) struct Drawing<'a> {
     pub(super) title_focus: Option<FocusHandle>,
     /// The spaces the body leaves to the layer over the page, and where it lays them out.
     pub(super) lifting: Option<(&'a HashSet<u64>, &'a Rc<RefCell<HashMap<u64, Lifted>>>)>,
+    /// Where the body of a page leaves the soft edges of its divs that scroll, for the layer
+    /// over it.
+    pub(super) edges: Option<&'a Edges>,
     /// Whether its card shows the cells behind its expand icon. `None` for a page, which hides
     /// none.
     pub(super) expanded: Option<bool>,
@@ -113,6 +119,7 @@ impl Drawing<'_> {
             drag: (self.drag.as_ref()).map(|(id, numbers)| (id.as_str(), *numbers)),
             spaces: &self.spaces,
             hovered: (self.hovered.as_ref()).and_then(|(_, node)| self.table.shape_key(*node)),
+            touched: &self.touched,
             feeds: self.feeds,
         }
     }
@@ -437,14 +444,24 @@ impl Drawing<'_> {
                 if let (Some(axis), Some(scroller)) = (style.scroll(), scroller) {
                     // The box it scrolls in has its size; it is as large as its children.
                     let name = self.element_name("scroll", key.as_deref(), id);
-                    let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
+                    let scrolling = style.sized(div()).id(ElementId::Name(name.clone().into()));
                     let scrolling = style.fade(scrolling, disabled).track_scroll(&scroller);
                     let scrolling = match axis {
                         tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
                         // A column, or it would stretch what it scrolls to its own height.
                         tree::ScrollAxis::Y => scrolling.flex_col().overflow_y_scroll(),
                     };
-                    return scrolling.child(inner).into_any_element();
+                    let theme = self.cx.theme();
+                    let under = match self.expanded {
+                        Some(_) => theme.surface(),
+                        None => theme.background(),
+                    };
+                    let ground = table.ground(slot, under, theme.surface());
+                    // Over the cards and the meters a page draws over itself, unless something
+                    // may lie over the div, as for them.
+                    let over = (self.edges).filter(|_| !table.kept_in_page(slot)).cloned();
+                    let edges = soft_edges(name, scroller, axis, ground, over);
+                    return scrolling.child(inner).child(edges).into_any_element();
                 }
                 inner
             }

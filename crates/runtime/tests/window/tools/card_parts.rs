@@ -73,11 +73,47 @@ fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on(
     assert_eq!(window.problems(), []);
 }
 
+/// Two rows of steps that each name the step that plays: the first runs with the piece, the
+/// second on its own.
+const RINGS: &str = r#"import { h, number, pattern, Steps, tool } from "./sdk";
+
+const row = () => pattern({ length: 4, min: 0, max: 1, default: 0 });
+const place = (at: number) => number({ min: 0, max: 3, default: at, integer: true });
+
+tool({
+  name: "rings",
+  title: "Rings",
+  when: "A test",
+  doc: "Two rows of steps with a ring on the step that plays.",
+  state: { timed: row(), free: row(), at: place(2), turn: place(1) },
+  sound: () => 0,
+  view: () => h("div", {},
+    h(Steps, { field: "timed", playing: "at" }),
+    h(Steps, { field: "free", playing: "turn", ownClock: true }),
+  ),
+});
+"#;
+
+#[gpui::test]
+fn the_ring_of_the_step_that_plays_shows_only_while_the_piece_plays(cx: &mut TestAppContext) {
+    let mut window = page(cx, "rings", RINGS);
+    window.until_found("steps-steps-free");
+    window.wait_for_bun();
+    // At rest only the row that runs on its own has one.
+    assert!(window.find("step-1-playing").is_some());
+    assert_eq!(window.find("step-2-playing"), None);
+
+    window.start_playing();
+    window.until_found("step-2-playing");
+    assert!(window.find("step-1-playing").is_some());
+    assert_eq!(window.problems(), []);
+}
+
 /// A rig that shows the cards of its box and of its beat. The box gives a display, then a knob
 /// over a wide control, two more knobs, and two that do not fit beside a display. The beat gives
-/// two rows of steps and five knobs, and the plain one has no view: a pattern, a list of pitches
-/// and a knob.
-const RIG: &str = r#"import { Cell, choice, Controls, DeviceCard, Display, h, input, Knob, list, number, pattern, SegmentedControl, Steps, tool } from "./sdk";
+/// two rows of steps and five knobs, and the plain one has no view: a pattern, a list of pitches,
+/// a knob and a switch.
+const RIG: &str = r#"import { boolean, choice, Controls, DeviceCard, Display, h, input, Knob, list, number, pattern, SegmentedControl, Steps, tool } from "./sdk";
 
 const level = () => number({ min: 0, max: 1, default: 0.5 });
 const knob = (field: string) => h(Knob, { field, label: field, min: 0, max: 1, default: 0.5 });
@@ -95,7 +131,7 @@ const box = tool({
     h(Display, { caption: "Level" }),
     h(Controls, {},
       knob("a"),
-      h(Cell, { label: "Kind" }, h(SegmentedControl, { key: "kind", field: "kind", options: kinds })),
+      h(SegmentedControl, { key: "kind", field: "kind", options: kinds }),
       knob("b"), knob("c"), knob("d"), knob("e"),
     ),
   ],
@@ -120,7 +156,7 @@ const plain = tool({
   title: "Plain",
   when: "A test",
   doc: "A card with no view of its own.",
-  state: { steps: row(), pitches: list(number({ min: 0, max: 127 }), { max: 4, default: [60, 62, 64, 65] }), j: level() },
+  state: { steps: row(), pitches: list(number({ min: 0, max: 127 }), { max: 4, default: [60, 62, 64, 65] }), j: level(), hold: boolean({ default: false }) },
   sound: () => input,
 });
 
@@ -208,6 +244,14 @@ fn rows_of_steps_stand_where_a_display_does_and_a_view_of_no_own_shows_them_for_
     let knob = window.until_found("space-knob-j");
     assert!(knob.x > steps.x);
     assert_eq!(window.find("steps-steps-pitches"), None);
+    // A switch on a field turns it, as one undo step that names it.
+    let hold = window.until_found("toggle-toggle-hold");
+    window.click(hold);
+    window.until("the switch to turn the field on", |window| {
+        window.record("rig/plain")["hold"] == true
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Turn hold on"));
     assert_eq!(window.problems(), []);
 }
 

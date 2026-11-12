@@ -177,6 +177,7 @@ fn live_values() {
         drag: Some(("move", numbers)),
         spaces: &spaces,
         hovered: None,
+        touched: &[],
         feeds: &Feeds::default(),
     };
     for count in SIZES {

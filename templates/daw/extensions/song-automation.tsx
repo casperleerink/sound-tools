@@ -1,7 +1,7 @@
 import { Circle, For, Fragment, h, Icon, Knob, Label, Line, memo, now, Path, positionOf, Rect, Select, Show, signal, Space, Text, valueAt, type Accessor, type Color, type Drag, type Live, type MovedNumber, type Num, type Press } from "./sdk";
 import { bent, type AutomationPoint } from "./song-clips";
-import { clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
-import { ENVELOPE, envelope, lfo, RATES, SHAPES } from "./lfo";
+import { BEAT, clamp, COLOR, lanesOf, nameFrom, words, type Child, type Page } from "./song-page";
+import { BEATS, ENVELOPE, envelope, lfo, lfoAt, RATES, SHAPES } from "./lfo";
 import { freeName, splitTarget, type Mover } from "./track";
 
 // The automation of a track: the lanes under it, each a line of points that moves a number of
@@ -222,22 +222,35 @@ export const LaneRow = (props: RowProps) => {
 };
 type RowProps = { page: Page; track: string; lane: { lane: string; target: string }; row: Accessor<number>; colour: Accessor<Color>; snap: number };
 
+/** The ticks one shape of an LFO's wave draws, a bar of 4/4: only those that show are drawn. */
+const PIECE = 4 * BEAT;
+/** Where along a cycle its wave is drawn through: sixteen steps, and right before its middle and its end, where a square and a saw jump. */
+const PHASES = [...Array.from({ length: 16 }, (_, step) => step / 16), 0.5 - 1e-6, 1 - 1e-6].sort((a, b) => a - b);
+
 /**
  * The row of an LFO or an envelope: the band its number moves in, between a line at `low` and
- * one at `high`, each of which a drag moves up and down.
+ * one at `high`, each of which a drag moves up and down. An LFO draws the wave it plays in it,
+ * in its shape and at its rate, and its two lines are quiet.
  */
 const BandRow = ({ page, track, lane, row, colour }: RowProps) => {
-  const { rows, topOf, update } = page;
-  const band = () => {
+  const { rows, topOf, update, end } = page;
+  const mover = () => {
     const owner = rows().find((each) => each.name === track);
     const child = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((each) => each.name === lane.lane) : undefined;
-    return child?.tool === "lfo" || child?.tool === "envelope" ? child.state : { low: 0, high: 1 };
+    return child?.tool === "lfo" || child?.tool === "envelope" ? child : undefined;
+  };
+  const band = () => mover()?.state ?? { low: 0, high: 1 };
+  /** What an LFO plays; an envelope draws no wave, as it follows the notes. */
+  const wave = () => {
+    const state = mover()?.state;
+    return state && "shape" in state ? state : undefined;
   };
   const range = () => rangeOf(page, track, lane.target, []);
   const top = () => topOf(row());
   const yOf = (value: number) => top() + 0.1 + (1 - positionOf(range(), value)) * 0.8;
+  const ids = { low: `band-low-${track}-${lane.lane}`, high: `band-high-${track}-${lane.lane}` };
   const edge = (end: "low" | "high") => {
-    const id = `band-${end}-${track}-${lane.lane}`;
+    const id = ids[end];
     const moved = now.drag(id);
     const drag: Drag = {
       id,
@@ -252,15 +265,29 @@ const BandRow = ({ page, track, lane, row, colour }: RowProps) => {
     };
     const y = () => moved.dy.plus(yOf(band()[end])).clamp(top() + 0.1, top() + 0.9);
     return [
-      <Line from={() => [-1e6, y()] as const} to={() => [1e6, y()] as const} color={colour} width={1.5} />,
+      <Line from={() => [-1e6, y()] as const} to={() => [1e6, y()] as const} color={colour} width={() => (wave() ? 1 : 1.5)} opacity={() => (wave() ? 0.4 : 1)} />,
       <Rect key={id} x={-1e6} y={() => y().minus(0.06)} width={2e6} height={0.12} color={COLOR.clear} cursor="ns-resize" drag={drag} />,
     ];
   };
   const [low, high] = [() => yOf(band().low), () => yOf(band().high)];
+  const pieces = memo(() => (wave() ? Array.from({ length: Math.ceil(end() / PIECE) }, (_, piece) => piece) : []));
+  // The wave is drawn where the band is: it is out of the way while a drag moves an edge.
+  const still = now.drag(ids.low).active.max(now.drag(ids.high).active).negate().plus(1);
   return (
     <>
       <Rect x={-1e6} y={top} width={2e6} height={page.timeline.pointY} color="border" />
       <Rect x={-1e6} y={() => Math.min(low(), high())} width={2e6} height={() => Math.abs(low() - high())} color="fill" />
+      <For each={pieces}>
+        {(piece) => (
+          <Path color={colour} width={1.5} opacity={still}
+            points={() => {
+              const played = wave();
+              if (!played) return [[0, 0]] as const;
+              const cycle = BEATS[played.rate] * BEAT;
+              return Array.from({ length: PIECE / cycle }, (_, at) => PHASES.map((phase) => [piece * PIECE + (at + phase) * cycle, yOf(lfoAt(played, phase))] as const)).flat();
+            }} />
+        )}
+      </For>
       {edge("low")}
       {edge("high")}
     </>

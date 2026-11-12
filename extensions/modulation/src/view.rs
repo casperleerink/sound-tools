@@ -22,7 +22,7 @@ use sound_ui::components::knob::{ParameterKnob, hertz_readout, percent_readout, 
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
-use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREAD, sweep};
+use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREAD};
 
 /// The name the rack puts on the card of a modulation.
 pub const NAME: &str = "Modulation";
@@ -62,19 +62,6 @@ const MODES: [(Mode, &str, &str); 3] = [
 /// A part of half a cycle, in degrees: `90°`.
 fn degrees_readout(half_cycles: f32) -> String {
     format!("{}°", short(half_cycles * 180.0))
-}
-
-/// How far the LFO swings, in the unit of the mode: `7.37 – 19.5 ms`, `250 Hz – 4 kHz`.
-fn caption(state: &ModulationState) -> String {
-    let [low, high] = sweep(state);
-    let hertz = |value: f32| match value < 1_000.0 {
-        true => format!("{} Hz", short(value)),
-        false => format!("{} kHz", short(value / 1_000.0)),
-    };
-    match state.mode {
-        Mode::Chorus | Mode::Flanger => format!("{} – {} ms", short(low), short(high)),
-        Mode::Phaser => format!("{} – {}", hertz(low), hertz(high)),
-    }
 }
 
 /// Where the LFO is drawn, as places from 0 to 1, `y` up. Two cycles across, the left side
@@ -150,11 +137,13 @@ impl ModulationView {
         id: &'static str,
         control: Control,
         (x, y): (Axis, Axis),
+        state: &ModulationState,
         cx: &mut Context<Self>,
     ) -> Handle {
         let sideways = x.drags;
         let automated = self.device.is_automated(control.parameter.field, cx);
         Handle::new(id, x, y)
+            .caption(control.caption(state))
             .automated(automated)
             .on_change(weak_callback(
                 cx,
@@ -185,17 +174,17 @@ impl ModulationView {
                 }
             }));
         let depth = Axis::new(DEPTH_TRAVEL, state.depth, DEPTH.default);
-        let depth = self.handle("depth", DEPTH_KNOB, (Axis::fixed(DEPTH_AT), depth), cx);
+        let depth = (Axis::fixed(DEPTH_AT), depth);
+        let depth = self.handle("depth", DEPTH_KNOB, depth, state, cx);
         let spread = Axis::new(SPREAD_TRAVEL, state.spread, SPREAD.default);
         let height = Axis::fixed(peak(state.depth));
-        let spread = self.handle("spread", SPREAD_KNOB, (spread, height), cx);
+        let spread = self.handle("spread", SPREAD_KNOB, (spread, height), state, cx);
         Display::new("display")
             .curve(line(state.depth, 0.))
             .dashed(line(state.depth, 0.5 * state.spread))
             .zero_line(layout::MIDDLE)
             .handle(spread.hollow(true))
             .handle(depth)
-            .caption(caption(state))
             .control(modes)
     }
 }
@@ -249,20 +238,6 @@ mod tests {
     fn a_spread_reads_in_degrees() {
         assert_eq!(degrees_readout(0.5), "90°");
         assert_eq!(degrees_readout(1.0), "180°");
-    }
-
-    #[test]
-    fn the_caption_is_the_sweep_in_the_unit_of_the_mode() {
-        let at = |mode, depth| {
-            caption(&ModulationState {
-                mode,
-                depth,
-                ..ModulationState::default()
-            })
-        };
-        assert_eq!(at(Mode::Chorus, 0.0), "12 – 12 ms");
-        assert_eq!(at(Mode::Flanger, 1.0), "0.265 – 8.49 ms");
-        assert_eq!(at(Mode::Phaser, 1.0), "250 Hz – 4 kHz");
     }
 
     /// The depth handle is on the second peak of the left side, and the spread handle on the

@@ -52,6 +52,8 @@ export interface Made extends PointerEvents {
   children?: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
   region?: { parent: number | null };
+  /** Its label as a cell of `Controls`, see `asCell`, and that cell once it is in one. */
+  cell?: { label: string; node?: UiNode };
 }
 
 /** What the window gets of a card at once: the ops since the last time. */
@@ -163,6 +165,18 @@ export function element(family: Family, props: Record<string, unknown>, children
   return made;
 }
 
+/** `node` as a control on a field, which is a cell of `Controls` by itself, with the field's `label` under it. */
+export function asCell(node: UiNode, label: string | undefined): UiNode {
+  if (label !== undefined) (node as Made).cell = { label };
+  return node;
+}
+
+/** `made` as it goes in a node of `family`: in `Controls` a control on a field goes in its cell, made once, so a binding that gives it again keeps it. */
+function placed(made: Made, family: Family): UiNode {
+  if (family !== "controls" || !made.cell) return made;
+  return (made.cell.node ??= element("cell", { label: made.cell.label }, [made]));
+}
+
 /** A shape as a plain object, as a child of a space. */
 export type ShapeLiteral = { [Kind in Shape["kind"]]: { kind: Kind } & ShapeProps<Kind> }[Shape["kind"]];
 
@@ -192,7 +206,7 @@ export function materialize(child: Child, into: UiNode[], family: Family) {
     if (family !== "space" && family !== "shape" && child.family === "shape") {
       throw new Error("a shape is drawn inside a Space");
     }
-    into.push(child);
+    into.push(placed(child, family));
   } else if ("kind" in child) {
     const { kind, ...props } = child as ShapeLiteral;
     into.push(shapeNode(kind, props, []));

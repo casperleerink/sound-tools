@@ -165,3 +165,50 @@ fn a_save_of_the_code_gives_no_div_without_a_key_the_scroll_of_another(cx: &mut 
     );
     assert_eq!(now, unscrolled);
 }
+
+/// A row 200 points wide that scrolls over 600 points of cards, beside one whose card fits.
+const ROWS: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "rows",
+  title: "Rows",
+  when: "Never",
+  doc: "Two rows.",
+  state: {},
+  view: () =>
+    h("div", { style: { gap: 8 } },
+      h("div", { key: "long", style: { scroll: "x", direction: "row", width: 200, height: 40 } },
+        h("div", { key: "cards", style: { width: 600, height: 40, keep: true } }, "cards")),
+      h("div", { key: "short", style: { scroll: "x", direction: "row", width: 200, height: 40 } },
+        h("div", { style: { width: 100, height: 40, keep: true } }, "card"))),
+});
+"#;
+
+#[gpui::test]
+fn a_div_that_scrolls_fades_only_at_the_sides_where_more_waits(cx: &mut TestAppContext) {
+    let mut window = page(cx, "rows", ROWS);
+    let row = in_box_of(&mut window, "div-cards");
+    let fades = |window: &mut Opened, key: &str| {
+        window.until_found("div-cards");
+        let shell = window.shell.clone();
+        (window.cx).update(|_, cx| {
+            let page = shell.read(cx).main_view().cloned().unwrap();
+            sound_typescript::soft_edges(&page, key, cx).unwrap()
+        })
+    };
+    assert_eq!(fades(&mut window, "long"), [0., 1.]);
+    assert_eq!(fades(&mut window, "short"), [0., 0.]);
+    let across = |window: &mut Opened, by: f32| {
+        window.cx.simulate_event(ScrollEvent {
+            position: row,
+            delta: ScrollDelta::Pixels(point(px(-by), px(0.))),
+            touch_phase: TouchPhase::Moved,
+            ..Default::default()
+        });
+    };
+    // A little of it waits at the start: it fades a little there.
+    across(&mut window, 12.);
+    assert_eq!(fades(&mut window, "long"), [0.5, 1.]);
+    across(&mut window, 1000.);
+    assert_eq!(fades(&mut window, "long"), [1., 0.]);
+}

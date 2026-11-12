@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, alpha, audio, blend, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, Notes, now, number, list, notes, NumberBox, output, Page, Path, rise, Row, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, Transport, bang, Wave, type Color, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, alpha, audio, blend, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, Notes, now, number, list, notes, NumberBox, output, Page, Path, Readout, rise, Row, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, Transport, bang, Wave, type Color, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -564,6 +564,18 @@ NumberBox({ field: "bpm", key: "bpm", width: 40 });
 SegmentedControl({ field: "mode" });
 Select({ field: "mode" });
 Steps({ field: "kick" });
+// A switch on a boolean field says the field's label and turns it; else it says its face and what it shows.
+Toggle({ field: "hold" });
+Toggle({ field: "hold", icon: "lock" });
+// @ts-expect-error: a field or `on`, not both.
+Toggle({ field: "hold", on: true });
+// @ts-expect-error: a switch on what code keeps has a face.
+Toggle({ on: true });
+// A control on a field is a cell of `Controls` by itself.
+Controls({ children: [Knob({ field: "cutoff" }), SegmentedControl({ field: "mode" }), Select({ field: "mode", size: "sm" }), Toggle({ field: "hold" })] });
+// The ring of the step that plays shows while the piece plays, unless the steps run on their own.
+Steps({ field: "kick", playing: "step" });
+Steps({ field: "kick", playing: "step", ownClock: true });
 // Each can still be said, and a number inside a child's record is a field too.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
 Knob({ field: "kit.pads.36.volume_db", label: "Level" });
@@ -581,6 +593,11 @@ SegmentedControl({ value: "a", onChange: (picked: string) => picked });
 Knob({ field: "cutoff", text: "value" });
 // @ts-expect-error: a knob has no size.
 Knob({ field: "cutoff", size: "sm" });
+// A number stays quiet until its control is touched: a knob's own, or the one beside a fader.
+Knob({ field: "cutoff", quiet: true });
+Readout({ field: "cutoff", width: 44, quiet: () => true });
+// @ts-expect-error: a fader says no number, so it has none to keep quiet.
+Fader({ field: "cutoff", length: 100, quiet: true });
 // @ts-expect-error: a value code keeps is no field name, and needs `onChange`.
 Select({ value: "velocity", options: lanes });
 // @ts-expect-error: a field or what code keeps, not both.

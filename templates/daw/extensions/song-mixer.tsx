@@ -1,5 +1,5 @@
-import { Fader, For, Fragment, h, Knob, Label, memo, now, NumberBox, Show, Space, Text, Toggle, untrack, type Live, type Peaks } from "./sdk";
-import { colourOf, Mark, muted, rowLook, titleOf, type Child, type Page } from "./song-page";
+import { Fader, For, Fragment, h, Knob, memo, NumberBox, Readout, Show, Text, Toggle, untrack, type Bind, type Peaks } from "./sdk";
+import { colourOf, lanesOf, Mark, mixOf, muted, rowLook, titleOf, type Child, type Page } from "./song-page";
 
 // The mixer under the timeline: a strip per track and per return, and the master's.
 
@@ -33,8 +33,8 @@ const Level = ({ path, length, meter }: { path: string; length: number; meter: P
   <Fader field={`${path}.gain_db`} length={length} default={0} label={VOLUME} meter={meter} />
 );
 /** The gain of the fader `path`, to drag or type. */
-const Gain = ({ path, width, align }: { path: string; width: number; align?: "center" }) => (
-  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label={VOLUME} width={width} size="sm" height={16} align={align} />
+const Gain = ({ path, width, align, quiet }: { path: string; width: number; align?: "center"; quiet?: Bind<boolean> }) => (
+  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label={VOLUME} width={width} size="sm" height={16} align={align} quiet={quiet} />
 );
 /** A fader and under it its gain, in a column. */
 export const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
@@ -44,36 +44,33 @@ export const Volume = ({ path, length, meter }: { path: string; length: number; 
   </>
 );
 
-/** What a dial plays, in words: it shows `when` its number says something, not where a dial rests. */
-const Reading = ({ field, unit, when }: { field: string; unit: "pan" | "db"; when: (value: Live) => Live }) => {
-  const value = now.value(field);
-  return (
-    <Space width={SIDE} height={16}>
-      <Label x={0} y={0} text={value} unit={unit} color="text" opacity={when(value)} />
-    </Space>
-  );
-};
-
 /**
  * A strip per track, which scroll, then the returns' and the master's, which stay at the right;
  * the master's limiter is in its panel. A strip is its name, its fader over its meter, and beside
  * that its pan, its gain, mute and solo, as a track's panel lays them out; under them a dial per
  * send, as a send takes the sound after the fader. A return's name is said once, left of the row
- * of its sends. A press on a strip's name shows its panel.
+ * of its sends. At rest a strip says only its gain and its pan where they are not where they
+ * rest; any number shows while its control is touched or it moves. A click on a strip's name
+ * chooses it, a double click shows its panel.
  */
 export const Mixer = ({ page }: { page: Page }) => {
-  const { state, rows, returns, chosenTrack, openPanel, openMaster, toggleMute, toggleSolo } = page;
+  const { state, children, rows, returns, chosenTrack, choose, openPanel, openMaster, toggleMute, toggleSolo } = page;
   /** The returns some strip sends to, in their order: a row of dials each, so they line up across the tracks. */
   const sent = memo(() => returns().filter((back) => rows().some((each) => sendsOf(each).includes(`send-${back.name}`))));
   /** The faders take the room the sends leave. */
   const fader = memo(() => Math.max(MIXER - AROUND - sent().length * (DIAL + 4), SHORTEST));
   const Strip = ({ each }: { each?: Child }) => {
-    const path = each ? `${each.name}/mix` : "master";
+    const [name, path] = each ? [each.name, `${each.name}/mix`] : ["master", "master"];
+    /** Whether a number of its fader is at 0 with no lane on it: it then needs no saying. */
+    const rests = (number: "gain_db" | "pan") => () => {
+      const fader = each ? mixOf(each) : children.find((child) => child.name === "master");
+      return fader?.tool === "fader" && (fader.state[number] ?? 0) === 0 && !(each && lanesOf(each).some(({ target }) => target === `mix.${number}`));
+    };
     return (
       <div style={{ ...COLUMN, width: STRIP }}>
-        <div key={each ? `strip-name-${each.name}` : "strip-name-master"} tabStop
+        <div key={`strip-name-${name}`} tabStop
           style={() => ({ height: DIAL, paddingX: "xs", radius: "md", direction: "row", align: "center", gap: "sm", ...rowLook(each !== undefined && chosenTrack() === each.name) })}
-          onClick={() => (each ? openPanel(each.name) : openMaster())}>
+          onClick={({ clicks }) => (clicks === 2 ? (each ? openPanel(each.name) : openMaster()) : each && choose(new Set(), each.name))}>
           <Mark colour={each && (() => colourOf(each))} dim={() => each !== undefined && muted(each)} />
           <Text variant="label" tone="text" style={{ truncate: true }}>{() => (each ? titleOf(each) : "Master")}</Text>
         </div>
@@ -84,9 +81,9 @@ export const Mixer = ({ page }: { page: Page }) => {
               <Level path={path} length={length} meter={each ? { of: path } : "device"} />
               <div style={{ width: SIDE, height: length, gap: "xs" }}>
                 <Knob field={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar text="none" />
-                <Reading field={`${path}.pan`} unit="pan" when={(pan) => pan.abs().gt(0.005)} />
+                <Readout field={`${path}.pan`} unit="pan" width={SIDE} quiet={rests("pan")} />
                 <div style={{ grow: true }} />
-                <Gain path={path} width={SIDE} />
+                <Gain path={path} width={SIDE} quiet={rests("gain_db")} />
                 {/* A strip without one keeps its room, so the gains of all strips are on one line. */}
                 <div style={{ height: TOGGLE, keep: true }}>
                   {each ? <Toggle key={`strip-mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} /> : null}
@@ -105,7 +102,7 @@ export const Mixer = ({ page }: { page: Page }) => {
                 {() => sendsOf(each).includes(`send-${back.name}`) ? (
                   <>
                     <Knob field={`${each.name}/send-${back.name}.gain_db`} label={untrack(() => titleOf(back))} min={-60} max={6} default={0} unit="db" text="none" />
-                    <Reading field={`${each.name}/send-${back.name}.gain_db`} unit="db" when={(gain) => gain.gt(-60)} />
+                    <Readout field={`${each.name}/send-${back.name}.gain_db`} unit="db" width={SIDE} quiet />
                   </>
                 ) : null}
               </div>

@@ -195,6 +195,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(MIXER_TOGGLE), px(547.)), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-mixer")?;
+    // The pointer on the send of the third track: it says its number, which the others at
+    // rest do not.
+    pointer_to(&opened, point(px(281.), px(892.)), cx)?;
+    play(&mut opened, cx)?;
+    save(cx, opened.window.into(), "typescript-song-mixer-strip")?;
     // A track's head shows its panel in place of the mixer, and the automation of the first
     // track's head: its lane of the cutoff shows under it.
     click(&opened, point(px(60.), px(280.)), 1, cx)?;

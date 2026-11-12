@@ -68,7 +68,8 @@ const CURVES: [(Curve, &str, &str); 4] = [
     (Curve::Clip, "clip", "Clip"),
 ];
 
-/// The automatic gain under the display, to a tenth of a dB: `Auto gain -4.2 dB`.
+/// The automatic gain, which no control shows, to a tenth of a dB: `Auto gain -4.2 dB`. The
+/// handle of the drive says it, as the drive sets it.
 fn auto_gain_readout(state: &SaturatorState) -> String {
     let db = 20. * auto_gain(state.curve, state.drive_db).log10();
     format!("Auto gain {} dB", short((db * 10.).round() / 10.))
@@ -139,7 +140,13 @@ impl SaturatorView {
         let x = Axis::new(LEVELS, bend, bend_of(DRIVE.default));
         let y = Axis::fixed(place(level_out(state, bend)));
         let automated = self.device.is_automated(DRIVE.field, cx);
+        let caption = format!(
+            "{} · {}",
+            DRIVE_KNOB.caption(state),
+            auto_gain_readout(state)
+        );
         Handle::new("drive", x, y)
+            .caption(caption)
             .automated(automated)
             .on_change(weak_callback(
                 cx,
@@ -175,7 +182,6 @@ impl SaturatorView {
             )
             .zero_line(place(0.))
             .handle(self.handle(state, cx))
-            .caption(auto_gain_readout(state))
             .control(curves)
     }
 }
