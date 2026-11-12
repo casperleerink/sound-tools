@@ -135,12 +135,13 @@ impl SynthView {
         // The synth's own stages are drawn straight.
         let straight = [0.; 3];
         let time = ATTACK_KNOB.range();
-        let readouts = Adsr {
+        // Expanded, the knobs of the envelope are in view and say it.
+        let readouts = (!self.expanded).then(|| Adsr {
             attack: seconds_readout(adsr.attack),
             decay: seconds_readout(adsr.decay),
             sustain: percent_readout(adsr.sustain),
             release: seconds_readout(adsr.release),
-        };
+        });
         envelope_display(
             "envelope",
             time,

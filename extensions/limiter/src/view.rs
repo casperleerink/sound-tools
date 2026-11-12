@@ -191,7 +191,6 @@ impl Render for LimiterView {
         let handle = self
             .history
             .handle(state.ceiling_db, CEILING.default)
-            .caption(CEILING_KNOB.caption(&state))
             .on_change(weak_callback(
                 cx,
                 |view, change: ValueChange<Point<f32>>, cx| {

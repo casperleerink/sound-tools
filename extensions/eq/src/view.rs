@@ -282,9 +282,10 @@ impl EqView {
             true => format!("{frequency} · {}", GAIN_KNOB.caption(&settings)),
             false => frequency,
         };
+        // The knobs say the band that is selected.
         Handle::new(SharedString::from(format!("band-{number}")), x, y)
             .label(number.to_string())
-            .caption(caption)
+            .when(band != self.selected, |handle| handle.caption(caption))
             .automated(automated)
             .hollow(band != self.selected)
             .dimmed(!settings.on)

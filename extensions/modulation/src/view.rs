@@ -137,13 +137,11 @@ impl ModulationView {
         id: &'static str,
         control: Control,
         (x, y): (Axis, Axis),
-        state: &ModulationState,
         cx: &mut Context<Self>,
     ) -> Handle {
         let sideways = x.drags;
         let automated = self.device.is_automated(control.parameter.field, cx);
         Handle::new(id, x, y)
-            .caption(control.caption(state))
             .automated(automated)
             .on_change(weak_callback(
                 cx,
@@ -175,15 +173,18 @@ impl ModulationView {
             }));
         let depth = Axis::new(DEPTH_TRAVEL, state.depth, DEPTH.default);
         let depth = (Axis::fixed(DEPTH_AT), depth);
-        let depth = self.handle("depth", DEPTH_KNOB, depth, state, cx);
+        let depth = self.handle("depth", DEPTH_KNOB, depth, cx);
         let spread = Axis::new(SPREAD_TRAVEL, state.spread, SPREAD.default);
         let height = Axis::fixed(peak(state.depth));
-        let spread = self.handle("spread", SPREAD_KNOB, (spread, height), state, cx);
+        let spread = self.handle("spread", SPREAD_KNOB, (spread, height), cx);
         Display::new("display")
             .curve(line(state.depth, 0.))
             .dashed(line(state.depth, 0.5 * state.spread))
             .zero_line(layout::MIDDLE)
-            .handle(spread.hollow(true))
+            // The knob of the spread is behind expand.
+            .handle(spread.hollow(true).when(!self.expanded, |spread| {
+                spread.caption(SPREAD_KNOB.caption(state))
+            }))
             .handle(depth)
             .control(modes)
     }

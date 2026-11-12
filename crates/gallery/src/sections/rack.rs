@@ -401,7 +401,7 @@ fn gain_reduction(cx: &App) -> AnyElement {
                 18. => "18 dB",
                 _ => "6.8 dB",
             };
-            sample(caption, cx, GainReduction::new(db))
+            sample(caption, cx, GainReduction::new(db).h(px(132.)))
         }),
     )
 }
@@ -836,7 +836,7 @@ fn sections_card() -> DeviceCard {
         "curved",
         time,
         (adsr, adsr, Adsr::default()),
-        readouts,
+        Some(readouts),
         [0.5, 0.9, 0.8],
         |_, _, _| {},
     );

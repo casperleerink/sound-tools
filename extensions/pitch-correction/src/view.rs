@@ -1,6 +1,6 @@
 //! The card of the pitch correction: across its display, a semitone around the note the voice
-//! is moved to, at the middle line. A thin line is what the voice sings, and a block from it
-//! to a bright line is how far it is moved, to where it plays. Key and Scale sit above it,
+//! is moved to, at the middle line. A thin line is what the voice sings, and a soft block from
+//! it reaches to where it plays: how far it is moved. Key and Scale sit above it,
 //! Retune and Humanize at its right, and behind expand the voice range, formants, Mix and
 //! Ignore vibrato. The rack gives the view a [`CardFrame`].
 //!
@@ -9,7 +9,9 @@
 //! the processor, read once per poll of the session, and the card draws again only when that
 //! changed.
 
-use gpui::{Context, Entity, Point, SharedString, Task, Window, div, point, prelude::*};
+use std::ops::Range;
+
+use gpui::{Context, Entity, SharedString, Task, Window, div, point, prelude::*};
 use sound_core::Instance;
 use sound_notes::Pitch;
 use sound_ui::components::cell::{Cell, control_width};
@@ -129,19 +131,13 @@ fn across(cents: f32) -> f32 {
 }
 
 /// The block from what is sung to where it plays, left to right.
-fn moved(reading: Reading) -> Vec<Point<f32>> {
+fn moved(reading: Reading) -> Option<(Range<f32>, f32)> {
     if reading.heard <= 0. || reading.target <= 0. {
-        return Vec::new();
+        return None;
     }
     let sung = across((reading.heard - reading.target) * 100.);
     let plays = across((reading.heard + reading.correction - reading.target) * 100.);
-    let (left, right) = (sung.min(plays), sung.max(plays));
-    vec![
-        point(left, 0.),
-        point(left, MOVE_HEIGHT),
-        point(right, MOVE_HEIGHT),
-        point(right, 0.),
-    ]
+    Some((sung.min(plays)..sung.max(plays), MOVE_HEIGHT))
 }
 
 pub struct PitchCorrectionView {
@@ -239,7 +235,7 @@ impl PitchCorrectionView {
             .control(key)
             .control(scale)
             .scale(SCALE)
-            .curve(moved(reading));
+            .columns(moved(reading));
         let display = match caption(reading) {
             Some(caption) => display.caption(caption),
             None => display,

@@ -234,15 +234,7 @@ impl DelayView {
         // While it syncs, the division is the time and a lane of the ms moves nothing here.
         let automated =
             lanes.is_automated(FEEDBACK.field) || (!sync && lanes.is_automated(TIME.field));
-        let caption = format!(
-            "{} {} · {}",
-            TIME_KNOB.label,
-            time_readout(state),
-            FEEDBACK_KNOB.caption(state)
-        );
-        let handle = Handle::new("time-feedback", x, y)
-            .caption(caption)
-            .automated(automated);
+        let handle = Handle::new("time-feedback", x, y).automated(automated);
         handle.on_change(weak_callback(
             cx,
             move |view, change: ValueChange<Point<f32>>, cx| {

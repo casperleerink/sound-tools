@@ -1,6 +1,6 @@
 //! The display of a limiter: the last four seconds of what it sent out, as a green line over a
-//! quiet tint under the ceiling line, and how much it took, hanging from the top. The handle at the right end of the
-//! ceiling line drags the ceiling up and down.
+//! quiet tint under the ceiling line, and how much it took, a soft fill hanging from the top.
+//! The handle at the right end of the ceiling line drags the ceiling up and down.
 //!
 //! The owner keeps a [`LimiterHistory`], feeds it one reading per poll, and builds the display
 //! from it when it renders, with a handle whose change it handles itself.
@@ -14,6 +14,7 @@ use gpui::{
 use crate::components::display::{Axis, Display, Handle};
 use crate::components::knob::KnobRange;
 use crate::components::meter::GainReduction;
+use crate::components::paint;
 use crate::theme::ActiveTheme;
 use sound_dsp::decibels;
 
@@ -95,7 +96,7 @@ impl LimiterHistory {
         true
     }
 
-    /// The largest reduction of the last column, for the line under the display.
+    /// The largest reduction of the last column, for the line of the display.
     pub fn reduction_now(&self) -> f32 {
         self.moments
             .back()
@@ -111,8 +112,8 @@ impl LimiterHistory {
         )
     }
 
-    /// The history under the ceiling line, with its handle, and the reduction in words under
-    /// it while the limiter takes some or the pointer is on the display.
+    /// The history under the ceiling line, with its handle, and the reduction in words while
+    /// the limiter takes some.
     pub fn display(
         &self,
         id: impl Into<ElementId>,
@@ -123,7 +124,7 @@ impl LimiterHistory {
         let range = self.ceiling;
         let ceiling = range.position(ceiling_db);
         let theme = cx.theme();
-        let colors = (theme.green, theme.text());
+        let colors = (theme.green, paint::soft_fill(theme));
         let moments: Vec<Moment> = self.moments.iter().copied().collect();
         let history = canvas(
             |_, _, _| {},
@@ -133,19 +134,17 @@ impl LimiterHistory {
         .top_0()
         .left_0()
         .size_full();
-        let display = Display::new(id)
+        Display::new(id)
             .curve([point(0., ceiling), point(1., ceiling)])
             .handle(handle)
-            .child(history);
-        match GainReduction::says(self.reduction_now()) {
-            (says, true) => display.caption(says),
-            (says, false) => display.pointed(says),
-        }
+            .child(history)
+            .when_some(GainReduction::says(self.reduction_now()), Display::caption)
     }
 }
 
-/// The bars of the history: the peaks as a green line on the scale of the ceiling line, tinted
-/// under it, and the reduction hanging from the top, 24 dB for the whole height.
+/// The history, its columns joined: the peaks as one green line on the scale of the ceiling
+/// line, tinted under it, and the reduction as one soft fill hanging from the top, 24 dB for the
+/// whole height.
 fn paint_history(
     bounds: Bounds<Pixels>,
     moments: &[Moment],
@@ -156,7 +155,6 @@ fn paint_history(
     let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
     let inset = 6.;
     let step = (width - 2. * inset) / COLUMNS as f32;
-    let bar = (step - 1.).max(1.);
     // The newest column at the right, as time goes.
     let first = COLUMNS - moments.len();
     for (index, moment) in moments.iter().enumerate() {
@@ -169,22 +167,17 @@ fn paint_history(
             let top = height * (1. - up);
             let body = Bounds::new(
                 bounds.origin + point(px(x), px(top)),
-                size(px(bar), px(height - top)),
+                size(px(step), px(height - top)),
             );
             window.paint_quad(fill(body, green.opacity(LEVEL_TINT)));
-            // As wide as the step, so the tops of the columns join into one line.
             let line = Bounds::new(body.origin, size(px(step), px(LEVEL_LINE)));
             window.paint_quad(fill(line, green));
         }
-        // Narrower than the level and over it, so the two read apart where they meet under
-        // the ceiling.
         let down = (moment.reduction_db / GainReduction::RANGE_DB).clamp(0., 1.) * height;
         if down > 0. {
-            let thin = (bar / 3.).max(1.);
-            let left = x + (bar - thin) / 2.;
             let body = Bounds::new(
-                bounds.origin + point(px(left), px(0.)),
-                size(px(thin), px(down)),
+                bounds.origin + point(px(x), px(0.)),
+                size(px(step), px(down)),
             );
             window.paint_quad(fill(body, reduction));
         }

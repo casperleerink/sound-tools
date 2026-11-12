@@ -9,7 +9,7 @@ use gpui::{
     Render, TestAppContext, VisualTestContext, Window, div, point, prelude::*, px,
 };
 use sound_ui::components::device_card::{Column, DeviceCard};
-use sound_ui::components::display::{Axis, Display, Handle};
+use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT, WIDTH};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange};
 
@@ -102,13 +102,17 @@ impl Render for Controls {
         )
         .caption("Sideways")
         .on_change(follow(cx, |view| &mut view.sideways));
-        div().flex().gap(px(40.)).p(px(40.)).child(
-            Display::new("display")
-                .pointed("At rest")
-                .handle(handle)
-                .handle(sideways)
-                .handle(still),
-        )
+        let low = Handle::new("low", Axis::fixed(0.5), Axis::fixed(0.05)).caption("Low");
+        let display = Display::new("display")
+            .handle(handle)
+            .handle(sideways)
+            .handle(still)
+            .handle(low);
+        div()
+            .flex()
+            .gap(px(40.))
+            .p(px(40.))
+            .child(div().debug_selector(|| "display".into()).child(display))
     }
 }
 
@@ -170,7 +174,7 @@ fn a_handle_drags_from_where_it_is_and_escape_puts_it_back(cx: &mut TestAppConte
     assert!(view.read_with(cx, |view, _| view.handle.changes.is_empty()));
 
     // A tenth of the width right and a tenth of the height up.
-    let across = point(px(24.8), px(-11.8));
+    let across = point(px(WIDTH / 10.), px(-INSET_HEIGHT / 10.));
     drag_to(cx, beside + across, false);
     let value = view.read_with(cx, |view, _| view.handle.value);
     assert!(
@@ -195,7 +199,7 @@ fn a_handle_drags_from_where_it_is_and_escape_puts_it_back(cx: &mut TestAppConte
     release(cx, beside, 1);
 }
 
-/// Whether the line under the display says `words`, as `caption-<words>`.
+/// Whether the line of the display says `words`, as `caption-<words>`.
 fn says(cx: &mut VisualTestContext, words: &'static str) -> bool {
     cx.update(|window, _| window.refresh());
     cx.run_until_parked();
@@ -203,21 +207,18 @@ fn says(cx: &mut VisualTestContext, words: &'static str) -> bool {
 }
 
 #[gpui::test]
-fn the_line_under_a_display_speaks_only_of_what_is_pointed_at_or_dragged(cx: &mut TestAppContext) {
+fn the_line_of_a_display_speaks_only_of_what_is_pointed_at_or_dragged(cx: &mut TestAppContext) {
     let (_, cx) = open(cx);
     let sideways = bounds(cx, "handle-sideways").center();
     let hover = |cx: &mut VisualTestContext, at| {
         cx.simulate_mouse_move(at, None, Modifiers::default());
         cx.run_until_parked();
     };
-    hover(cx, point(px(5.), px(5.)));
-    assert!(!says(cx, "caption-At rest") && !says(cx, "caption-Sideways"));
     // On the display and on no handle, then on the handle that speaks.
-    let beside = sideways - point(px(80.), px(0.));
-    hover(cx, beside);
-    assert!(says(cx, "caption-At rest"));
+    hover(cx, sideways - point(px(80.), px(0.)));
+    assert!(!says(cx, "caption-Sideways"));
     hover(cx, sideways);
-    assert!(says(cx, "caption-Sideways") && !says(cx, "caption-At rest"));
+    assert!(says(cx, "caption-Sideways"));
     // The handle moves sideways only, so a drag up leaves it: it still speaks, until the
     // button comes up.
     press(cx, sideways, 1);
@@ -225,7 +226,25 @@ fn the_line_under_a_display_speaks_only_of_what_is_pointed_at_or_dragged(cx: &mu
     drag_to(cx, above, false);
     assert!(says(cx, "caption-Sideways"));
     release(cx, above, 1);
-    assert!(says(cx, "caption-At rest") && !says(cx, "caption-Sideways"));
+    assert!(!says(cx, "caption-Sideways"));
+}
+
+#[gpui::test]
+fn the_line_of_a_display_is_inside_it_and_never_over_the_handle_it_speaks_of(
+    cx: &mut TestAppContext,
+) {
+    let (_, cx) = open(cx);
+    let display = bounds(cx, "display");
+    for (handle, line) in [
+        ("handle-sideways", "caption-Sideways"),
+        ("handle-low", "caption-Low"),
+    ] {
+        let handle = bounds(cx, handle);
+        cx.simulate_mouse_move(handle.center(), None, Modifiers::default());
+        let line = bounds(cx, line);
+        assert_eq!(display.intersect(&line), line, "the line is inside");
+        assert!(!line.intersects(&handle), "{line:?} is over {handle:?}");
+    }
 }
 
 #[gpui::test]
