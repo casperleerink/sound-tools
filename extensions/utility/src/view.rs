@@ -13,7 +13,7 @@
 
 use std::f32::consts::FRAC_PI_4;
 
-use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
+use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*, px};
 use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -64,12 +64,10 @@ const BASS_KNOB: Control = Control::new(
     hertz_readout,
 );
 
-/// A switch of the card, on or off.
+/// A switch of the card.
 struct Switch {
     id: &'static str,
-    /// What the toggle says. `None` is `On` or `Off`.
-    face: Option<&'static str>,
-    label: &'static str,
+    name: &'static str,
     undo_label: &'static str,
     get: fn(&UtilityState) -> bool,
     set: fn(&mut UtilityState, bool),
@@ -78,32 +76,28 @@ struct Switch {
 /// `utility-mute`, apart from the `mute` of the track in the same panel.
 const MUTE: Switch = Switch {
     id: "utility-mute",
-    face: Some("M"),
-    label: "Mute",
+    name: "Mute",
     undo_label: "Change mute",
     get: |state| state.mute,
     set: |state, on| state.mute = on,
 };
 const BASS_MONO: Switch = Switch {
     id: "bass_mono",
-    face: None,
-    label: "Bass mono",
+    name: "Bass mono",
     undo_label: "Change bass mono",
     get: |state| state.bass_mono,
     set: |state, on| state.bass_mono = on,
 };
 const INVERT_LEFT: Switch = Switch {
     id: "invert_left",
-    face: Some("L"),
-    label: "Invert",
+    name: "L",
     undo_label: "Change invert left",
     get: |state| state.invert_left,
     set: |state, on| state.invert_left = on,
 };
 const INVERT_RIGHT: Switch = Switch {
     id: "invert_right",
-    face: Some("R"),
-    label: "Invert",
+    name: "R",
     undo_label: "Change invert right",
     get: |state| state.invert_right,
     set: |state, on| state.invert_right = on,
@@ -230,11 +224,13 @@ impl UtilityView {
         cx: &mut Context<Self>,
     ) -> Toggle {
         let on = (switch.get)(state);
-        let face = switch.face.unwrap_or(if on { "On" } else { "Off" });
-        Toggle::new(switch.id, face, on).on_change(weak_callback(cx, move |view, on: bool, cx| {
-            view.device
-                .change(switch.undo_label, ValueChange::Set(on), switch.set, cx);
-        }))
+        Toggle::new(switch.id, switch.name, on).on_change(weak_callback(
+            cx,
+            move |view, on: bool, cx| {
+                view.device
+                    .change(switch.undo_label, ValueChange::Set(on), switch.set, cx);
+            },
+        ))
     }
 
     /// The handle on the top of the image: sideways is pan, where a mono sound is heard, and up
@@ -276,17 +272,11 @@ impl UtilityView {
                         .change("Change channels", ValueChange::Set(*channels), set, cx);
                 }
             }));
-        let caption = format!(
-            "Gain {} · Pan {}",
-            decibels_readout(state.gain_db),
-            pan_readout(state.pan)
-        );
         Display::new("display")
             .curve(image(state))
             .grid([-1., 0., 1.].map(across).to_vec(), Vec::new())
             .zero_line(gain_axis().position(0.))
             .handle(self.handle(state, cx))
-            .caption(caption)
             .control(channels)
     }
 }
@@ -307,26 +297,26 @@ impl Render for UtilityView {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
-        let toggle = |switch: &'static Switch, cx: &mut Context<Self>| {
-            Cell::new(self.toggle(switch, &state, cx)).label(switch.label)
-        };
         // Peach, as the mute of a track.
         let peach = cx.theme().peach;
-        let mute = Cell::new(self.toggle(&MUTE, &state, cx).color(peach)).label(MUTE.label);
+        let mute = Cell::switch(self.toggle(&MUTE, &state, cx).color(peach));
+        // One cell for the two channels, as M and S of a track stand together.
+        let invert = div()
+            .flex()
+            .gap(px(4.))
+            .child(self.toggle(&INVERT_LEFT, &state, cx))
+            .child(self.toggle(&INVERT_RIGHT, &state, cx));
         let columns = [
             Column::new()
                 .top(knob(GAIN_KNOB, cx))
                 .bottom(knob(WIDTH_KNOB, cx)),
             Column::new().top(knob(PAN_KNOB, cx)).bottom(mute),
         ];
-        let hidden = [
-            Column::new()
-                .top(toggle(&BASS_MONO, cx))
-                .bottom(knob(BASS_KNOB, cx)),
-            Column::new()
-                .top(toggle(&INVERT_LEFT, cx))
-                .bottom(toggle(&INVERT_RIGHT, cx)),
-        ];
+        // `Bass mono` does not fit in one column.
+        let hidden = [Column::new()
+            .top(Cell::switch(self.toggle(&BASS_MONO, &state, cx)).span(2))
+            .bottom(knob(BASS_KNOB, cx))
+            .bottom(Cell::new(invert).label("Invert"))];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
