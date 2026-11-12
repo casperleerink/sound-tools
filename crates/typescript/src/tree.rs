@@ -48,7 +48,7 @@ macro_rules! props {
 
 mod parts;
 use parts::{CellChange, DisplayChange, StepsChange};
-pub(crate) use parts::{CellProps, DisplayProps, StepsProps};
+pub(crate) use parts::{CellProps, DisplayProps, Mark, StepsProps};
 
 props! {
     DivProps / DivChange {

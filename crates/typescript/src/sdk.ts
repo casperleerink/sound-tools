@@ -90,7 +90,7 @@ export {
   Cell, Controls, defaultView, Display
 } from "./sdk/card";
 export type {
-  DisplayProps
+  DisplayProps, DisplayScale
 } from "./sdk/card";
 // what the runtime calls
 export {

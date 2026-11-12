@@ -7,7 +7,26 @@ use super::{Num, changed};
 props! {
     /// The well at the left of a card, as wide as a built-in one or `wide`, with a quiet line
     /// under it. The space among its children draws in it; the others sit above that.
-    DisplayProps / DisplayChange { wide: bool, caption: String }
+    DisplayProps / DisplayChange { wide: bool, caption: String, scale: Scale }
+}
+
+/// The marks of the scale of a display, at places from 0 to 1 of its drawing, `y` down.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Scale {
+    #[serde(default)]
+    pub x: Vec<Mark>,
+    #[serde(default)]
+    pub y: Vec<f32>,
+    pub zero: Option<f32>,
+}
+
+/// A line of a scale at a place across, alone or with its word.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Mark {
+    Line(f32),
+    Worded(f32, String),
 }
 
 props! {
