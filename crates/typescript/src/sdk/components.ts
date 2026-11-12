@@ -664,6 +664,8 @@ export type StepsProps = ValueProps<readonly number[]> & {
   /** What a step turned on holds, unless it held another before: the default of the field's items when that is on, else their max, or 1. */
   max?: number;
   playing?: string;
+  /** Its steps run on their own, not with the piece: the ring of `playing` shows while the piece is stopped too. */
+  ownClock?: boolean;
   /** What the row is, at its left: the field's label, else its name in words, when left out; `""` for none. Rows with a label, one over the other, line up. */
   label?: string;
   /** A row that changes another row, such as accents or slides: it reads quieter than a row of notes. */
@@ -676,7 +678,7 @@ export type StepsProps = ValueProps<readonly number[]> & {
  * for what code keeps), so a soft hit shows as one. A click turns a step off, or on again as
  * strong as it was. Tab reaches it: the arrows move along it, and space or enter turns a step.
  * `playing` names an output, as `now.value` does, whose value is the step that plays, which a
- * green ring shows.
+ * green ring shows while the piece plays.
  */
 export function Steps(props: StepsProps): UiNode {
   const field = props.field === undefined ? undefined : fieldOf(props.field);
@@ -685,6 +687,8 @@ export function Steps(props: StepsProps): UiNode {
   const on = props.max ?? (item?.default !== undefined && item.default > off ? item.default : full);
   const { get, set } = valueOf(props);
   const list = () => get() ?? [];
+  const { clock } = drawing();
+  const step = props.playing === undefined ? undefined : now.value(props.playing);
   /** What each step held before it was turned off. Not saved: a view made again turns a step on at `on`. */
   const held = new Map<number, number>();
   return element("steps", {
@@ -692,7 +696,8 @@ export function Steps(props: StepsProps): UiNode {
     label: props.label ?? (props.field === undefined ? undefined : labelOf(props.field, field)),
     secondary: props.secondary,
     levels: () => list().map((value) => within((value - off) / (full - off))),
-    playing: props.playing === undefined ? undefined : now.value(props.playing),
+    // At rest a ring on the first step would read as a selection.
+    playing: step && (props.ownClock ? step : () => (clock.playing ? step : undefined)),
     onChange: (step: number) => {
       const changed = [...untrack(list)];
       const was = changed[step] ?? off;
