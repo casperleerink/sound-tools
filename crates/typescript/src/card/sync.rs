@@ -17,6 +17,7 @@ use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
+use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::select::Select;
 use sound_ui::components::text_input::TextInput;
@@ -158,6 +159,12 @@ impl TypeScriptCard {
         let card = self.card;
         if let Some(menu) = self.live.update(cx, |live, _| live.take_menu(card)) {
             self.open_menu(menu, window, cx);
+        }
+        // A typed number goes the way of a key on its control.
+        for (drag, to) in self.live.update(cx, |live, _| live.take_typed(card)) {
+            if let Some(turns) = drag.y.as_ref().or(drag.x.as_ref()) {
+                self.turn(turns, ValueChange::Set(to), cx);
+            }
         }
         if let Some(asked) = self.live.update(cx, |live, _| live.take_asked()) {
             // The question takes the keys, and the key that asked comes up there.

@@ -401,11 +401,16 @@ pub(crate) enum Change {
     Marker,
 }
 
+/// A number typed for what a drag turns, see [`Op::Turn`].
+pub(crate) type Typed = (Rc<Drag>, f32);
+
 /// One change of the nodes of a card, as `host.ts` writes it: `["create", id, family, props]`,
 /// `["set", id, family, props]`, `["insert", parent, id, before]`, `["remove", id]`, `["root",
-/// id]` and `["drag", id, drag]`.
+/// id]` and `["drag", id, drag]`. `["turn", drag, value]` changes no node: it is a number typed
+/// for what the drag turns.
 #[derive(Debug)]
 pub(crate) enum Op {
+    Turn(u64, f32),
     Create(u64, Props),
     Set(u64, Change),
     Insert {
@@ -521,10 +526,16 @@ impl<'de> Visitor<'de> for OpVisitor {
             "remove" => Op::Remove(id),
             "root" => Op::Root(id),
             "drag" => Op::Drag(id, next(&mut seq, "drag")?),
+            "turn" => {
+                let value: serde_json::Value = next(&mut seq, "value")?;
+                let value = number_of(&value)
+                    .ok_or_else(|| A::Error::custom(format!("a turn to no number: {value}")))?;
+                Op::Turn(id, value)
+            }
             other => {
                 return Err(A::Error::unknown_variant(
                     other,
-                    &["create", "set", "insert", "remove", "root", "drag"],
+                    &["create", "set", "insert", "remove", "root", "drag", "turn"],
                 ));
             }
         })
@@ -955,11 +966,13 @@ impl NodeTable {
         self.slots.get_mut(slot)?.as_mut()
     }
 
-    /// Applies the ops of one batch, or says what is wrong with them.
-    pub(crate) fn apply(&mut self, ops: Vec<Op>) -> Result<(), String> {
+    /// Applies the ops of one batch, or says what is wrong with them. Gives the numbers typed
+    /// in it, which its card turns.
+    pub(crate) fn apply(&mut self, ops: Vec<Op>) -> Result<Vec<Typed>, String> {
         self.version += 1;
         let mut emptied = HashSet::new();
         let mut keyed = Vec::new();
+        let mut typed = Vec::new();
         for op in ops {
             match op {
                 Op::Create(id, props) => {
@@ -1089,6 +1102,10 @@ impl NodeTable {
                 Op::Drag(id, drag) => {
                     self.drags.insert(id, Rc::new(drag));
                 }
+                Op::Turn(drag, to) => {
+                    let drag = (self.drags.get(&drag)).ok_or_else(|| format!("no drag {drag}"))?;
+                    typed.push((drag.clone(), to));
+                }
             }
         }
         for parent in emptied {
@@ -1106,7 +1123,7 @@ impl NodeTable {
                 "two {kind}s of this view have the key \"{key}\": give each its own, such as \
                  one made from the item a row of a list shows"
             )),
-            None => Ok(()),
+            None => Ok(typed),
         }
     }
 

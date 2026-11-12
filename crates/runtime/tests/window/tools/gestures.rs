@@ -1407,3 +1407,61 @@ fn enter_or_a_click_on_its_value_types_the_value_of_a_knob(cx: &mut TestAppConte
         window.record("shared")["depth"].as_f64() == Some(0.25)
     });
 }
+
+const PLAYED: &str = r#"import { Controls, h, Knob, number, NumberBox, output, tool } from "./sdk";
+
+tool({
+  name: "played",
+  title: "Played",
+  when: "A test",
+  doc: "A number input on a knob and in a number box, which its sound sends out again as `heard`.",
+  state: {},
+  inputs: { rate: number({ min: 0, max: 10, default: 2, unit: "plain" }) },
+  sound: ({ rate }) => {
+    output("heard", rate);
+    return 0;
+  },
+  onKey: () => {},
+  view: () => h(Controls, {}, h(Knob, { field: "rate" }), h(NumberBox, { key: "box", field: "rate", width: 48 })),
+});
+"#;
+
+/// A number input is played, not saved, however it is turned: a value typed on its knob or in
+/// its number box moves what a drag moves, and writes no record and no undo step.
+#[gpui::test]
+fn a_number_input_typed_and_dragged_change_the_same_value(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("played", PLAYED));
+    let knob = window.space("knob-rate");
+    window.wait_for_bun();
+    let heard = |window: &mut Opened<'_>| {
+        window
+            .project(|project| project.watched(&crate::support::id("played"), "heard"))
+            .unwrap()
+    };
+    let hears = |window: &mut Opened<'_>, what: &str, rate: f32| {
+        window.until(what, |window| (heard(window) - rate).abs() < 0.01);
+    };
+    hears(&mut window, "its default", 2.0);
+
+    // A quarter of its travel up.
+    let dial = knob + point(px(32.), px(18.));
+    window.press(dial);
+    window.drag_to(dial - point(px(0.), px(50.)));
+    window.release(dial - point(px(0.), px(50.)));
+    hears(&mut window, "the drag", 4.5);
+
+    window.click(knob + point(px(32.), px(62.)));
+    window.until_found("div-knob-rate-typed");
+    window.keys("7 enter");
+    hears(&mut window, "the value typed on the knob", 7.0);
+
+    let number_box = window.space("box") + point(px(10.), px(10.));
+    window.double_click(number_box);
+    window.until_found("div-box-typed");
+    window.keys("3 enter");
+    hears(&mut window, "the value typed in the box", 3.0);
+
+    assert_eq!(window.record("played"), serde_json::json!({}));
+    assert_eq!(window.undo_label(), None);
+    assert_eq!(window.problems(), []);
+}

@@ -40,7 +40,7 @@ use crate::feeds::played_name;
 use crate::recorder::{self, Recorder, RecorderUpdate};
 use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Input, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
-use crate::tree::{NodeTable, Uses};
+use crate::tree::{NodeTable, Typed, Uses};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
 
 /// How often the control loops run and code hears of the watches its bindings read.
@@ -147,6 +147,8 @@ struct Card {
     events_answered: u64,
     /// A menu its code opened and the card did not show yet, with its question.
     menu: Option<OpenedMenu>,
+    /// The numbers typed on it that the card did not turn yet.
+    typed: Vec<Typed>,
 }
 
 /// What changed for the cards of the window, which each card filters.
@@ -697,6 +699,7 @@ impl Live {
             events_sent: 0,
             events_answered: 0,
             menu: None,
+            typed: Vec::new(),
         };
         self.cards.insert(card, entry);
         self.mount(card, cx);
@@ -894,6 +897,11 @@ impl Live {
     /// The menu the code of the card opened, which the card shows now.
     pub(crate) fn take_menu(&mut self, card: u64) -> Option<OpenedMenu> {
         self.cards.get_mut(&card)?.menu.take()
+    }
+
+    /// The numbers typed on the card, which it turns now.
+    pub(crate) fn take_typed(&mut self, card: u64) -> Vec<Typed> {
+        (self.cards.get_mut(&card)).map_or_else(Vec::new, |entry| std::mem::take(&mut entry.typed))
     }
 
     /// Answers an `openMenu` with the place of the item picked, or none.
@@ -1588,7 +1596,10 @@ impl Live {
                 let mut refused = None;
                 match (base, ops) {
                     (Some(mut table), Ok(ops)) => {
-                        let applied = Rc::make_mut(&mut table).apply(ops).map(|()| table);
+                        let applied = Rc::make_mut(&mut table).apply(ops).map(|typed| {
+                            entry.typed.extend(typed);
+                            table
+                        });
                         refused = applied.as_ref().err().cloned();
                         entry.stale &= !(mount && applied.is_ok());
                         entry.tree = Some(applied);

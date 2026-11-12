@@ -477,7 +477,7 @@ pub(crate) fn built_in_schemas() -> [ToolSchema; 6] {
 /// Whether a card or a page made nodes the window can show.
 fn drawn(ops: Result<serde_json::Value, String>) -> Result<(), String> {
     let ops: Vec<tree::Op> = serde_json::from_value(ops?).map_err(|error| error.to_string())?;
-    tree::NodeTable::default().apply(ops)
+    tree::NodeTable::default().apply(ops).map(|_| ())
 }
 
 /// The files of tools in `extensions`, by name, in order: those that are not the runtime's.
