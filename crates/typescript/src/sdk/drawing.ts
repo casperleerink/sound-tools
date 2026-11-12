@@ -94,7 +94,7 @@ export type Shape =
          * `height` say: a line `size` points thick, smooth for a history, or with `band` the
          * lowest to the highest under each point, as a waveform. A line about zero lies on a
          * hairline at zero, and a history that is not full yet is empty at its left. `text` when
-         * `color` is left out, as a value is; `green` is for sound that moves. `level` scales
+         * `color` is left out, as a value and its history are; `green` is for sound. `level` scales
          * them about the middle along it: `[x, factor]` from its left, straight between, so a
          * waveform shows its gain and fades.
          */

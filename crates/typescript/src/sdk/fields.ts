@@ -141,15 +141,17 @@ export const isPattern = (field: Field): field is ListField<NumberField> => patt
 
 /**
  * A row of `length` numbers, such as the steps of a sequence: a list that starts as `length`
- * times `default`, or as the list `default` is, such as a groove to start with.
+ * times `default`, or as the list `default` is, such as a groove to start with. A step is as
+ * strong as its number, from `min`, off, to `max`, so a soft hit is one between. Steps that are
+ * only on or off, such as an accent or a slide, say `integer: true` from 0 to 1.
  */
-export function pattern(field: { length: number; min: number; max: number; default: number | number[]; label?: string }): ListField<NumberField> {
-  const { length, min, max, label } = field;
+export function pattern(field: { length: number; min: number; max: number; integer?: boolean; default: number | number[]; label?: string }): ListField<NumberField> {
+  const { length, min, max, integer, label } = field;
   if (!Number.isInteger(length) || length < 1 || length > 1024) {
     throw new RangeError(`a pattern holds 1 to 1024 values, not ${length}`);
   }
   const [each, start] = typeof field.default === "number" ? [field.default, Array<number>(length).fill(field.default)] : [min, field.default];
-  const made = list(number({ min, max, default: each, unit: "plain" }), { max: length, label, default: start });
+  const made = list(number({ min, max, integer, default: each, unit: "plain" }), { max: length, label, default: start });
   patterns.add(made);
   return made;
 }

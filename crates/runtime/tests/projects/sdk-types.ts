@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, alpha, audio, blend, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, Notes, now, number, list, notes, NumberBox, output, Page, Path, Readout, rise, Row, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, Transport, bang, Wave, type Color, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, alpha, audio, blend, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, Notes, now, number, list, notes, NumberBox, output, Page, Path, pattern, Readout, rise, Row, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, Transport, bang, Wave, type Color, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -652,6 +652,12 @@ Wave({ list: now.scope("bass/synth", { frames: 1024 }), y: 0.5, height: 0.5 });
 Notes({ list: now.take("rec"), color: "text" });
 // @ts-expect-error: a scope is of sound, not of a number.
 Wave({ list: now.scope(3) });
+// @ts-expect-error: a scope fits its height: how loud a sound is is a meter's to show.
+Wave({ list: now.scope({ fit: false }) });
+
+// The steps of a pattern are as strong as their numbers, or on or off.
+pattern({ length: 16, min: 0, max: 1, default: [1, 0.4] });
+pattern({ length: 16, min: 0, max: 1, integer: true, default: 0 });
 
 // A display says its scale: lines at places across, with a word where given, lines at places down and a zero line.
 Display({ scale: { x: [0.25, [0.5, "1k"]], y: [0.25, 0.75] }, zero: 0.5 });

@@ -11,7 +11,7 @@ use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::Section;
 use sound_ui::components::display::{self, Display};
 
-use crate::tree::{Axes, CellProps, DisplayProps, Layout, Mark, NodeTable, Props};
+use crate::tree::{Axes, CellProps, DisplayProps, Layout, List, Mark, NodeTable, Props};
 
 use super::drawing::Drawing;
 
@@ -34,6 +34,24 @@ pub(super) fn drawn<'a>(
             Some(Props::Marker) | None
         )
     })
+}
+
+/// Where the zero of a wave of a scope among `shapes` lies down the drawing it fills: the
+/// display draws its zero line there by itself.
+fn scope_zero(table: &NodeTable, shapes: &[usize]) -> Option<f32> {
+    shapes
+        .iter()
+        .find_map(|slot| match &table.get(*slot)?.props {
+            Props::Shape(shape)
+                if matches!(shape.list, Some(List::Scope { .. }))
+                    && shape.y.is_none()
+                    && shape.height.is_none() =>
+            {
+                let (low, high) = (shape.low.unwrap_or(-1.), shape.high.unwrap_or(1.));
+                (low < 0. && high > 0.).then(|| high / (high - low))
+            }
+            _ => None,
+        })
 }
 
 /// How many cells of each `Controls` a card shows before its expand icon.
@@ -108,7 +126,9 @@ impl Drawing<'_> {
         // A place of the view's space, inside the margin, as a place of the whole drawing.
         let across = |x: f32| (DISPLAY_MARGIN + x * (width - 2. * DISPLAY_MARGIN)) / width;
         let up = |y: f32| 1. - (DISPLAY_MARGIN + y * (height - 2. * DISPLAY_MARGIN)) / height;
-        display = display.when_some(props.zero, |display, zero| display.zero_line(up(zero)));
+        let space = (spaces.first()).and_then(|slot| Some((*slot, table.get(*slot)?)));
+        let zero = (props.zero).or_else(|| scope_zero(table, &space?.1.children));
+        display = display.when_some(zero, |display, zero| display.zero_line(up(zero)));
         if let Some(scale) = &props.scale {
             let lines = scale.x.iter().filter_map(|mark| match mark {
                 Mark::Line(x) => Some(across(*x)),
@@ -125,7 +145,6 @@ impl Drawing<'_> {
         for control in controls {
             display = display.control(control);
         }
-        let space = (spaces.first()).and_then(|slot| Some((*slot, table.get(*slot)?)));
         if let Some((slot, entry)) = space
             && let Props::Space(space) = &entry.props
         {

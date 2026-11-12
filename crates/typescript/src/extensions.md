@@ -57,7 +57,7 @@ Build it with the methods of `Signal` (`.plus`, `.times`...) and the functions o
 | `file()`: the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound in stereo, up to 3 minutes |
 | `list(item, { max?, default? })`: `item` is a field, or an object of fields such as `{ name: text(), notes: notes() }` | a list of numbers is a table: `.at(index)` |
 
-`pattern(...)` is a list of numbers, such as the steps of a sequence, whose `default` may be a list: a groove to start with. `notes()` is a list of `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter); `quantize`, `humanize` and `legato` edit one as a piano roll does. A sound reads at most 32 numbers and booleans.
+`pattern(...)` is a list of numbers, such as the steps of a sequence, whose `default` may be a list: a groove to start with. Steps that are on or off, an accent or a slide, say `integer: true`. `notes()` is a list of `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter); `quantize`, `humanize` and `legato` edit one as a piano roll does. A sound reads at most 32 numbers and booleans.
 
 ## Inputs
 
@@ -65,11 +65,11 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 ## Its view
 
-Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
+Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. Your own `view` goes in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is a `Display` of what the tool does to the sound, or a `StepGrid` of rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most. A row of steps holds the controls of that row, such as the level of a drum, and the grid names their columns.
+A card is a `Display` of what the tool does to the sound, or a `StepGrid` of rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show, the rest wait behind the card's expand icon: put first what matters most. A row of steps holds its own controls, such as a drum's level, and the grid names their columns.
 
-A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, faint marks and a zero line, not with shapes of its own, and what no mark says with a `caption`, which starts with a capital: `Pitch, ±50 cents`. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names. Sound that moves is `green` and a value is `text`: a view picks no hue of its own.
+A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, not with shapes of its own, and what no mark says with a `caption`, which starts with a capital: `Pitch, ±50 cents`. `now.scope()` is the sound the tool plays: its wave fills the display over its own zero line and takes no marks. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names. Sound is `green`; a value is `text`, and so is its history: a view picks no hue of its own.
 
 ```tsx
 import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
@@ -78,7 +78,7 @@ tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ now, send }) => (
     <>
-      <Display zero={0.5}>
+      <Display>
         <Wave list={now.scope()} color="green" />
       </Display>
       <Controls>
@@ -109,7 +109,7 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a knob with its label goes in `Controls` here too. A `StepGrid` takes its `Controls` as its last child. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a labelled knob goes in `Controls` here too. A `StepGrid` takes its `Controls` as its last child. `grow` is for a surface that needs the room, a canvas or a piano roll, not a picture of a sound. `<Page flush>` is one surface to the window's edges.
 
 ```tsx
 import { Controls, Display, type Drag, h, Knob, Line, lowpass, mtof, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
@@ -135,7 +135,7 @@ tool({
       <Page>
         <Panel title="Drone">
           <Row>
-            <Display zero={0.5} cursor="ew-resize" drag={brighten}>
+            <Display cursor="ew-resize" drag={brighten}>
               <Wave list={now.scope()} color="green" />
               <Line from={[tone, 0]} to={[tone, 1]} color="text" />
             </Display>
@@ -153,7 +153,7 @@ tool({
 
 ## The clock
 
-One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. The transport in a page's header plays and stops it and gives its tool space to play and pause. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
+One clock plays the project: `clock` in a view, its handlers and `tick`, and `playing` and `beat` in a sound. A page's transport plays and stops it, on space too. `clock.tick`, `bar`, `beat` and `bpm` move every frame: read them in a handler, and show them with `now.tick` (`agent-docs/extensions-drawing.md`).
 
 ## Check your work
 
@@ -161,4 +161,4 @@ One clock plays the project: `clock` in a view, its handlers and `tick`, and `pl
 2. `problems.txt`, or `sound-tools . --inspect`, lists what is wrong under `extensions/<file>`: what does not load or build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
 3. `console.log` goes to `extensions/log.txt` while the window is open (the last lines since the tools started), and `--inspect` prints it.
 4. Use the tool as the composer will: write its record (`"state": {}` is its defaults) where a parent plays it, as the parent's doc says, such as in the `order` of a `chain`. Then measure it with `--analyze` (`agent-docs/inspect.md`).
-5. `sound-tools . --screenshot screenshot.png` draws the window as the project opens, on macOS only: read the picture. Add `--click x,y` for each click before it, in points from the window's top left, half the picture's pixels: a click on a track's name shows its cards. Add `--play 2` to draw it after the piece played 2 seconds: meters, scopes and steps as they are then. Use that one name, so each picture replaces the last.
+5. `sound-tools . --screenshot screenshot.png` draws the window as the project opens (the app's own window loads a changed tool by itself), on macOS only: read the picture. `--click x,y` clicks first, in points from the window's top left, half the picture's pixels: a track's name shows its cards. `--play 2` draws it after 2 seconds of play: its meters, scopes and steps then. Use that one name, so each picture replaces the last.

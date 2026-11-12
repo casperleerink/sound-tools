@@ -17,7 +17,7 @@ mod steps;
 mod sync;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -813,8 +813,6 @@ impl TypeScriptCard {
     ) -> Drawing<'a> {
         let live = self.live.read(cx);
         let info = live.info(self.card);
-        static NONE: BTreeMap<String, f32> = BTreeMap::new();
-        let watches = live.watches(self.card).unwrap_or(&NONE);
         let played = live.played_of(&self.id);
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
@@ -833,7 +831,6 @@ impl TypeScriptCard {
         Drawing {
             info,
             state,
-            watches,
             played,
             tick,
             spaces: self.spaces.borrow().clone(),

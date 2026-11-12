@@ -145,6 +145,15 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
+/**
+ * A number typed for what `drag` turns, which goes the way its drag and its keys go: the window
+ * turns it, so a field a lane holds stays put, and a number input is played, not saved.
+ */
+export function turnTo(drag: Drag, value: number) {
+  const card = currentCard();
+  card.ops.push(["turn", keptDrag(card, drag), Number.isFinite(value) ? value : "-inf"]);
+}
+
 const HANDLERS = new Set(["onPress", "onRelease", "onClick", "onHover", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain", "onChange", "onKey"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */

@@ -4,7 +4,7 @@ import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, 
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
 import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, touched, Turn } from "./live";
-import { asCell, Child, currentCard, element, homeInControls, ownLines, Show, StepChange, UiNode } from "./nodes";
+import { asCell, Child, currentCard, element, homeInControls, ownLines, Show, StepChange, turnTo, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
@@ -286,7 +286,7 @@ const [CELL_WIDTH, CELL_CONTROL] = [64, 36];
  * `ValueProps`. Both turn as they are dragged, are a tab stop the arrows step, and go to
  * `default` on a double click or backspace. Enter, or a click on its value, types the value as
  * it reads: `F#2`, `440`, `50`. A field shows what plays: while a lane or a cable moves it, the
- * knob follows that, with a dot and a tooltip, and no drag turns it.
+ * knob follows that, with a dot and a tooltip, and no drag, key or typed value turns it.
  * `bipolar` draws its arc from the top, as a pan's. `quiet` hides its value, see `Quiet`.
  */
 export function Knob(props: KnobProps): UiNode {
@@ -332,7 +332,7 @@ export function Knob(props: KnobProps): UiNode {
   });
   // A dial says no value, so none is typed on it.
   if (dial) return knob();
-  const { get, set } = props.field === undefined ? valueOf(props) : numberAt(props.field, turns.label);
+  const { get, set } = typedValue(props, drag);
   const [low, high] = [Math.min(travel.min, travel.max), Math.max(travel.min, travel.max)];
   const taken = (number: number) => Math.min(Math.max(field?.integer ? Math.round(number) : number, low), high);
   // The field stands where the dial is, over the label it keeps.
@@ -526,8 +526,9 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
   return value;
 }
 
-/** What the field for typing `value` opens on: the number as `unit` reads it, which `typedNumber` reads back. */
+/** What the field for typing `value` opens on: the number as `unit` reads it, which `typedNumber` reads back, and nothing for no number. */
 function typedText(value: number, unit: NumberBoxProps["unit"]): string {
+  if (Number.isNaN(value)) return "";
   if (!Number.isFinite(value)) return "-inf";
   if (unit === "percent") return short(value * 100);
   if (unit === "pan") return value === 0 ? "C" : `${short(Math.abs(value) * 100)}${value < 0 ? "L" : "R"}`;
@@ -543,7 +544,7 @@ const typedField = (key: string, value: number, unit: NumberBoxProps["unit"], wi
  * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
  * or what code keeps, such as the tempo map, see `ValueProps`. Either changes as it is dragged:
  * a field's drag and a typed value are one undo step each, and what code keeps hears each value.
- * Tab reaches it: enter types, and the arrows step it.
+ * Tab reaches it: enter types, and the arrows step it. A typed value turns what a drag turns.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const { key, width, values, field, size = "md" } = props;
@@ -555,7 +556,9 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   // A small one says its number as a label, the others as body text: lines of 16 and 18 points.
   const [variant, line] = size === "sm" ? (["label", 16] as const) : (["body", 18] as const);
   const label = props.label ?? told.turns.label;
-  const { get, set } = field === undefined ? valueOf(props) : numberAt(field, label);
+  // Made here for the field that types its number, and told what it turns below.
+  const drag: Drag = {};
+  const { get, set } = typedValue(props, drag);
   const [typing, type] = signal(false);
   const clamped = (number: number) => Math.min(Math.max(number, min ?? -Infinity), max ?? Infinity);
   /** A typed or turned value as it takes it: one of `values`, or on the grid of `step`. */
@@ -574,7 +577,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const kept = field !== undefined ? undefined
     : values ? keptTurns(get, give, (from, moved) => values[Math.min(Math.max(Math.max(values.indexOf(taken(from)), 0) + moved, 0), values.length - 1)] ?? from)
     : keptTurns(get, give, (from, moved) => taken(from + moved * (step ?? 1)));
-  const turns: DragTurns = kept
+  drag.y = kept
     ? { onTurn: kept.onTurn, step: 1, per: props.per }
     : { value: field ?? "", min, max, unit: valueUnit, fader: told.turns.fader, label, ...stepped };
   const box = (): UiNode =>
@@ -584,7 +587,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
         kept?.onPress();
         if (button === "left" && clicks === 2) type(true);
       },
-      drag: { y: turns },
+      drag,
       children: [Label({ ...text, text: shows, unit, opacity: quietly(props.quiet, { field, key }) })],
     });
   // Enter types a number. The arrows are the window's, as a knob's.
@@ -620,15 +623,22 @@ export function Readout({ field, width, align, quiet, ...props }: ReadoutProps):
   return Space({ width, height: 16, children: [Label({ x, y: 0, text: value, unit, color: "text", align, opacity: quietly(quiet, { field, key: field }) })] });
 }
 
-/** A number field as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
-function numberAt(path: string, label?: string) {
-  const field = valueOf<unknown>({ field: path });
+/**
+ * What the field that types the number of a control opens on, and where its number goes: the
+ * way of `drag`, the control's own, so typing, dragging and the keys change the same thing. The
+ * window turns a field, unless a lane holds it, or plays a number input; what code keeps hears
+ * it. A field opens on what its record holds, -inf as a fader holds it; only the window can
+ * read a number input, which opens on nothing.
+ */
+function typedValue(props: ValueProps<number>, drag: Drag): { get: () => number; set: (number: number) => void } {
+  if (props.field === undefined) return valueOf(props);
+  const { get } = valueOf<unknown>(props);
   return {
     get: () => {
-      const found = field.get();
+      const found = get();
       return found === "-inf" ? -Infinity : typeof found === "number" ? found : Number.NaN;
     },
-    set: (number: number) => field.set(number === -Infinity ? "-inf" : Number(short(number)), label),
+    set: (number) => turnTo(drag, Number(short(number))),
   };
 }
 
@@ -778,8 +788,9 @@ export type StepsProps = ValueProps<readonly number[]> & {
  * for what code keeps), so a soft hit shows as one. A click turns a step off, or on again as
  * strong as it was, and a drag up or down on a step changes how strong it is. Tab reaches it:
  * left and right move along it, space or enter turns a step, and up and down change how strong
- * it is. `playing` names an output, as `now.value` does, whose value is the step that plays,
- * which a green ring shows while the piece plays.
+ * it is. A row of whole numbers from 0 to 1 is switches: a step is on or off, and no drag or key
+ * makes it half strong. `playing` names an output, as `now.value` does, whose value is the step
+ * that plays, which a green ring shows while the piece plays.
  */
 export function Steps(props: StepsProps): UiNode {
   const field = props.field === undefined ? undefined : fieldOf(props.field);
@@ -796,6 +807,7 @@ export function Steps(props: StepsProps): UiNode {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
     label: props.label ?? (props.field === undefined ? undefined : labelOf(props.field, field)),
     secondary: props.secondary,
+    switches: item?.integer === true && full - off === 1,
     levels: () => list().map((value) => within((value - off) / (full - off))),
     // At rest a ring on the first step would read as a selection.
     playing: step && (props.ownClock ? step : () => (clock.playing ? step : undefined)),
