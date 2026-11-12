@@ -25,7 +25,7 @@ export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag"
   scale?: Bind<DisplayScale>;
   /** The line of no change, a little brighter than a mark, at a place down from 0 to 1: 0.5 for a wave. */
   zero?: Bind<number>;
-  /** The quiet line under it, for what no mark and no control says: its numbers, `A 5 ms · D 350 ms`. */
+  /** A quiet line inside it, at its foot, for what no mark and no control says: `Turned down 3 dB`. */
   caption?: Bind<string>;
   /** A control above the drawing, such as a `SegmentedControl`. */
   control?: Child;
