@@ -77,7 +77,7 @@ export interface View<State, I extends Inputs = Inputs, M = unknown, K extends C
 /** What a live value is made of, as the window gets it. */
 type LiveNode =
   | { op: "tick" | "elapsed" | "bpm" }
-  | { op: "value"; name: string; child?: string; played: boolean; fraction: boolean }
+  | { op: "value" | "held"; name: string; child?: string; fraction?: boolean }
   | { op: "peak"; name: string; channel?: Channel }
   | { op: "device_peak"; channel?: Channel }
   | { op: "input"; channel: number }
@@ -185,6 +185,9 @@ export interface SpaceValues {
 /** The numbers of fields `State` holds. */
 type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
 
+/** Which channel of a sound a scope shows, their mean when left out, and how many samples. */
+type ScopeOptions = { channel?: Channel; frames?: number };
+
 /** What a wave draws: see `now.scope`, `now.history` and `now.file`. */
 export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
@@ -207,15 +210,15 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   /** Seconds since the view opened, on every frame: `now.elapsed.mod(1).lt(0.5)` blinks once a second. */
   elapsed: Live;
   /**
-   * A number as it is now: a field of the record, also as a drag turns it; a number input,
-   * where it was put last; or a number output of the sound. A child's, or one deeper, as
+   * A number as it is now: a field of the record as it plays, which is what a lane or a cable
+   * plays into it, else the record, also as a drag turns it; a number input, where it was put
+   * last; or a number output of the sound. A child's, or one deeper, as
    * `"bass/synth.cutoff_hz"`: its field, or its output. A number inside a field as its record
    * holds it: `"kit.pads.36.volume_db"`, `"eq.bands[0].gain_db"`, or `"voices[2].detune"` of an
-   * item of its own list. With `played`, a field as it plays: what a
-   * lane or a cable plays into it, else the record, so a knob moves with its automation. With
-   * `fraction`, how far along its range it is, 0 to 1, on a log scale for `"hz"`.
+   * item of its own list. With `fraction`, how far along its range it is, 0 to 1, on a log
+   * scale for `"hz"`.
    */
-  value(name: ValueNames<State, I>, options?: { played?: boolean; fraction?: boolean }): Live;
+  value(name: ValueNames<State, I>, options?: { fraction?: boolean }): Live;
   /**
    * The loudest sample since the last frame, 0 to 1 and above when it clips: of a `meter` child
    * by its path, `"bass-meter"` or `"bass/meter"`, or of peaks a child keeps, as `"child.name"`.
@@ -229,8 +232,14 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    * 0 while the input is closed. It is open while a `recorder` is armed or records.
    */
   input(channel: number): Live;
-  /** The last sound of a `meter` child by its path, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
-  scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
+  /**
+   * The last sound the tool itself plays, or with a path what its child there plays, such as
+   * `"bass"` or `"bass/synth"` (what a `meter` child hears), for a `Wave`: -1 to 1, the last
+   * `frames` samples (2048 when left out, at most 8192), from where the sound rises through
+   * zero, so a steady tone stands still.
+   */
+  scope(options?: ScopeOptions): WaveList;
+  scope(child: string, options?: ScopeOptions): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
   history(of: Num, frames: number): WaveList;
   /**
@@ -254,10 +263,13 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
  * ends the child, and what follows is where its record holds the number, `pads.36.volume_db`.
  * A name of a child holds no `[`, so `"voices[2].detune"` is a number of the record itself.
  */
-export function splitPath(path: string): { child: string | undefined; name: string } {
+export function splitPath(path: string): { child?: string; name: string } {
   const dot = path.indexOf(".");
-  return dot < 0 || path.slice(0, dot).includes("[") ? { child: undefined, name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
+  return dot < 0 || path.slice(0, dot).includes("[") ? { name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
 }
+
+/** 1 while a lane or a cable moves the field at `path` and holds its control, which then shows a mark. */
+export const heldByLane = (path: string): Live => new Live({ op: "held", ...splitPath(path) });
 
 function sources(): Now<Record<string, number>> {
   const part = <Part extends string>(make: (part: Part) => LiveNode) => (parts: readonly Part[]) =>
@@ -266,14 +278,12 @@ function sources(): Now<Record<string, number>> {
     tick: new Live({ op: "tick" }),
     bpm: new Live({ op: "bpm" }),
     elapsed: new Live({ op: "elapsed" }),
-    value: (path, options) => {
-      const { child, name } = splitPath(path);
-      return new Live({ op: "value", name, ...(child === undefined ? {} : { child }), played: options?.played ?? false, fraction: options?.fraction ?? false });
-    },
+    value: (path, options) => new Live({ op: "value", ...splitPath(path), fraction: options?.fraction ?? false }),
     peak: (name, channel) => new Live({ op: "peak", name, channel }),
     devicePeak: (channel) => new Live({ op: "device_peak", channel }),
     input: (channel) => new Live({ op: "input", channel }),
-    scope: (name, options) => ({ source: "scope", name, ...options }),
+    scope: (child?: string | ScopeOptions, options?: ScopeOptions) =>
+      typeof child === "string" ? { source: "scope", name: child, ...options } : { source: "scope", name: "", ...child },
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
     file: (asset, options) => ({ source: "file", asset, ...options }),
     take: (name) => ({ source: "take", name }),

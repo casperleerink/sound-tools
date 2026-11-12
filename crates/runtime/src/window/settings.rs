@@ -233,14 +233,13 @@ impl SettingsPage {
 
     fn audio(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let (strong, text, muted, faint, accent, hole, live) = (
+        let (strong, text, muted, faint, accent, hole) = (
             theme.text(),
             theme.text_secondary(),
             theme.text_muted(),
             theme.text_muted(),
             theme.lavender,
             theme.well(),
-            theme.green,
         );
         let border = theme.border_strong();
         let intro = div()
@@ -271,8 +270,16 @@ impl SettingsPage {
                 let page = page.clone();
                 let value = id.to_string();
                 let picked = id == chosen;
-                // Only the output in use is known: the engine reports no input.
-                let in_use = output && id != SYSTEM_DEFAULT && *name == *self.output_name;
+                // Beside the picked output, what plays when that is not said by its name. Only
+                // the output in use is known: the engine reports no input.
+                let playing = &self.output_name;
+                let note = (output && picked && !playing.is_empty())
+                    .then(|| match (id == SYSTEM_DEFAULT, name == playing.as_ref()) {
+                        (true, _) => Some(playing.to_string()),
+                        (false, true) => None,
+                        (false, false) => Some(format!("Not available. Playing on {playing}")),
+                    })
+                    .flatten();
                 let dot = div()
                     .flex()
                     .flex_none()
@@ -305,17 +312,13 @@ impl SettingsPage {
                             .text_color(if picked { strong } else { text })
                             .child(name.to_string()),
                     )
-                    .when(in_use, |row| {
+                    .when_some(note, |row, note| {
                         row.child(
                             div()
-                                .flex()
                                 .flex_none()
-                                .items_center()
-                                .gap(px(6.))
                                 .text_variant(TextVariant::Label)
-                                .text_color(muted)
-                                .child(div().size(px(6.)).rounded_full().bg(live))
-                                .child("In use"),
+                                .text_color(text)
+                                .child(note),
                         )
                     });
                 TabStop::new(format!("settings-{key}-row-{id}"), row).on_click(move |_, _, cx| {

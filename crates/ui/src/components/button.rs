@@ -1,10 +1,12 @@
 //! Button: `primary`, `subtle`, `ghost` plus colour variants (solid, subtle, ghost) taking any
-//! accent, with an optional icon, icon-only squares and a pill shape.
+//! accent, with an optional icon, icon-only squares and a pill shape. Its words are 14 pt; on a
+//! device card they are 12 pt, as those of the toggles and selects beside it
+//! ([`Button::on_card`]).
 
 use std::rc::Rc;
 
 use gpui::{
-    App, ClickEvent, Div, ElementId, FocusHandle, Hsla, Interactivity, SharedString,
+    App, ClickEvent, Div, ElementId, FocusHandle, FontWeight, Hsla, Interactivity, SharedString,
     StyleRefinement, Window, div, prelude::*, px,
 };
 
@@ -63,6 +65,7 @@ pub struct Button {
     icon: Option<SharedString>,
     variant: ButtonVariant,
     size: ControlSize,
+    on_card: bool,
     rounded: bool,
     disabled: bool,
     focus_handle: Option<FocusHandle>,
@@ -86,6 +89,7 @@ impl Button {
             icon: None,
             variant: ButtonVariant::default(),
             size: ControlSize::Lg,
+            on_card: false,
             rounded: false,
             disabled: false,
             focus_handle: None,
@@ -109,6 +113,14 @@ impl Button {
 
     pub fn size(mut self, size: ControlSize) -> Self {
         self.size = size;
+        self
+    }
+
+    /// A control of a device card: 24 pt high, with the 12 pt medium words and the padding of
+    /// the toggles and selects of a card.
+    pub fn on_card(mut self) -> Self {
+        self.size = ControlSize::Sm;
+        self.on_card = true;
         self
     }
 
@@ -255,6 +267,8 @@ impl RenderOnce for Button {
             .map(|b| {
                 if icon_only {
                     b.w(px(size.height()))
+                } else if self.on_card {
+                    b.px(px(pad_x(ControlSize::Md)))
                 } else {
                     b.px(px(pad_x(size)))
                 }
@@ -270,7 +284,13 @@ impl RenderOnce for Button {
             .border_color(border)
             .bg(bg)
             .text_color(fg)
-            .text_variant(TextVariant::Heading)
+            .map(|b| match self.on_card {
+                true => b
+                    .text_variant(TextVariant::Label)
+                    .line_height(px(14.))
+                    .font_weight(FontWeight::MEDIUM),
+                false => b.text_variant(TextVariant::Heading),
+            })
             .when(disabled, |b| b.opacity(0.4).cursor_not_allowed())
             .when(!disabled, |b| {
                 b.cursor_pointer()

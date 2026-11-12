@@ -18,6 +18,7 @@ use sound_ui::components::gesture::{ValueChange, ValueKey};
 use sound_ui::components::knob::{FINE_KEY_STEP, KEY_STEP};
 
 use crate::bun::EventKind;
+use crate::feeds::{Moment, lane_value};
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::ToolInfo;
 use crate::tree::{self, Axis, Drag, Turned};
@@ -767,7 +768,10 @@ impl TypeScriptCard {
                 };
                 match target {
                     Turned::Input(name) => sources.input(name),
-                    Turned::Field { name, .. } => sources.field(name),
+                    // What plays, as for a child's.
+                    Turned::Field { name, .. } => (self.feeds.played.get(name))
+                        .map(|(played, _)| *played)
+                        .or_else(|| sources.field(name)),
                     Turned::Kept => None,
                 }
             }
@@ -891,6 +895,12 @@ impl TypeScriptCard {
                     },
                     None => self.id.clone(),
                 };
+                // A lane's number is not the composer's to turn: no drag, key or reset moves it.
+                let session = self.session.read(cx);
+                let at = Moment::of(session, *session.playhead().read(cx));
+                if lane_value(session.project(), &id, name, at).is_some_and(|(_, held)| held) {
+                    return;
+                }
                 self.edit.apply_json(
                     &self.session,
                     &id,

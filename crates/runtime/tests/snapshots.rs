@@ -201,6 +201,9 @@ impl Opened {
             })
         });
         for _ in 0..30 {
+            // A page reads its meters once a frame of the executor's clock, which stands still
+            // here: without this every meter of a picture is dark.
+            cx.advance_clock(Duration::from_millis(16));
             self.advance(800, cx);
             std::thread::sleep(Duration::from_millis(16));
             cx.update_window(self.window.into(), |_, window, _| window.refresh())?;

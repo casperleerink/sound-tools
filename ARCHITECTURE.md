@@ -230,6 +230,9 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **One signals processor**; speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **A spectrum is a graph per bin** (`spectral`) on the same machine. Rejected: an op per effect, Rust for each new idea; bins as a list to loop over, a second way to write a sound.
 - **A view runs once, as in Solid**; only the ops of what changed cross to the window. Our own runtime in the SDK, so misuse is an error that says the fix. Rejected: a whole tree per change, as React (1 MB a click at 20,000 notes); Solid itself, a Babel transform in every project and DOM only.
+- **A field reads as it plays**, on every control and in `now.value`: a lane's number shows the lane and does not drag, as the window's knobs. Rejected: an option, which the shortest form left off, so a knob showed its record while a lane played.
+- **A view draws the sound of its tool or of a child with no meter**: the frame that first draws it asks the tool's behaviour for a tap. Rejected: a tap on every tool, which a song of many devices pays for.
+- **A page's transport shows the bars only for a tool that plays in them**: its sound reads `beat` or `bpm`, or a child it names is in time. Rejected: a prop per part.
 - **One import, `./sdk`, over modules by area**, so an agent reads one area. Rejected: `export *`, which makes the internals they share importable.
 - **Children reach all code filled with their defaults**, as one shape. A slot names a tool, or `takes(port)`: any tool with that port, so a project's own instruments and plugins fit. Rejected: a list of tools, which grows with every block.
 - **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back.

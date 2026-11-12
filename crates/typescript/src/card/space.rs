@@ -10,6 +10,7 @@ use gpui::{
     WeakEntity, Window, canvas, div, point, prelude::*, px,
 };
 use sound_ui::ActiveTheme;
+use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::TabStop;
 
 use crate::bun::EventKind;
@@ -22,6 +23,10 @@ use super::input::{Carried, Hears, KeyTurned, heard};
 use super::paint::{Painted, found, paint, prepaint};
 use super::shapes::{Placed, Placing, Pointer, Shown};
 use super::{Lifted, TypeScriptCard};
+
+/// What the tooltip of a control says while a lane or a cable moves its field, as the window's
+/// own knobs say it.
+const HELD_BY_A_LANE: &str = "Follows the automation of the track";
 
 impl Drawing<'_> {
     fn place(
@@ -103,6 +108,8 @@ impl Drawing<'_> {
         };
         match self.turned_by_keys(id, space, children) {
             Some(turned) => {
+                let held = (turned.turns.value.as_ref())
+                    .is_some_and(|field| self.feeds.held.contains(field));
                 let control = Control {
                     keys: Keys::Turn(turned),
                     menu: None,
@@ -110,7 +117,10 @@ impl Drawing<'_> {
                 // Round corners for its ring, as the window's controls have.
                 let holder = holder
                     .id(ElementId::Name(name.clone().into()))
-                    .rounded(px(6.));
+                    .rounded(px(6.))
+                    .when(held, |holder| {
+                        holder.tooltip(|_, cx| Tooltip::new(HELD_BY_A_LANE).view(cx))
+                    });
                 let holder = self.control(holder, id, control);
                 TabStop::new(format!("tab-{name}"), holder).into_any_element()
             }

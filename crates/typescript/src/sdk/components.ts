@@ -3,7 +3,7 @@
 import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, Space, Text } from "./drawing";
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
-import { Drag, DragTurns, Live, now, Num, Press, splitPath, Turn } from "./live";
+import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, Turn } from "./live";
 import { currentCard, element, Show, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
@@ -52,7 +52,10 @@ function fieldIn(fields: Fields, parts: readonly string[]): Field | undefined {
   return at?.kind === "object" ? undefined : at;
 }
 
-/** A number of a built-in tool as a field: its range, and the unit its name ends in. */
+/** The units a name of a built-in number ends in, as `cutoff_hz`. */
+const NAMED_UNITS = ["hz", "db", "ms", "seconds", "semitones", "cents", "octaves"] as const;
+
+/** A number of a built-in tool as a field: its range, and the unit its name says. */
 function builtInNumber(tool: string, parts: readonly string[]): Found | undefined {
   const fits = (pattern: string) => {
     const each = pattern.split(".");
@@ -62,7 +65,7 @@ function builtInNumber(tool: string, parts: readonly string[]): Found | undefine
   if (!found) return undefined;
   const { min = -Infinity, max = Infinity, scale } = found;
   const last = parts.at(-1) ?? "";
-  const unit = (["hz", "db", "ms"] as const).find((unit) => last.endsWith(`_${unit}`)) ?? (min === 0 && max === 1 ? "percent" : undefined);
+  const unit = NAMED_UNITS.find((unit) => last.endsWith(`_${unit}`)) ?? (last === "pan" ? "pan" : min === 0 && max === 1 ? "percent" : undefined);
   return { kind: "number", min, max, default: found.default, unit: scale === "log" || unit !== "hz" ? unit : undefined, builtIn: { fader: scale === "fader" } };
 }
 
@@ -105,7 +108,7 @@ function numberInput(tool: string, parts: readonly string[]): Field | undefined 
 }
 
 /** `cutoff_hz` is `Cutoff`: a name in words, without the unit it ends in. */
-const named = (name: string) => words(name.replace(/_(hz|db|ms|seconds|semitones|cents|octaves|percent)$/, ""));
+const named = (name: string) => words(name.replace(new RegExp(`_(${NAMED_UNITS.join("|")}|percent)$`), ""));
 
 /** What a control calls the field at `path`: its own label, else its name in words. */
 const labelOf = (path: string, field = fieldOf(path)) => field?.label ?? named(partsOf(splitPath(path).name).at(-1) ?? path);
@@ -141,14 +144,8 @@ const SWEEP = 0.75;
 /** Points of a drag for the whole range of a knob, as the window's. */
 const TRAVEL = 200;
 
-/** How a control reads its number: in a unit, a pan as `C`, `25L`, `100R`, or a pitch as its note, `C2` for 36, with its cents where it is not whole, `D2 +30`. */
-type Reading = Unit | "pan" | "pitch";
-
-/** The unit a drag steps a number in: a pan and a pitch have none. */
-const unitOf = (reading?: Reading): Unit | undefined => (reading === "pan" || reading === "pitch" ? undefined : reading);
-
 /** How a knob spreads a number from `min` to `max`, as the window's knobs: on a log scale for `"hz"`. */
-const knobTravel = (min: number, max: number, unit?: Reading): Travel => ({ min, max, scale: unit === "hz" && min > 0 ? "log" : "linear" });
+const knobTravel = (min: number, max: number, unit?: Unit): Travel => ({ min, max, scale: unit === "hz" && min > 0 ? "log" : "linear" });
 
 /** The fader's own travel, whatever its ends. */
 const FADER_TRAVEL: Travel = { min: 0, max: 0, scale: "fader" };
@@ -163,11 +160,11 @@ function livePosition({ min, max, scale }: Travel, value: Live): Live {
 /** The range of a number control and where a double click puts it. */
 type Range = { min: number; max: number; default: number };
 
-/** A number control: on a `field` its range and default are the field's unless said, with `played` it moves with a lane; on what code keeps they are said. */
-type NumberValue = Either<{ field: string; played?: boolean } & Partial<Range>, Kept<number> & Range>;
+/** A number control: on a `field` its range and default are the field's unless said; on what code keeps they are said. */
+type NumberValue = Either<{ field: string } & Partial<Range>, Kept<number> & Range>;
 
 /** What a number control is on, with what its field tells where its props do not say. */
-function numberOf(kind: string, props: { field?: string; min?: number; max?: number; default?: number; unit?: Reading; label?: string }) {
+function numberOf(kind: string, props: { field?: string; min?: number; max?: number; default?: number; unit?: Unit; label?: string }) {
   const found = props.field === undefined ? undefined : fieldOf(props.field);
   const field = found?.kind === "number" ? (found as NumberField & Found) : undefined;
   const [min, max] = [props.min ?? field?.min, props.max ?? field?.max];
@@ -176,7 +173,7 @@ function numberOf(kind: string, props: { field?: string; min?: number; max?: num
   const fader = field?.builtIn?.fader === true && props.min === undefined;
   const ranged = min !== undefined && max !== undefined && Number.isFinite(min) && Number.isFinite(max) && !fader;
   const turns: Omit<DragTurns, "value" | "onTurn"> = {
-    ...(ranged ? { min, max, unit: unitOf(unit) } : { fader }),
+    ...(ranged ? { min, max, unit } : { fader }),
     // A whole number turns in whole steps over the same travel.
     ...(ranged && field?.integer ? { step: 1, per: TRAVEL / Math.max(max - min, 1) } : {}),
     // A field of the project that names no default starts at its min; a built-in number says none.
@@ -225,14 +222,15 @@ function keptTurns(get: () => number, set: (value: number) => void, to: (from: n
 /**
  * What a knob or a fader shows and the drag that turns it, `along` an axis. The window measures
  * the drag and the keys of both a field and what code keeps, so they behave as one: a field is
- * changed there, and `onChange` hears each value of what code keeps as it goes.
+ * changed there, and `onChange` hears each value of what code keeps as it goes. `held` is 1
+ * while a lane or a cable moves a field: the window then lets no drag or key turn it.
  */
-function turned(kind: string, props: Either<{ field: string; played?: boolean }, Kept<number>> & { key?: string }, travel: Travel | undefined, turns: Omit<DragTurns, "value" | "onTurn">, along: "x" | "y") {
+function turned(kind: string, props: Either<{ field: string }, Kept<number>> & { key?: string }, travel: Travel | undefined, turns: Omit<DragTurns, "value" | "onTurn">, along: "x" | "y") {
   if (props.field !== undefined) {
-    const { field: name, played } = props;
-    const value = now.value(name, { played });
-    const fraction = travel ? livePosition(travel, value).clamp(0, 1) : now.value(name, { played, fraction: true });
-    return { key: props.key ?? `${kind}-${name}`, value, fraction, drag: { [along]: { value: name, ...turns } } as Drag, onPress: undefined };
+    const name = props.field;
+    const value = now.value(name);
+    const fraction = travel ? livePosition(travel, value).clamp(0, 1) : now.value(name, { fraction: true });
+    return { key: props.key ?? `${kind}-${name}`, value, fraction, held: heldByLane(name), drag: { [along]: { value: name, ...turns } } as Drag, onPress: undefined };
   }
   const { value, onChange } = props;
   const at = travel ?? FADER_TRAVEL;
@@ -241,16 +239,21 @@ function turned(kind: string, props: Either<{ field: string; played?: boolean },
     key: props.key ?? controlId(kind),
     value: () => Live.of(finite(read(value))),
     fraction: () => Live.of(within(positionOf(at, read(value)))),
+    held: undefined,
     drag: { [along]: { onTurn, ...turns } } as Drag,
     onPress,
   };
 }
 
+/** The dot of a control whose field a lane or a cable moves, as the window's knobs have: 4 points, in the grey of a label. */
+const heldMark = (held: Live | undefined, x: number, y: number): UiNode[] => (held ? [Circle({ x, y, radius: 2, color: "text-secondary", opacity: held })] : []);
+
 export type KnobProps = NumberValue & {
   key?: string;
   /** The field's own label, else its name in words, when left out. It names its undo step too. */
   label?: string;
-  unit?: Reading;
+  /** The field's own when left out. */
+  unit?: Unit;
   bipolar?: boolean;
   /** How much text it shows: its label and its value (`"all"`, when left out); its `"value"` alone, for knobs whose names a column beside them says once; or `"none"`, a 28-point dial that fits a row of controls. */
   text?: "all" | "value" | "none";
@@ -259,14 +262,14 @@ export type KnobProps = NumberValue & {
 /**
  * A knob, as the app's knobs look: `<Knob field="cutoff" />`, or on what code keeps, see
  * `ValueProps`. Both turn as they are dragged, are a tab stop the arrows step, and go to
- * `default` on a double click or backspace. With `played` it moves with a lane.
- * `bipolar` draws its arc from the top, as a pan's; `unit: "pan"` reads `C`, `25L`, `100R`, and
- * `"pitch"` the note of a pitch, `C2` for 36.
+ * `default` on a double click or backspace. A field shows what plays: while a lane or a cable
+ * moves it, the knob follows that, with a dot and a tooltip, and no drag turns it.
+ * `bipolar` draws its arc from the top, as a pan's.
  */
 export function Knob(props: KnobProps): UiNode {
   const { label, unit, travel, turns, unranged } = numberOf("Knob", props);
   if (!travel || travel.scale === "fader") throw unranged();
-  const { key, value, fraction, drag, onPress } = turned("knob", props, travel, turns, "y");
+  const { key, value, fraction, held, drag, onPress } = turned("knob", props, travel, turns, "y");
   const turn = (): Live => read(fraction).times(SWEEP).minus(SWEEP / 2);
   const dial = props.text === "none";
   const [centreX, centreY, radius, cap] = dial ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
@@ -291,6 +294,8 @@ export function Knob(props: KnobProps): UiNode {
       Arc({ x: centreX, y: centreY, radius, from: props.bipolar ? 0 : -SWEEP / 2, to: turn, color: "text", width: 2.5 }),
       Circle({ x: centreX, y: centreY, radius: cap, color: "fill-strong" }),
       Line({ from: along(cap / 3), to: along(cap * 0.76), color: "text", width: 2 }),
+      // In the top right corner of the dial, clear of its arc.
+      ...heldMark(held, centreX + radius - 2, centreY - radius + 2),
       ...texts,
     ],
   });
@@ -340,7 +345,7 @@ const faderLevel = (amplitude: Live) => amplitude.pow(20 / FADER.decade).times(F
 /** What a meter shows: the peaks a child keeps as `now.peak` names them, channels of the audio input, or what the device plays. */
 export type Peaks = { of: string } | { input: readonly number[] } | "device";
 
-export type FaderProps = Either<{ field: string; played?: boolean }, Kept<number>> & { key?: string; length: number; horizontal?: boolean; default?: number; /** The undo step of a field. */ label?: string; min?: number; max?: number; unit?: Unit; meter?: Peaks };
+export type FaderProps = Either<{ field: string }, Kept<number>> & { key?: string; length: number; horizontal?: boolean; default?: number; /** The undo step of a field. */ label?: string; min?: number; max?: number; unit?: Unit; meter?: Peaks };
 
 /** The level of `channel` of `peaks`; one channel of the input shows on both bars. */
 const levelOf = (peaks: Peaks, channel: 0 | 1): Live =>
@@ -386,7 +391,7 @@ export function Fader(props: FaderProps): UiNode {
   const { travel, turns } = numberOf("Fader", { ...props, label: undefined });
   const scale = travel ?? (props.field === undefined ? FADER_TRAVEL : undefined);
   const moves = { ...turns, ...(scale?.scale === "fader" ? { fader: true } : {}), travel: length, label: props.label ?? turns.label };
-  const { key, fraction, drag, onPress } = turned("fader", props, scale, moves, horizontal ? "x" : "y");
+  const { key, fraction, held, drag, onPress } = turned("fader", props, scale, moves, horizontal ? "x" : "y");
   const bars = meter === undefined ? [] : levelBars(meter, length, along(horizontal, length), 8, 5, 2);
   const at = () => read(fraction).times(length).minus(3);
   const handle = horizontal
@@ -399,7 +404,7 @@ export function Fader(props: FaderProps): UiNode {
     cursor: horizontal ? "ew-resize" : "ns-resize",
     drag,
     onPress,
-    children: [...bars, handle],
+    children: [...bars, handle, ...heldMark(held, horizontal ? length - 2 : 26, 2)],
   });
 }
 
@@ -424,9 +429,7 @@ export type NumberBoxProps = Either<
   /** Points of a drag for one step: 10 when left out. */
   per?: number;
   /** How it shows the number, as a `Label` does: the field's unit when left out. */
-  unit?: Reading | TickUnit;
-  /** A field as it plays, see `now.value`. */
-  played?: boolean;
+  unit?: Unit | TickUnit;
   /** The undo step of a field: "Change <its label>" when left out. */
   label?: string;
   width: number;
@@ -485,8 +488,8 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   };
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
   const text = { x, y: Math.round((height - line) / 2), variant, color: "text", align: props.align } as const;
-  const shows = field !== undefined ? now.value(field, { played: props.played }) : props.show !== undefined ? Live.of(props.show) : () => Live.of(finite(get()));
-  const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Reading);
+  const shows = field !== undefined ? now.value(field) : props.show !== undefined ? Live.of(props.show) : () => Live.of(finite(get()));
+  const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit);
   const stepped = step === undefined ? {} : { step, per: props.per };
   /** What its drag turns. What code keeps moves in steps: through `values`, or of `step`. */
   const kept = field !== undefined ? undefined
@@ -494,7 +497,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     : keptTurns(get, give, (from, moved) => taken(from + moved * (step ?? 1)));
   const turns: DragTurns = kept
     ? { onTurn: kept.onTurn, step: 1, per: props.per }
-    : { value: field ?? "", min, max, unit: unitOf(valueUnit), fader: told.turns.fader, label, ...stepped };
+    : { value: field ?? "", min, max, unit: valueUnit, fader: told.turns.fader, label, ...stepped };
   const box = (): UiNode =>
     Space({
       key, width, height, cursor: "ns-resize",
@@ -634,7 +637,7 @@ export function SegmentedControl<const T extends string | number | boolean | nul
   }, []);
 }
 
-export type SliderProps = { field: string; key?: string; min?: number; max?: number; default?: number; unit?: Unit; label?: string; played?: boolean; bipolar?: boolean; width?: number };
+export type SliderProps = { field: string; key?: string; min?: number; max?: number; default?: number; unit?: Unit; label?: string; bipolar?: boolean; width?: number };
 
 /**
  * A field or a number input on a short line, as the window's sliders: a drag sideways, ten times
@@ -642,11 +645,11 @@ export type SliderProps = { field: string; key?: string; min?: number; max?: num
  * `min` and `max` say, on a log scale for `"hz"`; `bipolar` draws from 0. 120 points wide unless
  * `width` says.
  */
-export function Slider({ field, played, key, bipolar, width, ...props }: SliderProps): UiNode {
+export function Slider({ field, key, bipolar, width, ...props }: SliderProps): UiNode {
   const { travel, turns, unranged } = numberOf("Slider", { ...props, field });
   if (!travel || travel.scale === "fader") throw unranged();
   const { min, max } = travel;
-  return element("slider", { key, bipolar, width, field, min, max, unit: turns.unit, default: turns.default, label: turns.label, value: now.value(field, { played }) }, []);
+  return element("slider", { key, bipolar, width, field, min, max, unit: turns.unit, default: turns.default, label: turns.label, value: now.value(field) }, []);
 }
 
 /**

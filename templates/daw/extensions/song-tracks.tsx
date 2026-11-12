@@ -97,13 +97,12 @@ export const Heads = ({ page }: { page: Page }) => {
 
 /**
  * A track's header: its colour, its name, what plays it, and of its toggles those that are on,
- * all of them while the pointer is over it or its panel shows. A click anywhere on it but its
+ * all of them while the pointer is over it or it is chosen. A click anywhere on it but its
  * toggles shows its panel, a double click names it, a right press opens its menu.
  */
 const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
-  const { state, memory, panelOf, openPanel, toggleMute, toggleSolo } = page;
-  // Chosen while what shows below is its own: its panel, or the notes of one of its clips.
-  const chosen = () => panelOf() === each.name || (memory.below?.kind === "editor" && memory.below.clip.startsWith(`${each.name}/`));
+  const { state, memory, chosenTrack, openPanel, toggleMute, toggleSolo } = page;
+  const chosen = () => chosenTrack() === each.name;
   const all = () => memory.hovered === each.name || chosen();
   const dim = () => (muted(each) ? DIM : 1);
   // A head drawn anew, as when lanes show, hears no leave of the one it replaces.

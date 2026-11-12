@@ -107,7 +107,7 @@ const laneName = ({ memory }: Page, track: string, target: string, whole = false
  * the name to remove the lane.
  */
 export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lane: { lane: string; target: string } }) => {
-  const played = now.value(`${track}/${lane.target}`, { played: true });
+  const played = now.value(`${track}/${lane.target}`);
   const known = () => page.memory.ranges[`${track}/${lane.target}`];
   const mover = () => moverOf(page, track, lane.lane);
   const path = `${track}/${lane.lane}`;

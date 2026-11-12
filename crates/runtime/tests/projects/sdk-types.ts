@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, alpha, audio, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, now, number, list, notes, NumberBox, output, Page, Path, rise, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, bang, Wave, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, alpha, audio, blend, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, Notes, now, number, list, notes, NumberBox, output, Page, Path, rise, Row, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, Transport, bang, Wave, type Color, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -547,7 +547,7 @@ tool({
   doc: "A card of a display and a knob.",
   state: { level: number({ min: 0, max: 1 }) },
   view: ({ now }) => [
-    Display({ caption: "Level", children: [Wave({ x: 0, y: 0, width: 1, height: 1, list: now.history(now.value("level"), 120) }), Label({ x: 0, y: 0, text: "Level", variant: "heading", tone: "muted" })] }),
+    Display({ caption: "Level", children: [Wave({ list: now.history(now.value("level"), 120) }), Label({ x: 0, y: 0, text: "Level", variant: "heading", tone: "muted" })] }),
     Controls({ children: Knob({ field: "level", min: 0, max: 1, default: 0 }) }),
   ],
 });
@@ -566,15 +566,17 @@ Select({ field: "mode" });
 Steps({ field: "kick" });
 // Each can still be said, and a number inside a child's record is a field too.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
-Knob({ field: "kit.pads.36.volume_db", label: "Level", played: true });
+Knob({ field: "kit.pads.36.volume_db", label: "Level" });
+// @ts-expect-error: a field always shows what plays, so no control says it.
+Knob({ field: "cutoff", played: true });
+// @ts-expect-error: nor a live value.
+now.value("cutoff", { played: true });
 // Or it shows what code keeps and hears it with `onChange`, and then says its range or its options.
 Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0 });
 // @ts-expect-error: what code keeps has no field to tell its range.
 Knob({ value: () => 0.5, onChange: (value: number) => value });
 // @ts-expect-error: nor its options.
 SegmentedControl({ value: "a", onChange: (picked: string) => picked });
-// @ts-expect-error: a lane plays a field, not what code keeps.
-Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0, played: true });
 // One prop says how much text a knob shows.
 Knob({ field: "cutoff", text: "value" });
 // @ts-expect-error: a knob has no size.
@@ -599,3 +601,38 @@ const marks = ["teal", "sky"] as const;
 for (const mark of marks) Path({ points, color: alpha(mark, 40), width: 2 });
 // @ts-expect-error: a colour is one of the theme.
 alpha("grey", 40);
+// Colours kept in a list, typed by what the list holds or left as they are written.
+const voices: { title: string; color: Color }[] = [{ title: "Root", color: "blue" }, { title: "Reed", color: "teal/60" }];
+for (const voice of voices) Path({ points, color: blend(alpha(voice.color, 25), voice.color, now.value("level")), width: 2 });
+const drones = [{ title: "Choir", color: "mauve" }, { title: "Glass", color: "peach" }] as const;
+for (const drone of drones) Wave({ list: now.scope(), color: drone.color });
+// @ts-expect-error: a colour of a list that says nothing is any text.
+for (const drone of [{ color: "mauve" }]) Wave({ list: now.scope(), color: drone.color });
+
+// A field says its unit, in music's own: a knob on it needs none.
+number({ min: -12, max: 12, unit: "semitones" });
+number({ min: 24, max: 84, unit: "pitch" });
+number({ min: -1, max: 1, unit: "pan" });
+Label({ x: 0, y: 0, text: now.value("detune"), unit: "cents" });
+// @ts-expect-error: beats are no unit of a number.
+number({ min: 0, max: 4, unit: "beats" });
+
+// A scope is of what the tool plays, or of a child by its path; a wave and notes fill their space unless they say a place.
+Wave({ list: now.scope() });
+Wave({ list: now.scope({ frames: 1024, channel: 0 }) });
+Wave({ list: now.scope("bass/synth", { frames: 1024 }), y: 0.5, height: 0.5 });
+Notes({ list: now.take("rec"), color: "text" });
+// @ts-expect-error: a scope is of sound, not of a number.
+Wave({ list: now.scope(3) });
+
+// A row of parts takes a gap of the scale and nothing of a style.
+Row({ gap: "lg", grow: true, children: [Knob({ field: "cutoff" }), Knob({ field: "level" })] });
+// @ts-expect-error: a gap of a row is a step of the scale.
+Row({ gap: 10 });
+// @ts-expect-error: a row is no div to style.
+Row({ style: { padding: "lg" } });
+
+// A transport shows the bars by what its tool plays, or as it is told.
+Page({ header: Transport({ time: true }) });
+// @ts-expect-error: the parts of a transport are not picked one by one.
+Transport({ metronome: false });

@@ -237,6 +237,7 @@ async function load() {
 function described(spec: Spec, file: string) {
   const inputs = Object.entries(spec.inputs ?? {});
   const sounds = combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))] as const);
+  beats.set(spec.name, sounds.some(([, graph]) => "Ok" in graph && readsBeat(graph.Ok)));
   // Before its actions are read: a `Transport` in its view gives it `play`.
   const view = made(() => draw(spec));
   return {
@@ -273,6 +274,26 @@ function described(spec: Spec, file: string) {
 function readsInput(graph: Graph): boolean {
   return graph.nodes.some((node) => (node.op === "input" || node.op === "inputLeft" || node.op === "inputRight") && node.name === undefined);
 }
+
+/** Whether a sound plays in the bars of the piece: it reads its beat or its tempo. */
+function readsBeat(graph: Graph): boolean {
+  return graph.nodes.some((node) => node.op === "beat" || node.op === "bpm");
+}
+
+/** Whether the sound of each tool reads the beat, once worked out. */
+const beats = new Map<string, boolean>();
+
+// A `Transport` asks of the tool that draws it and of its children, some of which a file loaded later describes.
+sdk.host.readsBeat = (tool) => {
+  const spec = sdk.host.tools.get(tool);
+  if (spec && !beats.has(tool)) {
+    beats.set(tool, combinations(spec).some((choices) => {
+      const graph = made(() => sound(spec, choices));
+      return "Ok" in graph && readsBeat(graph.Ok);
+    }));
+  }
+  return beats.get(tool) ?? false;
+};
 
 /** Whether a sound is silence and nothing else: it moves numbers, as an LFO does. */
 function isSilent(graph: Graph): boolean {

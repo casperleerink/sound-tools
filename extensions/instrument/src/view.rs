@@ -132,25 +132,28 @@ impl SynthView {
                 view.device.change(label, change, set, cx);
             },
         );
-        let caption = format!(
-            "A {} · D {} · S {} · R {}",
-            seconds_readout(adsr.attack),
-            seconds_readout(adsr.decay),
-            percent_readout(adsr.sustain),
-            seconds_readout(adsr.release),
-        );
         // The synth's own stages are drawn straight.
         let straight = [0.; 3];
         let time = ATTACK_KNOB.range();
-        envelope_display(
+        let display = envelope_display(
             "envelope",
             time,
             (adsr, defaults, automated),
             straight,
             on_change,
         )
-        .caption(caption)
-        .control(self.waveform(state, cx))
+        .control(self.waveform(state, cx));
+        // Expanded, the knobs of the envelope say its numbers.
+        if self.expanded {
+            return display;
+        }
+        display.caption(format!(
+            "A {} · D {} · S {} · R {}",
+            seconds_readout(adsr.attack),
+            seconds_readout(adsr.decay),
+            percent_readout(adsr.sustain),
+            seconds_readout(adsr.release),
+        ))
     }
 
     fn waveform(&self, state: &SynthState, cx: &mut Context<Self>) -> SegmentedControl {
@@ -191,7 +194,7 @@ impl SynthView {
                     view.device.change("Change character", change, set, cx);
                 }
             }));
-        Cell::new(characters).span(2).label("Character")
+        Cell::new(characters).span(2)
     }
 }
 

@@ -7,7 +7,8 @@ use std::rc::Rc;
 use gpui::{FontWeight, Hsla, SharedString};
 use sound_ui::LiveNotes;
 use sound_ui::components::knob::{
-    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
+    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout,
+    seconds_readout, semitones_readout, short,
 };
 use sound_ui::theme::Theme;
 
@@ -16,10 +17,14 @@ use crate::tokens::{TextVariant, Tone, tone_of};
 use crate::tools::Unit;
 use crate::tree::{
     self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
-    Weight, Words,
+    TickReadout, Weight, Words,
 };
 
 use super::input::Hears;
+
+/// The frames of a scope a wave draws when it says no number: 43 ms at 48 kHz, a few waves of
+/// a low note.
+const SCOPE_FRAMES: usize = 2048;
 
 /// What a shape of a space does with the pointer.
 #[derive(Clone)]
@@ -501,14 +506,22 @@ impl Placing<'_> {
                 let Some((kept, _)) = feeds.scopes.get(name) else {
                     return Vec::new();
                 };
-                let count = frames.map_or(kept.len(), |frames| frames as usize);
-                let skip = kept.len().saturating_sub(count);
                 let pick = |frame: &[f32; 2]| match channel {
                     Some(0) => frame[0],
                     Some(_) => frame[1],
                     None => (frame[0] + frame[1]) / 2.0,
                 };
-                kept.iter().skip(skip).map(pick).collect()
+                let count = (frames.map_or(SCOPE_FRAMES, |frames| frames as usize)).min(kept.len());
+                // From where the sound last rose through zero with that many frames after it,
+                // so a steady tone stands still, as on a scope.
+                let latest = kept.len() - count;
+                let rises = |at: &usize| {
+                    let before = at.checked_sub(1).and_then(|before| kept.get(before));
+                    before.is_some_and(|before| pick(before) < 0.0)
+                        && kept.get(*at).is_some_and(|here| pick(here) >= 0.0)
+                };
+                let start = (0..=latest).rev().find(rises).unwrap_or(latest);
+                (kept.iter().skip(start).take(count).map(pick)).collect()
             }
             Some(List::History { of, frames, key }) => {
                 feeds.history(key, *frames, self.sources.number(of))
@@ -525,6 +538,25 @@ impl Placing<'_> {
         number
             .as_ref()
             .map_or(0.0, |number| self.sources.number(number))
+    }
+
+    /// The box of a wave or of notes, from `(left, top)`: where it says, and to the edges of
+    /// what shows of its space where it does not, so one that says no place fills it.
+    fn filled(&self, shape: &tree::ShapeProps, (left, top): (f64, f64)) -> (f64, f64, f64, f64) {
+        let shown = self.shown.as_ref();
+        let from = |said: &Option<tree::Num>, origin: f64, edge: Option<f64>| match said {
+            Some(said) => origin + self.sources.number(said),
+            None => edge.unwrap_or(origin),
+        };
+        let x = from(&shape.x, left, shown.map(|shown| shown.left));
+        let y = from(&shape.y, top, shown.map(|shown| shown.top));
+        let size = |said: &Option<tree::Num>, edge: Option<f64>, start: f64| match said {
+            Some(said) => self.sources.number(said),
+            None => edge.map_or(0.0, |edge| edge - start),
+        };
+        let width = size(&shape.width, shown.map(|shown| shown.right), x);
+        let height = size(&shape.height, shown.map(|shown| shown.bottom), y);
+        (x, y, width, height)
     }
 
     /// The shapes under `children`, with where those that stay are.
@@ -866,7 +898,7 @@ impl Placing<'_> {
                 align: shape.align.unwrap_or(Align::Left),
             },
             ShapeKind::Wave => {
-                let width = self.number(&shape.width);
+                let (x, y, width, height) = self.filled(shape, (left, top));
                 let level = (shape.level.iter().flatten())
                     .map(|[along, factor]| {
                         let along = self.sources.number(along) / width.max(f64::MIN_POSITIVE);
@@ -877,7 +909,7 @@ impl Placing<'_> {
                     x,
                     y,
                     width,
-                    height: self.number(&shape.height),
+                    height,
                     wave: Rc::new(Wave {
                         values: self.list(shape.list.as_ref()),
                         low: shape.low.unwrap_or(-1.0),
@@ -893,11 +925,12 @@ impl Placing<'_> {
                     Some(List::Take { name }) => self.sources.feeds.take_notes.get(name),
                     _ => None,
                 };
+                let (x, y, width, height) = self.filled(shape, (left, top));
                 Geometry::Notes {
                     x,
                     y,
-                    width: self.number(&shape.width),
-                    height: self.number(&shape.height),
+                    width,
+                    height,
                     notes: Rc::new(
                         take.map_or(Notes::NONE, |take| Notes::of(take, self.sources.tick)),
                     ),
@@ -934,43 +967,45 @@ fn readout(value: f32, unit: Option<Unit>) -> String {
     match unit {
         Some(Unit::Hz) => hertz_readout(value),
         Some(Unit::Ms) => milliseconds_readout(value),
+        Some(Unit::Seconds) => seconds_readout(value),
         Some(Unit::Db) => decibels_readout(value),
         Some(Unit::Percent) => percent_readout(value),
+        Some(Unit::Semitones) => semitones_readout(value),
+        Some(Unit::Cents) => format!("{} ct", short(value)),
+        Some(Unit::Octaves) => format!("{} oct", short(value)),
+        Some(Unit::Pitch) => pitch_readout(f64::from(value)),
+        Some(Unit::Pan) => pan_readout(value),
         None => short(value),
     }
 }
 
-/// A live number as text shows it: a tick as a place in the piece (`5.3`), as minutes and seconds
-/// (`1:07`), or as the time signature there (`7/8`).
+/// A live number as text shows it: in its unit, or a tick as a place in the piece (`5.3`), as
+/// minutes and seconds (`1:07`), or as the time signature there (`7/8`).
 fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>) -> String {
-    let unit = |unit| readout(value as f32, Some(unit));
+    let shown = match shown {
+        None => return readout(value as f32, None),
+        // A pitch keeps its cents, which an `f32` of a high note would round.
+        Some(Readout::Unit(Unit::Pitch)) => return pitch_readout(value),
+        Some(Readout::Unit(unit)) => return readout(value as f32, Some(unit)),
+        Some(Readout::Tick(shown)) => shown,
+    };
     let tick = sound_core::Ticks(value.max(0.0) as u64);
-    let signatures = clock.map(|clock| clock.tempo_map().time_signatures());
+    let Some(clock) = clock else {
+        return String::new();
+    };
+    let signatures = clock.tempo_map().time_signatures();
     match shown {
-        None => readout(value as f32, None),
-        Some(Readout::Hz) => unit(Unit::Hz),
-        Some(Readout::Ms) => unit(Unit::Ms),
-        Some(Readout::Db) => unit(Unit::Db),
-        Some(Readout::Percent) => unit(Unit::Percent),
-        Some(Readout::Pan) => pan_readout(value as f32),
-        Some(Readout::Pitch) => pitch_readout(value),
-        Some(Readout::Position) => signatures.map_or_else(String::new, |signatures| {
+        TickReadout::Position => {
             let position = signatures.bar_beat_of(tick);
             format!("{}.{}", position.bar, position.beat)
-        }),
-        Some(Readout::Time) => clock.map_or_else(String::new, |clock| {
+        }
+        TickReadout::Time => {
             let seconds = clock.seconds_of(tick).max(0.0) as u64;
             format!("{}:{:02}", seconds / 60, seconds % 60)
-        }),
-        Some(Readout::Signature) => signatures.map_or_else(String::new, |signatures| {
-            signatures.bar_at(tick).signature.to_string()
-        }),
-        Some(Readout::Beats) => signatures.map_or_else(String::new, |signatures| {
-            signatures.bar_at(tick).signature.numerator().to_string()
-        }),
-        Some(Readout::Note) => signatures.map_or_else(String::new, |signatures| {
-            signatures.bar_at(tick).signature.denominator().to_string()
-        }),
+        }
+        TickReadout::Signature => signatures.bar_at(tick).signature.to_string(),
+        TickReadout::Beats => signatures.bar_at(tick).signature.numerator().to_string(),
+        TickReadout::Note => signatures.bar_at(tick).signature.denominator().to_string(),
     }
 }
 

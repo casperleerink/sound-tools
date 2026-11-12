@@ -510,21 +510,20 @@ impl WavetableView {
         }
     }
 
-    /// A cell with a toggle that turns something on or off, labelled with what it is.
+    /// A cell with a switch that turns something on or off, named for what it is.
     fn switch(
         id: SharedString,
-        label: &'static str,
+        name: &'static str,
         what: String,
         on: bool,
         cx: &mut Context<Self>,
         set: impl Fn(&mut WavetableState, bool) + 'static,
     ) -> Cell {
-        let text = if on { "On" } else { "Off" };
-        let toggle = Toggle::new(id, text, on).on_change(weak_callback(cx, move |view, on, cx| {
+        let toggle = Toggle::new(id, name, on).on_change(weak_callback(cx, move |view, on, cx| {
             let label = format!("Turn {what} {}", if on { "on" } else { "off" });
             view.device.change(&label, ValueChange::Set(on), &set, cx);
         }));
-        Cell::new(toggle).label(label)
+        Cell::switch(toggle)
     }
 
     /// The wavetable of an oscillator, with its table above it. A drag up and down anywhere
@@ -537,16 +536,12 @@ impl WavetableView {
     ) -> Display {
         let oscillator = (object.get)(state);
         let table = wavetable(oscillator.table).ok();
-        let (lines, playing, caption) = match &table {
-            Some(table) => {
-                let (frame, count) = drawing::frame_number(table, oscillator.position);
-                (
-                    drawing::frames(table),
-                    drawing::playing(table, oscillator.position),
-                    format!("{} · frame {frame} of {count}", object.title),
-                )
-            }
-            None => (Vec::new(), Vec::new(), object.title.to_string()),
+        let (lines, playing) = match &table {
+            Some(table) => (
+                drawing::frames(table),
+                drawing::playing(table, oscillator.position),
+            ),
+            None => (Vec::new(), Vec::new()),
         };
         let travel = Axis::new(
             POSITION_TRAVEL,
@@ -576,7 +571,6 @@ impl WavetableView {
             .curve(playing)
             .filled(false)
             .handle(area)
-            .caption(caption)
             .control(tables)
     }
 
@@ -749,13 +743,12 @@ impl WavetableView {
             move |state, character| (object.get_mut)(state).character = character,
         );
         let character = Self::segments(object.id("character"), filter.character, cx, pick);
-        let slope_value = format!("{} dB/oct", filter.slope.label());
         Column::new()
             .top(on)
             .top(self.knob(object, &DRIVE, state, cx))
-            .top(Cell::new(slope).span(2).label("Slope").value(slope_value))
+            .top(Cell::new(slope).span(2).label("Slope"))
             .bottom(Cell::new(kind).span(2).label("Type"))
-            .bottom(Cell::new(character).span(2).label("Character"))
+            .bottom(Cell::new(character).span(2))
     }
 
     /// The cutoff and the resonance of the first filter are on the card before it unfolds, so
@@ -817,13 +810,6 @@ impl WavetableView {
             sustain: automated(&SUSTAIN),
             release: automated(&RELEASE),
         };
-        let caption = format!(
-            "A {} · D {} · S {} · R {}",
-            readout(Unit::Seconds, values.attack),
-            readout(Unit::Seconds, values.decay),
-            readout(Unit::Part, values.sustain),
-            readout(Unit::Seconds, values.release),
-        );
         let switch = Self::segments("envelope-shown", self.envelope, cx, Self::show_envelope);
         let display = envelope_display(
             "envelope-display",
@@ -832,7 +818,6 @@ impl WavetableView {
             curves,
             on_change,
         )
-        .caption(caption)
         .control(switch);
         let mut knob = |control| self.knob(object, control, state, cx);
         Section::new()
@@ -857,18 +842,9 @@ impl WavetableView {
             (object.get_mut)(state).shape = shape
         });
         let shape = Self::select(object.id("shape"), lfo.shape, cx, pick).menu_width(160.);
-        let caption = match lfo.sync {
-            true => format!(
-                "{} · {}",
-                lfo.division.label(),
-                lfo.feel.label().to_lowercase()
-            ),
-            false => readout(Unit::Hertz, lfo.rate_hz),
-        };
         let display = Display::new("lfo-display")
             .curve(lfo_line(lfo.shape, 2., 0.5, 0.36))
             .zero_line(0.5)
-            .caption(caption)
             .control(switch)
             .control(shape);
         let sync = Self::switch(
@@ -911,10 +887,11 @@ impl WavetableView {
             Cell::new(feel).span(2).label("Feel")
         });
         // The switches first, so Sync stays under the pointer when it changes what is after it.
+        // `Retrigger` does not fit in one column.
         let rate = Column::new().top(rate);
         Section::new()
             .display(display)
-            .column(Column::new().top(sync).bottom(retrigger))
+            .column(Column::new().top(sync.span(2)).bottom(retrigger.span(2)))
             .column(match feel {
                 Some(feel) => rate.bottom(feel),
                 None => rate,

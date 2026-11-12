@@ -1,4 +1,4 @@
-import { type BangInput, type Color, type ShapeLiteral, type Style, Button, Knob, SegmentedControl, Space, Text, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
+import { type BangInput, type Color, type ShapeLiteral, type Style, Button, Row, Knob, SegmentedControl, Space, Text, channel, choice, delay, feedback, h, number, lowpass, max, mix, noise, pow, sampleRate, tool, bang } from "./sdk";
 
 // The page, in points.
 const WIDTH = 640;
@@ -33,7 +33,6 @@ type Memory = { balls: Ball[]; shake: number[]; time: number };
 const DEFAULTS = { gravity: 900, bounce: 0.7 };
 
 const page: Style = { gap: "md", padding: "md", background: "background" };
-const row: Style = { direction: "row", gap: "md", align: "center" };
 
 tool({
   name: "gravity-harp",
@@ -168,10 +167,10 @@ tool({
 
     return (
       <div style={page}>
-        <div style={row}>
+        <Row>
           <Text variant="title">Gravity harp</Text>
           <Button label="Clear" variant="subtle" onClick={() => (memory.balls = [])} />
-        </div>
+        </Row>
         <Space
           width={WIDTH}
           height={HEIGHT}
@@ -181,19 +180,19 @@ tool({
         >
           {shapes}
         </Space>
-        <div style={row}>
+        <Row>
           {options("Root", "root", ["C", "D", "E", "F", "G", "A"])}
           {options("Scale", "scale", ["major", "minor"])}
           {options("Octave", "octave", [3, 4, 5])}
-        </div>
-        <div style={row}>
+        </Row>
+        <Row>
           <Knob field="decay" />
           <Knob field="brightness" />
           <Knob field="space" />
           <Knob field="volume" />
           <Knob field="gravity" />
           <Knob field="bounce" />
-        </div>
+        </Row>
       </div>
     );
   },

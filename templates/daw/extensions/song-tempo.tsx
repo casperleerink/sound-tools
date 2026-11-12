@@ -50,7 +50,8 @@ export const TempoLane = ({ page }: { page: Page }) => {
       <Line from={[playhead, 0]} to={[playhead, height]} color="text" width={1} />
       <For each={marks}>
         {(change) => {
-          const text = `${bpmText(change.bpm)} bpm`;
+          // As the line says its tempos: the lane's head says the unit.
+          const text = bpmText(change.bpm);
           const y = () => clamp(yOf()(change.bpm), 9, height - 9);
           const shown = () => (chosen(change.tick) ? 1 : now.hover(`tempo-${change.tick}`));
           return [

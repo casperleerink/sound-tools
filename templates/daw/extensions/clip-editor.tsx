@@ -1,6 +1,6 @@
 import { blend, Button, For, Fragment, h, humanize, Label, legato, Line, memo, now, quantize, Rect, Select, selector, signal, Space, Text, untrack, type Accessor, type Color, type Context, type Drag, type FilledStateOfTool, type Frozen, type Memory, type Note, type Press } from "./sdk";
 
-// The note editor of one timeline, as the window drew it: a header with its track and a ruler,
+// The note editor of one timeline, as the window drew it: a header with its track, its title and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
 // expression lanes. Times are ticks from the clip's start.
 const BEAT = 960;
@@ -177,8 +177,9 @@ export interface EditorProps {
   clip: Accessor<Frozen<Clip> | undefined>;
   /** Where the bars of the song start, in ticks from the clip's start. */
   bars: Accessor<readonly number[]>;
-  /** The track's name and colour. */
+  /** The track's name and colour, and the title the composer gave the clip, or none. */
   name: Accessor<string>;
+  title: Accessor<string>;
   colour: Accessor<Color>;
   /** Keeps the editor's scroll and zoom, and fits it to a clip once: the clip's `track/clip`. */
   id: string;
@@ -252,8 +253,8 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
   return true;
 }
 
-/** The editor: a header with the track and the ruler, the notes, and the lane under them. */
-export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview, seek, onClose, height, openMenu, hearsControllers }: EditorProps) {
+/** The editor: a header with the track, the clip's title, the ruler and its buttons, the notes, and the lane under them. */
+export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, preview, seek, onClose, height, openMenu, hearsControllers }: EditorProps) {
   const isPicked = selector(() => memory.notes);
   const notes = () => clip()?.notes ?? [];
   const length = () => {
@@ -458,11 +459,13 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       <div style={{ height: RULER, direction: "row", keep: true }}>
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm", keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: "full", keep: true, background: colour() })} />
-          <Text variant="heading" style={{ grow: true, truncate: true }}>{name}</Text>
-          <div style={{ direction: "row", keep: true }}>
-            <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
-            <Button key="close-editor" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={onClose} />
-          </div>
+          {/* A clip the composer named leads with its title, and its track's name takes the room that is left. */}
+          {() => title() ? (
+            <>
+              <Text variant="heading" style={{ maxWidth: 96, truncate: true, keep: true }}>{title}</Text>
+              <Text variant="label" style={{ grow: true, truncate: true }}>{name}</Text>
+            </>
+          ) : <Text variant="heading" style={{ grow: true, truncate: true }}>{name}</Text>}
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}
@@ -474,6 +477,10 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
             ]}
           </For>
         </Space>
+        <div style={{ direction: "row", align: "center", paddingX: "sm", keep: true }}>
+          <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
+          <Button key="close-editor" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={onClose} />
+        </div>
       </div>
       <div style={{ height: 1, background: "border", keep: true }} />
       <div style={{ height: roll, direction: "row", keep: true }}>

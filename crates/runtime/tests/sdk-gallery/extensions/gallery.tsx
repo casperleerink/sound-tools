@@ -1,15 +1,13 @@
 import {
   adsr, Button, Cell, choice, Circle, Controls, DeviceCard, Dialog, Display, Fader, For, Fragment, h, Input, input, interval, Knob,
   Label, lowpass, Match, Meter, note, Notice, number, NumberBox, onCleanup, output, Pad, Page, Panel, Path, pattern, Popover, Rect,
-  SegmentedControl, Select, Show, sine, Slider, Space, Steps, Switch, Text, timeout, Toggle, tool, Wave,
+  Row, SegmentedControl, Select, Show, sine, Slider, Space, Steps, Switch, Text, timeout, Toggle, tool, Wave,
   type Child, type Declaration, type Press, type Style,
 } from "./sdk";
 
-const row: Style = { direction: "row", gap: "sm", align: "center" };
 const box: Style = { width: 84, height: 36, align: "center", justify: "center", radius: "md", background: "fill-strong" };
 const NAMES = ["Bass", "Bells", "Brass", "Choir", "Drums", "Flute", "Keys", "Pad", "Strings"];
 const WAVES = [{ value: "sine", label: "Sine" }, { value: "saw", label: "Saw" }, { value: "square", label: "Square" }] as const;
-const MODES = [{ value: "soft", label: "Soft" }, { value: "hard", label: "Hard" }, { value: "fold", label: "Fold" }] as const;
 
 const Section = (props: { title: string; children?: Child }) => <Panel title={props.title} width={372}>{props.children}</Panel>;
 
@@ -33,20 +31,20 @@ const sweep = tool({
     const cutoff = now.value("cutoff", { fraction: true });
     return (
       <>
-        <Display caption="A drag moves the cutoff" cursor="ew-resize" drag={{ x: { value: "cutoff", absolute: true } }}
-          control={<SegmentedControl field="mode" options={MODES} />}>
+        <Display caption="100 Hz to 8 kHz" cursor="ew-resize" drag={{ x: { value: "cutoff", absolute: true } }}
+          control={<SegmentedControl field="mode" />}>
           <Path points={() => [[0, 0.5], [cutoff.times(0.8), 0.5], [cutoff, 0.25], [cutoff.plus(0.3), 1]]} color="text" width={1.5} />
           <Circle x={cutoff} y={0.25} radius={5} color="text" />
         </Display>
         <Controls>
-          <Knob field="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
-          <Knob field="resonance" label="Resonance" min={0} max={1} default={0.2} unit="percent" />
+          <Knob field="cutoff" />
+          <Knob field="resonance" />
           <Cell label="Wave">
-            <Select size="sm" field="wave" options={WAVES} />
+            <Select size="sm" field="wave" />
           </Cell>
           <Cell label="Hold"><Toggle dot on={() => memory.held} onClick={() => { memory.held = !memory.held; }} /></Cell>
-          <Knob field="drive" label="Drive" min={0} max={1} default={0.3} unit="percent" />
-          <Knob field="mix" label="Mix" min={0} max={1} default={1} unit="percent" />
+          <Knob field="drive" />
+          <Knob field="mix" />
         </Controls>
       </>
     );
@@ -65,8 +63,8 @@ tool({
   when: "You check how every part of the view SDK looks and behaves",
   doc: "A page as a view composes one, the card of its child `sweep`, and after them the components, styles, pointer events, overlays and timers of the view SDK that the other snapshots do not show. The log on the right shows what code hears, newest first; the pad under Pointer holds a note while it is pressed.",
   state: {
-    kick: pattern({ length: 8, min: 0, max: 1, default: 0, label: "Kick" }),
-    hat: pattern({ length: 8, min: 0, max: 1, default: 0, label: "Hat" }),
+    kick: pattern({ length: 8, min: 0, max: 1, default: 0 }),
+    hat: pattern({ length: 8, min: 0, max: 1, default: 0 }),
     cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
     level: number({ min: -30, max: 6, default: -6, unit: "db" }),
     mode: choice({ options: ["soft", "hard", "fold"], default: "hard" }),
@@ -103,20 +101,20 @@ tool({
           <div style={{ grow: true, gap: "lg" }}>
             <div style={{ direction: "row", align: "start", gap: "lg" }}>
               <Panel title="Beat">
-                <Steps field="kick" label="Kick" playing="step" />
-                <Steps field="hat" label="Hat" playing="step" />
-                <div style={{ direction: "row", align: "center", gap: "lg" }}>
-                  <Knob key="tone" field="cutoff" label="Tone" min={100} max={8000} default={1200} unit="hz" />
-                  <Knob key="volume" field="level" label="Level" min={-30} max={6} default={-6} unit="db" />
-                  <SegmentedControl key="shape" field="mode" options={MODES} />
-                </div>
+                <Steps field="kick" playing="step" />
+                <Steps field="hat" playing="step" />
+                <Row gap="lg">
+                  <Knob key="tone" field="cutoff" label="Tone" />
+                  <Knob key="volume" field="level" />
+                  <SegmentedControl key="shape" field="mode" />
+                </Row>
               </Panel>
               <DeviceCard path="sweep" />
             </div>
             <div style={{ direction: "row", wrap: true, align: "start", gap: "lg" }}>
               <Section title="Field or kept">
-                <div style={row}>
-                  <Knob field="cutoff" label="Field" min={100} max={8000} default={1200} unit="hz" />
+                <Row gap="sm">
+                  <Knob field="cutoff" label="Field" />
                   <Knob value={() => memory.gain} onChange={(gain) => { memory.gain = gain; log(`knob end ${gain.toFixed(2)}`); }}
                     label="Kept" min={0} max={1} default={0.5} />
                   <Meter value={() => memory.gain} />
@@ -124,25 +122,25 @@ tool({
                   <Pad size={64} value={() => memory.pad} onChange={(pad) => { memory.pad = pad; log(`pad ${pad.x.toFixed(2)} ${pad.y.toFixed(2)}`); }} />
                   <Fader length={64} min={0} max={1} default={0} value={() => memory.fader}
                     onChange={(fader) => { memory.fader = fader; log(`fader end ${fader.toFixed(2)}`); }} />
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <NumberBox key="amount" width={32} min={1} max={16} value={() => memory.amount}
                     onChange={(amount) => { memory.amount = amount; log(`number ${amount}`); }} />
                   <Select value={() => memory.wave} options={WAVES} onChange={(wave) => { memory.wave = wave; log(`select ${wave}`); }} />
-                  <Slider field="level" min={-30} max={6} default={-6} unit="db" />
-                </div>
-                <div style={row}>
-                  <SegmentedControl field="mode" options={MODES} />
+                  <Slider field="level" />
+                </Row>
+                <Row gap="sm">
+                  <SegmentedControl field="mode" />
                   <Switch fallback={() => "A square"}>
                     <Match when={() => memory.wave === "sine"}>{() => <Text variant="label" style={{ color: "teal" }}>A sine</Text>}</Match>
                     <Match when={() => memory.wave === "saw"}>{() => <Text variant="label" style={{ color: "peach" }}>A saw</Text>}</Match>
                   </Switch>
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <Steps value={() => memory.steps} onChange={(steps) => { memory.steps = [...steps]; log(`steps ${steps.join("")}`); }} />
                   <Button icon="minus" size="sm" variant="subtle" onClick={() => { memory.steps = memory.steps.slice(0, -1); }} />
                   <Button icon="plus" size="sm" variant="subtle" onClick={() => { memory.steps = [...memory.steps, 0]; }} />
-                </div>
+                </Row>
               </Section>
 
               <Section title="Text">
@@ -165,7 +163,7 @@ tool({
               </Section>
 
               <Section title="Overlays and timers">
-                <div style={row}>
+                <Row gap="sm">
                   <div>
                     <Button label="Popover" variant="subtle" onClick={() => { memory.popover = !memory.popover; }} />
                     <Popover open={() => memory.popover} onClose={() => { memory.popover = false; log("popover closed"); }}>
@@ -189,24 +187,24 @@ tool({
                       </div>
                     )}
                   </Dialog>
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <Button label="Hold to repeat"
                     onPress={() => { memory.repeats++; stopRepeat = interval(() => { memory.repeats++; }, 100); }}
                     onRelease={() => { stopRepeat(); log(`repeated ${memory.repeats}`); }} />
                   <Text variant="label" tone="text">{() => `${memory.repeats}`}</Text>
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <Button label="Flash" variant="subtle" onClick={() => { memory.flash = true; timeout(() => { memory.flash = false; }, 1000); }} />
                   <Show when={() => memory.flash}>{() => <Text variant="label" style={{ color: "yellow" }}>Gone in a second</Text>}</Show>
                   <Button label="Part" variant="subtle" onClick={() => { memory.part = !memory.part; }} />
                   <Show when={() => memory.part}>{() => <Part />}</Show>
-                </div>
+                </Row>
                 <Notice tone="warning" message="A notice with an action" action={{ label: "Act", onClick: () => log("notice action") }} onDismiss={() => log("notice dismissed")} />
               </Section>
 
               <Section title="Pointer">
-                <div style={row}>
+                <Row gap="sm">
                   <div key="div" style={box} {...pointer("div")}>Div</div>
                   <Space key="shapes" width={84} height={36} background="fill" radius="md" {...pointer("space")}>
                     <Rect x={8} y={8} width={32} height={20} radius={4} color="lavender" hover="pink" cursor="pointer" {...pointer("rect")} />
@@ -214,43 +212,43 @@ tool({
                   </Space>
                   <Button label="Button" {...pointer("button")} />
                   <Toggle label="T" on={() => memory.held} {...pointer("toggle")} />
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <div key="hold" style={() => ({ ...box, width: 200, background: memory.held ? "green/40" : "fill-strong" })}
                     onPress={() => { memory.held = true; play(60, { hold: true }); log("note on"); }}
                     onRelease={() => { memory.held = false; send("notes", { type: "noteOff", pitch: 60 }); log("note off"); }}>
                     {() => (memory.held ? "Holds a note: drag off" : "Hold for a note")}
                   </div>
                   <Meter value="gate" />
-                </div>
+                </Row>
               </Section>
 
               <Section title="Looks">
-                <div style={row}>
+                <Row gap="sm">
                   <div key="look" cursor="pointer" tooltip="A tooltip on a div" onClick={() => {}}
                     style={{ ...box, hover: { background: "selected" }, pressed: { background: "lavender", color: "text-inverse" } }}>Press</div>
                   <div disabled onClick={() => log("disabled div click")} style={box}>Disabled</div>
                   <div disabled style={{ ...box, disabled: { background: "red/20", color: "red" } }}>Own look</div>
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <Button label="Primary" tooltip="A tooltip on a button" />
                   <Button label="Subtle" variant="subtle" />
                   <Button label="Solid" variant="solid" color="teal" />
                   <Button icon="trash-2" variant="ghost" rounded />
                   <Button label="Off" disabled onClick={() => log("disabled button click")} />
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <Button label="Small" size="sm" variant="subtle" />
                   <Button label="Medium" variant="subtle" />
                   <Button label="Large" size="lg" variant="subtle" />
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <Toggle label="M" on color="yellow" tooltip="A letter" />
                   <Toggle icon="metronome" count={3} on={false} tooltip="An icon with a count" />
                   <Toggle dot on color="red" tooltip="A dot" />
                   <Toggle label="D" on disabled onClick={() => log("disabled toggle click")} />
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <div style={{ width: 120, height: 60, padding: "sm", radius: "lg", background: "surface", shadow: true }}>
                     Shadow
                     <div style={{ absolute: { top: -6, right: -6 }, width: 18, height: 18, radius: "full", align: "center", justify: "center", background: "red" }}>
@@ -266,11 +264,11 @@ tool({
                       <div style={{ width: 28, height: 18, radius: "sm", align: "center", justify: "center", background: "fill-strong" }}>{index}</div>
                     ))}
                   </div>
-                </div>
-                <div style={row}>
+                </Row>
+                <Row gap="sm">
                   <div style={{ minWidth: 150, padding: "sm", background: "fill", textAlign: "end" }}>Aligned end</div>
                   <div style={{ padding: "sm", background: "fill", opacity: 0.4 }}>Opacity 0.4</div>
-                </div>
+                </Row>
               </Section>
 
               <Section title="Shapes">
@@ -283,6 +281,9 @@ tool({
                   <Label x={10} y={82} text="quad" tone="muted" />
                   <Label x={130} y={82} text="cubic" tone="muted" />
                   <Label x={338} y={2} text="closed" tone="text" align="right" />
+                </Space>
+                <Space key="scope" height={40} background="well" radius="md">
+                  <Wave list={now.scope()} color="green" />
                 </Space>
               </Section>
             </div>

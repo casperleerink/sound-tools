@@ -2,9 +2,10 @@
 //! so the two can be compared side by side: `look-*.png`.
 //!
 //! - `look-empty.png`: a song with no tracks.
-//! - `look-piece.png`: the piece playing at 6.3, the second clip of the bass chosen.
+//! - `look-piece.png`: the piece playing at 6.3, the second clip of the bass chosen, which
+//!   shows the panel of the bass.
 //! - `look-sections.png`: the piece with an intro and a verse named on the ruler.
-//! - `look-editor.png`: the note editor on the first clip of the melody.
+//! - `look-editor.png`: the note editor on the first clip of the melody, which has a title.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, under the pointer
@@ -14,6 +15,8 @@
 //!   expanded with its sidechain picker.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
+//! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
+//!   with its two sends, and the returns' and the master's strips at the right.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
 //!   the test plugin, the menu of its card's title open, and the menu of Add effect.
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
@@ -263,7 +266,15 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     save(cx, opened.window.into(), "look-sections")?;
     drop(opened);
 
-    let opened = open(cx, &[])?;
+    // The composer named the clip: it says so over its notes, and so does the editor's heading.
+    let mut files = piece_files(&[]);
+    let clip = "state/song/melody/clip-000.json";
+    if let Some((_, record)) = files.iter_mut().find(|(path, _)| path == clip) {
+        let mut file: Value = serde_json::from_str(record)?;
+        file["state"]["title"] = "Theme".into();
+        *record = file.to_string();
+    }
+    let opened = super::Opened::open(cx, &files)?;
     click(&opened, at(4 * BAR + 960, 2.), 2, cx)?;
     // Its sixth note, 79 from beat 6: the editor opens fitted, bar 5 eight points into its roll,
     // with 79 four and a half rows from the top of it.
@@ -352,6 +363,16 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
             ),
             ("bass/send-ret-a.json", send(-12.)),
             ("bass/send-ret-b.json", send(-18.)),
+            // What the mixer says in words only away from where a dial rests: a pan off the
+            // middle, and not a send that is silent.
+            (
+                "track-1/mix.json",
+                json!({ "tool": "fader", "state": { "pan": -0.3 } }),
+            ),
+            (
+                "track-1/send-ret-a.json",
+                json!({ "tool": "fader", "state": { "gain_db": "-inf" } }),
+            ),
         ],
     )?;
     let bottom = super::WINDOW_HEIGHT - 40.;

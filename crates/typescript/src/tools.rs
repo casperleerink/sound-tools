@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 use sound_core::{
     Assets, AudioThru, Automation, BehaviourContext, BehaviourError, Event, EventThru, GraphError,
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
-    PlayedLanes, Problem, RecordStamp, Ticks, ValueRange, Watch,
+    Peaks, PlayedLanes, Problem, RecordStamp, Ticks, ValueRange, Watch,
 };
 use sound_media::{AudioPlayer, AudioUpdate, Region};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
@@ -31,6 +31,7 @@ use sound_ui::shortcuts;
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
 use crate::feeds::played_name;
+use crate::meter::Meter;
 use crate::{FOLDER, lane, region, samples};
 
 /// A tool as `host.ts` sends it.
@@ -205,8 +206,17 @@ impl Input {
 pub(crate) enum Unit {
     Hz,
     Ms,
+    Seconds,
     Db,
+    /// A part of one: 0 to 1 reads `0%` to `100%`.
     Percent,
+    Semitones,
+    Cents,
+    Octaves,
+    /// A MIDI note, which reads as its name: `C2` for 36.
+    Pitch,
+    /// From -1 to 1: `C`, `25L`, `100R`.
+    Pan,
 }
 
 /// An option of a choice: a number or a word.
@@ -253,8 +263,14 @@ impl Unit {
         match self {
             Self::Hz => " Hz",
             Self::Ms => " ms",
+            Self::Seconds => " s",
             Self::Db => " dB",
             Self::Percent => " (0 to 1)",
+            Self::Semitones => " semitones",
+            Self::Cents => " cents",
+            Self::Octaves => " octaves",
+            Self::Pitch => " (a MIDI note, 60 is middle C)",
+            Self::Pan => " (-1 left, 1 right)",
         }
     }
 }
@@ -1039,7 +1055,8 @@ impl Sounds {
             && self.passes()
         {
             let own = own_ports(None, context)?;
-            return self.declare(parent, state, own, context);
+            let passed = self.declare(parent, state, own, context)?;
+            return scopes(passed, context);
         }
         let code = self.code(state).map_err(BehaviourError::Other)?;
         let code = &*code;
@@ -1119,7 +1136,8 @@ impl Sounds {
             }
             context.input(NOTES_INPUT, InputEndpoint::new(signals, Signals::NOTES));
         }
-        context.output(AUDIO_OUTPUT, OutputEndpoint::new(signals, Signals::OUTPUT));
+        let sound = OutputEndpoint::new(signals, Signals::OUTPUT);
+        context.output(AUDIO_OUTPUT, sound);
         for (index, name) in self.info.sound_inputs.iter().enumerate() {
             let input = InputEndpoint::new(signals, Signals::sound_input(index + 1));
             context.input(name, input);
@@ -1161,7 +1179,7 @@ impl Sounds {
             let own = own_ports(Some(signals), context)?;
             self.declare(parent, state, own, context)?;
         }
-        Ok(())
+        scopes(Some(sound), context)
     }
 
     /// A parent with nothing of its own to play: no sound, no inputs and no `onNotes`. Its
@@ -1174,14 +1192,14 @@ impl Sounds {
 
     /// Connects the children of an owner and its `own` ports as its behaviour declares: what
     /// Bun answered for its record and its children, or the last declaration while Bun works
-    /// it out.
+    /// it out. Gives the sound an owner with none of its own passes on, see [`passed_sound`].
     fn declare(
         &self,
         (bun, tools): &(Arc<Bun>, Arc<Tools>),
         state: &Value,
         own: Own,
         context: &mut BehaviourContext<'_>,
-    ) -> Result<(), BehaviourError> {
+    ) -> Result<Option<OutputEndpoint>, BehaviourError> {
         let id = context.id().clone();
         let reads = behaviours::reads_of(context.assets(), &id);
         let child_fields = reads.as_ref().and_then(|reads| reads.children.as_deref());
@@ -1460,22 +1478,24 @@ fn own_ports(
     })
 }
 
-/// Makes `sent` the `audio` output of an owner that passes its children's sound on: the one
-/// that is sent, as it is, or a sum of several. An owner nothing sends to is silent.
+/// Makes `sent` the `audio` output of an owner that passes its children's sound on, and gives
+/// it: the one that is sent, as it is, or a sum of several. An owner nothing sends to is silent.
 fn passed_sound(
     sent: &[OutputEndpoint],
     context: &mut BehaviourContext<'_>,
-) -> Result<(), BehaviourError> {
-    if let [one] = sent {
-        context.output(AUDIO_OUTPUT, *one);
-        return Ok(());
-    }
-    let sum = context.processor("out:audio", AudioThru::default)?;
-    for output in sent {
-        context.connect(output.to(InputEndpoint::new(sum, AudioThru::INPUT)))?;
-    }
-    context.output(AUDIO_OUTPUT, OutputEndpoint::new(sum, AudioThru::OUTPUT));
-    Ok(())
+) -> Result<OutputEndpoint, BehaviourError> {
+    let output = match sent {
+        [one] => *one,
+        _ => {
+            let sum = context.processor("out:audio", AudioThru::default)?;
+            for output in sent {
+                context.connect(output.to(InputEndpoint::new(sum, AudioThru::INPUT)))?;
+            }
+            OutputEndpoint::new(sum, AudioThru::OUTPUT)
+        }
+    };
+    context.output(AUDIO_OUTPUT, output);
+    Ok(output)
 }
 
 /// What a connection may name, for a problem that says so.
@@ -1488,13 +1508,13 @@ const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to
 ///
 /// What plays into the `notes` of a child goes through a [`NoteFeed`] of that child, which
 /// releases what the child holds when that changes: a sender that went away or plays elsewhere
-/// sends no off there.
+/// sends no off there. Gives the sound an owner with none of its own passes on.
 fn wire(
     declaration: &Declaration,
     own: Own,
     child_tools: &BTreeMap<String, &ToolInfo>,
     context: &mut BehaviourContext<'_>,
-) -> Result<(), BehaviourError> {
+) -> Result<Option<OutputEndpoint>, BehaviourError> {
     let fed = (declaration.connections.iter()).filter_map(|connection| {
         let to = &connection.to;
         let notes = matches!(to.port(), Some((Key::Port | Key::Notes, NOTES_INPUT)));
@@ -1635,9 +1655,10 @@ fn wire(
             fed.entry(child).or_default().insert(sender);
         }
     }
-    if own.sound.is_none() {
-        passed_sound(&passed, context)?;
-    }
+    let passed = match own.sound {
+        Some(_) => None,
+        None => Some(passed_sound(&passed, context)?),
+    };
     // A card's knob of a number a cable moves shows what the cable plays, as a lane's does.
     for (child, numbers) in played {
         context.show_lanes(Some(child), Arc::new(Played(numbers)));
@@ -1648,7 +1669,7 @@ fn wire(
             context.update(*feed, NoteFeedUpdate::Senders)?;
         }
     }
-    Ok(())
+    Ok(passed)
 }
 
 /// Whether the child `name` is a region and `port` its sound.
@@ -1977,6 +1998,57 @@ fn feeds<'a>(
         feeds.insert(child, feed);
     }
     Ok(feeds)
+}
+
+/// The sounds a view of every tool of every project draws as a wave, by the path of the child
+/// inside the tool that plays it, or no path for what the tool itself plays: only those are
+/// kept, so a song of many devices keeps the sound of none it does not show.
+static SCOPED: Mutex<BTreeSet<(Assets, InstanceId, String)>> = Mutex::new(BTreeSet::new());
+
+/// The name `owner` keeps the scope of the sound at `path` under, see [`show_sound`].
+pub(crate) fn scope_name(path: &str) -> String {
+    format!("scope:{path}")
+}
+
+/// Asks `owner` to keep the sound its child at `path` plays, or with no path what it plays
+/// itself, for a wave of its view. Whether it kept none: then it must run its behaviour again.
+pub(crate) fn show_sound(assets: &Assets, owner: &InstanceId, path: &str) -> bool {
+    let mut scoped = SCOPED.lock().unwrap_or_else(PoisonError::into_inner);
+    scoped.insert((assets.clone(), owner.clone(), path.to_string()))
+}
+
+/// Keeps each sound [`show_sound`] asked this owner for, whose own sound is `own`: a meter
+/// hears it and plays nothing on. A path with no such child, or one with no sound, keeps none.
+fn scopes(
+    own: Option<OutputEndpoint>,
+    context: &mut BehaviourContext<'_>,
+) -> Result<(), BehaviourError> {
+    let (assets, owner) = (context.assets().clone(), context.id().clone());
+    let paths: Vec<String> = {
+        let scoped = SCOPED.lock().unwrap_or_else(PoisonError::into_inner);
+        (scoped.range((assets.clone(), owner.clone(), String::new())..))
+            .take_while(|(project, of, _)| *project == assets && *of == owner)
+            .map(|(_, _, path)| path.clone())
+            .collect()
+    };
+    for path in paths {
+        let output = match path.is_empty() {
+            true => own,
+            false => context.child_output(&path, AUDIO_OUTPUT),
+        };
+        let Some(output) = output else {
+            continue;
+        };
+        let name = scope_name(&path);
+        let scope = context.scope(&name);
+        let meter = context.processor(&name, || Meter::new(Peaks::new(), scope))?;
+        match context.connect(output.to(InputEndpoint::new(meter, Meter::INPUT))) {
+            // An output named `audio` that carries something else than sound.
+            Err(BehaviourError::Graph(GraphError::PortTypeMismatch { .. })) => {}
+            connected => connected?,
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn key(value: &impl Hash) -> u64 {
