@@ -69,7 +69,7 @@ Without `view`, it gets a control per number, boolean, choice, file, `pattern`, 
 
 A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most. Rows of steps that each have a knob: "A grid of steps" in `agent-docs/extensions-view.md`.
 
-A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale`, faint marks and a zero line, not with shapes of its own. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
+A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, faint marks and a zero line, not with shapes of its own. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
 
 ```tsx
 import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
@@ -78,7 +78,7 @@ tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ now, send }) => (
     <>
-      <Display scale={{ zero: 0.5 }}>
+      <Display zero={0.5}>
         <Wave list={now.scope()} color="green" />
       </Display>
       <Controls>

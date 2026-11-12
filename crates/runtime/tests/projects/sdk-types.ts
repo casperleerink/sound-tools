@@ -654,14 +654,14 @@ Notes({ list: now.take("rec"), color: "text" });
 Wave({ list: now.scope(3) });
 
 // A display says its scale: lines at places across, with a word where given, lines at places down and a zero line.
-Display({ scale: { x: [0.25, [0.5, "1k"]], y: [0.25, 0.75], zero: 0.5 } });
-Display({ scale: () => ({ zero: 0.5 }) });
+Display({ scale: { x: [0.25, [0.5, "1k"]], y: [0.25, 0.75] }, zero: 0.5 });
+Display({ scale: () => ({ y: [0.5] }), zero: () => 0.5 });
 // @ts-expect-error: a mark is its place, then its word.
 Display({ scale: { x: [["1k", 0.5]] } });
 // @ts-expect-error: a line across has no word.
 Display({ scale: { y: [[0.5, "0 dB"]] } });
 // @ts-expect-error: one zero line.
-Display({ scale: { zero: [0.5] } });
+Display({ zero: [0.5] });
 
 // A row of parts takes a gap of the scale and nothing of a style.
 Row({ gap: "lg", grow: true, children: [Display({}), Controls({ children: [Knob({ field: "cutoff" }), Knob({ field: "level" })] })] });

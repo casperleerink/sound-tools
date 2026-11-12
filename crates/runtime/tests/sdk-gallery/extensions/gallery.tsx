@@ -35,7 +35,7 @@ const sweep = tool({
     const cutoff = now.value("cutoff", { fraction: true });
     return (
       <>
-        <Display scale={{ x: [[across(200), "200"], [across(1000), "1k"], [across(5000), "5k"]], zero: 0.5 }} cursor="ew-resize"
+        <Display scale={{ x: [[across(200), "200"], [across(1000), "1k"], [across(5000), "5k"]] }} zero={0.5} cursor="ew-resize"
           drag={{ x: { value: "cutoff", absolute: true } }} control={<SegmentedControl field="mode" />}>
           <Path points={() => [[0, 0.5], [cutoff.times(0.8), 0.5], [cutoff, 0.25], [cutoff.plus(0.3), 1]]} color="text" width={1.5} />
           <Circle x={cutoff} y={0.25} radius={5} color="text" />
@@ -130,7 +130,7 @@ tool({
             <DeviceCard path="sweep" />
             <Panel title="Drone">
               <Row>
-                <Display scale={{ zero: 0.5 }}>
+                <Display zero={0.5}>
                   <Wave list={now.scope()} color="green" />
                 </Display>
                 <Controls>

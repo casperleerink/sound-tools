@@ -105,10 +105,11 @@ impl Drawing<'_> {
         let mut display = Display::new(ElementId::Name(name.into()))
             .when(wide, Display::wide)
             .when_some(props.caption.clone(), Display::caption);
+        // A place of the view's space, inside the margin, as a place of the whole drawing.
+        let across = |x: f32| (DISPLAY_MARGIN + x * (width - 2. * DISPLAY_MARGIN)) / width;
+        let up = |y: f32| 1. - (DISPLAY_MARGIN + y * (height - 2. * DISPLAY_MARGIN)) / height;
+        display = display.when_some(props.zero, |display, zero| display.zero_line(up(zero)));
         if let Some(scale) = &props.scale {
-            // A place of the view's space, inside the margin, as a place of the whole drawing.
-            let across = |x: f32| (DISPLAY_MARGIN + x * (width - 2. * DISPLAY_MARGIN)) / width;
-            let up = |y: f32| 1. - (DISPLAY_MARGIN + y * (height - 2. * DISPLAY_MARGIN)) / height;
             let lines = scale.x.iter().filter_map(|mark| match mark {
                 Mark::Line(x) => Some(across(*x)),
                 Mark::Worded(..) => None,
@@ -119,8 +120,7 @@ impl Drawing<'_> {
             });
             display = display
                 .grid(lines.collect(), scale.y.iter().map(|y| up(*y)).collect())
-                .scale(worded)
-                .when_some(scale.zero, |display, zero| display.zero_line(up(zero)));
+                .scale(worded);
         }
         for control in controls {
             display = display.control(control);

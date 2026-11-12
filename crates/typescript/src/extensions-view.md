@@ -11,11 +11,15 @@ Read `agent-docs/extensions.md` first. The elements and their props are in `exte
 Rows of steps that each have a knob: the knob shows its `"value"` alone, one line over the rows names its column, and a control of the whole thing goes in `Controls` beside them. A row marked `secondary`, such as accents, changes the row over it.
 
 ```tsx
+const rows: Style = { gap: "sm" };
+// As wide as a knob.
+const head: Style = { width: 56, textAlign: "center" };
+
 <Panel title="Drums">
   <Row align="start">
-    <div style={{ gap: "sm" }}>
+    <div style={rows}>
       <Row gap="lg" justify="end">
-        <Text variant="label" style={{ width: 56, textAlign: "center" }}>Level</Text>
+        <Text variant="label" style={head}>Level</Text>
       </Row>
       {DRUMS.map((drum) => (
         <Row gap="lg">

@@ -387,7 +387,10 @@ fn a_knob_with_its_label_in_a_row_is_told_to_go_in_controls() {
         error.contains("put controls in Controls") && error.contains(r#"<Knob field="level" />"#),
         "{error}"
     );
-    let named = LOOSE.replace(r#"{ field: "level" }"#, r#"{ field: "level", text: "value" }"#);
+    let named = LOOSE.replace(
+        r#"{ field: "level" }"#,
+        r#"{ field: "level", text: "value" }"#,
+    );
     let bun = mounted("loose.ts", &named, "loose");
     assert!(first_ops(&bun).is_ok());
 }
@@ -401,22 +404,21 @@ tool({
   doc: "A display with the marks of its scale.",
   state: {},
   sound: () => 0,
-  view: () => h(Display, { scale: { x: [0.25, [0.5, "1k"]], y: [0.75], zero: 0.5 } }),
+  view: () => h(Display, { scale: { x: [0.25, [0.5, "1k"]], y: [0.75] }, zero: 0.5 }),
 });
 "#;
 
 #[test]
 fn a_display_gets_the_marks_of_its_scale() {
     let bun = mounted("scaled.ts", SCALED, "scaled");
-    let scale = (first_ops(&bun).unwrap().into_iter())
+    let display = (first_ops(&bun).unwrap().into_iter())
         .find_map(|op| match op {
-            Op::Create(_, Props::Display(display)) => display.scale,
+            Op::Create(_, Props::Display(display)) => Some(display),
             _ => None,
         })
-        .expect("a display with a scale");
+        .expect("a display");
     assert_eq!(
-        format!("{scale:?}"),
-        r#"Scale { x: [Line(0.25), Worded(0.5, "1k")], y: [0.75], zero: Some(0.5) }"#
+        format!("{:?} {:?}", display.scale, display.zero),
+        r#"Some(Scale { x: [Line(0.25), Worded(0.5, "1k")], y: [0.75] }) Some(0.5)"#
     );
 }
-
