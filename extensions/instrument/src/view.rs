@@ -135,25 +135,21 @@ impl SynthView {
         // The synth's own stages are drawn straight.
         let straight = [0.; 3];
         let time = ATTACK_KNOB.range();
-        let display = envelope_display(
+        let readouts = Adsr {
+            attack: seconds_readout(adsr.attack),
+            decay: seconds_readout(adsr.decay),
+            sustain: percent_readout(adsr.sustain),
+            release: seconds_readout(adsr.release),
+        };
+        envelope_display(
             "envelope",
             time,
             (adsr, defaults, automated),
+            readouts,
             straight,
             on_change,
         )
-        .control(self.waveform(state, cx));
-        // Expanded, the knobs of the envelope say its numbers.
-        if self.expanded {
-            return display;
-        }
-        display.caption(format!(
-            "A {} · D {} · S {} · R {}",
-            seconds_readout(adsr.attack),
-            seconds_readout(adsr.decay),
-            percent_readout(adsr.sustain),
-            seconds_readout(adsr.release),
-        ))
+        .control(self.waveform(state, cx))
     }
 
     fn waveform(&self, state: &SynthState, cx: &mut Context<Self>) -> SegmentedControl {

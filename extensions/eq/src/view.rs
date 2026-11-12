@@ -1,5 +1,5 @@
 //! The card of the EQ: the summed curve with a numbered handle per band, then Frequency, Gain,
-//! Q and Shape of the selected band, and behind expand the on and off of each band and the
+//! Q and Shape of the selected band, and behind expand a numbered switch per band and the
 //! output gain. The rack gives the view a [`CardFrame`]: the picker of the slot as the title,
 //! and the close icon.
 //!
@@ -13,11 +13,11 @@
 //! display, and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{
-    App, Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*,
+    App, Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*, px,
 };
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
-use sound_ui::components::curves::{DRAWN_AT, RESPONSE_ACROSS, RESPONSE_CAPTION, response_decades};
+use sound_ui::components::curves::{DRAWN_AT, RESPONSE_ACROSS, response_scale};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
@@ -45,6 +45,9 @@ const DISPLAY_DB: (f32, f32) = (-18., 18.);
 /// Points of the curve across the display: two points per point of width or so, for the
 /// narrow dip of a notch.
 const CURVE_POINTS: usize = 156;
+
+/// Between the switches of the bands, which then take two columns of cells.
+const SWITCH_GAP: f32 = 4.;
 
 /// Up and down on the display is the gain of a band, placed so that the handle is at its gain
 /// on the scale of the display.
@@ -274,8 +277,14 @@ impl EqView {
         let number = band + 1;
         let automated = (with_gain && self.is_automated(band, GAIN.field, cx))
             || self.is_automated(band, FREQUENCIES[band].field, cx);
+        let frequency = frequency_knob(band).caption(&settings);
+        let caption = match with_gain {
+            true => format!("{frequency} · {}", GAIN_KNOB.caption(&settings)),
+            false => frequency,
+        };
         Handle::new(SharedString::from(format!("band-{number}")), x, y)
             .label(number.to_string())
+            .caption(caption)
             .automated(automated)
             .hollow(band != self.selected)
             .dimmed(!settings.on)
@@ -301,9 +310,8 @@ impl EqView {
         let display = Display::new("display")
             .wide()
             .curve(curve(state))
-            .grid(response_decades(), Vec::new())
-            .zero_line(height_of(0.))
-            .caption(RESPONSE_CAPTION);
+            .scale(response_scale())
+            .zero_line(height_of(0.));
         // The selected handle last, so that it is on top of any other at its place.
         let order = (0..BANDS)
             .filter(|band| *band != self.selected)
@@ -313,21 +321,26 @@ impl EqView {
         })
     }
 
-    /// The on and off of one band, behind expand.
-    fn switch(&self, band: usize, state: &EqState, cx: &mut Context<Self>) -> Cell {
-        let on = state.bands[band].on;
-        let number = band + 1;
-        let toggle = Toggle::new(
-            SharedString::from(format!("band-{number}-on")),
-            format!("Band {number}"),
-            on,
-        )
-        .on_change(weak_callback(cx, move |view, on: bool, cx| {
-            let label = if on { "Turn band on" } else { "Turn band off" };
-            let set = move |state: &mut EqState, on| state.bands[band].on = on;
-            view.device.change(label, ValueChange::Set(on), set, cx);
-        }));
-        Cell::switch(toggle)
+    /// The on and off of every band, behind expand: a switch per band with the number of its
+    /// handle, lit while the band is on.
+    fn switches(&self, state: &EqState, cx: &mut Context<Self>) -> Cell {
+        let switches = (0..BANDS).map(|band| {
+            let number = band + 1;
+            Toggle::new(
+                SharedString::from(format!("band-{number}-on")),
+                number.to_string(),
+                state.bands[band].on,
+            )
+            .on_change(weak_callback(cx, move |view: &mut Self, on: bool, cx| {
+                let label = if on { "Turn band on" } else { "Turn band off" };
+                let set = move |state: &mut EqState, on| state.bands[band].on = on;
+                view.device.change(label, ValueChange::Set(on), set, cx);
+            }))
+        });
+        let switches: Vec<_> = switches.collect();
+        Cell::new(div().flex().gap(px(SWITCH_GAP)).children(switches))
+            .span(2)
+            .label("Bands")
     }
 }
 
@@ -360,13 +373,9 @@ impl Render for EqView {
             Column::new().top(frequency).bottom(q),
             Column::new().top(gain).bottom(shape),
         ];
-        let switch = |band, cx: &mut Context<Self>| self.switch(band, &state, cx);
-        let hidden = [
-            // Bands 1 and 2 on the first row, so they read in order across.
-            Column::new().top(switch(0, cx)).bottom(switch(2, cx)),
-            Column::new().top(switch(1, cx)).bottom(switch(3, cx)),
-            Column::new().top(self.device.knob(OUTPUT_KNOB, &state, cx)),
-        ];
+        let hidden = Column::new()
+            .top(self.switches(&state, cx))
+            .bottom(self.device.knob(OUTPUT_KNOB, &state, cx));
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
@@ -376,9 +385,7 @@ impl Render for EqView {
         let card = columns
             .into_iter()
             .fold(card, |card, column| card.column(column));
-        let card = hidden
-            .into_iter()
-            .fold(card, |card, column| card.hidden_column(column));
+        let card = card.hidden_column(hidden);
         // The keys 1 to 4 select a band from any control of the card that has the focus, which
         // is how the keyboard reaches the bands that the handles select with the pointer.
         div()

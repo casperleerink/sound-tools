@@ -2,6 +2,8 @@
 //! through it:
 //!
 //! - `cards-effects.png`: the Filter, the Compressor pressed by the chord and the EQ.
+//! - `cards-pointed.png`, `cards-pointed-playing.png`: the same with the pointer on a handle
+//!   of the Synth's envelope, and on the threshold of the Compressor as it turns down.
 //! - `cards-effects-expanded.png`: the same three expanded.
 //! - `cards-dynamics.png`: the Saturator driven 18 dB into its tube curve, the Limiter pushing
 //!   the chord into a ceiling of -6 dB, and the Gate.
@@ -18,7 +20,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use gpui::HeadlessAppContext;
+use gpui::{HeadlessAppContext, Modifiers, MouseMoveEvent, PlatformInput, point, px};
 use plugin_host::PluginFormat;
 use sound_core::Ticks;
 
@@ -69,6 +71,23 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
         .collect();
     let opened = rack(cx, &effects)?;
     save(cx, opened.window.into(), "cards-effects")?;
+    // The corner of the Synth's envelope, the threshold of the Compressor, then off the cards.
+    let pointed = [
+        (Some("cards-pointed"), (86., 154.)),
+        (Some("cards-pointed-playing"), (139., 549.)),
+        (None, (1000., 800.)),
+    ];
+    for (name, (x, y)) in pointed {
+        let moved = MouseMoveEvent {
+            position: point(px(x), px(y)),
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        };
+        opened.event(PlatformInput::MouseMove(moved), cx)?;
+        if let Some(name) = name {
+            save(cx, opened.window.into(), name)?;
+        }
+    }
     expand!(opened, cx, eq::view::EqView, "eq");
     expand!(opened, cx, compressor::view::CompressorView, "compressor");
     expand!(opened, cx, filter::view::FilterView, "filter");

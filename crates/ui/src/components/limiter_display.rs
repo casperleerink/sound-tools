@@ -111,7 +111,8 @@ impl LimiterHistory {
         )
     }
 
-    /// The history under the ceiling line, with its handle and the reduction under it.
+    /// The history under the ceiling line, with its handle, and the reduction in words under
+    /// it while the limiter takes some or the pointer is on the display.
     pub fn display(
         &self,
         id: impl Into<ElementId>,
@@ -132,12 +133,14 @@ impl LimiterHistory {
         .top_0()
         .left_0()
         .size_full();
-        let caption = format!("GR {}", reduction_readout(self.reduction_now()));
-        Display::new(id)
+        let display = Display::new(id)
             .curve([point(0., ceiling), point(1., ceiling)])
             .handle(handle)
-            .caption(caption)
-            .child(history)
+            .child(history);
+        match GainReduction::says(self.reduction_now()) {
+            (says, true) => display.caption(says),
+            (says, false) => display.pointed(says),
+        }
     }
 }
 
@@ -188,14 +191,6 @@ fn paint_history(
     }
 }
 
-/// The reduction under the display, to a tenth of a dB: `0 dB`, `−4.1 dB`.
-fn reduction_readout(db: f32) -> String {
-    match db < 0.05 {
-        true => "0 dB".into(),
-        false => format!("\u{2212}{db:.1} dB"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,12 +215,5 @@ mod tests {
             history.read(0.5, 1.0);
         }
         assert_eq!(history.moments.len(), COLUMNS);
-    }
-
-    #[test]
-    fn the_reduction_reads_to_a_tenth_of_a_decibel() {
-        assert_eq!(reduction_readout(0.0), "0 dB");
-        assert_eq!(reduction_readout(0.04), "0 dB");
-        assert_eq!(reduction_readout(4.12), "−4.1 dB");
     }
 }

@@ -14,7 +14,7 @@ use gpui::{App, Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{
-    DRAWN_AT, RESPONSE_CAPTION, resonance_travel, response_curve, response_decades, response_height,
+    DRAWN_AT, resonance_travel, response_curve, response_height, response_scale,
 };
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
@@ -124,7 +124,14 @@ impl FilterView {
         let device = &self.device;
         let automated =
             device.is_automated(CUTOFF.field, cx) || device.is_automated(RESONANCE.field, cx);
-        let handle = Handle::new("cutoff-resonance", x, y).automated(automated);
+        let caption = format!(
+            "{} · {}",
+            CUTOFF_KNOB.caption(state),
+            RESONANCE_KNOB.caption(state)
+        );
+        let handle = Handle::new("cutoff-resonance", x, y)
+            .automated(automated)
+            .caption(caption);
         handle.on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
@@ -155,10 +162,9 @@ impl FilterView {
             }));
         Display::new("display")
             .curve(response_curve(|hz| response(state, hz, DRAWN_AT)))
-            .grid(response_decades(), Vec::new())
+            .scale(response_scale())
             .zero_line(response_height(0.))
             .handle(self.handle(state, cx))
-            .caption(RESPONSE_CAPTION)
             .control(types)
     }
 

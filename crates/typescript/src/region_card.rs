@@ -312,12 +312,6 @@ impl RegionCard {
         let length = file.seconds();
         let end = state.file_end_seconds.unwrap_or(length);
         let (curve, handles) = self.gain_line(state, file, cx);
-        let caption = format!(
-            "{} to {} of {}",
-            seconds_label(state.file_start_seconds),
-            seconds_label(end),
-            seconds_label(length)
-        );
         let file = *file;
         let display = WaveformDisplay::new("region-display", overview, length as f32)
             .trim(state.file_start_seconds as f32, end as f32)
@@ -331,8 +325,7 @@ impl RegionCard {
                 card.change(TRIM_LABEL, change, set, cx);
             }))
             .playhead(self.playing_at)
-            .curve(curve)
-            .caption(caption);
+            .curve(curve);
         handles.into_iter().fold(display, WaveformDisplay::handle)
     }
 

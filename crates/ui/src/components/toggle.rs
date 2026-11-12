@@ -1,7 +1,9 @@
 //! Toggle: a button that is on or off, such as M and S of a track or `Freeze` of a reverb. Its
 //! face is a word, a circle ([`Toggle::dot`]) or an icon ([`Toggle::icon`]). The word is its
-//! name, never `On` or `Off`: it is lit while on. On, it may take a colour ([`Toggle::color`]):
-//! mute is peach and solo yellow, the one place a control fills with colour.
+//! name, never `On` or `Off`. Its state reads by shape, not by tone alone: off it is hollow, an
+//! outline with a quiet face, and on it is filled with a tint of its colour under a bright
+//! face. The colour is white, or one that means something ([`Toggle::color`]): mute is peach
+//! and solo yellow, the one place a control fills with colour.
 //!
 //! Controlled: the caller gives `on` and hears the new state. A click toggles it, and so do
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
@@ -27,6 +29,10 @@ const LETTER_EXTRA: f32 = 4.;
 const DOT: f32 = 10.;
 /// The glyph of [`Toggle::icon`].
 const GLYPH: f32 = 14.;
+/// How much of its colour fills a toggle that is on.
+const TINT: f32 = 0.16;
+/// From the sides of a toggle of a set width to its word.
+const WORD_PADDING: f32 = 4.;
 
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -122,8 +128,8 @@ impl Toggle {
         self
     }
 
-    /// Makes a toggle of a word this wide whatever it says, so the switches of a card line up.
-    /// Else it is as wide as its word.
+    /// Makes a toggle of a word this wide whatever it says, so the switches of a card line up:
+    /// a word too long for it ends in an ellipsis. Else it is as wide as its word.
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
         self
@@ -181,12 +187,19 @@ impl RenderOnce for Toggle {
             .shows_ring(&focus_handle, window);
 
         let theme = cx.theme();
-        let (background, text) = match (self.on, self.color) {
-            (false, _) => (theme.fill(), theme.text_secondary()),
-            (true, None) => (theme.fill_strong(), theme.text()),
-            (true, Some(color)) => (color.opacity(0.16), color),
+        let (background, outline, text) = match self.on {
+            false => (
+                Hsla::transparent_black(),
+                theme.border_strong(),
+                theme.text_secondary(),
+            ),
+            true => {
+                let color = self.color.unwrap_or(theme.text());
+                (color.opacity(TINT), Hsla::transparent_black(), color)
+            }
         };
         let ring = theme.lavender;
+        let set_width = self.width.is_some();
         let height = self.size.height();
         let width = match &self.face {
             Face::Icon { count, .. } if *count > 0 => None,
@@ -219,7 +232,7 @@ impl RenderOnce for Toggle {
             .border_1()
             .border_color(match ring_shows {
                 true => ring,
-                false => Hsla::transparent_black(),
+                false => outline,
             })
             .text_variant(TextVariant::Label)
             .line_height(px(14.))
@@ -239,7 +252,10 @@ impl RenderOnce for Toggle {
                 toggle.tooltip(move |_, cx| tooltip.clone().view(cx))
             })
             .map(|toggle| match self.face {
-                Face::Label(label) => toggle.child(label),
+                Face::Label(label) => {
+                    let word = div().min_w_0().truncate().child(label);
+                    toggle.child(word.when(set_width, |word| word.px(px(WORD_PADDING))))
+                }
                 Face::Icon { icon, count } => toggle
                     .child(Icon::new(icon).size(GLYPH).color(text))
                     .when(count > 0, |toggle| toggle.child(count.to_string())),

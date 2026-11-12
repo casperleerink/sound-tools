@@ -190,6 +190,12 @@ impl<S> ParameterKnob<S> {
         (self.readout)(value)
     }
 
+    /// The name and the value in `of`, as the handle of a display says what it moves:
+    /// `Cutoff 1.2 kHz`.
+    pub fn caption(&self, of: &S) -> String {
+        format!("{} {}", self.label, self.readout((self.parameter.get)(of)))
+    }
+
     /// The knob at the value of `of`. The card adds whether a lane moves it and what a change
     /// does.
     pub fn knob(&self, of: &S) -> Knob {

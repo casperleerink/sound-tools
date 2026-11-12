@@ -13,6 +13,7 @@ use gpui::{
 
 use sound_core::Scale;
 
+use crate::components::knob::short;
 use crate::theme::ActiveTheme;
 
 /// The top of the scale.
@@ -351,6 +352,14 @@ impl GainReduction {
             db,
         }
     }
+
+    /// The reduction in words, to a tenth of a dB, for the line under a display:
+    /// `Turned down 6.8 dB`. Whether that is a reduction worth a line: under a twentieth of a dB
+    /// it reads 0.
+    pub fn says(db: f32) -> (String, bool) {
+        let tenths = (db.max(0.) * 10.).round() / 10.;
+        (format!("Turned down {} dB", short(tenths)), tenths > 0.)
+    }
 }
 
 impl Styled for GainReduction {
@@ -385,6 +394,19 @@ impl RenderOnce for GainReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reduction_reads_in_words_to_a_tenth_of_a_decibel() {
+        assert_eq!(GainReduction::says(0.), ("Turned down 0 dB".into(), false));
+        assert_eq!(
+            GainReduction::says(0.04),
+            ("Turned down 0 dB".into(), false)
+        );
+        assert_eq!(
+            GainReduction::says(6.83),
+            ("Turned down 6.8 dB".into(), true)
+        );
+    }
 
     #[test]
     fn zero_db_is_at_eighty_percent_and_the_ends_are_minus_inf_and_six() {

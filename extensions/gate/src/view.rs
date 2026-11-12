@@ -145,6 +145,7 @@ impl GateView {
         let y = Axis::fixed(LEVELS.up(threshold));
         let automated = self.device.is_automated(THRESHOLD.field, cx);
         Handle::new("threshold", x, y)
+            .caption(THRESHOLD_KNOB.caption(state))
             .automated(automated)
             .on_change(weak_callback(
                 cx,

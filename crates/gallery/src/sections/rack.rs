@@ -553,10 +553,8 @@ fn low_pass(cutoff: f32, resonance: f32) -> Vec<Point<f32>> {
 }
 
 /// The places across of 100 Hz, 1 kHz and 10 kHz.
-fn decades() -> Vec<f32> {
-    [100., 1_000., 10_000.]
-        .map(|hz| CUTOFF.position(hz))
-        .to_vec()
+fn decades() -> [(f32, &'static str); 3] {
+    [(100., "100"), (1_000., "1k"), (10_000., "10k")].map(|(hz, word)| (CUTOFF.position(hz), word))
 }
 
 fn filter_card(state: &Entity<RackState>, index: usize, id: &'static str, cx: &App) -> DeviceCard {
@@ -576,15 +574,20 @@ fn filter_card(state: &Entity<RackState>, index: usize, id: &'static str, cx: &A
         Axis::new(CUTOFF, cutoff, 2_000.),
         Axis::new(PART, resonance, 0.5),
     )
+    .caption(format!(
+        "Cutoff {} · Resonance {}",
+        hertz(cutoff),
+        percent(resonance)
+    ))
     .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
         s.filter[0].follow(x_of(change));
         s.filter[1].follow(y_of(change));
     }));
     let display = Display::new(("filter-display", index))
         .curve(low_pass(cutoff, resonance))
-        .grid(decades(), vec![0.45])
+        .scale(decades())
+        .grid(Vec::new(), vec![0.45])
         .handle(handle)
-        .caption("100 · 1k · 10k")
         .control(
             SegmentedControl::new(("filter-type", index), segment)
                 .options([
@@ -658,6 +661,7 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
         Axis::new(time(0.), attack, 0.005),
         Axis::fixed(1.),
     )
+    .caption(format!("Attack {}", seconds(attack)))
     .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
         s.envelope[0].follow(x_of(change).map(|x| x.max(0.001)));
     }));
@@ -666,6 +670,11 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
         Axis::new(time(attack), decay, 0.35),
         Axis::new(PART, sustain, 0.25),
     )
+    .caption(format!(
+        "Decay {} · Sustain {}",
+        seconds(decay),
+        percent(sustain)
+    ))
     .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
         s.envelope[1].follow(x_of(change).map(|x| x.max(0.001)));
         s.envelope[2].follow(y_of(change));
@@ -675,22 +684,15 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
         Axis::new(time(attack + decay + HOLD), release, 0.12),
         Axis::fixed(0.),
     )
+    .caption(format!("Release {}", seconds(release)))
     .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
         s.envelope[3].follow(x_of(change).map(|x| x.max(0.001)));
     }));
-    let caption = format!(
-        "A {} · D {} · S {} · R {}",
-        seconds(attack),
-        seconds(decay),
-        percent(sustain),
-        seconds(release)
-    );
     let display = Display::new("synth-display")
         .curve(curve)
         .handle(peak)
         .handle(corner)
         .handle(end)
-        .caption(caption)
         .control(
             SegmentedControl::new("waveform", "square")
                 .options([("saw", "Saw"), ("square", "Square")]),
@@ -754,23 +756,19 @@ fn reverb_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
         Axis::fixed(1.),
     )
     .hollow(true)
+    .caption(format!("Pre-delay {}", seconds(pre_delay)))
     .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
         s.reverb[0].follow(x_of(change));
     }));
-    let end = Handle::new("reverb-decay", Axis::new(time, decay, 2.), Axis::fixed(0.)).on_change(
-        update(state, |s, change: ValueChange<Point<f32>>| {
+    let end = Handle::new("reverb-decay", Axis::new(time, decay, 2.), Axis::fixed(0.))
+        .caption(format!("Decay {}", seconds(decay)))
+        .on_change(update(state, |s, change: ValueChange<Point<f32>>| {
             s.reverb[1].follow(x_of(change).map(|x| x.max(0.1)));
-        }),
-    );
+        }));
     let display = Display::new("reverb-display")
         .curve(curve)
         .handle(start)
-        .handle(end)
-        .caption(format!(
-            "Pre-delay {} · Decay {}",
-            seconds(pre_delay),
-            seconds(decay)
-        ));
+        .handle(end);
     let knob = |id: &'static str, label: &'static str, value: f32| {
         Knob::new(id)
             .value(value)
@@ -828,14 +826,20 @@ fn sections_card() -> DeviceCard {
         release: 0.8,
     };
     let time = KnobRange::logarithmic(0.001, 10.);
+    let readouts = Adsr {
+        attack: seconds(adsr.attack),
+        decay: seconds(adsr.decay),
+        sustain: percent(adsr.sustain),
+        release: seconds(adsr.release),
+    };
     let envelope = envelope_display(
         "curved",
         time,
         (adsr, adsr, Adsr::default()),
+        readouts,
         [0.5, 0.9, 0.8],
         |_, _, _| {},
-    )
-    .caption("A 20 ms · D 600 ms · S 40% · R 800 ms");
+    );
     let lfo = Display::new("lfo")
         .curve(lfo_line(LfoShape::Triangle, 2., 0.5, 0.36))
         .zero_line(0.5);
@@ -862,8 +866,8 @@ fn plugin_card() -> DeviceCard {
         .variant(ButtonVariant::Subtle)
         .on_card();
     let display = TextDisplay::new("plugin-display")
-        .button(open)
-        .caption("CLAP · Surge Synth Team");
+        .message("CLAP · Surge Synth Team")
+        .button(open);
     DeviceCard::new("plugin", div().child("Surge XT"))
         .power(true, |_, _, _| {})
         .close(|_, _, _| {})
