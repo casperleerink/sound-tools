@@ -4,7 +4,7 @@
 
 import { Knob, SegmentedControl, Select, Steps, words } from "./components";
 import { Button, SpaceProps, Space, Toggle } from "./drawing";
-import { Fields, Inputs, isPattern, NumberField } from "./fields";
+import { Fields, Inputs, isPattern } from "./fields";
 import { PointerEvents } from "./live";
 import { Child, element, UiNode } from "./nodes";
 import { Bind } from "./reactivity";
@@ -52,12 +52,10 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
     const knobs: Child[] = [];
     const cells: Child[] = [];
     const patterns: Child[] = [];
-    const knob = (name: string, field: NumberField) =>
-      Knob({ field: name, label: field.label ?? words(name), min: field.min, max: field.max, default: field.default ?? field.min, unit: field.unit });
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
       if (field.kind === "number") {
-        knobs.push(knob(name, field));
+        knobs.push(Knob({ field: name }));
       } else if (isPattern(field)) {
         patterns.push(Steps({ field: name, label }));
       } else if (field.kind === "file") {
@@ -85,7 +83,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
     }
     for (const [name, input] of Object.entries(inputs)) {
       if (input.kind === "number") {
-        knobs.push(knob(name, input));
+        knobs.push(Knob({ field: name }));
       } else if (input.kind === "bang") {
         cells.push(Cell({ children: Button({ label: input.label ?? words(name), variant: "subtle", onClick: () => (send as (input: string) => void)(name) }) }));
       }

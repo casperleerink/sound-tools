@@ -90,11 +90,18 @@ function fieldOf(path: string): Found | undefined {
   const { fields, state, children, tool: own } = drawing();
   const { child, name } = splitPath(path);
   const parts = partsOf(name);
-  if (child === undefined) return fieldIn(fields, parts);
+  if (child === undefined) return fieldIn(fields, parts) ?? numberInput(own, parts);
   const tool = toolAt(own, child) ?? untrack(() => recordAt({ state, children }, child)?.tool);
   if (tool === undefined) return undefined;
   const spec = host.tools.get(tool);
   return spec ? fieldIn(spec.state, parts) : builtInNumber(tool, parts);
+}
+
+/** A number input of `tool` by its name: a control turns it as it turns a field. */
+function numberInput(tool: string, parts: readonly string[]): Field | undefined {
+  const [name, ...deeper] = parts;
+  const input = name === undefined || deeper.length > 0 ? undefined : host.tools.get(tool)?.inputs?.[name];
+  return input?.kind === "number" ? input : undefined;
 }
 
 /** `cutoff_hz` is `Cutoff`: a name in words, without the unit it ends in. */
