@@ -46,12 +46,14 @@ Each colour has one meaning:
 
 A meter is the one place colour fills an area, because level is a signal. Otherwise only a toggle that is on is tinted, with its colour at low opacity.
 
+What is chosen has one look: a row takes the selected fill; on a canvas a box gets a bright outline and a small mark turns bright.
+
 Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/ui/src/theme.rs` checks the text roles.
 
 ### Type and sizes
 
 - InterDisplay with tabular numbers for every number, so readouts and the transport do not jitter while playing. Five kinds of text and no other size: display 24, title 16 medium, heading 14 medium, body 14, label 12.
-- The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window. The snapshot tests render at that size.
+- The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window, as the snapshot tests render.
 - Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
 - One grid for devices: every card is the same height, with two rows of fixed cells of a knob, a label line and a value line. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
 - Hit targets are larger than what is drawn, for a trackpad.
@@ -69,6 +71,7 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
 - Click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes.
 - Double click on empty space makes what lives there: a clip, a note. On a control it sets the default.
+- A song opens on its first track, chosen, with its panel: that shows what a click on a track does. Rejected: a hint in words.
 - Alt-drag copies.
 - Adding something never changes the sound: a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands.
