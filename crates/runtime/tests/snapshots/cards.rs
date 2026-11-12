@@ -6,6 +6,8 @@
 //!   of the Synth's envelope, whose knobs are behind expand, and on a band of the EQ that its
 //!   knobs do not show.
 //! - `cards-effects-expanded.png`: the same three expanded.
+//! - `cards-typed.png`: the same, with the field a click on the value of the Filter's cutoff
+//!   opens to type it.
 //! - `cards-dynamics.png`: the Saturator driven 18 dB into its tube curve, the Limiter pushing
 //!   the chord into a ceiling of -6 dB, and the Gate.
 //! - `cards-time.png`, `cards-time-expanded.png`: the Delay synced and dotted, and the Reverb.
@@ -22,7 +24,10 @@
 use std::path::Path;
 
 use anyhow::Result;
-use gpui::{HeadlessAppContext, Modifiers, MouseMoveEvent, PlatformInput, point, px};
+use gpui::{
+    HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PlatformInput, point, px,
+};
 use plugin_host::PluginFormat;
 use sound_core::Ticks;
 
@@ -94,6 +99,25 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
     expand!(opened, cx, compressor::view::CompressorView, "compressor");
     expand!(opened, cx, filter::view::FilterView, "filter");
     save(cx, opened.window.into(), "cards-effects-expanded")?;
+    // The value under the Filter's cutoff knob.
+    let position = point(px(312.), px(350.));
+    let (button, modifiers) = (MouseButton::Left, Modifiers::default());
+    let press = MouseDownEvent {
+        button,
+        position,
+        modifiers,
+        click_count: 1,
+        first_mouse: false,
+    };
+    let release = MouseUpEvent {
+        button,
+        position,
+        modifiers,
+        click_count: 1,
+    };
+    opened.event(PlatformInput::MouseDown(press), cx)?;
+    opened.event(PlatformInput::MouseUp(release), cx)?;
+    save(cx, opened.window.into(), "cards-typed")?;
     drop(opened);
 
     let dynamics = [

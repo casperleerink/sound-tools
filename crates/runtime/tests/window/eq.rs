@@ -76,6 +76,29 @@ fn a_click_on_a_handle_selects_its_band_and_the_knobs_follow(cx: &mut TestAppCon
     assert_eq!(state(&mut opened), EqState::default());
 }
 
+/// One knob shows the gain of whichever band is selected. A gain typed for one band stays that
+/// band's when a press on another handle closes the field and selects the other band.
+#[gpui::test]
+fn a_gain_typed_for_a_band_is_that_bands_when_another_is_selected(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    // A window tells of the keys leaving a field only while it has the keys, as the app's has.
+    opened.cx.update(|window, _| window.activate_window());
+    opened.settle();
+    assert_eq!(selected(&mut opened), 0);
+    let value = opened.control("knob-gain_db-value");
+    opened.click(value);
+    opened.cx.simulate_input("6 dB");
+    opened.cx.run_until_parked();
+
+    let handle = opened.control("handle-band-3");
+    opened.click(handle);
+    assert_eq!(selected(&mut opened), 2);
+    let after = state(&mut opened);
+    assert_eq!(after.bands[0].gain_db, 6.);
+    assert_eq!(after.bands[2], Band::default_at(2));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
+}
+
 /// Sideways is frequency and up is gain, both one step; the press also selects the band.
 #[gpui::test]
 fn a_drag_of_a_handle_changes_frequency_and_gain_as_one_step(cx: &mut TestAppContext) {
