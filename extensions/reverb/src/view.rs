@@ -210,24 +210,26 @@ impl ReverbView {
         let pre_delay = self.time_handle("pre-delay", PRE_DELAY_KNOB, pre_delay, state, cx);
         let decay = (start + SHORTEST_TAIL, DECAY_ZONE, FLOOR);
         let decay = self.time_handle("decay", DECAY_KNOB, decay, state, cx);
-        let caption = format!(
-            "Pre-delay {} · Decay {}",
-            milliseconds_readout(state.pre_delay_ms),
-            seconds_readout(state.decay_seconds),
-        );
-        Display::new("display")
+        let display = Display::new("display")
             .curve(tail)
             .marks(reflections)
             .dashed(highs)
             .handle(pre_delay.hollow(true))
-            .handle(decay)
-            .caption(caption)
+            .handle(decay);
+        // Expanded, the knobs of the two handles say their numbers.
+        if self.expanded {
+            return display;
+        }
+        display.caption(format!(
+            "Pre-delay {} · Decay {}",
+            milliseconds_readout(state.pre_delay_ms),
+            seconds_readout(state.decay_seconds),
+        ))
     }
 
     fn freeze(&self, state: &ReverbState, cx: &mut Context<Self>) -> Cell {
         let frozen = state.freeze;
-        let label = if frozen { "On" } else { "Off" };
-        let toggle = Toggle::new("freeze", label, frozen).on_change(weak_callback(
+        let toggle = Toggle::new("freeze", "Freeze", frozen).on_change(weak_callback(
             cx,
             |view, frozen: bool, cx| {
                 let set = |state: &mut ReverbState, frozen| state.freeze = frozen;
@@ -235,7 +237,7 @@ impl ReverbView {
                     .change("Change freeze", ValueChange::Set(frozen), set, cx);
             },
         ));
-        Cell::new(toggle).label("Freeze")
+        Cell::switch(toggle)
     }
 }
 
