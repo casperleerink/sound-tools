@@ -939,6 +939,8 @@ fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>
         Some(Readout::Db) => unit(Unit::Db),
         Some(Readout::Percent) => unit(Unit::Percent),
         Some(Readout::Pan) => pan_readout(value as f32),
+        Some(Readout::Pitch) => sound_notes::Pitch::try_from(value.round() as i64)
+            .map_or_else(|_| readout(value as f32, None), sound_notes::Pitch::name),
         Some(Readout::Position) => signatures.map_or_else(String::new, |signatures| {
             let position = signatures.bar_beat_of(tick);
             format!("{}.{}", position.bar, position.beat)

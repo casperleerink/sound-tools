@@ -8,9 +8,11 @@ mod controls;
 mod drawing;
 mod input;
 mod paint;
+mod parts;
 mod placed;
 mod shapes;
 mod space;
+mod steps;
 mod sync;
 
 use std::cell::{Cell, RefCell};
@@ -60,6 +62,8 @@ pub(crate) struct TypeScriptCard {
     frame: Option<CardFrame>,
     /// The drag of a field of the record.
     edit: ControlEdit,
+    /// Whether its card shows the cells behind its expand icon.
+    expanded: bool,
     /// The scroll and zoom of each space, by its key, and the size it was last laid out at,
     /// which its paint writes.
     spaces: Rc<RefCell<HashMap<String, SpaceView>>>,
@@ -429,6 +433,7 @@ impl TypeScriptCard {
             card,
             frame,
             edit: ControlEdit::default(),
+            expanded: false,
             spaces: Rc::default(),
             state: None,
             held: None,
@@ -794,6 +799,7 @@ impl TypeScriptCard {
             takes_keys,
             title_focus,
             lifting: None,
+            expanded: self.frame.as_ref().map(|_| self.expanded),
             card: self.handle.clone(),
             generation: live.generation(),
             cx,
@@ -875,6 +881,7 @@ impl Render for TypeScriptCard {
         let live = self.live.read(cx);
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
+        let hides_cells = matches!(&tree, Some(Ok(table)) if parts::hides_cells(table));
         let playhead = *self.session.read(cx).playhead().read(cx);
         if self.parts(cx).body.animates {
             window.request_animation_frame();
@@ -937,6 +944,13 @@ impl Render for TypeScriptCard {
             Some(frame) => frame
                 .card()
                 .min_w(px(PLAIN_CARD_WIDTH))
+                .when(hides_cells, |card| {
+                    let expand = cx.listener(|view, _, _, cx| {
+                        view.expanded = !view.expanded;
+                        cx.notify();
+                    });
+                    card.expand(self.expanded, expand)
+                })
                 .child(takes_keys(body))
                 .into_any_element(),
             None => {
