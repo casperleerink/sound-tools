@@ -1,6 +1,7 @@
-//! The card of a hosted plugin. The plugin draws its interface in a window of its own; the card
-//! has the button that opens it, the list that pins parameters to the card, and a cell per pin,
-//! two to a column, so the card grows wider and never taller.
+//! The card of a hosted plugin. The plugin draws its interface in a window of its own, so the
+//! display of the card holds the button that opens it, with the list that pins parameters to
+//! the card above it; then a cell per pin, two to a column, so the card grows wider and never
+//! taller.
 //!
 //! A stepped parameter is driven by the number of its step, never by its value, so a control
 //! always writes one of the plugin's own step values.
@@ -13,16 +14,14 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, Context, Div, Entity, FocusHandle, SharedString, Task, Window, div,
-    prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, SharedString, Task, Window, div, prelude::*, px,
 };
 use sound_core::{Instance, InstanceId, MAX_AUTOMATED, Project, ProjectEvent};
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
-use sound_ui::components::cell::{CELL_WIDTH, Cell, ROW_HEIGHT};
-use sound_ui::components::device_card::{
-    BODY_VALUE_LINE, CARD_PADDING, CardFrame, Column, PLAIN_CARD_WIDTH,
-};
+use sound_ui::components::cell::{Cell, control_width};
+use sound_ui::components::device_card::{CardFrame, Column};
+use sound_ui::components::display::TextDisplay;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -41,11 +40,8 @@ use sound_ui::{TextVariant, Typography};
 use crate::parameters::lane_of_pin;
 use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlugins};
 
-/// The room at the left of the body, where the plain card has all of it.
-const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
-/// A dropdown spans two cells, so the names of its steps fit, and leaves air on either side.
+/// A dropdown spans two cells, so the names of its steps fit.
 const DROPDOWN_SPAN: usize = 2;
-const DROPDOWN_WIDTH: f32 = DROPDOWN_SPAN as f32 * CELL_WIDTH - 8.;
 /// How often at most the card asks the plugin for its text of a value a lane plays, which
 /// changes every frame.
 const LANE_READ_OUT: Duration = Duration::from_millis(66);
@@ -215,15 +211,13 @@ impl PluginView {
         })
         .detach();
         let menu = cx.new(|cx| {
-            let mut menu = DropdownMenu::new("Parameters", Vec::new(), cx)
+            DropdownMenu::new("Parameters", Vec::new(), cx)
                 .searchable("Search", cx)
-                .trigger(Trigger::Subtle)
+                .trigger(Trigger::Select)
                 .side(Side::Top)
                 .width(260.)
                 .max_height(320.)
-                .debug_name("plugin-parameters");
-            menu.set_trigger_height(ControlSize::Md.height(), cx);
-            menu
+                .debug_name("plugin-parameters")
         });
         cx.subscribe(&menu, |view, _, MenuPicked(value), cx| {
             view.pin_or_unpin(value, cx);
@@ -463,11 +457,11 @@ impl PluginView {
         cx.notify();
     }
 
-    /// The cell of the pin `id`, and how many columns of cells it spans.
-    fn pin(&self, id: u32, pin: &Pin, cx: &mut Context<Self>) -> (AnyElement, usize) {
+    /// The cell of the pin `id`.
+    fn pin(&self, id: u32, pin: &Pin, cx: &mut Context<Self>) -> AnyElement {
         let parameter = self.parameters.as_ref().and_then(|list| list.get(&id));
         let Some(parameter) = parameter else {
-            return (missing(id, pin, cx), 1);
+            return missing(id, pin, cx);
         };
         let name = SharedString::from(parameter.name.clone());
         let label = format!("Change {name}");
@@ -489,7 +483,7 @@ impl PluginView {
                 .collect()
         };
         let element_id = ("pin", u64::from(id));
-        let (cell, span) = match Control::of(parameter) {
+        let cell = match Control::of(parameter) {
             Control::Toggle(steps) => {
                 let on = steps.index(pin.value) == 1;
                 let word = if on { "On" } else { "Off" };
@@ -502,7 +496,7 @@ impl PluginView {
                         view.change(id, &label, ValueChange::Set(value), |value| value, cx);
                     },
                 ));
-                (Cell::new(toggle), 1)
+                Cell::new(toggle)
             }
             Control::Dropdown(steps) => {
                 let items = steps
@@ -518,7 +512,7 @@ impl PluginView {
                 let select = Select::new(element_id, picked)
                     .entries(vec![MenuEntry::Group(MenuGroup::new().items(items))])
                     .placeholder("None")
-                    .trigger_width(DROPDOWN_WIDTH)
+                    .trigger_width(control_width(DROPDOWN_SPAN))
                     .menu_width(160.)
                     .on_change(weak_callback(cx, move |view, picked: SharedString, cx| {
                         let index = picked.parse::<usize>().ok();
@@ -526,7 +520,7 @@ impl PluginView {
                             view.change(id, &label, ValueChange::Set(*value), |value| value, cx);
                         }
                     }));
-                (Cell::new(select).span(DROPDOWN_SPAN), DROPDOWN_SPAN)
+                Cell::new(select).span(DROPDOWN_SPAN)
             }
             control @ (Control::Stepped(_) | Control::Knob) => {
                 let readout = match out_of_range {
@@ -568,13 +562,12 @@ impl PluginView {
                             view.change(id, &label, change, value, cx);
                         })),
                 };
-                return (knob.into_any_element(), 1);
+                return knob.into_any_element();
             }
         };
-        let cell = cell
-            .label(name)
-            .when(out_of_range, |cell| cell.value("Out of range"));
-        (cell.into_any_element(), span)
+        cell.label(name)
+            .when(out_of_range, |cell| cell.value("Out of range"))
+            .into_any_element()
     }
 }
 
@@ -664,32 +657,19 @@ impl Render for PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return div().into_any_element();
         };
-        let muted = cx.theme().text_secondary();
-        let line = |text: String| {
-            div()
-                .text_variant(TextVariant::Label)
-                .line_height(px(14.))
-                .text_color(muted)
-                .child(text)
-        };
-        let plain = self.frame.card().w(px(PLAIN_CARD_WIDTH));
-        let left = |top: Div, bottom: Option<Div>| {
-            div()
-                .relative()
-                .w(px(LEFT_WIDTH))
-                .h(px(ROW_HEIGHT * 2.))
-                .child(top)
-                .children(bottom.map(|bottom| bottom.absolute().top(px(BODY_VALUE_LINE))))
-        };
+        // The plugin draws itself in a window of its own, so the display of its card is the
+        // way there, and says what is wrong when there is none.
+        let display = TextDisplay::new("plugin-display");
+        let card = self.frame.card();
 
         let Some(installed) = plugins.installed(record.format, &record.plugin_id) else {
             let text = format!(
                 "This computer has no {} plugin with this id. Install it, or pick another.",
                 record.format.name()
             );
-            return plain.child(left(line(text), None)).into_any_element();
+            return card.display(display.message(text)).into_any_element();
         };
-        let detail = line(installed.detail());
+        let display = display.caption(installed.detail());
 
         let id = self.device.instance.id();
         // The plugin crashed or hung in its own process, and waits for the composer.
@@ -706,21 +686,13 @@ impl Render for PluginView {
                     cx.notify();
                 }));
             let text = format!("{} stopped working.", installed.name);
-            let top = div()
-                .flex()
-                .flex_col()
-                .items_start()
-                .gap(px(4.))
-                .child(button)
-                .child(line(text));
-            return plain.child(left(top, Some(detail))).into_any_element();
+            let display = display.message(text).button(button);
+            return card.display(display).into_any_element();
         }
         // `None`: this machine has the plugin but it did not load, which is reported already.
         let Some(has_window) = plugins.window_offered(id) else {
             let text = "This plugin did not load, so there is nothing to open.";
-            return plain
-                .child(left(line(text.to_string()), Some(detail)))
-                .into_any_element();
+            return card.display(display.message(text)).into_any_element();
         };
         // A plugin's view goes in an `NSView` or an `HWND`, and Linux has neither. The host
         // does not check, so its tests can open windows on every platform.
@@ -738,44 +710,35 @@ impl Render for PluginView {
         } else {
             "Open window"
         };
-        let button = Button::new("plugin-window", label)
-            .debug_selector(|| "plugin-window".to_string())
-            .variant(ButtonVariant::Subtle)
-            .size(ControlSize::Md)
-            .disabled(!has_window)
-            .focus_handle(&self.window_focus)
-            .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx)));
-        let top = div()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap(px(4.))
-            .child(button)
-            .children((!has_window).then(|| line(no_window.to_string())))
-            .children(self.parameters.is_some().then(|| self.menu.clone()));
+        // A control that does nothing is not shown: with no window the display says why.
+        let display = match has_window {
+            true => display.button(
+                Button::new("plugin-window", label)
+                    .debug_selector(|| "plugin-window".to_string())
+                    .variant(ButtonVariant::Subtle)
+                    .size(ControlSize::Md)
+                    .focus_handle(&self.window_focus)
+                    .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx))),
+            ),
+            false => display.message(no_window),
+        };
+        let display = match self.parameters.is_some() {
+            true => display.control(self.menu.clone()),
+            false => display,
+        };
 
         // Two pins to a column, in the order of their ids.
-        let pins: Vec<(AnyElement, usize)> = record
+        let mut pins = record
             .parameters
             .iter()
-            .map(|(pin, value)| self.pin(*pin, value, cx))
-            .collect();
-        let mut pins = pins.into_iter();
-        let mut columns = Vec::new();
-        while let Some((top, top_span)) = pins.next() {
+            .map(|(pin, value)| self.pin(*pin, value, cx));
+        let mut card = card.display(display);
+        while let Some(top) = pins.next() {
             let column = Column::new().top(top);
-            columns.push(match pins.next() {
-                Some((bottom, span)) => column.bottom(bottom).span(span.max(top_span)),
-                None => column.span(top_span),
+            card = card.column(match pins.next() {
+                Some(bottom) => column.bottom(bottom),
+                None => column,
             });
-        }
-        let card = match columns.is_empty() {
-            true => plain,
-            false => self.frame.card(),
-        };
-        let mut card = card.display(left(top, Some(detail)));
-        for column in columns {
-            card = card.column(column);
         }
         card.into_any_element()
     }

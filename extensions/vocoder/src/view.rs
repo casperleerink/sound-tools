@@ -20,10 +20,6 @@ use crate::{BANDS, FORMANT, HIGHEST_HZ, LOWEST_HZ, MIX, RELEASE, Vocoder, Vocode
 /// The name the rack puts on the card of a vocoder.
 pub const NAME: &str = "Vocoder";
 
-/// The width of the display: with two columns of cells the card is as wide as the
-/// modulation's.
-const DISPLAY_WIDTH: f32 = 200.;
-
 /// The display shows the spectrum from here to there, in octaves.
 const LEFT_HZ: f32 = 50.;
 const RIGHT_HZ: f32 = 20_000.;
@@ -112,7 +108,7 @@ impl VocoderView {
 
     fn display(&self, state: &VocoderState) -> Display {
         let grid = [100., 1_000., 10_000.].map(across).to_vec();
-        Display::new("display", DISPLAY_WIDTH)
+        Display::new("display")
             .marks(bank(state.bands))
             .grid(grid, Vec::new())
             .caption(caption(state))

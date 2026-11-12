@@ -121,7 +121,7 @@ fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut T
     window.wait_for_bun();
     assert_eq!(window.find("space-knob-d"), None);
 
-    // The wide control takes whole columns, and the knob over it sits in their middle.
+    // The wide control takes whole columns, and the knob over it stays in the first of them.
     let left = |window: &mut super::Opened<'_>, selector: &str| {
         f32::from(window.bounds(selector).unwrap().origin.x)
     };
@@ -132,7 +132,7 @@ fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut T
         left(&mut window, "space-knob-a"),
         left(&mut window, "space-knob-b"),
     );
-    assert_eq!(b - a, 28. * (columns + 1.));
+    assert_eq!(b - a, 56. * columns);
 
     let expand = window.until_found("card-rig/box-expand");
     window.click(expand);

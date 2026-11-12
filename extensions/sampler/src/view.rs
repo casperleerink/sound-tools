@@ -32,9 +32,9 @@ use sound_core::{Changes, Instance, ProjectEvent};
 use sound_media::{Cached, Imported, Info};
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
-use sound_ui::components::cell::{CELL_WIDTH, Cell};
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
-use sound_ui::components::display::{Axis, Handle};
+use sound_ui::components::display::{Axis, Handle, TextDisplay, WIDE_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -45,7 +45,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::waveform_display::{
-    FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
+    FileDrop, WaveformDisplay, clamped_end, clamped_start, place,
 };
 use sound_ui::import;
 use sound_ui::{
@@ -62,8 +62,6 @@ use crate::{
 
 /// The name the rack puts on the card of a sampler.
 pub const NAME: &str = "Sampler";
-/// The display, so the card is 32 + 312 + 8 + 3 x 56 = 520 pt with a sample, and 817 expanded.
-pub const DISPLAY_WIDTH: f32 = 312.;
 /// What the display says with no file, and while one is dragged over it.
 pub const EMPTY: &str = "Drop an audio file here";
 pub const DROP_TO_LOAD: &str = "Drop to load the file";
@@ -79,7 +77,6 @@ const FILE_VALUE: &str = "file";
 const SAMPLE_VALUE: &str = "sample";
 const SFZ_VALUE: &str = "sfz";
 const LIBRARY_PREFIX: &str = "library:";
-const INSTRUMENT_SELECT_WIDTH: f32 = 2. * CELL_WIDTH - 8.;
 
 /// Registers the card of the `sampler` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -203,7 +200,7 @@ impl SamplerView {
         let instruments = cx.new(|cx| {
             DropdownMenu::new("Instrument", Vec::new(), cx)
                 .trigger(Trigger::Select)
-                .trigger_width(INSTRUMENT_SELECT_WIDTH)
+                .trigger_width(control_width(2))
                 .width(280.)
                 .max_height(420.)
                 .debug_name("instrument")
@@ -361,7 +358,7 @@ impl SamplerView {
         let [seconds, _] = peaks.take();
         let length = self.file(cx).map(|file| file.seconds() as f32);
         let at = length.filter(|_| seconds > 0.0).map(|length| {
-            let step = length / DISPLAY_WIDTH;
+            let step = length / WIDE_WIDTH;
             (seconds / step).round() * step
         });
         if at != self.playing_at {
@@ -493,7 +490,7 @@ impl SamplerView {
     }
 
     /// The display with no file that plays: what it says, `Choose file` and the drop.
-    fn no_file(&self, says: String, has_sample: bool, cx: &mut Context<Self>) -> NoFile {
+    fn no_file(&self, says: String, has_sample: bool, cx: &mut Context<Self>) -> TextDisplay {
         let button = Button::new("choose-file", "Choose file")
             .debug_selector(|| "choose-file".to_string())
             .variant(ButtonVariant::Subtle)
@@ -504,7 +501,9 @@ impl SamplerView {
             true => DROP_TO_REPLACE,
             false => DROP_TO_LOAD,
         };
-        NoFile::new("sampler-display", DISPLAY_WIDTH, says)
+        TextDisplay::new("sampler-display")
+            .wide()
+            .message(says)
             .button(button)
             .drop_file(self.file_drop(drop, cx))
     }
@@ -617,7 +616,9 @@ impl SamplerView {
             ),
             Status::NoLibrary => (format!("{} is not downloaded", entry.name), None),
         };
-        let display = NoFile::new("sampler-display", DISPLAY_WIDTH, says)
+        let display = TextDisplay::new("sampler-display")
+            .wide()
+            .message(says)
             .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
         let display = match button {
             Some(label) => display.button(
@@ -681,25 +682,24 @@ impl SamplerView {
             percent_readout(state.sustain),
         );
         let loop_start = state.loop_start_seconds.unwrap_or(state.start_seconds);
-        let display =
-            WaveformDisplay::new("sampler-display", DISPLAY_WIDTH, overview, length as f32)
-                .trim(state.start_seconds as f32, end as f32)
-                .on_start(weak_callback(cx, move |view, change: ValueChange, cx| {
-                    let set = |state: &mut SamplerState, seconds: f32| {
-                        with_start(state, f64::from(seconds), length)
-                    };
-                    view.device.change("Change start", change, set, cx);
-                }))
-                .on_end(weak_callback(cx, move |view, change: ValueChange, cx| {
-                    let set = |state: &mut SamplerState, seconds: f32| {
-                        with_end(state, f64::from(seconds), &file)
-                    };
-                    view.device.change("Change end", change, set, cx);
-                }))
-                .playhead(self.playing_at)
-                .curve(curve)
-                .caption(caption)
-                .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
+        let display = WaveformDisplay::new("sampler-display", overview, length as f32)
+            .trim(state.start_seconds as f32, end as f32)
+            .on_start(weak_callback(cx, move |view, change: ValueChange, cx| {
+                let set = |state: &mut SamplerState, seconds: f32| {
+                    with_start(state, f64::from(seconds), length)
+                };
+                view.device.change("Change start", change, set, cx);
+            }))
+            .on_end(weak_callback(cx, move |view, change: ValueChange, cx| {
+                let set = |state: &mut SamplerState, seconds: f32| {
+                    with_end(state, f64::from(seconds), &file)
+                };
+                view.device.change("Change end", change, set, cx);
+            }))
+            .playhead(self.playing_at)
+            .curve(curve)
+            .caption(caption)
+            .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
         let display = match state.looping {
             true => display.loop_start(
                 loop_start as f32,
@@ -731,22 +731,16 @@ impl Render for SamplerView {
             .span(2)
             .label("Instrument");
         if state.sfz.is_some() || state.library.is_some() {
-            let columns = [
-                Column::new().top(instrument).bottom(knob(GAIN_KNOB, cx)),
-                Column::new(),
-            ];
+            let column = Column::new().top(instrument).bottom(knob(GAIN_KNOB, cx));
             let card = self.frame.card().display(self.display(&state, cx));
-            let card = columns
-                .into_iter()
-                .fold(card, |card, column| card.column(column));
-            return card.into_any_element();
+            return card.column(column).into_any_element();
         }
         let columns = [
             // A root between two notes is no root.
             Column::new()
                 .top(instrument)
-                .bottom(knob(ROOT_KNOB, cx).step(1.)),
-            Column::new().bottom(knob(VELOCITY_KNOB, cx)),
+                .bottom(knob(ROOT_KNOB, cx).step(1.))
+                .bottom(knob(VELOCITY_KNOB, cx)),
             Column::new()
                 .top(knob(RELEASE_KNOB, cx))
                 .bottom(knob(GAIN_KNOB, cx)),

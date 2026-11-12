@@ -1,4 +1,4 @@
-//! Segmented control: one choice of a few. It sits on the knob line of its cell, at the top of a
+//! Segmented control: one choice of a few. It sits on the knob line of its cell, above the drawing of a
 //! display, or in the header of a card as its pages. A marked option has a dot after its label:
 //! a page with something on it worth a look. Controlled: the caller owns the selected value and
 //! gets an `on_change(value)`.

@@ -23,7 +23,7 @@ mod matrix;
 
 use gpui::{Context, ElementId, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent};
-use sound_ui::components::cell::Cell;
+use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::curves::{
     Adsr as Times, EnvelopeHandle, RESPONSE_CAPTION, envelope_display, lfo_line, resonance_travel,
     response_curve, response_decades, response_height, svf_gain,
@@ -57,9 +57,6 @@ type Parameter<T> = sound_core::Parameter<T>;
 
 /// The name the rack puts on the card.
 pub const NAME: &str = "Wavetable";
-
-/// The width of every display of the card.
-const DISPLAY_WIDTH: f32 = 200.;
 
 /// Registers the card of the `wavetable` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -530,7 +527,7 @@ impl WavetableView {
         Cell::new(toggle).label(label)
     }
 
-    /// The wavetable of an oscillator, with its table at the top. A drag up and down anywhere
+    /// The wavetable of an oscillator, with its table above it. A drag up and down anywhere
     /// on it moves the position, as the Position knob does and under the same name.
     fn oscillator_display(
         &self,
@@ -574,17 +571,17 @@ impl WavetableView {
             (object.get_mut)(state).table = table
         });
         let tables = Self::select(object.id("table"), oscillator.table, cx, pick).menu_width(200.);
-        Display::new(object.id("display"), DISPLAY_WIDTH)
+        Display::new(object.id("display"))
             .lines(lines)
             .curve(playing)
             .filled(false)
             .handle(area)
             .caption(caption)
-            .child(tables)
+            .control(tables)
     }
 
-    /// The columns of an oscillator but its position: on, level, the effect and its amount,
-    /// the tuning and the pan.
+    /// The columns of an oscillator but its position: on, level, the tuning, the pan, and the
+    /// effect and its amount.
     fn oscillator_columns(
         &self,
         object: Object<Oscillator>,
@@ -603,16 +600,19 @@ impl WavetableView {
         let pick = Self::picks(object.undo("Change", "effect"), move |state, effect| {
             (object.get_mut)(state).effect = effect
         });
-        let effect =
-            Self::select(object.id("effect"), oscillator.effect, cx, pick).menu_width(120.);
+        let effect = Self::select(object.id("effect"), oscillator.effect, cx, pick)
+            .trigger_width(control_width(2))
+            .menu_width(120.);
         let mut knob = |control| self.knob(object, control, state, cx);
+        // The effect last: it is two columns wide, and the empty cell beside its amount is
+        // then at the end.
         [
             Column::new().top(on).bottom(knob(&LEVEL)),
-            Column::new()
-                .top(Cell::new(effect).label("Effect"))
-                .bottom(knob(&EFFECT_AMOUNT)),
             Column::new().top(knob(&OCTAVE)).bottom(knob(&SEMITONE)),
             Column::new().top(knob(&DETUNE)).bottom(knob(&PAN)),
+            Column::new()
+                .top(Cell::new(effect).span(2).label("Effect"))
+                .bottom(knob(&EFFECT_AMOUNT)),
         ]
     }
 
@@ -680,7 +680,7 @@ impl WavetableView {
 
     /// Both filters on one response display: the first as the line, the second dashed with a
     /// hollow handle. A filter that is off lets the sound through: the first is flat, the
-    /// second has no line and its handle is dim. The routing at the top.
+    /// second has no line and its handle is dim. The routing above it.
     fn filter_display(&self, state: &WavetableState, cx: &mut Context<Self>) -> Display {
         let response = |filter: &Filter| {
             let filter = *filter;
@@ -703,7 +703,7 @@ impl WavetableView {
             .filter_handle(FILTER_2, &state.filter_2, cx)
             .hollow(true)
             .dimmed(!state.filter_2.on);
-        Display::new("filter-display", DISPLAY_WIDTH)
+        Display::new("filter-display")
             .curve(response(&state.filter_1))
             .dashed(match state.filter_2.on {
                 true => response(&state.filter_2),
@@ -714,16 +714,17 @@ impl WavetableView {
             .handle(second)
             .handle(self.filter_handle(FILTER_1, &state.filter_1, cx))
             .caption(RESPONSE_CAPTION)
-            .child(routing)
+            .control(routing)
     }
 
-    /// On, type, slope, character and drive of a filter.
-    fn filter_columns(
+    /// On, drive and slope of a filter over its type and character. All but the switch and
+    /// the knob are two columns wide, so the slope stands over the character.
+    fn filter_column(
         &self,
         object: Object<Filter>,
         state: &WavetableState,
         cx: &mut Context<Self>,
-    ) -> [Column; 3] {
+    ) -> Column {
         let filter = (object.get)(state);
         let on = Self::switch(
             object.id("on"),
@@ -736,7 +737,9 @@ impl WavetableView {
         let pick = Self::picks(object.undo("Change", "type"), move |state, kind| {
             (object.get_mut)(state).kind = kind
         });
-        let kind = Self::select(object.id("type"), filter.kind, cx, pick).menu_width(120.);
+        let kind = Self::select(object.id("type"), filter.kind, cx, pick)
+            .trigger_width(control_width(2))
+            .menu_width(120.);
         let pick = Self::picks(object.undo("Change", "slope"), move |state, slope| {
             (object.get_mut)(state).slope = slope
         });
@@ -746,31 +749,26 @@ impl WavetableView {
             move |state, character| (object.get_mut)(state).character = character,
         );
         let character = Self::segments(object.id("character"), filter.character, cx, pick);
-        [
-            Column::new().top(on).bottom(Cell::new(kind).label("Type")),
-            Column::new()
-                .span(2)
-                .top(Cell::new(slope).label("Slope").value("dB / oct"))
-                .bottom(Cell::new(character).span(2).label("Character")),
-            Column::new().top(self.knob(object, &DRIVE, state, cx)),
-        ]
+        let slope_value = format!("{} dB/oct", filter.slope.label());
+        Column::new()
+            .top(on)
+            .top(self.knob(object, &DRIVE, state, cx))
+            .top(Cell::new(slope).span(2).label("Slope").value(slope_value))
+            .bottom(Cell::new(kind).span(2).label("Type"))
+            .bottom(Cell::new(character).span(2).label("Character"))
     }
 
+    /// The cutoff and the resonance of the first filter are on the card before it unfolds, so
+    /// only the second has them here.
     fn filters(&self, state: &WavetableState, cx: &mut Context<Self>) -> Section {
-        let [first_on, first_slope, first_drive] = self.filter_columns(FILTER_1, state, cx);
-        let [second_on, second_slope, second_drive] = self.filter_columns(FILTER_2, state, cx);
-        let second_tone = Column::new()
+        let second = self
+            .filter_column(FILTER_2, state, cx)
             .top(self.knob(FILTER_2, &CUTOFF, state, cx))
-            .bottom(self.knob(FILTER_2, &RESONANCE, state, cx));
+            .top(self.knob(FILTER_2, &RESONANCE, state, cx));
         Section::new()
             .display(self.filter_display(state, cx))
-            .column(first_on)
-            .column(first_slope)
-            .column(first_drive)
-            .column(second_on)
-            .column(second_slope)
-            .column(second_drive)
-            .column(second_tone)
+            .column(self.filter_column(FILTER_1, state, cx))
+            .column(second)
     }
 
     /// The envelope the switch shows, with the handles of the synth, its curves, and its
@@ -829,14 +827,13 @@ impl WavetableView {
         let switch = Self::segments("envelope-shown", self.envelope, cx, Self::show_envelope);
         let display = envelope_display(
             "envelope-display",
-            DISPLAY_WIDTH,
             ATTACK.range(),
             (values, defaults, automated),
             curves,
             on_change,
         )
         .caption(caption)
-        .child(div().ml_auto().child(switch));
+        .control(switch);
         let mut knob = |control| self.knob(object, control, state, cx);
         Section::new()
             .display(display)
@@ -850,7 +847,7 @@ impl WavetableView {
             )
     }
 
-    /// The LFO the switch shows: two cycles of its shape, its shape at the top, and its rate,
+    /// The LFO the switch shows: two cycles of its shape, its shape above them, and its rate,
     /// free or in time with the tempo.
     fn lfos(&self, state: &WavetableState, cx: &mut Context<Self>) -> Section {
         let object = self.lfo.object();
@@ -868,11 +865,12 @@ impl WavetableView {
             ),
             false => readout(Unit::Hertz, lfo.rate_hz),
         };
-        let display = Display::new("lfo-display", DISPLAY_WIDTH)
-            .curve(lfo_line(lfo.shape, 2., 0.4, 0.28))
-            .zero_line(0.4)
+        let display = Display::new("lfo-display")
+            .curve(lfo_line(lfo.shape, 2., 0.5, 0.36))
+            .zero_line(0.5)
             .caption(caption)
-            .child(div().flex().gap_1().child(switch).child(shape));
+            .control(switch)
+            .control(shape);
         let sync = Self::switch(
             object.id("sync"),
             "Sync",
@@ -896,9 +894,10 @@ impl WavetableView {
                     Self::picks(object.undo("Change", "division"), move |state, division| {
                         (object.get_mut)(state).division = division
                     });
-                let division =
-                    Self::select(object.id("division"), lfo.division, cx, pick).menu_width(96.);
-                Cell::new(division).label("Rate").into_any_element()
+                let division = Self::select(object.id("division"), lfo.division, cx, pick)
+                    .trigger_width(control_width(2))
+                    .menu_width(96.);
+                Cell::new(division).span(2).label("Rate").into_any_element()
             }
             false => self.knob(object, &RATE, state, cx).into_any_element(),
         };
@@ -906,17 +905,20 @@ impl WavetableView {
             let pick = Self::picks(object.undo("Change", "feel"), move |state, feel| {
                 (object.get_mut)(state).feel = feel
             });
-            let feel = Self::select(object.id("feel"), lfo.feel, cx, pick).menu_width(120.);
-            Cell::new(feel).label("Feel")
+            let feel = Self::select(object.id("feel"), lfo.feel, cx, pick)
+                .trigger_width(control_width(2))
+                .menu_width(120.);
+            Cell::new(feel).span(2).label("Feel")
         });
-        let feel_column = match feel {
-            Some(feel) => Column::new().top(feel),
-            None => Column::new(),
-        };
+        // The switches first, so Sync stays under the pointer when it changes what is after it.
+        let rate = Column::new().top(rate);
         Section::new()
             .display(display)
-            .column(Column::new().top(rate).bottom(sync))
-            .column(feel_column.bottom(retrigger))
+            .column(Column::new().top(sync).bottom(retrigger))
+            .column(match feel {
+                Some(feel) => rate.bottom(feel),
+                None => rate,
+            })
     }
 
     fn voicing(&self, state: &WavetableState, cx: &mut Context<Self>) -> Section {

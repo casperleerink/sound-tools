@@ -6,20 +6,14 @@ use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ElementId, Empty, GlobalElementId, InspectorElementId,
     LayoutId, Pixels, SharedString, Size, Window, div, point, prelude::*, px, size,
 };
-use sound_ui::ControlSize;
 use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, Cell, ROW_HEIGHT};
-use sound_ui::components::device_card::{DISPLAY_GAP, Section};
-use sound_ui::components::display::{Display, INSET_HEIGHT};
+use sound_ui::components::device_card::Section;
+use sound_ui::components::display::{self, Display};
 
 use crate::tree::{Axes, CellProps, DisplayProps, NodeTable, Props};
 
 use super::drawing::Drawing;
 
-/// As the displays of the built-in cards: of most, and of those that show a file or a spectrum.
-const DISPLAY_WIDTH: f32 = 200.;
-const WIDE_DISPLAY_WIDTH: f32 = 312.;
-/// What a small control at the top of a display takes of its height, with the air around it.
-const CONTROL_ROOM: f32 = ControlSize::Sm.height() + 12.;
 /// The columns of cells a card shows before its expand icon: beside a display, as the built-in
 /// cards, and with no display.
 const COLUMNS_BESIDE_DISPLAY: usize = 2;
@@ -61,10 +55,7 @@ impl Drawing<'_> {
         children: &[usize],
     ) -> AnyElement {
         let table = self.table;
-        let width = match props.wide {
-            Some(true) => WIDE_DISPLAY_WIDTH,
-            _ => DISPLAY_WIDTH,
-        };
+        let wide = props.wide == Some(true);
         let name = self.element_name("display", None, id);
         let is_space = |slot: &usize| {
             let props = table.get(*slot).map(|entry| &entry.props);
@@ -72,20 +63,18 @@ impl Drawing<'_> {
         };
         let (spaces, controls): (Vec<usize>, Vec<usize>) =
             drawn(table, children).partition(is_space);
-        // The drawing starts under the control, so the control lies over none of it.
-        let top = match controls.is_empty() {
-            true => 0.,
-            false => CONTROL_ROOM,
-        };
-        let mut display = Display::new(ElementId::Name(name.into()), width)
-            .when_some(props.caption.clone(), Display::caption)
-            .children(controls.into_iter().map(|control| self.draw(control)));
+        let (width, height) = Display::drawing_size(wide, !controls.is_empty());
+        let mut display = Display::new(ElementId::Name(name.into()))
+            .when(wide, Display::wide)
+            .when_some(props.caption.clone(), Display::caption);
+        for control in controls {
+            display = display.control(self.draw(control));
+        }
         let space = (spaces.first()).and_then(|slot| Some((*slot, table.get(*slot)?)));
         if let Some((slot, entry)) = space
             && let Props::Space(space) = &entry.props
         {
             // One unit is its whole width across and its whole height down.
-            let height = INSET_HEIGHT - top;
             let mut space = (**space).clone();
             (space.width, space.height, space.grow) = (Some(width), Some(height), None);
             space.unit = Some(Axes {
@@ -93,9 +82,9 @@ impl Drawing<'_> {
                 y: Some(height),
             });
             let drawing = self.space(slot, entry.id, &space, &entry.children);
-            display = display.overlay(div().absolute().left_0().top(px(top)).child(drawing));
+            display = display.child(div().absolute().left_0().top_0().child(drawing));
         }
-        (div().flex_none().mr(px(DISPLAY_GAP)).child(display)).into_any_element()
+        (div().flex_none().mr(px(display::GAP)).child(display)).into_any_element()
     }
 
     /// The cells of a card, two to a column. In a card the first columns show, and the rest
@@ -114,8 +103,8 @@ impl Drawing<'_> {
                 .map(|column| {
                     let rows =
                         (column.iter()).map(|cell| div().h(px(ROW_HEIGHT)).child(self.cell(*cell)));
-                    // A cell narrower than its column sits in its middle.
-                    (div().flex_none().flex().flex_col().items_center())
+                    // A cell narrower than its column stays on the grid, at its left.
+                    (div().flex_none().flex().flex_col().items_start())
                         .children(rows)
                         .into_any_element()
                 })

@@ -31,9 +31,6 @@ use crate::{
 /// The name the rack puts on the card of a reverb.
 pub const NAME: &str = "Reverb";
 
-/// The width of the display. With it and two columns of cells the card is 352 pt.
-const DISPLAY_WIDTH: f32 = 200.;
-
 /// Registers the view of the `reverb` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(ReverbView::new);
@@ -218,7 +215,7 @@ impl ReverbView {
             milliseconds_readout(state.pre_delay_ms),
             seconds_readout(state.decay_seconds),
         );
-        Display::new("display", DISPLAY_WIDTH)
+        Display::new("display")
             .curve(tail)
             .marks(reflections)
             .dashed(highs)

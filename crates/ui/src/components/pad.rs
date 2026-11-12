@@ -14,12 +14,14 @@ use gpui::{
     div, prelude::*, px,
 };
 
+use crate::components::display::WIDE_WIDTH;
 use crate::components::icon::Icon;
 use crate::scale::radius;
 use crate::theme::ActiveTheme;
 use crate::typography::{TextVariant, Typography};
 
-pub const PAD_WIDTH: f32 = 72.;
+/// Four pads across with their gaps are as wide as a wide display.
+pub const PAD_WIDTH: f32 = (WIDE_WIDTH - 3. * PAD_GAP) / 4.;
 pub const PAD_HEIGHT: f32 = 32.;
 /// Between two pads of a grid.
 pub const PAD_GAP: f32 = 4.;

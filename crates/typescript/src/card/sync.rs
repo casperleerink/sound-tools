@@ -12,7 +12,7 @@ use gpui::{
 use serde_json::json;
 use sound_core::InstanceId;
 use sound_notes::SIDECHAIN_INPUT;
-use sound_ui::components::cell::{self, CELL_WIDTH};
+use sound_ui::components::cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -67,7 +67,7 @@ fn sidechain_column(
         let picker = Select::new(format!("sidechain-{place}"), value)
             .entries(vec![MenuEntry::Group(MenuGroup::new().items(rows))])
             .placeholder(select.value.clone())
-            .trigger_width(SPAN as f32 * CELL_WIDTH - 8.)
+            .trigger_width(cell::control_width(SPAN))
             .on_change(move |picked, _, cx| {
                 let Ok(option) = picked.parse::<usize>() else {
                     return;
@@ -82,7 +82,7 @@ fn sidechain_column(
             .span(SPAN)
             .label(select.label.clone())
     });
-    let column = Column::new().span(SPAN);
+    let column = Column::new();
     let column = match cells.next() {
         Some(cell) => column.top(cell),
         None => column,

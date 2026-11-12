@@ -81,15 +81,16 @@ fn a_drag_on_the_wavetable_moves_the_position_as_one_undo_step(cx: &mut TestAppC
     // Off the middle, where the pointer is not on the line: a press never jumps.
     let from = area + point(px(40.), px(20.));
     opened.press(from);
+    opened.drag_to(from - point(px(0.), px(5.)));
     opened.drag_to(from - point(px(0.), px(10.)));
-    opened.drag_to(from - point(px(0.), px(20.)));
     assert!(opened.gesture_open());
-    opened.release(from - point(px(0.), px(20.)));
+    opened.release(from - point(px(0.), px(10.)));
     assert!(!opened.gesture_open());
     let position = state(&mut opened).osc_1.position;
-    // 20 pt of a display 118 pt tall whose frames rise 40 % of it from first to last.
+    // 10 pt of a drawing 82 pt tall, under the table select, whose frames rise 40 % of it
+    // from first to last.
     assert!(
-        (position - (0.5 + 20. / (118. * 0.4))).abs() < 0.01,
+        (position - (0.5 + 10. / (82. * 0.4))).abs() < 0.01,
         "{position}"
     );
     assert_eq!(

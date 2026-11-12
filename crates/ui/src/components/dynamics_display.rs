@@ -1,24 +1,23 @@
 //! The display of a device that turns a level down, the Compressor and the Gate: its transfer
-//! curve, the input across and the output up, square, so an untouched sound is a diagonal. The
-//! level now is a dot on the curve and the gain reduction a bar at the right edge, with a
-//! caption under it.
+//! curve, the input across and the output up, so an untouched sound is the diagonal of the
+//! curve's part. The level now is a dot on the curve and the gain reduction a bar at the right
+//! edge, with a caption under it.
 //!
 //! The owner draws its own curve and handles on [`Levels`], keeps a [`Reading`] from its meters
 //! and adds them with [`Levels::meters`].
 
 use gpui::{App, div, prelude::*, px};
 
-use crate::components::display::{Display, INSET_HEIGHT};
+use crate::components::display::{Display, INSET_HEIGHT, WIDTH};
 use crate::components::knob::{KnobRange, short};
 use crate::components::meter::GainReduction;
 use crate::theme::ActiveTheme;
 
-/// The width of the display.
-pub const WIDTH: f32 = 136.;
+/// The room of the gain reduction bar at the right edge, in points.
+const BAR_ROOM: f32 = 18.;
 
-/// The curve takes this part of the width, so that it is as wide as the display is tall. The
-/// gain reduction bar has the rest.
-pub const CURVE_WIDTH: f32 = INSET_HEIGHT / WIDTH;
+/// The curve takes this part of the width. The gain reduction bar has the rest.
+pub const CURVE_WIDTH: f32 = (WIDTH - BAR_ROOM) / WIDTH;
 
 /// The dot of the level and the bar of the gain reduction, in points.
 const LEVEL_DOT: f32 = 8.;

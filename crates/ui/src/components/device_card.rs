@@ -27,7 +27,8 @@ use gpui::{
 
 use sound_core::InstanceId;
 
-use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
+use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT};
+use crate::components::display::GAP as DISPLAY_GAP;
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
 use crate::renders::{self, Part};
@@ -35,19 +36,15 @@ use crate::scale::radius;
 use crate::theme::ActiveTheme;
 
 pub const CARD_HEIGHT: f32 = 192.;
-/// A card with no display and no cells: a plugin, or a slot with nothing to show.
-pub const PLAIN_CARD_WIDTH: f32 = 200.;
+/// A card with no display and no cells, such as a slot with nothing to show: four columns of
+/// cells wide, as a card with a display and no cells.
+pub const PLAIN_CARD_WIDTH: f32 = CARD_PADDING * 2. + 4. * CELL_WIDTH;
 /// The narrowest card of the grid, one column of cells wide, for a card with a word or two to
 /// say.
 pub const NARROW_CARD_WIDTH: f32 = CARD_PADDING * 2. + CELL_WIDTH;
-/// The value line of the second row of cells, from the top of the body: where a card puts its
-/// quiet line, such as `CLAP · <maker>`.
-pub const BODY_VALUE_LINE: f32 = ROW_HEIGHT + VALUE_LINE;
 pub const HEADER_HEIGHT: f32 = 32.;
 /// From the sides of the card to its body, and from its left edge to the title.
 pub const CARD_PADDING: f32 = 16.;
-/// Between the display and the first column of cells.
-pub const DISPLAY_GAP: f32 = 8.;
 const ICON_TARGET: f32 = 24.;
 const ICON_GLYPH: f32 = 12.;
 const ICON_GAP: f32 = 4.;
@@ -140,24 +137,13 @@ impl CardFrame {
     }
 }
 
-/// A column of a card: one cell in each of the two rows. Either may be empty. It is one cell
-/// wide, or wider for a cell that spans more, such as a select with words in it; a narrower
-/// cell in it is centred.
-#[derive(IntoElement)]
+/// A column of a card: a cell in each of the two rows. Either may be empty. A cell that spans
+/// two columns makes it two wide, and the other row then takes two cells side by side, so every
+/// cell stays on the columns of the grid.
+#[derive(IntoElement, Default)]
 pub struct Column {
-    top: Option<AnyElement>,
-    bottom: Option<AnyElement>,
-    span: usize,
-}
-
-impl Default for Column {
-    fn default() -> Self {
-        Self {
-            top: None,
-            bottom: None,
-            span: 1,
-        }
-    }
+    top: Vec<AnyElement>,
+    bottom: Vec<AnyElement>,
 }
 
 impl Column {
@@ -165,35 +151,25 @@ impl Column {
         Self::default()
     }
 
-    /// How many columns of cells it is wide, from 1.
-    pub fn span(mut self, columns: usize) -> Self {
-        self.span = columns.max(1);
-        self
-    }
-
+    /// A cell of the first row, after those it has.
     pub fn top(mut self, cell: impl IntoElement) -> Self {
-        self.top = Some(cell.into_any_element());
+        self.top.push(cell.into_any_element());
         self
     }
 
+    /// A cell of the second row, after those it has.
     pub fn bottom(mut self, cell: impl IntoElement) -> Self {
-        self.bottom = Some(cell.into_any_element());
+        self.bottom.push(cell.into_any_element());
         self
     }
 }
 
 impl RenderOnce for Column {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let wide = self.span > 1;
-        let row = |cell: Option<AnyElement>| {
-            div()
-                .h(px(ROW_HEIGHT))
-                .when(wide, |row| row.flex().justify_center())
-                .children(cell)
-        };
+        let row = |cells: Vec<AnyElement>| div().h(px(ROW_HEIGHT)).flex().children(cells);
         div()
             .flex_none()
-            .w(px(CELL_WIDTH * self.span as f32))
+            .min_w(px(CELL_WIDTH))
             .flex()
             .flex_col()
             .child(row(self.top))
@@ -362,7 +338,7 @@ impl Styled for DeviceCard {
     }
 }
 
-/// Anything else in the body, after the columns: the button of a plugin card, a quiet line.
+/// Anything else in the body, after the columns, such as a quiet line.
 impl ParentElement for DeviceCard {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements);
