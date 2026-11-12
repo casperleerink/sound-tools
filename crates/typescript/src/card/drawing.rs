@@ -36,7 +36,6 @@ pub(super) struct Drawing<'a> {
     pub(super) info: Option<Rc<ToolInfo>>,
     /// The record, with each field it leaves out at its default.
     pub(super) state: Rc<Value>,
-    pub(super) watches: &'a BTreeMap<String, f32>,
     pub(super) played: Option<&'a BTreeMap<String, f32>>,
     pub(super) tick: f64,
     pub(super) spaces: HashMap<String, SpaceView>,
@@ -112,7 +111,6 @@ impl Drawing<'_> {
     pub(super) fn sources(&self) -> Sources<'_> {
         Sources {
             tick: self.tick,
-            watches: self.watches,
             state: &self.state,
             info: self.info.as_deref(),
             played: self.played,

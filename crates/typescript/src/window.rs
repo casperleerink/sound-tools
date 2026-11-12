@@ -43,8 +43,7 @@ use crate::tools::{Input, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor}
 use crate::tree::{NodeTable, Uses};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
 
-/// How often the cards look at their watches and the control loops run: often enough for a
-/// step light, a meter or a moving drawing.
+/// How often the control loops run and code hears of the watches its bindings read.
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// The room a card in a rack gives its view: the body of a card, under its header. It grows
@@ -138,8 +137,6 @@ struct Card {
     surface: Surface,
     /// Its nodes, or why there are none. `None` until its first ops arrive.
     tree: Option<Result<Rc<NodeTable>, String>>,
-    /// The watches its live values read.
-    watches: BTreeMap<String, f32>,
     /// Its code made its nodes, or is asked to.
     mounted: bool,
     /// Its nodes are an earlier Bun's: a press on them reaches nothing until the new ones come.
@@ -671,10 +668,6 @@ impl Live {
             .any(|card| matches!(&card.tree, Some(Ok(table)) if table.shows_dialog()))
     }
 
-    pub(crate) fn watches(&self, card: u64) -> Option<&BTreeMap<String, f32>> {
-        self.cards.get(&card).map(|card| &card.watches)
-    }
-
     pub(crate) fn generation(&self) -> u64 {
         self.generation.get()
     }
@@ -694,17 +687,11 @@ impl Live {
     ) -> u64 {
         let card = self.next_card;
         self.next_card += 1;
-        let watches = self
-            .session
-            .upgrade()
-            .map(|session| watches_of(session.read(cx).project(), &id))
-            .unwrap_or_default();
         let entry = Card {
             id,
             tool,
             surface,
             tree: None,
-            watches,
             mounted: false,
             stale: false,
             events_sent: 0,
@@ -741,18 +728,18 @@ impl Live {
         let Some(entry) = self.cards.get_mut(&card) else {
             return;
         };
+        let watches = watches_of(session.read(cx).project(), &entry.id);
         let request = Request::Mount {
             card,
             instance: &entry.id,
-            watches: &entry.watches,
+            watches: &watches,
             size,
             clock,
         };
         // One that did not go is asked again by the next Bun.
         entry.mounted = self.host.send(&request);
         if entry.mounted {
-            self.told_watches
-                .insert(entry.id.clone(), entry.watches.clone());
+            self.told_watches.insert(entry.id.clone(), watches);
         }
     }
 
@@ -1509,25 +1496,16 @@ impl Live {
         }
     }
 
-    /// Reads the watches of every card, which its live values follow, and tells Bun those its
-    /// bindings read as they move, and the clock and the song when they changed.
+    /// Tells Bun the watches the bindings of each card read as they move, and the clock and the
+    /// song when they changed. A live value reads a watch as it draws, with no code.
     fn look_at_watches(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
         let mut moved = BTreeMap::new();
-        let mut shown_moved = Vec::new();
         let tools = self.tools.borrow();
-        for (card, entry) in self.cards.iter_mut() {
+        for entry in self.cards.values() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
-            if watches != entry.watches {
-                if (entry.tree.as_ref())
-                    .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches))
-                {
-                    shown_moved.push(*card);
-                }
-                entry.watches = watches.clone();
-            }
             let told = self.told_watches.get(&entry.id);
             let reads = self
                 .reads
@@ -1562,9 +1540,6 @@ impl Live {
             }
         }
         self.tell_song(cx);
-        for card in shown_moved {
-            cx.emit(CardsChanged::One(card));
-        }
     }
 
     fn heard(&mut self, event: Event, cx: &mut Context<Self>) {

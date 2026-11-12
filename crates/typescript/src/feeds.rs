@@ -491,9 +491,16 @@ pub(crate) fn lane_value(
     Some((value, !(at.writes && lanes.source(number).is_some())))
 }
 
+/// The number the sound of `instance` sends out as `name`, as its last block played it.
+fn output(project: &Project, instance: &InstanceId, name: &str) -> Option<f32> {
+    (project.watched(instance, name)).filter(|value| value.is_finite())
+}
+
 /// The number `name` as it plays, and whether what plays it holds it: of an instance inside
 /// it, `path.number`, what a cable plays into it, else what a lane plays, else its record; of
-/// the instance, what a lane plays, else its record.
+/// the instance, what a lane plays, else its record. A name that is no field is an output of
+/// the sound, read with the playhead of the same poll, so the step a row lights is the one
+/// the transport says.
 fn played(
     project: &Project,
     (id, state): (&InstanceId, &Value),
@@ -506,7 +513,7 @@ fn played(
         let record = crate::path::at(state, name).and_then(crate::tree::number_of);
         return match lane_value(project, id, name, at) {
             Some((value, held)) => Some((value, range, held)),
-            None => Some((record?, range, false)),
+            None => Some((record.or_else(|| output(project, id, name))?, range, false)),
         };
     };
     let inner = id.child(path).ok()?;
@@ -514,7 +521,9 @@ fn played(
     let owner = inner.parent()?;
     let cable = (project.watched(&owner, &played_name(&format!("{}.{number}", inner.name()))))
         .filter(|value| value.is_finite());
-    let (record, range) = child_field(project, id, name, records)?;
+    let Some((record, range)) = child_field(project, id, name, records) else {
+        return Some((output(project, &inner, number)?, None, false));
+    };
     let lane = lane_value(project, &inner, number, at);
     let value = cable.or(lane.map(|(value, _)| value)).unwrap_or(record);
     Some((value, range, lane.is_some_and(|(_, held)| held)))

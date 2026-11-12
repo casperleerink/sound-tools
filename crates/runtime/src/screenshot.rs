@@ -173,7 +173,9 @@ fn click(cx: &mut HeadlessAppContext, window: AnyWindowHandle, at: Point<Pixels>
 }
 
 /// How long the window runs: in real time, which Bun answers in, or until the engine played
-/// that much, which a poll on a busy machine takes longer for.
+/// past that much, which a poll on a busy machine takes longer for. Past it, because a picture
+/// on a bar line would show the last step of the bar before under the first beat of the next:
+/// the playhead is where the next block starts, and a sound has only said what it played.
 #[derive(Clone, Copy)]
 enum Time {
     Real(Duration),
@@ -196,7 +198,7 @@ fn run(
     let mut played = Duration::ZERO;
     while match time {
         Time::Real(time) => started.elapsed() < time,
-        Time::Played(time) => played < time,
+        Time::Played(time) => played <= time,
     } {
         played += POLL_INTERVAL;
         drum_pad::wait_for_sounds();

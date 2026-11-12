@@ -4,6 +4,7 @@
 //! it shows a transport and puts a part that does not grow in its middle.
 
 use gpui::{TestAppContext, px};
+use sound_ui::POLL_INTERVAL;
 use sound_ui::components::cell::CELL_WIDTH;
 
 use super::gestures::press_key;
@@ -124,6 +125,55 @@ fn the_ring_of_the_step_that_plays_shows_only_while_the_piece_plays(cx: &mut Tes
     // A secondary row has none: a stack of rows shows the step once.
     assert_eq!(window.find("step-3-playing"), None);
     assert_eq!(window.problems(), []);
+}
+
+/// Sixteen steps whose sound says the sixteenth the piece is in.
+const RUNNER: &str = r#"import { beat, floor, h, output, pattern, Steps, tool } from "./sdk";
+
+tool({
+  name: "runner",
+  title: "Runner",
+  when: "A test",
+  doc: "Sixteen steps, and the one that plays as its sound says it.",
+  state: { steps: pattern({ length: 16, min: 0, max: 1, default: 0 }) },
+  sound: () => {
+    output("step", floor(beat.times(4)).mod(16));
+    return 0;
+  },
+  view: () => h(Steps, { field: "steps", playing: "step" }),
+});
+"#;
+
+/// The ring is on the step the playhead is in at every poll, so it and a transport never show
+/// two moments.
+#[gpui::test]
+fn the_ring_is_on_the_step_the_playhead_is_in(cx: &mut TestAppContext) {
+    let mut window = page(cx, "runner", RUNNER);
+    window.until_found("step-15");
+    window.wait_for_bun();
+    window.start_playing();
+    // Its code hears that the piece plays, and the row shows a ring.
+    window.until("a ring", |window| {
+        (0..16).any(|step| window.find(&format!("step-{step}-playing")).is_some())
+    });
+    let session = window.session.clone();
+    let mut steps = std::collections::BTreeSet::new();
+    for _ in 0..60 {
+        // Not a whole number of steps, so the playhead lands inside one.
+        window.render(1000);
+        window.cx.executor().advance_clock(POLL_INTERVAL);
+        window.cx.run_until_parked();
+        let tick = (window.cx).read(|cx| session.read(cx).playhead().read(cx).tick.0);
+        // On a line the playhead is at the next step and the sound has played only the last.
+        if tick % 240 == 0 {
+            continue;
+        }
+        let step = tick / 240 % 16;
+        let ring = format!("step-{step}-playing");
+        assert!(window.find(&ring).is_some(), "no {ring} at tick {tick}");
+        steps.insert(step);
+    }
+    assert!(steps.len() > 4, "{steps:?}");
 }
 
 /// A rig that shows the cards of its box and of its beat. The box gives a display, then a knob

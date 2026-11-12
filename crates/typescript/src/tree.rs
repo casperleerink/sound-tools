@@ -557,7 +557,6 @@ const FAMILIES: &[&str] = &[
 /// window reads for them on every frame.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Uses {
-    pub watches: bool,
     pub tick: bool,
     /// It moves on every frame by itself: with the time since it opened, a history or a scope.
     /// What moves with the engine's levels, a take, what a lane or a cable plays or as it eases
@@ -604,7 +603,6 @@ impl Uses {
     }
 
     pub(crate) fn join(&mut self, other: &Uses) {
-        self.watches |= other.watches;
         self.tick |= other.tick;
         self.animates |= other.animates;
         self.output |= other.output;
@@ -627,7 +625,6 @@ impl Uses {
 /// How many nodes of a table use each thing, so a node that goes takes its use with it.
 #[derive(Clone, Debug, Default)]
 struct UseCounts {
-    watches: usize,
     tick: usize,
     animates: usize,
     output: usize,
@@ -657,7 +654,6 @@ impl UseCounts {
                 };
             }
         };
-        step(&mut self.watches, uses.watches);
         step(&mut self.tick, uses.tick);
         step(&mut self.animates, uses.animates);
         step(&mut self.output, uses.output);
@@ -691,7 +687,6 @@ impl UseCounts {
                 .collect()
         };
         Uses {
-            watches: self.watches > 0,
             tick: self.tick > 0,
             animates: self.animates > 0,
             output: self.output > 0,
@@ -1805,8 +1800,6 @@ impl Live {
                     uses.inside.insert(named.clone());
                 }
                 uses.played.insert(named);
-                // It may be an output, which moves with the watches.
-                uses.watches = true;
             }
             Self::Held { name, child } => _ = uses.played.insert(named(child.as_deref(), name)),
             Self::Touched { .. } => uses.touched = true,

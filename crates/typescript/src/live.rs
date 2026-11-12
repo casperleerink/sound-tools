@@ -92,7 +92,6 @@ impl SpaceView {
 /// What live values read, as the window has it now.
 pub(crate) struct Sources<'a> {
     pub tick: f64,
-    pub watches: &'a BTreeMap<String, f32>,
     /// The record, with each field it leaves out at its default.
     pub state: &'a Value,
     pub info: Option<&'a ToolInfo>,
@@ -146,7 +145,8 @@ impl Sources<'_> {
         if let Some(value) = self.input(name) {
             return along(value, input_range(self.info, name));
         }
-        self.watches.get(name).copied().map_or(0.0, f64::from)
+        let output = self.feeds.played.get(name);
+        output.map_or(0.0, |(value, _)| f64::from(*value))
     }
 
     fn live(&self, live: &Live) -> f64 {
@@ -183,10 +183,7 @@ impl Sources<'_> {
                 let named = format!("{child}.{name}");
                 let field =
                     (self.feeds.played.get(&named)).or_else(|| self.feeds.inside.get(&named));
-                match field {
-                    Some(field) => along(*field, *fraction),
-                    None => self.watches.get(&named).copied().map_or(0.0, f64::from),
-                }
+                field.map_or(0.0, |field| along(*field, *fraction))
             }
             Live::Held { name, child } => {
                 truth(self.feeds.held.contains(&named(child.as_deref(), name)))
@@ -323,7 +320,8 @@ mod tests {
 
     #[test]
     fn a_drag_moves_what_binds_to_it_snapped_and_nothing_bound_to_another() {
-        let watches = BTreeMap::from([("step".to_string(), 3.4)]);
+        let mut feeds = Feeds::default();
+        feeds.played.insert("step".to_string(), (3.4, None));
         let spaces = HashMap::new();
         let numbers = DragNumbers {
             start_x: 960.0,
@@ -333,7 +331,6 @@ mod tests {
         };
         let sources = Sources {
             tick: 0.0,
-            watches: &watches,
             state: &Value::Null,
             info: None,
             played: None,
@@ -341,7 +338,7 @@ mod tests {
             spaces: &spaces,
             hovered: None,
             touched: &[],
-            feeds: &Feeds::default(),
+            feeds: &feeds,
         };
         let moved = live(serde_json::json!({
             "op": "plus",

@@ -2,7 +2,7 @@
 //! hears, the drags that turn what they turn, hovers, drops and keys.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -757,7 +757,6 @@ impl TypeScriptCard {
                 let played = self.live.read(cx).played_of(&self.id).cloned();
                 let sources = Sources {
                     tick: 0.0,
-                    watches: &BTreeMap::new(),
                     state,
                     info,
                     played: played.as_ref(),
