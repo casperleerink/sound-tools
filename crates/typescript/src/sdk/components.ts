@@ -291,7 +291,7 @@ export type NumberBoxProps = Either<
   /** The undo step of a field: "Change <field>" when left out. */
   label?: string;
   width: number;
-  /** `md` when left out. A small one says its number in 12 points, the others in 14. */
+  /** `md` when left out. A small one says its number as a `label`, the others as `body` text. */
   size?: ControlSize;
   /** Its height in points where no size fits, such as a readout under a fader. */
   height?: number;
@@ -327,7 +327,8 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const { key, unit, width, values, field, size = "md" } = props;
   const height = props.height ?? CONTROL_HEIGHT[size];
-  const textSize = size === "sm" ? 12 : 14;
+  // A small one says its number as a label, the others as body text: lines of 16 and 18 points.
+  const [variant, line] = size === "sm" ? (["label", 16] as const) : (["body", 18] as const);
   const per = props.per ?? 10;
   const step = props.step ?? 1;
   const { get, set } = field === undefined ? valueOf(props) : numberField(field, props.label);
@@ -338,8 +339,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     values ? values.reduce((best, each) => (Math.abs(each - number) < Math.abs(best - number) ? each : best), values[0] ?? number)
     : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
-  // The line of a label is 1.3 times its size.
-  const text = { x, y: Math.round((height - textSize * 1.3) / 2), size: textSize, color: "text", align: props.align } as const;
+  const text = { x, y: Math.round((height - line) / 2), size: variant, color: "text", align: props.align } as const;
   const shows = props.field !== undefined ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
   const shown = { ...text, text: shows, unit };
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Reading);
@@ -463,7 +463,7 @@ export type SelectProps<T> = ValueProps<T> & {
   placeholder?: string;
   /** Of its list, in points: 160 when left out. */
   menuWidth?: number;
-  /** `md` when left out. A small one says it in 12 points, the others in 14. */
+  /** `md` when left out. A small one says it as a `label`, the others as a `heading`. */
   size?: ControlSize;
   /** A field above its list that keeps the options whose label holds what is typed. */
   search?: boolean;

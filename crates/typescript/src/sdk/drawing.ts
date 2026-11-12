@@ -59,8 +59,8 @@ interface Pointed extends PointerEvents {
 }
 
 /**
- * Something a space draws. Positions and sizes are in the units of the space; `radius`, `width`
- * of a line and `size` of text are in points.
+ * Something a space draws. Positions and sizes are in the units of the space; `radius` and `width`
+ * of a line are in points.
  */
 export type Shape =
   /**
@@ -81,8 +81,9 @@ export type Shape =
          * note (`"pitch"`: `C2` for 36), and a tick, such as
          * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
          * Parts make one line in colours and weights of their own, such as a bar number then a name.
+         * `size` is as large as a step of the type scale, `label` when left out, or points.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "pitch" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: TextVariant | number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
@@ -299,8 +300,6 @@ export type ButtonProps = PointerEvents & Tip & {
   /** A pill, round at its ends. */
   rounded?: boolean;
   disabled?: Bind<boolean>;
-  /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
-  opacity?: number;
 };
 
 export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
@@ -359,9 +358,7 @@ export interface Style {
   justify?: "start" | "center" | "end" | "between";
   background?: Color;
   color?: Color;
-  /** The size, the line height and the weight of its text, for what the scale of `Text` cannot say. */
-  fontSize?: number;
-  lineHeight?: number;
+  /** The weight of its text, for the face of a control, which is medium at any size. */
   weight?: "normal" | "medium" | "semibold";
   radius?: Radius | number;
   borderColor?: Color;

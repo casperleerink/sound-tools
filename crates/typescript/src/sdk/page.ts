@@ -1,7 +1,7 @@
 // The parts of a view that fills the window: the page, the panels on it and the transport.
 
 import { Meter, NumberBox } from "./components";
-import { Button, Color, h, Label, Space, Style, Text } from "./drawing";
+import { Button, Color, h, Label, Space, Style, Text, Toggle } from "./drawing";
 import { Clock, Live, now, TempoMap } from "./live";
 import { Child, currentCard, element, UiNode } from "./nodes";
 import { Accessor, Bind } from "./reactivity";
@@ -81,11 +81,11 @@ function signatureAt(runs: Frozen<TempoMap>["time_signatures"], tick: number): {
 
 /** A readout of a tick of the clock as it moves, in the pill's text. */
 const clockText = (key: string, width: number, unit: "position" | "time", color: Color, text: Live = now.tick) =>
-  Space({ key, width, height: 18, children: Label({ x: 0, y: 0, text, unit, color, size: 14 }) });
+  Space({ key, width, height: 18, children: Label({ x: 0, y: 0, text, unit, color, size: "body" }) });
 
 /** A word of the pill `x` points into its room, such as the unit of the number before it. */
 const word = (key: string, width: number, x: number, text: string) =>
-  Space({ key, width, height: 18, children: Label({ x, y: 2, text, color: "text-muted", size: 12 }) });
+  Space({ key, width, height: 18, children: Label({ x, y: 2, text, color: "text-muted" }) });
 
 export interface TransportProps {
   /** A record button: whether it records, and what a press does. An action of the tool named `record` shows its key on it. */
@@ -99,8 +99,8 @@ export interface TransportProps {
 /**
  * The transport of the piece, a pill for the `header` of a `Page`: play and pause, stop, where
  * the piece plays as a bar and a beat and as a time, the tempo and the time signature that play
- * there, which a drag up or down or a typed number changes as one undo step, the click and the
- * meter of what the device plays.
+ * there, which a drag up or down or a typed number changes as one undo step, the switches of
+ * how the piece is played, and the meter of what the device plays.
  */
 export function Transport({ record, computerKeys, writeAutomation }: TransportProps = {}): UiNode {
   const { clock, tool } = currentCard().drawn;
@@ -126,12 +126,6 @@ export function Transport({ record, computerKeys, writeAutomation }: TransportPr
     });
   };
   const round = { variant: "ghost", size: "md", rounded: true } as const;
-  /** A switch of the pill: bright while it is on. */
-  const toggle = (on: Accessor<boolean>) => ({
-    ...round,
-    variant: () => (on() ? "primary" : "ghost") as "primary" | "ghost",
-    color: () => (on() ? undefined : "text-muted") as Color,
-  });
   return h("div", { key: "transport", style: pill },
     h("div", { style: { ...row, gap: "xs" } },
       Button({
@@ -152,15 +146,19 @@ export function Transport({ record, computerKeys, writeAutomation }: TransportPr
       word("transport-slash", 14, 3, "/"),
       NumberBox({ key: "transport-note", width: 14, values: NOTES, unit: "note", value: () => signature().note, onChange: (note) => setSignature(signature().beats, note), show: now.tick }),
     ),
-    computerKeys && Button({
-      ...toggle(() => clock.computerKeys), key: "computer-keys", icon: "keyboard-music", tooltip: "Play notes with the computer keys", shortcut: "app.computer_keys",
-      onClick: () => clock.setComputerKeys(!clock.computerKeys),
-    }),
-    writeAutomation && Button({
-      ...toggle(() => clock.writeAutomation), key: "write-automation", icon: "automation",
-      tooltip: "Write automation: while it plays, moving a knob or a fader that has a lane records into the lane", onClick: () => clock.setWriteAutomation(!clock.writeAutomation),
-    }),
-    Button({ ...toggle(() => clock.click), key: "click", icon: "metronome", tooltip: "Metronome", onClick: () => clock.setClick(!clock.click) }),
-    Meter({ key: "transport-meter", peaks: "device", horizontal: true }),
+    h("div", { style: { ...row, gap: "xs" } },
+      computerKeys && Toggle({
+        key: "computer-keys", size: "sm", icon: "keyboard-music", on: () => clock.computerKeys, tooltip: "Play notes with the computer keys", shortcut: "app.computer_keys",
+        onClick: () => clock.setComputerKeys(!clock.computerKeys),
+      }),
+      // Red while on, as what records.
+      writeAutomation && Toggle({
+        key: "write-automation", size: "sm", icon: "automation", on: () => clock.writeAutomation, color: "red",
+        tooltip: "Write automation: while it plays, moving a knob or a fader that has a lane records into the lane", onClick: () => clock.setWriteAutomation(!clock.writeAutomation),
+      }),
+      Toggle({ key: "click", size: "sm", icon: "metronome", on: () => clock.click, tooltip: "Metronome", onClick: () => clock.setClick(!clock.click) }),
+    ),
+    // In a well, as a display: its bars show against it while nothing plays.
+    h("div", { style: { justify: "center", height: 16, paddingX: "xs", radius: "sm", background: "well" } }, Meter({ key: "transport-meter", peaks: "device", horizontal: true })),
   );
 }

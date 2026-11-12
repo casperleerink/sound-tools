@@ -73,6 +73,29 @@ impl TryFrom<Token> for Radius {
     }
 }
 
+/// How large the text of a shape is, in points: as a step of the type scale, or points, which
+/// is also how thick the line of a wave is.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(try_from = "Token")]
+pub(crate) struct TextSize(pub(crate) f32);
+
+impl TryFrom<Token> for TextSize {
+    type Error = String;
+
+    fn try_from(token: Token) -> Result<Self, String> {
+        match token {
+            Token::Points(points) => Ok(Self(points)),
+            Token::Named(name) => serde_json::from_value::<TextVariant>(name.as_str().into())
+                .map(|variant| Self(variant.size().into()))
+                .map_err(|_| {
+                    format!(
+                        "{name:?} is no size of text: \"display\", \"title\", \"heading\", \"body\", \"label\" or points"
+                    )
+                }),
+        }
+    }
+}
+
 /// The tone of a text that names none.
 pub(crate) fn tone_of(variant: TextVariant) -> Tone {
     match variant {
@@ -134,6 +157,7 @@ mod tests {
         resolves::<Radius>("Radius");
         resolves::<ControlSize>("ControlSize");
         resolves::<TextVariant>("TextVariant");
+        resolves::<TextSize>("TextVariant");
         resolves::<Tone>("Tone");
     }
 

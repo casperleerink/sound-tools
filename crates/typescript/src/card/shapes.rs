@@ -848,7 +848,7 @@ impl Placing<'_> {
                         .collect(),
                     _ => Rc::new([]),
                 },
-                size: shape.size.unwrap_or(12.0),
+                size: shape.size.map_or(12.0, |size| size.0),
                 align: shape.align.unwrap_or(Align::Left),
             },
             ShapeKind::Wave => {
@@ -869,7 +869,7 @@ impl Placing<'_> {
                         low: shape.low.unwrap_or(-1.0),
                         high: shape.high.unwrap_or(1.0),
                         band: shape.band == Some(true),
-                        line: shape.size.unwrap_or(1.0),
+                        line: shape.size.map_or(1.0, |size| size.0),
                         level,
                     }),
                 }
