@@ -1,4 +1,4 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Space, Text, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
+import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, now, Rect, Show, Space, Text, type Clock, type Color, type Drag, type Press, type TextPart } from "./sdk";
 import { ACROSS, barStarts, BEAT, COLOR, HEADER, LEAD, ROW, RULER, tickOfBar, type Page, type Runs } from "./song-page";
 
 // The ruler: the sections on its top line; bars, time signatures and tempo changes on the line
@@ -160,9 +160,10 @@ export const Ruler = ({ page }: { page: Page }) => {
       if (to > from) clock.setRepeat({ from, to });
     },
   };
-  // The repeat's bar under the ruler, as the arrangement had it: a click turns it on or off,
-  // its body moves it, an edge moves that end, on the beats. Off, it keeps its range.
-  const repeat = () => clock.repeat ?? memory.repeatRange;
+  // The repeat's bar under the ruler, once a drag over the ruler made one: a click turns it on
+  // or off, its body moves it, an edge moves that end, on the beats. Off, it keeps its range.
+  const made = () => clock.repeat ?? memory.repeatRange;
+  const repeat = () => made() ?? { from: 0, to: 0 };
   // A line with its two ends standing up, bright while it repeats.
   const band = (): Color => (clock.repeat ? "text" : "text-muted");
   const setRepeatRange = (from: number, to: number) => {
@@ -172,7 +173,7 @@ export const Ruler = ({ page }: { page: Page }) => {
   };
   const toggleRepeat = () => {
     if (clock.repeat) memory.repeatRange = { ...clock.repeat };
-    clock.setRepeat(clock.repeat ? null : { ...memory.repeatRange });
+    clock.setRepeat(clock.repeat ? null : memory.repeatRange);
   };
   const repeatDrag = (part: "move" | "start" | "end"): Drag => ({
     id: `repeat-${part}`,
@@ -235,16 +236,20 @@ export const Ruler = ({ page }: { page: Page }) => {
             color={COLOR.clear} cursor="pointer" onPress={pressMark(page, change.mark)} />,
         ]}
       </For>
-      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 6}
-        width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={3} radius={1.5} color={band} />
-      <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 11} width={timeline.pointX.times(2)} height={5} color={band} />
-      <Rect x={() => moving!.dx.plus(ending!.dx).plus(repeat().to).minus(timeline.pointX.times(2))} y={RULER - 11} width={timeline.pointX.times(2)} height={5} color={band} />
-      <Rect x={() => moving!.dx.plus(repeat().from)} y={RULER - 14} width={() => repeat().to - repeat().from} height={14}
-        color={COLOR.clear} cursor="pointer" drag={repeatMove!} onClick={toggleRepeat} />
-      <Rect x={() => starting!.dx.plus(repeat().from)} y={RULER - 14} width={handle} height={14}
-        color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} onClick={toggleRepeat} />
-      <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
-        anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} onClick={toggleRepeat} />
+      <Show when={() => made() !== null}>
+        {() => [
+          <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 6}
+            width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={3} radius={1.5} color={band} />,
+          <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 11} width={timeline.pointX.times(2)} height={5} color={band} />,
+          <Rect x={() => moving!.dx.plus(ending!.dx).plus(repeat().to).minus(timeline.pointX.times(2))} y={RULER - 11} width={timeline.pointX.times(2)} height={5} color={band} />,
+          <Rect x={() => moving!.dx.plus(repeat().from)} y={RULER - 14} width={() => repeat().to - repeat().from} height={14}
+            color={COLOR.clear} cursor="pointer" drag={repeatMove!} onClick={toggleRepeat} />,
+          <Rect x={() => starting!.dx.plus(repeat().from)} y={RULER - 14} width={handle} height={14}
+            color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} onClick={toggleRepeat} />,
+          <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
+            anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} onClick={toggleRepeat} />,
+        ]}
+      </Show>
       <Rect x={loop.startX.min(loop.x)} y={RULER - 6} width={loop.dx.abs()} height={3} radius={1.5} color="text" opacity={loop.active.times(loop.dx.abs().gt(0))} />
       <For each={tempos}>
         {(change) => {

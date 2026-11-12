@@ -1,4 +1,4 @@
-import { Button, DeviceCard, For, Fragment, h, Knob, Select, Show, Text, Toggle, type Accessor, type CardSelect } from "./sdk";
+import { Button, DeviceCard, For, Fragment, h, Knob, Readout, Select, Show, Text, Toggle, type Accessor, type CardSelect, type MenuItem } from "./sdk";
 import { returnTitle, sendsOf, Volume } from "./song-mixer";
 import { colourOf, HEADER, inputOf, itemTool, Mark, muted, nameFrom, titleOf, type Page } from "./song-page";
 import { freeName } from "./track";
@@ -11,6 +11,8 @@ const CARD = 192;
 const RACK = CARD + 24;
 // The fader of the chosen track's panel.
 const PANEL_FADER = 112;
+/** A send's row, how wide the return's name and what it sends are beside its dial, and how many rows show before they scroll. */
+const [SEND, SEND_NAME, SEND_AMOUNT, SENDS] = [32, 48, 44, 5];
 /** The top of a panel's first column: its mark, its name and its close button. */
 const TITLE = { height: 32, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm" } as const;
 /** A fader over its value, under the title. */
@@ -22,20 +24,25 @@ const SURFACE = { height: CARD, radius: "lg", background: "surface", borderColor
 /** Where on a track a sidechain takes its sound, and what its select says, as the arrangement's. */
 const TAPS = [["pre_fx", "Pre FX"], ["post_fx", "Post FX"], ["post_fader", "Post mixer"]] as const;
 type Tap = (typeof TAPS)[number][0];
+/** The keys that move an effect a step in its chain while its card has the focus, as alt and an arrow move a track. */
+const [EARLIER, LATER] = ["alt-left", "alt-right"] as const;
 
-/** A device the composer picks from what the window offers that takes `takes`, as the window's pickers list them. */
-async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: string) {
+/**
+ * A device the composer picks from what the window offers that takes `takes`, as the window's
+ * pickers list them; or one of `first`, the items over them, by its place.
+ */
+async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: string, first: readonly MenuItem[] = []) {
   const { offers: offered, notes, here } = await offers(takes, { at });
   const items = offered.map(({ key, name, detail, group, icon, unavailable }) => ({ label: name, detail: detail ?? undefined, group, icon, checked: key === here, disabled: unavailable !== null }));
-  const picked = await openMenu(items, { notes, width: 280, maxHeight: 540, search: true });
-  return picked === null ? undefined : offered[picked];
+  const picked = await openMenu([...first, ...items], { notes, width: 280, maxHeight: 540, search: true });
+  return picked === null ? undefined : picked < first.length ? picked : offered[picked - first.length];
 }
 
 /**
  * The devices of the track or return `name`: an instrument, which can be changed, or the card
  * of an audio track's chosen region, then the effects of its chain, which can be added, turned
- * off, removed and dragged into another order. They scroll on their own: a track's sends stay
- * at the right, however long its chain is.
+ * off, removed and put in another order: by a drag, from the menu of its title, or by the
+ * keys. They scroll on their own: a track's sends stay at the right, however long its chain is.
  */
 export const Rack = ({ page, name }: { page: Page; name: string }) => {
   const { state, children, memory, update, addOffer, rows, strips, toggleMute, toggleSolo } = page;
@@ -55,18 +62,38 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
     });
   const addEffect = async () => {
     const offer = await pick(page, "audio");
-    if (!offer) return;
+    if (typeof offer !== "object") return;
     const taken = chainOf()?.children.map((child) => child.name) ?? [];
     const effect = freeName(taken, nameFrom(offer.key) || "effect");
     addOffer(offer.key, `${name}/chain/${effect}`, "Add an effect");
     editChain("Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
   };
-  /** Another device in place of the one at `path`: an instrument from what takes notes, an effect from what takes sound. */
-  const replace = async (takes: "notes" | "audio", path: string, label: string) => {
-    const offer = await pick(page, takes, path);
-    if (!offer) return;
+  /**
+   * The menu of a card's title: another device in place of the one at `path`, an instrument
+   * from what takes notes, an effect from what takes sound; and over them, for an `effect` of
+   * a chain of several, a step earlier or later in it, with the keys that do it while its
+   * card has the focus: each effect's card is a tab stop for them.
+   */
+  const replace = async (takes: "notes" | "audio", path: string, label: string, effect?: string) => {
+    const at = effect === undefined ? -1 : order().indexOf(effect);
+    const moves: MenuItem[] = effect === undefined || order().length < 2 ? [] : [
+      { label: "Move earlier", icon: "arrow-left", shortcut: EARLIER, disabled: at === 0 },
+      { label: "Move later", icon: "arrow-right", shortcut: LATER, disabled: at === order().length - 1 },
+    ];
+    const picked = await pick(page, takes, path, moves);
+    if (picked === undefined) return;
+    if (typeof picked === "number") {
+      if (effect !== undefined) step(effect, picked === 0 ? -1 : 1);
+      return;
+    }
     unkey(path, label);
-    addOffer(offer.key, path, label);
+    addOffer(picked.key, path, label);
+  };
+  /** Moves an effect a step earlier or later in its chain; at its end it stays. */
+  const step = (effect: string, by: -1 | 1) => {
+    const at = order().indexOf(effect);
+    const other = order()[at + by];
+    if (at >= 0 && other !== undefined) moveBefore(effect, by < 0 ? other : (order()[at + 2] ?? null));
   };
   /** Takes the sidechain off the effect at `path`, as part of the step `label`: it goes, or another device takes its place. */
   const unkey = (path: string, label: string) => {
@@ -109,7 +136,7 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
     editChain(isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
       effects.state.off = effects.state.off.includes(effect) ? effects.state.off.filter((each) => each !== effect) : [...effects.state.off, effect];
     });
-  // An effect dragged onto another goes before it, onto the instrument first, onto Add effect last.
+  // An effect dragged onto another goes before it, onto the instrument first, onto Add effect last; its title's menu moves it a step.
   const moveBefore = (moved: string, before: string | null) =>
     order().includes(moved) && moved !== before &&
     editChain("Move an effect", (effects) => {
@@ -174,9 +201,10 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
         }
         <For each={order}>
           {(effect) => (
-            <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && moveBefore(carried, effect)}>
+            <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && moveBefore(carried, effect)}
+              tabStop keys={[EARLIER, LATER]} onKey={({ key }) => step(effect, key === "left" ? -1 : 1)} style={{ radius: "lg", keep: true }}>
               <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)}
-                onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect")}
+                onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect", effect)}
                 sidechain={() => sidechainOf(effect)} />
             </div>
           )}
@@ -227,14 +255,27 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
   );
 };
 
-/** A track's sends: a knob for each return, one under the other, in a column of the panel as its fader has one, right of its effects as a send takes the sound after them. It stays as wide with any number of returns: more than fit scroll down. */
+/**
+ * A track's sends: a row for each return, its dial, the return's name and what it sends, one
+ * under the other in a column of the panel as its fader has one, right of its
+ * effects as a send takes the sound after them. Five rows fit, and it ends as far over the
+ * window's edge as a card does; more scroll down, and the cut one fades.
+ */
 const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accessor<string[]> }) => (
   <div style={{ paddingX: "lg", paddingTop: "md", keep: true }}>
     <div style={{ height: TITLE.height, justify: "center" }}>
       <Text variant="heading">Sends</Text>
     </div>
-    <div key="sends" style={{ height: RACK - 12 - TITLE.height, scroll: "y" }}>
-      <For each={sends}>{(send) => <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" />}</For>
+    <div key="sends" style={{ height: SENDS * SEND, scroll: "y" }}>
+      <For each={sends}>
+        {(send) => (
+          <div style={{ height: SEND, direction: "row", align: "center", gap: "sm", keep: true }}>
+            <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" text="none" />
+            <Text variant="label" style={{ width: SEND_NAME, truncate: true, keep: true }}>{returnTitle(page, send)}</Text>
+            <Readout field={`${name}/${send}.gain_db`} unit="db" width={SEND_AMOUNT} align="right" />
+          </div>
+        )}
+      </For>
     </div>
   </div>
 );

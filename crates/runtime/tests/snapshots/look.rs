@@ -6,7 +6,7 @@
 //!   shows the panel of the bass.
 //! - `look-sections.png`: the piece with an intro and a verse named on the ruler.
 //! - `look-editor.png`: the note editor on the first clip of the melody, which has a title, its
-//!   sixth note chosen, which its head says.
+//!   sixth note chosen, which its head says, the piece playing inside it at 6.3.
 //! - `look-note-drag.png`: that note dragged a beat later and two keys up, still held.
 //! - `look-editor-large.png`: the editor made large with its key.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
@@ -16,7 +16,7 @@
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
 //! - `look-sidechain.png`: the panel of the bass with a filter and a compressor keyed by Track 1,
 //!   expanded with its sidechain picker.
-//! - `look-sends-many.png`: the panel of the bass in a song of five returns: its sends scroll.
+//! - `look-sends-many.png`: the panel of the bass in a song of five returns: a row for each send, all whole.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
 //! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
@@ -278,8 +278,23 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         file["state"]["title"] = "Theme".into();
         *record = file.to_string();
     }
-    let opened = super::Opened::open(cx, &files)?;
+    let mut opened = super::Opened::open(cx, &files)?;
     click(&opened, at(4 * BAR + 960, 2.), 2, cx)?;
+    // The playhead is at bar 1, before the clip: the editor shows no cursor.
+    anyhow::ensure!(
+        editor_cursor(&opened, cx)?.is_empty(),
+        "a cursor outside the clip"
+    );
+    // The piece plays inside the clip, at 6.3: the editor's cursor is on the note that sounds.
+    opened.play_from(Ticks(5 * BAR + 1000), cx)?;
+    let tick = cx.update(|cx| opened.session.read(cx).playhead().read(cx).tick.0);
+    let across = (1470. - HEADER - 1. - 104.) / (4 * BAR) as f32;
+    let playhead = HEADER + 1. + 8. + (tick - 4 * BAR) as f32 * across;
+    let cursor = editor_cursor(&opened, cx)?;
+    anyhow::ensure!(
+        !cursor.is_empty() && cursor.iter().all(|x| (x - playhead).abs() <= 1.),
+        "the cursor is at {cursor:?}, the playhead at {playhead}"
+    );
     // Its sixth note, 79 from beat 6: the editor opens fitted, bar 5 eight points into its roll,
     // with 79 four and a half rows from the top of it.
     let across = (1470. - HEADER - 1. - 104.) / (4 * BAR) as f32;
@@ -399,7 +414,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     save(cx, opened.window.into(), "look-mixer")?;
     drop(opened);
 
-    // Five returns: the sends of the bass stay one column, which scrolls.
+    // Five returns: the sends of the bass are one column of rows, all of them whole.
     let names = ["Space", "Echo", "Plate", "Room", "Tape"];
     let returns: Vec<(String, Value)> = (names.iter().zip('a'..))
         .flat_map(|(title, letter)| {
@@ -579,6 +594,26 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
 /// `track-1`, a bass line on `bass` and a melody with a gap on `melody`, over twelve bars, with
 /// nothing in their chains, in a project of every bundled extension, as a new one is. `more`
 /// adds files after the tracks.
+/// Where the note editor, as it opens, draws its cursor, in points from the window's left: the
+/// columns that are bright in its ruler, in its notes and in its lane, all three.
+fn editor_cursor(opened: &super::Opened, cx: &mut HeadlessAppContext) -> Result<Vec<f32>> {
+    let picture = cx.capture_screenshot(opened.window.into())?;
+    // A row of the ruler over its bar numbers, the top row of the notes, and the top of the lane
+    // over its bars: nothing else is bright there.
+    let top = super::WINDOW_HEIGHT - 352.;
+    let rows = [top + 4., top + 36., super::WINDOW_HEIGHT - 54.];
+    let bright = |x: u32, y: f32| {
+        picture.get_pixel(x, (y * 2.) as u32).0[..3]
+            .iter()
+            .all(|part| *part > 200)
+    };
+    let from = ((HEADER + 2.) * 2.) as u32;
+    Ok((from..picture.width())
+        .filter(|x| rows.iter().all(|y| bright(*x, *y)))
+        .map(|x| x as f32 / 2.)
+        .collect())
+}
+
 fn piece_files(more: &[(&str, Value)]) -> Vec<(String, String)> {
     let note = |start: u64, length: u64, pitch: u64| json!({ "start": start, "length": length, "pitch": pitch, "velocity": 100 });
     let mut chords = Vec::new();
