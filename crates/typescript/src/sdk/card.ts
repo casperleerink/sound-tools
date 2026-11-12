@@ -36,7 +36,9 @@ export const Controls = ({ children }: { children?: Child }): UiNode => element(
 /**
  * A cell of `Controls` for a control that is no knob: a `Select`, a `SegmentedControl`, a
  * `Toggle`, a `NumberBox` or a `Button`, of `size="sm"` as the controls of a card are. `label`
- * and `value` are the lines a knob has under it. It is as many columns wide as its control needs.
+ * and `value` are the lines a knob has under it; `value` reads what the control does not say
+ * itself, such as `1 ms` under a select that says `1`, and never a unit alone. It is as many
+ * columns wide as its control needs.
  */
 export const Cell = ({ children, ...props }: { label?: Bind<string>; value?: Bind<string>; children?: Child }): UiNode =>
   element("cell", props, [children]);
@@ -69,7 +71,7 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
             next[name] = !on;
           });
         };
-        cells.push(Cell({ label, children: Toggle({ dot: true, size: "sm", on: () => state[name] as boolean, onClick: turn }) }));
+        cells.push(Cell({ label, children: Toggle({ label: () => (state[name] ? "On" : "Off"), size: "sm", on: () => state[name] as boolean, onClick: turn }) }));
       } else if (field.kind === "choice") {
         const options = field.options.map((option) => ({ value: option, label: words(String(option)) }));
         // More than a few side by side would make the card wide.

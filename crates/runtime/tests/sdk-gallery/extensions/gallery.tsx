@@ -238,7 +238,7 @@ tool({
                     <Knob key="cell" field="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
                     <Knob value={() => memory.pitch} onChange={(pitch) => { memory.pitch = Math.round(pitch); log(`pitch ${memory.pitch}`); }}
                       label="Pitch" min={24} max={60} default={36} unit="pitch" />
-                    <Cell label="Wave" value={() => memory.wave}>
+                    <Cell label="Wave">
                       <Select size="sm" value={() => memory.wave} options={WAVES} onChange={(wave) => { memory.wave = wave; }} />
                     </Cell>
                     <Cell label="Held"><Toggle dot size="sm" on={() => memory.held} /></Cell>

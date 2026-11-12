@@ -20,7 +20,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 
 ### One calm instrument
 
-- Every device shows what it does to the sound. A card is a display of the sound on the left and a few knobs at its right. The handles on a display drag.
+- Every device shows what it does to the sound: a display at the left of its card, whose handles drag, and a few knobs at its right.
 - A display is never the only way to reach a value: every value a handle moves also has a knob, visible or behind expand. That knob is the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
 - One control per value. The tempo is a drag number in the transport; a mark in the ruler or the tempo lane selects and seeks.
@@ -53,7 +53,8 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - InterDisplay with tabular numbers for every number, so readouts and the transport do not jitter while playing. Five kinds of text and no other size: display 24, title 16 medium, heading 14 medium, body 14, label 12.
 - The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window. The snapshot tests render at that size.
 - Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
-- One grid for devices: every card is the same height, with two rows of fixed cells of a knob, a label line and a value line. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
+- One grid for devices: every card is the same height and whole columns wide, with two rows of cells of a control, a label line and a value line. A display is four columns wide, or six for a file or the bands of an EQ; a control that needs the room takes two. Cards grow wider, never taller, so a rack has a straight bottom and straight columns. Empty cells are fine.
+- Nothing lies over the drawing of a display: its control sits in a strip above it. A value line never holds a unit alone. A plugin draws itself in its own window, so its display holds the button that opens it.
 - Hit targets are larger than what is drawn, for a trackpad.
 
 ## Using the app
