@@ -445,14 +445,14 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 }
 
 /// A sequencer whose pattern starts as a groove: its second step is on.
-const GROOVE: &str = r#"import { list, number, sine, tool } from "./sdk";
+const GROOVE: &str = r#"import { pattern, sine, tool } from "./sdk";
 
 tool({
   name: "groove",
   title: "Groove",
   when: "A test",
   doc: "A tone as loud as the second step of its pattern.",
-  state: { steps: list(number({ min: 0, max: 1 }), { max: 4, default: [0, 0.5, 0, 0] }) },
+  state: { steps: pattern({ length: 4, min: 0, max: 1, default: [0, 0.5, 0, 0] }) },
   sound: ({ steps }) => sine(440).times(steps.at(1)),
 });
 "#;

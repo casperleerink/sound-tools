@@ -391,13 +391,16 @@ impl Drawing<'_> {
             });
             (div().flex().flex_none().justify_end())
                 .h(px(HEAD))
-                .mb(px(HEAD_GAP - gap))
+                .mb(px(HEAD_GAP))
                 .children(heads)
         });
+        let rows = rows.iter().enumerate().map(|(place, row)| {
+            let air = if place == 0 { 0. } else { gap };
+            div().flex_none().pt(px(air)).child(self.draw(*row))
+        });
         (div().flex().flex_col().flex_none())
-            .gap(px(gap))
             .children(heads)
-            .children(rows.iter().map(|row| self.draw(*row)))
+            .children(rows.collect::<Vec<_>>())
     }
 
     /// A grid of steps: its rows, and beside them what else it holds, the controls of the whole
