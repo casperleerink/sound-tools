@@ -857,6 +857,11 @@ impl Placing<'_> {
             None => (left, top),
         };
         let (x, y) = (left + self.number(&shape.x), top + self.number(&shape.y));
+        // A line that says no width is a point wide: at none it would not show.
+        let stroke = |width: &Option<tree::Num>| match width {
+            Some(width) => self.sources.number(width).max(0.0) as f32,
+            None => 1.0,
+        };
         let geometry = match shape.kind? {
             ShapeKind::Rect => {
                 let border_width = self.number(&shape.border_width) as f32;
@@ -879,14 +884,14 @@ impl Placing<'_> {
             ShapeKind::Line => Geometry::Line {
                 from: reach(&shape.from),
                 to: reach(&shape.to),
-                width: self.number(&shape.width).max(0.0) as f32,
+                width: stroke(&shape.width),
             },
             ShapeKind::Arc => Geometry::Arc {
                 x,
                 y,
                 radius: self.number(&shape.radius) as f32,
                 turns: (reach(&shape.from).0 as f32, reach(&shape.to).0 as f32),
-                width: self.number(&shape.width).max(0.0) as f32,
+                width: stroke(&shape.width),
             },
             ShapeKind::Text => Geometry::Text {
                 x,

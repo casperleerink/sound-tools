@@ -112,7 +112,7 @@ update("Add a note", ({ state }) => {
 Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a knob with its label goes in `Controls` here too. A `StepGrid` takes its `Controls` as its last child. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
 
 ```tsx
-import { Controls, Display, h, Knob, Line, lowpass, mtof, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
+import { Controls, Display, type Drag, h, Knob, Line, lowpass, mtof, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
 
 tool({
   name: "drone",
@@ -130,11 +130,12 @@ tool({
   view: ({ now }) => {
     // How bright it is, across the display: a line to drag.
     const tone = now.value("tone", { fraction: true });
+    const brighten: Drag = { x: { value: "tone", absolute: true } };
     return (
       <Page>
         <Panel title="Drone">
           <Row>
-            <Display zero={0.5} cursor="ew-resize" drag={{ x: { value: "tone", absolute: true } }}>
+            <Display zero={0.5} cursor="ew-resize" drag={brighten}>
               <Wave list={now.scope()} color="green" />
               <Line from={[tone, 0]} to={[tone, 1]} color="text" />
             </Display>
