@@ -29,9 +29,8 @@ use serde_json::json;
 
 use super::{open, settle};
 
-/// The lavender of a focus ring, and what the ring of a button is on the window's ground: the
-/// app's button draws it at 40%.
-const RINGS: [[u8; 3]; 2] = [[0xa9, 0xb1, 0xff], [0x4f, 0x53, 0x74]];
+/// The lavender of a focus ring.
+const RING: [u8; 3] = [0xa9, 0xb1, 0xff];
 
 /// A part of the window in points: its left, its top, its width and its height.
 type Part = (f32, f32, f32, f32);
@@ -83,7 +82,7 @@ fn ring_points(
         .flat_map(|y| (x0..x1.min(picture.width())).map(move |x| (x, y)))
         .filter(|(x, y)| {
             let pixel = picture.get_pixel(*x, *y).0;
-            (RINGS.iter()).any(|ring| (0..3).all(|part| pixel[part].abs_diff(ring[part]) < 16))
+            (0..3).all(|part| pixel[part].abs_diff(RING[part]) < 16)
         });
     Ok(points.collect())
 }
