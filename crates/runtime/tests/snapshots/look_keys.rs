@@ -20,7 +20,7 @@
 //!   its card says.
 //! - `keys-14-second-effect.png`: enter, `util`, enter: a utility after it, chosen.
 //! - `keys-15-move-earlier.png`: alt-left: the utility before the saturator.
-//! - `keys-16-type-send.png`: tab to what the track sends into Space, enter, `-12` typed.
+//! - `keys-16-type-send.png`: tab to the dial of what the track sends into Space, enter, `-12` typed.
 //! - `keys-17-send-typed.png`: enter: it sends -12 dB.
 
 use anyhow::{Context as _, Result};
@@ -187,8 +187,8 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &crate::Save) -> Resu
     keys(&opened, "alt-left", cx)?;
     shot(cx, "move-earlier")?;
 
-    // The sends of the track, at the right of its panel: a dial, then what it sends.
-    tab_to(&opened, "tab", (1390., panel + 44., 80., 32.), cx).context("the send")?;
+    // The sends of the track, at the right of its panel: the dial has the keys for what it sends.
+    tab_to(&opened, "tab", (1312., panel + 44., 40., 32.), cx).context("the send")?;
     keys(&opened, "enter", cx)?;
     typed(&opened, "-12", cx)?;
     shot(cx, "type-send")?;
