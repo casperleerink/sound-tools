@@ -102,7 +102,8 @@ export const Heads = ({ page }: { page: Page }) => {
  */
 const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   const { state, memory, panelOf, openPanel, toggleMute, toggleSolo } = page;
-  const chosen = () => panelOf() === each.name;
+  // Chosen while what shows below is its own: its panel, or the notes of one of its clips.
+  const chosen = () => panelOf() === each.name || (memory.below?.kind === "editor" && memory.below.clip.startsWith(`${each.name}/`));
   const all = () => memory.hovered === each.name || chosen();
   const dim = () => (muted(each) ? DIM : 1);
   // A head drawn anew, as when lanes show, hears no leave of the one it replaces.
