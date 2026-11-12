@@ -9,7 +9,6 @@ use gpui::{
     div, prelude::*, px,
 };
 use serde_json::json;
-use sound_ui::components::cell::CELL_WIDTH;
 use sound_ui::typography::{TextVariant, Typography};
 use sound_ui::{ActiveTheme, KeyboardFocus, radius};
 
@@ -29,6 +28,8 @@ const ACROSS: f32 = 24.;
 const DOWN: f32 = 24.;
 /// More air between two groups.
 const AIR: f32 = 4.;
+/// The room of a label: a name of two short words, and air before the steps.
+const LABEL: f32 = 80.;
 
 type Turn = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
@@ -135,7 +136,7 @@ impl RenderOnce for Steps {
                 row.track_focus(&focus_handle).on_key_down(on_key_down)
             })
             .children(steps);
-        // A label takes the width of a cell, so rows one over the other line up.
+        // Every label takes the same width, so rows one over the other line up.
         div()
             .flex()
             .flex_none()
@@ -143,7 +144,8 @@ impl RenderOnce for Steps {
             .children(self.label.map(|label| {
                 div()
                     .flex_none()
-                    .w(px(CELL_WIDTH))
+                    .w(px(LABEL))
+                    .pr(px(8.))
                     .text_variant(TextVariant::Label)
                     .text_color(label_color)
                     .truncate()
