@@ -283,7 +283,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         &opened,
         point(
             px(HEADER + 1. + 8. + 5160. * across),
-            px(920. - 352. + 33. + 60.),
+            px(920. - 352. + 33. + 54.),
         ),
         1,
         cx,

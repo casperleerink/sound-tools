@@ -75,7 +75,7 @@ impl Opened<'_> {
             _ => 60.,
         };
         let height = f32::from(roll.size.height);
-        let top = ((127. - middle + 0.5) * EDITOR_ROW - height / 2.).round() / EDITOR_ROW;
+        let top = (127. - middle + 0.5 - height / EDITOR_ROW / 2.).round();
         Editor {
             roll,
             lane,
