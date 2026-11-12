@@ -2,7 +2,7 @@
 
 import { Fields, Inputs } from "./fields";
 import { PLAIN_KEYS, Press, SHIFTED_KEYS, SYMBOL_KEYS, Turn } from "./live";
-import { CardRoot, Child, forget, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
+import { CardRoot, Child, forget, homeInControls, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
 import { adopted, batch, isRead, listener, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
 import { Context, Key, ToolSpec } from "./tools";
 
@@ -24,6 +24,7 @@ function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
       const [only] = made as Made[];
       top = only;
       if (made.length !== 1 || !only || only.family === "marker" || only.family === "text") {
+        homeInControls(made);
         top = makeNode("div");
         // The parts of a card, which the window puts side by side.
         top.props.layout = "card";

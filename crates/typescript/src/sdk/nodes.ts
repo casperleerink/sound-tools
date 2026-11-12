@@ -54,6 +54,8 @@ export interface Made extends PointerEvents {
   region?: { parent: number | null };
   /** Its label as a cell of `Controls`, see `asCell`, and that cell once it is in one. */
   cell?: { label: string; node?: UiNode };
+  /** What an error calls it, as a control that draws its own label and value, see `ownLines`. */
+  ownLines?: string;
 }
 
 /** What the window gets of a card at once: the ops since the last time. */
@@ -169,6 +171,26 @@ export function element(family: Family, props: Record<string, unknown>, children
 export function asCell(node: UiNode, label: string | undefined): UiNode {
   if (label !== undefined) (node as Made).cell = { label };
   return node;
+}
+
+/** `node` as a control that draws its label and value itself, as a cell does: `called` is how its view wrote it. Its home is `Controls`. */
+export function ownLines(node: UiNode, called: string): UiNode {
+  (node as Made).ownLines = called;
+  return node;
+}
+
+/**
+ * Fails where a child of `parent`, a `Row` or a `Panel`, is a control with its own lines, or one
+ * of the parts of a card, whose grid is the window's, is any control on a field: side by side by
+ * hand they hug one edge and stand off the grid of the cells.
+ */
+export function homeInControls(parent: UiNode | readonly UiNode[]) {
+  const card = Array.isArray(parent);
+  for (const part of (card ? parent : ((parent as Made).children ?? [])) as Iterable<Made>) {
+    const called = part.ownLines ?? (card && part.cell ? `the control of ${JSON.stringify(part.cell.label)}` : undefined);
+    if (called === undefined) continue;
+    throw new Error(`put controls in Controls: ${called} goes in <Controls>, beside the Display or the Steps, as <Row><Display>...</Display><Controls>...</Controls></Row>. A knob that its row names says text="value" or text="none".`);
+  }
 }
 
 /** `made` as it goes in a node of `family`: in `Controls` a control on a field goes in its cell, made once, so a binding that gives it again keeps it. */

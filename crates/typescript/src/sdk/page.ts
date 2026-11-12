@@ -4,7 +4,7 @@ import { Meter, NumberBox } from "./components";
 import { Button, h, Label, Space, Style, Text, Toggle, Tone } from "./drawing";
 import { host } from "./host";
 import { Clock, Live, now, TempoMap } from "./live";
-import { Child, currentCard, element, UiNode } from "./nodes";
+import { Child, currentCard, element, homeInControls, UiNode } from "./nodes";
 import { Accessor, Bind, untrack } from "./reactivity";
 import { Action, Frozen } from "./tools";
 
@@ -51,9 +51,12 @@ export interface PanelProps {
  * A surface on a page, as a card looks, its content one under the other. The parts of a card go
  * in it side by side: `<Panel title="Drone"><Row><Display>...</Display><Controls>...</Controls></Row></Panel>`.
  */
-export const Panel = ({ key, title, grow, width, children }: PanelProps): UiNode =>
-  h("div", { key, style: { grow, width, keep: width !== undefined, gap: "md", padding: "lg", radius: "lg", background: "surface", borderColor: "border", borderWidth: 1 } },
+export function Panel({ key, title, grow, width, children }: PanelProps): UiNode {
+  const panel = h("div", { key, style: { grow, width, keep: width !== undefined, gap: "md", padding: "lg", radius: "lg", background: "surface", borderColor: "border", borderWidth: 1 } },
     title === undefined ? null : Text({ variant: "heading", children: title }), children);
+  homeInControls(panel);
+  return panel;
+}
 
 /** What a `Transport` gives its tool as the action `play`, which its button shows the key of. */
 const playPause: Action<{ clock: Clock }> = {
