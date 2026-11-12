@@ -33,6 +33,8 @@ pub const NAME: &str = "Pitch correction";
 
 /// The display reaches this far each side of the note moved to, in cents.
 const REACH_CENTS: f32 = 50.;
+/// What the three lines of the display stand for, across that reach.
+const SCALE_CAPTION: &str = "−25 · 0 · +25 ct";
 /// How high the line of the voice and the block of the move reach, 0 to 1.
 const HEARD_HEIGHT: f32 = 0.8;
 const MOVE_HEIGHT: f32 = 0.55;
@@ -102,10 +104,11 @@ fn name(note: f32) -> String {
     Pitch::nearest(note.round() as i64).name()
 }
 
-/// The line under the display: `A3 −32 ct → A3 · +30 ct`, or a dash while no note is heard.
+/// The line under the display: `A3 −32 ct → A3 · +30 ct`, or the scale of its lines while no
+/// note is heard.
 fn caption(reading: Reading) -> String {
     if reading.heard <= 0. {
-        return "–".into();
+        return SCALE_CAPTION.into();
     }
     let off = ((reading.heard - reading.heard.round()) * 100.).round();
     let heard = format!("{} {} ct", name(reading.heard), signed(off));
@@ -214,18 +217,16 @@ impl PitchCorrectionView {
     fn toggle(
         &self,
         id: &'static str,
+        name: &'static str,
         on: bool,
         undo_label: &'static str,
         set: fn(&mut PitchCorrectionState, bool),
         cx: &mut Context<Self>,
     ) -> Toggle {
-        Toggle::new(id, if on { "On" } else { "Off" }, on).on_change(weak_callback(
-            cx,
-            move |view, on: bool, cx| {
-                view.device
-                    .change(undo_label, ValueChange::Set(on), set, cx);
-            },
-        ))
+        Toggle::new(id, name, on).on_change(weak_callback(cx, move |view, on: bool, cx| {
+            view.device
+                .change(undo_label, ValueChange::Set(on), set, cx);
+        }))
     }
 
     fn display(&self, key: Select, scale: Select) -> Display {
@@ -288,6 +289,7 @@ impl Render for PitchCorrectionView {
         );
         let formants = self.toggle(
             "keep_formants",
+            "Formants",
             state.keep_formants,
             "Change formants",
             |state, on| state.keep_formants = on,
@@ -295,6 +297,7 @@ impl Render for PitchCorrectionView {
         );
         let vibrato = self.toggle(
             "ignore_vibrato",
+            "Ignore vibrato",
             state.ignore_vibrato,
             "Change ignore vibrato",
             |state, on| state.ignore_vibrato = on,
@@ -303,7 +306,7 @@ impl Render for PitchCorrectionView {
         let retune = Column::new()
             .top(knob(RETUNE_KNOB, cx))
             .bottom(knob(HUMANIZE_KNOB, cx));
-        // `Ignore vibrato` does not fit under a toggle in one column.
+        // The names of the two switches do not fit in one column.
         let hidden = [
             Column::new()
                 .top(
@@ -311,9 +314,9 @@ impl Render for PitchCorrectionView {
                         .span(2)
                         .label("Voice"),
                 )
-                .bottom(Cell::new(vibrato).span(2).label("Ignore vibrato")),
+                .bottom(Cell::switch(vibrato).span(2)),
             Column::new()
-                .top(Cell::new(formants).label("Formants"))
+                .top(Cell::switch(formants).span(2))
                 .bottom(knob(MIX_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
@@ -345,6 +348,6 @@ mod tests {
             ..reading
         };
         assert_eq!(caption(unmoved), "A3 −32 ct");
-        assert_eq!(caption(Reading::default()), "–");
+        assert_eq!(caption(Reading::default()), SCALE_CAPTION);
     }
 }
