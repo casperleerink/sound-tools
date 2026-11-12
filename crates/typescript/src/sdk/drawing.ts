@@ -30,8 +30,8 @@ export type ThemeColor =
 /** A colour of the theme, or one at an opacity in percent, `"green/40"`. `#rrggbb` and `#rrggbbaa` are for what the theme cannot say. */
 export type Color = ThemeColor | `${ThemeColor}/${number}` | `#${string}`;
 
-/** `color` at an opacity in percent, as `"green/40"` writes it: for a colour that is a variable. */
-export const alpha = (color: ThemeColor | `#${string}`, percent: number): Color => `${color}/${percent}`;
+/** `color` at an opacity in percent, as `"green/40"` writes it, in place of the one it had: for a colour that is a variable, such as one kept in a list. */
+export const alpha = (color: Color, percent: number): Color => `${color.split("/")[0] as ThemeColor}/${percent}`;
 
 /** Room between things and inside them: 4, 8, 12, 16, 24 or 32 points. */
 export type Spacing = "xs" | "sm" | "md" | "lg" | "xl" | "2xl";

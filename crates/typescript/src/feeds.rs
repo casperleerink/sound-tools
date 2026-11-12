@@ -27,8 +27,8 @@ static SHOWN: std::sync::Mutex<std::collections::BTreeMap<String, f32>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// What the live values of a card last read of the peaks `name` (`peak:<name>`, the louder
-/// channel), of a number as it plays (`played:<name>`) or of a channel of the audio input
-/// (`input:<channel>`), for a test that a meter moves.
+/// channel), of a number as it plays (`played:<name>`), whether a lane holds it (`held:<name>`,
+/// 1 or 0) or of a channel of the audio input (`input:<channel>`), for a test that a meter moves.
 #[cfg(feature = "test-support")]
 pub fn shown_by_live_values(name: &str) -> Option<f32> {
     let shown = SHOWN
@@ -317,6 +317,8 @@ impl Feeds {
         }
         for (name, (value, _)) in &self.played {
             shown.insert(format!("played:{name}"), *value);
+            let held = f32::from(u8::from(self.held.contains(name)));
+            shown.insert(format!("held:{name}"), held);
         }
         for (channel, level) in self.input.iter().enumerate() {
             shown.insert(format!("input:{channel}"), *level);

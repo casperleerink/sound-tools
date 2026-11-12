@@ -78,6 +78,13 @@ impl Opened<'_> {
         self.cx.executor().advance_clock(sound_ui::POLL_INTERVAL);
         self.find("space-fader-master");
     }
+
+    /// The same, of a page of knobs.
+    fn play_and_draw_knobs(&mut self, frames: usize) {
+        self.loudest(frames);
+        self.cx.executor().advance_clock(sound_ui::POLL_INTERVAL);
+        self.find("space-knob-filter.cutoff_hz");
+    }
 }
 
 #[gpui::test]
@@ -370,4 +377,88 @@ fn a_number_a_page_shows_as_it_plays_draws_again_when_the_record_of_its_child_ch
     });
     window.renders_in(1);
     assert_eq!(shown(), Some(0.5));
+}
+
+/// A filter whose cutoff a lane moves, with a knob on the cutoff and one on the resonance.
+const SWEPT: &str = r##"import { h, Knob, tool, type Declaration } from "./sdk";
+
+const children = { filter: "filter", sweep: "lane" } as const;
+
+tool({
+  name: "swept",
+  title: "Swept",
+  when: "A test",
+  doc: "The lane `sweep` moves the cutoff of the filter `filter`.",
+  state: {},
+  children,
+  behaviour: (): Declaration<typeof children> => ({
+    connections: [{ from: { child: "sweep", number: "value" }, to: { child: "filter", number: "cutoff_hz" } }],
+  }),
+  view: () => h("div", null, h(Knob, { field: "filter.cutoff_hz" }), h(Knob, { field: "filter.resonance" })),
+});
+"##;
+
+#[gpui::test]
+fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAppContext) {
+    let project = json!({
+        "format": 1,
+        "extensions": ["filter"],
+        "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
+        "connections": [],
+    })
+    .to_string();
+    let lane = json!({ "tool": "lane", "state": { "points": [{ "tick": 0, "value": 300 }, { "tick": 3840, "value": 3000 }] } })
+        .to_string();
+    let mut window = open(
+        cx,
+        &[
+            ("project.json", &project),
+            (
+                "state/swept/instance.json",
+                r#"{"tool": "swept", "state": {}}"#,
+            ),
+            (
+                "state/swept/filter.json",
+                r#"{"tool": "filter", "state": {"cutoff_hz": 1000.0, "resonance": 0.2}}"#,
+            ),
+            ("state/swept/sweep.json", &lane),
+            ("extensions/swept.ts", SWEPT),
+        ],
+    );
+    let cutoff = window.space_at("knob-filter.cutoff_hz") + point(px(28.), px(18.));
+    assert_eq!(window.problems(), []);
+    window.wait_for_bun();
+    window.renders_in(10);
+    let shown = |name: &str| sound_typescript::shown_by_live_values(name).unwrap();
+    // Its record says 1000 Hz, and the lane plays 300 Hz at the start.
+    let near = |shown: f32, played: f32| assert!((shown - played).abs() < 3.0, "{shown}");
+    near(shown("played:filter.cutoff_hz"), 300.0);
+    assert_eq!(shown("held:filter.cutoff_hz"), 1.0);
+    assert_eq!(shown("held:filter.resonance"), 0.0);
+
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, _| {
+            session.engine().seek(sound_core::Ticks(3840));
+        });
+    });
+    window.until("the knob to follow the lane", |window| {
+        window.play_and_draw_knobs(1_200);
+        (shown("played:filter.cutoff_hz") - 3000.0).abs() < 3.0
+    });
+
+    // The lane's number is not the composer's: a drag of its knob turns nothing.
+    window.press(cutoff);
+    window.drag_to(cutoff - point(px(0.), px(50.)));
+    window.release(cutoff - point(px(0.), px(50.)));
+    assert_eq!(window.record("swept/filter")["cutoff_hz"], 1000.0);
+    assert_eq!(window.undo_label(), None);
+
+    // The knob beside it, which no lane moves, turns as ever.
+    let resonance = window.space_at("knob-filter.resonance") + point(px(28.), px(18.));
+    window.press(resonance);
+    window.drag_to(resonance - point(px(0.), px(50.)));
+    window.release(resonance - point(px(0.), px(50.)));
+    assert!(window.record("swept/filter")["resonance"].as_f64().unwrap() > 0.2);
+    assert_eq!(window.undo_label().as_deref(), Some("Change resonance"));
 }
