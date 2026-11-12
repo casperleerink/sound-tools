@@ -856,8 +856,8 @@ fn sections_card() -> DeviceCard {
         )
 }
 
-/// A plugin draws nothing on its card: a strip in the place of a display, then its pins.
-fn plugin_card() -> DeviceCard {
+/// A plugin draws nothing on its card: its window button over its list, then its pins.
+fn plugin_card(id: &'static str, pinned: bool) -> DeviceCard {
     let open = Button::new("open-window", "Open window")
         .variant(ButtonVariant::Subtle)
         .on_card()
@@ -865,16 +865,29 @@ fn plugin_card() -> DeviceCard {
     let parameters = Select::new("parameters", "")
         .placeholder("Parameters")
         .trigger_width(control_width(2));
-    let strip = ControlStrip::new().control(open).control(parameters);
+    let own = Column::new()
+        .top(Cell::new(open).span(2))
+        .bottom(Cell::new(parameters).span(2));
+    let card = DeviceCard::new(id, div().child("Surge XT"))
+        .power(true, |_, _, _| {})
+        .close(|_, _, _| {})
+        .column(own);
+    if !pinned {
+        return card;
+    }
     let cutoff = Knob::new("plugin-cutoff")
         .value(0.6)
         .label("Cutoff")
         .readout("1.2 kHz");
-    DeviceCard::new("plugin", div().child("Surge XT"))
-        .power(true, |_, _, _| {})
-        .close(|_, _, _| {})
-        .display(strip)
-        .column(Column::new().top(cutoff))
+    let wave = Select::new("plugin-wave", "")
+        .placeholder("Sine")
+        .trigger_width(control_width(2));
+    let bright = Toggle::new("plugin-bright", "Bright", true);
+    let pins = Column::new()
+        .top(cutoff)
+        .top(Cell::switch(bright))
+        .bottom(Cell::new(wave).span(2).label("Wave"));
+    card.column(pins)
 }
 
 /// What the card of a plugin says when the plugin cannot play.
@@ -905,7 +918,12 @@ fn cards(state: &Entity<RackState>, cx: &App) -> AnyElement {
             ),
             sample("effect off", cx, filter_card(state, 1, "filter-off", cx)),
             sample("expanded, a hollow handle", cx, reverb_card(state, cx)),
-            sample("plugin, one parameter on the card", cx, plugin_card()),
+            sample("plugin", cx, plugin_card("plugin", false)),
+            sample(
+                "plugin, three parameters on the card",
+                cx,
+                plugin_card("plugin-pinned", true),
+            ),
             sample("plugin that stopped", cx, plugin_card_stopped()),
             sample(
                 "sections behind expand, curved envelope, LFO",

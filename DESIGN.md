@@ -56,7 +56,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
 - One grid for devices: every card is whole columns wide, with two rows of cells: a control, a label line, a value line. A display is two rows tall and four columns wide, or six for a file or an EQ; a control that needs room takes two. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
 - A card says each thing once: a switch carries its name and is lit while on, a control that says its value has no value line, and the line at the foot of a display says only what moves, or a pointed handle's value no knob in view says.
-- Only the faint marks of its scale lie over the drawing of a display: its control sits in a strip above. A plugin's card has no display, only a row: the button that opens its window and the list of its parameters.
+- Only the faint marks of its scale lie over the drawing of a display: its control sits in a strip above. A plugin's card has no display: the button that opens its window over the list of its parameters, and beside them the parameters picked from it.
 - Hit targets are larger than what is drawn, for a trackpad.
 
 ## Using the app
