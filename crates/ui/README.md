@@ -74,5 +74,7 @@ registries and installs them as GPUI globals:
 - Draw only what is visible. A view of many records paints on one `canvas`.
 - Show a focus ring only when the focus came from the keyboard (`KeyboardFocus`).
 - Put coordinate math in pure functions with tests.
-- Use the components and theme tokens of this crate. A general component goes here, with a
-  gallery entry. What only one tool needs stays in its extension.
+- Use the components of this crate, and name its tokens: a colour role of the theme
+  (`cx.theme().fill()`), a `TextVariant`, a `radius` and a `ControlSize`. The grey steps are
+  private, so a view cannot pick one. A general component goes here, with a gallery entry.
+  What only one tool needs stays in its extension.
