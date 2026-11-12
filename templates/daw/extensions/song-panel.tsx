@@ -115,8 +115,8 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
       <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
         <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
-          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-          <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
+          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "text" }}>{() => (row() ? titleOf(row()!) : name)}</div>
+          <Button key="close-panel" icon="x" variant="ghost" size="sm" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
         </div>
         <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
           <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
@@ -125,9 +125,9 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
           <div style={{ align: "start" }}>
             <Knob field={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
             <div style={{ direction: "row", gap: 4, paddingTop: 6 }}>
-              <Toggle key={`panel-mute-${name}`} label="M" tooltip="Mute" on={() => (row() ? muted(row()!) : false)} color="peach" onClick={() => toggleMute(name)} />
+              <Toggle key={`panel-mute-${name}`} size="sm" label="M" tooltip="Mute" on={() => (row() ? muted(row()!) : false)} color="peach" onClick={() => toggleMute(name)} />
               <Show when={() => !isReturn()}>
-                {() => <Toggle key={`panel-solo-${name}`} label="S" tooltip="Solo" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />}
+                {() => <Toggle key={`panel-solo-${name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />}
               </Show>
             </div>
             <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: 14 }}><InputSelect page={page} name={name} /></div>}</Show>
@@ -135,7 +135,7 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
           </div>
         </div>
       </div>
-      <div style={{ width: 1, background: "alpha/5", keep: true }} />
+      <div style={{ width: 1, background: "border", keep: true }} />
       <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 11, paddingRight: 16, align: "start", scroll: "x" }}>
         {() =>
           row()?.tool === "tape" ? (
@@ -144,7 +144,7 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
                 const chosen = [...memory.selected].find((key) => key.startsWith(`${name}/`) && itemTool(children, key) === "region");
                 return chosen ? <DeviceCard key={`clip-${chosen}`} path={chosen} /> : <EmptyClip />;
               }}
-              <div style={{ width: 1, height: CARD, background: "alpha/6", keep: true }} />
+              <div style={{ width: 1, height: CARD, background: "border", keep: true }} />
             </>
           ) : row()?.tool === "track" ? (
             <div key="instrument" onDrop={({ carried }) => carried && order()[0] !== undefined && moveBefore(carried, order()[0]!)}>
@@ -161,15 +161,15 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
             </div>
           )}
         </For>
-        <div key="add-effect" tabStop style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "alpha/5" }, keep: true }} onClick={addEffect}
+        <div key="add-effect" tabStop style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: { background: "fill" }, keep: true }} onClick={addEffect}
           onDrop={({ carried }) => carried && moveBefore(carried, null)}>
-          <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
-          <Icon name="chevron-down" size={14} color="gray-700" />
+          <div style={{ fontSize: 14, weight: "medium", color: "text" }}>Add effect</div>
+          <Icon name="chevron-down" size={14} color="text-muted" />
         </div>
         <Show when={() => row()?.tool === "track" && returns().length > 0}>
           {() => (
             <>
-              <div style={{ width: 1, height: CARD, background: "alpha/6", keep: true }} />
+              <div style={{ width: 1, height: CARD, background: "border", keep: true }} />
               <Sends page={page} name={name} />
             </>
           )}
@@ -181,11 +181,11 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
 
 /** The first card of an audio track while none of its regions is chosen, as a device card looks. */
 const EmptyClip = () => (
-  <div key="clip-empty" style={{ width: 88, height: CARD, radius: 10, background: "gray-200", borderColor: "alpha/6", borderWidth: 1, keep: true }}>
+  <div key="clip-empty" style={{ width: 88, height: CARD, radius: 10, background: "surface", borderColor: "border", borderWidth: 1, keep: true }}>
     <div style={{ height: 32, direction: "row", align: "center", paddingLeft: 15 }}>
-      <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Clip</div>
+      <div style={{ fontSize: 14, weight: "medium", color: "text" }}>Clip</div>
     </div>
-    <div style={{ paddingX: 15, fontSize: 12, lineHeight: 14, color: "gray-800" }}>Select a clip.</div>
+    <div style={{ paddingX: 15, fontSize: 12, lineHeight: 14, color: "text-secondary" }}>Select a clip.</div>
   </div>
 );
 /** The channels of the input an audio track records, each alone and then the pair. */
@@ -197,7 +197,7 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
     return rec?.tool === "recorder" ? rec.state.channels : [];
   };
   return (
-    <Select key={`input-${name}`} title="Input" value={() => Math.max(INPUTS.findIndex((each) => each.channels.join() === channels().join()), 0)}
+    <Select key={`input-${name}`} size="sm" title="Input" value={() => Math.max(INPUTS.findIndex((each) => each.channels.join() === channels().join()), 0)}
       options={INPUTS.map(({ label }, index) => ({ value: index, label }))}
       onChange={(index) =>
         update("Change input", ({ children }) => {
@@ -218,9 +218,9 @@ const Sends = ({ page, name }: { page: Page; name: string }) => {
   };
   const columns = memo(() => Array.from({ length: Math.ceil(sends().length / 2) }, (_, index) => index));
   return (
-    <div key="sends" style={{ height: CARD, radius: 10, background: "gray-200", borderColor: "alpha/6", borderWidth: 1, paddingX: 15, keep: true }}>
+    <div key="sends" style={{ height: CARD, radius: 10, background: "surface", borderColor: "border", borderWidth: 1, paddingX: 15, keep: true }}>
       <div style={{ height: 32, direction: "row", align: "center" }}>
-        <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Sends</div>
+        <div style={{ fontSize: 14, weight: "medium", color: "text" }}>Sends</div>
       </div>
       <div style={{ direction: "row", gap: 8 }}>
         <For each={columns}>
@@ -243,7 +243,7 @@ const PreFader = ({ page: { update, returns }, name }: { page: Page; name: strin
     return back?.tool === "bus" && back.state.pre_fader;
   };
   return (
-    <Toggle key={`pre-fader-${name}`} label="Pre fader" on={on}
+    <Toggle key={`pre-fader-${name}`} size="sm" label="Pre fader" on={on}
       onClick={() =>
         update(on() ? "Send after the faders" : "Send before the faders", ({ children }) => {
           const back = children.find((child) => child.name === name);
@@ -258,9 +258,9 @@ export const MasterPanel = ({ page: { state, memory, update } }: { page: Page })
   <div style={{ height: RACK, direction: "row", keep: true }}>
     <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
       <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
-        <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
-        <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-950" }}>Master</div>
-        <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
+        <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "text-secondary", keep: true }} />
+        <div style={{ grow: true, fontSize: 14, weight: "medium", color: "text" }}>Master</div>
+        <Button key="close-master" icon="x" variant="ghost" size="sm" opacity={0.6} tooltip="Close" shortcut="song.back" onClick={() => (memory.below = null)} />
       </div>
       <div style={{ direction: "row", paddingLeft: 8 }}>
         <div style={{ align: "center", gap: 7, paddingTop: 5 }}>
@@ -268,7 +268,7 @@ export const MasterPanel = ({ page: { state, memory, update } }: { page: Page })
         </div>
       </div>
     </div>
-    <div style={{ width: 1, background: "alpha/5", keep: true }} />
+    <div style={{ width: 1, background: "border", keep: true }} />
     <div style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 11, paddingRight: 16, align: "start" }}>
       <DeviceCard path="limit" on={() => !state.limit_off} onPower={() => update(state.limit_off ? "Turn the limiter on" : "Turn the limiter off", (song) => (song.state.limit_off = !song.state.limit_off))} />
     </div>
