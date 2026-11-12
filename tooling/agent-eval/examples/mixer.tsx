@@ -1,13 +1,9 @@
-import { Arc, blend, Circle, For, Group, h, Label, Line, list, now, Rect, Space, text, tool, Wave, type Connection, type Declaration, type Live, type UtilityState } from "./sdk";
+import { Arc, blend, Circle, For, Group, h, Label, Line, list, now, Rect, Space, text, Text, Toggle, tool, Wave, type Connection, type Declaration, type Live, type UtilityState } from "./sdk";
 
 // Each `tone` child is a strip: it plays through the utility `<name>-mix`, whose gain, pan and
 // mute the strip turns, into the utility `master`. The meter `<name>-meter` hears the mix.
 const HEIGHT = 220;
 const STRIP = 64;
-const COLOR = {
-  back: "#121317", track: "#1b1d23", green: "#7ee0a0", line: "#e9ebef", cap: "#a9b1ff", text: "#7c808c",
-  on: "#a9b1ff", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", dark: "#3a1418", red: "#ff4d5e",
-} as const;
 
 // Where a level sits on a meter, 0 to 1: the fader scale of the window, 0 dB at 0.8.
 const place = (amplitude: Live) => amplitude.pow(20 / 61.94).times(0.8).min(1);
@@ -20,9 +16,9 @@ function Meter({ level, x }: { level: (channel: 0 | 1) => Live; x: number }) {
     const peak = place(level(channel)).hold(1.5).fall(0.5);
     const left = x + channel * 7;
     return [
-      <Rect x={left} y={0} width={5} height={HEIGHT} color={COLOR.track} />,
-      <Rect x={left} y={up(bar)} width={5} height={bar.times(HEIGHT)} color={COLOR.green} />,
-      <Rect x={left} y={up(peak)} width={5} height={1} color={COLOR.line} opacity={peak.gt(0.01)} />,
+      <Rect x={left} y={0} width={5} height={HEIGHT} color="fill" />,
+      <Rect x={left} y={up(bar)} width={5} height={bar.times(HEIGHT)} color="green" />,
+      <Rect x={left} y={up(peak)} width={5} height={1} color="text" opacity={peak.gt(0.01)} />,
     ];
   })}</Group>;
 }
@@ -34,8 +30,8 @@ function Fader({ name, child, level }: { name: string; child: string; level: (ch
     <Space key={`fader-${name}`} width={40} height={HEIGHT} cursor="ns-resize"
       drag={{ y: { value: `${child}.gain_db`, travel: HEIGHT, default: 0, label: "Change the volume" } }}>
       <Meter level={level} x={4} />
-      <Rect x={22} y={0} width={2} height={HEIGHT} color={COLOR.track} />
-      <Rect x={16} y={up(at).minus(4)} width={16} height={8} radius={2} color={COLOR.cap} />
+      <Rect x={22} y={0} width={2} height={HEIGHT} color="fill-strong" />
+      <Rect x={16} y={up(at).minus(4)} width={16} height={8} radius={2} color="text" />
     </Space>
   );
 }
@@ -45,17 +41,9 @@ function Pan({ name, child }: { name: string; child: string }) {
   const angle = now.value(`${child}.pan`, { played: true, fraction: true }).minus(0.5).times(0.75);
   return (
     <Space key={`pan-${name}`} width={40} height={36} cursor="ns-resize" drag={{ y: { value: `${child}.pan`, default: 0, label: "Change the pan" } }}>
-      <Arc x={20} y={18} radius={12} from={-0.375} to={0.375} color={COLOR.track} width={3} />
-      <Arc x={20} y={18} radius={12} from={0} to={angle} color={COLOR.cap} width={3} />
+      <Arc x={20} y={18} radius={12} from={-0.375} to={0.375} color="fill-strong" width={3} />
+      <Arc x={20} y={18} radius={12} from={0} to={angle} color="text" width={3} />
     </Space>
-  );
-}
-
-function Button({ label, on, color, onClick }: { label: string; on: () => boolean; color: `#${string}`; onClick: () => void }) {
-  return (
-    <div style={() => ({ width: 22, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onClick={onClick}>
-      {label}
-    </div>
   );
 }
 
@@ -96,47 +84,47 @@ export const mixer = tool({
         state.solo = state.solo.includes(name) ? state.solo.filter((each) => each !== name) : [...state.solo, name];
       });
     return (
-      <div style={{ direction: "row", gap: 16, padding: 8, background: COLOR.back }}>
-        <div style={{ direction: "row", gap: 4 }}>
+      <div style={{ direction: "row", gap: "lg", padding: "sm", background: "background" }}>
+        <div style={{ direction: "row", gap: "xs" }}>
           <For each={strips}>
             {(name) => (
-              <div style={{ width: STRIP, gap: 6, align: "center" }}>
+              <div style={{ width: STRIP, gap: "sm", align: "center" }}>
                 <Pan name={name} child={`${name}-mix`} />
                 <Fader name={name} child={`${name}-mix`} level={(channel) => now.peak(`${name}-meter`, channel)} />
-                <Space width={STRIP} height={14}>
-                  <Label x={STRIP / 2} y={0} text={now.value(`${name}-mix.gain_db`)} unit="db" size={10} color={COLOR.text} align="center" />
+                <Space width={STRIP} height={16}>
+                  <Label x={STRIP / 2} y={0} text={now.value(`${name}-mix.gain_db`)} unit="db" color="text-muted" align="center" />
                 </Space>
-                <div style={{ direction: "row", gap: 4 }}>
-                  <Button label="M" on={() => muted(name)} color={COLOR.mute} onClick={() => toggleMute(name)} />
-                  <Button label="S" on={() => state.solo.includes(name)} color={COLOR.solo} onClick={() => toggleSolo(name)} />
+                <div style={{ direction: "row", gap: "xs" }}>
+                  <Toggle label="M" size="sm" on={() => muted(name)} color="peach" onClick={() => toggleMute(name)} />
+                  <Toggle label="S" size="sm" on={() => state.solo.includes(name)} color="yellow" onClick={() => toggleSolo(name)} />
                 </div>
-                <div style={{ fontSize: 11, color: COLOR.text }}>{name}</div>
+                <Text variant="label">{name}</Text>
               </div>
             )}
           </For>
         </div>
-        <div style={{ width: STRIP, gap: 6, align: "center" }}>
+        <div style={{ width: STRIP, gap: "sm", align: "center" }}>
           <div style={{ height: 36 }} />
           <Fader name="master" child="master" level={(channel) => now.peak("master-meter", channel)} />
-          <div style={{ fontSize: 11, color: COLOR.text }}>master</div>
+          <Text variant="label">master</Text>
         </div>
-        <div style={{ gap: 10 }}>
-          <div style={{ direction: "row", gap: 6, align: "center" }}>
+        <div style={{ gap: "sm" }}>
+          <div style={{ direction: "row", gap: "sm", align: "center" }}>
             <Space width={16} height={16}>
-              <Circle x={8} y={8} radius={5} color={blend(COLOR.dark, COLOR.red, now.elapsed.mod(1).lt(0.5))} />
+              <Circle x={8} y={8} radius={5} color={blend("red/20", "red", now.elapsed.mod(1).lt(0.5))} />
             </Space>
-            <div style={{ fontSize: 11, color: COLOR.text }}>Live</div>
+            <Text variant="label">Live</Text>
           </div>
-          <div style={{ fontSize: 11, color: COLOR.text }}>Master, the last 20 ms</div>
-          <Space width={260} height={80} background={COLOR.track} radius={4}>
-            <Line from={[0, 40]} to={[260, 40]} color={COLOR.off} width={1} />
-            <Wave x={0} y={0} width={260} height={80} list={now.scope("master-meter", { frames: 960 })} color={COLOR.green} size={1.5} />
+          <Text variant="label">Master, the last 20 ms</Text>
+          <Space width={260} height={80} background="well" radius="sm">
+            <Line from={[0, 40]} to={[260, 40]} color="border-strong" width={1} />
+            <Wave x={0} y={0} width={260} height={80} list={now.scope("master-meter", { frames: 960 })} color="green" size={1.5} />
           </Space>
-          <div style={{ fontSize: 11, color: COLOR.text }}>Master level, the last 4 s</div>
-          <Space width={260} height={60} background={COLOR.track} radius={4}>
-            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} color={COLOR.cap} />
+          <Text variant="label">Master level, the last 4 s</Text>
+          <Space width={260} height={60} background="well" radius="sm">
+            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} color="text" />
           </Space>
-          <div style={{ fontSize: 11, color: COLOR.text }}>Device out</div>
+          <Text variant="label">Device out</Text>
           <Space width={30} height={HEIGHT}>
             <Meter level={(channel) => now.devicePeak(channel)} x={6} />
           </Space>
