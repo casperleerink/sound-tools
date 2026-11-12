@@ -77,7 +77,8 @@ impl ControlEdit {
     ///
     /// A drag is one gesture and one undo step: it begins with its first `Drag`, so a click is
     /// no step, publishes every move so the sound follows, and ends at `DragEnd`, or goes back
-    /// to the state before it at `DragCancel`. A `Set`, a key step or a reset, is one commit.
+    /// to the state before it at `DragCancel`. A `Set`, a key step, a reset or a typed value, is
+    /// a drag that goes there and lets go at once, so what follows a gesture follows it too.
     pub fn apply<S: State, V>(
         &mut self,
         session: &Entity<Session>,
@@ -119,35 +120,29 @@ impl ControlEdit {
         update: impl FnOnce(&mut Project, &mut ProjectEdit, V) -> Result<(), ProjectError>,
         cx: &mut App,
     ) {
-        match change {
-            ValueChange::Drag(value) => {
-                // A move may still arrive in the frame that lost the record.
-                if session.read(cx).project().tool_of(id).is_none() {
-                    return;
-                }
-                // The gesture is gone: a control that went away during its drag sent no end,
-                // and another view or the session may have closed it since. It opens again.
-                if !session.read(cx).gesture_open() {
-                    self.drag = DragEdit::default();
-                }
-                self.drag.publish(session, label, cx, |project, edit| {
-                    update(project, edit, value)
-                });
-            }
-            ValueChange::DragEnd => self.finish(session, cx),
+        let lets_go = matches!(change, ValueChange::Set(_));
+        let value = match change {
+            ValueChange::Drag(value) | ValueChange::Set(value) => value,
+            ValueChange::DragEnd => return self.finish(session, cx),
             ValueChange::DragCancel => {
                 self.drag.cancel(session, cx);
+                return;
             }
-            ValueChange::Set(value) => session.update(cx, |session, cx| {
-                if session.project().tool_of(id).is_none() {
-                    return;
-                }
-                session.edit(cx, |project| {
-                    let mut edit = project.begin(label);
-                    update(project, &mut edit, value)?;
-                    project.finish(edit)
-                });
-            }),
+        };
+        // A move may still arrive in the frame that lost the record.
+        if session.read(cx).project().tool_of(id).is_none() {
+            return;
+        }
+        // The gesture is gone: a control that went away during its drag sent no end, and
+        // another view or the session may have closed it since. It opens again.
+        if !session.read(cx).gesture_open() {
+            self.drag = DragEdit::default();
+        }
+        self.drag.publish(session, label, cx, |project, edit| {
+            update(project, edit, value)
+        });
+        if lets_go {
+            self.finish(session, cx);
         }
     }
 

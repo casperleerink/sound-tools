@@ -191,6 +191,8 @@ export interface SpaceProps extends PointerEvents {
    * drag turns one number, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
    */
   drag?: Drag;
+  /** `false` where tab passes it by, as it shows the number of another control: enter on that one clicks it. */
+  tabStop?: Bind<false | undefined>;
   /** Files or a carried value let go on it, where in its units. */
   onDrop?: (drop: Dropped) => void;
   cursor?: Pointed["cursor"];

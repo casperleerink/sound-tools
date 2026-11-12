@@ -348,9 +348,11 @@ impl Drawing<'_> {
             Keys::Own => wrap,
             Keys::Turn(turned) => {
                 wrap.on_key_down(self.listener(move |view, event: &KeyDownEvent, _, cx| {
-                    if let Some(key) = ValueKey::of(&event.keystroke)
-                        && view.turn_by_key(&turned, key, cx)
-                    {
+                    let keys = &event.keystroke;
+                    let turned_it =
+                        ValueKey::of(keys).is_some_and(|key| view.turn_by_key(&turned, key, cx));
+                    let enter = keys.key == "enter" && !keys.modifiers.modified();
+                    if turned_it || (enter && view.type_number_of(&turned, cx)) {
                         cx.stop_propagation();
                     }
                 }))

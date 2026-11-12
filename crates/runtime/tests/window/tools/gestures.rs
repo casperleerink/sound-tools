@@ -52,7 +52,7 @@ tool({
 "#;
 
 /// A fader with the number of its field quiet beside it, and a knob whose own value is quiet.
-const QUIET: &str = r#"import { Fader, h, Knob, number, Readout, tool } from "./sdk";
+const QUIET: &str = r#"import { Fader, h, Knob, number, NumberBox, tool } from "./sdk";
 
 tool({
   name: "quiet",
@@ -65,7 +65,7 @@ tool({
   view: () =>
     h("div", { style: { direction: "row", gap: 40 } },
       h(Fader, { field: "level", length: 100, min: 0, max: 1 }),
-      h(Readout, { field: "level", width: 40, quiet: true }),
+      h(NumberBox, { key: "level", field: "level", width: 40, quiet: true }),
       h(Knob, { field: "tone", quiet: true })),
 });
 "#;
@@ -88,7 +88,7 @@ fn a_quiet_number_shows_while_the_pointer_or_the_keys_are_on_a_control_of_its_fi
     assert_eq!(touched(&mut window, "tone"), 0.);
     window.hover(fader + point(px(30.), px(0.)));
     assert_eq!(touched(&mut window, "level"), 0.);
-    // Tab goes to the fader, then to the knob.
+    // Tab goes to the fader, then to the knob: the number beside the fader is the fader's.
     window.keys("tab");
     assert_eq!(touched(&mut window, "level"), 1.);
     window.keys("tab");
@@ -96,6 +96,36 @@ fn a_quiet_number_shows_while_the_pointer_or_the_keys_are_on_a_control_of_its_fi
         [touched(&mut window, "level"), touched(&mut window, "tone")],
         [0., 1.]
     );
+    // Enter on the fader types its number, in the percent it shows; the fader has the keys again.
+    window.keys("shift-tab");
+    press_key(&mut window, "enter");
+    window.until_found("div-level-typed");
+    window.keys("cmd-a 8 0 enter");
+    window.until("the level typed", |window| {
+        window.record("quiet")["level"].as_f64() == Some(0.8)
+    });
+    window.until_found("space-level");
+    assert_eq!(touched(&mut window, "level"), 1.);
+    press_key(&mut window, "down");
+    window.until("a step down on the fader", |window| {
+        window.record("quiet")["level"].as_f64() == Some(0.78)
+    });
+    // A click on the number types it too, and a drag from it still turns it.
+    let number = window.space("level") + point(px(10.), px(10.));
+    window.click(number);
+    window.until_found("div-level-typed");
+    window.keys("cmd-a 2 0 enter");
+    window.until("the level typed after a click", |window| {
+        window.record("quiet")["level"].as_f64() == Some(0.2)
+    });
+    let number = window.until_found("space-level") + point(px(10.), px(10.));
+    window.press(number);
+    window.drag_to(number - point(px(0.), px(50.)));
+    window.release(number - point(px(0.), px(50.)));
+    window.settle();
+    assert!(window.find("div-level-typed").is_none());
+    assert!(window.record("quiet")["level"].as_f64().unwrap() > 0.4);
+    assert_eq!(window.problems(), []);
 }
 
 #[gpui::test]
@@ -1456,7 +1486,7 @@ fn a_number_input_typed_and_dragged_change_the_same_value(cx: &mut TestAppContex
     hears(&mut window, "the value typed on the knob", 7.0);
 
     let number_box = window.space("box") + point(px(10.), px(10.));
-    window.double_click(number_box);
+    window.click(number_box);
     window.until_found("div-box-typed");
     window.keys("3 enter");
     hears(&mut window, "the value typed in the box", 3.0);

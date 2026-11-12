@@ -3,9 +3,9 @@
 import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, Space, Text } from "./drawing";
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
-import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, touched, Turn } from "./live";
-import { asCell, Child, currentCard, element, homeInControls, ownLines, Show, StepChange, turnTo, UiNode } from "./nodes";
-import { Accessor, Bind, signal, untrack } from "./reactivity";
+import { Drag, DragTurns, heldByLane, Live, now, Num, splitPath, touched, Turn } from "./live";
+import { asCell, CardRoot, Child, currentCard, element, homeInControls, ownLines, Show, StepChange, turnTo, UiNode } from "./nodes";
+import { Accessor, Bind, onCleanup, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
 /** The view that draws now, for the components below, which read its record and fields. */
@@ -264,6 +264,26 @@ function quietly(quiet: Bind<boolean> | undefined, { field, key }: { field?: str
   return () => (read(quiet) ? shown : 1);
 }
 
+/** How many controls of each field of a card say no number, a dial or a fader: the `NumberBox` of its field is then its number. */
+const numberless = new WeakMap<CardRoot, Map<string, ReturnType<typeof signal<number>>>>();
+
+function numberlessOn(field: string) {
+  const card = currentCard();
+  const fields = numberless.get(card) ?? new Map<string, ReturnType<typeof signal<number>>>();
+  numberless.set(card, fields);
+  const counted = fields.get(field) ?? signal(0);
+  fields.set(field, counted);
+  return counted;
+}
+
+/** Counts a control on `field` that says no number, while it is there. */
+function saysNoNumber(field: string | undefined) {
+  if (field === undefined) return;
+  const [count, set] = numberlessOn(field);
+  set(untrack(count) + 1);
+  onCleanup(() => set(untrack(count) - 1));
+}
+
 /** The dot of a control whose field a lane or a cable moves, as the window's knobs have: 4 points, in the grey of a label. */
 const heldMark = (held: Live | undefined, x: number, y: number): UiNode[] => (held ? [Circle({ x, y, radius: 2, color: "text-secondary", opacity: held })] : []);
 
@@ -287,7 +307,8 @@ const [CELL_WIDTH, CELL_CONTROL] = [64, 36];
  * `default` on a double click or backspace. Enter, or a click on its value, types the value as
  * it reads: `F#2`, `440`, `50`. A field shows what plays: while a lane or a cable moves it, the
  * knob follows that, with a dot and a tooltip, and no drag, key or typed value turns it.
- * `bipolar` draws its arc from the top, as a pan's. `quiet` hides its value, see `Quiet`.
+ * `bipolar` draws its arc from the top, as a pan's. `quiet` hides its value, see `Quiet`. A
+ * dial says no value: put a `NumberBox` of its field beside it, as beside a `Fader`.
  */
 export function Knob(props: KnobProps): UiNode {
   const { field, label, unit, travel, turns, unranged } = numberOf("Knob", props);
@@ -330,8 +351,10 @@ export function Knob(props: KnobProps): UiNode {
       ...texts(),
     ],
   });
-  // A dial says no value, so none is typed on it.
-  if (dial) return knob();
+  if (dial) {
+    saysNoNumber(props.field);
+    return knob();
+  }
   const { get, set } = typedValue(props, drag);
   const [low, high] = [Math.min(travel.min, travel.max), Math.max(travel.min, travel.max)];
   const taken = (number: number) => Math.min(Math.max(field?.integer ? Math.round(number) : number, low), high);
@@ -434,7 +457,7 @@ function levelBars(peaks: Peaks, length: number, box: Box, side: number, thickne
  * `horizontal`, over the level bars of `meter` when given. What it moves is as a `Knob`'s. A field
  * keeps its own range and scale unless `min` and `max` say; what code keeps, without them, moves
  * on the fader's scale in dB. A double click puts it at `default`. It says no number: put a
- * `NumberBox` or a `Readout` of its field beside it.
+ * `NumberBox` of its field beside it, which is then its number, and enter on the fader types it.
  */
 export function Fader(props: FaderProps): UiNode {
   const { length, horizontal, meter } = props;
@@ -443,6 +466,7 @@ export function Fader(props: FaderProps): UiNode {
   const moves = { ...turns, ...(scale?.scale === "fader" ? { fader: true } : {}), travel: length, label: props.label ?? turns.label };
   const { key, fraction, held, drag, onPress } = turned("fader", props, scale, moves, horizontal ? "x" : "y");
   const bars = meter === undefined ? [] : levelBars(meter, length, along(horizontal, length), 8, 5, 2);
+  saysNoNumber(props.field);
   const at = () => read(fraction).times(length).minus(3);
   const handle = horizontal
     ? Rect({ x: at, y: 0, width: 6, height: 28, radius: 3, color: "text" })
@@ -485,7 +509,7 @@ export type NumberBoxProps = Either<
   width: number;
   /** `md` when left out. A small one says its number as a `label`, the others as `body` text. */
   size?: ControlSize;
-  /** Its height in points where no size fits, such as a readout under a fader. */
+  /** Its height in points where no size fits, such as the number under a fader. */
   height?: number;
   align?: "left" | "center" | "right";
 };
@@ -541,10 +565,12 @@ const typedField = (key: string, value: number, unit: NumberBoxProps["unit"], wi
   h("div", { key: `${key}-typed` }, Input({ value: typedText(value, unit), width, size, focus: true, onCommit: (text) => done(typedNumber(text, unit)), onCancel: () => done(null) }));
 
 /**
- * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
- * or what code keeps, such as the tempo map, see `ValueProps`. Either changes as it is dragged:
- * a field's drag and a typed value are one undo step each, and what code keeps hears each value.
+ * A number to drag up and down, or click and type, as the transport's tempo is: a field, or
+ * what code keeps, such as the tempo map, see `ValueProps`. Either changes as it is dragged: a
+ * field's drag and a typed value are one undo step each, and what code keeps hears each value.
  * Tab reaches it: enter types, and the arrows step it. A typed value turns what a drag turns.
+ * Beside a dial or a `Fader` of its field it is that control's number: with `quiet` it shows
+ * while the control is touched, see `Quiet`, and tab reaches the control, where enter types it.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const { key, width, values, field, size = "md" } = props;
@@ -560,6 +586,9 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const drag: Drag = {};
   const { get, set } = typedValue(props, drag);
   const [typing, type] = signal(false);
+  // The control of its field that says no number has the keys for it.
+  const others = field === undefined ? undefined : numberlessOn(field)[0];
+  const beside = others && (() => (others() > 0 ? false : undefined));
   const clamped = (number: number) => Math.min(Math.max(number, min ?? -Infinity), max ?? Infinity);
   /** A typed or turned value as it takes it: one of `values`, or on the grid of `step`. */
   const taken = (number: number) =>
@@ -583,10 +612,10 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
   const box = (): UiNode =>
     Space({
       key, width, height, cursor: "ns-resize",
-      onPress: ({ clicks, button }: Press) => {
-        kept?.onPress();
-        if (button === "left" && clicks === 2) type(true);
-      },
+      onPress: kept?.onPress,
+      // A click types it; a drag from there still turns it.
+      onClick: () => type(true),
+      tabStop: beside,
       drag,
       children: [Label({ ...text, text: shows, unit, opacity: quietly(props.quiet, { field, key }) })],
     });
@@ -602,25 +631,6 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
     },
     fallback: box,
   })), told.label);
-}
-
-export type ReadoutProps = Quiet & {
-  field: string;
-  /** The field's own when left out. */
-  unit?: Unit;
-  width: number;
-  align?: "left" | "center" | "right";
-};
-
-/**
- * What a field plays, in words, as a line of `label` text: the number of a fader or of a dial
- * that shows none, beside it. With `quiet` it shows while that control is touched, see `Quiet`.
- */
-export function Readout({ field, width, align, quiet, ...props }: ReadoutProps): UiNode {
-  const { unit } = numberOf("Readout", { ...props, field });
-  const value = now.value(field);
-  const x = align === "center" ? width / 2 : align === "right" ? width : 0;
-  return Space({ width, height: 16, children: [Label({ x, y: 0, text: value, unit, color: "text", align, opacity: quietly(quiet, { field, key: field }) })] });
 }
 
 /**

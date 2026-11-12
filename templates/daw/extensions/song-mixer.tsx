@@ -1,4 +1,4 @@
-import { Fader, For, Fragment, h, Knob, memo, NumberBox, Readout, Show, Text, Toggle, untrack, type Bind, type Peaks } from "./sdk";
+import { Fader, For, Fragment, h, Knob, memo, NumberBox, Show, Text, Toggle, untrack, type Bind, type Peaks } from "./sdk";
 import { colourOf, lanesOf, Mark, mixOf, muted, rowLook, titleOf, type Child, type Page } from "./song-page";
 
 // The mixer under the timeline: a strip per track and per return, and the master's.
@@ -32,9 +32,9 @@ const VOLUME = "Change the volume";
 const Level = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
   <Fader field={`${path}.gain_db`} length={length} default={0} label={VOLUME} meter={meter} />
 );
-/** The gain of the fader `path`, to drag or type, as the undo step `label`. */
-export const Gain = ({ path, width, align, quiet, label = VOLUME }: { path: string; width: number; align?: "center" | "left" | "right"; quiet?: Bind<boolean>; label?: string }) => (
-  <NumberBox key={`gain-${path}`} field={`${path}.gain_db`} unit="db" max={6} label={label} width={width} size="sm" height={16} align={align} quiet={quiet} />
+/** The gain of the fader `path`, to drag or type, as the undo step `label`: the number of its fader or its dial. */
+export const Gain = ({ path, key = `gain-${path}`, width, align, quiet, label = VOLUME }: { path: string; key?: string; width: number; align?: "center" | "left" | "right"; quiet?: Bind<boolean>; label?: string }) => (
+  <NumberBox key={key} field={`${path}.gain_db`} unit="db" max={6} label={label} width={width} size="sm" height={NUMBER} align={align} quiet={quiet} />
 );
 /** A fader and under it its gain, in a column. */
 export const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
@@ -85,7 +85,7 @@ export const Mixer = ({ page }: { page: Page }) => {
               <Level path={path} length={length} meter={each ? { of: path } : "device"} />
               <div style={{ width: SIDE, height: length }}>
                 <Knob field={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar text="none" />
-                <Readout field={`${path}.pan`} unit="pan" width={DIAL} align="center" quiet={rests("pan")} />
+                <NumberBox key={`pan-${path}`} field={`${path}.pan`} unit="pan" min={-1} max={1} label="Change pan" width={DIAL} size="sm" height={NUMBER} align="center" quiet={rests("pan")} />
                 <div style={{ grow: true }} />
                 {/* A strip without one keeps its room, so the toggles of all strips are on one line. */}
                 <div style={{ gap: "xs", keep: true }}>
@@ -104,12 +104,16 @@ export const Mixer = ({ page }: { page: Page }) => {
           <For each={sent}>
             {(back) => (
               <div style={{ height: DIAL, direction: "row", align: "center", gap: "sm", paddingX: "xs", keep: true }}>
-                {() => sendsOf(each).includes(`send-${back.name}`) ? (
-                  <>
-                    <Knob field={`${each.name}/send-${back.name}.gain_db`} label={untrack(() => titleOf(back))} min={-60} max={6} default={0} unit="db" text="none" />
-                    <Readout field={`${each.name}/send-${back.name}.gain_db`} unit="db" width={SIDE} quiet />
-                  </>
-                ) : null}
+                {() => {
+                  if (!sendsOf(each).includes(`send-${back.name}`)) return null;
+                  const [path, title] = [`${each.name}/send-${back.name}`, untrack(() => titleOf(back))];
+                  return (
+                    <>
+                      <Knob field={`${path}.gain_db`} label={title} min={-60} max={6} default={0} unit="db" text="none" />
+                      <Gain path={path} key={`strip-send-${path}`} width={SIDE} quiet label={`Change ${title.toLowerCase()}`} />
+                    </>
+                  );
+                }}
               </div>
             )}
           </For>

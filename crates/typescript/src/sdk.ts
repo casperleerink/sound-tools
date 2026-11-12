@@ -69,13 +69,13 @@ export type {
   PathPoint, PathPoints, Radius, RowProps, Shape, SpaceProps, Spacing, Style, TextPart, TextProps,
   TextVariant, ThemeColor, ToggleProps, Tone
 } from "./sdk/drawing";
-// controls made of them: `Knob`, `Fader`, `Readout`, `Select`, `Steps`, `Pad`
+// controls made of them: `Knob`, `Fader`, `NumberBox`, `Select`, `Steps`, `Pad`
 export {
-  Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, Readout, SegmentedControl, Select,
+  Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, SegmentedControl, Select,
   Slider, Steps, valueAt, words
 } from "./sdk/components";
 export type {
-  FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, Quiet, ReadoutProps,
+  FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, Quiet,
   SegmentedControlProps, SelectOption, SelectProps, SliderProps, StepsProps, Travel, ValueProps
 } from "./sdk/components";
 // a view that fills the window: `Page`, `Panel` and `Transport`

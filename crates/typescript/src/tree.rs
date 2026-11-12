@@ -293,6 +293,9 @@ props! {
         on_click: bool,
         /// Its drag, by its number among the drags of the card.
         drag: u64,
+        /// `false` where tab passes it by: it shows the number of another control, whose enter
+        /// clicks it.
+        tab_stop: bool,
         cursor: Cursor,
         on_drop: bool,
     }
@@ -762,7 +765,7 @@ impl NodeTable {
         };
         let takes = match &entry.props {
             Props::Div(div) => div.tab_stop == Some(true),
-            Props::Space(space) => space.drag.is_some(),
+            Props::Space(space) => space.drag.is_some() && space.tab_stop != Some(false),
             Props::Shape(shape) => shape.drag.is_some(),
             Props::Text(_) | Props::Icon(_) | Props::Marker => false,
             _ => true,
@@ -804,6 +807,37 @@ impl NodeTable {
 
     pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Rc<Drag>> {
         self.drags.get(&id?)
+    }
+
+    /// The space that shows the number `value` of the control `control`, which says none: the
+    /// nearest one in the tree that turns it too, hears a click and is no tab stop.
+    pub(crate) fn number_of(&self, control: u64, value: &str) -> Option<u64> {
+        let shows = |entry: &Entry| match &entry.props {
+            Props::Space(space) if space.tab_stop == Some(false) => {
+                let turns = |turns: &Option<Turns>| {
+                    (turns.as_ref()).is_some_and(|turns| turns.value.as_deref() == Some(value))
+                };
+                space.on_click == Some(true)
+                    && (self.drag(space.drag)).is_some_and(|drag| turns(&drag.x) || turns(&drag.y))
+            }
+            _ => false,
+        };
+        let mut above = self.get(*self.ids.get(&control)?)?.parent;
+        while let Some(slot) = above {
+            if let Some(found) = self.find_in(slot, &shows) {
+                return Some(found);
+            }
+            above = self.get(slot)?.parent;
+        }
+        None
+    }
+
+    fn find_in(&self, slot: usize, is: &impl Fn(&Entry) -> bool) -> Option<u64> {
+        let entry = self.get(slot)?;
+        if is(entry) {
+            return Some(entry.id);
+        }
+        (entry.children.iter()).find_map(|child| self.find_in(*child, is))
     }
 
     #[cfg(test)]
