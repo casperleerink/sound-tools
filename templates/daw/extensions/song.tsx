@@ -1,10 +1,10 @@
-import { boolean, choice, Fragment, h, list, memo, Page, Show, text, tool, Transport, untrack, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type ValuesOf } from "./sdk";
+import { boolean, choice, Fragment, h, list, memo, Page, Rect, Show, Space, text, tool, Transport, untrack, type Accessor, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type Turn, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
-import { ClipEditor, type EditorMemory } from "./clip-editor";
+import { ClipEditor, ROW as NOTE_ROW, type EditorMemory } from "./clip-editor";
 import type { Clipboard } from "./song-clips";
 import { songActions } from "./song-keys";
 import { Mixer } from "./song-mixer";
-import { BEAT, colourOf, pageOf, titleOf } from "./song-page";
+import { BEAT, beatRuns, clamp, colourOf, LOW_ROW, pageOf, ROW, RULER, TEMPO, titleOf } from "./song-page";
 import { MasterPanel, Rack } from "./song-panel";
 import { Ruler, SectionName, type Editing, type Mark } from "./song-ruler";
 import { TempoLane } from "./song-tempo";
@@ -19,7 +19,10 @@ export const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-
 const fields = { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text(), tap: choice({ options: ["pre_fx", "post_fx", "post_fader"], default: "post_fader" }) }, { max: 64 }), limit_off: boolean({ default: false }) };
 /** What the song's code gets: its view, the parts of its page and its actions. */
 export type Song = Context<ValuesOf<typeof fields>, Inputs, Memory, typeof parts>;
-const EDITOR = 352;
+/** How tall the note editor opens, and the shortest a drag makes it. */
+const [EDITOR, SHORTEST] = [352, 184];
+/** The line over the editor that drags, with the room around it the pointer finds. */
+const DIVIDER = 5;
 
 /** What shows under the timeline, one at a time: a track's panel, the master's, a clip's notes or the mixer. */
 type Below = { kind: "track"; name: string } | { kind: "master" } | { kind: "editor"; clip: string } | { kind: "mixer" } | null;
@@ -57,6 +60,9 @@ type Memory = {
   mark: Mark | null;
   /** Whether it showed the panel of its first track, as it does once, when it opens. */
   opened: boolean;
+  /** How tall the note editor is, in points, and whether it is large: all the window but one track. */
+  editor: number;
+  editorLarge: boolean;
 } & EditorMemory;
 
 export const song = tool({
@@ -64,12 +70,12 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner; cmd held drags off it. Clips and regions are one selection, and choosing one chooses its track: the panel below shows that track, and an open editor that clip. Drag one to move the chosen (alt copies them, up and down to another track of their kind; the automation under them goes along, a device's lane on its own track only), drag either end of a clip to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose what is there, shift- or cmd-click to add one; right-click it, or press alt-enter, to cut, copy, duplicate, rename, export its notes, render or delete it; alt-left and alt-right choose the clip before and the next on its track. A MIDI file of one part dropped on a track becomes a clip there, else each part a new track. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips and regions, cut and paste with the automation under them, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, Q quantizes the chosen notes (all while none is) to the snap, its menu (right-click the notes or its … button) sets the strength and swing, humanizes or makes them legato, its lane picker shows the clip's controller lanes and on a plugin's track any controller, and escape closes it; escape with nothing chosen closes what shows below, a panel or the mixer. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, renders it, or deletes it; a render (Render to audio track…, which asks: with or without the tail) plays the track alone, after its effects, from its first chosen clip to its last (all its clips from a track's menu), onto a new audio track `audio-*` under it that takes the track's fader, sends, their automation, solo and post-fader sidechains, and mutes the track; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: press to add a point, chosen, and drag on to move it; drag a point to move it between its neighbours, alt-drag to erase the points it covers; drag the dot in the middle of a line up or down to bend it, double-click it to straighten it; delete removes the chosen one and alt-click any; the last point takes its lane along; a lane's name is a menu that moves its number with points, an LFO or an envelope (a track's notes play it), or removes it. An LFO or an envelope shows its controls under the lane's name, and the band its number moves in, whose low and high lines drag; an LFO draws its wave there. With Write automation on in the transport, dragging a knob or a fader a lane moves while the song plays writes into the lane from where it was grabbed to where it was let go. A song opens with the panel of its first track. The returns sit over the master's row under the tracks, each with a panel of its effects; a track's panel has a knob per send at its right, where they stay while its devices scroll, and so does its strip in the mixer, which the toggle of the master's row shows: the tracks' strips scroll, the returns' and the master's stay at its right; a strip says a number only away from where it rests, or under the pointer; a click on its name chooses it, a double click shows its panel. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change or a time signature, which the transport then changes, or a section, T adds a tempo change at the playhead, shift-T a time signature change and shift-S a section, alt-shift-left and alt-shift-right go to the mark before and the next and choose it, drag over it to repeat a range; the tempo toggle left of it shows the tempo changes as a line under it, chosen and removed as in the ruler; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region chosen alone: an edge trims it, its handles change its gain and fades, alt-up and alt-down its gain. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`: into its effects, out of them or out of its fader; a compressor's or a gate's card picks it behind its expand. The keys named here are the first keys of its `actions`, in `song-keys.ts`; the composer may have given them others.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner; cmd held drags off it. Clips and regions are one selection, and choosing one chooses its track: the panel below shows that track, and an open editor that clip. Drag one to move the chosen (alt copies them, up and down to another track of their kind; the automation under them goes along, a device's lane on its own track only), drag either end of a clip to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose what is there, shift- or cmd-click to add one; right-click it, or press alt-enter, to cut, copy, duplicate, rename, export its notes, render or delete it; alt-left and alt-right choose the clip before and the next on its track. A MIDI file of one part dropped on a track becomes a clip there, else each part a new track. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips and regions, cut and paste with the automation under them, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, Q quantizes the chosen notes (all while none is) to the snap, its menu (right-click the notes or its … button) sets the strength and swing, humanizes or makes them legato, its lane picker shows the clip's controller lanes and on a plugin's track any controller, its head says the chosen note, the line over it drags it taller, shift-enter makes it large and puts it back, and escape closes it; escape with nothing chosen closes what shows below, a panel or the mixer. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, renders it, or deletes it; a render (Render to audio track…, which asks: with or without the tail) plays the track alone, after its effects, from its first chosen clip to its last (all its clips from a track's menu), onto a new audio track `audio-*` under it that takes the track's fader, sends, their automation, solo and post-fader sidechains, and mutes the track; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: press to add a point, chosen, and drag on to move it; drag a point to move it between its neighbours, alt-drag to erase the points it covers; drag the dot in the middle of a line up or down to bend it, double-click it to straighten it; delete removes the chosen one and alt-click any; the last point takes its lane along; a lane's name is a menu that moves its number with points, an LFO or an envelope (a track's notes play it), or removes it. An LFO or an envelope shows its controls under the lane's name, and the band its number moves in, whose low and high lines drag; an LFO draws its wave there. With Write automation on in the transport, dragging a knob or a fader a lane moves while the song plays writes into the lane from where it was grabbed to where it was let go. A song opens with the panel of its first track. The returns sit over the master's row under the tracks, each with a panel of its effects; a track's panel has a knob per send at its right, one column that stays while its devices scroll and scrolls down itself, and so does its strip in the mixer, which the toggle of the master's row shows: the returns' and the master's stand after the tracks' and stay in view while those scroll; a strip says a number only away from where it rests, or under the pointer; a click on its name chooses it, a double click shows its panel. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change or a time signature, which the transport then changes, or a section, T adds a tempo change at the playhead, shift-T a time signature change and shift-S a section, alt-shift-left and alt-shift-right go to the mark before and the next and choose it, drag over it to repeat a range; the tempo toggle left of it shows the tempo changes as a line under it, chosen and removed as in the ruler; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region chosen alone: an edge trims it, its handles change its gain and fades, alt-up and alt-down its gain. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`: into its effects, out of them or out of its fader; a compressor's or a gate's card picks it behind its expand. The keys named here are the first keys of its `actions`, in `song-keys.ts`; the composer may have given them others.",
   state: fields,
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), below: null, armed: new Set(), recording: null, track: null, hovered: null, renaming: null, renamingClip: null, clipMenu: null,
-    clipboard: null, tempoLane: false, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {}, opened: false,
+    clipboard: null, tempoLane: false, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {}, opened: false, editor: EDITOR, editorLarge: false,
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
   }),
   actions: songActions,
@@ -146,6 +152,9 @@ export const song = tool({
       });
     });
 
+    // The editor at its largest leaves the ruler, one track, the returns and the master over it.
+    const largest = () => Math.max(tool.size.height - DIVIDER - RULER - 1 - (memory.tempoLane ? TEMPO + 1 : 0) - ROW - page.returnsHeight() - LOW_ROW, SHORTEST);
+    const editorHeight = () => (memory.editorLarge ? largest() : clamp(memory.editor, SHORTEST, largest()));
     const openKey = () => (memory.below?.kind === "editor" ? memory.below.clip : null);
     const open = () => {
       const key = openKey();
@@ -175,7 +184,10 @@ export const song = tool({
           preview={(pitch) => play(pitch, { child: trackName as `audio-${string}`, seconds: 0.3 })}
           seek={(tick) => clock.jump((open()?.state.start ?? 0) + tick)}
           onClose={() => (memory.below = { kind: "track", name: trackName ?? "" })}
-          height={EDITOR}
+          height={editorHeight}
+          large={() => memory.editorLarge}
+          onLarge={() => (memory.editorLarge = !memory.editorLarge)}
+          beats={() => beatRuns(page.runs())}
           openMenu={page.openMenu}
           hearsControllers={() => {
             const row = rows().find((each) => each.name === trackName);
@@ -220,9 +232,13 @@ export const song = tool({
             : shown?.kind === "master" ? <MasterPanel page={page} />
             : shown?.kind === "track" && strips().some((each) => each.name === shown.name) ? <Rack page={page} name={shown.name} />
             : null;
+          const resize = (height: number) => {
+            memory.editor = clamp(height, SHORTEST, largest());
+            memory.editorLarge = false;
+          };
           return below === null ? null : (
             <>
-              <div style={{ height: 1, background: "border", keep: true }} />
+              {shown?.kind === "editor" ? <Divider height={editorHeight} resize={resize} /> : <div style={{ height: 1, background: "border", keep: true }} />}
               {below}
             </>
           );
@@ -231,3 +247,20 @@ export const song = tool({
     );
   },
 });
+
+/**
+ * The line over the note editor: a drag up makes the editor taller, a row of notes at a time,
+ * and a double click puts it back as it opens. A tab stop, which the arrows turn.
+ */
+const Divider = ({ height, resize }: { height: Accessor<number>; resize: (height: number) => void }) => {
+  let pressed = EDITOR;
+  const onTurn = (turn: Turn) => {
+    if ("reset" in turn) resize(EDITOR);
+    else if ("moved" in turn) resize((turn.held ? pressed : height()) + turn.moved * NOTE_ROW);
+  };
+  return (
+    <Space key="editor-divider" height={DIVIDER} cursor="ns-resize" onPress={() => (pressed = height())} drag={{ y: { onTurn, step: 1, per: NOTE_ROW, default: EDITOR } }}>
+      <Rect x={0} y={(DIVIDER - 1) / 2} width={1e5} height={1} color="border" />
+    </Space>
+  );
+};

@@ -5,7 +5,10 @@
 //! - `look-piece.png`: the piece playing at 6.3, the second clip of the bass chosen, which
 //!   shows the panel of the bass.
 //! - `look-sections.png`: the piece with an intro and a verse named on the ruler.
-//! - `look-editor.png`: the note editor on the first clip of the melody, which has a title.
+//! - `look-editor.png`: the note editor on the first clip of the melody, which has a title, its
+//!   sixth note chosen, which its head says.
+//! - `look-note-drag.png`: that note dragged a beat later and two keys up, still held.
+//! - `look-editor-large.png`: the editor made large with its key.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, under the pointer
@@ -13,6 +16,7 @@
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
 //! - `look-sidechain.png`: the panel of the bass with a filter and a compressor keyed by Track 1,
 //!   expanded with its sidechain picker.
+//! - `look-sends-many.png`: the panel of the bass in a song of five returns: its sends scroll.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
 //! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
@@ -279,16 +283,20 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     // Its sixth note, 79 from beat 6: the editor opens fitted, bar 5 eight points into its roll,
     // with 79 four and a half rows from the top of it.
     let across = (1470. - HEADER - 1. - 104.) / (4 * BAR) as f32;
-    click(
-        &opened,
-        point(
-            px(HEADER + 1. + 8. + 5160. * across),
-            px(920. - 352. + 33. + 54.),
-        ),
-        1,
-        cx,
-    )?;
+    let note = point(
+        px(HEADER + 1. + 8. + 5160. * across),
+        px(920. - 352. + 33. + 54.),
+    );
+    click(&opened, note, 1, cx)?;
     save(cx, opened.window.into(), "look-editor")?;
+    let to = note + point(px(960. * across), px(-24.));
+    timeline::hold(&opened, note, to, Modifiers::default(), cx)?;
+    save(cx, opened.window.into(), "look-note-drag")?;
+    timeline::release(&opened, to, Modifiers::default(), cx)?;
+    opened.key("shift-enter", cx)?;
+    settle(cx);
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-editor-large")?;
     drop(opened);
 
     let reverb = json!({ "tool": "reverb", "state": { "decay_seconds": 2.4, "size": 0.6, "low_cut_hz": 200.0, "mix": 0.25 } });
@@ -389,6 +397,33 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(MIXER_TOGGLE), px(684.)), 1, cx)?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-mixer")?;
+    drop(opened);
+
+    // Five returns: the sends of the bass stay one column, which scrolls.
+    let names = ["Space", "Echo", "Plate", "Room", "Tape"];
+    let returns: Vec<(String, Value)> = (names.iter().zip('a'..))
+        .flat_map(|(title, letter)| {
+            [
+                (format!("ret-{letter}/instance.json"), bus(title, "teal")),
+                (
+                    format!("ret-{letter}/mix.json"),
+                    json!({ "tool": "fader", "state": {} }),
+                ),
+                (
+                    format!("ret-{letter}/chain/instance.json"),
+                    json!({ "tool": "chain", "state": {} }),
+                ),
+                (format!("bass/send-ret-{letter}.json"), send(json!(-12.))),
+            ]
+        })
+        .collect();
+    let returns: Vec<(&str, Value)> = (returns.iter())
+        .map(|(path, record)| (path.as_str(), record.clone()))
+        .collect();
+    let opened = open(cx, &returns)?;
+    click(&opened, header(1.), 1, cx)?;
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-sends-many")?;
     drop(opened);
 
     // Track 1 alone, its instrument the test plugin.
