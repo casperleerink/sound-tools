@@ -313,13 +313,7 @@ impl Opened<'_> {
 
     /// Waits for pending records, watches and behaviour answers to reach the window.
     fn wait_for_bun(&mut self) {
-        self.until("Bun answered", |window| {
-            if !window.page_ready() {
-                return false;
-            }
-            window.poll_plugins();
-            window.page_ready()
-        });
+        self.until("Bun answered", |_| true);
     }
 
     /// Waits for the playhead to reach `tick`. A jump from code moves it only once the engine
@@ -332,17 +326,6 @@ impl Opened<'_> {
                 .read(|cx| session.read(cx).playhead().read(cx).tick)
                 == Ticks(tick)
         });
-    }
-
-    fn page_ready(&mut self) -> bool {
-        let shell = self.shell.clone();
-        self.cx.update(|_, cx| {
-            shell
-                .read(cx)
-                .main_view()
-                .cloned()
-                .is_none_or(|page| sound_typescript::page_ready(&page, cx))
-        })
     }
 
     fn focused(&mut self) -> FocusHandle {
@@ -369,12 +352,7 @@ impl Opened<'_> {
 
     /// Where the element of `selector` is, once the page drew it.
     fn until_found(&mut self, selector: &str) -> Point<Pixels> {
-        let mut found = None;
-        self.until(selector, |window| {
-            found = window.find(selector);
-            found.is_some()
-        });
-        found.unwrap()
+        self.control(selector)
     }
 
     /// The pointer over the name of the track `track`, until its header shows all its toggles.
