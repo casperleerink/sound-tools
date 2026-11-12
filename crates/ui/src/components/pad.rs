@@ -14,15 +14,15 @@ use gpui::{
     div, prelude::*, px,
 };
 
-use crate::components::display::WIDE_WIDTH;
+use crate::components::display::{INSET_HEIGHT, WIDE_WIDTH};
 use crate::components::icon::Icon;
 use crate::scale::radius;
 use crate::theme::ActiveTheme;
 use crate::typography::{TextVariant, Typography};
 
-/// Four pads across with their gaps are as wide as a wide display.
+/// Four pads across and down with their gaps are as wide and as tall as a wide display.
 pub const PAD_WIDTH: f32 = (WIDE_WIDTH - 3. * PAD_GAP) / 4.;
-pub const PAD_HEIGHT: f32 = 32.;
+pub const PAD_HEIGHT: f32 = (INSET_HEIGHT - 3. * PAD_GAP) / 4.;
 /// Between two pads of a grid.
 pub const PAD_GAP: f32 = 4.;
 /// The fill of a sounding pad at full level.
