@@ -28,7 +28,7 @@ export type {
 } from "./sdk/sound";
 // `tool`, its `Context`, children and connections
 export {
-  takes, tool
+  hearsNotes, takes, tool
 } from "./sdk/tools";
 export type {
   Action, At, ChildBang, ChildNotes, ChildNumber, ChildPort, ChildTools, Connection, Context, Declaration,

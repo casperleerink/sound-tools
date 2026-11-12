@@ -162,3 +162,38 @@ fn a_track_taken_out_goes_with_what_it_holds_and_one_added_comes_with_its_clips(
     assert_eq!(window.undo_label().as_deref(), Some("Add a bass"));
     assert_eq!(window.problems(), []);
 }
+
+/// Tools a parent asks about: one whose sound reads its notes, one that plays its own steps in
+/// time, and one whose code hears notes. The page says what `hearsNotes` answers of each, and
+/// of a built-in instrument.
+const HEARING: &str = r#"import { beat, h, hearsNotes, note, sine, tool } from "./sdk";
+
+tool({ name: "voice", title: "Voice", when: "Never", doc: "Plays notes.", state: {}, sound: () => sine(note.freq).times(note.gate) });
+tool({ name: "steps", title: "Steps", when: "Never", doc: "Plays its own steps.", state: {}, sound: () => sine(220).times(beat.mod(1).lt(0.5)) });
+tool({ name: "listens", title: "Listens", when: "Never", doc: "Its code hears notes.", state: {}, sound: () => sine(220), onNotes: () => {} });
+
+tool({
+  name: "asks",
+  title: "Asks",
+  when: "Never",
+  doc: "Says which tools notes play.",
+  state: {},
+  view: () => h("div", { key: "page" }, ...["voice", "steps", "listens", "instrument.synth"].map((name) => h("div", { key: `${name}-${hearsNotes(name)}` }, name))),
+});
+"#;
+
+/// A parent learns whether notes play a tool: not one of the project that makes its own
+/// notes, so a track can show its clips as not played.
+#[gpui::test]
+fn a_parent_learns_whether_notes_play_a_tool(cx: &mut TestAppContext) {
+    let mut window = super::parts::page(cx, "asks", HEARING);
+    for answer in [
+        "voice-true",
+        "steps-false",
+        "listens-true",
+        "instrument.synth-true",
+    ] {
+        window.until_found(&format!("div-{answer}"));
+    }
+    assert_eq!(window.problems(), []);
+}
