@@ -156,11 +156,12 @@ fn height(db: f32) -> f32 {
     ((db - FLOOR_DB) / -FLOOR_DB).clamp(0., 1.)
 }
 
-/// A level as every readout shows a number, with its unit, or a dash for silence.
+/// A level as every readout shows a number, with its unit, or nothing for silence: at rest a
+/// readout is its name alone.
 fn level(value: Option<f32>, unit: &str) -> String {
     match value.filter(|value| value.is_finite() && *value > FLOOR_DB) {
         Some(value) => format!("{} {unit}", short(value)),
-        None => "–".into(),
+        None => String::new(),
     }
 }
 
@@ -189,7 +190,7 @@ impl Render for AnalyzerView {
         let reading = self.analysis.reading();
         let (name, cents) = match reading.note.map(tuning) {
             Some((name, cents)) => (name, format!("{} ct", signed(cents as f32))),
-            None => ("–".into(), String::new()),
+            None => (String::new(), String::new()),
         };
         let note = Cell::new(readout(name, cx)).label("Note").value(cents);
         // Two columns wide: `−14.2 LUFS` does not fit in one.
