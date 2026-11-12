@@ -14,7 +14,8 @@ import { Context } from "./tools";
 /**
  * The marks of a display's scale, faint behind its drawing as the app's own displays have them,
  * at places from 0 to 1 as its shapes have them: a line up and down at each `x`, with a word at
- * its top where it has one, `[0.5, "1k"]`, and a line across at each `y`.
+ * its top where it has one, `[0.5, "1k"]`, and a line across at each `y`. A scope has none: it
+ * is as tall as its wave, so a line across it would measure nothing.
  */
 export interface DisplayScale {
   x?: readonly (number | readonly [at: number, word: string])[];
@@ -23,7 +24,7 @@ export interface DisplayScale {
 
 export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag" | "onDrop" | "cursor" | "children"> & {
   scale?: Bind<DisplayScale>;
-  /** The line of no change, a little brighter than a mark, at a place down from 0 to 1: 0.5 for a wave. */
+  /** The line of no change, a little brighter than a mark, at a place down from 0 to 1. A wave of `now.scope` has its own. */
   zero?: Bind<number>;
   /** A quiet line inside it, at its foot, for what no mark and no control says: `Turned down 3 dB`. */
   caption?: Bind<string>;
@@ -38,7 +39,7 @@ export type DisplayProps = Pick<SpaceProps, keyof PointerEvents | "key" | "drag"
  * are shapes, as a `Space`'s, in a space 1 wide and 1 tall whatever its size in points: `x` 0 is
  * its left and 1 its right, `y` 0 its top and 1 its bottom, a little inside its edges. It hears
  * the pointer as a `Space`.
- * `<Display zero={0.5}><Wave list={now.scope()} /></Display>`
+ * `<Display><Wave list={now.scope()} color="green" /></Display>`
  */
 export const Display = ({ scale, zero, caption, control, wide, ...space }: DisplayProps): UiNode =>
   element("display", { scale, zero, caption, wide }, [control, Space(space)]);

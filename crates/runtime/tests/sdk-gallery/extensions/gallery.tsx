@@ -124,7 +124,7 @@ tool({
             <DeviceCard path="sweep" />
             <Panel title="Drone">
               <Row>
-                <Display zero={0.5}>
+                <Display>
                   <Wave list={now.scope()} color="green" />
                 </Display>
                 <Controls>

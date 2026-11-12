@@ -65,11 +65,11 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 ## Its view
 
-Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
+Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. Your own `view` goes in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is a `Display` of what the tool does to the sound, or a `StepGrid` of rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most. A row of steps holds the controls of that row, such as the level of a drum, and the grid names their columns.
+A card is a `Display` of what the tool does to the sound, or a `StepGrid` of rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show, the rest wait behind the card's expand icon: put first what matters most. A row of steps holds its own controls, such as a drum's level, and the grid names their columns.
 
-A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, faint marks and a zero line, not with shapes of its own, and what no mark says with a `caption`, which starts with a capital: `Pitch, ±50 cents`. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names. Sound that moves is `green` and a value is `text`: a view picks no hue of its own.
+A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, not with shapes of its own, and what no mark says with a `caption`, which starts with a capital: `Pitch, ±50 cents`. `now.scope()` is the sound the tool plays: its wave fills the display over its own zero line and takes no marks. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names. Sound is `green`; a value is `text`, and so is its history: a view picks no hue of its own.
 
 ```tsx
 import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
@@ -78,7 +78,7 @@ tool({
   // name, title, when, doc, state, inputs and sound
   view: ({ now, send }) => (
     <>
-      <Display zero={0.5}>
+      <Display>
         <Wave list={now.scope()} color="green" />
       </Display>
       <Controls>
@@ -135,7 +135,7 @@ tool({
       <Page>
         <Panel title="Drone">
           <Row>
-            <Display zero={0.5} cursor="ew-resize" drag={brighten}>
+            <Display cursor="ew-resize" drag={brighten}>
               <Wave list={now.scope()} color="green" />
               <Line from={[tone, 0]} to={[tone, 1]} color="text" />
             </Display>
