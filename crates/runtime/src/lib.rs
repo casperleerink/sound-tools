@@ -332,8 +332,9 @@ pub fn sidebar_panel(sidebar: Entity<Sidebar>, cx: &mut Context<Shell>) -> LeftP
         })
 }
 
-/// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin
-/// into the slot it is picked for, with a state file of its own. After them every bundle that
+/// The plugins `list` gives, as offers for a picker, one for a plugin installed in two formats.
+/// Each writes the record of that plugin into the slot it is picked for, with a state file of
+/// its own, and says its maker, which tells two plugins of one name apart. After them every bundle that
 /// could not be scanned, named by its file and with why, and `Scan again`, which tries those
 /// again. What a failed bundle holds is unknown, so both pickers list it.
 fn plugin_offers(
@@ -364,7 +365,8 @@ fn plugin_offers(
             .icon("search")
             .with_detail("Try the plugins that could not be scanned")
     });
-    let found = list(&plugins).into_iter().map(|found| {
+    let found = plugin_host::one_per_plugin(list(&plugins));
+    let found = found.into_iter().map(|found| {
         let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
         let offer =
             DeviceOffer::new(
@@ -396,7 +398,10 @@ fn plugin_offers(
                 plugin_host::EXTENSION,
                 "This project does not load plugins.",
             );
-        offer.with_detail(found.detail())
+        match found.vendor.is_empty() {
+            true => offer,
+            false => offer.with_detail(found.vendor),
+        }
     });
     found.chain(failed).chain(scan_again).collect()
 }

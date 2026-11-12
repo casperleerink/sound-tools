@@ -13,7 +13,7 @@ Here the instrument of `rhodes`:
 
 | Field | Meaning |
 | --- | --- |
-| `format` | `clap` or `vst3`. |
+| `format` | `clap` or `vst3`. The app's pickers list a plugin installed as both once, as `clap`; only a record places the `vst3` one. |
 | `plugin_id` | For `clap`, the maker's id, such as `com.u-he.diva`. For `vst3`, the class id as thirty-two hex digits. Not the file name. |
 | `state_asset` | A name you choose for `assets/plugin-state/<name>.bin`, the plugin's own settings. Give every plugin its own name: two records that name one file share it. |
 

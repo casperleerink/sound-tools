@@ -59,13 +59,17 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
         PluginView::new(for_view.clone(), session, plugin, frame, window, cx)
     });
     devices.describe::<PluginRecord>(move |record| {
+        let (format, id) = (record.format, &record.plugin_id);
+        let plugins = for_label.upgrade();
+        let key = match &plugins {
+            Some(plugins) => plugins.offer_key(format, id),
+            None => PluginRecord::offer_key(format, id),
+        };
         // A plugin this machine does not have is named by its id.
-        let installed = for_label
-            .upgrade()
-            .and_then(|plugins| plugins.installed_name(record.format, &record.plugin_id));
+        let installed = plugins.and_then(|plugins| plugins.installed_name(format, id));
         DeviceLabel {
-            key: PluginRecord::offer_key(record.format, &record.plugin_id).into(),
-            name: installed.map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
+            key: key.into(),
+            name: installed.map_or_else(|| id.clone().into(), SharedString::from),
         }
     });
     let for_window = plugins.clone();
