@@ -213,6 +213,10 @@ export function pageOf(song: Song) {
     return clip?.tool === "timeline" ? clip : undefined;
   };
   const panelOf = () => (memory.below?.kind === "track" ? memory.below.name : null);
+  /** The track of what shows below: its panel, or the notes of one of its clips. */
+  const trackBelow = () => (memory.below?.kind === "editor" ? (memory.below.clip.split("/")[0] ?? null) : panelOf());
+  /** The one chosen track, which its head and its strip show: of what shows below, else of the chosen clips. */
+  const chosenTrack = () => trackBelow() ?? [...memory.selected][0]?.split("/")[0] ?? null;
   const lengthAt = lengths({ children, outputs, clock });
   /** The clip or the region `key` names, `row/name`. */
   const itemAt = (key: string) => {
@@ -220,8 +224,8 @@ export function pageOf(song: Song) {
     const item = rows().find((each) => each.name === rowName)?.children.find((child) => child.name === name);
     return item?.tool === "timeline" || item?.tool === "region" ? item : undefined;
   };
-  /** Chooses the clips and regions `keys` names, `row/name`: the keyboard plays the track of the first, or `track`, and Export selection exports their bars. */
-  const choose = (keys: Set<string>, track: string | null = null) => {
+  /** Chooses the clips and regions `keys` names, `row/name`: the keyboard plays the track of the first, or `track`, or with neither the track of what shows below, and Export selection exports their bars. */
+  const choose = (keys: Set<string>, track: string | null = trackBelow()) => {
     memory.selected = keys;
     memory.point = null;
     memory.mark = null;
@@ -272,7 +276,7 @@ export function pageOf(song: Song) {
   // The window's own context, not a copy: it reads `time` anew each time.
   return Object.assign(song, {
     rows, tracks, returns, strips, layout, tops, topOf, rowAt, returnsHeight, runs, end, starts, barOf,
-    clipAt, panelOf, lengthAt, itemAt, choose, openPanel, openMaster, editClips, toggleMute, toggleSolo,
+    clipAt, panelOf, chosenTrack, lengthAt, itemAt, choose, openPanel, openMaster, editClips, toggleMute, toggleSolo,
     timeline, playhead, handle,
   });
 }

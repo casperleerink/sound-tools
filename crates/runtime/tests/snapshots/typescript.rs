@@ -6,8 +6,8 @@
 //! - `typescript-song-lanes.png`: the same song with the automation lanes of its first track
 //!   showing under it: a bent line of its cutoff and an LFO of its volume.
 //! - `typescript-song.png`: the song of the DAW template (`templates/daw`), 12 tracks of 150 clips,
-//!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
-//!   under the timeline, another clip open in the note editor, the meters of the tracks.
+//!   as it plays: the SDK's transport on top, and a clip chosen after another was opened, so the
+//!   note editor shows the chosen one and its track's head is the chosen one.
 //! - `typescript-daw.png`: a new project from the DAW template, as it opens.
 //! - `typescript-gallery*.png`: the project `sdk-gallery`, a page with the transport in its
 //!   header that leads with a panel of steps and knobs and the card of a child, and under them
@@ -184,14 +184,14 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
                 px(row * crate::song::ROW),
             )
     };
-    // A clip of the second track opens below; the second of the fourth is selected, which shows
-    // the devices of its track. The transport of the page is above the rows.
+    // A clip of the third track opens below; then the second of the fifth is chosen, and the
+    // editor follows to it. The transport of the page is above the rows.
     click(&opened, lane(crate::song::BAR / 2, 2.5), 2, cx)?;
     click(&opened, lane(3 * crate::song::BAR + 960, 4.5), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song")?;
-    // The mixer's toggle at the end of the master's row, over the editor: a strip per track
-    // and return, then the master's, in place of the editor.
+    // The mixer's toggle at the end of the master's row, over the editor: a strip per track,
+    // which scroll, then the returns' and the master's, which stay, in place of the editor.
     click(&opened, point(px(MIXER_TOGGLE), px(547.)), 1, cx)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-mixer")?;
