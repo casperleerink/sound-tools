@@ -177,7 +177,7 @@ fn a_step_turned_off_and_on_again_is_as_strong_as_it_was(cx: &mut TestAppContext
     ];
     let mut window = open(cx, &files);
     let first = window.until_found("step-0");
-    let mut becomes = |window: &mut Opened<'_>, wanted: [f64; 4]| {
+    let becomes = |window: &mut Opened<'_>, wanted: [f64; 4]| {
         window.until(&format!("the steps to be {wanted:?}"), |window| {
             let steps = window.record("row")["steps"].clone();
             serde_json::from_value::<Vec<f64>>(steps).unwrap() == wanted
@@ -203,7 +203,6 @@ tool({
   doc: "Controls on its memory.",
   state: {
     level: number({ min: 0, max: 1, default: 0 }),
-    heard: number({ min: 0, max: 100, default: 0 }),
     mode: choice({ options: ["soft", "hard"], default: "soft" }),
     amount: number({ min: 0, max: 1, default: 0.5 }),
   },
@@ -213,7 +212,7 @@ tool({
   view: ({ memory, update }) => {
     const hear = (level: number) => {
       memory.level = level;
-      update("Hear", ({ state }) => { state.level = level; state.heard += 1; });
+      update("Hear", ({ state }) => { state.level = level; });
     };
     return h("div", { style: { gap: 8 } },
       h(Knob, { key: "kept", value: () => memory.level, onChange: hear, min: 0, max: 1, default: 0.5 }),
@@ -233,14 +232,6 @@ tool({
 "#;
 
 impl Opened<'_> {
-    /// Waits for the record of `kept` to have heard `count` values, and gives the last.
-    fn heard(&mut self, count: u64) -> f64 {
-        self.until(&format!("{count} values heard"), |window| {
-            window.record("kept")["heard"] == count
-        });
-        self.record("kept")["level"].as_f64().unwrap()
-    }
-
     fn heard_by_the_pointer(&mut self, heard: &str) {
         self.until(heard, |window| window.record("pointer")["heard"] == heard);
     }
@@ -255,7 +246,7 @@ fn a_knob_on_what_code_keeps_tells_its_code_as_it_is_dragged_and_takes_the_keys(
     let mut window = open_project(cx, &project("kept", KEPT));
     let knob = window.space("kept") + point(px(28.), px(20.));
     let level = |window: &mut Opened<'_>| window.record("kept")["level"].as_f64().unwrap_or(-1.0);
-    let mut becomes = |window: &mut Opened<'_>, wanted: f64| {
+    let becomes = |window: &mut Opened<'_>, wanted: f64| {
         window.until(&format!("its code to hear {wanted}"), |window| {
             (level(window) - wanted).abs() < 1e-6
         });
