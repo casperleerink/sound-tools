@@ -13,7 +13,7 @@ use gpui::{
     Window, canvas, div, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use serde_json::json;
-use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT};
+use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, ROW_HEIGHT};
 use sound_ui::components::display;
 use sound_ui::typography::{TextVariant, Typography};
 use sound_ui::{ActiveTheme, KeyboardFocus, radius};
@@ -428,9 +428,20 @@ impl Drawing<'_> {
             .when(card || !rest.is_empty(), |rows| rows.mr(px(gap)))
             // Alone, in the middle of the height of its card, as a display fills it.
             .when(rest.is_empty(), |rows| rows.justify_center());
-        let rest = rest
-            .into_iter()
-            .map(|part| div().flex_none().pt(px(head)).child(self.draw(part)));
+        // One control of the whole thing takes one row of cells, not the two a card has.
+        let one_cell = |part: &usize| {
+            (table.get(*part)).is_some_and(|part| {
+                matches!(part.props, Props::Controls)
+                    && super::parts::drawn(table, &part.children).count() == 1
+            })
+        };
+        let rest = rest.into_iter().map(|part| {
+            (div().flex_none().pt(px(head)))
+                .when(!card && one_cell(&part), |room| {
+                    room.h(px(head + ROW_HEIGHT))
+                })
+                .child(self.draw(part))
+        });
         (div().flex().flex_none().child(rows))
             .children(rest.collect::<Vec<_>>())
             .debug_selector(|| "grid".into())

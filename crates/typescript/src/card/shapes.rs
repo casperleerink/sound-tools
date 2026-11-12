@@ -30,10 +30,13 @@ const SCOPE_FRAMES: usize = 2048;
 /// sound that dies away sinks to a flat line, and noise at the floor is not blown up.
 const SCOPE_FLOOR: f32 = 0.03;
 
+/// How much of its height a scope that fits it reaches: its line stays whole at the edges.
+const SCOPE_REACH: f32 = 0.9;
+
 /// What a scope that fits its height multiplies its sound by, whose loudest sample is `peak`:
 /// a quiet sound is as tall as a loud one, and silence stays flat.
 fn scope_gain(peak: f32) -> f32 {
-    1.0 / peak.max(SCOPE_FLOOR)
+    SCOPE_REACH / peak.max(SCOPE_FLOOR)
 }
 
 /// What a shape of a space does with the pointer.
@@ -1062,8 +1065,8 @@ mod tests {
     #[test]
     fn a_scope_is_as_tall_as_a_quiet_sound_and_flat_for_silence() {
         // A drone at -20 dB used a tenth of its display.
-        assert!((0.1 * scope_gain(0.1) - 1.0).abs() < 1e-6);
-        assert!((0.9 * scope_gain(0.9) - 1.0).abs() < 1e-6);
+        assert!((0.1 * scope_gain(0.1) - SCOPE_REACH).abs() < 1e-6);
+        assert!((0.9 * scope_gain(0.9) - SCOPE_REACH).abs() < 1e-6);
         // What dies away sinks: at -60 dB a thirtieth of the height, and silence none.
         assert!(0.001 * scope_gain(0.001) < 0.04);
         assert_eq!(0.0 * scope_gain(0.0), 0.0);
