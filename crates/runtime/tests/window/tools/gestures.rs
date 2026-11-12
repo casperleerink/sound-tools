@@ -1061,6 +1061,66 @@ fn the_keys_step_a_silent_fader_from_silence(cx: &mut TestAppContext) {
     });
 }
 
+const HELD: &str = r#"import { Fader, h, list, number, Pad, tool } from "./sdk";
+
+tool({
+  name: "held",
+  title: "Held",
+  when: "A test",
+  doc: "A pad and a fader on what its code keeps, which it writes into its record as it hears it.",
+  state: { pad: list(number({ min: 0, max: 1 }), { default: [0.5, 0.5] }), gain: number({ min: -100, max: 6, default: 0 }) },
+  memory: () => ({ pad: { x: 0.5, y: 0.5 }, gain: 0 }),
+  sound: () => 0,
+  view: ({ memory, update }) =>
+    h("div", { style: { gap: 8 } },
+      h(Pad, { key: "pad", size: 100, value: () => memory.pad, onChange: (pad) => {
+        memory.pad = pad;
+        update("Play the pad", ({ state }) => { state.pad = [pad.x, pad.y]; });
+      } }),
+      h(Fader, { key: "gain", length: 100, value: () => memory.gain, onChange: (gain) => {
+        memory.gain = gain;
+        update("Move the fader", ({ state }) => { state.gain = gain; });
+      } }),
+    ),
+});
+"#;
+
+/// A pad and a fader on what code keeps tell their code as the pointer goes, as on a field: a
+/// pad from the press on, and back where it was on escape; a fader along the scale of a volume.
+#[gpui::test]
+fn a_pad_and_a_fader_on_what_code_keeps_tell_their_code_as_they_are_dragged(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_project(cx, &project("held", HELD));
+    let pad = window.space("pad");
+    let becomes = |window: &mut Opened<'_>, wanted: [f64; 2]| {
+        window.until(&format!("the pad to be at {wanted:?}"), |window| {
+            let pad = window.record("held")["pad"].clone();
+            // The record leaves it out until its code first writes it.
+            let pad = serde_json::from_value::<Vec<f64>>(pad).unwrap_or_default();
+            pad.len() == 2
+                && (pad.iter().zip(wanted)).all(|(at, wanted)| (at - wanted).abs() < 1e-6)
+        });
+    };
+    // The press plays it where the pointer is, and the drag moves it on: across and up.
+    window.press(pad + point(px(25.), px(25.)));
+    becomes(&mut window, [0.25, 0.75]);
+    window.drag_to(pad + point(px(80.), px(90.)));
+    becomes(&mut window, [0.8, 0.1]);
+    window.cx.simulate_keystrokes("escape");
+    becomes(&mut window, [0.5, 0.5]);
+    window.release(pad + point(px(80.), px(90.)));
+
+    // 0 dB sits at 0.8 of a fader's travel: a tenth of its length up is about +3.2 dB.
+    let fader = window.space("gain") + point(px(14.), px(20.));
+    window.press(fader);
+    window.drag_to(fader - point(px(0.), px(10.)));
+    window.until("the fader to move as it is dragged", |window| {
+        window.record("held")["gain"].as_f64() == Some(3.17)
+    });
+    window.release(fader - point(px(0.), px(10.)));
+}
+
 const KIT: &str = r#"import { h, Knob, number, tool } from "./sdk";
 
 tool({

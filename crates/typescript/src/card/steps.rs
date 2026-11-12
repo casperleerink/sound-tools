@@ -6,8 +6,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton, SharedString, Window,
-    div, prelude::*, px,
+    AnyElement, App, Background, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
+    SharedString, Window, div, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use serde_json::json;
 use sound_ui::typography::{TextVariant, Typography};
@@ -83,21 +83,25 @@ impl RenderOnce for Steps {
                 (false, true) => plays,
                 (false, false) => Hsla::transparent_black(),
             };
-            let level = match *level > 0.0 {
-                true => level.clamp(SOFTEST, 1.0),
-                false => 0.0,
+            // Lit from its foot as far up as it is strong: a hard edge, not a fade.
+            let fill: Background = match *level {
+                level if level <= 0.0 => dark.into(),
+                level if level >= 1.0 => lit.into(),
+                level => {
+                    let edge = level.max(SOFTEST);
+                    linear_gradient(
+                        0.,
+                        linear_color_stop(lit, edge),
+                        linear_color_stop(dark, edge + 0.001),
+                    )
+                }
             };
             let square = div()
                 .size(px(SQUARE))
                 .rounded(radius::SM)
-                .bg(dark)
+                .bg(fill)
                 .border_2()
-                .border_color(ring)
-                .flex()
-                .flex_col()
-                .justify_end()
-                .overflow_hidden()
-                .child(div().w_full().h(gpui::relative(level)).bg(lit));
+                .border_color(ring);
             let state = state.clone();
             div()
                 .id(("step", step))
