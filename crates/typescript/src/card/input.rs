@@ -33,7 +33,7 @@ const TRAVEL: f32 = 200.0;
 /// Points of a drag for one step of what turns in steps, when it says none.
 const STEP_TRAVEL: f32 = 10.0;
 /// With shift, a drag turns this much as far.
-const FINE: f32 = 0.1;
+pub(super) const FINE: f32 = 0.1;
 
 /// Takes no room and writes into `down` whether a mouse button is down in the window. A left or
 /// right button that goes down ends the click of `card`; one that goes up releases its presses of

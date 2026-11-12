@@ -239,6 +239,17 @@ impl TypeScriptCard {
                 _ => {}
             }
         }
+        // A field that took the keys as it was made gives them back as it goes while it has
+        // them: to the knob whose value was typed in it.
+        if let Some((field, before)) =
+            (self.keys_before_field).take_if(|(field, _)| !inputs.contains_key(field))
+        {
+            let typed_in = (self.inputs.get(&field))
+                .is_some_and(|(input, _)| input.focus_handle(cx).is_focused(window));
+            if let Some(before) = before.upgrade().filter(|_| typed_in) {
+                window.focus(&before, cx);
+            }
+        }
         self.inputs = inputs;
         (self.scrolled_cards.borrow_mut()).retain(|node, _| embedded.contains_key(node));
         self.embedded = embedded;
@@ -320,6 +331,7 @@ impl TypeScriptCard {
         })
         .detach();
         if props.focus == Some(true) && !disabled {
+            self.keys_before_field = window.focused(cx).map(|before| (node, before.downgrade()));
             window.focus(&focus, cx);
             input.update(cx, TextInput::select_all_text);
         }
@@ -347,7 +359,10 @@ impl TypeScriptCard {
         };
         let shown = shown.clone();
         input.update(cx, |input, cx| input.set_text(shown, cx));
-        window.focus(&self.focus, cx);
+        let before = (self.keys_before_field.as_ref())
+            .filter(|(field, _)| *field == node)
+            .and_then(|(_, before)| before.upgrade());
+        window.focus(&before.unwrap_or_else(|| self.focus.clone()), cx);
         self.event(node, EventKind::Cancel, json!({}), cx);
     }
 

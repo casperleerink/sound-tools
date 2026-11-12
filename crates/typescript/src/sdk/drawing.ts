@@ -63,7 +63,7 @@ interface Pointed extends PointerEvents {
 
 /**
  * Something a space draws. Positions and sizes are in the units of the space; `radius` and the
- * `width` of a line are in points.
+ * `width` of a line are in points, and a line or an arc is 1 wide when it says none.
  */
 export type Shape =
   /**

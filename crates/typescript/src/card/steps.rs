@@ -1,23 +1,29 @@
 //! Steps: a row of steps in groups of four, each lit as far up as it is strong, so a soft hit
-//! is not a full one. Tab reaches the row as one stop: left and right move along it, and space
-//! or enter turns the step they are on, which carries the focus ring. The step that plays has a
-//! green ring: sound is moving. A secondary row has none, so a stack of rows shows one ring.
+//! is not a full one. A click turns a step, and a drag up or down on it changes how strong it
+//! is, from where it is, ten times finer with shift. Tab reaches the row as one stop: left and
+//! right move along it, space or enter turns the step they are on, which carries the focus
+//! ring, and up and down change how strong it is. The step that plays has a green ring: sound
+//! is moving. A secondary row has none, so a stack of rows shows one ring.
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Background, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
-    SharedString, Window, div, linear_color_stop, linear_gradient, prelude::*, px,
+    AnyElement, App, Background, DispatchPhase, Div, ElementId, Entity, FocusHandle, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString,
+    Window, canvas, div, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use serde_json::json;
+use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, ROW_HEIGHT};
+use sound_ui::components::display;
 use sound_ui::typography::{TextVariant, Typography};
 use sound_ui::{ActiveTheme, KeyboardFocus, radius};
 
 use crate::bun::EventKind;
-use crate::tree::StepsProps;
+use crate::tree::{GridProps, Props, StepsProps, decimal};
 
 use super::controls::{Control, Keys};
 use super::drawing::Drawing;
+use super::input::FINE;
 
 /// Steps in a group, with more air before the next group.
 const GROUP: usize = 4;
@@ -33,14 +39,116 @@ const DOWN: f32 = 24.;
 const AIR: f32 = 12.;
 /// The room of a label: a name of two short words, and air before the steps.
 const LABEL: f32 = 80.;
+/// From the steps of a row to its controls.
+const CONTROLS_GAP: f32 = 16.;
+/// Between two rows that hold controls, whose values would touch the dials under them.
+const ROW_GAP: f32 = 8.;
+/// From the rows of a grid on a page to the controls of the whole of it.
+const GRID_GAP: f32 = 24.;
+/// The line over the first row that names the columns of the controls, and the air under it.
+const HEAD: f32 = 16.;
+const HEAD_GAP: f32 = 4.;
 
-type Turn = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+/// Points of a drag up a step for its whole strength.
+const TRAVEL: f32 = 80.;
+/// A press that moves less than this is a click.
+const SLOP: f32 = 3.;
+/// What a drag rounds a strength to, and with shift. An arrow steps a strength by two of them.
+const NOTCH: f32 = 0.05;
+const FINE_NOTCH: f32 = 0.01;
+
+/// Tells the code of a row what a step does.
+type Turn = Rc<dyn Fn(usize, Turned, &mut App)>;
+
+/// What a click, a drag or a key does to a step.
+#[derive(Clone, Copy)]
+enum Turned {
+    /// Off, or on again.
+    Over,
+    /// As strong as this, from 0 to 1: a drag, which knows where it started.
+    To(f32),
+    /// Stronger by this much of the whole, on the grid of that step: a key, which may come
+    /// before the row drew what the last one did.
+    By(f32),
+}
 
 struct StepsState {
     focus_handle: FocusHandle,
     keyboard_focus: KeyboardFocus,
     /// The step the arrows are on.
     at: usize,
+    held: Option<HeldStep>,
+}
+
+/// The step the pointer holds.
+struct HeldStep {
+    step: usize,
+    /// Where it was pressed, and how strong the step was then.
+    start: Pixels,
+    from: f32,
+    /// How strong the drag last told it to be; `None` until the pointer moved: a click.
+    told: Option<f32>,
+}
+
+impl HeldStep {
+    /// How strong the step is with the pointer at `y`, if that is new: nothing before the
+    /// pointer moved past a click.
+    fn dragged_to(&mut self, y: Pixels, fine: bool) -> Option<f32> {
+        let up = f32::from(self.start - y);
+        if self.told.is_none() && up.abs() < SLOP {
+            return None;
+        }
+        let (finer, notch) = if fine {
+            (FINE, FINE_NOTCH)
+        } else {
+            (1., NOTCH)
+        };
+        let level = (self.from + up * finer / TRAVEL).clamp(0., 1.);
+        let level = (level / notch).round() * notch;
+        // A drag that began is one to its end, back at where it started too.
+        (self.told.replace(level) != Some(level)).then_some(level)
+    }
+}
+
+/// Takes no room and follows the pointer while it holds a step of `state`, wherever it goes: a
+/// move changes how strong the step is, and a release with no move turns it.
+fn hears_the_drag(state: Entity<StepsState>, on_turn: Turn) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            window.on_mouse_event({
+                let (state, on_turn) = (state.clone(), on_turn.clone());
+                move |event: &MouseMoveEvent, phase, _, cx| {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let turned = state.update(cx, |state, _| {
+                        // The button came up outside the window.
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            state.held = None;
+                        }
+                        let held = state.held.as_mut()?;
+                        let level = held.dragged_to(event.position.y, event.modifiers.shift)?;
+                        Some((held.step, level))
+                    });
+                    if let Some((step, level)) = turned {
+                        on_turn(step, Turned::To(level), cx);
+                    }
+                }
+            });
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+                    return;
+                }
+                let held = state.update(cx, |state, _| state.held.take());
+                if let Some(held) = held.filter(|held| held.told.is_none()) {
+                    on_turn(held.step, Turned::Over, cx);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 #[derive(IntoElement)]
@@ -51,6 +159,8 @@ struct Steps {
     label: Option<SharedString>,
     secondary: bool,
     on_turn: Option<Turn>,
+    /// The controls of the row, each in a column of a cell at its right end.
+    controls: Vec<AnyElement>,
 }
 
 impl RenderOnce for Steps {
@@ -59,6 +169,7 @@ impl RenderOnce for Steps {
             focus_handle: cx.focus_handle().tab_stop(true),
             keyboard_focus: KeyboardFocus::default(),
             at: 0,
+            held: None,
         });
         let focus_handle = state.read(cx).focus_handle.clone();
         let ring_shows = (state.read(cx).keyboard_focus).shows_ring(&focus_handle, window);
@@ -77,71 +188,84 @@ impl RenderOnce for Steps {
         );
         let on_turn = self.on_turn;
         let playing = self.playing.filter(|_| !self.secondary);
-        let steps = self.levels.iter().enumerate().map(|(step, level)| {
-            // The ring of the keys wins over the ring of the step that plays.
-            let ring = match (ring_shows && step == at, playing == Some(step)) {
-                (true, _) => focus,
-                (false, true) => plays,
-                (false, false) => Hsla::transparent_black(),
-            };
-            // Lit from its foot as far up as it is strong: a hard edge, not a fade.
-            let fill: Background = match *level {
-                level if level <= 0.0 => dark.into(),
-                level if level >= 1.0 => lit.into(),
-                level => {
-                    let edge = level.max(SOFTEST);
-                    linear_gradient(
-                        0.,
-                        linear_color_stop(lit, edge),
-                        linear_color_stop(dark, edge + 0.001),
-                    )
-                }
-            };
-            let square = div()
-                .size(px(SQUARE))
-                .rounded(radius::SM)
-                .bg(fill)
-                .border_2()
-                .border_color(ring)
-                .when(playing == Some(step), |square| {
-                    square.debug_selector(move || format!("step-{step}-playing"))
-                });
-            let state = state.clone();
-            div()
-                .id(("step", step))
-                .debug_selector(move || format!("step-{step}"))
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .w(px(ACROSS))
-                .h(px(DOWN))
-                .when(step > 0 && step % GROUP == 0, |room| room.ml(px(AIR)))
-                .when_some(on_turn.clone(), |room, on_turn| {
-                    room.cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            state.update(cx, |state, cx| {
-                                state.at = step;
-                                state.keyboard_focus.pressed(cx);
-                            });
-                            on_turn(step, window, cx);
-                        })
-                })
-                .child(square)
-        });
+        let steps = self
+            .levels
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(step, level)| {
+                // The ring of the keys wins over the ring of the step that plays.
+                let ring = match (ring_shows && step == at, playing == Some(step)) {
+                    (true, _) => focus,
+                    (false, true) => plays,
+                    (false, false) => Hsla::transparent_black(),
+                };
+                // Lit from its foot as far up as it is strong: a hard edge, not a fade.
+                let fill: Background = match level {
+                    level if level <= 0.0 => dark.into(),
+                    level if level >= 1.0 => lit.into(),
+                    level => {
+                        let edge = level.max(SOFTEST);
+                        linear_gradient(
+                            0.,
+                            linear_color_stop(lit, edge),
+                            linear_color_stop(dark, edge + 0.001),
+                        )
+                    }
+                };
+                let square = div()
+                    .size(px(SQUARE))
+                    .rounded(radius::SM)
+                    .bg(fill)
+                    .border_2()
+                    .border_color(ring)
+                    .when(playing == Some(step), |square| {
+                        square.debug_selector(move || format!("step-{step}-playing"))
+                    });
+                let state = state.clone();
+                div()
+                    .id(("step", step))
+                    .debug_selector(move || format!("step-{step}"))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .w(px(ACROSS))
+                    .h(px(DOWN))
+                    .when(step > 0 && step % GROUP == 0, |room| room.ml(px(AIR)))
+                    .when(on_turn.is_some(), |room| {
+                        let pressed =
+                            move |event: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                                state.update(cx, |state, cx| {
+                                    state.at = step;
+                                    state.keyboard_focus.pressed(cx);
+                                    state.held = Some(HeldStep {
+                                        step,
+                                        start: event.position.y,
+                                        from: level,
+                                        told: None,
+                                    });
+                                });
+                            };
+                        (room.cursor_pointer()).on_mouse_down(MouseButton::Left, pressed)
+                    })
+                    .child(square)
+            });
         let on_key_down = on_turn.clone().map(|on_turn| {
             let state = state.clone();
-            move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-                if event.keystroke.modifiers.modified() {
+            move |event: &KeyDownEvent, _: &mut Window, cx: &mut App| {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
                     return;
                 }
-                let to = match event.keystroke.key.as_str() {
-                    "left" => at.saturating_sub(1),
-                    "right" => (at + 1).min(last),
-                    "space" | "enter" => {
-                        cx.stop_propagation();
-                        return on_turn(at, window, cx);
-                    }
+                // Twice what a drag rounds to: a tenth, and a fiftieth with shift.
+                let by = 2. * if modifiers.shift { FINE_NOTCH } else { NOTCH };
+                let to = match (event.keystroke.key.as_str(), modifiers.shift) {
+                    ("up", _) => return turned(at, Turned::By(by), &on_turn, cx),
+                    ("down", _) => return turned(at, Turned::By(-by), &on_turn, cx),
+                    ("space" | "enter", false) => return turned(at, Turned::Over, &on_turn, cx),
+                    ("left", false) => at.saturating_sub(1),
+                    ("right", false) => (at + 1).min(last),
                     _ => return,
                 };
                 cx.stop_propagation();
@@ -159,29 +283,53 @@ impl RenderOnce for Steps {
             .when_some(on_key_down, |row, on_key_down| {
                 row.track_focus(&focus_handle).on_key_down(on_key_down)
             })
-            .children(steps);
+            .children(steps)
+            .children(on_turn.map(|on_turn| hears_the_drag(state.clone(), on_turn)));
+        // Beside controls, its steps are level with a knob's dial, whose value hangs under it.
+        let beside_controls = !self.controls.is_empty();
+        let level = |part: Div| match beside_controls {
+            true => part.h(px(CONTROL_HEIGHT)),
+            false => part,
+        };
+        let controls = beside_controls.then(|| {
+            let columns = (self.controls.into_iter()).map(|control| {
+                (div().flex().flex_none().justify_center())
+                    .min_w(px(CELL_WIDTH))
+                    .child(control)
+            });
+            // At the end of the row, so the columns of rows of other lengths line up.
+            (div().flex().flex_none().ml_auto().pl(px(CONTROLS_GAP))).children(columns)
+        });
         // Every label takes the same width, so rows one over the other line up.
         div()
             .flex()
             .flex_none()
-            .items_center()
+            .items_start()
             .children(self.label.map(|label| {
-                div()
-                    .flex_none()
-                    .w(px(LABEL))
-                    .pr(px(8.))
+                let name = (div().w_full().truncate())
                     .text_variant(TextVariant::Label)
                     .text_color(label_color)
-                    .truncate()
-                    .child(label)
+                    .child(label);
+                level(div().flex().flex_none().items_center())
+                    .w(px(LABEL))
+                    .pr(px(8.))
+                    .child(name)
             }))
-            .child(row)
+            .child(level(div().flex().flex_none().items_center()).child(row))
+            .children(controls)
     }
 }
 
+/// A key of the row did `turned` to its step `at`.
+fn turned(at: usize, turned: Turned, on_turn: &Turn, cx: &mut App) {
+    cx.stop_propagation();
+    on_turn(at, turned, cx);
+}
+
 impl Drawing<'_> {
-    /// A row of steps, which tells its code the place of the step a press or a key turns.
-    pub(super) fn steps(&mut self, id: u64, props: &StepsProps) -> AnyElement {
+    /// A row of steps, which tells its code the place of the step a click, a drag or a key
+    /// changes, and how.
+    pub(super) fn steps(&mut self, id: u64, props: &StepsProps, children: &[usize]) -> AnyElement {
         let name = self.element_name("steps", props.key.as_deref(), id);
         let selector = format!("steps-{}", props.key.as_deref().unwrap_or_default());
         let playing = (props.playing.as_ref())
@@ -190,11 +338,13 @@ impl Drawing<'_> {
             .map(|playing| playing as usize);
         let on_turn = (props.on_change == Some(true)).then(|| {
             let card = self.card.clone();
-            Rc::new(move |step: usize, _: &mut Window, cx: &mut App| {
-                (card.update(cx, |view, cx| {
-                    view.event(id, EventKind::Change, json!(step), cx)
-                }))
-                .ok();
+            Rc::new(move |step: usize, turned: Turned, cx: &mut App| {
+                let change = match turned {
+                    Turned::Over => json!({ "step": step }),
+                    Turned::To(level) => json!({ "step": step, "level": decimal(level) }),
+                    Turned::By(by) => json!({ "step": step, "by": decimal(by) }),
+                };
+                (card.update(cx, |view, cx| view.event(id, EventKind::Change, change, cx))).ok();
             }) as Turn
         });
         let steps = Steps {
@@ -204,6 +354,10 @@ impl Drawing<'_> {
             label: props.label.clone().map(SharedString::from),
             secondary: props.secondary == Some(true),
             on_turn,
+            controls: self.small(|drawing| {
+                let controls = super::parts::drawn(drawing.table, children);
+                controls.map(|control| drawing.draw(control)).collect()
+            }),
         };
         let control = Control {
             keys: Keys::Own,
@@ -212,5 +366,85 @@ impl Drawing<'_> {
         // A press on it is its own, not the row's under it.
         let wrap = div().flex_none().occlude().debug_selector(move || selector);
         (self.control(wrap, id, control).child(steps)).into_any_element()
+    }
+
+    /// Rows of steps one under the other, as wide as the widest, with the names of the columns
+    /// of their controls over the first.
+    pub(super) fn step_rows(&mut self, rows: &[usize], columns: &[String]) -> Div {
+        let table = self.table;
+        let holds_controls = |row: &usize| {
+            (table.get(*row))
+                .is_some_and(|row| super::parts::drawn(table, &row.children).count() > 0)
+        };
+        let gap = if rows.iter().any(holds_controls) {
+            ROW_GAP
+        } else {
+            0.
+        };
+        let secondary = self.cx.theme().text_secondary();
+        let heads = (!columns.is_empty()).then(|| {
+            let heads = columns.iter().map(|name| {
+                (div().flex().flex_none().justify_center().w(px(CELL_WIDTH)))
+                    .text_variant(TextVariant::Label)
+                    .text_color(secondary)
+                    .child(name.clone())
+            });
+            (div().flex().flex_none().justify_end())
+                .h(px(HEAD))
+                .mb(px(HEAD_GAP))
+                .children(heads)
+        });
+        let rows = rows.iter().enumerate().map(|(place, row)| {
+            let air = if place == 0 { 0. } else { gap };
+            div().flex_none().pt(px(air)).child(self.draw(*row))
+        });
+        (div().flex().flex_col().flex_none())
+            .children(heads)
+            .children(rows.collect::<Vec<_>>())
+    }
+
+    /// A grid of steps: its rows, and beside them what else it holds, the controls of the whole
+    /// of it, level with the first row.
+    pub(super) fn grid(&mut self, props: &GridProps, children: &[usize]) -> AnyElement {
+        let table = self.table;
+        let is_steps = |slot: &usize| {
+            matches!(
+                table.get(*slot).map(|entry| &entry.props),
+                Some(Props::Steps(_))
+            )
+        };
+        let (rows, rest): (Vec<usize>, Vec<usize>) =
+            super::parts::drawn(table, children).partition(is_steps);
+        let columns = props.columns.as_deref().unwrap_or_default();
+        let head = if columns.is_empty() {
+            0.
+        } else {
+            HEAD + HEAD_GAP
+        };
+        // In a card the gap to what follows is that of its grid, as after a display.
+        let card = self.expanded.is_some();
+        let gap = if card { display::GAP } else { GRID_GAP };
+        let rows = (self.step_rows(&rows, columns))
+            .when(card || !rest.is_empty(), |rows| rows.mr(px(gap)))
+            // Alone, in the middle of the height of its card, as a display fills it.
+            .when(rest.is_empty(), |rows| rows.justify_center());
+        // One control of the whole thing takes one row of cells, not the two a card has.
+        let one_cell = |part: &usize| {
+            (table.get(*part)).is_some_and(|part| {
+                matches!(part.props, Props::Controls)
+                    && super::parts::drawn(table, &part.children).count() == 1
+            })
+        };
+        let rest = rest.into_iter().map(|part| {
+            (div().flex_none().pt(px(head)))
+                .when(!card && one_cell(&part), |room| {
+                    room.h(px(head + ROW_HEIGHT))
+                })
+                .child(self.draw(part))
+        });
+        (div().flex().flex_none().child(rows))
+            .children(rest.collect::<Vec<_>>())
+            .debug_selector(|| "grid".into())
+            .into_any_element()
     }
 }

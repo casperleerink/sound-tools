@@ -47,8 +47,8 @@ macro_rules! props {
 }
 
 mod parts;
-use parts::{CellChange, DisplayChange, StepsChange};
-pub(crate) use parts::{CellProps, DisplayProps, Mark, StepsProps};
+use parts::{CellChange, DisplayChange, GridChange, StepsChange};
+pub(crate) use parts::{CellProps, DisplayProps, GridProps, Mark, StepsProps};
 
 props! {
     DivProps / DivChange {
@@ -96,6 +96,9 @@ pub(crate) enum Layout {
     /// The content of a page, one under the other: a part that does not grow is as wide as
     /// what is in it, in the middle of the window.
     Page,
+    /// A cell of the controls by itself, which draws its own lines: a knob, with the field its
+    /// value is typed in.
+    Cell,
 }
 
 props! {
@@ -370,6 +373,7 @@ pub(crate) enum Props {
     Controls,
     Cell(CellProps),
     Steps(StepsProps),
+    Grid(GridProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -393,6 +397,7 @@ pub(crate) enum Change {
     Controls,
     Cell(CellChange),
     Steps(StepsChange),
+    Grid(GridChange),
     Marker,
 }
 
@@ -461,6 +466,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "display" => Props::Display(next(&mut seq, "props")?),
                         "cell" => Props::Cell(next(&mut seq, "props")?),
                         "steps" => Props::Steps(next(&mut seq, "props")?),
+                        "grid" => Props::Grid(next(&mut seq, "props")?),
                         "controls" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Controls
@@ -494,6 +500,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "display" => Change::Display(next(&mut seq, "props")?),
                         "cell" => Change::Cell(next(&mut seq, "props")?),
                         "steps" => Change::Steps(next(&mut seq, "props")?),
+                        "grid" => Change::Grid(next(&mut seq, "props")?),
                         "controls" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Controls
@@ -542,6 +549,7 @@ const FAMILIES: &[&str] = &[
     "controls",
     "cell",
     "steps",
+    "grid",
     "marker",
 ];
 
@@ -1009,6 +1017,7 @@ impl NodeTable {
                         (Props::Display(props), Change::Display(change)) => props.apply(change),
                         (Props::Cell(props), Change::Cell(change)) => props.apply(change),
                         (Props::Steps(props), Change::Steps(change)) => props.apply(change),
+                        (Props::Grid(props), Change::Grid(change)) => props.apply(change),
                         (Props::Marker, Change::Marker) | (Props::Controls, Change::Controls) => {}
                         _ => return Err(format!("a change of another kind of node for {id}")),
                     }
@@ -1432,6 +1441,8 @@ pub(crate) enum List {
         channel: Option<u8>,
         /// How many of the last frames, at most [`sound_core::Scope::FRAMES`].
         frames: Option<u32>,
+        /// Whether it is as tall as its wave, which it is when left out; else as loud as it is.
+        fit: Option<bool>,
     },
     History {
         of: Num,

@@ -139,13 +139,17 @@ export function list<const I extends Field | Fields>(
 const patterns = new WeakSet<Field>();
 export const isPattern = (field: Field): field is ListField<NumberField> => patterns.has(field);
 
-/** A row of `length` numbers, such as the steps of a sequence: a list that starts as `length` times `default`. */
-export function pattern(field: { length: number; min: number; max: number; default: number; label?: string }): ListField<NumberField> {
+/**
+ * A row of `length` numbers, such as the steps of a sequence: a list that starts as `length`
+ * times `default`, or as the list `default` is, such as a groove to start with.
+ */
+export function pattern(field: { length: number; min: number; max: number; default: number | number[]; label?: string }): ListField<NumberField> {
   const { length, min, max, label } = field;
   if (!Number.isInteger(length) || length < 1 || length > 1024) {
     throw new RangeError(`a pattern holds 1 to 1024 values, not ${length}`);
   }
-  const made = list(number({ min, max, default: field.default, unit: "plain" }), { max: length, label, default: Array<number>(length).fill(field.default) });
+  const [each, start] = typeof field.default === "number" ? [field.default, Array<number>(length).fill(field.default)] : [min, field.default];
+  const made = list(number({ min, max, default: each, unit: "plain" }), { max: length, label, default: start });
   patterns.add(made);
   return made;
 }
