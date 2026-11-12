@@ -59,7 +59,8 @@ pub struct ScannedPlugin {
 }
 
 impl ScannedPlugin {
-    /// The quiet line under its name, in a picker and on its card: `CLAP · <maker>`.
+    /// The quiet line under its name in a picker, which tells two plugins of one name apart:
+    /// `CLAP · <maker>`.
     pub fn detail(&self) -> String {
         match self.vendor.is_empty() {
             true => self.format.name().to_string(),
