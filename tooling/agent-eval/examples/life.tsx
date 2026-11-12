@@ -129,11 +129,11 @@ tool({
           <Text variant="label">{() => `Generation ${memory.generation}`}</Text>
         </div>
         <div style={row}>
-          <Knob field="speed" label="Columns / s" min={0.5} max={16} default={4} unit="hz" />
-          <Knob field="evolve_every" label="Evolve every" min={1} max={32} default={8} />
-          <Knob field="ring" label="Ring" min={200} max={6000} default={2500} unit="ms" />
-          <Knob field="brightness" label="Brightness" min={0} max={1} default={0.4} />
-          <Knob field="gain" label="Gain" min={0} max={1} default={0.15} />
+          <Knob field="speed" />
+          <Knob field="evolve_every" />
+          <Knob field="ring" />
+          <Knob field="brightness" />
+          <Knob field="gain" />
         </div>
       </div>
     );

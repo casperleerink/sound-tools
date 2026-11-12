@@ -122,7 +122,7 @@ export const mixer = tool({
           </Space>
           <Text variant="label">Master level, the last 4 s</Text>
           <Space width={260} height={60} background="well" radius="sm">
-            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} color="text" />
+            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} />
           </Space>
           <Text variant="label">Device out</Text>
           <Space width={30} height={HEIGHT}>

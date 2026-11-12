@@ -1,10 +1,8 @@
-import { bandpass, Button, clamp, db, exp, feedback, h, highpass, hold, Knob, number, lowpass, max, Meter, mix, noise, Pad, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, type Style, tool, bang, output } from "./sdk";
+import { bandpass, Button, Cell, Circle, clamp, Controls, db, Display, exp, feedback, Fragment, h, highpass, hold, Knob, number, lowpass, max, mix, noise, phasor, pow, rise, sampleRate, saturate, type Signal, smooth, sqrt, tool, bang, output, Wave } from "./sdk";
 
 /** A slow random wander from -1 to 1: a new target `hz` times a second, glided over `ms`. */
 const gust = (hz: Signal | number, ms: Signal | number): Signal =>
   smooth(hold(noise(), rise(phasor(hz).minus(0.5))), ms);
-
-const row: Style = { direction: "row", gap: "sm", align: "center" };
 
 tool({
   name: "storm",
@@ -13,7 +11,7 @@ tool({
   doc: [
     "A storm that blows all the time, notes or not: wind made of filtered noise that gusts and howls by itself, with thunder on a button.",
     "",
-    "It is played live from its card. The pad's across, `tone`, goes from dark (a low, muffled roar, 0) to bright (a thin, hissing whistle, 1); the middle is an open, full wind. The pad's up, `wild`, goes from a calm, slow breeze (0) to a howling gale (1): faster, deeper gusts, a ringing whistle and gritty spray. Halfway is a steady, moving wind. **Thunder** sets off a deep rumble that rolls and dies away over `thunder_decay`.",
+    "It is played live from its card. Across its display, `tone` goes from dark (a low, muffled roar, 0) to bright (a thin, hissing whistle, 1); the middle is an open, full wind. Up it, `wild` goes from a calm, slow breeze (0) to a howling gale (1): faster, deeper gusts, a ringing whistle and gritty spray. Halfway is a steady, moving wind. **Thunder** sets off a deep rumble that rolls and dies away over `thunder_decay`.",
     "",
     "`level` is the wind's loudness. `thunder` is how loud a thunderclap is next to the wind: 0 turns thunder off, 1 is a big, close clap. `thunder_decay` is how long the rumble rolls on.",
   ].join("\n"),
@@ -78,16 +76,25 @@ tool({
 
     return wind.plus(rumble.plus(crack).times(thunder));
   },
-  view: ({ send }) => (
-    <div style={row}>
-      <Pad field={{ x: "tone", y: "wild" }} size={160} />
-      <div style={{ gap: "sm" }}>
-        <Button label="Thunder" variant="subtle" onClick={() => send("strike")} />
-        <Meter value="rumble" label="Rumble" />
-        <Knob field="level" label="Level" min={-30} max={6} default={-10} unit="db" />
-        <Knob field="thunder" label="Thunder" min={0} max={1} default={0.7} unit="percent" />
-        <Knob field="thunder_decay" label="Rumble" min={500} max={8000} default={3000} unit="ms" />
-      </div>
-    </div>
-  ),
+  view: ({ now, send }) => {
+    const [tone, wild] = [now.value("tone", { fraction: true }), now.value("wild", { fraction: true })];
+    return (
+      <>
+        <Display caption="Dark to bright, calm to wild" cursor="crosshair" drag={{ x: { value: "tone", absolute: true }, y: { value: "wild", absolute: true } }}>
+          <Wave x={0} y={0} width={1} height={1} list={now.history(now.value("rumble"), 120)} low={0} high={1} color="green" />
+          <Circle x={tone} y={wild.negate().plus(1)} radius={5} color="text" />
+        </Display>
+        <Controls>
+          <Knob field="level" />
+          <Cell>
+            <Button label="Thunder" variant="subtle" onClick={() => send("strike")} />
+          </Cell>
+          <Knob field="thunder" />
+          <Knob field="thunder_decay" />
+          <Knob field="tone" />
+          <Knob field="wild" />
+        </Controls>
+      </>
+    );
+  },
 });
