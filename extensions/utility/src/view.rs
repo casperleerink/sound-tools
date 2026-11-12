@@ -1,4 +1,4 @@
-//! The card of the utility: the stereo image with the channels at its top and one handle for
+//! The card of the utility: the stereo image with the channels above it and one handle for
 //! gain and pan, then Gain, Width, Pan and Mute, and behind expand bass mono and the inverts of
 //! the two channels. The rack gives the view a [`CardFrame`]: the picker of the slot as the
 //! title, and the power and close icons.

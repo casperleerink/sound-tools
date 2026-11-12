@@ -27,7 +27,7 @@ use gpui::{
 
 use sound_core::InstanceId;
 
-use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
+use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT};
 use crate::components::display::GAP as DISPLAY_GAP;
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
@@ -42,9 +42,6 @@ pub const PLAIN_CARD_WIDTH: f32 = CARD_PADDING * 2. + 4. * CELL_WIDTH;
 /// The narrowest card of the grid, one column of cells wide, for a card with a word or two to
 /// say.
 pub const NARROW_CARD_WIDTH: f32 = CARD_PADDING * 2. + CELL_WIDTH;
-/// The value line of the second row of cells, from the top of the body: where a card puts its
-/// quiet line, such as `CLAP · <maker>`.
-pub const BODY_VALUE_LINE: f32 = ROW_HEIGHT + VALUE_LINE;
 pub const HEADER_HEIGHT: f32 = 32.;
 /// From the sides of the card to its body, and from its left edge to the title.
 pub const CARD_PADDING: f32 = 16.;
@@ -341,7 +338,7 @@ impl Styled for DeviceCard {
     }
 }
 
-/// Anything else in the body, after the columns: the button of a plugin card, a quiet line.
+/// Anything else in the body, after the columns, such as a quiet line.
 impl ParentElement for DeviceCard {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements);

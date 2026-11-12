@@ -1,6 +1,6 @@
 //! The card of the pitch correction: across its display, a semitone around the note the voice
 //! is moved to, at the middle line. A thin line is what the voice sings, and a block from it
-//! to a bright line is how far it is moved, to where it plays. Key and Scale sit at its top,
+//! to a bright line is how far it is moved, to where it plays. Key and Scale sit above it,
 //! Retune and Humanize at its right, and behind expand the voice range, formants, Mix and
 //! Ignore vibrato. The rack gives the view a [`CardFrame`].
 //!

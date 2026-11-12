@@ -1,5 +1,5 @@
 //! The card of the saturator: the curve from the level that goes in to the level that comes
-//! out, in dBFS, with a handle at its bend and the curves at its top, then Drive, Tone, Output
+//! out, in dBFS, with a handle at its bend and the curves above it, then Drive, Tone, Output
 //! and Mix. The rack gives the view a [`CardFrame`]: the picker of the slot as the title, and
 //! the power and close icons.
 //!

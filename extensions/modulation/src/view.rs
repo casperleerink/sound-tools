@@ -1,5 +1,5 @@
 //! The card of the modulation: the LFO over two cycles, the left side as the line and the right
-//! side dashed, with the mode at its top; then Rate, Depth, Feedback and Mix, and behind expand
+//! side dashed, with the mode above it; then Rate, Depth, Feedback and Mix, and behind expand
 //! the spread. The rack gives the view a [`CardFrame`]: the picker of the slot as the title,
 //! and the close icon.
 //!
