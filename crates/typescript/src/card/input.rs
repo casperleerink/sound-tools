@@ -209,7 +209,7 @@ impl Render for Carried {
 /// A drag the pointer holds, on a shape or a space.
 #[derive(Clone)]
 pub(super) struct Held {
-    space: String,
+    pub(super) space: String,
     /// The node that hears it: the shape it holds, or the space.
     node: u64,
     /// Whether it holds a shape, whose drag it takes again as the shape changes.
@@ -764,6 +764,7 @@ impl TypeScriptCard {
                     drag: None,
                     spaces: &HashMap::new(),
                     hovered: None,
+                    touched: &[],
                     feeds: &self.feeds,
                 };
                 match target {
@@ -981,6 +982,21 @@ impl TypeScriptCard {
         }
         drop(spaces);
         cx.notify();
+    }
+
+    /// The pointer is `over` the control of the space `key`, which `drag` turns, or not. What
+    /// reads it draws again, and nothing does where nothing reads it.
+    pub(super) fn point(&mut self, key: &str, drag: &Drag, over: bool, cx: &mut Context<Self>) {
+        let here = self.pointed.first().is_some_and(|pointed| pointed == key);
+        if over == here {
+            return;
+        }
+        let parts = self.parts(cx);
+        let reads = [&parts.body, &parts.title_bar, &parts.over].map(|uses| uses.touched);
+        if reads.contains(&true) {
+            self.pointed = if over { drag.control(key) } else { Vec::new() };
+            self.draw_again(reads, cx);
+        }
     }
 
     pub(super) fn hover(&mut self, hovered: Option<(String, u64)>, cx: &mut Context<Self>) {

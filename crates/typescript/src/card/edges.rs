@@ -17,8 +17,8 @@ use crate::tree::ScrollAxis;
 /// How long an edge fades, in points. Less of it waits, less of it fades.
 const FADE: f32 = 24.;
 
-/// The edges a page paints over itself, by the node of the div.
-pub(super) type Edges = Rc<RefCell<HashMap<u64, Edge>>>;
+/// The edges a page paints over itself, by the name of what the div scrolls in.
+pub(super) type Edges = Rc<RefCell<HashMap<String, Edge>>>;
 
 /// Where a div scrolls in the window, and how much of what it scrolls waits past each end.
 #[derive(Clone, Copy)]
@@ -48,10 +48,9 @@ impl Edge {
         }
     }
 
-    /// Whether what it scrolls is cut at its start, and at its end.
-    #[cfg(feature = "test-support")]
-    pub(super) fn cut(&self) -> [bool; 2] {
-        self.waits.map(|waits| waits > px(0.5))
+    /// How strong it fades at its start and at its end: not at all where nothing waits.
+    pub(super) fn fades(&self) -> [f32; 2] {
+        self.waits.map(|waits| (waits / px(FADE)).clamp(0., 1.))
     }
 
     pub(super) fn paint(&self, window: &mut Window) {
@@ -74,8 +73,7 @@ impl Edge {
         };
         let mask = ContentMask { bounds: self.mask };
         window.with_content_mask(Some(mask), |window| {
-            for ((at, angle), waits) in sides.into_iter().zip(self.waits) {
-                let strength = (waits / px(FADE)).clamp(0., 1.);
+            for ((at, angle), strength) in sides.into_iter().zip(self.fades()) {
                 if strength <= 0. {
                     continue;
                 }
@@ -94,10 +92,10 @@ impl Edge {
     }
 }
 
-/// The soft edges of the div `node` that scrolls with `scroller`, for the box it scrolls in,
+/// The soft edges of the div that scrolls with `scroller` in the box `name`, for that box,
 /// after what it scrolls. With `over`, the layer over the page paints them, see [`Edges`].
 pub(super) fn soft_edges(
-    node: u64,
+    name: String,
     scroller: ScrollHandle,
     axis: ScrollAxis,
     ground: Hsla,
@@ -108,7 +106,7 @@ pub(super) fn soft_edges(
             let edge = Edge::of(&scroller, axis, ground, window);
             match over {
                 Some(edges) => {
-                    edges.borrow_mut().insert(node, edge);
+                    edges.borrow_mut().insert(name.clone(), edge);
                     None
                 }
                 None => Some(edge),

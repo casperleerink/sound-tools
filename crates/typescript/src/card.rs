@@ -77,6 +77,12 @@ pub(crate) struct TypeScriptCard {
     turning: Option<input::Turning>,
     /// The shape the pointer is over: the key of its space and its node.
     hovered: Option<(String, u64)>,
+    /// The control the pointer is over, as `Live::Touched` names it: the key of its space
+    /// first. Empty while no node reads it.
+    pointed: Vec<String>,
+    /// The keys of each control a drag turns, by the key of its space, with what
+    /// `Live::Touched` names it by.
+    control_focus: RefCell<HashMap<String, (FocusHandle, Vec<String>)>>,
     /// The presses whose release its code hears, by node, with their button and what the
     /// press told, which the release tells again.
     pressed: Vec<(u64, MouseButton, Value)>,
@@ -177,6 +183,15 @@ pub fn page_ready(page: &AnyView, cx: &mut App) -> bool {
     };
     let live = page.read(cx).0.read(cx).live.clone();
     live.update(cx, |live, cx| live.flush(cx))
+}
+
+/// How strong the div of `key` that scrolls on the page `page` fades at its start and at its
+/// end, see [`edges`]. `None` for a div that does not scroll or does not show.
+#[cfg(feature = "test-support")]
+pub fn soft_edges(page: &AnyView, key: &str, cx: &App) -> Option<[f32; 2]> {
+    let page = page.clone().downcast::<Page>().ok()?;
+    let edges = page.read(cx).0.read(cx).edges.borrow();
+    edges.get(key).map(edges::Edge::fades)
 }
 
 /// Whether the page has a text node that says `text`, for tests waiting for a view change.
@@ -449,6 +464,8 @@ impl TypeScriptCard {
             held: None,
             turning: None,
             hovered: None,
+            pointed: Vec::new(),
+            control_focus: RefCell::default(),
             pressed: Vec::new(),
             clicking: None,
             focus,
@@ -799,6 +816,13 @@ impl TypeScriptCard {
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
             (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
+        let mut touched = self.pointed.clone();
+        if let Some(held) = &self.held {
+            touched.extend(held.drag.control(&held.space));
+        }
+        let focused = self.control_focus.borrow();
+        let focused = (focused.values()).filter(|(focus, _)| focus.is_focused(window));
+        touched.extend(focused.flat_map(|(_, names)| names.iter().cloned()));
         let takes_keys = self.takes_keys(info.as_deref());
         let title_focus = (info.as_deref())
             .is_some_and(ToolInfo::hears_keys)
@@ -813,6 +837,8 @@ impl TypeScriptCard {
             laid_out: self.spaces.clone(),
             drag,
             hovered: self.hovered.clone(),
+            touched,
+            control_focus: &self.control_focus,
             table,
             feeds: &self.feeds,
             indexes: &self.indexes,

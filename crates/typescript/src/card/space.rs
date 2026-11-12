@@ -110,6 +110,15 @@ impl Drawing<'_> {
             Some(turned) => {
                 let held = (turned.turns.value.as_ref())
                     .is_some_and(|field| self.feeds.held.contains(field));
+                // Kept by the card, which reads from it whether the keys are on the control.
+                let names =
+                    (std::iter::once(name.clone()).chain(turned.turns.value.clone())).collect();
+                let mut kept = self.control_focus.borrow_mut();
+                let (focus, _) = (kept.entry(name.clone()))
+                    .and_modify(|(_, old)| old.clone_from(&names))
+                    .or_insert_with(|| (self.cx.focus_handle().tab_stop(true), names.clone()));
+                let focus = focus.clone();
+                drop(kept);
                 let control = Control {
                     keys: Keys::Turn(turned),
                     menu: None,
@@ -122,7 +131,9 @@ impl Drawing<'_> {
                         holder.tooltip(|_, cx| Tooltip::new(HELD_BY_A_LANE).view(cx))
                     });
                 let holder = self.control(holder, id, control);
-                TabStop::new(format!("tab-{name}"), holder).into_any_element()
+                TabStop::new(format!("tab-{name}"), holder)
+                    .focus_handle(&focus)
+                    .into_any_element()
             }
             None => holder.into_any_element(),
         }
@@ -457,6 +468,9 @@ fn listen(
                 if event.dragging() {
                     card.drag_to(&frame, event.position, event.modifiers, cx);
                     return;
+                }
+                if let Some(drag) = frame.drag.as_ref().filter(|drag| drag.turns()) {
+                    card.point(&frame.key, drag, over, cx);
                 }
                 let hovered = found(&frame, &painted, event.position)
                     .filter(|_| over)

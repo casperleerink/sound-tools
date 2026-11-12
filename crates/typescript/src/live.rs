@@ -102,6 +102,9 @@ pub(crate) struct Sources<'a> {
     pub spaces: &'a HashMap<String, SpaceView>,
     /// The key of the shape the pointer is over.
     pub hovered: Option<&'a str>,
+    /// The controls the pointer or the keys are on, or a drag holds, as `Live::Touched` names
+    /// them.
+    pub touched: &'a [String],
     pub feeds: &'a Feeds,
 }
 
@@ -213,6 +216,15 @@ impl Sources<'_> {
                 .unwrap_or_default()
                 .part(*part),
             Live::Hover { key } => truth(self.hovered == Some(key.as_str())),
+            Live::Touched { name } => {
+                let touched = self.touched.contains(name);
+                #[cfg(feature = "test-support")]
+                crate::feeds::tell_tests_shown(
+                    format!("touched:{name}"),
+                    f32::from(u8::from(touched)),
+                );
+                truth(touched)
+            }
             Live::Plus { a, b } => self.number(a) + self.number(b),
             Live::Minus { a, b } => self.number(a) - self.number(b),
             Live::Times { a, b } => self.number(a) * self.number(b),
@@ -328,6 +340,7 @@ mod tests {
             drag: Some(("move", numbers)),
             spaces: &spaces,
             hovered: None,
+            touched: &[],
             feeds: &Feeds::default(),
         };
         let moved = live(serde_json::json!({

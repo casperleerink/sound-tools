@@ -28,13 +28,22 @@ static SHOWN: std::sync::Mutex<std::collections::BTreeMap<String, f32>> =
 
 /// What the live values of a card last read of the peaks `name` (`peak:<name>`, the louder
 /// channel), of a number as it plays (`played:<name>`), whether a lane holds it (`held:<name>`,
-/// 1 or 0) or of a channel of the audio input (`input:<channel>`), for a test that a meter moves.
+/// 1 or 0), whether its control is touched (`touched:<name>`, 1 or 0) or of a channel of the
+/// audio input (`input:<channel>`), for a test that a meter moves.
 #[cfg(feature = "test-support")]
 pub fn shown_by_live_values(name: &str) -> Option<f32> {
     let shown = SHOWN
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     shown.get(name).copied()
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn tell_tests_shown(name: String, value: f32) {
+    let mut shown = SHOWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    shown.insert(name, value);
 }
 
 /// How many stretches a waveform of a file holds: more than a wave draws columns, so each

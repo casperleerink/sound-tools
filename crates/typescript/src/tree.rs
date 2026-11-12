@@ -569,6 +569,8 @@ pub(crate) struct Uses {
     pub files: BTreeSet<String>,
     /// The recorders whose takes it draws as they grow.
     pub takes: BTreeSet<String>,
+    /// It reads which control the pointer or the keys are on.
+    pub touched: bool,
 }
 
 impl Uses {
@@ -599,6 +601,7 @@ impl Uses {
         self.animates |= other.animates;
         self.output |= other.output;
         self.input |= other.input;
+        self.touched |= other.touched;
         let sets = [
             (&mut self.peaks, &other.peaks),
             (&mut self.played, &other.played),
@@ -621,6 +624,7 @@ struct UseCounts {
     animates: usize,
     output: usize,
     input: usize,
+    touched: usize,
     named: HashMap<(Named, String), usize>,
 }
 
@@ -650,6 +654,7 @@ impl UseCounts {
         step(&mut self.animates, uses.animates);
         step(&mut self.output, uses.output);
         step(&mut self.input, uses.input);
+        step(&mut self.touched, uses.touched);
         let named = [
             (Named::Peak, &uses.peaks),
             (Named::Played, &uses.played),
@@ -683,6 +688,7 @@ impl UseCounts {
             animates: self.animates > 0,
             output: self.output > 0,
             input: self.input > 0,
+            touched: self.touched > 0,
             peaks: names(Named::Peak),
             played: names(Named::Played),
             scopes: names(Named::Scope),
@@ -1620,6 +1626,12 @@ pub(crate) enum Live {
     Hover {
         key: String,
     },
+    /// 1 while the pointer is over a control, the keys are on it or a drag holds it: the space
+    /// of the key `name`, or one whose drag turns the field `name`, so a fader shows the
+    /// number beside it.
+    Touched {
+        name: String,
+    },
     Plus {
         a: Num,
         b: Num,
@@ -1739,6 +1751,7 @@ impl Live {
             Self::Tick
             | Self::Bpm
             | Self::Elapsed
+            | Self::Touched { .. }
             | Self::Value { .. }
             | Self::Held { .. }
             | Self::Peak { .. }
@@ -1787,6 +1800,7 @@ impl Live {
                 uses.watches = true;
             }
             Self::Held { name, child } => _ = uses.played.insert(named(child.as_deref(), name)),
+            Self::Touched { .. } => uses.touched = true,
             Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
@@ -1854,6 +1868,22 @@ pub(crate) struct Drag {
     /// Its code hears its end.
     #[serde(default)]
     pub on_end: bool,
+}
+
+impl Drag {
+    /// Whether it turns a number, as a knob's.
+    pub(crate) fn turns(&self) -> bool {
+        self.x.is_some() || self.y.is_some()
+    }
+
+    /// What `Live::Touched` names the control of the space `key` by, whose drag this is: its
+    /// key, and the fields it turns.
+    pub(crate) fn control(&self, key: &str) -> Vec<String> {
+        let fields = [&self.x, &self.y].map(|turns| turns.as_ref()?.value.clone());
+        std::iter::once(key.to_string())
+            .chain(fields.into_iter().flatten())
+            .collect()
+    }
 }
 
 /// Whole steps of a drag, in units: of how far it went, or with `grid`, of where the anchor of

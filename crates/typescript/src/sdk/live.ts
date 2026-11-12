@@ -84,6 +84,7 @@ type LiveNode =
   | { op: "drag"; id: string; part: keyof DragValues }
   | { op: "space"; key: string; part: keyof SpaceValues }
   | { op: "hover"; key: string }
+  | { op: "touched"; name: string }
   | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
   | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels"; x: Num }
   | { op: "ease"; x: Num; ease: EaseNode; key: string };
@@ -267,6 +268,9 @@ export function splitPath(path: string): { child?: string; name: string } {
   const dot = path.indexOf(".");
   return dot < 0 || path.slice(0, dot).includes("[") ? { name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
 }
+
+/** 1 while the pointer is over a control, the keys are on it or a drag holds it: the control of the key `name`, or any that turns the field `name`. */
+export const touched = (name: string): Live => new Live({ op: "touched", name });
 
 /** 1 while a lane or a cable moves the field at `path` and holds its control, which then shows a mark. */
 export const heldByLane = (path: string): Live => new Live({ op: "held", ...splitPath(path) });
