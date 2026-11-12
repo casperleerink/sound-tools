@@ -301,23 +301,32 @@ fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut T
     let kind = window.bounds("segmented-kind").unwrap();
     assert_eq!(kind.size.height, px(24.));
 
-    // The wide control takes whole columns, and the knob over it stays in the first of them.
+    // The wide control takes whole columns under the first knob; the next knob fills the room
+    // over it, and the one after starts the column past it.
     let left = |window: &mut super::Opened<'_>, selector: &str| {
         f32::from(window.bounds(selector).unwrap().origin.x)
     };
     let kind = f32::from(window.bounds("segmented-kind").unwrap().size.width);
     let columns = (kind / CELL_WIDTH).ceil();
     assert!(columns >= 2., "{kind}");
-    let (a, b) = (
+    let (a, b, c) = (
         left(&mut window, "space-knob-a"),
         left(&mut window, "space-knob-b"),
+        left(&mut window, "space-knob-c"),
     );
-    assert_eq!(b - a, CELL_WIDTH * columns);
+    assert_eq!(b - a, CELL_WIDTH);
+    assert_eq!(c - a, CELL_WIDTH * columns);
+    let top =
+        |window: &mut super::Opened<'_>, selector: &str| window.bounds(selector).unwrap().origin.y;
+    assert_eq!(
+        top(&mut window, "space-knob-b"),
+        top(&mut window, "space-knob-a")
+    );
 
     let expand = window.until_found("card-rig/box-expand");
     window.click(expand);
     let d = window.until_found("space-knob-d");
-    assert!(d.x > px(b), "the hidden columns come after the others");
+    assert!(d.x > px(c), "the hidden columns come after the others");
     let expand = window.until_found("card-rig/box-expand");
     window.click(expand);
     window.until("the card to fold", |window| {
