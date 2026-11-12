@@ -239,6 +239,48 @@ fn a_step_turned_off_and_on_again_is_as_strong_as_it_was(cx: &mut TestAppContext
     becomes(&mut window, [0.5, 1.0, 0.0, 0.0]);
 }
 
+/// A drag up or down on a step changes how strong it is, from where it is: 80 points for the
+/// whole of it. It turns nothing, and is one undo step.
+#[gpui::test]
+fn a_drag_on_a_step_changes_how_strong_it_is(cx: &mut TestAppContext) {
+    let files = [
+        (ONLY_THE_TOOL[0].0, ONLY_THE_TOOL[0].1),
+        ("extensions/row.ts", STEPS),
+        (
+            "state/row.json",
+            r#"{"tool": "row", "state": {"steps": [0.5, 0, 0, 0]}}"#,
+        ),
+    ];
+    let mut window = open(cx, &files);
+    let becomes = |window: &mut Opened<'_>, wanted: [f64; 4]| {
+        window.until(&format!("the steps to be {wanted:?}"), |window| {
+            let steps = window.record("row")["steps"].clone();
+            serde_json::from_value::<Vec<f64>>(steps).unwrap() == wanted
+        });
+    };
+    let first = window.until_found("step-0");
+    window.press(first);
+    window.drag_to(first - point(px(0.), px(20.)));
+    becomes(&mut window, [0.75, 0.0, 0.0, 0.0]);
+    // The pointer may leave the step, and the row.
+    window.drag_to(first + point(px(60.), px(16.)));
+    becomes(&mut window, [0.3, 0.0, 0.0, 0.0]);
+    window.release(first + point(px(60.), px(16.)));
+    // A step that is off starts from nothing, and a drag to the top is full.
+    let second = window.until_found("step-1");
+    window.press(second);
+    window.drag_to(second - point(px(0.), px(200.)));
+    window.release(second - point(px(0.), px(200.)));
+    becomes(&mut window, [0.3, 1.0, 0.0, 0.0]);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change a step"));
+    window.undo();
+    assert_eq!(
+        window.record("row")["steps"],
+        serde_json::json!([0.5, 0, 0, 0])
+    );
+}
+
 /// A knob on what code keeps and the options of a mode, which keep each value they hear in the
 /// record, and a slider on a field, on a page that holds the keys first.
 const KEPT: &str = r#"import { choice, h, Knob, number, SegmentedControl, Slider, tool } from "./sdk";

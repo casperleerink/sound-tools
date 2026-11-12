@@ -38,8 +38,8 @@ export interface Made extends PointerEvents {
   onDrop?: (drop: Dropped) => void;
   onCommit?: (text: string) => void;
   onCancel?: () => void;
-  /** A field's text, or a segmented control's place. */
-  onChange?: (value: string | number) => void;
+  /** A field's text, a segmented control's place, or what changed of a row of steps. */
+  onChange?: (value: string | number | StepChange) => void;
   onPower?: () => void;
   onClose?: () => void;
   onTitle?: () => void;
@@ -57,6 +57,13 @@ export interface Made extends PointerEvents {
   /** What an error calls it, as a control that draws its own label and value, see `ownLines`. */
   ownLines?: string;
 }
+
+/**
+ * What the window tells of a row of steps: the step a click or a key turns off or on; with
+ * `level` how strong a drag makes it, from 0 to 1; with `by` how much stronger a key makes it,
+ * on the grid of that much.
+ */
+export type StepChange = { step: number; level?: number; by?: number };
 
 /** What the window gets of a card at once: the ops since the last time. */
 export type Op = [string, ...unknown[]];

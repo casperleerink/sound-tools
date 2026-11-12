@@ -4,7 +4,7 @@ import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, 
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
 import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, touched, Turn } from "./live";
-import { asCell, currentCard, element, ownLines, Show, UiNode } from "./nodes";
+import { asCell, currentCard, element, ownLines, Show, StepChange, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
@@ -774,9 +774,10 @@ export type StepsProps = ValueProps<readonly number[]> & {
  * A row of steps on a list of numbers, such as a `pattern` field, one per number, in groups of
  * four. A step is lit as far up as it is strong, from the items' min, off, to their max (0 and 1
  * for what code keeps), so a soft hit shows as one. A click turns a step off, or on again as
- * strong as it was. Tab reaches it: the arrows move along it, and space or enter turns a step.
- * `playing` names an output, as `now.value` does, whose value is the step that plays, which a
- * green ring shows while the piece plays.
+ * strong as it was, and a drag up or down on a step changes how strong it is. Tab reaches it:
+ * left and right move along it, space or enter turns a step, and up and down change how strong
+ * it is. `playing` names an output, as `now.value` does, whose value is the step that plays,
+ * which a green ring shows while the piece plays.
  */
 export function Steps(props: StepsProps): UiNode {
   const field = props.field === undefined ? undefined : fieldOf(props.field);
@@ -796,9 +797,17 @@ export function Steps(props: StepsProps): UiNode {
     levels: () => list().map((value) => within((value - off) / (full - off))),
     // At rest a ring on the first step would read as a selection.
     playing: step && (props.ownClock ? step : () => (clock.playing ? step : undefined)),
-    onChange: (step: number) => {
+    onChange: ({ step, level, by }: StepChange) => {
       const changed = [...untrack(list)];
       const was = changed[step] ?? off;
+      const strength = within((was - off) / (full - off));
+      const to = by === undefined ? level : within((Math.round(strength / Math.abs(by)) + Math.sign(by)) * Math.abs(by));
+      if (to !== undefined) {
+        const value = off + to * (full - off);
+        changed[step] = item?.integer ? Math.round(value) : Number(short(value));
+        if (changed[step] !== was) set(changed, "Change a step");
+        return;
+      }
       if (was > off) held.set(step, was);
       changed[step] = was > off ? off : (held.get(step) ?? on);
       set(changed, was > off ? "Turn a step off" : "Turn a step on");

@@ -70,6 +70,20 @@ fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on(
     window.undo();
     assert_eq!(window.record("sequence")["steps"], steps([0, 1, 1, 1]));
     assert_eq!(window.record("sequence")["heard"], 1);
+    // Up and down change how strong the step they are on is: a tenth, a fiftieth with shift.
+    // Each from what the record holds, also before the row drew the key before.
+    for key in ["down", "down", "shift-down"] {
+        press_key(&mut window, key);
+    }
+    window.until("the last step softer", |window| {
+        window.record("sequence")["steps"] == serde_json::json!([0, 1, 1, 0.78])
+    });
+    for key in ["left", "left", "left", "up"] {
+        press_key(&mut window, key);
+    }
+    window.until("the first step on, soft", |window| {
+        window.record("sequence")["steps"] == serde_json::json!([0.1, 1, 1, 0.78])
+    });
     assert_eq!(window.problems(), []);
 }
 

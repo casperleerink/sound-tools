@@ -80,7 +80,7 @@ fn a_step_turned_sends_how_strong_the_steps_are_and_nothing_else() {
         card: 1,
         node: steps,
         kind: EventKind::Change,
-        payload: json!(2),
+        payload: json!({ "step": 2 }),
         time: 0.0,
     });
     let ops = next_ops(&bun);
