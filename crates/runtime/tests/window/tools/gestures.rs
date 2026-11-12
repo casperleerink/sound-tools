@@ -481,7 +481,7 @@ fn a_toggle_and_a_button_tell_how_many_clicks(cx: &mut TestAppContext) {
 }
 
 /// `key` down and up, as GPUI clicks what has the focus on the key up of enter.
-fn press_key(window: &mut Opened<'_>, key: &str) {
+pub(super) fn press_key(window: &mut Opened<'_>, key: &str) {
     window.keys(key);
     let up = gpui::KeyUpEvent {
         keystroke: gpui::Keystroke::parse(key).unwrap(),
