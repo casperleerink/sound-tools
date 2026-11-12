@@ -30,7 +30,6 @@ use std::path::PathBuf;
 use gpui::{AnyElement, Context, Entity, FocusHandle, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Changes, Instance, ProjectEvent};
 use sound_media::{Cached, Imported, Info};
-use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -494,7 +493,7 @@ impl SamplerView {
         let button = Button::new("choose-file", "Choose file")
             .debug_selector(|| "choose-file".to_string())
             .variant(ButtonVariant::Subtle)
-            .size(ControlSize::Md)
+            .on_card()
             .focus_handle(&self.choose_focus)
             .on_click(cx.listener(|view, _, _, cx| view.choose_file(cx)));
         let drop = match has_sample {
@@ -628,7 +627,7 @@ impl SamplerView {
                 )
                 .debug_selector(|| "download".to_string())
                 .variant(ButtonVariant::Subtle)
-                .size(ControlSize::Md)
+                .on_card()
                 .on_click(cx.listener(move |view, _, _, cx| view.download(entry, cx))),
             ),
             None => display,
@@ -675,12 +674,6 @@ impl SamplerView {
         let length = file.seconds();
         let end = state.end_seconds.unwrap_or(length);
         let (curve, handles) = self.envelope(state, length, cx);
-        let caption = format!(
-            "{name} · A {} · D {} · S {}",
-            seconds_readout(state.attack_seconds),
-            seconds_readout(state.decay_seconds),
-            percent_readout(state.sustain),
-        );
         let loop_start = state.loop_start_seconds.unwrap_or(state.start_seconds);
         let display = WaveformDisplay::new("sampler-display", overview, length as f32)
             .trim(state.start_seconds as f32, end as f32)
@@ -698,8 +691,17 @@ impl SamplerView {
             }))
             .playhead(self.playing_at)
             .curve(curve)
-            .caption(caption)
             .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
+        // The select says the file. Expanded, the knobs of the envelope say its numbers.
+        let display = match self.expanded {
+            true => display,
+            false => display.caption(format!(
+                "A {} · D {} · S {}",
+                seconds_readout(state.attack_seconds),
+                seconds_readout(state.decay_seconds),
+                percent_readout(state.sustain),
+            )),
+        };
         let display = match state.looping {
             true => display.loop_start(
                 loop_start as f32,
@@ -748,28 +750,25 @@ impl Render for SamplerView {
         // Behind expand: the values the handles of the display move, so the keys reach every
         // one of them, whether it loops, and which way and how tuned the file plays.
         let [start, end] = self.trim_knobs(&state, cx);
-        let looping = on_off("loop", "Change loop", state.looping, cx, |state, on| {
+        let looping = switch("loop", "Loop", state.looping, cx, |state, on| {
             state.looping = on
         });
-        let reverse = on_off(
-            "reverse",
-            "Change reverse",
-            state.reverse,
-            cx,
-            |state, on| state.reverse = on,
-        );
+        let reverse = switch("reverse", "Reverse", state.reverse, cx, |state, on| {
+            state.reverse = on
+        });
+        // `Reverse` does not fit in one column, so it is under the loop and its start.
         let hidden = [
             Column::new().top(start).bottom(end),
             Column::new()
-                .top(Cell::new(looping).label("Loop"))
-                .bottom(self.loop_start_knob(&state, cx)),
-            Column::new()
-                .top(Cell::new(reverse).label("Reverse"))
-                .bottom(knob(TUNE_KNOB, cx)),
+                .top(Cell::switch(looping))
+                .top(self.loop_start_knob(&state, cx))
+                .bottom(Cell::switch(reverse).span(2)),
             Column::new()
                 .top(knob(ATTACK_KNOB, cx))
                 .bottom(knob(DECAY_KNOB, cx)),
-            Column::new().top(knob(SUSTAIN_KNOB, cx)),
+            Column::new()
+                .top(knob(SUSTAIN_KNOB, cx))
+                .bottom(knob(TUNE_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
@@ -795,18 +794,18 @@ impl DeviceView for SamplerView {
     }
 }
 
-/// An On/Off toggle of the record, one undo step a click.
-fn on_off(
+/// A switch of the record, one undo step a click.
+fn switch(
     id: &'static str,
-    label: &'static str,
+    name: &'static str,
     on: bool,
     cx: &mut Context<SamplerView>,
     set: fn(&mut SamplerState, bool),
 ) -> Toggle {
-    Toggle::new(id, if on { "On" } else { "Off" }, on)
-        .on_change(weak_callback(cx, move |view, on: bool, cx| {
-            view.device.change(label, ValueChange::Set(on), set, cx)
-        }))
+    Toggle::new(id, name, on).on_change(weak_callback(cx, move |view, on: bool, cx| {
+        let label = format!("Change {}", name.to_lowercase());
+        view.device.change(&label, ValueChange::Set(on), set, cx)
+    }))
 }
 
 #[cfg(test)]
