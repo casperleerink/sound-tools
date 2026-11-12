@@ -178,7 +178,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - A session that plays runs every plugin in a process of its own (the same program), so a crash or a hang costs its slot: silent (an effect lets the sound through), a problem, back only by Start again, never by itself. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
 - The audio thread waits for each sub-block of a plugin's process, one round trip of about 10 µs. Rejected: playing a block behind, a block of latency per plugin in a chain.
 - A child is hung when its main thread has not come back to its loop for 10 s, a minute while it loads or saves: the app waits for it, and a longer freeze is worse than a lost plugin.
-- Renders stay in their own process, so a crash fails the render instead of leaving a plugin out. Windows (the OS) plays plugins in-process for now: Rust has no Unix sockets there. So does a window session on macOS, until plugin windows move into the plugin's process.
+- Renders stay in their own process, so a crash fails the render instead of leaving a plugin out. Windows (the OS) plays plugins in-process for now: Rust has no Unix sockets there. So does a window session on macOS. Rejected: plugin windows in the plugin's process: with 20 plugins a project opened in 2.2 s instead of 0.5 s, with 70% more memory and idle CPU 63% instead of 25%.
 - Plugins that talk between their own instances see only the ones in their process.
 
 ## The window
