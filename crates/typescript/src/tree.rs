@@ -1435,6 +1435,8 @@ pub(crate) enum List {
         channel: Option<u8>,
         /// How many of the last frames, at most [`sound_core::Scope::FRAMES`].
         frames: Option<u32>,
+        /// Whether it is as tall as its wave, which it is when left out; else as loud as it is.
+        fit: Option<bool>,
     },
     History {
         of: Num,

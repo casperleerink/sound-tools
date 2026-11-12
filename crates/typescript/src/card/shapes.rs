@@ -26,6 +26,16 @@ use super::input::Hears;
 /// a low note.
 const SCOPE_FRAMES: usize = 2048;
 
+/// The peak below which a scope that fits its height shrinks with its sound, about -30 dB: a
+/// sound that dies away sinks to a flat line, and noise at the floor is not blown up.
+const SCOPE_FLOOR: f32 = 0.03;
+
+/// What a scope that fits its height multiplies its sound by, whose loudest sample is `peak`:
+/// a quiet sound is as tall as a loud one, and silence stays flat.
+fn scope_gain(peak: f32) -> f32 {
+    1.0 / peak.max(SCOPE_FLOOR)
+}
+
 /// What a shape of a space does with the pointer.
 #[derive(Clone)]
 pub(super) struct Pointer {
@@ -502,6 +512,7 @@ impl Placing<'_> {
                 name,
                 channel,
                 frames,
+                fit,
             }) => {
                 let Some((kept, _)) = feeds.scopes.get(name) else {
                     return Vec::new();
@@ -521,7 +532,17 @@ impl Placing<'_> {
                         && kept.get(*at).is_some_and(|here| pick(here) >= 0.0)
                 };
                 let start = (0..=latest).rev().find(rises).unwrap_or(latest);
-                (kept.iter().skip(start).take(count).map(pick)).collect()
+                // By the loudest of all it keeps, not of what shows: a steady gain.
+                let gain = match fit {
+                    Some(false) => 1.0,
+                    _ => scope_gain(
+                        kept.iter()
+                            .map(|frame| pick(frame).abs())
+                            .fold(0.0, f32::max),
+                    ),
+                };
+                let shown = kept.iter().skip(start).take(count);
+                shown.map(|frame| pick(frame) * gain).collect()
             }
             Some(List::History { of, frames, key }) => {
                 feeds.history(key, *frames, self.sources.number(of))
@@ -1031,6 +1052,16 @@ mod tests {
         assert_eq!(pitch_readout(38.3), "D2 +30");
         assert_eq!(pitch_readout(37.6), "D2 -40");
         assert_eq!(pitch_readout(36.004), "C2");
+    }
+
+    #[test]
+    fn a_scope_is_as_tall_as_a_quiet_sound_and_flat_for_silence() {
+        // A drone at -20 dB used a tenth of its display.
+        assert!((0.1 * scope_gain(0.1) - 1.0).abs() < 1e-6);
+        assert!((0.9 * scope_gain(0.9) - 1.0).abs() < 1e-6);
+        // What dies away sinks: at -60 dB a thirtieth of the height, and silence none.
+        assert!(0.001 * scope_gain(0.001) < 0.04);
+        assert_eq!(0.0 * scope_gain(0.0), 0.0);
     }
 
     #[test]
