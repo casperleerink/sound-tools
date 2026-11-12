@@ -1,7 +1,7 @@
 //! The card of a hosted plugin. The plugin draws its interface in a window of its own, so the
-//! display of the card holds the button that opens it, with the list that pins parameters to
-//! the card above it; then a cell per pin, two to a column, so the card grows wider and never
-//! taller.
+//! card has no display: in its place one row, the button that opens the window and the list
+//! that pins parameters to the card; then a cell per pin, two to a column, so the card grows
+//! wider and never taller.
 //!
 //! A stepped parameter is driven by the number of its step, never by its value, so a control
 //! always writes one of the plugin's own step values.
@@ -20,7 +20,7 @@ use sound_core::{Instance, InstanceId, MAX_AUTOMATED, Project, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonVariant};
 use sound_ui::components::cell::{Cell, control_width};
 use sound_ui::components::device_card::{CardFrame, Column};
-use sound_ui::components::display::TextDisplay;
+use sound_ui::components::display::ControlStrip;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -41,6 +41,8 @@ use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlu
 
 /// A dropdown spans two cells, so the names of its steps fit.
 const DROPDOWN_SPAN: usize = 2;
+/// The two controls of the card itself take two cells each: the place of a display.
+const STRIP_SPAN: usize = 2;
 /// The longest name a switch of one column holds. A longer one takes two, and one past that
 /// ends in an ellipsis, with the whole name in a tooltip.
 const SWITCH_LETTERS: usize = 7;
@@ -217,6 +219,7 @@ impl PluginView {
             DropdownMenu::new("Parameters", Vec::new(), cx)
                 .searchable("Search", cx)
                 .trigger(Trigger::Select)
+                .trigger_width(control_width(STRIP_SPAN))
                 .side(Side::Top)
                 .width(260.)
                 .max_height(320.)
@@ -668,41 +671,43 @@ impl Render for PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return div().into_any_element();
         };
-        // The plugin draws itself in a window of its own, so the display of its card is the
-        // way there, and says what is wrong when there is none.
-        let display = TextDisplay::new("plugin-display");
+        // The plugin draws itself in a window of its own, so its card has no display: the way
+        // there and the list of its parameters, or what is wrong.
+        let strip = ControlStrip::new();
         let card = self.frame.card();
 
         let Some(installed) = plugins.installed(record.format, &record.plugin_id) else {
-            let text = format!(
-                "This computer has no {} plugin with this id. Install it, or pick another.",
-                record.format.name()
-            );
-            return card.display(display.message(text)).into_any_element();
+            let text = "This plugin is not on this computer. Install it, or pick another.";
+            return card.display(strip.message(text)).into_any_element();
         };
 
         let id = self.device.instance.id();
-        // The plugin crashed or hung in its own process, and waits for the composer.
-        if plugins.has_stopped(id) {
-            let button = Button::new("plugin-start-again", "Start again")
-                .debug_selector(|| "plugin-start-again".to_string())
+        let button = |id: &'static str, label: &'static str| {
+            Button::new(id, label)
+                .debug_selector(move || id.to_string())
                 .variant(ButtonVariant::Subtle)
                 .on_card()
+                .w(px(control_width(STRIP_SPAN)))
                 .focus_handle(&self.window_focus)
-                .on_click(cx.listener(|view, _, _, cx| {
+        };
+        // The plugin crashed or hung in its own process, and waits for the composer.
+        if plugins.has_stopped(id) {
+            let button = button("plugin-start-again", "Start again").on_click(cx.listener(
+                |view, _, _, cx| {
                     if let Some(plugins) = view.plugins.upgrade() {
                         plugins.start_again(view.device.instance.id());
                     }
                     cx.notify();
-                }));
+                },
+            ));
             let text = format!("{} stopped working.", installed.name);
-            let display = display.message(text).button(button);
-            return card.display(display).into_any_element();
+            let strip = strip.control(button).message(text);
+            return card.display(strip).into_any_element();
         }
         // `None`: this machine has the plugin but it did not load, which is reported already.
         let Some(has_window) = plugins.window_offered(id) else {
             let text = "This plugin did not load, so there is nothing to open.";
-            return card.display(display.message(text)).into_any_element();
+            return card.display(strip.message(text)).into_any_element();
         };
         // A plugin's view goes in an `NSView` or an `HWND`, and Linux has neither. The host
         // does not check, so its tests can open windows on every platform.
@@ -720,21 +725,17 @@ impl Render for PluginView {
         } else {
             "Open window"
         };
-        // A control that does nothing is not shown: with no window the display says why.
-        let display = match has_window {
-            true => display.button(
-                Button::new("plugin-window", label)
-                    .debug_selector(|| "plugin-window".to_string())
-                    .variant(ButtonVariant::Subtle)
-                    .on_card()
-                    .focus_handle(&self.window_focus)
+        // A control that does nothing is not shown: with no window the card says why.
+        let strip = match has_window {
+            true => strip.control(
+                button("plugin-window", label)
                     .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx))),
             ),
-            false => display.message(no_window),
+            false => strip.message(no_window),
         };
-        let display = match self.parameters.is_some() {
-            true => display.control(self.menu.clone()),
-            false => display,
+        let strip = match self.parameters.is_some() {
+            true => strip.control(self.menu.clone()),
+            false => strip,
         };
 
         // Two pins to a column, in the order of their ids.
@@ -742,7 +743,7 @@ impl Render for PluginView {
             .parameters
             .iter()
             .map(|(pin, value)| self.pin(*pin, value, cx));
-        let mut card = card.display(display);
+        let mut card = card.display(strip);
         while let Some(top) = pins.next() {
             let column = Column::new().top(top);
             card = card.column(match pins.next() {

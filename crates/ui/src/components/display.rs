@@ -34,6 +34,8 @@
 //!
 //! A display can also show a waveform under its curve, with the part outside two lines shaded
 //! and a green line where the sound plays, see [`waveform_display`](super::waveform_display).
+//!
+//! A device with nothing to draw has no display: a [`ControlStrip`] takes its place.
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -1227,12 +1229,6 @@ impl TextDisplay {
         self
     }
 
-    /// A control in the strip above the words, as on [`Display::control`].
-    pub fn control(mut self, control: impl IntoElement) -> Self {
-        self.display = self.display.control(control);
-        self
-    }
-
     /// Takes a file dropped from the file manager, see [`FileDrop`].
     pub fn drop_file(mut self, drop: FileDrop) -> Self {
         self.drop = Some(drop);
@@ -1264,6 +1260,70 @@ impl RenderOnce for TextDisplay {
             Some(drop) => display.overlay(drop),
             None => display,
         }
+    }
+}
+
+/// The place of a display on the card of a device with nothing to draw, such as a plugin, which
+/// draws itself in a window of its own. No inset: only the controls a strip would hold, on the
+/// line of the knobs beside them, and under them what is wrong, in words. Two controls of two
+/// cells each fill it.
+#[derive(IntoElement, Default)]
+pub struct ControlStrip {
+    controls: Vec<AnyElement>,
+    message: Option<SharedString>,
+}
+
+impl ControlStrip {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A control, after those it has.
+    pub fn control(mut self, control: impl IntoElement) -> Self {
+        self.controls.push(control.into_any_element());
+        self
+    }
+
+    /// The line under the controls. A long one wraps.
+    pub fn message(mut self, message: impl Into<SharedString>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+}
+
+impl RenderOnce for ControlStrip {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Under controls the words start on the label line of a cell. Alone, their first line
+        // is centred where the controls would be.
+        let above = match self.controls.is_empty() {
+            true => (STRIP_HEIGHT - CAPTION_HEIGHT) / 2.,
+            false => 2.,
+        };
+        let controls = (!self.controls.is_empty()).then(|| {
+            div()
+                .flex_none()
+                .h(px(STRIP_HEIGHT))
+                .flex()
+                .items_center()
+                .gap(px(GAP))
+                .children(self.controls)
+        });
+        let message = self.message.map(|message| {
+            div()
+                .pt(px(above))
+                .text_variant(TextVariant::Label)
+                .line_height(px(CAPTION_HEIGHT))
+                .text_color(cx.theme().text_secondary())
+                .child(message)
+        });
+        div()
+            .flex_none()
+            .w(px(WIDTH))
+            .h(px(INSET_HEIGHT))
+            .flex()
+            .flex_col()
+            .children(controls)
+            .children(message)
     }
 }
 
