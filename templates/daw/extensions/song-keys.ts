@@ -223,6 +223,10 @@ export const songActions: Record<string, SongAction> = {
     memory.below = { kind: "editor", clip };
     memory.notes = new Set();
   }),
+  editor_size: on(["shift-enter"], "Make the note editor large, or put it back", ({ memory }) => {
+    if (memory.below?.kind !== "editor") return false;
+    memory.editorLarge = !memory.editorLarge;
+  }),
   select_all_clips: on(["cmd-a"], "Choose all clips", ({ memory, children, state }) => {
     memory.selected = new Set(rowsOf(children, state.order).flatMap(({ name }) => {
       const owner = children.find((child) => child.name === name);
