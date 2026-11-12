@@ -42,8 +42,8 @@ use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlu
 
 /// A dropdown spans two cells, so the names of its steps fit.
 const DROPDOWN_SPAN: usize = 2;
-/// The two controls of the card itself take two cells each.
-const OWN_SPAN: usize = 2;
+/// The two controls of the card itself take three cells each, so the name of the plugin fits.
+const OWN_SPAN: usize = 3;
 /// The longest name a switch of one column holds. A longer one takes two, and one past that
 /// ends in an ellipsis, with the whole name in a tooltip.
 const SWITCH_LETTERS: usize = 7;
