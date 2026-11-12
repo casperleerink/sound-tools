@@ -2,8 +2,9 @@
 //! is not a full one. A click turns a step, and a drag up or down on it changes how strong it
 //! is, from where it is, ten times finer with shift. Tab reaches the row as one stop: left and
 //! right move along it, space or enter turns the step they are on, which carries the focus
-//! ring, and up and down change how strong it is. The step that plays has a green ring: sound
-//! is moving. A secondary row has none, so a stack of rows shows one ring.
+//! ring, and up and down change how strong it is. A row of switches only turns its steps on and
+//! off. The step that plays has a green ring: sound is moving. A secondary row has none, so a
+//! stack of rows shows one ring.
 
 use std::rc::Rc;
 
@@ -111,8 +112,9 @@ impl HeldStep {
 }
 
 /// Takes no room and follows the pointer while it holds a step of `state`, wherever it goes: a
-/// move changes how strong the step is, and a release with no move turns it.
-fn hears_the_drag(state: Entity<StepsState>, on_turn: Turn) -> impl IntoElement {
+/// move changes how strong the step is, and a release with no move turns it. A step of
+/// `switches` only turns.
+fn hears_the_drag(state: Entity<StepsState>, on_turn: Turn, switches: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |_, (), window, _| {
@@ -127,7 +129,7 @@ fn hears_the_drag(state: Entity<StepsState>, on_turn: Turn) -> impl IntoElement 
                         if event.pressed_button != Some(MouseButton::Left) {
                             state.held = None;
                         }
-                        let held = state.held.as_mut()?;
+                        let held = state.held.as_mut().filter(|_| !switches)?;
                         let level = held.dragged_to(event.position.y, event.modifiers.shift)?;
                         Some((held.step, level))
                     });
@@ -158,6 +160,7 @@ struct Steps {
     playing: Option<usize>,
     label: Option<SharedString>,
     secondary: bool,
+    switches: bool,
     on_turn: Option<Turn>,
     /// The controls of the row, each in a column of a cell at its right end.
     controls: Vec<AnyElement>,
@@ -186,7 +189,7 @@ impl RenderOnce for Steps {
             theme.lavender,
             theme.text_secondary(),
         );
-        let on_turn = self.on_turn;
+        let (on_turn, switches) = (self.on_turn, self.switches);
         let playing = self.playing.filter(|_| !self.secondary);
         let steps = self
             .levels
@@ -261,6 +264,7 @@ impl RenderOnce for Steps {
                 // Twice what a drag rounds to: a tenth, and a fiftieth with shift.
                 let by = 2. * if modifiers.shift { FINE_NOTCH } else { NOTCH };
                 let to = match (event.keystroke.key.as_str(), modifiers.shift) {
+                    ("up" | "down", _) if switches => return,
                     ("up", _) => return turned(at, Turned::By(by), &on_turn, cx),
                     ("down", _) => return turned(at, Turned::By(-by), &on_turn, cx),
                     ("space" | "enter", false) => return turned(at, Turned::Over, &on_turn, cx),
@@ -284,7 +288,7 @@ impl RenderOnce for Steps {
                 row.track_focus(&focus_handle).on_key_down(on_key_down)
             })
             .children(steps)
-            .children(on_turn.map(|on_turn| hears_the_drag(state.clone(), on_turn)));
+            .children(on_turn.map(|on_turn| hears_the_drag(state.clone(), on_turn, switches)));
         // Beside controls, its steps are level with a knob's dial, whose value hangs under it.
         let beside_controls = !self.controls.is_empty();
         let level = |part: Div| match beside_controls {
@@ -353,6 +357,7 @@ impl Drawing<'_> {
             playing,
             label: props.label.clone().map(SharedString::from),
             secondary: props.secondary == Some(true),
+            switches: props.switches == Some(true),
             on_turn,
             controls: self.small(|drawing| {
                 let controls = super::parts::drawn(drawing.table, children);

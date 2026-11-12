@@ -176,6 +176,46 @@ fn the_ring_is_on_the_step_the_playhead_is_in(cx: &mut TestAppContext) {
     assert!(steps.len() > 4, "{steps:?}");
 }
 
+/// Four accents, which are on or off.
+const SWITCHES: &str = r#"import { h, pattern, Steps, tool } from "./sdk";
+
+tool({
+  name: "switches",
+  title: "Switches",
+  when: "A test",
+  doc: "Four accents, each on or off, on a page that holds the keys first.",
+  state: { accents: pattern({ length: 4, min: 0, max: 1, integer: true, default: [1, 0, 0, 0] }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h(Steps, { field: "accents" }),
+});
+"#;
+
+/// A step of a row of switches is on or off: a drag up it, which makes a hit of a row of
+/// strengths soft, turns it as a click does, and the keys that change a strength do nothing.
+#[gpui::test]
+fn a_row_of_switches_turns_its_steps_and_no_drag_makes_one_half_strong(cx: &mut TestAppContext) {
+    let mut window = page(cx, "switches", SWITCHES);
+    let step = window.until_found("step-1");
+    window.wait_for_bun();
+    // A fifth of the way up a row of strengths.
+    window.press(step);
+    window.drag_to(step - gpui::point(px(0.), px(16.)));
+    window.release(step - gpui::point(px(0.), px(16.)));
+    window.until("the step on", |window| {
+        window.record("switches")["accents"] == serde_json::json!([1, 1, 0, 0])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Turn a step on"));
+    for key in ["tab", "down", "shift-down", "left", "space"] {
+        press_key(&mut window, key);
+    }
+    window.until("the first step off", |window| {
+        window.record("switches")["accents"] == serde_json::json!([0, 1, 0, 0])
+    });
+    assert_eq!(window.problems(), []);
+}
+
 /// A rig that shows the cards of its box and of its beat. The box gives a display, then a knob
 /// over a wide control, two more knobs, and two that do not fit beside a display. The beat gives
 /// two rows of steps and five knobs, and the plain one has no view: a pattern, a list of pitches,

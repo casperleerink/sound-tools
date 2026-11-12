@@ -778,8 +778,9 @@ export type StepsProps = ValueProps<readonly number[]> & {
  * for what code keeps), so a soft hit shows as one. A click turns a step off, or on again as
  * strong as it was, and a drag up or down on a step changes how strong it is. Tab reaches it:
  * left and right move along it, space or enter turns a step, and up and down change how strong
- * it is. `playing` names an output, as `now.value` does, whose value is the step that plays,
- * which a green ring shows while the piece plays.
+ * it is. A row of whole numbers from 0 to 1 is switches: a step is on or off, and no drag or key
+ * makes it half strong. `playing` names an output, as `now.value` does, whose value is the step
+ * that plays, which a green ring shows while the piece plays.
  */
 export function Steps(props: StepsProps): UiNode {
   const field = props.field === undefined ? undefined : fieldOf(props.field);
@@ -796,6 +797,7 @@ export function Steps(props: StepsProps): UiNode {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
     label: props.label ?? (props.field === undefined ? undefined : labelOf(props.field, field)),
     secondary: props.secondary,
+    switches: item?.integer === true && full - off === 1,
     levels: () => list().map((value) => within((value - off) / (full - off))),
     // At rest a ring on the first step would read as a selection.
     playing: step && (props.ownClock ? step : () => (clock.playing ? step : undefined)),
