@@ -1,4 +1,4 @@
-import { Button, DeviceCard, For, Fragment, h, Knob, memo, Select, Show, Text, Toggle, type CardSelect } from "./sdk";
+import { Button, DeviceCard, For, Fragment, h, Knob, memo, Select, Show, Text, Toggle, type Accessor, type CardSelect } from "./sdk";
 import { returnTitle, sendsOf, Volume } from "./song-mixer";
 import { colourOf, HEADER, inputOf, itemTool, Mark, muted, nameFrom, titleOf, type Page } from "./song-page";
 import { freeName } from "./track";
@@ -34,10 +34,11 @@ async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: s
 /**
  * The devices of the track or return `name`: an instrument, which can be changed, or the card
  * of an audio track's chosen region, then the effects of its chain, which can be added, turned
- * off, removed and dragged into another order, and last a track's sends.
+ * off, removed and dragged into another order. They scroll on their own: a track's sends stay
+ * at the right, however long its chain is.
  */
 export const Rack = ({ page, name }: { page: Page; name: string }) => {
-  const { state, children, memory, update, addOffer, rows, returns, strips, toggleMute, toggleSolo } = page;
+  const { state, children, memory, update, addOffer, rows, strips, toggleMute, toggleSolo } = page;
   const chainOf = () => {
     const row = strips().find((each) => each.name === name);
     const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
@@ -118,6 +119,10 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
     });
   const row = () => strips().find((each) => each.name === name);
   const isReturn = () => row()?.tool === "bus";
+  const sends = () => {
+    const sending = row();
+    return sending ? sendsOf(sending) : [];
+  };
   return (
     <div style={{ height: RACK, direction: "row", keep: true }}>
       <div style={{ width: HEADER - 1, keep: true, paddingTop: "md" }}>
@@ -139,7 +144,14 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
               </Show>
             </div>
             <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: "md" }}><InputSelect page={page} name={name} /></div>}</Show>
-            <Show when={isReturn}>{() => <div style={{ paddingTop: "md" }}><PreFader page={page} name={name} /></div>}</Show>
+            <Show when={isReturn}>
+              {() => (
+                <div style={{ paddingTop: "md", gap: "xs", align: "center" }}>
+                  <Text variant="label" tone="muted">Sends</Text>
+                  <PreFader page={page} name={name} />
+                </div>
+              )}
+            </Show>
           </div>
         </div>
       </div>
@@ -172,15 +184,15 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
         <div key="add-effect" style={{ keep: true }} onDrop={({ carried }) => carried && moveBefore(carried, null)}>
           <Button key="add-effect" label="Add effect" icon="plus" variant="ghost" color="text-secondary" size="lg" onClick={addEffect} />
         </div>
-        <Show when={() => row()?.tool === "track" && returns().length > 0}>
-          {() => (
-            <>
-              <div style={{ width: 1, height: CARD, background: "border", keep: true }} />
-              <Sends page={page} name={name} />
-            </>
-          )}
-        </Show>
       </div>
+      <Show when={() => sends().length > 0}>
+        {() => (
+          <>
+            <div style={{ width: 1, background: "border", keep: true }} />
+            <Sends page={page} name={name} sends={sends} />
+          </>
+        )}
+      </Show>
     </div>
   );
 };
@@ -215,17 +227,12 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
   );
 };
 
-/** A track's sends: a knob for each return, two to a column, after its effects as a send takes the sound after them. */
-const Sends = ({ page, name }: { page: Page; name: string }) => {
-  const { rows } = page;
-  const sends = () => {
-    const row = rows().find((each) => each.name === name);
-    return row ? sendsOf(row) : [];
-  };
+/** A track's sends: a knob for each return, two to a column, in a column of the panel as its fader has one, right of its effects as a send takes the sound after them. */
+const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accessor<string[]> }) => {
   const columns = memo(() => Array.from({ length: Math.ceil(sends().length / 2) }, (_, index) => index));
   return (
-    <div key="sends" style={SURFACE}>
-      <div style={{ height: 32, justify: "center" }}>
+    <div key="sends" style={{ paddingX: "lg", paddingTop: "md", keep: true }}>
+      <div style={{ height: TITLE.height, justify: "center" }}>
         <Text variant="heading">Sends</Text>
       </div>
       <div style={{ direction: "row", gap: "sm" }}>
@@ -249,7 +256,7 @@ const PreFader = ({ page: { update, returns }, name }: { page: Page; name: strin
     return back?.tool === "bus" && back.state.pre_fader;
   };
   return (
-    <Toggle key={`pre-fader-${name}`} size="sm" label="Pre fader" on={on}
+    <Toggle key={`pre-fader-${name}`} size="sm" label="Pre fader" tooltip="The sends into this return take the sound before the tracks' faders" on={on}
       onClick={() =>
         update(on() ? "Send after the faders" : "Send before the faders", ({ children }) => {
           const back = children.find((child) => child.name === name);
