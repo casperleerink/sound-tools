@@ -41,6 +41,10 @@ use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlu
 
 /// A dropdown spans two cells, so the names of its steps fit.
 const DROPDOWN_SPAN: usize = 2;
+/// The longest name a switch of one column holds. A longer one takes two, and one past that
+/// ends in an ellipsis, with the whole name in a tooltip.
+const SWITCH_LETTERS: usize = 7;
+const WIDE_SWITCH_LETTERS: usize = 17;
 /// How often at most the card asks the plugin for its text of a value a lane plays, which
 /// changes every frame.
 const LANE_READ_OUT: Duration = Duration::from_millis(66);
@@ -483,19 +487,27 @@ impl PluginView {
         };
         let element_id = ("pin", u64::from(id));
         let cell = match Control::of(parameter) {
+            // A switch carries its name and is lit while on, as every switch of a card.
             Control::Toggle(steps) => {
                 let on = steps.index(pin.value) == 1;
-                let word = if on { "On" } else { "Off" };
-                let face = readout.unwrap_or_else(|| word.into());
                 let values = step_values(steps);
-                let toggle = Toggle::new(element_id, face, on).on_change(weak_callback(
+                let letters = name.chars().count();
+                let toggle = Toggle::new(element_id, name.clone(), on).on_change(weak_callback(
                     cx,
                     move |view, on: bool, cx| {
                         let value = values[usize::from(on)];
                         view.change(id, &label, ValueChange::Set(value), |value| value, cx);
                     },
                 ));
-                Cell::new(toggle)
+                let toggle = match letters > WIDE_SWITCH_LETTERS {
+                    true => toggle.tooltip(Tooltip::new(name)),
+                    false => toggle,
+                };
+                let columns = if letters > SWITCH_LETTERS { 2 } else { 1 };
+                return Cell::switch(toggle)
+                    .span(columns)
+                    .when(out_of_range, |cell| cell.value("Out of range"))
+                    .into_any_element();
             }
             Control::Dropdown(steps) => {
                 let items = steps
@@ -668,7 +680,6 @@ impl Render for PluginView {
             );
             return card.display(display.message(text)).into_any_element();
         };
-        let display = display.caption(installed.detail());
 
         let id = self.device.instance.id();
         // The plugin crashed or hung in its own process, and waits for the composer.
@@ -709,9 +720,10 @@ impl Render for PluginView {
         } else {
             "Open window"
         };
-        // A control that does nothing is not shown: with no window the display says why.
+        // A control that does nothing is not shown: with no window the display says why. Over
+        // the button it says what no drawing can: the format of the plugin and who made it.
         let display = match has_window {
-            true => display.button(
+            true => display.message(installed.detail()).button(
                 Button::new("plugin-window", label)
                     .debug_selector(|| "plugin-window".to_string())
                     .variant(ButtonVariant::Subtle)
