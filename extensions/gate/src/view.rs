@@ -14,7 +14,7 @@ use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dynamics_display::{Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{ParameterKnob, decibels_readout, milliseconds_readout};
+use sound_ui::components::knob::{ParameterKnob, Unit};
 use sound_ui::{
     DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, every_poll, weak_callback,
 };
@@ -45,26 +45,17 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<GateState>;
 
-const THRESHOLD_KNOB: Control = Control::new(
-    &THRESHOLD,
-    "Threshold",
-    "Change threshold",
-    decibels_readout,
-);
-const RANGE_KNOB: Control = Control::new(&RANGE, "Range", "Change range", decibels_readout);
-const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", milliseconds_readout);
+const THRESHOLD_KNOB: Control =
+    Control::new(&THRESHOLD, "Threshold", "Change threshold", Unit::DECIBELS);
+const RANGE_KNOB: Control = Control::new(&RANGE, "Range", "Change range", Unit::DECIBELS);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::MILLISECONDS);
 const RELEASE_KNOB: Control =
-    Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
-const HOLD_KNOB: Control = Control::new(&HOLD, "Hold", "Change hold", milliseconds_readout);
-const TRANSIENT_KNOB: Control = Control::new(
-    &TRANSIENT,
-    "Transient",
-    "Change transient",
-    decibels_readout,
-)
-.bipolar();
+    Control::new(&RELEASE, "Release", "Change release", Unit::MILLISECONDS);
+const HOLD_KNOB: Control = Control::new(&HOLD, "Hold", "Change hold", Unit::MILLISECONDS);
+const TRANSIENT_KNOB: Control =
+    Control::new(&TRANSIENT, "Transient", "Change transient", Unit::DECIBELS).bipolar();
 const SUSTAIN_KNOB: Control =
-    Control::new(&SUSTAIN, "Sustain", "Change sustain", decibels_readout).bipolar();
+    Control::new(&SUSTAIN, "Sustain", "Change sustain", Unit::DECIBELS).bipolar();
 
 /// The transfer curve: what comes out for each level that goes in. Four corners: under the
 /// threshold down by the range, a step up at the threshold, then the diagonal.

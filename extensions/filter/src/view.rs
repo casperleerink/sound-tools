@@ -19,9 +19,7 @@ use sound_ui::components::curves::{
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    ParameterKnob, decibels_readout, hertz_readout, percent_readout, short,
-};
+use sound_ui::components::knob::{ParameterKnob, Typed, Unit, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
@@ -48,14 +46,18 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<FilterState>;
 
-const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", hertz_readout);
+const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", Unit::HERTZ);
 const RESONANCE_KNOB: Control =
-    Control::new(&RESONANCE, "Resonance", "Change resonance", percent_readout);
-const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", decibels_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
-const RATE_KNOB: Control = Control::new(&LFO_RATE, "LFO rate", "Change LFO rate", hertz_readout);
-const DEPTH_KNOB: Control =
-    Control::new(&LFO_DEPTH, "LFO depth", "Change LFO depth", octaves_readout);
+    Control::new(&RESONANCE, "Resonance", "Change resonance", Unit::PERCENT);
+const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", Unit::DECIBELS);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
+const RATE_KNOB: Control = Control::new(&LFO_RATE, "LFO rate", "Change LFO rate", Unit::HERTZ);
+const DEPTH_KNOB: Control = Control::new(
+    &LFO_DEPTH,
+    "LFO depth",
+    "Change LFO depth",
+    Unit::new(octaves_readout, Typed::Number),
+);
 
 /// The value of a segment and its label, for each type.
 const TYPES: [(FilterType, &str, &str); 4] = [

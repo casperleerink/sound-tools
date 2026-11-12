@@ -21,7 +21,7 @@ use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{ParameterKnob, hertz_readout, percent_readout, seconds_readout};
+use sound_ui::components::knob::{ParameterKnob, Unit, percent_readout, seconds_readout};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
@@ -48,14 +48,14 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the view.
 type Control = ParameterKnob<SynthState>;
 
-const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", hertz_readout);
+const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", Unit::HERTZ);
 const RESONANCE_KNOB: Control =
-    Control::new(&RESONANCE, "Resonance", "Change resonance", percent_readout);
-const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", percent_readout);
-const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", seconds_readout);
-const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
-const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", percent_readout);
-const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", seconds_readout);
+    Control::new(&RESONANCE, "Resonance", "Change resonance", Unit::PERCENT);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::PERCENT);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::SECONDS);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", Unit::SECONDS);
+const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", Unit::PERCENT);
+const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", Unit::SECONDS);
 
 /// The value of the segmented control and the label of each waveform.
 const WAVEFORMS: [(Waveform, &str, &str); 2] = [

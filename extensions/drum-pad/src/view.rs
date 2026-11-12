@@ -31,9 +31,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    Knob, ParameterKnob, decibels_readout, milliseconds_readout, pan_readout, semitones_readout,
-};
+use sound_ui::components::knob::{Knob, ParameterKnob, Unit};
 use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElement, PadGlyph};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::import;
@@ -88,11 +86,11 @@ fn knobs(pad: usize) -> [ParameterKnob<Pad>; 4] {
     let [volume, pitch, decay, pan] =
         [VOLUME, PITCH, DECAY, PAN].map(|number| &PARAMETERS[pad % PADS][number]);
     [
-        ParameterKnob::new(volume, "Volume", "Change volume", decibels_readout),
+        ParameterKnob::new(volume, "Volume", "Change volume", Unit::DECIBELS),
         // Pitch and pan go both ways from the middle, so their arcs start at the top.
-        ParameterKnob::new(pitch, "Pitch", "Change pitch", semitones_readout).bipolar(),
-        ParameterKnob::new(decay, "Decay", "Change decay", milliseconds_readout),
-        ParameterKnob::new(pan, "Pan", "Change pan", pan_readout).bipolar(),
+        ParameterKnob::new(pitch, "Pitch", "Change pitch", Unit::SEMITONES).bipolar(),
+        ParameterKnob::new(decay, "Decay", "Change decay", Unit::MILLISECONDS),
+        ParameterKnob::new(pan, "Pan", "Change pan", Unit::PAN).bipolar(),
     ]
 }
 

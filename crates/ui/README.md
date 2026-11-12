@@ -32,8 +32,9 @@ drag. Nothing needs to sync.
 - **A device view keeps a `DeviceEdit` and implements `DeviceView`.** It draws from
   `DeviceEdit::state`, the record with the automation lanes over it. Each control gets the
   value on every render and hands its `ValueChange` to `DeviceEdit::change`: one call does the
-  gesture, a key step and a reset. A knob on a number of the record is a `ParameterKnob`, put
-  on the card with `DeviceEdit::knob`. A number an automation lane moves does not drag.
+  gesture, a key step, a reset and a typed value. A knob on a number of the record is a
+  `ParameterKnob`, put on the card with `DeviceEdit::knob`; its `Unit` says how the value
+  reads and how a typed one is read. A number an automation lane moves does not drag.
 - **A file from the composer goes through `import`:** `choose_file` opens the file panel, and
   `import_file` copies the file into the assets on a background thread.
 - **Something that should sound now but is not an edit**, such as a preview note, goes through

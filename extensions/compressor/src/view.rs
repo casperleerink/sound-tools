@@ -22,9 +22,7 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::components::dynamics_display::{CURVE_HEIGHT, Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    KnobRange, ParameterKnob, decibels_readout, milliseconds_readout, percent_readout, short,
-};
+use sound_ui::components::knob::{KnobRange, ParameterKnob, Typed, Unit, short};
 use sound_ui::{
     DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, every_poll, weak_callback,
 };
@@ -62,19 +60,20 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<CompressorState>;
 
-const THRESHOLD_KNOB: Control = Control::new(
-    &THRESHOLD,
-    "Threshold",
-    "Change threshold",
-    decibels_readout,
+const THRESHOLD_KNOB: Control =
+    Control::new(&THRESHOLD, "Threshold", "Change threshold", Unit::DECIBELS);
+const RATIO_KNOB: Control = Control::new(
+    &RATIO,
+    "Ratio",
+    "Change ratio",
+    Unit::new(ratio_readout, Typed::Number),
 );
-const RATIO_KNOB: Control = Control::new(&RATIO, "Ratio", "Change ratio", ratio_readout);
-const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", milliseconds_readout);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::MILLISECONDS);
 const RELEASE_KNOB: Control =
-    Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
-const KNEE_KNOB: Control = Control::new(&KNEE, "Knee", "Change knee", decibels_readout);
-const MAKEUP_KNOB: Control = Control::new(&MAKEUP, "Makeup", "Change makeup", decibels_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+    Control::new(&RELEASE, "Release", "Change release", Unit::MILLISECONDS);
+const KNEE_KNOB: Control = Control::new(&KNEE, "Knee", "Change knee", Unit::DECIBELS);
+const MAKEUP_KNOB: Control = Control::new(&MAKEUP, "Makeup", "Change makeup", Unit::DECIBELS);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
 
 /// The value of a row of the lookahead select for each lookahead: its ms, which the row says
 /// with the unit.

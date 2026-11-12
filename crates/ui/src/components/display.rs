@@ -35,7 +35,7 @@
 //! A display can also show a waveform under its curve, with the part outside two lines shaded
 //! and a green line where the sound plays, see [`waveform_display`](super::waveform_display).
 //!
-//! A device with nothing to draw has no display: a [`ControlStrip`] takes its place.
+//! A device that cannot play says why where its display would be: a [`ControlStrip`].
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -1266,10 +1266,9 @@ impl RenderOnce for TextDisplay {
     }
 }
 
-/// The place of a display on the card of a device with nothing to draw, such as a plugin, which
-/// draws itself in a window of its own. No inset: only the controls a strip would hold, on the
-/// line of the knobs beside them, and under them what is wrong, in words. Two controls of two
-/// cells each fill it.
+/// The place of a display on the card of a device that cannot play, such as a plugin that
+/// stopped. No inset: what is wrong, in words, under the control that helps, such as a button
+/// that starts it again, on the line of the knobs of the first row.
 #[derive(IntoElement, Default)]
 pub struct ControlStrip {
     controls: Vec<AnyElement>,

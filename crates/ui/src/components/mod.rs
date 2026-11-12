@@ -24,6 +24,7 @@ pub mod select;
 pub mod slider;
 pub mod text_input;
 pub mod toggle;
+pub mod typed;
 pub mod waveform_display;
 
 pub mod dropdown_menu;

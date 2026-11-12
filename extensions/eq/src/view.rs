@@ -24,9 +24,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    Knob, KnobRange, ParameterKnob, decibels_readout, hertz_readout, short,
-};
+use sound_ui::components::knob::{Knob, KnobRange, ParameterKnob, Unit};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::lanes::object_of;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
@@ -66,21 +64,16 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 }
 
 fn frequency_knob(band: usize) -> ParameterKnob<Band> {
-    ParameterKnob::new(
-        &FREQUENCIES[band],
-        "Freq",
-        "Change frequency",
-        hertz_readout,
-    )
+    ParameterKnob::new(&FREQUENCIES[band], "Freq", "Change frequency", Unit::HERTZ)
 }
 
 /// A gain goes both ways from 0 dB, so its arc starts at the top.
 const GAIN_KNOB: ParameterKnob<Band> =
-    ParameterKnob::new(&GAIN, "Gain", "Change gain", decibels_readout).bipolar();
+    ParameterKnob::new(&GAIN, "Gain", "Change gain", Unit::DECIBELS).bipolar();
 /// A Q is a number with no unit.
-const Q_KNOB: ParameterKnob<Band> = ParameterKnob::new(&Q, "Q", "Change Q", short);
+const Q_KNOB: ParameterKnob<Band> = ParameterKnob::new(&Q, "Q", "Change Q", Unit::NUMBER);
 const OUTPUT_KNOB: ParameterKnob<EqState> =
-    ParameterKnob::new(&OUTPUT_GAIN, "Output", "Change output", decibels_readout).bipolar();
+    ParameterKnob::new(&OUTPUT_GAIN, "Output", "Change output", Unit::DECIBELS).bipolar();
 
 /// The value of each shape in the select, its label and its icon. The select shows the icon,
 /// because no name of a shape but `Bell` fits in a cell, and the cell says the name under it.
