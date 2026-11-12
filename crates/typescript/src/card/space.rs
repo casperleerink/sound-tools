@@ -106,7 +106,9 @@ impl Drawing<'_> {
         } else {
             holder.flex_none()
         };
-        match self.turned_by_keys(id, space, children) {
+        let turned =
+            (self.turned_by_keys(id, space, children)).filter(|_| space.tab_stop != Some(false));
+        match turned {
             Some(turned) => {
                 let held = (turned.turns.value.as_ref())
                     .is_some_and(|field| self.feeds.held.contains(field));

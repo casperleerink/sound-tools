@@ -23,7 +23,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Every device shows what it does to the sound: a display at the left of its card, whose handles drag, then a few knobs. Every value a handle moves also has a knob, visible or behind expand: the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured. Only what the composer drags is bright in a display: a level, a history or a reduction is one soft fill under at most one line.
 - One control per value. The tempo is a drag number in the transport; a mark in the ruler or the tempo lane selects and seeks.
-- Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
+- Every drag control shares one gesture: a press never jumps, shift is ten times finer, double click or backspace sets the default, escape puts a drag back. A click on a value, or enter, types it.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record. While Write automation is on and the piece plays, it drags from what plays and writes into the lane (touch).
 - Two-finger scroll never changes a value. A control that took it would change a sound scrolled past.
 - Interface state that is about how the composer works (zoom, snap, the loop, expanded cards, shown lanes, open returns, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, its threads, the composer's own shortcuts, and how the last export was made.
@@ -56,7 +56,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - Corners are 4, 6 or 8 pt, or a pill. A control is 24, 28 or 32 pt high, and controls of one size line up in a row.
 - One grid for devices: every card is whole columns wide, with two rows of cells: a control, a label line, a value line. A display is two rows tall and four columns wide, or six for a file or an EQ; a control that needs room takes two. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
 - A card says each thing once: a switch carries its name and is lit while on, a control that says its value has no value line, and the line at the foot of a display says only what moves, or a pointed handle's value no knob in view says.
-- Only the faint marks of its scale lie over the drawing of a display: its control sits in a strip above. A plugin's card has no display, only a row: the button that opens its window and the list of its parameters.
+- Only the faint marks of its scale lie over the drawing of a display: its control sits in a strip above. A plugin's card has no display: the button for its window over the list of its parameters, then those picked.
 - Hit targets are larger than what is drawn, for a trackpad.
 
 ## Using the app

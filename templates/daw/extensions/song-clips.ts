@@ -33,6 +33,19 @@ export function endMoved(clip: FilledStateOfTool<"timeline">, length: number) {
   cutLanes(clip, 0, length);
 }
 
+/** Adds an empty clip to the track `name`, from `start` and `length` long, as one undo step: its key, `track/clip`, or none when `name` is no track. */
+export function addClip({ update }: Pick<Song, "update">, name: string, start: number, length: number): string | undefined {
+  let added: string | undefined;
+  update("Add a clip", ({ children }) => {
+    const owner = children.find((child) => child.name === name);
+    if (owner?.tool !== "track") return;
+    const clip = freeName(owner.children.map((child) => child.name), "clip");
+    owner.children = [...owner.children, { name: clip, tool: "timeline", state: { start, length, notes: [] } }];
+    added = `${owner.name}/${clip}`;
+  });
+  return added;
+}
+
 type ClipPoint = FilledStateOfTool<"timeline">["bend"][number];
 
 /**

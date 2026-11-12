@@ -2,10 +2,10 @@
 //! of what the window offers, a text field and rows dragged onto each other.
 
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent,
-    TestAppContext, TouchPhase, point, px,
+    Bounds, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
+    ScrollEvent, TestAppContext, TouchPhase, point, px,
 };
-use sound_ui::{Devices, Takes};
+use sound_ui::{Devices, Shortcuts, Takes};
 
 use super::gestures::press_key;
 use super::{Opened, open};
@@ -172,11 +172,23 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
 }
 
 /// An effect moves a step in its chain with no drag: from the menu of its title, which Move
-/// earlier and Move later lead, and by the keys that menu names, alt and an arrow, while its
-/// card has the focus. Each move is one undo step, and at an end of the chain it stays.
+/// earlier and Move later lead, and by the keys of two actions of the song, which Settings
+/// lists and which move the chosen effect by whatever keys the composer gave them. The menu of
+/// its title chooses an effect, and escape lets go. Each move is one undo step, and at an end
+/// of the chain it stays.
 #[gpui::test]
-fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys(cx: &mut TestAppContext) {
+fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys_of_its_actions(
+    cx: &mut TestAppContext,
+) {
     let mut window = open_rack(cx);
+    let listed = window.cx.read(|cx| {
+        let song = (cx.global::<Shortcuts>().groups()).find(|group| group.name == "song");
+        let names = song.map(|song| song.actions.iter().map(|action| action.name.clone()));
+        names.map(Iterator::collect::<Vec<_>>).unwrap_or_default()
+    });
+    for action in ["effect_earlier", "effect_later"] {
+        assert!(listed.iter().any(|name| name == action), "{listed:?}");
+    }
     let title = window.until_found("card-title-song/t00/chain/room");
     window.click(title);
     window.pick("menu-1");
@@ -186,30 +198,61 @@ fn an_effect_moves_a_step_from_its_title_menu_and_by_the_keys(cx: &mut TestAppCo
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move an effect"));
 
-    // Each effect's card is a tab stop: tab goes on until the reverb's, the last effect now,
-    // has the focus and alt and the arrow move it.
+    // Its menu chose the reverb: the keys the menu named move it.
     let before = window.record("song/t00/chain/room");
     let first = serde_json::json!(["room", "trim"]);
-    window.focus_the_window();
-    for _ in 0..60 {
-        press_key(&mut window, "tab");
-        press_key(&mut window, "alt-left");
-        window.wait_for_bun();
-        if window.chain_order() == first {
-            break;
-        }
-    }
-    assert_eq!(window.chain_order(), first);
-    // The first stays the first; the card kept the focus, so the other arrow takes it back.
+    press_key(&mut window, "alt-left");
+    window.until("the reverb earlier", |window| window.chain_order() == first);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Move an effect"));
+    // The first stays the first.
     press_key(&mut window, "alt-left");
     window.wait_for_bun();
     assert_eq!(window.chain_order(), first);
+
+    // The composer gives moving later another key: that key moves it, and the old one does not.
+    window.cx.update(|_, cx| {
+        let keys = vec!["shift-l".to_string()];
+        (cx.global_mut::<Shortcuts>()
+            .set_keys("song.effect_later", keys))
+        .unwrap();
+    });
     press_key(&mut window, "alt-right");
+    window.wait_for_bun();
+    assert_eq!(window.chain_order(), first);
+    press_key(&mut window, "shift-l");
     window.until("the reverb later again", |window| {
         window.chain_order() == serde_json::json!(["trim", "room"])
     });
+
+    // Escape lets go of it: the key then moves no effect.
+    press_key(&mut window, "escape");
+    window.wait_for_bun();
+    press_key(&mut window, "alt-left");
+    window.wait_for_bun();
+    assert_eq!(window.chain_order(), serde_json::json!(["trim", "room"]));
+
     // The keys turned no knob.
     assert_eq!(window.record("song/t00/chain/room"), before);
+
+    // An effect that is added is chosen: the key moves it at once.
+    let add = window.until_found("div-add-effect");
+    window.click(add);
+    let reverb = window.cx.update(|_, cx| {
+        (Devices::offered(Takes::Audio, cx).into_iter())
+            .filter(|offer| !offer.is_command())
+            .position(|offer| offer.name == "Reverb")
+    });
+    let item: &'static str = format!("menu-{}", reverb.unwrap()).leak();
+    let item = window.until_found(item);
+    window.click(item);
+    window.until("a reverb added", |window| {
+        window.chain_order() == serde_json::json!(["trim", "room", "reverb"])
+    });
+    press_key(&mut window, "alt-left");
+    window.until("the new reverb earlier", |window| {
+        window.chain_order() == serde_json::json!(["trim", "reverb", "room"])
+    });
     assert_eq!(window.problems(), []);
 }
 
@@ -455,4 +498,88 @@ fn a_card_draws_once_the_rack_scrolls_it_into_view(cx: &mut TestAppContext) {
         window.find(last).is_some()
     });
     assert!(window.find("card-title-song/t00/chain/fx0").is_none());
+}
+
+impl Opened<'_> {
+    /// Where the rack shows its cards, and where the Add effect button after them is.
+    fn rack_and_add_effect(&mut self) -> (Bounds<Pixels>, Bounds<Pixels>) {
+        let button = self.bounds("button-add-effect").unwrap();
+        let shell = self.shell.clone();
+        let rack = self.cx.update(|_, cx| {
+            let page = shell.read(cx).main_view().cloned().unwrap();
+            sound_typescript::scroll_room(&page, "rack", cx).unwrap()
+        });
+        (rack, button)
+    }
+
+    /// Whether the rack shows the whole Add effect button.
+    fn shows_add_effect(&mut self) -> bool {
+        let (rack, button) = self.rack_and_add_effect();
+        rack.left() <= button.left() && button.right() <= rack.right()
+    }
+}
+
+/// The song with a rack wider than its room, and the focus on its Add effect button, which only
+/// tab took there: the rack scrolled to it, out of view at its far end before.
+fn open_rack_with_the_keys_on_add_effect(cx: &mut TestAppContext) -> Opened<'_> {
+    let mut window = open_rack_of(cx, 10);
+    window.until_found("button-add-effect");
+    assert!(!window.shows_add_effect());
+    // The button is the one tab stop that shows whole only at the end of the rack.
+    for _ in 0..400 {
+        if window.shows_add_effect() {
+            return window;
+        }
+        press_key(&mut window, "tab");
+        window.settle();
+    }
+    panic!("tab did not reach Add effect");
+}
+
+/// With the keys alone, each effect added leaves the focused Add effect button in view: the
+/// rack grows before it and scrolls to it.
+#[gpui::test]
+fn the_rack_keeps_the_focused_add_effect_button_in_view_as_effects_are_added(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_rack_with_the_keys_on_add_effect(cx);
+    for count in 11..14 {
+        // Enter opens the menu of offers, in whose field the keys are; enter picks what it kept.
+        press_key(&mut window, "enter");
+        window.until_found("menu-0");
+        window.cx.simulate_input("util");
+        press_key(&mut window, "enter");
+        window.until("the card of the effect added", |window| {
+            let order = window.chain_order();
+            let added = order.as_array().filter(|order| order.len() == count);
+            let last = added.and_then(|order| order.last()?.as_str());
+            last.is_some_and(|last| window.find(&format!("div-effect-{last}")).is_some())
+        });
+        window.settle();
+        let (rack, button) = window.rack_and_add_effect();
+        assert!(window.shows_add_effect(), "{button:?} in {rack:?}");
+    }
+}
+
+/// A wheel on the rack while a button in it holds the focus stays where the composer put it.
+#[gpui::test]
+fn a_wheel_scrolls_the_rack_away_from_the_focused_button_and_it_stays(cx: &mut TestAppContext) {
+    let mut window = open_rack_with_the_keys_on_add_effect(cx);
+    let (rack, before) = window.rack_and_add_effect();
+    window.cx.simulate_event(ScrollEvent {
+        position: rack.center(),
+        delta: ScrollDelta::Pixels(point(px(300.), px(0.))),
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+        ..Default::default()
+    });
+    window.settle();
+    let (_, scrolled) = window.rack_and_add_effect();
+    assert_eq!(scrolled.left(), before.left() + px(300.));
+    // Frames later it is still there, and the button still has the keys.
+    window.settle();
+    window.settle();
+    assert_eq!(window.rack_and_add_effect().1, scrolled);
+    press_key(&mut window, "enter");
+    window.until_found("menu-0");
 }

@@ -15,7 +15,7 @@ use gpui::{
 use crate::tree::ScrollAxis;
 
 /// How long an edge fades at most, in points.
-const FADE: f32 = 24.;
+pub(super) const FADE: f32 = 24.;
 
 /// The edges a page paints over itself, by the name of what the div scrolls in.
 pub(super) type Edges = Rc<RefCell<HashMap<String, Edge>>>;
@@ -46,6 +46,11 @@ impl Edge {
             waits: [before, all - before],
             ground,
         }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(super) fn room(&self) -> Bounds<Pixels> {
+        self.bounds
     }
 
     /// How much of [`FADE`] it fades at its start and at its end: as much as waits there, so

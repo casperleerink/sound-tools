@@ -161,7 +161,6 @@ fn live_values() {
         "b": 960,
     }))
     .unwrap();
-    let watches = BTreeMap::new();
     let spaces = HashMap::new();
     let numbers = DragNumbers {
         dx: 300.0,
@@ -170,7 +169,6 @@ fn live_values() {
     };
     let sources = Sources {
         tick: 0.0,
-        watches: &watches,
         state: &Value::Null,
         info: None,
         played: None,

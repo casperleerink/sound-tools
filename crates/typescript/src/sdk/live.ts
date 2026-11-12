@@ -186,8 +186,8 @@ export interface SpaceValues {
 /** The numbers of fields `State` holds. */
 type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
 
-/** Which channel of a sound a scope shows, their mean when left out, how many samples, and with `fit: false` how loud it is. */
-type ScopeOptions = { channel?: Channel; frames?: number; fit?: boolean };
+/** Which channel of a sound a scope shows, their mean when left out, and how many samples. */
+type ScopeOptions = { channel?: Channel; frames?: number };
 
 /** What a wave draws: see `now.scope`, `now.history` and `now.file`. */
 export type WaveList =
@@ -238,8 +238,8 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    * `"bass"` or `"bass/synth"` (what a `meter` child hears), for a `Wave`: the last `frames`
    * samples (2048 when left out, at most 8192), from where the sound rises through zero, so a
    * steady tone stands still. It is as tall as its wave, so a quiet sound shows as a loud one
-   * does, and one that dies away sinks to a flat line; `fit: false` draws it as loud as it is,
-   * from -1 to 1. A child's is its sound before its parent changes it:
+   * does, and one that dies away sinks to a flat line: how loud it is is a `Meter`'s to show.
+   * A child's is its sound before its parent changes it:
    * a child its parent silences still draws a wave, so gate the sound in the child, where its
    * picture should be flat while nothing is heard.
    */

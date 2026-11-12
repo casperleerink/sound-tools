@@ -2,7 +2,7 @@
 //! What moves on the card, such as its meter or a knob, then draws the card alone: in GPUI a
 //! notified view also renders every view it is in, and the page is the heaviest one.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::{
@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use super::TypeScriptCard;
+use super::in_view::{InView, Scroller};
 use super::input::hearing_keys;
 
 /// Where the page made room for a card, and where it cuts it off, as by a div that scrolls.
@@ -27,6 +28,8 @@ pub(super) struct Placing {
     room: Rc<Cell<Option<Room>>>,
     /// The size of the card when it last drew, which its room takes.
     size: Rc<Cell<Option<Size<Pixels>>>>,
+    /// The divs of the page that scroll its room, which keep it in view while it holds the keys.
+    scrollers: Rc<RefCell<Vec<Scroller>>>,
 }
 
 impl Placing {
@@ -36,7 +39,7 @@ impl Placing {
         window: &mut Window,
         cx: &mut Context<TypeScriptCard>,
     ) -> Self {
-        let (room, size) = (Rc::default(), Rc::default());
+        let (room, size, scrollers) = (Rc::default(), Rc::default(), Rc::default());
         // The keys of the page that its controls hand on, held while the focus is in it.
         let focus = cx.focus_handle();
         cx.on_focus_out(&focus, window, |page, _, _, cx| page.let_go_of_keys(cx))
@@ -50,11 +53,17 @@ impl Placing {
                 focus,
                 room: Rc::clone(&room),
                 size: Rc::clone(&size),
+                scrollers: Rc::clone(&scrollers),
                 origin,
                 page: page.downgrade(),
             }
         });
-        Self { view, room, size }
+        Self {
+            view,
+            room,
+            size,
+            scrollers,
+        }
     }
 
     /// The page draws in a new frame: what it does not make room for again shows nowhere.
@@ -62,9 +71,15 @@ impl Placing {
         self.room.set(None);
     }
 
-    /// What the page draws for the card: room of its size, or, while its size is not known,
-    /// the card itself, which measures it.
-    pub(super) fn room(&self, card: &AnyView, page: &WeakEntity<TypeScriptCard>) -> AnyElement {
+    /// What the page draws for the card in the divs `scrollers`: room of its size, or, while
+    /// its size is not known, the card itself, which measures it.
+    pub(super) fn room(
+        &self,
+        card: &AnyView,
+        page: &WeakEntity<TypeScriptCard>,
+        scrollers: &[Scroller],
+    ) -> AnyElement {
+        *self.scrollers.borrow_mut() = scrollers.to_vec();
         match self.size.get() {
             Some(size) => {
                 let room = Rc::clone(&self.room);
@@ -113,6 +128,7 @@ pub(crate) struct Placed {
     focus: FocusHandle,
     room: Rc<Cell<Option<Room>>>,
     size: Rc<Cell<Option<Size<Pixels>>>>,
+    scrollers: Rc<RefCell<Vec<Scroller>>>,
     /// Where the page is in the window.
     origin: Rc<Cell<Point<Pixels>>>,
     page: WeakEntity<TypeScriptCard>,
@@ -126,8 +142,19 @@ impl Render for Placed {
         };
         let origin = self.origin.get();
         // A card that grows lies over what follows it until the next frame of the page.
+        let scrollers = self.scrollers.borrow().clone();
+        let shown = match scrollers.is_empty() {
+            true => self.card.clone().into_any_element(),
+            false => InView {
+                id: "in-view".into(),
+                scrollers,
+                page: self.page.clone(),
+                child: self.card.clone().into_any_element(),
+            }
+            .into_any_element(),
+        };
         let card = (div().flex_none().relative())
-            .child(self.card.clone())
+            .child(shown)
             .child(measured(&self.size, &self.page).absolute().size_full());
         let at = div()
             .absolute()

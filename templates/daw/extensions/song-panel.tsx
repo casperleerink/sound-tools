@@ -1,6 +1,7 @@
-import { Button, DeviceCard, For, Fragment, h, Knob, Readout, Select, Show, Text, Toggle, type Accessor, type CardSelect, type MenuItem } from "./sdk";
-import { returnTitle, sendsOf, Volume } from "./song-mixer";
+import { Button, DeviceCard, For, Fragment, h, Knob, Select, Show, Text, Toggle, type Accessor, type CardSelect, type MenuItem } from "./sdk";
+import { Gain, returnTitle, sendsOf, Volume } from "./song-mixer";
 import { colourOf, HEADER, inputOf, itemTool, Mark, muted, nameFrom, titleOf, type Page } from "./song-page";
+import type { Song } from "./song";
 import { freeName } from "./track";
 
 // What shows under the timeline for one track or return, its panel, and for the master.
@@ -17,23 +18,62 @@ const [SEND, SEND_NAME, SEND_AMOUNT, SENDS] = [32, 48, 44, 5];
 const TITLE = { height: 32, direction: "row", align: "center", gap: "sm", paddingLeft: "lg", paddingRight: "sm" } as const;
 /** A fader over its value, under the title. */
 const VOLUME = { align: "center", gap: "sm", paddingTop: "xs" } as const;
-/** The cards of a panel, side by side. */
-const CARDS = { grow: true, direction: "row", gap: "md", paddingX: "lg", paddingTop: "md", align: "start" } as const;
+/** The cards of a panel, side by side, each in a `SLOT`: 12 points apart, and 12 above them. */
+const CARDS = { grow: true, direction: "row", gap: "xs", paddingX: "md", paddingTop: "sm", align: "start" } as const;
+/** What a card of a panel is in: the room around it where the ring of its tab stop shows, and the fill of the chosen one, which a card that filled it would cover. */
+const SLOT = { padding: "xs", radius: "lg", keep: true } as const;
 /** A surface as tall as a device card and with its look, for what a panel shows beside them. */
 const SURFACE = { height: CARD, radius: "lg", background: "surface", borderColor: "border", borderWidth: 1, paddingX: "lg", keep: true } as const;
 /** Where on a track a sidechain takes its sound, and what its select says, as the arrangement's. */
 const TAPS = [["pre_fx", "Pre FX"], ["post_fx", "Post FX"], ["post_fader", "Post mixer"]] as const;
 type Tap = (typeof TAPS)[number][0];
-/** The keys that move an effect a step in its chain while its card has the focus, as alt and an arrow move a track. */
-const [EARLIER, LATER] = ["alt-left", "alt-right"] as const;
+
+/** The chain of the track or return `name`. */
+const chainOf = (children: Song["children"], name: string) => {
+  const row = children.find((each) => each.name === name);
+  const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
+  return effects?.tool === "chain" ? effects : undefined;
+};
+/** Changes the chain of the track or return `name` as one undo step `label`. */
+const editChain = ({ update }: Pick<Song, "update">, name: string, label: string, change: (effects: { state: { order: string[]; off: string[] }; children: { name: string }[] }) => void) =>
+  update(label, ({ children }) => {
+    const row = children.find((child) => child.name === name);
+    const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
+    if (effects?.tool === "chain") change(effects);
+  });
+/** Puts the effect `moved` of `name` before `before` in its chain, or last, as one undo step. */
+function moveEffect(tool: Pick<Song, "children" | "update">, name: string, moved: string, before: string | null) {
+  if (!chainOf(tool.children, name)?.state.order.includes(moved) || moved === before) return;
+  editChain(tool, name, "Move an effect", (effects) => {
+    const rest = effects.state.order.filter((each) => each !== moved);
+    rest.splice(before === null ? rest.length : rest.indexOf(before), 0, moved);
+    effects.state.order = rest;
+  });
+}
+/** Moves the effect `effect` of `name` a step earlier or later in its chain; at its end it stays. */
+export function stepEffect(tool: Pick<Song, "children" | "update">, name: string, effect: string, by: -1 | 1) {
+  const order = chainOf(tool.children, name)?.state.order ?? [];
+  const at = order.indexOf(effect);
+  const other = order[at + by];
+  if (at >= 0 && other !== undefined) moveEffect(tool, name, effect, by < 0 ? other : (order[at + 2] ?? null));
+}
+/** The chosen effect, while the panel of its track shows and its chain holds it: the one the keys move. */
+export function chosenEffect({ memory, children }: Pick<Song, "memory" | "children">) {
+  const chosen = memory.effect;
+  const shown = chosen !== null && memory.below?.kind === "track" && memory.below.name === chosen.track;
+  return shown && chainOf(children, chosen.track)?.state.order.includes(chosen.name) ? chosen : null;
+}
 
 /**
  * A device the composer picks from what the window offers that takes `takes`, as the window's
- * pickers list them; or one of `first`, the items over them, by its place.
+ * pickers list them, under `heading`, which says what a pick does; or one of `first`, the
+ * items over them, by its place.
  */
-async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: string, first: readonly MenuItem[] = []) {
+async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: string, first: readonly MenuItem[] = [], heading?: string) {
   const { offers: offered, notes, here } = await offers(takes, { at });
-  const items = offered.map(({ key, name, detail, group, icon, unavailable }) => ({ label: name, detail: detail ?? undefined, group, icon, checked: key === here, disabled: unavailable !== null }));
+  // A menu has one level of headings: `heading` is a line of the first group's, over its own.
+  const headed = (group: string) => (heading !== undefined && group === offered[0]?.group ? `${heading}\n${group}` : group);
+  const items = offered.map(({ key, name, detail, group, icon, unavailable }) => ({ label: name, detail: detail ?? undefined, group: headed(group), icon, checked: key === here, disabled: unavailable !== null }));
   const picked = await openMenu([...first, ...items], { notes, width: 280, maxHeight: 540, search: true });
   return picked === null ? undefined : picked < first.length ? picked : offered[picked - first.length];
 }
@@ -41,59 +81,48 @@ async function pick({ offers, openMenu }: Page, takes: "notes" | "audio", at?: s
 /**
  * The devices of the track or return `name`: an instrument, which can be changed, or the card
  * of an audio track's chosen region, then the effects of its chain, which can be added, turned
- * off, removed and put in another order: by a drag, from the menu of its title, or by the
- * keys. They scroll on their own: a track's sends stay at the right, however long its chain is.
+ * off, removed and put in another order: by a drag, from the menu of its title, or, the chosen
+ * one, by the keys of the song's actions. An action cannot see where the focus is, so the song
+ * keeps which effect is chosen: enter on its card, the menu of its title or adding it chooses
+ * it, with the fill of what is chosen around it. They scroll on their own: a track's sends stay
+ * at the right, however long its chain is.
  */
 export const Rack = ({ page, name }: { page: Page; name: string }) => {
   const { state, children, memory, update, addOffer, rows, strips, toggleMute, toggleSolo } = page;
-  const chainOf = () => {
-    const row = strips().find((each) => each.name === name);
-    const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
-    return effects?.tool === "chain" ? effects : undefined;
-  };
-  const order = () => chainOf()?.state.order ?? [];
-  const isOff = (effect: string) => chainOf()?.state.off.includes(effect) ?? false;
-  /** Changes the chain of the track as one undo step `label`. */
-  const editChain = (label: string, change: (effects: { state: { order: string[]; off: string[] }; children: { name: string }[] }) => void) =>
-    update(label, ({ children }) => {
-      const row = children.find((child) => child.name === name);
-      const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
-      if (effects?.tool === "chain") change(effects);
-    });
+  const chain = () => chainOf(children, name);
+  const order = () => chain()?.state.order ?? [];
+  const isOff = (effect: string) => chain()?.state.off.includes(effect) ?? false;
+  const choose = (effect: string) => (memory.effect = { track: name, name: effect });
   const addEffect = async () => {
     const offer = await pick(page, "audio");
     if (typeof offer !== "object") return;
-    const taken = chainOf()?.children.map((child) => child.name) ?? [];
+    const taken = chain()?.children.map((child) => child.name) ?? [];
     const effect = freeName(taken, nameFrom(offer.key) || "effect");
     addOffer(offer.key, `${name}/chain/${effect}`, "Add an effect");
-    editChain("Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
+    editChain(page, name, "Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
+    choose(effect);
   };
   /**
    * The menu of a card's title: another device in place of the one at `path`, an instrument
-   * from what takes notes, an effect from what takes sound; and over them, for an `effect` of
-   * a chain of several, a step earlier or later in it, with the keys that do it while its
-   * card has the focus: each effect's card is a tab stop for them.
+   * from what takes notes, an effect from what takes sound, which a heading says; and over
+   * them, for an `effect` of a chain of several, a step earlier or later in it, with the keys
+   * that do it. Its menu is about that effect, so it chooses it.
    */
   const replace = async (takes: "notes" | "audio", path: string, label: string, effect?: string) => {
+    if (effect !== undefined) choose(effect);
     const at = effect === undefined ? -1 : order().indexOf(effect);
     const moves: MenuItem[] = effect === undefined || order().length < 2 ? [] : [
-      { label: "Move earlier", icon: "arrow-left", shortcut: EARLIER, disabled: at === 0 },
-      { label: "Move later", icon: "arrow-right", shortcut: LATER, disabled: at === order().length - 1 },
+      { label: "Move earlier", icon: "arrow-left", shortcut: "song.effect_earlier", disabled: at === 0 },
+      { label: "Move later", icon: "arrow-right", shortcut: "song.effect_later", disabled: at === order().length - 1 },
     ];
-    const picked = await pick(page, takes, path, moves);
+    const picked = await pick(page, takes, path, moves, effect === undefined ? undefined : "Replace with");
     if (picked === undefined) return;
     if (typeof picked === "number") {
-      if (effect !== undefined) step(effect, picked === 0 ? -1 : 1);
+      if (effect !== undefined) stepEffect(page, name, effect, picked === 0 ? -1 : 1);
       return;
     }
     unkey(path, label);
     addOffer(picked.key, path, label);
-  };
-  /** Moves an effect a step earlier or later in its chain; at its end it stays. */
-  const step = (effect: string, by: -1 | 1) => {
-    const at = order().indexOf(effect);
-    const other = order()[at + by];
-    if (at >= 0 && other !== undefined) moveBefore(effect, by < 0 ? other : (order()[at + 2] ?? null));
   };
   /** Takes the sidechain off the effect at `path`, as part of the step `label`: it goes, or another device takes its place. */
   const unkey = (path: string, label: string) => {
@@ -101,7 +130,7 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
   };
   const remove = (effect: string) => {
     unkey(`${name}/chain/${effect}`, "Remove an effect");
-    editChain("Remove an effect", (effects) => {
+    editChain(page, name, "Remove an effect", (effects) => {
       effects.state.order = effects.state.order.filter((each) => each !== effect);
       effects.state.off = effects.state.off.filter((each) => each !== effect);
       effects.children = effects.children.filter((child) => child.name !== effect);
@@ -133,17 +162,11 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
     return [source, tap];
   };
   const toggle = (effect: string) =>
-    editChain(isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
+    editChain(page, name, isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
       effects.state.off = effects.state.off.includes(effect) ? effects.state.off.filter((each) => each !== effect) : [...effects.state.off, effect];
     });
   // An effect dragged onto another goes before it, onto the instrument first, onto Add effect last; its title's menu moves it a step.
-  const moveBefore = (moved: string, before: string | null) =>
-    order().includes(moved) && moved !== before &&
-    editChain("Move an effect", (effects) => {
-      const rest = effects.state.order.filter((each) => each !== moved);
-      rest.splice(before === null ? rest.length : rest.indexOf(before), 0, moved);
-      effects.state.order = rest;
-    });
+  const moveBefore = (moved: string, before: string | null) => moveEffect(page, name, moved, before);
   const row = () => strips().find((each) => each.name === name);
   const isReturn = () => row()?.tool === "bus";
   const sends = () => {
@@ -187,14 +210,18 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
         {() =>
           row()?.tool === "tape" ? (
             <>
-              {() => {
-                const chosen = [...memory.selected].find((key) => key.startsWith(`${name}/`) && itemTool(children, key) === "region");
-                return chosen ? <DeviceCard key={`clip-${chosen}`} path={chosen} /> : <EmptyClip />;
-              }}
-              <div style={{ width: 1, height: CARD, background: "border", keep: true }} />
+              <div style={SLOT}>
+                {() => {
+                  const chosen = [...memory.selected].find((key) => key.startsWith(`${name}/`) && itemTool(children, key) === "region");
+                  return chosen ? <DeviceCard key={`clip-${chosen}`} path={chosen} /> : <EmptyClip />;
+                }}
+              </div>
+              <div style={SLOT}>
+                <div style={{ width: 1, height: CARD, background: "border", keep: true }} />
+              </div>
             </>
           ) : row()?.tool === "track" ? (
-            <div key="instrument" onDrop={({ carried }) => carried && order()[0] !== undefined && moveBefore(carried, order()[0]!)}>
+            <div key="instrument" style={SLOT} onDrop={({ carried }) => carried && order()[0] !== undefined && moveBefore(carried, order()[0]!)}>
               <DeviceCard path={`${name}/synth`} onTitle={() => replace("notes", `${name}/synth`, "Change the instrument")} />
             </div>
           ) : null
@@ -202,14 +229,14 @@ export const Rack = ({ page, name }: { page: Page; name: string }) => {
         <For each={order}>
           {(effect) => (
             <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && moveBefore(carried, effect)}
-              tabStop keys={[EARLIER, LATER]} onKey={({ key }) => step(effect, key === "left" ? -1 : 1)} style={{ radius: "lg", keep: true }}>
+              tabStop keys={["enter"]} onKey={() => choose(effect)} style={() => ({ ...SLOT, background: chosenEffect(page)?.name === effect ? "selected" : undefined })}>
               <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)}
                 onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect", effect)}
                 sidechain={() => sidechainOf(effect)} />
             </div>
           )}
         </For>
-        <div key="add-effect" style={{ keep: true }} onDrop={({ carried }) => carried && moveBefore(carried, null)}>
+        <div key="add-effect" style={SLOT} onDrop={({ carried }) => carried && moveBefore(carried, null)}>
           <Button key="add-effect" label="Add effect" icon="plus" variant="ghost" color="text-secondary" size="lg" onClick={addEffect} />
         </div>
       </div>
@@ -256,9 +283,9 @@ const InputSelect = ({ page: { update, rows }, name }: { page: Page; name: strin
 };
 
 /**
- * A track's sends: a row for each return, its dial, the return's name and what it sends, one
- * under the other in a column of the panel as its fader has one, right of its
- * effects as a send takes the sound after them. Five rows fit, and it ends as far over the
+ * A track's sends: a row for each return, its dial, the return's name and what it sends, which
+ * a click, or enter on its dial, types, one under the other in a column of the panel as its fader has
+ * one, right of its effects as a send takes the sound after them. Five rows fit, and it ends as far over the
  * window's edge as a card does; more scroll down, and the cut one fades.
  */
 const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accessor<string[]> }) => (
@@ -268,13 +295,16 @@ const Sends = ({ page, name, sends }: { page: Page; name: string; sends: Accesso
     </div>
     <div key="sends" style={{ height: SENDS * SEND, scroll: "y" }}>
       <For each={sends}>
-        {(send) => (
-          <div style={{ height: SEND, direction: "row", align: "center", gap: "sm", keep: true }}>
-            <Knob field={`${name}/${send}.gain_db`} label={returnTitle(page, send)} min={-60} max={6} default={0} unit="db" text="none" />
-            <Text variant="label" style={{ width: SEND_NAME, truncate: true, keep: true }}>{returnTitle(page, send)}</Text>
-            <Readout field={`${name}/${send}.gain_db`} unit="db" width={SEND_AMOUNT} align="right" />
-          </div>
-        )}
+        {(send) => {
+          const title = returnTitle(page, send);
+          return (
+            <div style={{ height: SEND, direction: "row", align: "center", gap: "sm", keep: true }}>
+              <Knob field={`${name}/${send}.gain_db`} label={title} min={-60} max={6} default={0} unit="db" text="none" />
+              <Text variant="label" style={{ width: SEND_NAME, truncate: true, keep: true }}>{title}</Text>
+              <Gain path={`${name}/${send}`} width={SEND_AMOUNT} align="right" label={`Change ${title.toLowerCase()}`} />
+            </div>
+          );
+        }}
       </For>
     </div>
   </div>
@@ -313,7 +343,9 @@ export const MasterPanel = ({ page: { state, memory, update } }: { page: Page })
     </div>
     <div style={{ width: 1, background: "border", keep: true }} />
     <div style={CARDS}>
-      <DeviceCard path="limit" on={() => !state.limit_off} onPower={() => update(state.limit_off ? "Turn the limiter on" : "Turn the limiter off", (song) => (song.state.limit_off = !song.state.limit_off))} />
+      <div style={SLOT}>
+        <DeviceCard path="limit" on={() => !state.limit_off} onPower={() => update(state.limit_off ? "Turn the limiter on" : "Turn the limiter off", (song) => (song.state.limit_off = !song.state.limit_off))} />
+      </div>
     </div>
   </div>
 );

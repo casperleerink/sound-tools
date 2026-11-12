@@ -4,7 +4,7 @@ Read `agent-docs/extensions.md` first. The elements and their props are in `exte
 
 - A control's `field` may be a number inside a child's record: `"kit.pads.36.volume_db"`. `value` and `onChange` are what code keeps instead, such as `memory`.
 - A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.
-- `quiet` on a `Knob`, a `NumberBox` or a `Readout` shows its number only while a control of its field is touched or it moves, so a row of them at rest repeats no number.
+- `quiet` on a `Knob` or a `NumberBox` shows its number only while a control of its field is touched or it moves, so a row of them at rest repeats no number.
 
 ## Values that change
 

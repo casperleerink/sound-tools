@@ -2,7 +2,7 @@
 //! hears, the drags that turn what they turn, hovers, drops and keys.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -757,7 +757,6 @@ impl TypeScriptCard {
                 let played = self.live.read(cx).played_of(&self.id).cloned();
                 let sources = Sources {
                     tick: 0.0,
-                    watches: &BTreeMap::new(),
                     state,
                     info,
                     played: played.as_ref(),
@@ -823,6 +822,25 @@ impl TypeScriptCard {
         if let Some(value) = value {
             self.turn(turns, ValueChange::Set(value), cx);
         }
+        true
+    }
+
+    /// Enter on a control that says no number, a dial or a fader: a click on the number of its
+    /// value beside it, which types it. Whether there is one.
+    pub(super) fn type_number_of(
+        &mut self,
+        KeyTurned { turns, node, .. }: &KeyTurned,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(Ok(table)) = self.live.read(cx).tree(self.card) else {
+            return false;
+        };
+        let number = (turns.value.as_deref()).and_then(|value| table.number_of(*node, value));
+        let Some(number) = number else {
+            return false;
+        };
+        let press = press_of((0.0, 0.0), MouseButton::Left, 1, Modifiers::default());
+        self.event(number, EventKind::Click, press, cx);
         true
     }
 

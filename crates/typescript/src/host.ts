@@ -295,6 +295,26 @@ sdk.host.readsBeat = (tool) => {
   return beats.get(tool) ?? false;
 };
 
+/** The parts of `note`, as a sound reads them. */
+const NOTE_OPS = ["frequency", "pitch", "gate", "velocity", "onset"];
+
+/** Whether notes play each tool of the project, once worked out. */
+const hearing = new Map<string, boolean>();
+
+sdk.host.hearsNotes = (tool) => {
+  const spec = sdk.host.tools.get(tool);
+  // A built-in tool in a slot for notes plays them.
+  if (!spec) return true;
+  if (!hearing.has(tool)) {
+    // Its code hears them, its behaviour may pass them on to a child, or its sound reads them.
+    hearing.set(tool, spec.onNotes !== undefined || spec.behaviour !== undefined || combinations(spec).some((choices) => {
+      const graph = made(() => sound(spec, choices));
+      return "Ok" in graph && graph.Ok.nodes.some((node) => NOTE_OPS.includes(node.op));
+    }));
+  }
+  return hearing.get(tool) ?? true;
+};
+
 /** Whether a sound is silence and nothing else: it moves numbers, as an LFO does. */
 function isSilent(graph: Graph): boolean {
   const output = "mono" in graph.output ? graph.nodes[graph.output.mono] : undefined;

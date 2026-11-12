@@ -2,13 +2,14 @@ import { type Action, type ActionKey, type FilledStateOfTool } from "./sdk";
 import { noteCommand, type NoteCommand } from "./clip-editor";
 import { editPoints } from "./song-automation";
 import type { Song } from "./song";
-import { itemCommand, moveItems, placing, putTaken, take, type ClipCommand } from "./song-clips";
-import { BEAT, clamp, itemTool, ITEMS, rowsOf } from "./song-page";
+import { addClip, itemCommand, moveItems, placing, putTaken, take, type ClipCommand } from "./song-clips";
+import { barStarts, BEAT, clamp, itemTool, ITEMS, rowsOf } from "./song-page";
+import { chosenEffect, stepEffect } from "./song-panel";
 import { addSection, addSignatureNear, addTempoAtPlayhead, marksOf, removeMark } from "./song-ruler";
 import { askToDelete, toggleRecordingOf } from "./song-tracks";
 
 // What the song does on a key. The actions of one key are tried from the top: the notes of the
-// open clip first, then the chosen mark of the ruler, point of a lane, regions, track and clips.
+// open clip first, then the chosen mark of the ruler, point of a lane, regions, track, effect and clips.
 // Each says `false` while what it works on is not chosen, and the key goes on to the next.
 
 type SongAction = Action<Song>;
@@ -35,12 +36,13 @@ function onNotes({ memory, children, update, clock }: Song, command: NoteCommand
 
 const notes = (keys: readonly ActionKey[], title: string, command: NoteCommand) => on(keys, title, (tool) => onNotes(tool, command));
 
-/** Escape: closes the editor with no note chosen, else lets go of the chosen notes, mark, point or clips, else closes what shows below. */
+/** Escape: closes the editor with no note chosen, else lets go of the chosen notes, effect, mark, point or clips, else closes what shows below. */
 function back(tool: Song) {
   const { memory } = tool;
   const opened = memory.below?.kind === "editor" ? memory.below.clip : null;
   if (opened && memory.notes.size === 0) memory.below = { kind: "track", name: opened.split("/")[0] ?? "" };
   else if (onNotes(tool, "none")) return;
+  else if (chosenEffect(tool)) memory.effect = null;
   else if (memory.mark) memory.mark = null;
   else if (memory.point) memory.point = null;
   else if (memory.selected.size > 0) memory.selected = new Set();
@@ -73,6 +75,14 @@ const trackStep = (keys: readonly ActionKey[], title: string, by: -1 | 1, move: 
       names.splice(next, 0, name);
       update("Move a track", (song) => (song.state.order = names));
     }
+  });
+
+/** Moves the chosen effect a step earlier or later in the chain of its track. */
+const effectStep = (keys: readonly ActionKey[], title: string, by: -1 | 1) =>
+  on(keys, title, (tool) => {
+    const chosen = chosenEffect(tool);
+    if (!chosen) return false;
+    stepEffect(tool, chosen.track, chosen.name, by);
   });
 
 /** Steps the gain of the chosen regions by a decibel. */
@@ -155,6 +165,7 @@ export const songActions: Record<string, SongAction> = {
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
+  add_note: notes(["n"], "Add a note after the chosen ones, or at the playhead", "add"),
   paste_notes: notes(["cmd-v"], "Paste notes", "paste"),
   quantize_notes: notes(["q"], "Quantize the chosen notes, or all of them", "quantize"),
   delete_notes: notes(["backspace", "delete"], "Delete the chosen notes", "delete"),
@@ -206,12 +217,30 @@ export const songActions: Record<string, SongAction> = {
   move_track_up: trackStep(["alt-up"], "Move the track up", -1, true),
   move_track_down: trackStep(["alt-down"], "Move the track down", 1, true),
 
+  effect_earlier: effectStep(["alt-left"], "Move the chosen effect earlier", -1),
+  effect_later: effectStep(["alt-right"], "Move the chosen effect later", 1),
+
   next_clip: clipStep(["alt-right"], "Choose the next clip", 1),
   previous_clip: clipStep(["alt-left"], "Choose the clip before", -1),
   clip_menu: on(["alt-enter"], "Open the menu of the chosen clip", ({ memory }) => {
     const [chosen] = memory.selected;
     if (chosen === undefined) return false;
     memory.clipMenu = chosen;
+  }),
+  // On the track of the first chosen clip, else on the chosen track: a bar long, in the cell of the grid the playhead is in, as a double click adds one.
+  add_clip: on(["shift-c"], "Add a clip at the playhead", (tool) => {
+    const { memory, children, clock } = tool;
+    const name = [...memory.selected][0]?.split("/")[0] ?? memory.track;
+    if (name === null || children.find((child) => child.name === name)?.tool !== "track") return false;
+    const start = memory.snap > 0 ? Math.floor(Math.round(clock.tick) / memory.snap) * memory.snap : Math.round(clock.tick);
+    const starts = barStarts(clock.tempo_map.time_signatures, start + 1);
+    const next = starts.findIndex((tick) => tick > start);
+    const added = addClip(tool, name, start, (starts[next] ?? 0) - (starts[next - 1] ?? 0) || 4 * BEAT);
+    if (!added) return;
+    memory.selected = new Set([added]);
+    memory.track = name;
+    memory.point = null;
+    memory.mark = null;
   }),
   delete_clips: clips(["backspace", "delete"], "Delete the chosen clips", "delete"),
   cut_clips: clips(["cmd-x"], "Cut the chosen clips", "cut"),

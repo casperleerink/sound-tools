@@ -4,14 +4,14 @@
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ElementId, Empty, GlobalElementId, InspectorElementId,
-    LayoutId, Pixels, SharedString, Size, Window, div, point, prelude::*, px, size,
+    LayoutId, Pixels, SharedString, Size, Style, Window, div, point, prelude::*, px, size,
 };
 use sound_ui::ControlSize;
 use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::Section;
 use sound_ui::components::display::{self, Display};
 
-use crate::tree::{Axes, CellProps, DisplayProps, Layout, Mark, NodeTable, Props};
+use crate::tree::{Axes, CellProps, DisplayProps, Layout, List, Mark, NodeTable, Props};
 
 use super::drawing::Drawing;
 
@@ -34,6 +34,24 @@ pub(super) fn drawn<'a>(
             Some(Props::Marker) | None
         )
     })
+}
+
+/// Where the zero of a wave of a scope among `shapes` lies down the drawing it fills: the
+/// display draws its zero line there by itself.
+fn scope_zero(table: &NodeTable, shapes: &[usize]) -> Option<f32> {
+    shapes
+        .iter()
+        .find_map(|slot| match &table.get(*slot)?.props {
+            Props::Shape(shape)
+                if matches!(shape.list, Some(List::Scope { .. }))
+                    && shape.y.is_none()
+                    && shape.height.is_none() =>
+            {
+                let (low, high) = (shape.low.unwrap_or(-1.), shape.high.unwrap_or(1.));
+                (low < 0. && high > 0.).then(|| high / (high - low))
+            }
+            _ => None,
+        })
 }
 
 /// How many cells of each `Controls` a card shows before its expand icon.
@@ -108,7 +126,9 @@ impl Drawing<'_> {
         // A place of the view's space, inside the margin, as a place of the whole drawing.
         let across = |x: f32| (DISPLAY_MARGIN + x * (width - 2. * DISPLAY_MARGIN)) / width;
         let up = |y: f32| 1. - (DISPLAY_MARGIN + y * (height - 2. * DISPLAY_MARGIN)) / height;
-        display = display.when_some(props.zero, |display, zero| display.zero_line(up(zero)));
+        let space = (spaces.first()).and_then(|slot| Some((*slot, table.get(*slot)?)));
+        let zero = (props.zero).or_else(|| scope_zero(table, &space?.1.children));
+        display = display.when_some(zero, |display, zero| display.zero_line(up(zero)));
         if let Some(scale) = &props.scale {
             let lines = scale.x.iter().filter_map(|mark| match mark {
                 Mark::Line(x) => Some(across(*x)),
@@ -125,7 +145,6 @@ impl Drawing<'_> {
         for control in controls {
             display = display.control(control);
         }
-        let space = (spaces.first()).and_then(|slot| Some((*slot, table.get(*slot)?)));
         if let Some((slot, entry)) = space
             && let Props::Space(space) = &entry.props
         {
@@ -150,8 +169,8 @@ impl Drawing<'_> {
             .into_any_element()
     }
 
-    /// The cells of a card, two to a column. In a card the first columns show, and the rest
-    /// after a hairline while the card is expanded; a page shows them all.
+    /// The cells of a card, in two rows. In a card the first show, and the rest after a
+    /// hairline while the card is expanded; a page shows them all.
     pub(super) fn controls(&mut self, children: &[usize]) -> AnyElement {
         self.small(|drawing| drawing.cells(children))
     }
@@ -165,21 +184,12 @@ impl Drawing<'_> {
         };
         let (first, rest) = cells.split_at(shown);
         let expanded = self.expanded == Some(true);
-        let mut columns = |cells: &[usize]| -> Vec<AnyElement> {
-            (cells.chunks(2))
-                .map(|column| {
-                    let rows =
-                        (column.iter()).map(|cell| div().h(px(ROW_HEIGHT)).child(self.cell(*cell)));
-                    // A cell narrower than its column stays on the grid, at its left.
-                    (div().flex_none().flex().flex_col().items_start())
-                        .children(rows)
-                        .into_any_element()
-                })
-                .collect()
+        let mut grid = |cells: &[usize]| CellGrid {
+            cells: cells.iter().map(|cell| self.cell(*cell)).collect(),
         };
-        let row = (div().flex().flex_none().h(px(ROW_HEIGHT * 2.))).children(columns(first));
+        let row = (div().flex().flex_none().h(px(ROW_HEIGHT * 2.))).child(grid(first));
         match expanded && !rest.is_empty() {
-            true => row.child(Section::new().children(columns(rest))),
+            true => row.child(Section::new().child(grid(rest))),
             false => row,
         }
         .into_any_element()
@@ -208,6 +218,111 @@ impl Drawing<'_> {
             frame: None,
         }
         .into_any_element()
+    }
+}
+
+/// Cells in two rows, filled by column: each goes in the first place, down the columns, that
+/// is free for as many columns as it is wide. So a cell of one column after a wide one goes
+/// beside the cell over or under the wide one, and leaves no hole there.
+struct CellGrid {
+    cells: Vec<AnyElement>,
+}
+
+/// The column and the row of the first place in `taken` free for `span` columns, now taken.
+fn place(taken: &mut Vec<[bool; 2]>, span: usize) -> (usize, usize) {
+    let mut column = 0;
+    loop {
+        for row in 0..2 {
+            let free = (column..column + span)
+                .all(|column| taken.get(column).is_none_or(|rows| !rows[row]));
+            if free {
+                taken.resize(taken.len().max(column + span), [false; 2]);
+                (taken[column..column + span].iter_mut()).for_each(|rows| rows[row] = true);
+                return (column, row);
+            }
+        }
+        column += 1;
+    }
+}
+
+impl IntoElement for CellGrid {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for CellGrid {
+    /// The column and the row of each cell.
+    type RequestLayoutState = Vec<(usize, usize)>;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Vec<(usize, usize)>) {
+        let mut taken = Vec::new();
+        let places = (self.cells.iter_mut())
+            .map(|cell| {
+                let needs = cell.layout_as_root(by_itself(), window, cx);
+                let span = (f32::from(needs.width) / CELL_WIDTH).round().max(1.) as usize;
+                place(&mut taken, span)
+            })
+            .collect();
+        let style = Style {
+            size: size(
+                px(taken.len() as f32 * CELL_WIDTH).into(),
+                px(ROW_HEIGHT * 2.).into(),
+            ),
+            flex_shrink: 0.,
+            ..Style::default()
+        };
+        (window.request_layout(style, [], cx), places)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        places: &mut Vec<(usize, usize)>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for (cell, (column, row)) in self.cells.iter_mut().zip(places) {
+            let at = point(
+                px(*column as f32 * CELL_WIDTH),
+                px(*row as f32 * ROW_HEIGHT),
+            );
+            cell.prepaint_as_root(bounds.origin + at, by_itself(), window, cx);
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Vec<(usize, usize)>,
+        (): &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for cell in &mut self.cells {
+            cell.paint(window, cx);
+        }
     }
 }
 

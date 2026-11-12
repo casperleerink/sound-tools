@@ -26,15 +26,15 @@ use super::input::Hears;
 /// a low note.
 const SCOPE_FRAMES: usize = 2048;
 
-/// The peak below which a scope that fits its height shrinks with its sound, about -30 dB: a
+/// The peak below which a scope shrinks with its sound, about -30 dB: a
 /// sound that dies away sinks to a flat line, and noise at the floor is not blown up.
 const SCOPE_FLOOR: f32 = 0.03;
 
-/// How much of its height a scope that fits it reaches: its line stays whole at the edges.
+/// How much of its height a scope reaches: its line stays whole at the edges.
 const SCOPE_REACH: f32 = 0.9;
 
-/// What a scope that fits its height multiplies its sound by, whose loudest sample is `peak`:
-/// a quiet sound is as tall as a loud one, and silence stays flat.
+/// What a scope multiplies its sound by, whose loudest sample is `peak`: it fits its height,
+/// so a quiet sound is as tall as a loud one, and silence stays flat.
 fn scope_gain(peak: f32) -> f32 {
     SCOPE_REACH / peak.max(SCOPE_FLOOR)
 }
@@ -515,7 +515,6 @@ impl Placing<'_> {
                 name,
                 channel,
                 frames,
-                fit,
             }) => {
                 let Some((kept, _)) = feeds.scopes.get(name) else {
                     return Vec::new();
@@ -536,14 +535,11 @@ impl Placing<'_> {
                 };
                 let start = (0..=latest).rev().find(rises).unwrap_or(latest);
                 // By the loudest of all it keeps, not of what shows: a steady gain.
-                let gain = match fit {
-                    Some(false) => 1.0,
-                    _ => scope_gain(
-                        kept.iter()
-                            .map(|frame| pick(frame).abs())
-                            .fold(0.0, f32::max),
-                    ),
-                };
+                let gain = scope_gain(
+                    kept.iter()
+                        .map(|frame| pick(frame).abs())
+                        .fold(0.0, f32::max),
+                );
                 let shown = kept.iter().skip(start).take(count);
                 shown.map(|frame| pick(frame) * gain).collect()
             }

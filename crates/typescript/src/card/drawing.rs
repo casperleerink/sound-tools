@@ -25,6 +25,7 @@ use crate::tree::{self, DivProps, IconProps, InputProps, Layout, NodeTable, Prop
 
 use super::controls::{Control, Keys};
 use super::edges::{Edges, soft_edges};
+use super::in_view::{InView, Scroller};
 use super::input::{Hears, Hovers, hears_hover, listener};
 use super::shapes::SpaceIndex;
 use super::sync::Embedded;
@@ -36,7 +37,6 @@ pub(super) struct Drawing<'a> {
     pub(super) info: Option<Rc<ToolInfo>>,
     /// The record, with each field it leaves out at its default.
     pub(super) state: Rc<Value>,
-    pub(super) watches: &'a BTreeMap<String, f32>,
     pub(super) played: Option<&'a BTreeMap<String, f32>>,
     pub(super) tick: f64,
     pub(super) spaces: HashMap<String, SpaceView>,
@@ -60,8 +60,8 @@ pub(super) struct Drawing<'a> {
     pub(super) scrolls: &'a RefCell<HashMap<String, ScrollHandle>>,
     pub(super) scrolled_cards: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     pub(super) button_down: bool,
-    /// The scroll of the div that scrolls what it draws now, the innermost.
-    pub(super) scroller: Option<ScrollHandle>,
+    /// The divs that scroll what it draws now, the innermost last.
+    pub(super) scrollers: Vec<Scroller>,
     /// Whether it draws the title bar's div, which the body leaves out.
     pub(super) in_title_bar: bool,
     /// Whether what it draws shows out of its page, in the title bar.
@@ -112,7 +112,6 @@ impl Drawing<'_> {
     pub(super) fn sources(&self) -> Sources<'_> {
         Sources {
             tick: self.tick,
-            watches: self.watches,
             state: &self.state,
             info: self.info.as_deref(),
             played: self.played,
@@ -124,8 +123,25 @@ impl Drawing<'_> {
         }
     }
 
-    /// Draws the node in `slot`.
+    /// Draws the node in `slot`. What tab goes to is kept in view by the divs that scroll it.
     pub(super) fn draw(&mut self, slot: usize) -> AnyElement {
+        let element = self.node(slot);
+        let Some(entry) = (self.table.get(slot)).filter(|entry| takes_focus(&entry.props)) else {
+            return element;
+        };
+        if self.scrollers.is_empty() {
+            return element;
+        }
+        InView {
+            id: ElementId::Name(self.element_name("in-view", None, entry.id).into()),
+            scrollers: self.scrollers.clone(),
+            page: self.card.clone(),
+            child: element,
+        }
+        .into_any_element()
+    }
+
+    fn node(&mut self, slot: usize) -> AnyElement {
         DRAWN_NODES.fetch_add(1, Ordering::Relaxed);
         let table = self.table;
         let Some(entry) = table.get(slot) else {
@@ -181,7 +197,7 @@ impl Drawing<'_> {
                         view: Some(view),
                         placing: Some(placed),
                         ..
-                    }) if placing => placed.room(view, &self.card),
+                    }) if placing => placed.room(view, &self.card, &self.scrollers),
                     Some(Embedded {
                         view: Some(view), ..
                     }) => view.clone().into_any_element(),
@@ -189,8 +205,8 @@ impl Drawing<'_> {
                     Some(Embedded { frame, .. }) => frame.card().into_any_element(),
                     None => div().into_any_element(),
                 };
-                match self.scroller.clone() {
-                    Some(scroller) => self.scrolled_card(id, card, scroller),
+                match self.scrollers.last() {
+                    Some((scroller, _)) => self.scrolled_card(id, card, scroller.clone()),
                     None => card,
                 }
             }
@@ -276,7 +292,9 @@ impl Drawing<'_> {
                         .collect();
                     Some((heights?, gap, showing))
                 });
-                let outer = (scroller.clone()).map(|scroller| self.scroller.replace(scroller));
+                if let Some(scroller) = (scroller.clone()).zip(style.scroll()) {
+                    self.scrollers.push(scroller);
+                }
                 // A text it cuts off with "…" shows whole on hover, and only then. Under a div
                 // with a tooltip, GPUI would show this one in its place, even empty.
                 let own_tip = !self.under_tooltip && tooltip.is_none();
@@ -343,8 +361,8 @@ impl Drawing<'_> {
                     let hovered = hears_hover(id, self.hovers.clone(), card);
                     children.push(hovered.into_any_element());
                 }
-                if let Some(outer) = outer {
-                    self.scroller = outer;
+                if scroller.is_some() {
+                    self.scrollers.pop();
                 }
                 let base = match (variant, &words) {
                     (Some(variant), Some(run)) => div()
@@ -500,6 +518,22 @@ impl Drawing<'_> {
             .child(shown)
             .child(writes.absolute().size_full())
             .into_any_element()
+    }
+}
+
+/// Whether a node is itself what tab goes to.
+fn takes_focus(props: &Props) -> bool {
+    match props {
+        Props::Div(div) => div.tab_stop == Some(true),
+        Props::Space(space) => space.drag.is_some(),
+        Props::Input(_)
+        | Props::Card(_)
+        | Props::Button(_)
+        | Props::Toggle(_)
+        | Props::Slider(_)
+        | Props::Segmented(_)
+        | Props::Steps(_) => true,
+        _ => false,
     }
 }
 

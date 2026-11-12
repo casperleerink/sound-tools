@@ -287,15 +287,17 @@ function spanOf(notes: readonly Note[]) {
 }
 
 /** What an action of the song does to the notes of the open clip. */
-export type NoteCommand = "all" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | keyof typeof NOTE_MOVES;
+export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | keyof typeof NOTE_MOVES;
 /** How far each move takes the chosen notes: in steps of the grid, and in pitches. */
 const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "octave-up": [0, 12], "octave-down": [0, -12] } as const;
 
 /**
  * Does `command` to the notes of `clip`, which starts at `clip.start` in the song with the
- * playhead at `playhead`; whether there was something to do: all but choosing them all and a
- * paste need chosen notes. A paste goes to the playhead when it is inside the clip, else right
- * after the chosen notes, else to the start of the clip.
+ * playhead at `playhead`; whether there was something to do: all but choosing them all, adding
+ * one and a paste need chosen notes. A paste goes to the playhead when it is inside the clip,
+ * else right after the chosen notes, else to the start of the clip. A note added goes right
+ * after the chosen ones, at the pitch of the last, so adding again makes a row to type the
+ * values of, up to the end of the clip; with none chosen, on the grid where a paste goes, at C4.
  */
 export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   // Notes an undo or another tool took away are no longer chosen.
@@ -303,11 +305,17 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
   const change = changer(memory, edit);
   const picked = () => [...chosen].map((index) => clip.notes[index]!);
   const without = (notes: Note[], gone: ReadonlySet<number>) => ({ notes: notes.filter((_, index) => !gone.has(index)), chosen: new Set<number>() });
+  const inside = playhead >= clip.start && playhead < clip.start + lengthOf(clip);
   if (command === "all") {
     memory.notes = new Set(clip.notes.map(noteKey));
+  } else if (command === "add") {
+    const last = picked().reduce<Note | undefined>((latest, note) => (latest && latest.start + latest.length >= note.start + note.length ? latest : note), undefined);
+    const start = last ? last.start + last.length : inside ? snapped(playhead - clip.start, memory.snap) : 0;
+    if (start >= lengthOf(clip)) return false;
+    const note = { start, length: memory.length, pitch: last?.pitch ?? 60, velocity: 100 };
+    change("Add a note", (notes) => ({ notes: [...notes, note], chosen: new Set([notes.length]) }));
   } else if (command === "paste") {
     if (!memory.copied) return false;
-    const inside = playhead >= clip.start && playhead < clip.start + lengthOf(clip);
     const at = inside ? playhead - clip.start : chosen.size > 0 ? (({ start, span }) => start + span)(spanOf(picked())) : 0;
     const pasted = memory.copied.map((note) => ({ ...note, start: note.start + at }));
     change("Paste notes", (notes) => ({ notes: [...notes, ...pasted], chosen: new Set(pasted.map((_, index) => notes.length + index)) }));
@@ -563,6 +571,12 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
     );
   };
 
+  /** The notes as their velocities draw: the chosen ones last, so the bar of one draws over a neighbour's at the same start. */
+  const velocities = () => {
+    const chosen = (note: Note) => memory.notes.has(noteKey(note));
+    return [...notes().filter((note) => !chosen(note)), ...notes().filter(chosen)];
+  };
+
   /** The points of an expression lane: a double click adds one, alt and a press takes one away, a drag moves one. */
   const ExpressionLane = ({ lane }: { lane: Exclude<Lane, "velocity"> }) => {
     const points = () => {
@@ -700,7 +714,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
         <Space key={`${key}-lane`} grow height={LANE} {...across} unit={{ x: ACROSS, y: LANE }} follow={{ x: key }} onPress={pressLane} drag={velocityDraw}>
           {() => {
             const lane = memory.lane;
-            return lane === "velocity" ? <For each={notes}>{VelocityBar}</For> : <ExpressionLane lane={lane} />;
+            return lane === "velocity" ? <For each={velocities}>{VelocityBar}</For> : <ExpressionLane lane={lane} />;
           }}
           <Line from={[drawn.startX, drawn.startY]} to={[drawn.startX.plus(drawn.dx.times(drawn.active)), drawn.startY.plus(drawn.dy.times(drawn.active))]} color="text" width={1} />
           <Cursor to={1} />

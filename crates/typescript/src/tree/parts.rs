@@ -51,6 +51,8 @@ props! {
         label: String,
         /// A row that changes another row, such as accents: quieter than a row of notes.
         secondary: bool,
+        /// Its steps are on or off: no drag or key changes how strong one is.
+        switches: bool,
         on_change: bool,
     }
 }

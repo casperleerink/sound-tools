@@ -7,17 +7,24 @@
 //! once, also during a drag. The knob keeps only its focus handle and the open drag, in element
 //! state under its id.
 //!
+//! A knob with a [`Unit`] also takes a typed value: a click on its value, or enter while it has
+//! the focus, puts a field where the dial is. Enter, or the focus going elsewhere, reads what
+//! was typed in the unit the knob shows, as one [`ValueChange::Set`]; escape puts it back.
+//!
 //! An automated knob shows the value its lane plays, with the mark of
-//! [`automated`](super::automated), and does not drag, step or reset.
+//! [`automated`](super::automated), and does not drag, step, reset or take a typed value.
 //!
 //! [`KnobRange`] maps the value to the travel of the knob, linear or logarithmic, and gives
 //! values of three significant digits, so a readout and a saved file stay short.
 
+use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
-    App, Bounds, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, Pixels, SharedString,
-    StyleRefinement, Window, canvas, div, prelude::*, px,
+    App, Bounds, Context, CursorStyle, Div, ElementId, Entity, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, Pixels, SharedString, StyleRefinement, Subscription, Window, canvas, div,
+    prelude::*, px,
 };
 use sound_core::Parameter;
 
@@ -25,6 +32,9 @@ use crate::components::automated;
 use crate::components::cell::{self, CONTROL_HEIGHT};
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::paint;
+use crate::components::text_input::TextInput;
+pub use crate::components::typed::Typed;
+use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
 
 /// The arc runs from -135 to +135 degrees, like a hardware pot.
@@ -125,15 +135,49 @@ pub fn seconds_readout(seconds: f32) -> String {
     }
 }
 
+/// How a knob says a value and how it reads one that is typed on it. The two are one thing, so
+/// a typed value is always read in the unit the knob shows.
+#[derive(Clone, Copy)]
+pub struct Unit {
+    readout: fn(f32) -> String,
+    typed: Typed,
+}
+
+impl Unit {
+    pub const fn new(readout: fn(f32) -> String, typed: Typed) -> Self {
+        Self { readout, typed }
+    }
+
+    /// The value with its unit, as the knob shows it.
+    pub fn readout(&self, value: f32) -> String {
+        (self.readout)(value)
+    }
+
+    pub const fn typed(&self) -> Typed {
+        self.typed
+    }
+
+    pub const HERTZ: Self = Self::new(hertz_readout, Typed::Hertz);
+    pub const DECIBELS: Self = Self::new(decibels_readout, Typed::Number);
+    /// A part of one.
+    pub const PERCENT: Self = Self::new(percent_readout, Typed::Per(100.));
+    pub const MILLISECONDS: Self = Self::new(milliseconds_readout, Typed::Milliseconds);
+    pub const SECONDS: Self = Self::new(seconds_readout, Typed::Seconds);
+    pub const SEMITONES: Self = Self::new(semitones_readout, Typed::Number);
+    /// From -1, left, to 1, right.
+    pub const PAN: Self = Self::new(pan_readout, Typed::Pan);
+    /// A number with no unit, such as the Q of a band.
+    pub const NUMBER: Self = Self::new(short, Typed::Number);
+}
+
 /// A knob of a device card on one number of a record. The name of the knob, its range and its
 /// default come from the [`Parameter`]; the card says the label, the name of the undo step and
-/// how the value reads. A const of the card, and `Copy`, so a callback can keep it.
+/// the unit of the value. A const of the card, and `Copy`, so a callback can keep it.
 pub struct ParameterKnob<S: 'static> {
     pub parameter: &'static Parameter<S>,
     pub label: &'static str,
     pub undo_label: &'static str,
-    /// The value with its unit, such as [`hertz_readout`].
-    readout: fn(f32) -> String,
+    unit: Unit,
     bipolar: bool,
     id: &'static str,
 }
@@ -151,13 +195,13 @@ impl<S> ParameterKnob<S> {
         parameter: &'static Parameter<S>,
         label: &'static str,
         undo_label: &'static str,
-        readout: fn(f32) -> String,
+        unit: Unit,
     ) -> Self {
         Self {
             parameter,
             label,
             undo_label,
-            readout,
+            unit,
             bipolar: false,
             id: parameter.field,
         }
@@ -187,7 +231,7 @@ impl<S> ParameterKnob<S> {
     }
 
     pub fn readout(&self, value: f32) -> String {
-        (self.readout)(value)
+        self.unit.readout(value)
     }
 
     /// The name and the value in `of`, as the handle of a display says what it moves:
@@ -207,6 +251,7 @@ impl<S> ParameterKnob<S> {
             .bipolar(self.bipolar)
             .label(self.label)
             .readout(self.readout(value))
+            .typed(self.unit.typed)
     }
 }
 
@@ -224,6 +269,7 @@ pub struct Knob {
     automated: bool,
     /// Values in whole steps of this, and an arrow key moves one step.
     step: Option<f32>,
+    typed: Option<Typed>,
     on_change: Option<ChangeHandler<f32>>,
 }
 
@@ -241,8 +287,15 @@ impl Knob {
             disabled: false,
             automated: false,
             step: None,
+            typed: None,
             on_change: None,
         }
+    }
+
+    /// The knob takes a typed value, read as `typed` says: give how its readout reads.
+    pub fn typed(mut self, typed: Typed) -> Self {
+        self.typed = Some(typed);
+        self
     }
 
     /// Values in whole steps of `step` from 0, such as a note number: a drag gives the step
@@ -459,6 +512,89 @@ pub(crate) fn drags(
         .child(gesture::drag_listeners(state.clone(), on_change))
 }
 
+/// What a typed text does to the knob the field opened on.
+type Taken = Rc<dyn Fn(&str, &mut Window, &mut App)>;
+
+/// What a knob that takes a typed value keeps in element state under its id.
+struct Typing {
+    open: Option<OpenField>,
+    /// Whether the knob held still at its last render: what was typed is then dropped.
+    holds: Cell<bool>,
+}
+
+struct OpenField {
+    input: Entity<TextInput>,
+    /// What the field opened on: left as it is, nothing was typed.
+    opened: String,
+    /// Kept from the knob as it was then: a card may show another value under the same knob
+    /// before the field closes, such as another band of an EQ.
+    taken: Taken,
+    /// The focus of the knob, which gets the keys back.
+    knob: FocusHandle,
+    _blur: Subscription,
+}
+
+impl Typing {
+    /// Puts the field on the knob with `text` in it, all selected, and gives it the keys.
+    fn open(
+        &mut self,
+        text: String,
+        taken: Taken,
+        knob: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| TextInput::new(cx).size(ControlSize::Sm));
+        // The field calls these inside its own update, so it closes once that is over.
+        let closes = |commit: bool| {
+            let typing = cx.weak_entity();
+            move |_: &str, window: &mut Window, cx: &mut App| {
+                let typing = typing.clone();
+                window.defer(cx, move |window, cx| {
+                    typing
+                        .update(cx, |typing, cx| typing.close(commit, window, cx))
+                        .ok();
+                });
+            }
+        };
+        let (enter, escape) = (closes(true), closes(false));
+        input.update(cx, |input, cx| {
+            input.set_text(text.clone(), cx);
+            input.select_all_text(cx);
+            input.set_on_submit(enter);
+            input.set_on_cancel(escape);
+        });
+        let focus = input.focus_handle(cx);
+        // What was typed counts when the keys go elsewhere too, as on a press beside it.
+        let blur = cx.on_blur(&focus, window, |typing, window, cx| {
+            typing.close(true, window, cx);
+        });
+        window.focus(&focus, cx);
+        self.open = Some(OpenField {
+            input,
+            opened: text,
+            taken,
+            knob,
+            _blur: blur,
+        });
+        cx.notify();
+    }
+
+    fn close(&mut self, commit: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(field) = self.open.take() else {
+            return;
+        };
+        cx.notify();
+        if field.input.focus_handle(cx).is_focused(window) {
+            window.focus(&field.knob, cx);
+        }
+        let text = field.input.read(cx).text().to_string();
+        if commit && !self.holds.get() && text != field.opened {
+            (field.taken)(&text, window, cx);
+        }
+    }
+}
+
 impl RenderOnce for Knob {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
@@ -480,14 +616,65 @@ impl RenderOnce for Knob {
         };
         let (value, range, bipolar) = (self.value, self.range, self.bipolar);
         let position = range.position(value);
+        let held = disabled || automated;
+        let on_change = self.on_change;
+
+        let typing = self.typed.zip(on_change.clone()).map(|(typed, on_change)| {
+            let id = ElementId::NamedChild(Arc::new(self.id.clone()), "typed".into());
+            let typing = window.use_keyed_state(id, cx, |_, _| Typing {
+                open: None,
+                holds: Cell::new(held),
+            });
+            typing.read(cx).holds.set(held);
+            (typing, typed, on_change)
+        });
+        // The field stands where the dial is, over the label, and the value line is gone. A
+        // knob that holds still shows none: the field then loses the keys, which closes it.
+        let field = (typing.as_ref())
+            .and_then(|(typing, ..)| typing.read(cx).open.as_ref())
+            .filter(|_| !held)
+            .map(|field| field.input.clone());
+        if let Some(field) = field {
+            let selector = self.id.clone();
+            let field = div()
+                .debug_selector(move || format!("knob-{selector}-typed"))
+                .w(px(cell::control_width(1)))
+                .child(field);
+            let field = Some(field.into_any_element());
+            return cell::frame(self.base, field, self.label, None, cell::CELL_WIDTH, cx);
+        }
+        // Opens the field on the value as it is now.
+        let step = self.step;
+        let types = typing.filter(|_| !held).map(|(typing, typed, on_change)| {
+            let knob = focus_handle.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let on_change = on_change.clone();
+                let taken: Taken = Rc::new(move |text, window, cx| {
+                    let Some(typed) = typed.value(text) else {
+                        return;
+                    };
+                    let typed = match step {
+                        Some(step) => (typed / step).round() * step,
+                        None => typed,
+                    };
+                    let typed = typed.max(range.min).min(range.max);
+                    if typed != value {
+                        on_change(ValueChange::Set(typed), window, cx);
+                    }
+                });
+                let (text, knob) = (typed.text(value), knob.clone());
+                typing.update(cx, |typing, cx| {
+                    typing.open(text, taken, knob, window, cx);
+                });
+            }
+        });
+
         let dial = canvas(
             |_, _, _| {},
             move |bounds, (), window, _| paint_dial(bounds, position, bipolar, &colors, window),
         )
         .size_full();
 
-        let held = disabled || automated;
-        let on_change = self.on_change;
         let marked = self.id.clone();
         let mark = automated.then(|| {
             let mark = automated::mark(DIAL - automated::MARK - MARK_INSET, MARK_INSET, cx);
@@ -504,7 +691,7 @@ impl RenderOnce for Knob {
         // For tests, which find the knob by its id: `knob-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
         let knob = div()
-            .id(self.id)
+            .id(self.id.clone())
             .debug_selector(move || format!("knob-{selector}"))
             .relative()
             .size(px(DIAL))
@@ -513,12 +700,38 @@ impl RenderOnce for Knob {
                 true => d.child(gesture::held_listeners(state.clone(), on_change)),
                 false => drags(d, dragged, &state, &focus_handle, on_change),
             })
+            .when_some(types.clone(), |d, types| {
+                d.on_key_down(move |event, window, cx| {
+                    let enter = event.keystroke.key == "enter";
+                    let plain = !event.keystroke.modifiers.modified();
+                    // The mouse has a knob that is dragged.
+                    if enter && plain && !state.read(cx).is_dragging() {
+                        cx.stop_propagation();
+                        types(window, cx);
+                    }
+                })
+            })
             .when(automated, |d| {
                 let d = d.track_focus(&focus_handle);
                 automated::tooltip(d.on_key_down(|event, _, cx| gesture::held_key_down(event, cx)))
             })
             .child(dial)
             .children(mark);
+
+        // A click on the value types it. The target reaches the foot of the cell.
+        let value_target = types.filter(|_| self.readout.is_some()).map(|types| {
+            let selector = self.id.clone();
+            div()
+                .id(ElementId::NamedChild(Arc::new(self.id), "value".into()))
+                .debug_selector(move || format!("knob-{selector}-value"))
+                .absolute()
+                .top(px(cell::VALUE_LINE))
+                .left_0()
+                .w_full()
+                .h(px(cell::ROW_HEIGHT - cell::VALUE_LINE))
+                .cursor(CursorStyle::IBeam)
+                .on_click(move |_, window, cx| types(window, cx))
+        });
 
         cell::frame(
             self.base,
@@ -528,6 +741,7 @@ impl RenderOnce for Knob {
             cell::CELL_WIDTH,
             cx,
         )
+        .children(value_target)
         .when(disabled, |d| d.opacity(0.4))
     }
 }

@@ -7,6 +7,7 @@
 mod controls;
 mod drawing;
 mod edges;
+mod in_view;
 mod input;
 mod paint;
 mod parts;
@@ -17,7 +18,7 @@ mod steps;
 mod sync;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -194,6 +195,14 @@ pub fn soft_edges(page: &AnyView, key: &str, cx: &App) -> Option<[f32; 2]> {
     let page = page.clone().downcast::<Page>().ok()?;
     let edges = page.read(cx).0.read(cx).edges.borrow();
     edges.get(key).map(edges::Edge::fades)
+}
+
+/// Where the div of `key` that scrolls on the page `page` shows what it scrolls, in the window.
+#[cfg(feature = "test-support")]
+pub fn scroll_room(page: &AnyView, key: &str, cx: &App) -> Option<Bounds<Pixels>> {
+    let page = page.clone().downcast::<Page>().ok()?;
+    let edges = page.read(cx).0.read(cx).edges.borrow();
+    edges.get(key).map(edges::Edge::room)
 }
 
 /// Whether the page has a text node that says `text`, for tests waiting for a view change.
@@ -813,8 +822,6 @@ impl TypeScriptCard {
     ) -> Drawing<'a> {
         let live = self.live.read(cx);
         let info = live.info(self.card);
-        static NONE: BTreeMap<String, f32> = BTreeMap::new();
-        let watches = live.watches(self.card).unwrap_or(&NONE);
         let played = live.played_of(&self.id);
         let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
         let drag =
@@ -833,7 +840,6 @@ impl TypeScriptCard {
         Drawing {
             info,
             state,
-            watches,
             played,
             tick,
             spaces: self.spaces.borrow().clone(),
@@ -854,7 +860,7 @@ impl TypeScriptCard {
             scrolls: &self.scrolls,
             scrolled_cards: self.scrolled_cards.clone(),
             button_down: self.button_down.get(),
-            scroller: None,
+            scrollers: Vec::new(),
             in_title_bar: false,
             out_of_page: false,
             under_tooltip: false,

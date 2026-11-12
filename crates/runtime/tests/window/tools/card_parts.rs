@@ -4,6 +4,7 @@
 //! it shows a transport and puts a part that does not grow in its middle.
 
 use gpui::{TestAppContext, px};
+use sound_ui::POLL_INTERVAL;
 use sound_ui::components::cell::CELL_WIDTH;
 
 use super::gestures::press_key;
@@ -126,6 +127,95 @@ fn the_ring_of_the_step_that_plays_shows_only_while_the_piece_plays(cx: &mut Tes
     assert_eq!(window.problems(), []);
 }
 
+/// Sixteen steps whose sound says the sixteenth the piece is in.
+const RUNNER: &str = r#"import { beat, floor, h, output, pattern, Steps, tool } from "./sdk";
+
+tool({
+  name: "runner",
+  title: "Runner",
+  when: "A test",
+  doc: "Sixteen steps, and the one that plays as its sound says it.",
+  state: { steps: pattern({ length: 16, min: 0, max: 1, default: 0 }) },
+  sound: () => {
+    output("step", floor(beat.times(4)).mod(16));
+    return 0;
+  },
+  view: () => h(Steps, { field: "steps", playing: "step" }),
+});
+"#;
+
+/// The ring is on the step the playhead is in at every poll, so it and a transport never show
+/// two moments.
+#[gpui::test]
+fn the_ring_is_on_the_step_the_playhead_is_in(cx: &mut TestAppContext) {
+    let mut window = page(cx, "runner", RUNNER);
+    window.until_found("step-15");
+    window.wait_for_bun();
+    window.start_playing();
+    // Its code hears that the piece plays, and the row shows a ring.
+    window.until("a ring", |window| {
+        (0..16).any(|step| window.find(&format!("step-{step}-playing")).is_some())
+    });
+    let session = window.session.clone();
+    let mut steps = std::collections::BTreeSet::new();
+    for _ in 0..60 {
+        // Not a whole number of steps, so the playhead lands inside one.
+        window.render(1000);
+        window.cx.executor().advance_clock(POLL_INTERVAL);
+        window.cx.run_until_parked();
+        let tick = (window.cx).read(|cx| session.read(cx).playhead().read(cx).tick.0);
+        // On a line the playhead is at the next step and the sound has played only the last.
+        if tick.is_multiple_of(240) {
+            continue;
+        }
+        let step = tick / 240 % 16;
+        let ring = format!("step-{step}-playing");
+        assert!(window.find(&ring).is_some(), "no {ring} at tick {tick}");
+        steps.insert(step);
+    }
+    assert!(steps.len() > 4, "{steps:?}");
+}
+
+/// Four accents, which are on or off.
+const SWITCHES: &str = r#"import { h, pattern, Steps, tool } from "./sdk";
+
+tool({
+  name: "switches",
+  title: "Switches",
+  when: "A test",
+  doc: "Four accents, each on or off, on a page that holds the keys first.",
+  state: { accents: pattern({ length: 4, min: 0, max: 1, integer: true, default: [1, 0, 0, 0] }) },
+  sound: () => 0,
+  onKey: () => {},
+  view: () => h(Steps, { field: "accents" }),
+});
+"#;
+
+/// A step of a row of switches is on or off: a drag up it, which makes a hit of a row of
+/// strengths soft, turns it as a click does, and the keys that change a strength do nothing.
+#[gpui::test]
+fn a_row_of_switches_turns_its_steps_and_no_drag_makes_one_half_strong(cx: &mut TestAppContext) {
+    let mut window = page(cx, "switches", SWITCHES);
+    let step = window.until_found("step-1");
+    window.wait_for_bun();
+    // A fifth of the way up a row of strengths.
+    window.press(step);
+    window.drag_to(step - gpui::point(px(0.), px(16.)));
+    window.release(step - gpui::point(px(0.), px(16.)));
+    window.until("the step on", |window| {
+        window.record("switches")["accents"] == serde_json::json!([1, 1, 0, 0])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Turn a step on"));
+    for key in ["tab", "down", "shift-down", "left", "space"] {
+        press_key(&mut window, key);
+    }
+    window.until("the first step off", |window| {
+        window.record("switches")["accents"] == serde_json::json!([0, 1, 0, 0])
+    });
+    assert_eq!(window.problems(), []);
+}
+
 /// A rig that shows the cards of its box and of its beat. The box gives a display, then a knob
 /// over a wide control, two more knobs, and two that do not fit beside a display. The beat gives
 /// two rows of steps and five knobs, and the plain one has no view: a pattern, a list of pitches,
@@ -211,23 +301,32 @@ fn a_card_shows_its_first_columns_and_the_rest_behind_its_expand_icon(cx: &mut T
     let kind = window.bounds("segmented-kind").unwrap();
     assert_eq!(kind.size.height, px(24.));
 
-    // The wide control takes whole columns, and the knob over it stays in the first of them.
+    // The wide control takes whole columns under the first knob; the next knob fills the room
+    // over it, and the one after starts the column past it.
     let left = |window: &mut super::Opened<'_>, selector: &str| {
         f32::from(window.bounds(selector).unwrap().origin.x)
     };
     let kind = f32::from(window.bounds("segmented-kind").unwrap().size.width);
     let columns = (kind / CELL_WIDTH).ceil();
     assert!(columns >= 2., "{kind}");
-    let (a, b) = (
+    let (a, b, c) = (
         left(&mut window, "space-knob-a"),
         left(&mut window, "space-knob-b"),
+        left(&mut window, "space-knob-c"),
     );
-    assert_eq!(b - a, CELL_WIDTH * columns);
+    assert_eq!(b - a, CELL_WIDTH);
+    assert_eq!(c - a, CELL_WIDTH * columns);
+    let top =
+        |window: &mut super::Opened<'_>, selector: &str| window.bounds(selector).unwrap().origin.y;
+    assert_eq!(
+        top(&mut window, "space-knob-b"),
+        top(&mut window, "space-knob-a")
+    );
 
     let expand = window.until_found("card-rig/box-expand");
     window.click(expand);
     let d = window.until_found("space-knob-d");
-    assert!(d.x > px(b), "the hidden columns come after the others");
+    assert!(d.x > px(c), "the hidden columns come after the others");
     let expand = window.until_found("card-rig/box-expand");
     window.click(expand);
     window.until("the card to fold", |window| {

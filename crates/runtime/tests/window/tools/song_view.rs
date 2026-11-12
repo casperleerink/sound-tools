@@ -1331,6 +1331,31 @@ fn a_clip_added_in_three_four_is_as_long_as_its_bar(cx: &mut TestAppContext) {
     );
 }
 
+/// Shift-C in the first bar of a piece that changes to 3/4 and then to 6/8 later adds a clip as
+/// long as the bar the playhead is in, not as a bar of a later signature.
+#[gpui::test]
+fn the_key_adds_a_clip_as_long_as_the_bar_at_the_playhead(cx: &mut TestAppContext) {
+    let files = files_with(1, 0, "project.json", |project| {
+        let map = project["tempo_map"].as_object_mut().unwrap();
+        map.remove("time_signature");
+        let runs = serde_json::json!([
+            { "signature": "4/4", "bars": 2 },
+            { "signature": "3/4", "bars": 2 },
+            { "signature": "6/8", "bars": 1 },
+        ]);
+        map.insert("time_signatures".into(), runs);
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("shift-c");
+    window.until("the clip added", |window| window.has("song/t00/clip"));
+    let clip = window.record("song/t00/clip");
+    assert_eq!(
+        (clip["start"].as_u64(), clip["length"].as_u64()),
+        (Some(0), Some(4 * 960))
+    );
+}
+
 /// A pitch the editor shows of `clip` with no note at `tick`, near the middle of its notes.
 pub(super) fn free_pitch(clip: &serde_json::Value, tick: f32) -> u8 {
     let notes = clip["notes"].as_array().cloned().unwrap_or_default();
@@ -1574,6 +1599,109 @@ fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
     window.until_found("toggle-pre-fader-ret-a");
 }
 
+/// What a send sends is typed at its number in its row of the panel, as the gain of a fader
+/// is: a click, the number, enter. One undo step, named as the drag of its dial.
+#[gpui::test]
+fn what_a_send_sends_is_typed_in_its_row_of_the_panel(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let head = window.until_found("div-name-t00");
+    window.click(head);
+    let amount = window.until_found("space-gain-t00/send-ret-a");
+    window.click(amount);
+    window.until_found("div-gain-t00/send-ret-a-typed");
+    window.keys("secondary-a - 6 enter");
+    window.until("the send typed", |window| {
+        window.record("song/t00/send-ret-a")["gain_db"].as_f64() == Some(-6.0)
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change room"));
+    assert_eq!(window.problems(), []);
+}
+
+/// Tab until the keys are on the control of `field`, whose quiet number then shows: a number
+/// that is quiet now, as only that reads whether its control is touched. The pointer goes off
+/// the controls first, as it shows a number too.
+fn tab_to_the_control_of(window: &mut Opened<'_>, field: &str) {
+    let name = format!("touched:{field}");
+    window.hover(point(px(2.), px(2.)));
+    window.focus_the_window();
+    for _ in 0..200 {
+        press_key(window, "tab");
+        window.find("div-mixer");
+        if sound_typescript::shown_by_live_values(&name) == Some(1.) {
+            return;
+        }
+    }
+    panic!("tab did not reach the control of {field}");
+}
+
+/// Each number of a strip of the mixer is typed where it stands, read as it shows. The keys:
+/// the dial is the one tab stop of a dial and its number, and enter on it types the number.
+/// The pointer: a click on the pan under its dial, or on what a send sends beside its dial,
+/// types it, and a drag from it still turns it. One undo step each, named as the dial's drag.
+#[gpui::test]
+fn the_pan_and_the_sends_of_a_strip_are_typed_at_their_numbers(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let toggle = window.until_found("toggle-mixer-toggle");
+    window.click(toggle);
+    window.until_found("space-pan-t00/mix");
+    let pan = |window: &mut Opened<'_>| window.record("song/t00/mix")["pan"].as_f64();
+    let sent = |window: &mut Opened<'_>| window.record("song/t00/send-ret-a")["gain_db"].as_f64();
+
+    tab_to_the_control_of(&mut window, "t00/mix.pan");
+    press_key(&mut window, "enter");
+    window.until_found("div-pan-t00/mix-typed");
+    window.keys("secondary-a 5 0 r enter");
+    window.until("the pan typed by the keys", |window| {
+        pan(window) == Some(0.5)
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change pan"));
+    // The dial has the keys again, for the arrows.
+    window.until_found("space-pan-t00/mix");
+    press_key(&mut window, "down");
+    window.until("a step left", |window| pan(window) == Some(0.46));
+
+    tab_to_the_control_of(&mut window, "t00/send-ret-a.gain_db");
+    press_key(&mut window, "enter");
+    window.until_found("div-strip-send-t00/send-ret-a-typed");
+    window.keys("secondary-a - 1 8 enter");
+    window.until("the send typed by the keys", |window| {
+        sent(window) == Some(-18.0)
+    });
+    // The next tab leaves the send: its number is no second stop.
+    window.until_found("space-strip-send-t00/send-ret-a");
+    press_key(&mut window, "tab");
+    window.find("div-mixer");
+    let touched = sound_typescript::shown_by_live_values("touched:t00/send-ret-a.gain_db");
+    assert_eq!(touched, Some(0.));
+
+    let number = window.until_found("space-pan-t00/mix");
+    window.click(number);
+    window.until_found("div-pan-t00/mix-typed");
+    window.keys("secondary-a 2 5 l enter");
+    window.until("the pan typed", |window| pan(window) == Some(-0.25));
+
+    let number = window.until_found("space-strip-send-t00/send-ret-a");
+    window.click(number);
+    window.until_found("div-strip-send-t00/send-ret-a-typed");
+    window.keys("secondary-a - 6 enter");
+    window.until("the send typed", |window| sent(window) == Some(-6.0));
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change room"));
+
+    let number = window.until_found("space-pan-t00/mix");
+    window.press(number);
+    window.drag_to(number - point(px(0.), px(20.)));
+    window.release(number - point(px(0.), px(20.)));
+    window.wait_for_bun();
+    assert!(window.find("div-pan-t00/mix-typed").is_none());
+    assert!(pan(&mut window).is_some_and(|pan| pan > -0.25));
+    assert_eq!(window.problems(), []);
+}
+
 #[gpui::test]
 fn a_new_return_opens_the_returns(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 1, 1);
@@ -1637,11 +1765,8 @@ fn delete_asks_before_it_deletes_the_track_whose_panel_shows(cx: &mut TestAppCon
     assert_eq!(window.problems(), []);
 }
 
-/// With Write automation on in the transport, a drag of a track's fader in the mixer while the
-/// song plays writes into the lane of its volume, from the volume the lane plays and not the
-/// fader's own: one undo step, and the fader keeps its volume.
-#[gpui::test]
-fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mut TestAppContext) {
+/// The song with its mixer open, whose first track has a lane on its volume that plays -12 dB.
+fn open_with_a_volume_lane(cx: &mut TestAppContext) -> Opened<'_> {
     let mut files = song_files(2, 2);
     for (path, text) in &mut files {
         if path == "state/song/t00/instance.json" {
@@ -1661,12 +1786,27 @@ fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mu
     window.wait_for_bun();
     let toggle = window.until_found("toggle-mixer-toggle");
     window.click(toggle);
+    window
+}
+
+/// Turns Write automation on in the transport.
+fn write_automation(window: &mut Opened<'_>) {
     let write = window.until_found("toggle-write-automation");
     window.click(write);
     let session = window.session.clone();
     window.until("automation written", |window| {
         window.cx.read(|cx| session.read(cx).writes_automation())
     });
+}
+
+/// With Write automation on in the transport, a drag of a track's fader in the mixer while the
+/// song plays writes into the lane of its volume, from the volume the lane plays and not the
+/// fader's own: one undo step, and the fader keeps its volume.
+#[gpui::test]
+fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mut TestAppContext) {
+    let mut window = open_with_a_volume_lane(cx);
+    write_automation(&mut window);
+    let session = window.session.clone();
     let fader = window.space_at("fader-t00/mix.gain_db") + point(px(14.), px(40.));
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
     window.play_and_draw(4_800);
@@ -1706,6 +1846,59 @@ fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mu
         .filter_map(|point| point["value"].as_f64())
         .fold(f64::MAX, f64::min);
     assert_eq!(quietest, -100., "{points}");
+    assert_eq!(window.problems(), []);
+}
+
+/// A volume typed at a strip goes the way of a drag of its fader that goes there and lets go
+/// at once. While its lane plays it the lane holds it: nothing changes. With Write automation
+/// on while the song plays it lands in the lane at the playhead, as the one undo step a drag
+/// is, and the fader keeps its volume.
+#[gpui::test]
+fn a_volume_typed_while_its_lane_plays_is_refused_and_with_write_lands_in_the_lane(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_with_a_volume_lane(cx);
+    let session = window.session.clone();
+    (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
+    window.play_and_draw(4_800);
+    let (before, record, lane) = (
+        crate::support::mark(&mut window),
+        window.record("song/t00/mix"),
+        window.record("song/t00/lane-volume"),
+    );
+    let type_volume = |window: &mut Opened<'_>, volume: &str| {
+        let number = window.space_at("gain-t00/mix") + point(px(10.), px(8.));
+        window.click(number);
+        window.until_found("div-gain-t00/mix-typed");
+        window.keys("secondary-a");
+        window.cx.simulate_input(volume);
+        window.keys("enter");
+        window.until_found("space-gain-t00/mix");
+        window.wait_for_bun();
+        window.after_the_runs();
+    };
+    let label = window.undo_label();
+    type_volume(&mut window, "-3");
+    assert_eq!(window.record("song/t00/mix"), record);
+    assert_eq!(window.record("song/t00/lane-volume"), lane);
+    assert_eq!(window.undo_label(), label);
+
+    write_automation(&mut window);
+    window.play_and_draw(4_800);
+    let playhead = (window.cx).read(|cx| session.read(cx).playhead().read(cx).tick.0);
+    type_volume(&mut window, "-3");
+    let points = window.record("song/t00/lane-volume")["points"].clone();
+    let written = (points.as_array().unwrap().iter())
+        .find(|point| point["value"].as_f64() == Some(-3.))
+        .unwrap_or_else(|| panic!("{points}"));
+    // On the grid of a written line, a thirty-second, from where the song played.
+    let tick = written["tick"].as_u64().unwrap();
+    assert!(
+        tick + 120 > playhead && tick < playhead + 2 * BAR,
+        "{points} at {playhead}"
+    );
+    assert_eq!(window.record("song/t00/mix"), record);
+    crate::support::one_undo_step(&mut window, "Write automation", &before);
     assert_eq!(window.problems(), []);
 }
 

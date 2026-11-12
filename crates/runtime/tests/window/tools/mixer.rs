@@ -398,8 +398,8 @@ tool({
 });
 "##;
 
-#[gpui::test]
-fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAppContext) {
+/// The swept filter, whose lane plays 300 Hz at the start over a record of 1000 Hz.
+fn open_swept(cx: &mut TestAppContext) -> Opened<'_> {
     let project = json!({
         "format": 1,
         "extensions": ["filter"],
@@ -409,7 +409,7 @@ fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAp
     .to_string();
     let lane = json!({ "tool": "lane", "state": { "points": [{ "tick": 0, "value": 300 }, { "tick": 3840, "value": 3000 }] } })
         .to_string();
-    let mut window = open(
+    open(
         cx,
         &[
             ("project.json", &project),
@@ -424,7 +424,12 @@ fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAp
             ("state/swept/sweep.json", &lane),
             ("extensions/swept.ts", SWEPT),
         ],
-    );
+    )
+}
+
+#[gpui::test]
+fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAppContext) {
+    let mut window = open_swept(cx);
     let cutoff = window.space_at("knob-filter.cutoff_hz") + point(px(28.), px(18.));
     assert_eq!(window.problems(), []);
     window.wait_for_bun();
@@ -461,4 +466,35 @@ fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAp
     window.release(resonance - point(px(0.), px(50.)));
     assert!(window.record("swept/filter")["resonance"].as_f64().unwrap() > 0.2);
     assert_eq!(window.undo_label().as_deref(), Some("Change resonance"));
+}
+
+/// Typing goes the way of a drag: the number its lane moves refuses a typed value too, and
+/// the knob beside it takes one as one undo step.
+#[gpui::test]
+fn a_value_typed_on_a_knob_its_lane_moves_changes_nothing(cx: &mut TestAppContext) {
+    let mut window = open_swept(cx);
+    let value_of = |window: &mut Opened<'_>, field: &str| {
+        window.space_at(&format!("knob-{field}")) + point(px(32.), px(62.))
+    };
+    let cutoff = value_of(&mut window, "filter.cutoff_hz");
+    window.wait_for_bun();
+    window.click(cutoff);
+    window.until_found("div-knob-filter.cutoff_hz-typed");
+    window.keys("cmd-a 2 0 0 0 enter");
+    window.until_found("space-knob-filter.cutoff_hz");
+
+    let resonance = value_of(&mut window, "filter.resonance");
+    window.click(resonance);
+    window.until_found("div-knob-filter.resonance-typed");
+    window.keys("cmd-a 5 0 enter");
+    window.until("the resonance typed", |window| {
+        window.record("swept/filter")["resonance"].as_f64() == Some(0.5)
+    });
+    // The value typed first came first, and changed nothing.
+    assert_eq!(window.record("swept/filter")["cutoff_hz"], 1000.0);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change resonance"));
+    window.undo();
+    assert_eq!(window.undo_label(), None);
+    assert_eq!(window.problems(), []);
 }

@@ -121,6 +121,8 @@ export const host = {
   tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
   /** Whether the sound of the tool `name` reads `beat` or `bpm`. The host says. */
   readsBeat: (_name: string): boolean => false,
+  /** See `hearsNotes` in `tools.ts`. The host says. */
+  hearsNotes: (_name: string): boolean => true,
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
   mount,

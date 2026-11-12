@@ -168,6 +168,14 @@ export function takes<Port extends "notes" | "audio">(port: Port): Takes<Port> {
   return `takes:${port}` as Takes<Port>;
 }
 
+/**
+ * Whether notes play the tool `name`, such as what fills a `takes("notes")` slot, by
+ * `String(child.tool)`. `false` for a tool of the project that makes its own notes, such as a
+ * step sequencer: its sound reads no `note`, and it has no `onNotes` and no behaviour to pass
+ * them on. A parent then shows what it sends that child as not played.
+ */
+export const hearsNotes = (name: string): boolean => host.hearsNotes(name);
+
 declare const filled: unique symbol;
 /**
  * The tool of a child a `Takes` slot holds: one that takes `Port`, whichever it is. Not a string

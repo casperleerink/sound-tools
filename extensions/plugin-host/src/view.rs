@@ -1,7 +1,8 @@
 //! The card of a hosted plugin. The plugin draws its interface in a window of its own, so the
-//! card has no display: in its place one row, the button that opens the window and the list
-//! that pins parameters to the card; then a cell per pin, two to a column, so the card grows
-//! wider and never taller.
+//! card has no display: in its place the button that opens the window, over the list that pins
+//! parameters to the card. At rest the card is as narrow as those two. Then a cell per pin in
+//! the two rows beside them, each in the row that has the most room, so the card grows wider
+//! and never taller.
 //!
 //! A stepped parameter is driven by the number of its step, never by its value, so a control
 //! always writes one of the plugin's own step values.
@@ -41,8 +42,8 @@ use crate::{Parameter, Pin, PluginProblem, PluginRecord, Plugins, Steps, WeakPlu
 
 /// A dropdown spans two cells, so the names of its steps fit.
 const DROPDOWN_SPAN: usize = 2;
-/// The two controls of the card itself take two cells each: the place of a display.
-const STRIP_SPAN: usize = 2;
+/// The two controls of the card itself take three cells each, so the name of the plugin fits.
+const OWN_SPAN: usize = 3;
 /// The longest name a switch of one column holds. A longer one takes two, and one past that
 /// ends in an ellipsis, with the whole name in a tooltip.
 const SWITCH_LETTERS: usize = 7;
@@ -223,7 +224,7 @@ impl PluginView {
             DropdownMenu::new("Parameters", Vec::new(), cx)
                 .searchable("Search", cx)
                 .trigger(Trigger::Select)
-                .trigger_width(control_width(STRIP_SPAN))
+                .trigger_width(control_width(OWN_SPAN))
                 .side(Side::Top)
                 .width(260.)
                 .max_height(320.)
@@ -467,11 +468,11 @@ impl PluginView {
         cx.notify();
     }
 
-    /// The cell of the pin `id`.
-    fn pin(&self, id: u32, pin: &Pin, cx: &mut Context<Self>) -> AnyElement {
+    /// The cell of the pin `id`, and how many columns it takes.
+    fn pin(&self, id: u32, pin: &Pin, cx: &mut Context<Self>) -> (AnyElement, usize) {
         let parameter = self.parameters.as_ref().and_then(|list| list.get(&id));
         let Some(parameter) = parameter else {
-            return missing(id, pin, cx);
+            return (missing(id, pin, cx), 1);
         };
         let name = SharedString::from(parameter.name.clone());
         let label = format!("Change {name}");
@@ -511,10 +512,10 @@ impl PluginView {
                     false => toggle,
                 };
                 let columns = if letters > SWITCH_LETTERS { 2 } else { 1 };
-                return Cell::switch(toggle)
+                let cell = Cell::switch(toggle)
                     .span(columns)
-                    .when(out_of_range, |cell| cell.value("Out of range"))
-                    .into_any_element();
+                    .when(out_of_range, |cell| cell.value("Out of range"));
+                return (cell.into_any_element(), columns);
             }
             Control::Dropdown(steps) => {
                 let items = steps
@@ -580,12 +581,13 @@ impl PluginView {
                             view.change(id, &label, change, value, cx);
                         })),
                 };
-                return knob.into_any_element();
+                return (knob.into_any_element(), 1);
             }
         };
-        cell.label(name)
-            .when(out_of_range, |cell| cell.value("Out of range"))
-            .into_any_element()
+        let cell = cell
+            .label(name)
+            .when(out_of_range, |cell| cell.value("Out of range"));
+        (cell.into_any_element(), DROPDOWN_SPAN)
     }
 }
 
@@ -675,8 +677,7 @@ impl Render for PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return div().into_any_element();
         };
-        // The plugin draws itself in a window of its own, so its card has no display: the way
-        // there and the list of its parameters, or what is wrong.
+        // A plugin that cannot play says why where a display would be.
         let strip = ControlStrip::new();
         let card = self.frame.card();
 
@@ -691,7 +692,7 @@ impl Render for PluginView {
                 .debug_selector(move || id.to_string())
                 .variant(ButtonVariant::Subtle)
                 .on_card()
-                .w(px(control_width(STRIP_SPAN)))
+                .w(px(control_width(OWN_SPAN)))
                 .focus_handle(&self.window_focus)
         };
         // The plugin crashed or hung in its own process, and waits for the composer.
@@ -729,32 +730,42 @@ impl Render for PluginView {
         } else {
             "Open window"
         };
-        // A control that does nothing is not shown: with no window the card says why.
-        let strip = match has_window {
-            true => strip.control(
-                button("plugin-window", label)
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx))),
-            ),
-            false => strip.message(no_window),
+        // A control that does nothing is not shown: with no window the card says why there.
+        let window = match has_window {
+            true => button("plugin-window", label)
+                .on_click(cx.listener(|view, _, _, cx| view.toggle_window(cx)))
+                .into_any_element(),
+            false => div()
+                .w(px(control_width(OWN_SPAN)))
+                .text_variant(TextVariant::Label)
+                .line_height(px(14.))
+                .text_color(cx.theme().text_secondary())
+                .child(no_window)
+                .into_any_element(),
         };
-        let strip = match self.parameters.is_some() {
-            true => strip.control(self.menu.clone()),
-            false => strip,
+        let own = Column::new().top(Cell::new(window).span(OWN_SPAN));
+        let own = match self.parameters.is_some() {
+            true => own.bottom(Cell::new(self.menu.clone()).span(OWN_SPAN)),
+            false => own,
         };
-
-        // Two pins to a column, in the order of their ids.
-        let mut pins = record
-            .parameters
-            .iter()
-            .map(|(pin, value)| self.pin(*pin, value, cx));
-        let mut card = card.display(strip);
-        while let Some(top) = pins.next() {
-            let column = Column::new().top(top);
-            card = card.column(match pins.next() {
-                Some(bottom) => column.bottom(bottom),
-                None => column,
-            });
+        let card = card.column(own);
+        if record.parameters.is_empty() {
+            return card.into_any_element();
         }
-        card.into_any_element()
+
+        // In the order of their ids, each in the row with the most room: a pin of one column
+        // goes over or under the last, and beside a wide one where that leaves a hole.
+        let (mut pins, mut top, mut bottom) = (Column::new(), 0, 0);
+        for (pin, value) in &record.parameters {
+            let (cell, columns) = self.pin(*pin, value, cx);
+            if top <= bottom {
+                pins = pins.top(cell);
+                top += columns;
+            } else {
+                pins = pins.bottom(cell);
+                bottom += columns;
+            }
+        }
+        card.column(pins).into_any_element()
     }
 }

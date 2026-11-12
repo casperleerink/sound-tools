@@ -1,7 +1,7 @@
-import { Circle, For, Fragment, Group, h, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Text, untrack, Wave, type Accessor, type Child as Shapes, type Drag, type Dropped, type FilledStateOfTool, type Live, type Num, type Press, type Shortcut } from "./sdk";
+import { Circle, For, Fragment, Group, h, hearsNotes, Input, Label, Line, memo, Notes, now, Path, Rect, selector, Show, Space, Text, untrack, Wave, type Accessor, type Child as Shapes, type Drag, type Dropped, type FilledStateOfTool, type Live, type Num, type Press, type Shortcut } from "./sdk";
 import { lengthOf } from "./clip-editor";
 import { LaneRow } from "./song-automation";
-import { endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
+import { addClip, endMoved, itemCommand, moveItems, startMoved, type ClipCommand } from "./song-clips";
 import { ACROSS, BEAT, clamp, clipsOf, colourOf, COLOR, DIM, itemTool, LEAD, LOW_ROW, muted, regionsOf, ROW, titleOf, type Child, type Page } from "./song-page";
 import { NAMING, Shades, SoftFoot } from "./song-ruler";
 import { addInstrumentTrack, cannotRender, notesTrackOf, RENDER_ITEM, renderToTrack } from "./song-tracks";
@@ -12,6 +12,13 @@ import { secondsBetween, ticksAcross } from "./song-time";
 // it records, and the lanes of automation under a track that shows them.
 
 const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
+/** What the pointer over a clip that does not play reads. */
+const UNPLAYED = "Not played: the instrument makes its own notes";
+/** Whether the instrument of `each` plays its clips: one that makes its own notes, such as a step sequencer, hears none of them. */
+const plays = (each: Child) => {
+  const synth = each.tool === "track" ? each.children.find((child) => child.name === "synth") : undefined;
+  return synth === undefined || hearsNotes(String(synth.tool));
+};
 
 export const Timeline = ({ page }: { page: Page }) => {
   const { state, children, memory, update, clock, outputs, openMenu, exportNotes, rows, layout, tops, topOf, rowAt, starts, barOf, end, choose, clipAt, itemAt, lengthAt, editClips, timeline, playhead, handle } = page;
@@ -38,7 +45,10 @@ export const Timeline = ({ page }: { page: Page }) => {
     onEnd: ({ dx, dy, alt }) =>
       choose(moveItems(page, state.order, memory.selected, Math.round(dx), (row) => rowMoved(row, Math.round(dy)), alt)),
   });
-  const copying = now.drag("move").alt;
+  const moving = now.drag("move");
+  const copying = moving.alt;
+  /** The clips no instrument plays, which say so under the pointer. */
+  const unplayed = memo(() => layout().flatMap(({ each, lane, add }, row) => (lane || add || plays(each) ? [] : clipsOf(each).map((clip) => ({ key: `${each.name}/${clip.name}`, clip, row })))));
   /** A chosen clip or region where it was, while a drag with alt copies it: the original stays. */
   const Original = ({ x, row, width, picked, dim = () => 1, contents }: { x: Accessor<number>; row: Accessor<number>; width: Accessor<number>; picked: Accessor<boolean>; dim?: Accessor<number>; contents: (opacity: Live) => Shapes }) => (
     <Show when={picked}>
@@ -143,14 +153,7 @@ export const Timeline = ({ page }: { page: Page }) => {
     const start = cellAt(x);
     const bar = barOf(start);
     const length = (starts()[bar] ?? 0) - (starts()[bar - 1] ?? 0) || 4 * BEAT;
-    let added: string | undefined;
-    update("Add a clip", ({ children }) => {
-      const owner = children.find((child) => child.name === row.each.name);
-      if (owner?.tool !== "track") return;
-      const name = freeName(owner.children.map((child) => child.name), "clip");
-      owner.children = [...owner.children, { name, tool: "timeline", state: { start, length, notes: [] } }];
-      added = `${owner.name}/${name}`;
-    });
+    const added = addClip(page, row.each.name, start, length);
     if (added) choose(new Set([added]));
   };
   const dropOnTimeline = ({ files, timelines, x, y }: Dropped) => {
@@ -205,7 +208,8 @@ export const Timeline = ({ page }: { page: Page }) => {
       const bottom = ROW - 12 - ((shown - range) / 2) * step;
       return { lowest, step, height, bottom };
     });
-    const dim = () => (muted(each) ? DIM : 1);
+    // As dim as a muted track's: neither sounds.
+    const dim = () => (muted(each) || !plays(each) ? DIM : 1);
     const notes = (opacity: () => Num) => (
       <For each={() => clip.state.notes}>
         {(note) => (
@@ -220,7 +224,7 @@ export const Timeline = ({ page }: { page: Page }) => {
         <Original x={() => clip.state.start} row={row} width={length} picked={picked} dim={dim} contents={(shown) => notes(() => shown.times(dim()))} />
         <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
-          <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
+          <Rect key={`clip-${key}`} x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
             color="fill" border={() => (picked() ? "text" : "border-strong")} borderWidth={1} opacity={dim}
             grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           {notes(dim)}
@@ -423,6 +427,17 @@ export const Timeline = ({ page }: { page: Page }) => {
             </>
           )
         }
+      </For>
+      <For each={unplayed}>
+        {({ key, clip, row }) => {
+          const shown = now.hover(`clip-${key}`).times(moving.active.negate().plus(1));
+          const x = () => timeline.left.max(clip.state.start).plus(timeline.pointX.times(8));
+          const y = () => topOf(row) + (ROW - 22) / 2 / ROW;
+          return [
+            <Rect x={x} y={y} width={timeline.pointX.times(UNPLAYED.length * 5.4 + 16)} height={22 / ROW} radius={6} color="background" border="border-strong" borderWidth={1} opacity={shown} />,
+            <Label x={() => x().plus(timeline.pointX.times(8))} y={() => y() + 3 / ROW} text={UNPLAYED} color="text" opacity={shown} />,
+          ];
+        }}
       </For>
       <SoftFoot page={page} />
       <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}

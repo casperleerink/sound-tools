@@ -19,9 +19,7 @@ use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    ParameterKnob, decibels_readout, hertz_readout, pan_readout, percent_readout,
-};
+use sound_ui::components::knob::{ParameterKnob, Unit};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
@@ -49,19 +47,18 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// starts there.
 type Control = ParameterKnob<UtilityState>;
 
-const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", decibels_readout).bipolar();
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::DECIBELS).bipolar();
 /// `utility-pan`, because the mixer strip of the track, in the same panel, has a `pan` of its
 /// own, and a test finds a control by its name.
-const PAN_KNOB: Control = Control::new(&PAN, "Pan", "Change pan", pan_readout)
+const PAN_KNOB: Control = Control::new(&PAN, "Pan", "Change pan", Unit::PAN)
     .bipolar()
     .id("utility-pan");
-const WIDTH_KNOB: Control =
-    Control::new(&WIDTH, "Width", "Change width", percent_readout).bipolar();
+const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", Unit::PERCENT).bipolar();
 const BASS_KNOB: Control = Control::new(
     &BASS_MONO_HZ,
     "Below",
     "Change bass mono frequency",
-    hertz_readout,
+    Unit::HERTZ,
 );
 
 /// A switch of the card.

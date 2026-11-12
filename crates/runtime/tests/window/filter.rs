@@ -159,6 +159,112 @@ fn an_automated_cutoff_shows_its_lane_and_does_not_drag(cx: &mut TestAppContext)
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
 }
 
+/// The filter alone in the window that has the keys, as the app's window does. A window says
+/// that the keys left a field only while it is that one, and a test's is not until it is told.
+fn open_active(cx: &mut TestAppContext) -> Opened<'_> {
+    let mut opened = open_panel(cx);
+    opened.cx.update(|window, _| window.activate_window());
+    opened.settle();
+    opened
+}
+
+/// Types `text` over what the field of the knob `knob` shows. The field opens by a click on
+/// the value of the knob.
+fn type_on(opened: &mut Opened<'_>, knob: &str, text: &str) {
+    let value = opened.control(&format!("{knob}-value"));
+    opened.click(value);
+    assert!(opened.find(&format!("{knob}-typed")).is_some(), "{knob}");
+    opened.cx.simulate_input(text);
+    opened.cx.run_until_parked();
+}
+
+/// A click on the value of a knob puts a field in its place. Enter reads what was typed in the
+/// unit the knob shows, inside its range, as one undo step. Escape, and enter on what the field
+/// opened with, change nothing.
+#[gpui::test]
+fn a_value_typed_on_a_knob_is_read_in_its_unit_as_one_step(cx: &mut TestAppContext) {
+    let mut opened = open_active(cx);
+    let default = FilterState::default();
+    assert_eq!(opened.find("knob-cutoff_hz-typed"), None);
+
+    let before = support::mark(&mut opened);
+    type_on(&mut opened, "knob-cutoff_hz", "1.2 kHz");
+    assert_eq!(state(&mut opened), default, "typing alone is no edit");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened).cutoff_hz, 1_200.);
+    assert_eq!(opened.find("knob-cutoff_hz-typed"), None);
+    support::one_undo_step(&mut opened, "Change cutoff", &before);
+
+    // A part of one is typed as it shows, in percent, with or without the sign.
+    type_on(&mut opened, "knob-resonance", "50%");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened).resonance, 0.5);
+    type_on(&mut opened, "knob-resonance", "35");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened).resonance, 0.35);
+    type_on(&mut opened, "knob-drive_db", "6 dB");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened).drive_db, 6.);
+    // Past the end of the travel is the end.
+    type_on(&mut opened, "knob-cutoff_hz", "90k");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened).cutoff_hz, 20_000.);
+
+    // The keys went back to the knob, so enter opens the field again, on the value without
+    // its unit. Enter on that, escape after typing, and words are no edit.
+    let typed = state(&mut opened);
+    let step = opened.undo_label();
+    for keys in ["enter", "9 escape", "l o u d enter"] {
+        opened.keys("enter");
+        assert!(opened.find("knob-cutoff_hz-typed").is_some(), "{keys}");
+        opened.keys(keys);
+        assert_eq!(opened.find("knob-cutoff_hz-typed"), None, "{keys}");
+        assert_eq!(state(&mut opened), typed, "{keys}");
+        assert_eq!(opened.undo_label(), step, "{keys}");
+    }
+
+    // What was typed counts when the keys go elsewhere: a press on another knob.
+    type_on(&mut opened, "knob-cutoff_hz", "440");
+    let resonance = opened.control("knob-resonance");
+    opened.click(resonance);
+    assert_eq!(state(&mut opened).cutoff_hz, 440.);
+    assert_eq!(opened.find("knob-cutoff_hz-typed"), None);
+
+    // A double click on the dial still sets the default.
+    let knob = opened.control("knob-cutoff_hz");
+    opened.double_click(knob);
+    assert_eq!(state(&mut opened).cutoff_hz, default.cutoff_hz);
+}
+
+/// A value a lane moves cannot be typed, as it cannot be dragged: its value takes no click and
+/// enter on the knob opens nothing. A lane that arrives while a value is typed takes the field
+/// away, and what was typed is dropped.
+#[gpui::test]
+fn an_automated_knob_takes_no_typed_value(cx: &mut TestAppContext) {
+    let mut opened = open_active(cx);
+    type_on(&mut opened, "knob-cutoff_hz", "440");
+    automate(&mut opened, &[(0, 300.)]);
+    assert_eq!(opened.find("knob-cutoff_hz-typed"), None);
+    assert_eq!(state(&mut opened), FilterState::default());
+    let automated = opened.undo_label();
+
+    assert_eq!(opened.find("knob-cutoff_hz-value"), None);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.click(knob);
+    opened.keys("enter");
+    assert_eq!(opened.find("knob-cutoff_hz-typed"), None);
+    opened.cx.simulate_input("440");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened), FilterState::default());
+    assert_eq!(opened.undo_label(), automated);
+
+    // Without the lane the knob takes a typed value again.
+    automate(&mut opened, &[]);
+    type_on(&mut opened, "knob-cutoff_hz", "440");
+    opened.keys("enter");
+    assert_eq!(state(&mut opened).cutoff_hz, 440.);
+}
+
 /// A lane that arrives during a drag of the cutoff, as an agent writes it: the drag ends at the
 /// next mouse move, with the gesture of the session, so undo does not wait for a mouse up.
 #[gpui::test]
@@ -265,6 +371,49 @@ fn a_drag_of_an_automated_cutoff_while_it_plays_writes_into_its_lane(cx: &mut Te
     });
     play_on(&mut opened, 4_800);
     assert!(opened.find("automated-cutoff_hz").is_some());
+}
+
+/// A value typed on the cutoff while automation is written and the piece plays is a drag that
+/// goes there and lets go at once: it lands in the lane where the piece played, the lane goes
+/// back to its line after, and the record keeps its cutoff. One undo step, named as the drag's.
+#[gpui::test]
+fn a_value_typed_on_an_automated_cutoff_while_it_plays_writes_into_its_lane(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open_active(cx);
+    let far = 64 * support::BAR;
+    automate(&mut opened, &[(0, 1_000.), (far, 1_000.)]);
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.set_writes_automation(true, cx);
+            session.engine().play();
+        });
+    });
+    play_on(&mut opened, 24_000);
+    let before = support::mark(&mut opened);
+    type_on(&mut opened, "knob-cutoff_hz", "2 kHz");
+    play_on(&mut opened, 4_800);
+    let playhead = (opened.cx).read(|cx| session.read(cx).playhead().read(cx).tick.0);
+    opened.keys("enter");
+    opened.settle();
+
+    let written = points(&mut opened);
+    let (first, last) = (written[0], written[written.len() - 1]);
+    assert_eq!((first, last), ((0, 1_000.), (far, 1_000.)), "{written:?}");
+    let typed: Vec<_> = (written.iter().copied())
+        .filter(|(_, value)| *value == 2_000.)
+        .collect();
+    assert!(!typed.is_empty(), "{written:?}");
+    assert!(
+        typed.iter().all(|(tick, _)| tick.abs_diff(playhead) <= 120),
+        "{written:?} at {playhead}"
+    );
+    assert_eq!(
+        state(&mut opened).cutoff_hz,
+        FilterState::default().cutoff_hz
+    );
+    support::one_undo_step(&mut opened, "Write automation", &before);
 }
 
 /// Escape during a drag that writes automation puts everything back: the lane has its points,

@@ -94,7 +94,7 @@ export type Shape =
          * `height` say: a line `size` points thick, smooth for a history, or with `band` the
          * lowest to the highest under each point, as a waveform. A line about zero lies on a
          * hairline at zero, and a history that is not full yet is empty at its left. `text` when
-         * `color` is left out, as a value is; `green` is for sound that moves. `level` scales
+         * `color` is left out, as a value and its history are; `green` is for sound. `level` scales
          * them about the middle along it: `[x, factor]` from its left, straight between, so a
          * waveform shows its gain and fades.
          */
@@ -191,6 +191,8 @@ export interface SpaceProps extends PointerEvents {
    * drag turns one number, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
    */
   drag?: Drag;
+  /** `false` where tab passes it by, as it shows the number of another control: enter on that one clicks it. */
+  tabStop?: Bind<false | undefined>;
   /** Files or a carried value let go on it, where in its units. */
   onDrop?: (drop: Dropped) => void;
   cursor?: Pointed["cursor"];

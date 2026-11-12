@@ -12,9 +12,7 @@ use gpui::{Context, Entity, Window, div, prelude::*};
 use sound_core::Instance;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::Display;
-use sound_ui::components::knob::{
-    ParameterKnob, milliseconds_readout, percent_readout, short, signed,
-};
+use sound_ui::components::knob::{ParameterKnob, Typed, Unit, short, signed};
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views};
 
 use crate::{BANDS, FORMANT, HIGHEST_HZ, LOWEST_HZ, MIX, RELEASE, Vocoder, VocoderState};
@@ -44,12 +42,22 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<VocoderState>;
 
-const BANDS_KNOB: Control = Control::new(&BANDS, "Bands", "Change bands", bands_readout);
-const FORMANT_KNOB: Control =
-    Control::new(&FORMANT, "Formant", "Change formant", formant_readout).bipolar();
+const BANDS_KNOB: Control = Control::new(
+    &BANDS,
+    "Bands",
+    "Change bands",
+    Unit::new(bands_readout, Typed::Number),
+);
+const FORMANT_KNOB: Control = Control::new(
+    &FORMANT,
+    "Formant",
+    "Change formant",
+    Unit::new(formant_readout, Typed::Number),
+)
+.bipolar();
 const RELEASE_KNOB: Control =
-    Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+    Control::new(&RELEASE, "Release", "Change release", Unit::MILLISECONDS);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
 
 /// A number of bands, whole as the vocoder plays it: `24`.
 fn bands_readout(bands: f32) -> String {

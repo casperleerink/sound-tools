@@ -18,7 +18,7 @@ use sound_core::Instance;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{ParameterKnob, hertz_readout, percent_readout, short};
+use sound_ui::components::knob::{ParameterKnob, Typed, Unit, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
@@ -45,12 +45,17 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card.
 type Control = ParameterKnob<ModulationState>;
 
-const RATE_KNOB: Control = Control::new(&RATE, "Rate", "Change rate", hertz_readout);
-const DEPTH_KNOB: Control = Control::new(&DEPTH, "Depth", "Change depth", percent_readout);
+const RATE_KNOB: Control = Control::new(&RATE, "Rate", "Change rate", Unit::HERTZ);
+const DEPTH_KNOB: Control = Control::new(&DEPTH, "Depth", "Change depth", Unit::PERCENT);
 const FEEDBACK_KNOB: Control =
-    Control::new(&FEEDBACK, "Feedback", "Change feedback", percent_readout);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
-const SPREAD_KNOB: Control = Control::new(&SPREAD, "Spread", "Change spread", degrees_readout);
+    Control::new(&FEEDBACK, "Feedback", "Change feedback", Unit::PERCENT);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
+const SPREAD_KNOB: Control = Control::new(
+    &SPREAD,
+    "Spread",
+    "Change spread",
+    Unit::new(degrees_readout, Typed::Per(180.)),
+);
 
 /// The value of a segment and its label, for each mode.
 const MODES: [(Mode, &str, &str); 3] = [

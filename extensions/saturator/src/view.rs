@@ -17,9 +17,7 @@ use sound_dsp::amplitude;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    KnobRange, ParameterKnob, decibels_readout, percent_readout, short,
-};
+use sound_ui::components::knob::{KnobRange, ParameterKnob, Unit, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
@@ -54,11 +52,11 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 /// A knob of the card. A range that goes both ways from 0 has its arc start at the top.
 type Control = ParameterKnob<SaturatorState>;
 
-const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", decibels_readout);
-const TONE_KNOB: Control = Control::new(&TONE, "Tone", "Change tone", decibels_readout).bipolar();
+const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", Unit::DECIBELS);
+const TONE_KNOB: Control = Control::new(&TONE, "Tone", "Change tone", Unit::DECIBELS).bipolar();
 const OUTPUT_KNOB: Control =
-    Control::new(&OUTPUT, "Output", "Change output", decibels_readout).bipolar();
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+    Control::new(&OUTPUT, "Output", "Change output", Unit::DECIBELS).bipolar();
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::PERCENT);
 
 /// The value of a segment and its label, for each curve.
 const CURVES: [(Curve, &str, &str); 4] = [

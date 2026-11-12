@@ -52,7 +52,7 @@ pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use card::{TitleBar, drawn_nodes, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
-pub use card::{node_counts, page_has_text, page_ready, soft_edges};
+pub use card::{node_counts, page_has_text, page_ready, scroll_room, soft_edges};
 #[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
@@ -477,7 +477,7 @@ pub(crate) fn built_in_schemas() -> [ToolSchema; 6] {
 /// Whether a card or a page made nodes the window can show.
 fn drawn(ops: Result<serde_json::Value, String>) -> Result<(), String> {
     let ops: Vec<tree::Op> = serde_json::from_value(ops?).map_err(|error| error.to_string())?;
-    tree::NodeTable::default().apply(ops)
+    tree::NodeTable::default().apply(ops).map(|_| ())
 }
 
 /// The files of tools in `extensions`, by name, in order: those that are not the runtime's.
