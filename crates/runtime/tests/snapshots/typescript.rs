@@ -74,10 +74,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     mouse(&opened, cx, down(press))?;
     save(cx, opened.window.into(), "typescript-gallery")?;
     for (button, name) in [
-        (446., "typescript-gallery-popover"),
-        (526., "typescript-gallery-dialog"),
+        (442., "typescript-gallery-popover"),
+        (514., "typescript-gallery-dialog"),
     ] {
-        click(&opened, point(px(button), px(406.)), 1, cx)?;
+        click(&opened, point(px(button), px(438.)), 1, cx)?;
         save(cx, opened.window.into(), name)?;
     }
     drop(opened);
