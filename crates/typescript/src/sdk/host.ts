@@ -1,7 +1,7 @@
 // For the host.
 
 import { Fields, Inputs } from "./fields";
-import { PLAIN_KEYS, Press, SHIFTED_KEYS, SYMBOL_KEYS } from "./live";
+import { PLAIN_KEYS, Press, SHIFTED_KEYS, SYMBOL_KEYS, Turn } from "./live";
 import { CardRoot, Child, forget, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
 import { adopted, batch, isRead, listener, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
 import { Context, Key, ToolSpec } from "./tools";
@@ -59,7 +59,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 const releases = new Map<string, { release: (press: Press) => void; scope: Owner }>();
 
 /** An event of the window on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "release" | "click" | "hover" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change" | "key", payload: never) {
+function nodeEvent(id: number, kind: "press" | "release" | "click" | "hover" | "end" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain" | "change" | "key" | "turn", payload: never) {
   if (kind === "release") {
     const pressed = `${id} ${(payload as Press).button}`;
     const held = releases.get(pressed);
@@ -91,6 +91,10 @@ function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "rele
       return made.onTitle?.();
     case "key":
       return made.onKey?.(payload as Key);
+    case "turn": {
+      const { axis, ...turn } = payload as Turn & { axis: "x" | "y" };
+      return made.drag?.[axis]?.onTurn?.(turn);
+    }
     case "sidechain": {
       const { select, option } = payload as { select: number; option: number };
       return made.onSidechain?.(select, option);

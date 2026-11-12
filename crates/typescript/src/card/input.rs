@@ -29,6 +29,8 @@ use super::space::SpaceFrame;
 
 /// Points of pointer travel for the whole range of what a drag turns, as a knob of the window.
 const TRAVEL: f32 = 200.0;
+/// Points of a drag for one step of what turns in steps, when it says none.
+const STEP_TRAVEL: f32 = 10.0;
 /// With shift, a drag turns this much as far.
 const FINE: f32 = 0.1;
 
@@ -553,9 +555,15 @@ impl TypeScriptCard {
         let (state, info) = self.record(cx);
         let turns = [&drag.x, &drag.y];
         if event.click_count == 2 {
-            for turns in turns.into_iter().flatten() {
-                if let Some(default) = turns.default {
-                    self.turn(turns, ValueChange::Set(default), cx);
+            for (axis, turns) in turns.into_iter().enumerate() {
+                let Some((turns, default)) =
+                    (turns.as_ref()).and_then(|turns| Some((turns, turns.default?)))
+                else {
+                    continue;
+                };
+                match turns.target(info.as_deref()) {
+                    Turned::Kept => self.tell_kept(node, axis, json!({ "reset": true }), true, cx),
+                    _ => self.turn(turns, ValueChange::Set(default), cx),
                 }
             }
             return;
@@ -661,6 +669,7 @@ impl TypeScriptCard {
                 cx,
             );
         }
+        self.tell_turns(true, cx);
         self.held = match held.drag.on_end {
             true => {
                 let number = self.event(held.node, EventKind::End, held.result(), cx);
@@ -683,13 +692,9 @@ impl TypeScriptCard {
         self.clicking = None;
         let turns = [&held.drag.x, &held.drag.y];
         let info = self.live.read(cx).info(self.card);
-        let target = |turns: &tree::Turns| turns.target(info.as_deref()).to_owned_input();
-        if turns
-            .iter()
-            .copied()
-            .flatten()
-            .any(|turns| target(turns).is_none())
-        {
+        let field =
+            |turns: &tree::Turns| matches!(turns.target(info.as_deref()), Turned::Field { .. });
+        if turns.iter().copied().flatten().any(field) {
             (self.edit).apply_json(
                 &self.session,
                 &self.id,
@@ -700,15 +705,25 @@ impl TypeScriptCard {
             );
         }
         for (turns, from) in turns.into_iter().zip(held.from) {
-            if let (Some(input), Some(from)) = (turns.as_ref().and_then(target), from) {
-                self.control(&input, from, cx);
+            let (Some(turns), Some(from)) = (turns.as_ref(), from) else {
+                continue;
+            };
+            if let Turned::Input(input) = turns.target(info.as_deref()) {
+                self.control(input, from, cx);
+            }
+        }
+        // What code keeps goes back to where the press found it.
+        for (axis, turns) in turns.into_iter().enumerate() {
+            if (turns.as_ref()).is_some_and(|turns| turns.target(None) == Turned::Kept) {
+                let back = json!({ "moved": 0, "held": true });
+                self.tell_kept(held.node, axis, back, true, cx);
             }
         }
         cx.notify();
         true
     }
 
-    /// What `turns` turns is now.
+    /// What `turns` turns is now. What code keeps is its code's to say.
     fn turned_value(
         &self,
         turns: &tree::Turns,
@@ -727,8 +742,15 @@ impl TypeScriptCard {
                 }
                 let child = self.id.child(child).ok()?;
                 let record = state_of(self.session.read(cx).project(), &child)?;
-                let value = record.get(name).and_then(tree::number_of);
-                value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
+                let value = crate::path::at(&record, name).and_then(tree::number_of);
+                // A number its record leaves out turns from what its device plays, such as the
+                // level of a pad; one no lane can move, from its default.
+                let project = self.session.read(cx).project();
+                let plays = || project.automation(&child, name)?.record;
+                value.or_else(plays).or(turns.default).or_else(|| {
+                    let range = range_of(info, turns).or_else(|| self.child_range(turns, cx));
+                    range.map(|range| range.value(0.5))
+                })
             }
             target => {
                 let played = self.live.read(cx).played_of(&self.id).cloned();
@@ -746,36 +768,51 @@ impl TypeScriptCard {
                 match target {
                     Turned::Input(name) => sources.input(name),
                     Turned::Field { name, .. } => sources.field(name),
+                    Turned::Kept => None,
                 }
             }
         }
     }
 
     /// A key on the focused control of what `turns` turns, as a knob of the window takes it: an
-    /// arrow steps it a fiftieth of its travel, a five-hundredth with shift, backspace puts it at
-    /// its default. One undo step each. Whether the key was the control's: an arrow is, at an
-    /// end too; backspace only with a default; escape is what holds it.
+    /// arrow steps it a fiftieth of its travel, a five-hundredth with shift, or one of its own
+    /// steps; backspace puts it at its default. One undo step each. Whether the key was the
+    /// control's: an arrow is, at an end too; backspace only with a default; escape is what
+    /// holds it.
     pub(super) fn turn_by_key(
         &mut self,
-        turns: &tree::Turns,
+        KeyTurned { turns, node, axis }: &KeyTurned,
         key: ValueKey,
         cx: &mut Context<Self>,
     ) -> bool {
+        let (state, info) = self.record(cx);
+        let kept = turns.target(info.as_deref()) == Turned::Kept;
         let value = match key {
             ValueKey::Cancel => return false,
             ValueKey::Reset => match turns.default {
-                Some(default) => Some(default),
                 None => return false,
+                Some(_) if kept => {
+                    self.tell_kept(*node, *axis, json!({ "reset": true }), true, cx);
+                    None
+                }
+                Some(default) => Some(default),
             },
             ValueKey::Step { up, fine } => {
-                let by = if fine { FINE_KEY_STEP } else { KEY_STEP };
-                let by = if up { by } else { -by };
-                let (state, info) = self.record(cx);
-                let range =
-                    range_of(info.as_deref(), turns).or_else(|| self.child_range(turns, cx));
-                let now = self.turned_value(turns, &state, info.as_deref(), cx);
-                (range.zip(now))
-                    .map(|(range, now)| range.value((range.position(now) + by).clamp(0.0, 1.0)))
+                let by = if up { 1.0 } else { -1.0 };
+                let moved = match turns.step {
+                    Some(_) => Moved::Steps(by),
+                    None if fine => Moved::By(by * FINE_KEY_STEP),
+                    None => Moved::By(by * KEY_STEP),
+                };
+                if kept {
+                    self.tell_kept(*node, *axis, moved.told(false), true, cx);
+                    None
+                } else {
+                    let now = self.turned_value(turns, &state, info.as_deref(), cx);
+                    let range =
+                        range_of(info.as_deref(), turns).or_else(|| self.child_range(turns, cx));
+                    moved.value(turns, now, range)
+                }
             }
         };
         if let Some(value) = value {
@@ -792,31 +829,31 @@ impl TypeScriptCard {
             let Some(turns) = turns else {
                 continue;
             };
-            let Some(range) =
-                range_of(info.as_deref(), turns).or_else(|| self.child_range(turns, cx))
-            else {
-                continue;
+            let points = match axis {
+                0 => f32::from(held.now.x - held.start.x),
+                _ => f32::from(held.start.y - held.now.y),
             };
-            let position = if turns.absolute {
+            let moved = if turns.absolute {
                 let bounds = held.bounds;
                 let fraction = match axis {
                     0 => (held.now.x - bounds.origin.x) / bounds.size.width,
                     _ => 1.0 - (held.now.y - bounds.origin.y) / bounds.size.height,
                 };
-                fraction.clamp(0.0, 1.0)
+                Moved::To(fraction.clamp(0.0, 1.0))
+            } else if turns.step.is_some() {
+                Moved::Steps((points / turns.per.unwrap_or(STEP_TRAVEL)).round())
             } else {
-                let Some(from) = held.from[axis] else {
-                    continue;
-                };
-                let moved = match axis {
-                    0 => f32::from(held.now.x - held.start.x),
-                    _ => f32::from(held.start.y - held.now.y),
-                };
                 let fine = if held.modifiers.shift { FINE } else { 1.0 };
-                let travel = turns.travel.unwrap_or(TRAVEL);
-                (range.position(from) + moved * fine / travel).clamp(0.0, 1.0)
+                Moved::By(points * fine / turns.travel.unwrap_or(TRAVEL))
             };
-            self.turn(turns, ValueChange::Drag(range.value(position)), cx);
+            if turns.target(info.as_deref()) == Turned::Kept {
+                self.tell_kept(held.node, axis, moved.told(true), false, cx);
+                continue;
+            }
+            let range = range_of(info.as_deref(), turns).or_else(|| self.child_range(turns, cx));
+            if let Some(value) = moved.value(turns, held.from[axis], range) {
+                self.turn(turns, ValueChange::Drag(value), cx);
+            }
         }
     }
 
@@ -859,7 +896,9 @@ impl TypeScriptCard {
                     &id,
                     &label,
                     change,
-                    |state, value| tree::set_field(state, &field, tree::number_value(value)),
+                    |state, value| {
+                        crate::path::set(state, &field, Some(tree::number_value(value)));
+                    },
                     cx,
                 );
             }
@@ -868,6 +907,47 @@ impl TypeScriptCard {
                     let input = input.to_string();
                     self.control(&input, value, cx);
                 }
+            }
+            // Its code works out its value, from what [`Self::tell_kept`] tells it.
+            Turned::Kept => {}
+        }
+    }
+
+    /// Tells the code of what it keeps how the drag of `node` or a key moved it on `axis` (0
+    /// across, 1 up): the window measures the move, as for a field, and its code, which alone
+    /// can read what it keeps, works out the value. A drag tells its last move once its code
+    /// answered the one before, so a drag faster than its code skips moves and never queues
+    /// them; with `now`, at once, as a key and the end of a drag do.
+    fn tell_kept(&mut self, node: u64, axis: usize, moved: Value, now: bool, cx: &mut App) {
+        if (self.turning.as_ref()).is_none_or(|turning| turning.node != node) {
+            // What another control still waits to tell goes first.
+            self.tell_turns(true, cx);
+            self.turning = Some(Turning::of(node));
+        }
+        if let Some(turning) = &mut self.turning {
+            turning.waiting[axis] = Some(moved);
+        }
+        self.tell_turns(now, cx);
+    }
+
+    /// Tells what [`Self::tell_kept`] still holds back, once the last one was answered or `now`.
+    pub(super) fn tell_turns(&mut self, now: bool, cx: &mut App) {
+        let Some(turning) = &mut self.turning else {
+            return;
+        };
+        let (node, sent) = (turning.node, turning.sent);
+        if !now && self.live.read(cx).events_answered(self.card) < sent {
+            return;
+        }
+        let waiting = (self.turning.as_mut()).map(|turning| std::mem::take(&mut turning.waiting));
+        for (axis, moved) in waiting.into_iter().flatten().enumerate() {
+            let Some(Value::Object(mut moved)) = moved else {
+                continue;
+            };
+            moved.insert("axis".into(), json!(if axis == 0 { "x" } else { "y" }));
+            let sent = self.event(node, EventKind::Turn, Value::Object(moved), cx);
+            if let Some(turning) = &mut self.turning {
+                turning.sent = sent;
             }
         }
     }
@@ -903,13 +983,92 @@ impl TypeScriptCard {
 
 /// How what a drag turns spreads over its travel: as it says, or as the field or the input.
 fn range_of(info: Option<&ToolInfo>, turns: &tree::Turns) -> Option<ValueRange> {
+    if turns.fader {
+        return Some(ValueRange {
+            min: f32::NEG_INFINITY,
+            max: 6.0,
+            scale: sound_core::Scale::Fader,
+        });
+    }
     if let (Some(min), Some(max)) = (turns.min, turns.max) {
         return Some(crate::tools::knob_range(min, max, turns.unit));
     }
     match turns.target(info) {
         Turned::Field { child: None, name } => live::field_range(info, name),
         Turned::Input(name) => live::input_range(info, name),
-        Turned::Field { .. } => None,
+        Turned::Field { .. } | Turned::Kept => None,
+    }
+}
+
+/// How far a drag or a key moves what it turns.
+#[derive(Clone, Copy)]
+enum Moved {
+    /// Along its travel, as a part of the whole.
+    By(f32),
+    /// Whole steps of its own.
+    Steps(f32),
+    /// To a place on its travel, wherever it was.
+    To(f32),
+}
+
+impl Moved {
+    /// What `turns` turns to from `from`, over `range`.
+    fn value(
+        self,
+        turns: &tree::Turns,
+        from: Option<f32>,
+        range: Option<ValueRange>,
+    ) -> Option<f32> {
+        match self {
+            Self::By(by) => {
+                let (range, from) = range.zip(from)?;
+                Some(range.value((range.position(from) + by).clamp(0.0, 1.0)))
+            }
+            Self::Steps(steps) => {
+                let value = from? + steps * turns.step?;
+                let value = turns.min.map_or(value, |min| value.max(min));
+                Some(turns.max.map_or(value, |max| value.min(max)))
+            }
+            Self::To(place) => Some(range?.value(place)),
+        }
+    }
+
+    /// What the code of what it keeps hears: how far it moved since the press of a drag that
+    /// is `held`, else from where it is now, or the place it goes to.
+    fn told(self, held: bool) -> Value {
+        match self {
+            Self::By(moved) | Self::Steps(moved) => json!({ "moved": moved, "held": held }),
+            Self::To(place) => json!({ "at": place }),
+        }
+    }
+}
+
+/// A space the keys turn: the one number its drag turns, of the node that drag is on.
+#[derive(Clone)]
+pub(super) struct KeyTurned {
+    pub(super) turns: tree::Turns,
+    pub(super) node: u64,
+    /// The axis of the drag it is on: 0 across, 1 up.
+    pub(super) axis: usize,
+}
+
+/// What a control of what code keeps still has to tell its code, see
+/// [`TypeScriptCard::tell_kept`].
+pub(super) struct Turning {
+    node: u64,
+    /// The number of the last event that told a move.
+    sent: u64,
+    /// The last move across and up its code has not heard.
+    waiting: [Option<Value>; 2],
+}
+
+impl Turning {
+    fn of(node: u64) -> Self {
+        Self {
+            node,
+            sent: 0,
+            waiting: [None, None],
+        }
     }
 }
 

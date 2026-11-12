@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { abs, audio, Controls, Display, h, highpass, input, Knob, Label, lowpass, number, list, notes, NumberBox, output, Page, Path, rise, Select, text, Text, Toggle, tool, bang, Wave, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
+import { abs, alpha, audio, Controls, Display, Fader, h, highpass, input, Knob, Label, Live, lowpass, now, number, list, notes, NumberBox, output, Page, Path, rise, SegmentedControl, Select, Slider, Steps, text, Text, Toggle, tool, bang, Wave, type Declaration, type HeardEvent, type Look, type Style, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -556,9 +556,29 @@ Label({ x: 0, y: 0, text: "C2", variant: "small" });
 // @ts-expect-error: a label has no size in points.
 Label({ x: 0, y: 0, text: "C2", size: 13 });
 
-// A control names a `field`, or shows what code keeps and hears it with `onChange`.
+// A control names a `field`, and takes its range, its label and its options from it: nothing else is needed.
+Knob({ field: "cutoff" });
+Slider({ field: "cutoff" });
+Fader({ field: "mix.gain_db", length: 100 });
+NumberBox({ field: "bpm", key: "bpm", width: 40 });
+SegmentedControl({ field: "mode" });
+Select({ field: "mode" });
+Steps({ field: "kick" });
+// Each can still be said, and a number inside a child's record is a field too.
 Knob({ field: "cutoff", min: 0, max: 1, default: 0 });
+Knob({ field: "kit.pads.36.volume_db", label: "Level", played: true });
+// Or it shows what code keeps and hears it with `onChange`, and then says its range or its options.
 Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0 });
+// @ts-expect-error: what code keeps has no field to tell its range.
+Knob({ value: () => 0.5, onChange: (value: number) => value });
+// @ts-expect-error: nor its options.
+SegmentedControl({ value: "a", onChange: (picked: string) => picked });
+// @ts-expect-error: a lane plays a field, not what code keeps.
+Knob({ value: () => 0.5, onChange: (value: number) => value, min: 0, max: 1, default: 0, played: true });
+// One prop says how much text a knob shows.
+Knob({ field: "cutoff", text: "value" });
+// @ts-expect-error: a knob has no size.
+Knob({ field: "cutoff", size: "sm" });
 // @ts-expect-error: a value code keeps is no field name, and needs `onChange`.
 Select({ value: "velocity", options: lanes });
 // @ts-expect-error: a field or what code keeps, not both.
@@ -570,3 +590,12 @@ NumberBox({ field: "bpm", show: 120, key: "bpm", width: 40 });
 Path({ points: [[0, 0], [5, 0, 10, 10]], color: "#ffffff" });
 // @ts-expect-error: its first point is `[x, y]`.
 Path({ points: [[5, 0, 10, 10]], color: "#ffffff" });
+
+// Drawing by hand needs no cast: a number as a live value, points made in a loop, a colour that is a variable.
+const octaves: Live = Live.of(2).pow(now.value("pitch").over(12));
+const points: (readonly [Live, Live])[] = [];
+for (let place = 0; place <= 8; place++) points.push([octaves.times(place), octaves]);
+const marks = ["teal", "sky"] as const;
+for (const mark of marks) Path({ points, color: alpha(mark, 40), width: 2 });
+// @ts-expect-error: a colour is one of the theme.
+alpha("grey", 40);

@@ -953,8 +953,7 @@ fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>
         Some(Readout::Db) => unit(Unit::Db),
         Some(Readout::Percent) => unit(Unit::Percent),
         Some(Readout::Pan) => pan_readout(value as f32),
-        Some(Readout::Pitch) => sound_notes::Pitch::try_from(value.round() as i64)
-            .map_or_else(|_| readout(value as f32, None), sound_notes::Pitch::name),
+        Some(Readout::Pitch) => pitch_readout(value),
         Some(Readout::Position) => signatures.map_or_else(String::new, |signatures| {
             let position = signatures.bar_beat_of(tick);
             format!("{}.{}", position.bar, position.beat)
@@ -975,9 +974,29 @@ fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>
     }
 }
 
+/// A pitch as its note, `C2` for 36, and how many cents off it is where it is not whole:
+/// `D2 +30`, so two pitches tuned apart do not read the same.
+fn pitch_readout(value: f64) -> String {
+    let note = value.round();
+    let cents = ((value - note) * 100.0).round() as i64;
+    match sound_notes::Pitch::try_from(note as i64) {
+        Ok(pitch) if cents == 0 => pitch.name(),
+        Ok(pitch) => format!("{} {cents:+}", pitch.name()),
+        Err(_) => readout(value as f32, None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pitch_that_is_not_whole_reads_its_note_and_its_cents() {
+        assert_eq!(pitch_readout(36.0), "C2");
+        assert_eq!(pitch_readout(38.3), "D2 +30");
+        assert_eq!(pitch_readout(37.6), "D2 -40");
+        assert_eq!(pitch_readout(36.004), "C2");
+    }
 
     #[test]
     fn a_wave_is_scaled_straight_between_the_points_of_its_level_and_as_the_nearest_past_them() {

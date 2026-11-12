@@ -610,6 +610,21 @@ impl ToolInfo {
         self.fields.get(name)
     }
 
+    /// The field at `path` in the record, see [`crate::path`]: `voices[2].detune` is the field
+    /// `detune` of the items of the list `voices`.
+    pub(crate) fn field_at(&self, path: &str) -> Option<&Field> {
+        let mut parts = crate::path::parts(path);
+        let mut field = self.fields.get(parts.next()?)?;
+        for part in parts {
+            field = match field {
+                Field::List { item, .. } if part.parse::<usize>().is_ok() => item,
+                Field::Object { fields } => fields.get(part)?,
+                _ => return None,
+            };
+        }
+        Some(field)
+    }
+
     /// `state` with each field it leaves out at its default: the record as it plays, in the
     /// order of the fields, and inside lists too, as a behaviour reads it.
     pub(crate) fn with_defaults(&self, state: Value) -> Value {

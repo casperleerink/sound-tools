@@ -115,7 +115,7 @@ impl Sources<'_> {
 
     /// What a field of the record holds now.
     pub(crate) fn field(&self, name: &str) -> Option<f32> {
-        self.state.get(name).and_then(crate::tree::number_of)
+        crate::path::at(self.state, name).and_then(crate::tree::number_of)
     }
 
     /// Where a number input was put last, else where it starts.
@@ -131,8 +131,8 @@ impl Sources<'_> {
             let range = range.filter(|_| fraction);
             f64::from(range.map_or(value, |range| range.position(value)))
         };
-        let field = self.info.map_or(self.state.get(name).is_some(), |info| {
-            info.field(name).is_some()
+        let field = self.info.map_or(self.field(name).is_some(), |info| {
+            info.field_at(name).is_some()
         });
         if field {
             let playing = played.then(|| self.feeds.played.get(name)).flatten();
@@ -282,7 +282,7 @@ impl Sources<'_> {
 
 /// How a number field turns on its knob: over its range, on a log scale for Hz.
 pub(crate) fn field_range(info: Option<&ToolInfo>, name: &str) -> Option<ValueRange> {
-    info?.field(name)?.range()
+    info?.field_at(name)?.range()
 }
 
 /// How a number input turns: over its range, on a log scale for Hz.

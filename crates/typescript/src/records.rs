@@ -54,7 +54,78 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         "\n/** What the record of each built-in tool holds where it leaves a field out: what code that edits one gets. */\nexport const defaultStates: Record<string, Record<string, unknown>> = {};\n",
         Value::Object(defaults)
     ));
+    let numbers: serde_json::Map<String, Value> = (tools.iter())
+        .map(|schema| (schema.tool.to_string(), Value::Object(numbers_of(schema))))
+        .collect();
+    text.push_str(&format!(
+        "\n/** The numbers of the record of each built-in tool that have a range, by their path with `*` for a place in a list or a key of a map: what a control on one turns it over. */\nexport const builtInNumbers: Record<string, Record<string, {{ min?: number; max?: number; scale: \"linear\" | \"log\" | \"fader\"; default?: number }}>> = {};\n",
+        Value::Object(numbers)
+    ));
     text
+}
+
+/// The numbers of the record of a tool that have a range, each by its path, `bands.*.gain_db`,
+/// with its ends, its scale and its default where the record says them.
+fn numbers_of(schema: &ToolSchema) -> serde_json::Map<String, Value> {
+    let record = RecordSchema::new(&schema.schema);
+    let mut numbers = serde_json::Map::new();
+    number_fields(&record, &schema.schema, String::new(), 0, &mut numbers);
+    numbers
+}
+
+fn number_fields(
+    record: &RecordSchema,
+    schema: &Value,
+    path: String,
+    depth: usize,
+    numbers: &mut serde_json::Map<String, Value>,
+) {
+    let resolved = record.resolved(schema);
+    let said = |key: &str| schema.get(key).or_else(|| resolved.get(key));
+    if let Some(scale) = said("x-scale").and_then(Value::as_str) {
+        let mut number = serde_json::Map::new();
+        for (name, key) in [
+            ("min", "minimum"),
+            ("max", "maximum"),
+            ("default", "default"),
+        ] {
+            if let Some(value) = said(key).filter(|value| value.is_number()) {
+                number.insert(name.to_string(), value.clone());
+            }
+        }
+        let scale = match scale {
+            "logarithmic" => "log",
+            scale => scale,
+        };
+        number.insert("scale".to_string(), Value::from(scale));
+        numbers.insert(path, Value::Object(number));
+        return;
+    }
+    // A type that holds itself ends here.
+    if depth > 8 {
+        return;
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        for variant in (resolved.get(key).and_then(Value::as_array))
+            .into_iter()
+            .flatten()
+        {
+            number_fields(record, variant, path.clone(), depth + 1, numbers);
+        }
+    }
+    let properties = resolved.get("properties").and_then(Value::as_object);
+    for (name, property) in properties.into_iter().flatten() {
+        let path = match path.is_empty() {
+            true => name.clone(),
+            false => format!("{path}.{name}"),
+        };
+        number_fields(record, property, path, depth + 1, numbers);
+    }
+    for key in ["items", "additionalProperties"] {
+        if let Some(items) = resolved.get(key).filter(|items| items.is_object()) {
+            number_fields(record, items, format!("{path}.*"), depth + 1, numbers);
+        }
+    }
 }
 
 /// The fields of the record of a tool that have a default, with it.

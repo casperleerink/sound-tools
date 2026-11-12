@@ -30,6 +30,9 @@ export type ThemeColor =
 /** A colour of the theme, or one at an opacity in percent, `"green/40"`. `#rrggbb` and `#rrggbbaa` are for what the theme cannot say. */
 export type Color = ThemeColor | `${ThemeColor}/${number}` | `#${string}`;
 
+/** `color` at an opacity in percent, as `"green/40"` writes it: for a colour that is a variable. */
+export const alpha = (color: ThemeColor | `#${string}`, percent: number): Color => `${color}/${percent}`;
+
 /** Room between things and inside them: 4, 8, 12, 16, 24 or 32 points. */
 export type Spacing = "xs" | "sm" | "md" | "lg" | "xl" | "2xl";
 /** How round a corner is: 4, 6 or 8 points, or `full`, round at its ends. */
@@ -105,11 +108,14 @@ export type Shape =
          * wide, closed where its last point is its first: a fade's shade, a triangle, a curve. Give
          * them in the binding, `points={() => [...]}`, where TypeScript reads a list as points.
          */
-        | { kind: "path"; points: Bind<readonly [readonly [Num, Num], ...PathPoint[]]>; color: Bind<Paint>; width?: Bind<number> }
+        | { kind: "path"; points: Bind<PathPoints>; color: Bind<Paint>; width?: Bind<number> }
       ));
 
 /** `[x, y]` a path goes straight to, or curves to as `[cx, cy, x, y]`, pulled towards one control point, or `[c1x, c1y, c2x, c2y, x, y]`, towards two. */
 export type PathPoint = readonly [Num, Num] | readonly [Num, Num, Num, Num] | readonly [Num, Num, Num, Num, Num, Num];
+
+/** The points of a `Path`: it starts at an `[x, y]`. A list built in a loop is one of `[x, y]` points. */
+export type PathPoints = readonly [readonly [Num, Num], ...PathPoint[]] | readonly (readonly [Num, Num])[];
 
 /** A colour, or one between two by a live value: see `blend`. */
 export type Paint = Color | { mix: readonly [Color, Color]; by: Num };
@@ -171,7 +177,7 @@ export interface SpaceProps extends PointerEvents {
   radius?: Radius | number;
   /**
    * A drag from where no shape that hears the pointer is, such as a marquee. A space whose one
-   * drag turns a field, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
+   * drag turns one number, as a knob's or a fader's, is a tab stop the keys turn as the window's knobs.
    */
   drag?: Drag;
   /** Files or a carried value let go on it, where in its units. */

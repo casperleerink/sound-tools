@@ -16,13 +16,16 @@ props! {
 }
 
 props! {
-    /// A row of steps, each on or off; a press or a key on one tells its code its place.
+    /// A row of steps; a press or a key on one tells its code its place.
     StepsProps / StepsChange {
         key: String,
-        on: Vec<bool>,
+        /// How strong each step is: 0 off, 1 full, and a softer hit between.
+        levels: Vec<f32>,
         /// The place of the step that plays now, or less than 0.
         playing: Num,
         label: String,
+        /// A row that changes another row, such as accents: quieter than a row of notes.
+        secondary: bool,
         on_change: bool,
     }
 }

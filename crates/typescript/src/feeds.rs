@@ -421,14 +421,14 @@ fn child_field(
     name: &str,
     records: &mut Records,
 ) -> Option<(f32, Option<ValueRange>)> {
-    let (child, field) = name.split_once('.')?;
+    let (Some(child), field) = crate::path::split(name) else {
+        return None;
+    };
     let child = id.child(child).ok()?;
     let range = project.automation(&child, field).map(|number| number.range);
-    let value = records
-        .of(project, &child)?
-        .get(field)
-        .and_then(Value::as_f64);
-    let value = value.map(|value| value as f32).or_else(|| {
+    let record = records.of(project, &child)?;
+    let value = crate::path::at(record, field).and_then(crate::tree::number_of);
+    let value = value.or_else(|| {
         let number = project.automation(&child, field)?;
         number.record
     })?;
@@ -454,12 +454,9 @@ fn played(
             .find(|(each, _)| **each == *number)
             .map(|(_, value)| value)
     };
-    let Some((path, number)) = name.split_once('.') else {
+    let (Some(path), number) = crate::path::split(name) else {
         let range = project.automation(id, name).map(|number| number.range);
-        let record = state
-            .get(name)
-            .and_then(Value::as_f64)
-            .map(|value| value as f32);
+        let record = crate::path::at(state, name).and_then(crate::tree::number_of);
         return Some((lane(id, name).or(record)?, range));
     };
     let inner = id.child(path).ok()?;

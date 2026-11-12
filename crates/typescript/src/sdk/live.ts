@@ -1,7 +1,6 @@
 // Views: nodes the code makes once, which the window keeps. What moves on them (a drag, a
 // playhead, a meter, a knob turned) moves in the window, without running code: a live value.
 
-import { splitPath } from "./components";
 import { IconName } from "./drawing";
 import { InputNames, Inputs, Unit } from "./fields";
 import { ChildTools, Context, Frozen, StateOfTool } from "./tools";
@@ -111,6 +110,8 @@ function liveKey(value: unknown): string {
  */
 export class Live {
   constructor(readonly node: LiveNode) {}
+  /** A number as a live value, to start from: `Live.of(2).pow(octaves)`. */
+  static of(value: Num): Live { return typeof value === "number" ? new Live({ op: "plus", a: value, b: 0 }) : value; }
   toJSON(): LiveNode { return this.node; }
   plus(other: Num): Live { return new Live({ op: "plus", a: this, b: other }); }
   minus(other: Num): Live { return new Live({ op: "minus", a: this, b: other }); }
@@ -208,7 +209,9 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   /**
    * A number as it is now: a field of the record, also as a drag turns it; a number input,
    * where it was put last; or a number output of the sound. A child's, or one deeper, as
-   * `"bass/synth.cutoff_hz"`: its field, or its output. With `played`, a field as it plays: what a
+   * `"bass/synth.cutoff_hz"`: its field, or its output. A number inside a field as its record
+   * holds it: `"kit.pads.36.volume_db"`, `"eq.bands[0].gain_db"`, or `"voices[2].detune"` of an
+   * item of its own list. With `played`, a field as it plays: what a
    * lane or a cable plays into it, else the record, so a knob moves with its automation. With
    * `fraction`, how far along its range it is, 0 to 1, on a log scale for `"hz"`.
    */
@@ -244,6 +247,16 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   space(key: string): SpaceValues;
   /** 1 while the pointer is over the shape of `key`, and while it drags it: the readout of a point shows. */
   hover(key: string): Live;
+}
+
+/**
+ * `"bass/synth.cutoff_hz"` as the child `bass/synth` and its number `cutoff_hz`: the first dot
+ * ends the child, and what follows is where its record holds the number, `pads.36.volume_db`.
+ * A name of a child holds no `[`, so `"voices[2].detune"` is a number of the record itself.
+ */
+export function splitPath(path: string): { child: string | undefined; name: string } {
+  const dot = path.indexOf(".");
+  return dot < 0 || path.slice(0, dot).includes("[") ? { child: undefined, name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
 }
 
 function sources(): Now<Record<string, number>> {
@@ -430,18 +443,34 @@ export interface DragResult extends Modifiers {
 }
 
 /**
- * A number a drag turns as it goes, in the window, with no code: a knob or a fader. `value`
- * names it as `now.value` does: a field of the record, or of a child's as
- * `"bass/synth.gain_db"`, which the whole drag changes as one undo step; or a number input,
- * which is played, not saved. Without `min` and `max` it takes the field's or the input's.
+ * How a drag or a key moved what code keeps, as the window measured it: `moved` along its travel
+ * as a part of the whole, or in whole steps of its `step`, since the press of the drag while
+ * `held` and else from where it is now; `at` a place along its travel, of an `absolute` drag;
+ * or `reset`, to its default.
  */
-export type DragTurns = { value: string } & {
+export type Turn = { moved: number; held: boolean } | { at: number } | { reset: true };
+
+/**
+ * A number a drag turns as it goes, in the window: a knob or a fader. `value` names it as
+ * `now.value` does: a field of the record, or of a child's as `"bass/synth.gain_db"`, which the
+ * whole drag changes as one undo step; or a number input, which is played, not saved. Without
+ * `min` and `max` it takes the field's or the input's. Or what code keeps, with `onTurn`: code
+ * alone can read it, so the window tells each `Turn` of the drag and of the keys and the code
+ * works out the value, as `Knob` does. Either way shift is ten times finer, a double click or
+ * backspace is for `default`, and escape puts it back.
+ */
+export type DragTurns = ({ value: string; onTurn?: never } | { onTurn: (turn: Turn) => void; value?: never }) & {
   min?: number;
   max?: number;
   /** `"hz"` turns on a log scale. */
   unit?: Unit;
+  /** The scale of a volume fader, in dB: 0 dB at 0.8 of the travel, -inf at its foot. */
+  fader?: boolean;
   /** Points of pointer travel for the whole range, up or right; 200 when left out. With shift, ten times as far. */
   travel?: number;
+  /** It turns in whole steps of this size from where it is, `per` points of travel each (10 when left out), and the arrows step it by one: a number box. `min` and `max` then only bound it. */
+  step?: number;
+  per?: number;
   /** The value is where the pointer is across the space (or up it), from the press on, as on a pad. */
   absolute?: boolean;
   /** A double click puts it here. */
