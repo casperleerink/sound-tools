@@ -24,6 +24,7 @@ mod feeds;
 mod lane;
 mod live;
 mod meter;
+mod path;
 #[cfg(test)]
 mod performance;
 mod recorder;

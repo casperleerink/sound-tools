@@ -58,12 +58,12 @@ export const Mixer = ({ page }: { page: Page }) => {
           {(back) => (
             <div style={{ height: KNOB, keep: true }}>
               {() => each && sendsOf(each).includes(`send-${back.name}`)
-                ? <Knob field={`${each.name}/send-${back.name}.gain_db`} label={untrack(() => titleOf(back))} bare min={-60} max={6} default={0} unit="db" />
+                ? <Knob field={`${each.name}/send-${back.name}.gain_db`} label={untrack(() => titleOf(back))} text="value" min={-60} max={6} default={0} unit="db" />
                 : null}
             </div>
           )}
         </For>
-        <Knob field={`${path}.pan`} label="Pan" bare min={-1} max={1} default={0} unit="pan" bipolar />
+        <Knob field={`${path}.pan`} label="Pan" text="value" min={-1} max={1} default={0} unit="pan" bipolar />
         <div style={{ align: "center", gap: 7, paddingTop: 4 }}>
           <Volume path={path} length={MIXER_FADER} meter={master ? "device" : { of: path }} />
         </div>

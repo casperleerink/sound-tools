@@ -1,6 +1,7 @@
-//! Steps: a row of steps, each on or off, in groups of four. Tab reaches the row as one stop:
-//! left and right move along it, and space or enter turns the step they are on, which carries
-//! the focus ring. The step that plays has a green ring: sound is moving.
+//! Steps: a row of steps in groups of four, each lit as far up as it is strong, so a soft hit
+//! is not a full one. Tab reaches the row as one stop: left and right move along it, and space
+//! or enter turns the step they are on, which carries the focus ring. The step that plays has a
+//! green ring: sound is moving.
 
 use std::rc::Rc;
 
@@ -24,6 +25,8 @@ const GROUP: usize = 4;
 /// The square of a step, and the room it takes with the air around it, which hears the pointer:
 /// larger than what is drawn, for a trackpad.
 const SQUARE: f32 = 20.;
+/// The least of a square a step that is on lights, so the softest hit still shows.
+const SOFTEST: f32 = 0.2;
 const ACROSS: f32 = 24.;
 const DOWN: f32 = 24.;
 /// More air between two groups.
@@ -43,9 +46,10 @@ struct StepsState {
 #[derive(IntoElement)]
 struct Steps {
     id: ElementId,
-    on: Vec<bool>,
+    levels: Vec<f32>,
     playing: Option<usize>,
     label: Option<SharedString>,
+    secondary: bool,
     on_turn: Option<Turn>,
 }
 
@@ -58,30 +62,42 @@ impl RenderOnce for Steps {
         });
         let focus_handle = state.read(cx).focus_handle.clone();
         let ring_shows = (state.read(cx).keyboard_focus).shows_ring(&focus_handle, window);
-        let last = self.on.len().saturating_sub(1);
+        let last = self.levels.len().saturating_sub(1);
         let at = state.read(cx).at.min(last);
         let theme = cx.theme();
         let (lit, dark, plays, focus, label_color) = (
-            theme.text(),
+            match self.secondary {
+                true => theme.text_muted(),
+                false => theme.text(),
+            },
             theme.fill_strong(),
             theme.green,
             theme.lavender,
             theme.text_secondary(),
         );
         let on_turn = self.on_turn;
-        let steps = self.on.iter().enumerate().map(|(step, on)| {
+        let steps = self.levels.iter().enumerate().map(|(step, level)| {
             // The ring of the keys wins over the ring of the step that plays.
             let ring = match (ring_shows && step == at, self.playing == Some(step)) {
                 (true, _) => focus,
                 (false, true) => plays,
                 (false, false) => Hsla::transparent_black(),
             };
+            let level = match *level > 0.0 {
+                true => level.clamp(SOFTEST, 1.0),
+                false => 0.0,
+            };
             let square = div()
                 .size(px(SQUARE))
                 .rounded(radius::SM)
-                .bg(if *on { lit } else { dark })
+                .bg(dark)
                 .border_2()
-                .border_color(ring);
+                .border_color(ring)
+                .flex()
+                .flex_col()
+                .justify_end()
+                .overflow_hidden()
+                .child(div().w_full().h(gpui::relative(level)).bg(lit));
             let state = state.clone();
             div()
                 .id(("step", step))
@@ -175,9 +191,10 @@ impl Drawing<'_> {
         });
         let steps = Steps {
             id: ElementId::Name(name.into()),
-            on: props.on.clone().unwrap_or_default(),
+            levels: props.levels.clone().unwrap_or_default(),
             playing,
             label: props.label.clone().map(SharedString::from),
+            secondary: props.secondary == Some(true),
             on_turn,
         };
         let control = Control {

@@ -138,7 +138,7 @@ export const LaneHead = ({ page, track, lane }: { page: Page; track: string; lan
           return (
             <div style={{ direction: "row", gap: 4 }}>
               {Object.entries(ENVELOPE).map(([field, { label, min, max, default: fallback, unit }]) => (
-                <Knob key={`env-${field}-${path}`} field={`${path}.${field}`} label={label} size="sm" bare min={min} max={max} default={fallback ?? min} unit={unit} />
+                <Knob key={`env-${field}-${path}`} field={`${path}.${field}`} label={label} text="none" min={min} max={max} default={fallback ?? min} unit={unit} />
               ))}
             </div>
           );

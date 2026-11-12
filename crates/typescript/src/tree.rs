@@ -1837,18 +1837,26 @@ pub(crate) enum Readout {
     Note,
 }
 
-/// A number a drag turns as it goes: a field of the record, or a live control.
+/// A number a drag turns as it goes: a field of the record, a live control, or what code keeps.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct Turns {
     /// What it turns, as `now.value` names it: a field, of an instance inside it as
-    /// `path.field`, or a number input.
-    pub value: String,
+    /// `path.field`, or a number input. `None` for what code keeps: its code hears how far each
+    /// drag and key moved it, and works out its value.
+    pub value: Option<String>,
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub unit: Option<Unit>,
+    /// It turns on the scale of a volume fader, in dB, whatever its ends.
+    #[serde(default)]
+    pub fader: bool,
     /// Points of pointer travel for the whole range.
     pub travel: Option<f32>,
+    /// It turns in whole steps of this size from where it was, `per` points of travel each,
+    /// and needs no range: a number box.
+    pub step: Option<f32>,
+    pub per: Option<f32>,
     #[serde(default)]
     pub absolute: bool,
     pub default: Option<f32>,
@@ -1864,32 +1872,27 @@ pub(crate) enum Turned<'a> {
         name: &'a str,
     },
     Input(&'a str),
-}
-
-impl Turned<'_> {
-    /// The input it is, as an owned name, or `None` for a field.
-    pub(crate) fn to_owned_input(self) -> Option<String> {
-        match self {
-            Self::Input(name) => Some(name.to_string()),
-            Self::Field { .. } => None,
-        }
-    }
+    /// What code keeps: its code hears each value.
+    Kept,
 }
 
 impl Turns {
     /// What it turns, for the tool `info`: a number input of that name, else a field.
     pub(crate) fn target(&self, info: Option<&ToolInfo>) -> Turned<'_> {
-        if let Some((child, name)) = self.value.rsplit_once('.') {
+        let Some(value) = &self.value else {
+            return Turned::Kept;
+        };
+        if let (Some(child), name) = crate::path::split(value) {
             return Turned::Field {
                 child: Some(child),
                 name,
             };
         }
-        match info.and_then(|info| info.input(&self.value)) {
-            Some(_) => Turned::Input(&self.value),
+        match info.and_then(|info| info.input(value)) {
+            Some(_) => Turned::Input(value),
             None => Turned::Field {
                 child: None,
-                name: &self.value,
+                name: value,
             },
         }
     }
@@ -2343,12 +2346,6 @@ impl Style {
                 .text_ellipsis();
         }
         element
-    }
-}
-
-pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_json::Value) {
-    if let Some(fields) = state.as_object_mut() {
-        fields.insert(name.to_string(), value);
     }
 }
 

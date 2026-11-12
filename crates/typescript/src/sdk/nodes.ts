@@ -3,7 +3,7 @@
 
 import { Shape, shapeNode, ShapeProps } from "./drawing";
 import { Drawing } from "./host";
-import { Drag, Dropped, PointerEvents } from "./live";
+import { Drag, DragTurns, Dropped, PointerEvents } from "./live";
 import type { Key } from "./tools";
 import { Accessor, dispose, effect, memo, onCleanup, owner, Owner, RAW, root, setup, signal, untrack } from "./reactivity";
 
@@ -127,7 +127,9 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   if (id === undefined) {
     id = nextNode++;
     card.drags.set(drag, id);
-    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined }]);
+    // What code keeps has no `value`: the window tells its node each move.
+    const turns = (turned?: DragTurns) => turned && { ...turned, onTurn: undefined };
+    card.ops.push(["drag", id, { ...drag, x: turns(drag.x), y: turns(drag.y), onEnd: drag.onEnd !== undefined }]);
   }
   return id;
 }

@@ -194,6 +194,8 @@ pub(crate) enum EventKind {
     Close,
     /// A key a div takes, while the focus is in it.
     Key,
+    /// How far a drag or a key moved what code keeps, and on which axis of its drag.
+    Turn,
     /// The title of an embedded card, which is a menu.
     Title,
     /// A pick in a select of the sidechain picker of an embedded card.

@@ -1,40 +1,107 @@
 // Components made of the blocks above.
 
 import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, Space, Text } from "./drawing";
-import { Unit } from "./fields";
-import { Drawing } from "./host";
-import { Drag, DragResult, DragTurns, KeyName, Live, now, Num, Press } from "./live";
+import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
+import { Drawing, host } from "./host";
+import { Drag, DragTurns, Live, now, Num, Press, splitPath, Turn } from "./live";
 import { currentCard, element, Show, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
-import { Key } from "./tools";
+import { builtInNumbers } from "./records";
 
 /** The view that draws now, for the components below, which read its record and fields. */
 function drawing(): Drawing {
   return currentCard().drawn;
 }
 
-/** A value code keeps, such as in `memory`: a control shows it and `onChange` hears a drag once, at its end. */
+/** A value code keeps, such as in `memory`: a control shows it, and `onChange` hears each value a drag or a key gives it, as it goes. */
 export type Kept<T> = { value: Bind<T>; onChange: (value: T) => void };
 
 /** `A` or `B`, never a mix: each leaves out the keys of the other. */
 type Either<A, B> = (A & { [K in Exclude<keyof B, keyof A>]?: never }) | (B & { [K in Exclude<keyof A, keyof B>]?: never });
 
 /**
- * What a control shows and changes: a `field` as `now.value` names it, such as `"cutoff"` or
- * `"bass/mix.gain_db"`, whose change is one undo step; or a value code keeps, see `Kept`.
+ * What a control shows and changes: a `field` as `now.value` names it, such as `"cutoff"`,
+ * `"bass/mix.gain_db"` or `"kit.pads.36.volume_db"`, whose change is one undo step; or a value
+ * code keeps, see `Kept`. A control on a field takes its range, default, unit, label and
+ * options from the field, and each can still be said; on what code keeps they are said.
  */
 export type ValueProps<T> = Either<{ field: string }, Kept<T>>;
 
 const read = <V,>(bound: Bind<V>): V => (typeof bound === "function" ? (bound as Accessor<V>)() : bound);
 
-/** A number as a live value, to combine with others. */
-const liveOf = (value: Num): Live => (typeof value === "number" ? new Live({ op: "plus", a: value, b: 0 }) : value);
-
 const within = (position: number) => Math.min(Math.max(position, 0), 1);
 
 let controls = 0;
-/** The drag id and key of a control on what code keeps, when its props name none. */
+/** The key of a control on what code keeps, when its props name none. */
 const controlId = (kind: string) => `${kind}-${++controls}`;
+
+/** The parts of where a record holds a value: `bands[0].gain_db` is `bands`, `0` and `gain_db`. */
+const partsOf = (name: string) => name.split(/[.[\]]/).filter((part) => part !== "");
+
+/** A field as a control finds it: of a tool of the project, or a number of a built-in one, whose volume is on the fader's scale. */
+type Found = Field & { builtIn?: { fader: boolean } };
+
+/** The field at `parts` in `fields`: an item of a list by its place, a field of an item by its name. */
+function fieldIn(fields: Fields, parts: readonly string[]): Field | undefined {
+  let at: Field | ObjectItem | undefined = { kind: "object", fields };
+  for (const part of parts) {
+    if (at?.kind === "object") at = at.fields[part];
+    else if (at?.kind === "list" && /^\d+$/.test(part)) at = at.item;
+    else return undefined;
+  }
+  return at?.kind === "object" ? undefined : at;
+}
+
+/** A number of a built-in tool as a field: its range, and the unit its name ends in. */
+function builtInNumber(tool: string, parts: readonly string[]): Found | undefined {
+  const fits = (pattern: string) => {
+    const each = pattern.split(".");
+    return each.length === parts.length && each.every((part, at) => part === "*" || part === parts[at]);
+  };
+  const found = Object.entries(builtInNumbers[tool] ?? {}).find(([pattern]) => fits(pattern))?.[1];
+  if (!found) return undefined;
+  const { min = -Infinity, max = Infinity, scale } = found;
+  const last = parts.at(-1) ?? "";
+  const unit = (["hz", "db", "ms"] as const).find((unit) => last.endsWith(`_${unit}`)) ?? (min === 0 && max === 1 ? "percent" : undefined);
+  return { kind: "number", min, max, default: found.default, unit: scale === "log" || unit !== "hz" ? unit : undefined, builtIn: { fader: scale === "fader" } };
+}
+
+/**
+ * The tool of the child at `path` below `tool`, as each parent's `children` names it, by its name
+ * or the longest pattern it starts as. `undefined` for one a `takes` slot holds, or one only a
+ * record names.
+ */
+function toolAt(tool: string, path: string): string | undefined {
+  let at: string | undefined = tool;
+  for (const name of path.split("/")) {
+    const children: Record<string, string> = (at === undefined ? undefined : host.tools.get(at)?.children) ?? {};
+    const patterns = Object.keys(children).filter((pattern) => pattern.endsWith("*") && name.startsWith(pattern.slice(0, -1)));
+    at = children[name] ?? children[patterns.sort((one, other) => other.length - one.length)[0] ?? ""];
+  }
+  return at?.startsWith("takes:") ? undefined : at;
+}
+
+/**
+ * The field `path` names, see `splitPath`: of the tool that draws, or of the tool of a child,
+ * built-in or of this project. `undefined` where no tool tells it: a parameter of a plugin, or a
+ * child whose tool only its record says, before there is one.
+ */
+function fieldOf(path: string): Found | undefined {
+  const { fields, state, children, tool: own } = drawing();
+  const { child, name } = splitPath(path);
+  const parts = partsOf(name);
+  if (child === undefined) return fieldIn(fields, parts);
+  const tool = toolAt(own, child) ?? untrack(() => recordAt({ state, children }, child)?.tool);
+  if (tool === undefined) return undefined;
+  const spec = host.tools.get(tool);
+  return spec ? fieldIn(spec.state, parts) : builtInNumber(tool, parts);
+}
+
+/** `cutoff_hz` is `Cutoff`: a name in words, without the unit it ends in. */
+const named = (name: string) => words(name.replace(/_(hz|db|ms|seconds|semitones|cents|octaves|percent)$/, ""));
+
+/** What a control calls the field at `path`: its own label, else its name in words. */
+const labelOf = (path: string, field = fieldOf(path)) => field?.label ?? named(partsOf(splitPath(path).name).at(-1) ?? path);
 
 /** A field, or what code keeps, as a control reads and sets it. A field's change is one undo step of `label`. */
 function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label?: string) => void } {
@@ -44,12 +111,19 @@ function valueOf<T>(props: ValueProps<T>): { get: () => T; set: (value: T, label
   }
   const { state, children, update } = drawing();
   const { child, name } = splitPath(props.field);
+  const [parts, change] = [partsOf(name), `Change ${labelOf(props.field).toLowerCase()}`];
+  type Held = Record<string, unknown> | undefined;
   return {
-    get: () => recordAt({ state, children }, child)?.state[name] as T,
+    get: () => parts.reduce<unknown>((at, part) => (at as Held)?.[part], recordAt({ state, children }, child)?.state) as T,
     set: (value, label) =>
-      update(label ?? `Change ${name.replaceAll("_", " ")}`, (part) => {
-        const record = recordAt(part, child);
-        if (record) record.state[name] = value;
+      update(label ?? change, (part) => {
+        let at: Held = recordAt(part, child)?.state;
+        for (const each of parts.slice(0, -1)) {
+          // An object the record leaves out is made, such as a pad of a kit; an item of a list is not.
+          if (at && !Array.isArray(at)) at[each] ??= {};
+          at = at?.[each] as Held;
+        }
+        if (at) at[parts.at(-1) ?? name] = value;
       }),
   };
 }
@@ -60,7 +134,7 @@ const SWEEP = 0.75;
 /** Points of a drag for the whole range of a knob, as the window's. */
 const TRAVEL = 200;
 
-/** How a control reads its number: in a unit, a pan as `C`, `25L`, `100R`, or a pitch as its note, `C2` for 36. */
+/** How a control reads its number: in a unit, a pan as `C`, `25L`, `100R`, or a pitch as its note, `C2` for 36, with its cents where it is not whole, `D2 +30`. */
 type Reading = Unit | "pan" | "pitch";
 
 /** The unit a drag steps a number in: a pan and a pitch have none. */
@@ -69,89 +143,145 @@ const unitOf = (reading?: Reading): Unit | undefined => (reading === "pan" || re
 /** How a knob spreads a number from `min` to `max`, as the window's knobs: on a log scale for `"hz"`. */
 const knobTravel = (min: number, max: number, unit?: Reading): Travel => ({ min, max, scale: unit === "hz" && min > 0 ? "log" : "linear" });
 
-/** The value at `position` along a knob's `travel`, as `valueAt` puts it, worked out in the window. */
-function liveValueAt({ min, max, scale }: Travel, position: Live): Live {
-  if (scale === "log") return new Live({ op: "pow", a: max / min, b: position }).times(min);
-  return position.times(max - min).plus(min);
+/** The fader's own travel, whatever its ends. */
+const FADER_TRAVEL: Travel = { min: 0, max: 0, scale: "fader" };
+
+/** Where a live `value` sits along `travel`, as `positionOf` puts a number, worked out in the window. */
+function livePosition({ min, max, scale }: Travel, value: Live): Live {
+  if (scale === "log") return value.over(min).decibels().over(20 * Math.log10(max / min));
+  if (scale === "fader") return Live.of(10).pow(value.over(FADER.decade)).times(FADER.unity).min(1);
+  return value.minus(min).over(max - min);
+}
+
+/** The range of a number control and where a double click puts it. */
+type Range = { min: number; max: number; default: number };
+
+/** A number control: on a `field` its range and default are the field's unless said, with `played` it moves with a lane; on what code keeps they are said. */
+type NumberValue = Either<{ field: string; played?: boolean } & Partial<Range>, Kept<number> & Range>;
+
+/** What a number control is on, with what its field tells where its props do not say. */
+function numberOf(kind: string, props: { field?: string; min?: number; max?: number; default?: number; unit?: Reading; label?: string }) {
+  const found = props.field === undefined ? undefined : fieldOf(props.field);
+  const field = found?.kind === "number" ? (found as NumberField & Found) : undefined;
+  const [min, max] = [props.min ?? field?.min, props.max ?? field?.max];
+  const unit = props.unit ?? field?.unit;
+  const label = props.label ?? (props.field === undefined ? undefined : labelOf(props.field, found));
+  const fader = field?.builtIn?.fader === true && props.min === undefined;
+  const ranged = min !== undefined && max !== undefined && Number.isFinite(min) && Number.isFinite(max) && !fader;
+  const turns: Omit<DragTurns, "value" | "onTurn"> = {
+    ...(ranged ? { min, max, unit: unitOf(unit) } : { fader }),
+    // A whole number turns in whole steps over the same travel.
+    ...(ranged && field?.integer ? { step: 1, per: TRAVEL / Math.max(max - min, 1) } : {}),
+    // A field of the project that names no default starts at its min; a built-in number says none.
+    default: props.default ?? field?.default ?? (field?.builtIn ? undefined : field?.min),
+    label: label === undefined ? undefined : `Change ${label.toLowerCase()}`,
+  };
+  return {
+    field,
+    unit,
+    label,
+    /** `undefined` for a field whose range only the window knows: a fader's volume, or a number no tool describes. */
+    travel: ranged ? knobTravel(min, max, unit) : fader ? FADER_TRAVEL : undefined,
+    turns,
+    /** Why `kind` cannot draw: it needs a range, and neither its props nor its field give one. */
+    unranged: () => new Error(`${kind}: ${JSON.stringify(props.field)} is no number field with a range. Name a number field, or give it min and max.`),
+  };
+}
+
+/** A value to send the window: -inf, a silent volume, as the lowest it takes. */
+const finite = (value: number) => (Number.isFinite(value) ? value : value < 0 ? -1000 : 1000);
+
+/** The value `moved` of the way along `travel` from `from`, with three digits that count, as the window gives a field's. */
+function movedAlong(travel: Travel, from: number, moved: number): number {
+  const value = Number(valueAt(travel, within(positionOf(travel, from) + moved)).toPrecision(3));
+  return travel.scale === "fader" ? value : Math.min(Math.max(value, Math.min(travel.min, travel.max)), Math.max(travel.min, travel.max));
 }
 
 /**
- * What a knob or a fader shows and the drag that turns it, `along` an axis: a field the window
- * turns as the drag goes; or what code keeps, which shows where the drag went from it until
- * `onChange`, at its end, gives it a new value.
+ * What code keeps as the window's drags and keys turn it. Only code can read it, so the press
+ * notes where it is and each move is worked out from there: `to` gives the value `moved` away
+ * from one.
  */
-function turned(kind: string, props: ValueProps<number> & { key?: string; played?: boolean }, travel: Travel, turns: Omit<DragTurns, "value">, along: "x" | "y") {
-  if (props.field !== undefined) {
-    const { field: name, played } = props;
-    return {
-      key: props.key ?? `${kind}-${name}`,
-      value: () => now.value(name, { played }),
-      fraction: () => now.value(name, { played, fraction: true }),
-      drag: { [along]: { value: name, ...turns } } as Drag,
-      onPress: undefined,
-    };
-  }
-  const { value, onChange } = props;
-  const key = props.key ?? controlId(kind);
-  const length = turns.travel ?? TRAVEL;
-  const { dx, dy } = now.drag(key);
-  const moved = along === "x" ? dx.over(length) : dy.over(-length);
-  const position = () => positionOf(travel, read(value));
-  const fraction = () => moved.plus(position()).clamp(0, 1);
-  const onEnd = (drag: DragResult) => onChange(valueAt(travel, within(untrack(position) + (along === "x" ? drag.dx : -drag.dy) / length)));
-  const onPress = ({ clicks }: Press) => {
-    if (clicks === 2 && turns.default !== undefined) onChange(turns.default);
+function keptTurns(get: () => number, set: (value: number) => void, to: (from: number, moved: number) => number, reset?: number) {
+  let pressed = 0;
+  return {
+    onPress: () => {
+      pressed = untrack(get);
+    },
+    onTurn: (turn: Turn) => {
+      if ("reset" in turn) return reset === undefined ? undefined : set(reset);
+      if ("moved" in turn) set(to(turn.held ? pressed : untrack(get), turn.moved));
+    },
   };
-  return { key, value: () => liveValueAt(travel, fraction()), fraction, drag: { id: key, axis: along, onEnd }, onPress };
 }
 
-export type KnobProps = ValueProps<number> & {
+/**
+ * What a knob or a fader shows and the drag that turns it, `along` an axis. The window measures
+ * the drag and the keys of both a field and what code keeps, so they behave as one: a field is
+ * changed there, and `onChange` hears each value of what code keeps as it goes.
+ */
+function turned(kind: string, props: Either<{ field: string; played?: boolean }, Kept<number>> & { key?: string }, travel: Travel | undefined, turns: Omit<DragTurns, "value" | "onTurn">, along: "x" | "y") {
+  if (props.field !== undefined) {
+    const { field: name, played } = props;
+    const value = now.value(name, { played });
+    const fraction = travel ? livePosition(travel, value).clamp(0, 1) : now.value(name, { played, fraction: true });
+    return { key: props.key ?? `${kind}-${name}`, value, fraction, drag: { [along]: { value: name, ...turns } } as Drag, onPress: undefined };
+  }
+  const { value, onChange } = props;
+  const at = travel ?? FADER_TRAVEL;
+  const { onPress, onTurn } = keptTurns(() => read(value), onChange, (from, moved) => movedAlong(at, from, moved), turns.default);
+  return {
+    key: props.key ?? controlId(kind),
+    value: () => Live.of(finite(read(value))),
+    fraction: () => Live.of(within(positionOf(at, read(value)))),
+    drag: { [along]: { onTurn, ...turns } } as Drag,
+    onPress,
+  };
+}
+
+export type KnobProps = NumberValue & {
   key?: string;
+  /** The field's own label, else its name in words, when left out. It names its undo step too. */
   label?: string;
-  /** Its value alone under it, with `label` still naming its undo step: for knobs whose names a column beside them says once. */
-  bare?: boolean;
-  min: number;
-  max: number;
-  default: number;
   unit?: Reading;
-  played?: boolean;
   bipolar?: boolean;
-  size?: "sm" | "md";
+  /** How much text it shows: its label and its value (`"all"`, when left out); its `"value"` alone, for knobs whose names a column beside them says once; or `"none"`, a 28-point dial that fits a row of controls. */
+  text?: "all" | "value" | "none";
 };
 
 /**
- * A knob, as the app's knobs look, on a field, a number input or what code keeps, see
- * `ValueProps`. With `played` it moves with a lane. A double click puts it at `default`.
+ * A knob, as the app's knobs look: `<Knob field="cutoff" />`, or on what code keeps, see
+ * `ValueProps`. Both turn as they are dragged, are a tab stop the arrows step, and go to
+ * `default` on a double click or backspace. With `played` it moves with a lane.
  * `bipolar` draws its arc from the top, as a pan's; `unit: "pan"` reads `C`, `25L`, `100R`, and
  * `"pitch"` the note of a pitch, `C2` for 36.
- * `size: "sm"` is a 28-point dial without text.
  */
 export function Knob(props: KnobProps): UiNode {
-  const { label, min, max, unit, bipolar } = props;
-  const small = props.size === "sm";
-  const turns = { min, max, unit: unitOf(unit), default: props.default, label: label && `Change ${label.toLowerCase()}` };
-  const { key, value, fraction, drag, onPress } = turned("knob", props, knobTravel(min, max, unit), turns, "y");
-  const angle = () => fraction().times(SWEEP).minus(SWEEP / 2);
-  const [centreX, centreY, radius, cap] = small ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
+  const { label, unit, travel, turns, unranged } = numberOf("Knob", props);
+  if (!travel || travel.scale === "fader") throw unranged();
+  const { key, value, fraction, drag, onPress } = turned("knob", props, travel, turns, "y");
+  const turn = (): Live => read(fraction).times(SWEEP).minus(SWEEP / 2);
+  const dial = props.text === "none";
+  const [centreX, centreY, radius, cap] = dial ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
   const along = (distance: number) => () => {
-    const radians = angle().times(2 * Math.PI);
+    const radians = turn().times(2 * Math.PI);
     return [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
   };
-  const named = label !== undefined && !props.bare;
-  const texts = small ? [] : [
-    ...(named ? [Label({ x: centreX, y: 38, text: label, color: "text-secondary", align: "center" })] : []),
-    Label({ x: centreX, y: named ? 54 : 38, text: value, unit, color: "text", align: "center" }),
+  const said = label !== undefined && (props.text ?? "all") === "all";
+  const texts = dial ? [] : [
+    ...(said ? [Label({ x: centreX, y: 38, text: label, color: "text-secondary", align: "center" })] : []),
+    Label({ x: centreX, y: said ? 54 : 38, text: value, unit, color: "text", align: "center" }),
   ];
   return Space({
     key,
-    width: small ? 28 : 56,
-    height: small ? 28 : named ? 72 : 56,
+    width: dial ? 28 : 56,
+    height: dial ? 28 : said ? 72 : 56,
     cursor: "ns-resize",
     drag,
     onPress,
     children: [
       Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "fill-strong", width: 2.5 }),
-      Arc({ x: centreX, y: centreY, radius, from: bipolar ? 0 : -SWEEP / 2, to: angle, color: "text", width: 2.5 }),
+      Arc({ x: centreX, y: centreY, radius, from: props.bipolar ? 0 : -SWEEP / 2, to: turn, color: "text", width: 2.5 }),
       Circle({ x: centreX, y: centreY, radius: cap, color: "fill-strong" }),
       Line({ from: along(cap / 3), to: along(cap * 0.76), color: "text", width: 2 }),
       ...texts,
@@ -203,7 +333,7 @@ const faderLevel = (amplitude: Live) => amplitude.pow(20 / FADER.decade).times(F
 /** What a meter shows: the peaks a child keeps as `now.peak` names them, channels of the audio input, or what the device plays. */
 export type Peaks = { of: string } | { input: readonly number[] } | "device";
 
-export type FaderProps = ValueProps<number> & { key?: string; length: number; horizontal?: boolean; default?: number; label?: string; min?: number; max?: number; unit?: Unit; played?: boolean; meter?: Peaks };
+export type FaderProps = Either<{ field: string; played?: boolean }, Kept<number>> & { key?: string; length: number; horizontal?: boolean; default?: number; /** The undo step of a field. */ label?: string; min?: number; max?: number; unit?: Unit; meter?: Peaks };
 
 /** The level of `channel` of `peaks`; one channel of the input shows on both bars. */
 const levelOf = (peaks: Peaks, channel: 0 | 1): Live =>
@@ -245,12 +375,13 @@ function levelBars(peaks: Peaks, length: number, box: Box, side: number, thickne
  * on the fader's scale in dB. A double click puts it at `default`.
  */
 export function Fader(props: FaderProps): UiNode {
-  const { length, horizontal, meter, min, max, unit } = props;
-  const travel: Travel = min !== undefined && max !== undefined ? knobTravel(min, max, unit) : { min: 0, max: 0, scale: "fader" };
-  const turns = { min, max, unit, travel: length, default: props.default, label: props.label };
-  const { key, fraction, drag, onPress } = turned("fader", props, travel, turns, horizontal ? "x" : "y");
+  const { length, horizontal, meter } = props;
+  const { travel, turns } = numberOf("Fader", { ...props, label: undefined });
+  const scale = travel ?? (props.field === undefined ? FADER_TRAVEL : undefined);
+  const moves = { ...turns, ...(scale?.scale === "fader" ? { fader: true } : {}), travel: length, label: props.label ?? turns.label };
+  const { key, fraction, drag, onPress } = turned("fader", props, scale, moves, horizontal ? "x" : "y");
   const bars = meter === undefined ? [] : levelBars(meter, length, along(horizontal, length), 8, 5, 2);
-  const at = () => fraction().times(length).minus(3);
+  const at = () => read(fraction).times(length).minus(3);
   const handle = horizontal
     ? Rect({ x: at, y: 0, width: 6, height: 28, radius: 3, color: "text" })
     : Rect({ x: 0, y: () => at().negate().plus(length - 6), width: 28, height: 6, radius: 3, color: "text" });
@@ -274,21 +405,22 @@ export type NumberBoxProps = Either<
   /** `show` is what it shows in place of what code keeps, as a `Label` does: `now.bpm` of a tempo that changes as the piece plays, or `now.tick` in `"beats"`. */
   Kept<number> & { show?: Num }
 > & {
-  /** Names its space and its drag, as `now.drag(key)`. */
+  /** Names its space. */
   key: string;
+  /** The field's own when left out. */
   min?: number;
   max?: number;
-  /** What a drag of what code keeps moves by, and what a typed value rounds to: 1 when left out. */
+  /** It moves in whole steps of this size, and a typed value rounds to it: 1 for what code keeps and for a whole number field when left out; any other field turns over its range, as a knob. */
   step?: number;
   /** The only values it takes, in order, such as note values: a drag steps through them, and a typed value goes to the nearest. */
   values?: readonly number[];
-  /** Points of a drag for one step of what code keeps: 10 when left out. */
+  /** Points of a drag for one step: 10 when left out. */
   per?: number;
-  /** How it shows the number, as a `Label` does. */
+  /** How it shows the number, as a `Label` does: the field's unit when left out. */
   unit?: Reading | TickUnit;
   /** A field as it plays, see `now.value`. */
   played?: boolean;
-  /** The undo step of a field: "Change <field>" when left out. */
+  /** The undo step of a field: "Change <its label>" when left out. */
   label?: string;
   width: number;
   /** `md` when left out. A small one says its number in 12 points, the others in 14. */
@@ -320,85 +452,54 @@ function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null 
 
 /**
  * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
- * or what code keeps, such as the tempo map, see `ValueProps`. A field's drag and a typed value
- * are one undo step each; what code keeps hears a value once, at the end of a drag. Tab reaches
- * it: enter types, and the arrows step it.
+ * or what code keeps, such as the tempo map, see `ValueProps`. Either changes as it is dragged:
+ * a field's drag and a typed value are one undo step each, and what code keeps hears each value.
+ * Tab reaches it: enter types, and the arrows step it.
  */
 export function NumberBox(props: NumberBoxProps): h.JSX.Element {
-  const { key, unit, width, values, field, size = "md" } = props;
+  const { key, width, values, field, size = "md" } = props;
+  const told = numberOf("NumberBox", { ...props, unit: undefined, label: undefined });
+  const unit = props.unit ?? told.unit;
+  const [min, max] = [props.min ?? told.field?.min, props.max ?? told.field?.max];
+  const step = props.step ?? (field === undefined || told.field?.integer ? 1 : undefined);
   const height = props.height ?? CONTROL_HEIGHT[size];
   const textSize = size === "sm" ? 12 : 14;
-  const per = props.per ?? 10;
-  const step = props.step ?? 1;
-  const { get, set } = field === undefined ? valueOf(props) : numberField(field, props.label);
+  const label = props.label ?? told.turns.label;
+  const { get, set } = field === undefined ? valueOf(props) : numberAt(field, label);
   const [typing, type] = signal(false);
-  const clamped = (number: number) => Math.min(Math.max(number, props.min ?? -Infinity), props.max ?? Infinity);
-  /** A typed or dragged value as it takes it: one of `values`, or on the grid of `step`. */
+  const clamped = (number: number) => Math.min(Math.max(number, min ?? -Infinity), max ?? Infinity);
+  /** A typed or turned value as it takes it: one of `values`, or on the grid of `step`. */
   const taken = (number: number) =>
     values ? values.reduce((best, each) => (Math.abs(each - number) < Math.abs(best - number) ? each : best), values[0] ?? number)
-    : field !== undefined ? clamped(number) : clamped(Math.round(number / step) * step);
+    : clamped(step === undefined ? number : Math.round(number / step) * step);
+  const give = (number: number) => {
+    if (number !== untrack(get)) set(number);
+  };
   const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
   // The line of a label is 1.3 times its size.
   const text = { x, y: Math.round((height - textSize * 1.3) / 2), size: textSize, color: "text", align: props.align } as const;
-  const shows = props.field !== undefined ? now.value(props.field, { played: props.played }) : props.show !== undefined ? liveOf(props.show) : () => liveOf(get());
-  const shown = { ...text, text: shows, unit };
+  const shows = field !== undefined ? now.value(field, { played: props.played }) : props.show !== undefined ? Live.of(props.show) : () => Live.of(finite(get()));
   const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Reading);
-  const onPress = ({ clicks, button }: Press) => {
-    if (button === "left" && clicks === 2) type(true);
-  };
-  const box = (): UiNode => {
-    if (field !== undefined) {
-      return Space({
-        key, width, height, cursor: "ns-resize", onPress,
-        drag: { y: { value: field, min: props.min, max: props.max, unit: unitOf(valueUnit), label: props.label } },
-        children: [Label(shown)],
-      });
-    }
-    // Steps from where it was pressed, of `values` or of `step`.
-    const [pressed, press] = signal(0);
-    const drag = now.drag(key);
-    const steps = drag.dy.over(-per);
-    const dragged = (): Live => {
-      if (values) {
-        const index = steps.plus(pressed()).clamp(0, values.length - 1);
-        return values.reduce<Live>((sum, each, at) => sum.plus(index.eq(at).times(each)), index.times(0));
-      }
-      const moved = steps.times(step).plus(pressed());
-      const above = props.min === undefined ? moved : moved.max(props.min);
-      return props.max === undefined ? above : above.min(props.max);
-    };
-    return Space({
+  const stepped = step === undefined ? {} : { step, per: props.per };
+  /** What its drag turns. What code keeps moves in steps: through `values`, or of `step`. */
+  const kept = field !== undefined ? undefined
+    : values ? keptTurns(get, give, (from, moved) => values[Math.min(Math.max(Math.max(values.indexOf(taken(from)), 0) + moved, 0), values.length - 1)] ?? from)
+    : keptTurns(get, give, (from, moved) => taken(from + moved * (step ?? 1)));
+  const turns: DragTurns = kept
+    ? { onTurn: kept.onTurn, step: 1, per: props.per }
+    : { value: field ?? "", min, max, unit: unitOf(valueUnit), fader: told.turns.fader, label, ...stepped };
+  const box = (): UiNode =>
+    Space({
       key, width, height, cursor: "ns-resize",
-      onPress: (pointer) => {
-        press(values ? Math.max(values.indexOf(taken(get())), 0) : get());
-        onPress(pointer);
+      onPress: ({ clicks, button }: Press) => {
+        kept?.onPress();
+        if (button === "left" && clicks === 2) type(true);
       },
-      drag: {
-        id: key, axis: "y", snap: { y: per },
-        onEnd: ({ dy }) => {
-          const moved = -Math.round(dy / per);
-          const next = values ? values[Math.min(Math.max(pressed() + moved, 0), values.length - 1)] : clamped(pressed() + moved * step);
-          if (next !== undefined && next !== get()) set(next);
-        },
-      },
-      children: [
-        Label({ ...shown, opacity: drag.active.negate().plus(1) }),
-        Label({ ...text, text: dragged, unit: valueUnit, opacity: drag.active }),
-      ],
+      drag: { y: turns },
+      children: [Label({ ...text, text: shows, unit })],
     });
-  };
-  // Enter types a number. On what code keeps, which the window cannot step, the arrows step it
-  // as a drag does; a field's arrows are the window's, as a knob's.
-  const onKey = ({ key }: Key) => {
-    if (key === "enter") return type(true);
-    const by = key === "up" ? 1 : -1;
-    const next = values
-      ? values[Math.min(Math.max(Math.max(values.indexOf(taken(get())), 0) + by, 0), values.length - 1)]
-      : clamped(get() + by * step);
-    if (next !== undefined && next !== get()) set(next);
-  };
-  const keys: KeyName[] = field === undefined ? ["up", "down", "enter"] : ["enter"];
-  return h("div", { key: `${key}-keys`, tabStop: field === undefined, keys, onKey, style: { radius: "sm", keep: true } }, Show({
+  // Enter types a number. The arrows are the window's, as a knob's.
+  return h("div", { key: `${key}-keys`, keys: ["enter"], onKey: () => type(true), style: { radius: "sm", keep: true } }, Show({
     when: typing,
     children: () => {
       const before = untrack(get);
@@ -415,7 +516,7 @@ export function NumberBox(props: NumberBoxProps): h.JSX.Element {
 }
 
 /** A number field as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
-function numberField(path: string, label?: string) {
+function numberAt(path: string, label?: string) {
   const field = valueOf<unknown>({ field: path });
   return {
     get: () => {
@@ -426,15 +527,9 @@ function numberField(path: string, label?: string) {
   };
 }
 
-/** `"bass/synth.cutoff_hz"` as the child `bass/synth` and its field `cutoff_hz`. */
-export function splitPath(path: string): { child: string | undefined; name: string } {
-  const dot = path.lastIndexOf(".");
-  return dot < 0 ? { child: undefined, name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
-}
-
 /** The record of the child at `path` below `top`, or `top` itself. */
-function recordAt(top: { state: unknown; children: unknown }, path: string | undefined): { state: Record<string, unknown> } | undefined {
-  let at = top as { state: Record<string, unknown>; children: readonly { name: string; state: Record<string, unknown>; children: unknown }[] };
+function recordAt(top: { state: unknown; children: unknown }, path: string | undefined): { state: Record<string, unknown>; tool?: string } | undefined {
+  let at = top as { state: Record<string, unknown>; tool?: string; children: readonly { name: string; tool: string; state: Record<string, unknown>; children: unknown }[] };
   for (const name of path?.split("/") ?? []) {
     const next = at.children.find((child) => child.name === name);
     if (!next) return undefined;
@@ -452,11 +547,23 @@ export interface SelectOption<T> {
   disabled?: boolean;
 }
 
+/** What a control of options is on: a `choice` field, whose options it then takes unless `options` says, or what code keeps with its `options`. */
+type Chosen<T, Option> = Either<{ field: string; options?: Bind<readonly Option[]> }, Kept<T> & { options: Bind<readonly Option[]> }>;
+
+/** The options of a control: what its props say, else those of the choice field it is on, each named in words. */
+function optionsOf<T, Option extends { value: T; label: string }>(kind: string, props: { field?: string; options?: Bind<readonly Option[]> }): () => readonly Option[] {
+  const { field, options } = props;
+  if (options !== undefined) return () => read(options);
+  const found = field === undefined ? undefined : fieldOf(field);
+  if (found?.kind !== "choice") throw new Error(`${kind}: ${JSON.stringify(field)} is no choice field. Name a choice field, or give it options.`);
+  const told = found.options.map((value) => ({ value, label: words(String(value)) })) as unknown as Option[];
+  return () => told;
+}
+
 /** `onChange` hears a pick of another option. */
-export type SelectProps<T> = ValueProps<T> & {
+export type SelectProps<T> = Chosen<T, SelectOption<T>> & {
   /** Names it for tests: `div-<key>`. */
   key?: string;
-  options: Bind<readonly SelectOption<T>[]>;
   /** The heading over its list. */
   title?: string;
   /** What it says while `value` is none of the options: the value when left out. */
@@ -473,16 +580,17 @@ export type SelectProps<T> = ValueProps<T> & {
 export function Select<const T extends string | number | boolean | null>(props: SelectProps<T>): UiNode {
   const { openMenu } = drawing();
   const { get, set } = valueOf(props);
+  const options = optionsOf("Select", props);
   const size = props.size ?? "md";
   const said = () => {
     const value = get();
-    return read(props.options).find((option) => option.value === value)?.label ?? props.placeholder ?? String(value);
+    return options().find((option) => option.value === value)?.label ?? props.placeholder ?? String(value);
   };
   const open = async () => {
-    const [value, options] = [get(), read(props.options)];
-    const items = options.map(({ label, detail, icon, disabled, value: each }) => ({ label, detail, icon, disabled, checked: each === value, group: props.title }));
+    const [value, listed] = [get(), options()];
+    const items = listed.map(({ label, detail, icon, disabled, value: each }) => ({ label, detail, icon, disabled, checked: each === value, group: props.title }));
     const picked = await openMenu(items, { width: props.menuWidth ?? 160, search: props.search });
-    const option = picked === null ? undefined : options[picked];
+    const option = picked === null ? undefined : listed[picked];
     if (option && option.value !== value) set(option.value);
   };
   const style = { direction: "row", align: "center", gap: "xs", height: CONTROL_HEIGHT[size], paddingX: "sm", radius: "md", background: "fill", hover: { background: "fill-strong" } } as const;
@@ -491,10 +599,9 @@ export function Select<const T extends string | number | boolean | null>(props: 
   return h("div", { key: props.key, style, tabStop: true, onClick: open }, text, Icon({ name: "chevron-down", size: 12, color: "text-muted" }));
 }
 
-export type SegmentedControlProps<T> = ValueProps<T> & {
+export type SegmentedControlProps<T> = Chosen<T, Pick<SelectOption<T>, "value" | "label">> & {
   /** Names it for tests: `segmented-<key>`, and each option `segment-<place>`. */
   key?: string;
-  options: Bind<readonly Pick<SelectOption<T>, "value" | "label">[]>;
   /** `md` when left out. */
   size?: ControlSize;
   disabled?: Bind<boolean>;
@@ -503,7 +610,7 @@ export type SegmentedControlProps<T> = ValueProps<T> & {
 /** One of a few options side by side, as the window's pages of a card. */
 export function SegmentedControl<const T extends string | number | boolean | null>(props: SegmentedControlProps<T>): UiNode {
   const { get, set } = valueOf(props);
-  const options = () => read(props.options);
+  const options = optionsOf("SegmentedControl", props);
   return element("segmented", {
     key: props.key,
     size: props.size,
@@ -520,15 +627,19 @@ export function SegmentedControl<const T extends string | number | boolean | nul
   }, []);
 }
 
-export type SliderProps = { field: string; key?: string; min: number; max: number; default?: number; unit?: Unit; label?: string; played?: boolean; bipolar?: boolean; width?: number };
+export type SliderProps = { field: string; key?: string; min?: number; max?: number; default?: number; unit?: Unit; label?: string; played?: boolean; bipolar?: boolean; width?: number };
 
 /**
  * A field or a number input on a short line, as the window's sliders: a drag sideways, ten times
- * finer with shift, a double click to `default`, the arrows step. From `min` to `max`, on a log
- * scale for `"hz"`; `bipolar` draws from 0. 120 points wide unless `width` says.
+ * finer with shift, a double click to `default`, the arrows step. Over the field's range unless
+ * `min` and `max` say, on a log scale for `"hz"`; `bipolar` draws from 0. 120 points wide unless
+ * `width` says.
  */
-export function Slider({ field, played, ...props }: SliderProps): UiNode {
-  return element("slider", { ...props, field, value: now.value(field, { played }) }, []);
+export function Slider({ field, played, key, bipolar, width, ...props }: SliderProps): UiNode {
+  const { travel, turns, unranged } = numberOf("Slider", { ...props, field });
+  if (!travel || travel.scale === "fader") throw unranged();
+  const { min, max } = travel;
+  return element("slider", { key, bipolar, width, field, min, max, unit: turns.unit, default: turns.default, label: turns.label, value: now.value(field, { played }) }, []);
 }
 
 /**
@@ -540,34 +651,44 @@ export const Notice = ({ action, onDismiss, ...props }: { key?: string; message:
 
 export type StepsProps = ValueProps<readonly number[]> & {
   key?: string;
+  /** What a step turned on holds, unless it held another before: the default of the field's items when that is on, else their max, or 1. */
   max?: number;
   playing?: string;
-  /** What the row is, at its left. Rows with a label, one over the other, line up. */
+  /** What the row is, at its left: the field's label, else its name in words, when left out; `""` for none. Rows with a label, one over the other, line up. */
   label?: string;
+  /** A row that changes another row, such as accents or slides: it reads quieter than a row of notes. */
+  secondary?: boolean;
 };
 
 /**
  * A row of steps on a list of numbers, such as a `pattern` field, one per number, in groups of
- * four: a click turns a step on (to `max`, the item's max or 1 when left out) or off (to its min,
- * or 0). Tab reaches it: the arrows move along it, and space or enter turns a step. `playing`
- * names an output, as `now.value` does, whose value is the step that plays, which a green ring shows.
+ * four. A step is lit as far up as it is strong, from the items' min, off, to their max (0 and 1
+ * for what code keeps), so a soft hit shows as one. A click turns a step off, or on again as
+ * strong as it was. Tab reaches it: the arrows move along it, and space or enter turns a step.
+ * `playing` names an output, as `now.value` does, whose value is the step that plays, which a
+ * green ring shows.
  */
 export function Steps(props: StepsProps): UiNode {
-  const field = props.field !== undefined ? drawing().fields[props.field] : undefined;
+  const field = props.field === undefined ? undefined : fieldOf(props.field);
   const item = field?.kind === "list" && field.item.kind === "number" ? field.item : undefined;
-  const [off, on] = [item?.min ?? 0, props.max ?? item?.max ?? 1];
+  const [off, full] = [item?.min ?? 0, item?.max ?? 1];
+  const on = props.max ?? (item?.default !== undefined && item.default > off ? item.default : full);
   const { get, set } = valueOf(props);
   const list = () => get() ?? [];
+  /** What each step held before it was turned off. Not saved: a view made again turns a step on at `on`. */
+  const held = new Map<number, number>();
   return element("steps", {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
-    label: props.label,
-    on: () => list().map((value) => value > off),
+    label: props.label ?? (props.field === undefined ? undefined : labelOf(props.field, field)),
+    secondary: props.secondary,
+    levels: () => list().map((value) => within((value - off) / (full - off))),
     playing: props.playing === undefined ? undefined : now.value(props.playing),
     onChange: (step: number) => {
       const changed = [...untrack(list)];
-      const wasOn = (changed[step] ?? off) > off;
-      changed[step] = wasOn ? off : on;
-      set(changed, wasOn ? "Turn a step off" : "Turn a step on");
+      const was = changed[step] ?? off;
+      if (was > off) held.set(step, was);
+      changed[step] = was > off ? off : (held.get(step) ?? on);
+      set(changed, was > off ? "Turn a step off" : "Turn a step on");
     },
   }, []);
 }
@@ -586,7 +707,7 @@ export function Meter(props: MeterProps): UiNode {
   if (props.peaks !== undefined) return levelMeter(props.peaks, props.horizontal, props.length, props.key);
   const level = () => {
     const value = read(props.value);
-    return (typeof value === "string" ? now.value(value) : liveOf(value)).clamp(0, 1).times(64);
+    return (typeof value === "string" ? now.value(value) : Live.of(value)).clamp(0, 1).times(64);
   };
   const bar = Space({
     width: 8,
@@ -634,17 +755,25 @@ export function Pad(props: PadProps): UiNode {
     });
   }
   const { value, onChange } = props;
-  const key = props.key ?? controlId("pad");
-  const drag = now.drag(key);
-  /** Where the pointer is while the drag goes on and until code answers its end, else what code keeps. */
-  const at = (pointer: Live, kept: number) => drag.active.times(pointer.clamp(0, size)).plus(drag.active.negate().plus(1).times(kept * size));
-  const ended = ({ x, y }: { x: number; y: number }) => onChange({ x: within(x / size), y: within(1 - y / size) });
+  // Each axis of the drag tells its own place, and code hears the two together; escape puts both back.
+  let [pressed, at] = [untrack(() => read(value)), untrack(() => read(value))];
+  const turns = (axis: "x" | "y"): DragTurns => ({
+    onTurn: (turn) => {
+      at = { ...at, [axis]: "at" in turn ? turn.at : pressed[axis] };
+      onChange(at);
+    },
+    min: 0,
+    max: 1,
+    absolute: true,
+  });
   return Space({
     ...look,
-    key,
-    drag: { id: key, onEnd: ended },
-    onClick: ended,
-    children: [dot(() => at(drag.x, read(value).x), () => at(drag.y, 1 - read(value).y))],
+    key: props.key ?? controlId("pad"),
+    onPress: () => {
+      pressed = at = untrack(() => read(value));
+    },
+    drag: { x: turns("x"), y: turns("y") },
+    children: [dot(() => read(value).x * size, () => (1 - read(value).y) * size)],
   });
 }
 

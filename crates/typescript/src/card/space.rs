@@ -18,7 +18,7 @@ use crate::tree::{self, Cursor, Drag, Props, SpaceProps};
 
 use super::controls::{Control, Keys};
 use super::drawing::Drawing;
-use super::input::{Carried, Hears, heard};
+use super::input::{Carried, Hears, KeyTurned, heard};
 use super::paint::{Painted, found, paint, prepaint};
 use super::shapes::{Placed, Placing, Pointer, Shown};
 use super::{Lifted, TypeScriptCard};
@@ -101,10 +101,10 @@ impl Drawing<'_> {
         } else {
             holder.flex_none()
         };
-        match self.turned_by_keys(space, children) {
-            Some(turns) => {
+        match self.turned_by_keys(id, space, children) {
+            Some(turned) => {
                 let control = Control {
-                    keys: Keys::Turn(turns),
+                    keys: Keys::Turn(turned),
                     menu: None,
                 };
                 // Round corners for its ring, as the window's controls have.
@@ -118,18 +118,34 @@ impl Drawing<'_> {
         }
     }
 
-    /// What a space turns with the keys: a knob's or a fader's field, which it or one shape in it
-    /// drags, as a control of the window does. A space of more drags, such as a timeline, has none.
-    fn turned_by_keys(&self, space: &SpaceProps, children: &[usize]) -> Option<tree::Turns> {
-        let shapes = (children.iter()).filter_map(|child| match &self.table.get(*child)?.props {
-            Props::Shape(shape) => self.table.drag(shape.drag),
-            _ => None,
+    /// What a space turns with the keys: the one number that it or one shape in it drags, a
+    /// knob's or a fader's, as a control of the window does. A space of more drags, such as a
+    /// timeline, has none.
+    fn turned_by_keys(&self, id: u64, space: &SpaceProps, children: &[usize]) -> Option<KeyTurned> {
+        let shapes = (children.iter()).filter_map(|child| {
+            let node = self.table.get(*child)?;
+            match &node.props {
+                Props::Shape(shape) => Some((node.id, self.table.drag(shape.drag)?)),
+                _ => None,
+            }
         });
-        let mut turned = (self.table.drag(space.drag).into_iter())
-            .chain(shapes)
-            .flat_map(|drag| [drag.x.clone(), drag.y.clone()].into_iter().flatten());
-        let turns = turned.next()?;
-        turned.next().is_none().then_some(turns)
+        let mut turned = (self
+            .table
+            .drag(space.drag)
+            .map(|drag| (id, drag))
+            .into_iter())
+        .chain(shapes)
+        .flat_map(|(node, drag)| {
+            [drag.x.clone(), drag.y.clone()]
+                .into_iter()
+                .enumerate()
+                .filter_map(move |(axis, turns)| {
+                    let turns = turns?;
+                    Some(KeyTurned { turns, node, axis })
+                })
+        });
+        let only = turned.next()?;
+        turned.next().is_none().then_some(only)
     }
 
     /// The key of a space, and where it is scrolled to and how far zoomed now, which the spaces

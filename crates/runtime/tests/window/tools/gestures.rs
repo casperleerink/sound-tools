@@ -164,8 +164,36 @@ fn a_click_on_a_step_turns_it_on_through_its_code(cx: &mut TestAppContext) {
     assert_eq!(window.undo_label().as_deref(), Some("Turn a step on"));
 }
 
+/// A soft hit turned off and on again is as soft as it was; a step that was off turns on full.
+#[gpui::test]
+fn a_step_turned_off_and_on_again_is_as_strong_as_it_was(cx: &mut TestAppContext) {
+    let files = [
+        (ONLY_THE_TOOL[0].0, ONLY_THE_TOOL[0].1),
+        ("extensions/row.ts", STEPS),
+        (
+            "state/row.json",
+            r#"{"tool": "row", "state": {"steps": [0.5, 0, 0, 0]}}"#,
+        ),
+    ];
+    let mut window = open(cx, &files);
+    let first = window.until_found("step-0");
+    let mut becomes = |window: &mut Opened<'_>, wanted: [f64; 4]| {
+        window.until(&format!("the steps to be {wanted:?}"), |window| {
+            let steps = window.record("row")["steps"].clone();
+            serde_json::from_value::<Vec<f64>>(steps).unwrap() == wanted
+        });
+    };
+    window.click(first);
+    becomes(&mut window, [0.0, 0.0, 0.0, 0.0]);
+    window.click(first);
+    becomes(&mut window, [0.5, 0.0, 0.0, 0.0]);
+    let second = window.until_found("step-1");
+    window.click(second);
+    becomes(&mut window, [0.5, 1.0, 0.0, 0.0]);
+}
+
 /// A knob on what code keeps and the options of a mode, which keep each value they hear in the
-/// record, and a slider on a field.
+/// record, and a slider on a field, on a page that holds the keys first.
 const KEPT: &str = r#"import { choice, h, Knob, number, SegmentedControl, Slider, tool } from "./sdk";
 
 tool({
@@ -181,6 +209,7 @@ tool({
   },
   memory: () => ({ level: 0.5, mode: "soft" as "soft" | "hard" }),
   sound: () => 0,
+  onKey: () => {},
   view: ({ memory, update }) => {
     const hear = (level: number) => {
       memory.level = level;
@@ -217,29 +246,49 @@ impl Opened<'_> {
     }
 }
 
+/// A knob on what code keeps behaves as one on a field: its code hears each value as the drag
+/// goes, escape puts it back, and the keys step and reset it.
 #[gpui::test]
-fn a_knob_on_what_code_keeps_moves_with_no_bun_and_its_code_hears_the_end_once(
+fn a_knob_on_what_code_keeps_tells_its_code_as_it_is_dragged_and_takes_the_keys(
     cx: &mut TestAppContext,
 ) {
     let mut window = open_project(cx, &project("kept", KEPT));
     let knob = window.space("kept") + point(px(28.), px(20.));
-    // The press goes to its code, which hears a double click.
+    let level = |window: &mut Opened<'_>| window.record("kept")["level"].as_f64().unwrap_or(-1.0);
+    let mut becomes = |window: &mut Opened<'_>, wanted: f64| {
+        window.until(&format!("its code to hear {wanted}"), |window| {
+            (level(window) - wanted).abs() < 1e-6
+        });
+    };
+    // Tab reaches it: an arrow steps it a fiftieth of its travel, and backspace is its default.
+    press_key(&mut window, "tab");
+    press_key(&mut window, "up");
+    press_key(&mut window, "up");
+    becomes(&mut window, 0.54);
+    press_key(&mut window, "backspace");
+    becomes(&mut window, 0.5);
+    // While the pointer holds it: from 0.5, a quarter of its travel up, then another.
     window.press(knob);
-    let (_, events) = sound_typescript::sent_updates_and_events();
-    for step in 1..=10 {
-        window.drag_to(knob - point(px(0.), px(step as f32 * 10.)));
-    }
-    assert_eq!(sound_typescript::sent_updates_and_events().1, events);
+    window.drag_to(knob - point(px(0.), px(50.)));
+    becomes(&mut window, 0.75);
+    window.drag_to(knob - point(px(0.), px(100.)));
+    becomes(&mut window, 1.0);
     window.release(knob - point(px(0.), px(100.)));
-    // From 0.5, half its travel up.
-    assert_eq!(window.heard(1), 1.0);
-    assert_eq!(sound_typescript::sent_updates_and_events().1, events + 1);
+    window.wait_for_bun();
+    assert_eq!(level(&mut window), 1.0);
+    // Escape puts it back where the press found it.
+    window.press(knob);
+    window.drag_to(knob + point(px(0.), px(60.)));
+    becomes(&mut window, 0.7);
+    window.cx.simulate_keystrokes("escape");
+    becomes(&mut window, 1.0);
+    window.release(knob + point(px(0.), px(60.)));
     // It drags on from what its code gives it.
     let quarter = window.control("div-quarter");
     window.click(quarter);
     window.wait_for_bun();
     window.drag(knob, knob - point(px(0.), px(20.)));
-    assert!((window.heard(2) - 0.35).abs() < 1e-6);
+    becomes(&mut window, 0.35);
 }
 
 #[gpui::test]
@@ -1019,6 +1068,63 @@ fn the_keys_step_a_silent_fader_from_silence(cx: &mut TestAppContext) {
         let gain = window.record("faded/level")["gain_db"].as_f64();
         gain.is_some_and(|gain| gain < -30.0)
     });
+}
+
+const KIT: &str = r#"import { h, Knob, number, tool } from "./sdk";
+
+tool({
+  name: "kit",
+  title: "Kit",
+  when: "A test",
+  doc: "Knobs that name only their field: a whole number of its own, and the level of a pad of its child.",
+  state: { note: number({ min: 24, max: 60, default: 36, integer: true }) },
+  children: { drums: "drum-pad" },
+  behaviour: () => ({ connections: [] }),
+  onKey: () => {},
+  view: () => h("div", {}, h(Knob, { field: "drums.pads.36.volume_db" }), h(Knob, { field: "note" })),
+});
+"#;
+
+/// A knob that names only its field turns it over the field's own range: a number inside the
+/// record of a child, in a pad the record leaves out, as one undo step named by the field; and
+/// a whole number in whole steps.
+#[gpui::test]
+fn a_knob_takes_its_range_from_a_number_inside_a_child_and_steps_a_whole_number(
+    cx: &mut TestAppContext,
+) {
+    let files = [
+        (
+            "project.json",
+            r#"{"format": 1, "extensions": ["drum-pad"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": []}"#,
+        ),
+        ("extensions/kit.ts", KIT),
+        ("state/kit/instance.json", r#"{"tool": "kit", "state": {}}"#),
+        (
+            "state/kit/drums.json",
+            r#"{"tool": "drum-pad", "state": {}}"#,
+        ),
+    ];
+    let mut window = open(cx, &files);
+    let knob = window.space("knob-drums.pads.36.volume_db") + point(px(28.), px(20.));
+    // A pad's level runs from -48 to 12 dB: half its travel down from 0 dB is 30 dB less.
+    window.drag(knob, knob + point(px(0.), px(100.)));
+    window.wait_for_bun();
+    assert_eq!(window.record("kit/drums")["pads"]["36"]["volume_db"], -30.0);
+    assert_eq!(window.undo_label().as_deref(), Some("Change volume"));
+    // The second knob: an arrow is one whole step of a whole number.
+    press_key(&mut window, "tab");
+    press_key(&mut window, "tab");
+    press_key(&mut window, "up");
+    window.until("one note up", |window| {
+        window.record("kit")["note"].as_f64() == Some(37.0)
+    });
+    let note = window.space("knob-note") + point(px(28.), px(20.));
+    window.drag(note, note - point(px(0.), px(14.)));
+    window.wait_for_bun();
+    let dragged = window.record("kit")["note"].as_f64().unwrap();
+    assert!(dragged > 37.0 && dragged.fract() == 0.0, "{dragged}");
 }
 
 const NUMBERED: &str = r#"import { h, number, NumberBox, text, tool } from "./sdk";
