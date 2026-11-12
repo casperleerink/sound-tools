@@ -1437,6 +1437,28 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
     assert!(window.find("button-close-panel").is_none());
 }
 
+/// One selection: a click on a clip of another track shows that track's panel in place of the
+/// one that showed, and while the editor is open, the notes of the clip that is clicked.
+#[gpui::test]
+fn choosing_a_clip_shows_its_track_and_its_notes_below(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    // The song opens on the panel of its first track.
+    window.until_found("space-knob-t00/send-ret-a.gain_db");
+    let clip = window.on_lane(BAR / 2, 1);
+    window.click(clip);
+    window.until_found("space-knob-t01/send-ret-a.gain_db");
+    assert!(window.find("space-knob-t00/send-ret-a.gain_db").is_none());
+
+    window.double_click(clip);
+    window.until_found("space-editor-t01/c00");
+    let other = window.on_lane(BAR / 2, 0);
+    window.click(other);
+    window.until_found("space-editor-t00/c00");
+    assert!(window.find("space-editor-t01/c00").is_none());
+    assert_eq!(window.problems(), []);
+}
+
 /// Escape closes a track's panel, as its close button does, once nothing is selected.
 #[gpui::test]
 fn escape_closes_a_tracks_panel(cx: &mut TestAppContext) {

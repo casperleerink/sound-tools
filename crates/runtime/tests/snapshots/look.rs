@@ -15,6 +15,8 @@
 //!   expanded with its sidechain picker.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
+//! - `look-mixer.png`: the mixer of that song: Track 1 panned left with a silent send, the bass
+//!   with its two sends, and the returns' and the master's strips at the right.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
 //!   the test plugin, the menu of its card's title open, and the menu of Add effect.
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
@@ -361,6 +363,16 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
             ),
             ("bass/send-ret-a.json", send(-12.)),
             ("bass/send-ret-b.json", send(-18.)),
+            // What the mixer says in words only away from where a dial rests: a pan off the
+            // middle, and not a send that is silent.
+            (
+                "track-1/mix.json",
+                json!({ "tool": "fader", "state": { "pan": -0.3 } }),
+            ),
+            (
+                "track-1/send-ret-a.json",
+                json!({ "tool": "fader", "state": { "gain_db": "-inf" } }),
+            ),
         ],
     )?;
     let bottom = super::WINDOW_HEIGHT - 40.;
