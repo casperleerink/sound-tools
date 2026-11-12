@@ -12,6 +12,8 @@ const RULER = 32;
 const LANE = 56;
 // Points per tick at zoom 1, 24 a beat; it opens fitted to the clip, up to 192 a beat.
 const ACROSS = 0.025;
+// The fewest points between two lines of the grid: closer than this, they do not show.
+const GRID_ROOM = 6;
 // How far alt-up and alt-down move the chosen velocities.
 const VELOCITY_STEP = 10;
 // The top of a velocity of 127, and the bottom of every one, in the lane.
@@ -267,11 +269,11 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
   const marquee = now.drag("note-marquee");
   const drawn = now.drag("velocity-draw");
   const roll = height - RULER - LANE - 2;
-  // It opens on the clip: the middle of its notes in the middle of the roll, on whole points.
+  // It opens on the clip: the middle of its notes in the middle of the roll, on a whole row, so no key's name is cut at its top.
   const [opening, middleRow] = untrack(() => {
     const pitches = notes().map((note) => note.pitch);
     const middle = pitches.length > 0 ? (Math.min(...pitches) + Math.max(...pitches)) / 2 : 60;
-    return [length(), Math.round((127 - middle + 0.5) * ROW - roll / 2) / ROW] as const;
+    return [length(), Math.round(127 - middle + 0.5 - roll / ROW / 2)] as const;
   });
 
   const change = changer(memory, edit);
@@ -446,10 +448,13 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
   };
   const pitches = Array.from({ length: 128 }, (_, row) => 127 - row);
   const lines = () => bars().filter((tick) => tick >= -BEAT && tick <= end());
-  const beats = () => {
+  /** The ticks of the clip `step` apart where no line is yet: not a bar's, and not one of the wider grid `over` it. */
+  const every = (step: number, over?: number) => {
     const starts = new Set(lines());
-    return Array.from({ length: Math.ceil(end() / BEAT) }, (_, beat) => beat * BEAT).filter((tick) => !starts.has(tick));
+    return Array.from({ length: Math.ceil(end() / step) }, (_, at) => at * step).filter((tick) => !starts.has(tick) && !(over && tick % over === 0));
   };
+  /** 1 while lines `step` ticks apart have room at the zoom of the roll. */
+  const roomFor = (step: number) => space.pointX.lt(step / GRID_ROOM);
   // The roll and what follows it across: the ruler and the lane.
   const across = { unit: { x: ACROSS }, extent: () => ({ x: [-BEAT, end()] as const }), zoom: { x: [0.1, 8] as const } };
   const Rule = () => <div style={{ width: 1, background: "border", keep: true }} />;
@@ -494,14 +499,19 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
               onPress={() => preview(pitch)} />
           ))}
           {pitches.filter((pitch) => pitch % 12 === 0).map((pitch) => (
-            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch)} text={`C${pitch / 12 - 1}`} color="text-muted" align="right" />
+            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch) + (ROW - 16) / 2 / ROW} text={`C${pitch / 12 - 1}`} color="text-muted" align="right" />
           ))}
         </Space>
         <Rule />
         <Space key={key} grow height={roll} {...across} unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-BEAT, end()] as const, y: [0, 128] as const })}
           fit={{ x: [0, opening], before: 8, after: 96 }} scroll={{ y: middleRow }} drag={marqueeDrag} onPress={pressEmpty}>
           {pitches.filter(isBlack).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="fill" opacity={0.4} />)}
-          <For each={beats}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border" width={1} />}</For>
+          {/* Where a note lands: faint lines at the snap inside a beat, while the zoom leaves them room. */}
+          {() => {
+            const snap = memory.snap;
+            return snap > 0 && snap < BEAT ? <For each={() => every(snap, BEAT)}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border" width={1} opacity={roomFor(snap).times(0.5)} />}</For> : null;
+          }}
+          <For each={() => every(BEAT)}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border" width={1} opacity={roomFor(BEAT)} />}</For>
           <For each={lines}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="border-strong" width={1} />}</For>
           <Rect x={length} y={0} width={1e6} height={128} color="background" />
           <Rect x={-1e6} y={0} width={1e6} height={128} color="background" />

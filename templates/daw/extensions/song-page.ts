@@ -101,7 +101,7 @@ const wordsOf = (name: string) => {
   return words(rest);
 };
 export const titleOf = (each: Child) => ((each.tool === "track" || each.tool === "tape" || each.tool === "bus") && each.state.title) || wordsOf(each.name);
-const mixOf = (each: Child) => (each.tool === "track" || each.tool === "tape" || each.tool === "bus" ? each.children.find((child) => child.name === "mix") : undefined);
+export const mixOf = (each: Child) => (each.tool === "track" || each.tool === "tape" || each.tool === "bus" ? each.children.find((child) => child.name === "mix") : undefined);
 export const muted = (each: Child) => {
   const mix = mixOf(each);
   return mix?.tool === "fader" && mix.state.mute === true;
@@ -215,8 +215,8 @@ export function pageOf(song: Song) {
   const panelOf = () => (memory.below?.kind === "track" ? memory.below.name : null);
   /** The track of what shows below: its panel, or the notes of one of its clips. */
   const trackBelow = () => (memory.below?.kind === "editor" ? (memory.below.clip.split("/")[0] ?? null) : panelOf());
-  /** The one chosen track, which its head and its strip show: of what shows below, else of the chosen clips. */
-  const chosenTrack = () => trackBelow() ?? [...memory.selected][0]?.split("/")[0] ?? null;
+  /** The one chosen track or return, which its head and its strip show: of what shows below, else of the chosen clips, else, beside the mixer, the one the keyboard plays, as a click on a strip's name chooses it. */
+  const chosenTrack = () => trackBelow() ?? [...memory.selected][0]?.split("/")[0] ?? (memory.below?.kind === "mixer" ? memory.track : null);
   const lengthAt = lengths({ children, outputs, clock });
   /** The clip or the region `key` names, `row/name`. */
   const itemAt = (key: string) => {
@@ -276,7 +276,7 @@ export function pageOf(song: Song) {
   // The window's own context, not a copy: it reads `time` anew each time.
   return Object.assign(song, {
     rows, tracks, returns, strips, layout, tops, topOf, rowAt, returnsHeight, runs, end, starts, barOf,
-    clipAt, panelOf, chosenTrack, lengthAt, itemAt, choose, openPanel, openMaster, editClips, toggleMute, toggleSolo,
+    clipAt, chosenTrack, lengthAt, itemAt, choose, openPanel, openMaster, editClips, toggleMute, toggleSolo,
     timeline, playhead, handle,
   });
 }

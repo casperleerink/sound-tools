@@ -278,6 +278,8 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
     window.press(toggle);
     window.release(toggle);
     let fader = window.space_at("fader-t01/mix.gain_db") + point(px(20.), px(80.));
+    // The pointer comes over the strip, which then says its numbers, before the drag.
+    window.hover(fader);
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let questions = sound_typescript::asked_behaviours();
