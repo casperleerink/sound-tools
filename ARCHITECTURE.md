@@ -119,11 +119,12 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would move every clip, which goes wrong for clips off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
 - The loop, and a jump at a tick, go back on the frame of their end, and each processor ahead of the device goes back on its own frame first, so processors need no loop code. Rejected: a seek when the device gets there, which with latency (any filter or saturator) cut what rang one latency early: a click on every repeat.
-- The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
+- Every processor runs every block, playing or not, so live keys and tails sound while stopped.
 - Removing a processor is a hard switch, no crossfade.
 - The graph has no cycles. Which connection of a cycle is left out is fixed, so the same one goes on every open and a sidechain mistake usually mutes only a detector.
 - Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. Delaying would also delay a keyboard played into a track; with leading it waits only for that track's chain.
 - A side input (such as a sidechain) is skipped by the lead, so its source is not led by another track's chain. The detector hears it a little early or late instead.
+- A plugin's Play earlier (`earlier_ms`) is latency it reports with no delay behind it, so what plays into it leads, for a library whose notes start late. Rejected: a track delay in the template, which our own instruments do not need, and an effect that does nothing to the sound.
 - Every render is deterministic: the same project gives the same bytes. Anything that looks random takes a seed.
 
 ## Templates
