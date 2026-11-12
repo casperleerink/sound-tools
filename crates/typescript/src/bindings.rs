@@ -393,6 +393,17 @@ fn a_knob_with_its_label_in_a_row_is_told_to_go_in_controls() {
     );
     let bun = mounted("loose.ts", &named, "loose");
     assert!(first_ops(&bun).is_ok());
+    // A row of steps names its controls once, over the rows, as a row does.
+    let steps = "h(Steps, { value: [1], onChange: () => {} }, ";
+    let in_steps = LOOSE
+        .replace("h(Row, {}, ", steps)
+        .replace("Row,", "Steps,");
+    let bun = mounted("loose.ts", &in_steps, "loose");
+    assert!(
+        first_ops(&bun)
+            .unwrap_err()
+            .contains(r#"says text="value""#)
+    );
 }
 
 const SCALED: &str = r#"import { Display, h, tool } from "./sdk";

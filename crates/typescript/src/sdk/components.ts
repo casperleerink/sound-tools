@@ -4,7 +4,7 @@ import { Arc, Circle, ControlSize, h, Icon, IconName, Input, Label, Line, Rect, 
 import { Field, Fields, NumberField, ObjectItem, Unit } from "./fields";
 import { Drawing, host } from "./host";
 import { Drag, DragTurns, heldByLane, Live, now, Num, Press, splitPath, touched, Turn } from "./live";
-import { asCell, currentCard, element, ownLines, Show, StepChange, UiNode } from "./nodes";
+import { asCell, Child, currentCard, element, homeInControls, ownLines, Show, StepChange, UiNode } from "./nodes";
 import { Accessor, Bind, signal, untrack } from "./reactivity";
 import { builtInNumbers } from "./records";
 
@@ -768,6 +768,8 @@ export type StepsProps = ValueProps<readonly number[]> & {
   label?: string;
   /** A row that changes another row, such as accents or slides: it reads quieter than a row of notes. */
   secondary?: boolean;
+  /** The controls of this row, at its right, such as the level of a drum: a knob says `text="value"`, and the `columns` of its `StepGrid` name it. */
+  children?: Child;
 };
 
 /**
@@ -790,7 +792,7 @@ export function Steps(props: StepsProps): UiNode {
   const step = props.playing === undefined ? undefined : now.value(props.playing);
   /** What each step held before it was turned off. Not saved: a view made again turns a step on at `on`. */
   const held = new Map<number, number>();
-  return element("steps", {
+  const row = element("steps", {
     key: props.key ?? (props.field !== undefined ? `steps-${props.field}` : undefined),
     label: props.label ?? (props.field === undefined ? undefined : labelOf(props.field, field)),
     secondary: props.secondary,
@@ -812,7 +814,9 @@ export function Steps(props: StepsProps): UiNode {
       changed[step] = was > off ? off : (held.get(step) ?? on);
       set(changed, was > off ? "Turn a step off" : "Turn a step on");
     },
-  }, []);
+  }, [props.children]);
+  homeInControls(row);
+  return row;
 }
 
 export type MeterProps =

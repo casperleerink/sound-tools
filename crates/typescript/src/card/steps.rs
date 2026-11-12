@@ -8,16 +8,18 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Background, DispatchPhase, ElementId, Entity, FocusHandle, Hsla, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString, Window,
-    canvas, div, linear_color_stop, linear_gradient, prelude::*, px,
+    AnyElement, App, Background, DispatchPhase, Div, ElementId, Entity, FocusHandle, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString,
+    Window, canvas, div, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use serde_json::json;
+use sound_ui::components::cell::{CELL_WIDTH, CONTROL_HEIGHT};
+use sound_ui::components::display;
 use sound_ui::typography::{TextVariant, Typography};
 use sound_ui::{ActiveTheme, KeyboardFocus, radius};
 
 use crate::bun::EventKind;
-use crate::tree::{StepsProps, decimal};
+use crate::tree::{GridProps, Props, StepsProps, decimal};
 
 use super::controls::{Control, Keys};
 use super::drawing::Drawing;
@@ -37,6 +39,15 @@ const DOWN: f32 = 24.;
 const AIR: f32 = 12.;
 /// The room of a label: a name of two short words, and air before the steps.
 const LABEL: f32 = 80.;
+/// From the steps of a row to its controls.
+const CONTROLS_GAP: f32 = 16.;
+/// Between two rows that hold controls, whose values would touch the dials under them.
+const ROW_GAP: f32 = 8.;
+/// From the rows of a grid on a page to the controls of the whole of it.
+const GRID_GAP: f32 = 24.;
+/// The line over the first row that names the columns of the controls, and the air under it.
+const HEAD: f32 = 16.;
+const HEAD_GAP: f32 = 4.;
 
 /// Points of a drag up a step for its whole strength.
 const TRAVEL: f32 = 80.;
@@ -148,6 +159,8 @@ struct Steps {
     label: Option<SharedString>,
     secondary: bool,
     on_turn: Option<Turn>,
+    /// The controls of the row, each in a column of a cell at its right end.
+    controls: Vec<AnyElement>,
 }
 
 impl RenderOnce for Steps {
@@ -272,22 +285,38 @@ impl RenderOnce for Steps {
             })
             .children(steps)
             .children(on_turn.map(|on_turn| hears_the_drag(state.clone(), on_turn)));
+        // Beside controls, its steps are level with a knob's dial, whose value hangs under it.
+        let beside_controls = !self.controls.is_empty();
+        let level = |part: Div| match beside_controls {
+            true => part.h(px(CONTROL_HEIGHT)),
+            false => part,
+        };
+        let controls = beside_controls.then(|| {
+            let columns = (self.controls.into_iter()).map(|control| {
+                (div().flex().flex_none().justify_center())
+                    .min_w(px(CELL_WIDTH))
+                    .child(control)
+            });
+            // At the end of the row, so the columns of rows of other lengths line up.
+            (div().flex().flex_none().ml_auto().pl(px(CONTROLS_GAP))).children(columns)
+        });
         // Every label takes the same width, so rows one over the other line up.
         div()
             .flex()
             .flex_none()
-            .items_center()
+            .items_start()
             .children(self.label.map(|label| {
-                div()
-                    .flex_none()
-                    .w(px(LABEL))
-                    .pr(px(8.))
+                let name = (div().w_full().truncate())
                     .text_variant(TextVariant::Label)
                     .text_color(label_color)
-                    .truncate()
-                    .child(label)
+                    .child(label);
+                level(div().flex().flex_none().items_center())
+                    .w(px(LABEL))
+                    .pr(px(8.))
+                    .child(name)
             }))
-            .child(row)
+            .child(level(div().flex().flex_none().items_center()).child(row))
+            .children(controls)
     }
 }
 
@@ -300,7 +329,7 @@ fn turned(at: usize, turned: Turned, on_turn: &Turn, cx: &mut App) {
 impl Drawing<'_> {
     /// A row of steps, which tells its code the place of the step a click, a drag or a key
     /// changes, and how.
-    pub(super) fn steps(&mut self, id: u64, props: &StepsProps) -> AnyElement {
+    pub(super) fn steps(&mut self, id: u64, props: &StepsProps, children: &[usize]) -> AnyElement {
         let name = self.element_name("steps", props.key.as_deref(), id);
         let selector = format!("steps-{}", props.key.as_deref().unwrap_or_default());
         let playing = (props.playing.as_ref())
@@ -325,6 +354,10 @@ impl Drawing<'_> {
             label: props.label.clone().map(SharedString::from),
             secondary: props.secondary == Some(true),
             on_turn,
+            controls: self.small(|drawing| {
+                let controls = super::parts::drawn(drawing.table, children);
+                controls.map(|control| drawing.draw(control)).collect()
+            }),
         };
         let control = Control {
             keys: Keys::Own,
@@ -333,5 +366,71 @@ impl Drawing<'_> {
         // A press on it is its own, not the row's under it.
         let wrap = div().flex_none().occlude().debug_selector(move || selector);
         (self.control(wrap, id, control).child(steps)).into_any_element()
+    }
+
+    /// Rows of steps one under the other, as wide as the widest, with the names of the columns
+    /// of their controls over the first.
+    pub(super) fn step_rows(&mut self, rows: &[usize], columns: &[String]) -> Div {
+        let table = self.table;
+        let holds_controls = |row: &usize| {
+            (table.get(*row))
+                .is_some_and(|row| super::parts::drawn(table, &row.children).count() > 0)
+        };
+        let gap = if rows.iter().any(holds_controls) {
+            ROW_GAP
+        } else {
+            0.
+        };
+        let secondary = self.cx.theme().text_secondary();
+        let heads = (!columns.is_empty()).then(|| {
+            let heads = columns.iter().map(|name| {
+                (div().flex().flex_none().justify_center().w(px(CELL_WIDTH)))
+                    .text_variant(TextVariant::Label)
+                    .text_color(secondary)
+                    .child(name.clone())
+            });
+            (div().flex().flex_none().justify_end())
+                .h(px(HEAD))
+                .mb(px(HEAD_GAP - gap))
+                .children(heads)
+        });
+        (div().flex().flex_col().flex_none())
+            .gap(px(gap))
+            .children(heads)
+            .children(rows.iter().map(|row| self.draw(*row)))
+    }
+
+    /// A grid of steps: its rows, and beside them what else it holds, the controls of the whole
+    /// of it, level with the first row.
+    pub(super) fn grid(&mut self, props: &GridProps, children: &[usize]) -> AnyElement {
+        let table = self.table;
+        let is_steps = |slot: &usize| {
+            matches!(
+                table.get(*slot).map(|entry| &entry.props),
+                Some(Props::Steps(_))
+            )
+        };
+        let (rows, rest): (Vec<usize>, Vec<usize>) =
+            super::parts::drawn(table, children).partition(is_steps);
+        let columns = props.columns.as_deref().unwrap_or_default();
+        let head = if columns.is_empty() {
+            0.
+        } else {
+            HEAD + HEAD_GAP
+        };
+        // In a card the gap to what follows is that of its grid, as after a display.
+        let card = self.expanded.is_some();
+        let gap = if card { display::GAP } else { GRID_GAP };
+        let rows = (self.step_rows(&rows, columns))
+            .when(card || !rest.is_empty(), |rows| rows.mr(px(gap)))
+            // Alone, in the middle of the height of its card, as a display fills it.
+            .when(rest.is_empty(), |rows| rows.justify_center());
+        let rest = rest
+            .into_iter()
+            .map(|part| div().flex_none().pt(px(head)).child(self.draw(part)));
+        (div().flex().flex_none().child(rows))
+            .children(rest.collect::<Vec<_>>())
+            .debug_selector(|| "grid".into())
+            .into_any_element()
     }
 }

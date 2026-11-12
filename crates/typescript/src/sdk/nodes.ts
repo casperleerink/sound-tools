@@ -22,7 +22,7 @@ export interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "toggle" | "slider" | "segmented" | "notice" | "overlay" | "display" | "controls" | "cell" | "steps" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "toggle" | "slider" | "segmented" | "notice" | "overlay" | "display" | "controls" | "cell" | "steps" | "grid" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -187,9 +187,9 @@ export function ownLines(node: UiNode, called: string): UiNode {
 }
 
 /**
- * Fails where a child of `parent`, a `Row` or a `Panel`, is a control with its own lines, or one
- * of the parts of a card, whose grid is the window's, is any control on a field: side by side by
- * hand they hug one edge and stand off the grid of the cells.
+ * Fails where a child of `parent`, a `Row`, a `Panel` or a row of `Steps`, is a control with its
+ * own lines, or one of the parts of a card, whose grid is the window's, is any control on a
+ * field: side by side by hand they hug one edge and stand off the grid of the cells.
  */
 export function homeInControls(parent: UiNode | readonly UiNode[]) {
   const card = Array.isArray(parent);

@@ -24,7 +24,10 @@ const COLUMNS_BESIDE_DISPLAY: usize = 2;
 const COLUMNS_ALONE: usize = 4;
 
 /// The children of a node that draw.
-fn drawn<'a>(table: &'a NodeTable, children: &'a [usize]) -> impl Iterator<Item = usize> + 'a {
+pub(super) fn drawn<'a>(
+    table: &'a NodeTable,
+    children: &'a [usize],
+) -> impl Iterator<Item = usize> + 'a {
     (children.iter().copied()).filter(|child| {
         !matches!(
             table.get(*child).map(|child| &child.props),
@@ -62,11 +65,8 @@ impl Drawing<'_> {
             matches!(props, Some(Props::Steps(_)))
         };
         let (steps, rest): (Vec<usize>, Vec<usize>) = drawn(table, children).partition(is_steps);
-        let rows = (!steps.is_empty()).then(|| {
-            (div().flex().flex_col().flex_none().justify_center())
-                .mr(px(display::GAP))
-                .children(steps.into_iter().map(|row| self.draw(row)))
-        });
+        let rows = (!steps.is_empty())
+            .then(|| (self.step_rows(&steps, &[]).justify_center()).mr(px(display::GAP)));
         (div().flex().flex_none().h(px(ROW_HEIGHT * 2.)))
             .children(rows)
             .children(rest.into_iter().map(|part| self.draw(part)))
@@ -74,7 +74,7 @@ impl Drawing<'_> {
     }
 
     /// Draws with the controls that name no size small, as a card has them.
-    fn small<T>(&mut self, draw: impl FnOnce(&mut Self) -> T) -> T {
+    pub(super) fn small<T>(&mut self, draw: impl FnOnce(&mut Self) -> T) -> T {
         let outer = std::mem::replace(&mut self.control_size, ControlSize::Sm);
         let drawn = draw(self);
         self.control_size = outer;

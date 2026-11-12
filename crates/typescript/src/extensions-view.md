@@ -6,35 +6,6 @@ Read `agent-docs/extensions.md` first. The elements and their props are in `exte
 - A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.
 - `quiet` on a `Knob`, a `NumberBox` or a `Readout` shows its number only while a control of its field is touched or it moves, so a row of them at rest repeats no number.
 
-## A grid of steps
-
-Rows of steps that each have a knob: the knob shows its `"value"` alone, one line over the rows names its column, and a control of the whole thing goes in `Controls` beside them. A row marked `secondary`, such as accents, changes the row over it.
-
-```tsx
-const rows: Style = { gap: "sm" };
-// As wide as a knob.
-const head: Style = { width: 56, textAlign: "center" };
-
-<Panel title="Drums">
-  <Row align="start">
-    <div style={rows}>
-      <Row gap="lg" justify="end">
-        <Text variant="label" style={head}>Level</Text>
-      </Row>
-      {DRUMS.map((drum) => (
-        <Row gap="lg">
-          <Steps field={drum} playing="step" />
-          <Knob field={`${drum}_level`} text="value" />
-        </Row>
-      ))}
-    </div>
-    <Controls>
-      <Knob field="swing" />
-    </Controls>
-  </Row>
-</Panel>
-```
-
 ## Values that change
 
 A view and a component run once. A value that changes (a field, a child, an output, `clock.playing`, `memory`, `size`) goes in a function, which the window runs again when what it read changes; only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the view fails with an error that says how. A handler reads values as it runs, so it needs no function around them.

@@ -67,9 +67,9 @@ What plays the tool as a performer plays, which nothing saves and no undo takes 
 
 Without `view`, it gets a control per number, boolean, choice, file, `pattern`, number input and bang. For your own, give `view` in a `.tsx` file. It runs once; what changes goes in a function (`agent-docs/extensions-view.md`).
 
-A card is a `Display` of what the tool does to the sound, or rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most. Rows of steps that each have a knob: "A grid of steps" in `agent-docs/extensions-view.md`.
+A card is a `Display` of what the tool does to the sound, or a `StepGrid` of rows of `Steps` in its place, then `Controls`, the one home of its controls: each control on a field, and in a `Cell` what has none (`extensions/sdk/card.ts`). The first columns show and the rest wait behind the card's expand icon: put first what matters most. A row of steps holds the controls of that row, such as the level of a drum, and the grid names their columns.
 
-A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, faint marks and a zero line, not with shapes of its own. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names.
+A control with a `field` takes its range, unit and label from it and shows what plays, also while a lane moves it. A display says what it is measured by with `scale` and `zero`, faint marks and a zero line, not with shapes of its own, and what no mark says with a `caption`, which starts with a capital: `Pitch, ±50 cents`. A wave fills its display, and `now.scope()` is the sound the tool plays. A part shows how it is used, so a view adds no line of instructions. Name what a colour is for and a step of a scale, not a raw value: `background: "fill"`, `<Row gap="sm">`, `<Text variant="label">`; `extensions/sdk/drawing.ts` lists the names. Sound that moves is `green` and a value is `text`: a view picks no hue of its own.
 
 ```tsx
 import { Button, Cell, Controls, Display, Fragment, h, Knob, tool, Wave } from "./sdk";
@@ -109,13 +109,10 @@ update("Add a note", ({ state }) => {
 2. In `project.json` (`agent-docs/project-json.md`), name it `main` so the window shows it, and connect its `audio` to the speakers. The microphone or another app can play into its `input`: tell the composer to use headphones.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 
-Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a knob with its label goes in `Controls` here too. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
+Its `view` is a `Page` (`extensions/sdk/page.ts`): the transport shows in the window's title bar, and shows and sets the tempo of a tool that plays in the bars, so a page adds no tempo control; the rest is one under the other in the middle of the window. A `Panel` is a surface with a title, as wide as what is in it; its `Display` and its `Controls` go side by side in a `Row`, as a card has them, and a knob with its label goes in `Controls` here too. A `StepGrid` takes its `Controls` as its last child. `grow` is for a surface that needs the room, a canvas or a piano roll, not for a picture of a sound. `<Page flush>` is one surface to the window's edges.
 
 ```tsx
-import { type Channel, type Color, Controls, Display, h, Knob, lowpass, mtof, now, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
-
-// A colour kept in a list is a `Color`.
-const EARS: { channel: Channel; color: Color }[] = [{ channel: 0, color: "teal" }, { channel: 1, color: "mauve" }];
+import { Controls, Display, h, Knob, Line, lowpass, mtof, number, Page, Panel, playing, Row, saw, smooth, tool, Wave } from "./sdk";
 
 tool({
   name: "drone",
@@ -130,21 +127,26 @@ tool({
     const ear = (apart: number) => lowpass(saw(mtof(pitch).times(apart)), tone).times(smooth(playing, 50)).times(0.3);
     return { left: ear(1), right: ear(1.005) };
   },
-  view: () => (
-    <Page>
-      <Panel title="Drone">
-        <Row>
-          <Display>
-            {EARS.map(({ channel, color }) => <Wave list={now.scope({ channel })} color={color} />)}
-          </Display>
-          <Controls>
-            <Knob field="pitch" />
-            <Knob field="tone" />
-          </Controls>
-        </Row>
-      </Panel>
-    </Page>
-  ),
+  view: ({ now }) => {
+    // How bright it is, across the display: a line to drag.
+    const tone = now.value("tone", { fraction: true });
+    return (
+      <Page>
+        <Panel title="Drone">
+          <Row>
+            <Display zero={0.5} cursor="ew-resize" drag={{ x: { value: "tone", absolute: true } }}>
+              <Wave list={now.scope()} color="green" />
+              <Line from={[tone, 0]} to={[tone, 1]} color="text" />
+            </Display>
+            <Controls>
+              <Knob field="pitch" />
+              <Knob field="tone" />
+            </Controls>
+          </Row>
+        </Panel>
+      </Page>
+    );
+  },
 });
 ```
 

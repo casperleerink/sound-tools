@@ -85,12 +85,12 @@ export {
 export type {
   PageProps, PanelProps, TransportProps
 } from "./sdk/page";
-// the parts of a device card: `Display`, `Controls` and `Cell`
+// the parts of a device card: `Display`, `StepGrid`, `Controls` and `Cell`
 export {
-  Cell, Controls, defaultView, Display
+  Cell, Controls, defaultView, Display, StepGrid
 } from "./sdk/card";
 export type {
-  DisplayProps, DisplayScale
+  DisplayProps, DisplayScale, StepGridProps
 } from "./sdk/card";
 // what the runtime calls
 export {
