@@ -68,9 +68,9 @@ const effectStep = (keys: readonly ActionKey[], title: string, by: -1 | 1) =>
 export const pieceActions: Record<string, PieceAction> = {
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
 
-  select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
+  // With bars chosen and no note, cmd-A chooses all the bars.
+  select_all_notes: on(["cmd-a"], "Choose all notes", (tool) => (tool.memory.chosen === null || tool.memory.notes.size > 0) && onNotes(tool, "all")),
   add_note: notes(["n"], "Add a note", "add"),
-  // With bars chosen and no note, a paste goes to the bars.
   paste_notes: on(["cmd-v"], "Paste notes", (tool) => (tool.memory.chosen === null || tool.memory.notes.size > 0) && onNotes(tool, "paste")),
   quantize_notes: notes(["q"], "Quantize notes", "quantize"),
   delete_notes: notes(["backspace", "delete"], "Delete the chosen notes", "delete"),

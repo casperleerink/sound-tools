@@ -179,13 +179,28 @@ export function retime(part: Part, was: readonly Bar[], { bars, to }: Change) {
   part.length = next.at(-1)!;
 }
 
-/** The music of a part from `from` up to `to`, counted from `from`: what starts there, a note cut at `to`. */
+/**
+ * The music of a part from `from` up to `to`, counted from `from`: what sounds there, a note cut
+ * at `to`, and one held into it from before as a note of its own from the start, as a tied note
+ * copies in a score.
+ */
 export function sliceOf(part: Music, from: number, to: number): Music {
   // Not `structuredClone`: the record a view reads is a proxy, which it refuses.
   const music = JSON.parse(JSON.stringify({ notes: part.notes, pedal: part.pedal, bend: part.bend, mod_wheel: part.mod_wheel, pressure: part.pressure, controllers: part.controllers })) as Music;
-  music.notes = music.notes.flatMap((note) => (note.start >= from && note.start < to ? [{ ...note, start: note.start - from, length: Math.min(note.length, to - note.start) }] : []));
+  music.notes = music.notes
+    .flatMap((note) => {
+      const [start, end] = [Math.max(note.start, from), Math.min(note.start + note.length, to)];
+      return end > start ? [{ ...note, start: start - from, length: end - start }] : [];
+    })
+    .sort(byStart);
   movePoints(music, (tick) => (tick >= from && tick < to ? tick - from : null));
   return music;
+}
+
+/** Keeps a part inside `length` ticks, as a timeline plays it: what starts at or past it goes, and a note held past it ends there. */
+export function fit(part: Music, length: number) {
+  const points = [...part.pedal.map((change) => change.start), ...[part.bend, part.mod_wheel, part.pressure, ...Object.values(part.controllers)].flatMap((line) => line.map((point) => point.tick))];
+  if (part.notes.some((note) => note.start + note.length > length) || points.some((tick) => tick >= length)) clear(part, length, Infinity);
 }
 
 /** Takes the music from `from` up to `to` out of a part: a note held into it ends at `from`. */

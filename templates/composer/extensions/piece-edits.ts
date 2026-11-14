@@ -1,6 +1,6 @@
 import type { Frozen } from "./sdk";
 import type { Piece } from "./piece";
-import { barsOf, beatOf, changed, clear, idFor, inserted, isEmpty, laidOut, NO_MUSIC, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Music } from "./piece-form";
+import { barsOf, beatOf, changed, clear, fit, idFor, inserted, isEmpty, laidOut, NO_MUSIC, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Music } from "./piece-form";
 
 // What the piece does to its form: each edit changes the sections in its record, moves the music
 // of every instrument along, and puts the parts and the clock where the sections now are, as one
@@ -42,6 +42,8 @@ function place(draft: Draft) {
       if (part.tool !== "timeline" || !at) continue;
       if (part.state.start !== at.start) part.state.start = at.start;
       if (part.state.length !== at.length) part.state.length = at.length;
+      // A section made shorter by hand: its part would not load with a note past its end.
+      fit(part.state, at.length);
     }
   }
   return time;
@@ -190,6 +192,11 @@ export function paste(piece: Piece, id: string, chosen: Chosen, copied: Copied, 
 
 // Sections
 
+/** The ids a new section may not take: those of the sections, and the names of what the instruments hold, such as a part left from a section that is gone. */
+const takenBy = ({ state, children }: Pick<Piece, "state" | "children">) => [
+  ...state.sections.map((section) => section.id),
+  ...children.flatMap((track) => (track.tool === "track" ? track.children.map((child) => child.name) : [])),
+];
 /** `Section 3` for the third: the first such name no section has. */
 function freeNameOf(sections: readonly { readonly name: string }[]): string {
   for (let number = sections.length + 1; ; number++) {
@@ -203,7 +210,7 @@ export function addSection(piece: Piece, after: string | null): string {
   const at = after === null ? sections.length : sections.findIndex((section) => section.id === after) + 1 || sections.length;
   const before = sections[at - 1]?.bars.at(-1) ?? sections[0]?.bars[0];
   const name = freeNameOf(sections);
-  const id = idFor(name, sections.map((section) => section.id));
+  const id = idFor(name, takenBy(piece));
   edit(piece, "Add a section", (draft) => {
     draft.state.sections.splice(at, 0, { id, name, bars: [{ bars: 8, signature: before?.signature ?? "4/4", bpm: before?.bpm ?? 120 }] });
   });
@@ -238,7 +245,7 @@ export function duplicateSection(piece: Piece, id: string): string | undefined {
   const sections = piece.state.sections;
   const source = sections.find((section) => section.id === id);
   if (!source) return undefined;
-  const copy = idFor(source.name, sections.map((section) => section.id));
+  const copy = idFor(source.name, takenBy(piece));
   edit(piece, "Duplicate a section", (draft) => {
     const at = draft.state.sections.findIndex((section) => section.id === id);
     const from = draft.state.sections[at];
@@ -268,7 +275,7 @@ export function splitSection(piece: Piece, id: string, bar: number): string | un
   const source = sections.find((section) => section.id === id);
   if (!source || bar <= 0 || bar >= barsOf(source.bars as Draft["state"]["sections"][number]["bars"]).length) return undefined;
   const name = freeNameOf(sections);
-  const next = idFor(name, sections.map((section) => section.id));
+  const next = idFor(name, takenBy(piece));
   edit(piece, "Start a section", (draft) => {
     const at = draft.state.sections.findIndex((section) => section.id === id);
     const section = draft.state.sections[at];

@@ -149,7 +149,7 @@ export const piece = tool({
     let repeated = "";
     memo(() => {
       const repeat = clock.repeat;
-      const now = repeat ? `${repeat.from}-${repeat.to}:${pieceStarts().filter((tick) => tick <= repeat.to)}` : "";
+      const now = repeat ? `${repeat.from}-${repeat.to}:${state.sections.map((section) => section.id)}:${pieceStarts().filter((tick) => tick <= repeat.to)}` : "";
       if (repeated.split(":")[0] === now.split(":")[0] && repeated !== now) untrack(() => clock.setRepeat(null));
       repeated = now;
     });
@@ -157,12 +157,20 @@ export const piece = tool({
     // The editor at its largest leaves the section head, the bar strip, one row, the returns and the master over it.
     const largest = () => Math.max(tool.size.height - DIVIDER - SECTION_HEAD - 1 - STRIP - 1 - ROW - page.returnsHeight() - LOW_ROW, SHORTEST);
     const editorHeight = () => (memory.editorLarge ? largest() : clamp(memory.editor, SHORTEST, largest()));
-    /** The ticks of the open section the editor opens on: the chosen bars with a bar each side, or with none chosen its first eight. */
-    const shownBars = (): readonly [number, number] => {
-      const [starts, chosen] = [page.starts(), memory.chosen];
+    // The bars the editor opens on: the chosen ones with a bar each side, which it keeps when they are let go, and in a section with none chosen yet its first eight.
+    let kept: { id: string | null; from: number; to: number } = { id: null, from: 0, to: 8 };
+    const shownBars = memo(() => {
+      const [id, chosen] = [page.openId(), memory.chosen];
+      if (chosen) kept = { id, from: chosen.from - 1, to: chosen.to + 2 };
+      else if (kept.id !== id) kept = { id, from: 0, to: 8 };
+      return `${kept.from}-${kept.to}`;
+    });
+    /** The ticks of the open section those bars are, as it is now. */
+    const shownTicks = (bars: string): readonly [number, number] => {
+      const starts = untrack(page.starts);
+      const [from = 0, to = 8] = bars.split("-").map(Number);
       const last = starts.length - 1;
-      const [from, to] = chosen ? [Math.max(chosen.from - 1, 0), Math.min(chosen.to + 2, last)] : [0, Math.min(8, last)];
-      return [starts[from] ?? 0, starts[to] ?? 0];
+      return [starts[clamp(from, 0, last)] ?? 0, starts[clamp(to, 0, last)] ?? 0];
     };
     const editorOf = (name: string, id: string, shows: readonly [number, number]) => {
       const row = () => rows().find((each) => each.name === name);
@@ -215,7 +223,7 @@ export const piece = tool({
           const open = shown?.kind === "editor" ? page.openId() : null;
           const below =
             // Made again when other bars are chosen, so it shows them.
-            shown?.kind === "editor" && open !== null ? editorOf(shown.track, open, shownBars())
+            shown?.kind === "editor" && open !== null ? editorOf(shown.track, open, shownTicks(shownBars()))
             : shown?.kind === "mixer" ? <Mixer page={page} />
             : shown?.kind === "master" ? <MasterPanel page={page} />
             : shown?.kind === "track" && strips().some((each) => each.name === shown.name) ? <Rack page={page} name={shown.name} />

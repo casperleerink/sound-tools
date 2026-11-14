@@ -331,6 +331,45 @@ fn a_section_started_at_a_bar_takes_the_music_after_it_and_sounds_the_same(
     assert_eq!(window.problems(), []);
 }
 
+/// A note held from bar 2 into bar 3, and a section started at bar 3: the note ends at the new
+/// section line, and what was left of it goes on in the new section, from its start.
+#[gpui::test]
+fn a_note_held_across_a_new_section_line_goes_on_in_the_new_section(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let held =
+        json!([{ "start": 2 * BAR - BEAT / 2, "length": BEAT, "pitch": 67, "velocity": 100 }]);
+    let part =
+        json!({ "tool": "timeline", "state": { "start": 0, "length": 4 * BAR, "notes": held } });
+    write_outside(&mut window, "state/piece/t01/sec-a.json", &part.to_string());
+    window.until("the part", |window| window.has("piece/t01/sec-a"));
+    window.choose_bar(2);
+    window.keys("shift-s");
+    window.until("a section started", |window| {
+        window.sections().as_array().unwrap().len() == 3
+    });
+    window.after_the_runs();
+    let new = window.sections()[1]["id"].as_str().unwrap().to_string();
+    let lengths = |record: Value| -> Vec<(u64, u64)> {
+        (record["notes"].as_array().unwrap().iter())
+            .map(|note| {
+                (
+                    note["start"].as_u64().unwrap(),
+                    note["length"].as_u64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        lengths(window.record("piece/t01/sec-a")),
+        [(2 * BAR - BEAT / 2, BEAT / 2)]
+    );
+    assert_eq!(
+        lengths(window.record(&format!("piece/t01/{new}"))),
+        [(0, BEAT / 2)]
+    );
+    assert_eq!(window.problems(), []);
+}
+
 /// Alt-shift-down moves the open section A after B: the parts of both swap places.
 #[gpui::test]
 fn a_section_moved_takes_its_music_with_it(cx: &mut TestAppContext) {
@@ -353,8 +392,9 @@ fn a_section_moved_takes_its_music_with_it(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
-/// An agent writes a part with the wrong start and makes A a bar shorter in the piece's record:
-/// the open window puts every part where its section is and the clock's bars after them.
+/// An agent writes a part with the wrong start and makes A two bars shorter in the piece's
+/// record, leaving a note past its new end: the open window puts every part where its section
+/// is, the clock's bars after them, and the note that no longer fits goes, so the part loads.
 #[gpui::test]
 fn what_an_agent_left_out_of_place_is_laid_out_again(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
@@ -365,7 +405,7 @@ fn what_an_agent_left_out_of_place_is_laid_out_again(cx: &mut TestAppContext) {
     });
 
     let mut piece = window.record("piece");
-    piece["sections"][0]["bars"][0]["bars"] = 3.into();
+    piece["sections"][0]["bars"][0]["bars"] = 2.into();
     let record = json!({ "tool": "piece", "state": piece });
     write_outside(
         &mut window,
@@ -373,21 +413,22 @@ fn what_an_agent_left_out_of_place_is_laid_out_again(cx: &mut TestAppContext) {
         &record.to_string(),
     );
     window.until("the piece laid out", |window| {
-        window.part("t00", "sec-b").0 == 3 * BAR
+        window.part("t00", "sec-b").0 == 2 * BAR
     });
     window.after_the_runs();
-    assert_eq!(window.part("t01", "sec-b"), (3 * BAR, vec![BEAT]));
-    assert_eq!(window.record("piece/t00/sec-a")["length"], 3 * BAR);
+    assert_eq!(window.part("t01", "sec-b"), (2 * BAR, vec![BEAT]));
+    assert_eq!(window.part("t00", "sec-a"), (0, IN_A[..2].to_vec()));
+    assert_eq!(window.record("piece/t00/sec-a")["length"], 2 * BAR);
     let project = window.project_file();
     assert_eq!(
         project["tempo_map"]["time_signatures"],
-        json!([{ "signature": "4/4", "bars": 5 }])
+        json!([{ "signature": "4/4", "bars": 4 }])
     );
     assert_eq!(
         project["tempo_map"]["tempo_changes"][1],
-        json!({ "tick": 3 * BAR, "bpm": 90.0 })
+        json!({ "tick": 2 * BAR, "bpm": 90.0 })
     );
-    assert_eq!(project["sections"][1], json!({ "bar": 4, "name": "B" }));
+    assert_eq!(project["sections"][1], json!({ "bar": 3, "name": "B" }));
     assert_eq!(window.problems(), []);
 }
 

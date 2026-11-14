@@ -1,6 +1,6 @@
 import { h, memo, type Accessor, type Color, type Style } from "./sdk";
 import type { Piece } from "./piece";
-import { barsOf, BEAT, laidOut, NO_MUSIC, partsOf, startsOf, ticksOf, type Bar, type Part } from "./piece-form";
+import { barsOf, BEAT, fit, laidOut, NO_MUSIC, partsOf, startsOf, ticksOf, type Bar, type Part } from "./piece-form";
 import type { track } from "./track";
 
 // What the parts of the piece's page share: its sizes and colours, its instruments, the open
@@ -88,6 +88,8 @@ export function openOf(piece: Pick<Piece, "state" | "memory">) {
 export function showSection({ memory, children }: Pick<Piece, "memory" | "children">, id: string) {
   memory.open = id;
   memory.chosen = null;
+  // A note of the next section that is alike would be chosen with them.
+  if (memory.notes.size > 0) memory.notes = new Set();
   const below = memory.below;
   if (below?.kind === "editor" && !partAt(children.find((child) => child.name === below.track), id)) memory.below = { kind: "track", name: below.track };
 }
@@ -177,7 +179,9 @@ export const editPart = ({ update }: Pick<Piece, "update">, track: string, id: s
     const at = laidOut(state.sections).places[id];
     if (!owner.children.some((child) => child.name === id) && at) owner.children.push({ name: id as `sec-${string}`, tool: "timeline", state: emptyPart(at.start, at.length) });
     const part = owner.children.find((child) => child.name === id);
-    if (part?.tool === "timeline") change(part.state);
+    if (part?.tool !== "timeline") return;
+    change(part.state);
+    if (at) fit(part.state, at.length);
   });
 
 /** How long `bars` play, in seconds, each at its own tempo. */

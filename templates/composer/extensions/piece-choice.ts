@@ -1,6 +1,7 @@
 import type { MenuItem } from "./sdk";
 import type { Piece } from "./piece";
 import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, splitSection } from "./piece-edits";
+import { startsOf, type Bar } from "./piece-form";
 import { chooseBars, clamp, instrumentsOf, openAt, openOf, showEditor, showInstrument } from "./piece-page";
 
 // What the chosen bars of the open section do, whole or of some instruments: as in a score, a
@@ -51,15 +52,21 @@ export function cutChosen(piece: Piece): boolean {
   else clearMusic(piece, choice.open.id, choice);
   return true;
 }
+/** The last bar of the open section that music pasted from the bar `from` lies under: it is as long as its own bars were, which may be other bars than these. */
+function barsUnder(piece: Piece, from: number, copy: { bars: readonly Bar[] }): number {
+  const starts = openOf(piece)?.starts ?? [];
+  const end = (starts[from] ?? 0) + startsOf(copy.bars).at(-1)!;
+  return Math.max(starts.findLastIndex((start) => start < end), from);
+}
 /** Pastes what is copied: before the chosen bars, or over the chosen instruments from the first chosen bar on. What it pasted is chosen. */
 export function pasteChosen(piece: Piece): boolean {
   const [choice, copy] = [choiceOf(piece), piece.memory.copied];
   if (!choice || !copy) return false;
   paste(piece, choice.open.id, choice, copy, choice.names);
-  const to = choice.from + copy.bars.length - 1;
   const first = choice.rows === null ? -1 : choice.names.indexOf(choice.rows[0]!);
   const rows = choice.names.slice(first, first + copy.rows.length);
-  chooseBars(piece, choice.from, to, first < 0 || rows.length === 0 ? null : rows);
+  if (first < 0 || rows.length === 0) chooseBars(piece, choice.from, choice.from + copy.bars.length - 1);
+  else chooseBars(piece, choice.from, barsUnder(piece, choice.from, copy), rows);
   return true;
 }
 /** The chosen bars again right after them, with their music; of some instruments, their music over the bars after it, which the section gets where it has too few. The copy is chosen. */
@@ -68,9 +75,10 @@ export function repeatChosen(piece: Piece): boolean {
   if (!choice) return false;
   const { open, from, to, rows } = choice;
   const after = to + 1;
+  const copy = copied(piece, choice);
   if (rows === null) duplicateBars(piece, open.id, from, to);
-  else paste(piece, open.id, { from: after, to: after, rows }, copied(piece, choice), choice.names);
-  chooseBars(piece, after, after + to - from, rows);
+  else paste(piece, open.id, { from: after, to: after, rows }, copy, choice.names);
+  chooseBars(piece, after, rows === null ? after + to - from : barsUnder(piece, after, copy), rows);
   return true;
 }
 /** Opens the notes of the first chosen instrument, or of the chosen one, else of the first. */
