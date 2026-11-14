@@ -175,7 +175,7 @@ const moveTrack = ({ update, rows }: Page, moved: string, before: string) =>
   });
 
 /** Adds an instrument, 0, or a return, 1, after the others; the menu asks without one. */
-async function addTrack({ children, memory, update, openMenu, rows, returns, openPanel }: Page, kind?: number) {
+export async function addTrack({ children, memory, update, openMenu, rows, returns, openPanel }: Page, kind?: number) {
   const picked = kind ?? (await openMenu([{ label: "Instrument" }, { label: "Return" }]));
   if (picked === null) return;
   const names = children.map((child) => child.name);

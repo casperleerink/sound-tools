@@ -1,13 +1,15 @@
 import { type Action, type ActionKey } from "./sdk";
 import { noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { clamp, editedPart, editPart, openSectionOf } from "./piece-page";
+import { addBar, duplicateChosen, removeChosen, startSectionAt, stepBars } from "./piece-bars";
+import { chooseBars, clamp, editedPart, editPart, openOf, openSectionOf } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
+import { addSectionAfter, moveSectionBy, stepSection } from "./piece-sections";
 import { askToDelete } from "./piece-tracks";
 
 // What the piece does on a key. The actions of one key are tried from the top: the notes of the
-// open part first, then the instrument and the effect. Each says `false` while what it works on
-// is not chosen, and the key goes on to the next.
+// open part first, then the bars and the sections, then the instrument and the effect. Each says
+// `false` while what it works on is not chosen, and the key goes on to the next.
 
 type PieceAction = Action<Piece>;
 
@@ -25,14 +27,14 @@ function onNotes(tool: Piece, command: NoteCommand): boolean {
 
 const notes = (keys: readonly ActionKey[], title: string, command: NoteCommand) => on(keys, title, (tool) => onNotes(tool, command));
 
-/** Escape: closes the editor with no note chosen, else lets go of the chosen notes, effect or bars, else closes what shows below. */
+/** Escape: lets go of the chosen notes, effect or bars, else closes the editor, else what shows below. */
 function back(tool: Piece) {
   const { memory } = tool;
   const below = memory.below;
-  if (below?.kind === "editor" && memory.notes.size === 0) memory.below = { kind: "track", name: below.track };
-  else if (onNotes(tool, "none")) return;
+  if (below?.kind === "editor" && memory.notes.size > 0) onNotes(tool, "none");
   else if (chosenEffect(tool)) memory.effect = null;
   else if (memory.chosen) memory.chosen = null;
+  else if (below?.kind === "editor") memory.below = { kind: "track", name: below.track };
   else if (below) memory.below = null;
 }
 
@@ -94,6 +96,32 @@ export const pieceActions: Record<string, PieceAction> = {
   editor_size: on(["shift-enter"], "Make the note editor large, or put it back", ({ memory }) => {
     if (memory.below?.kind !== "editor") return false;
     memory.editorLarge = !memory.editorLarge;
+  }),
+
+  delete_bars: on(["backspace", "delete"], "Remove the chosen bars", removeChosen),
+  duplicate_bars: on(["cmd-d"], "Duplicate the chosen bars", duplicateChosen),
+  select_all_bars: on(["cmd-a"], "Choose all bars of the section", (tool) => {
+    const open = openOf(tool);
+    if (!open) return false;
+    chooseBars(tool, 0, open.bars.length - 1);
+  }),
+  bar_before: on(["left"], "Choose the bar before", (tool) => stepBars(tool, -1, false)),
+  bar_after: on(["right"], "Choose the next bar", (tool) => stepBars(tool, 1, false)),
+  bars_before: on(["shift-left"], "Choose the bar before too", (tool) => stepBars(tool, -1, true)),
+  bars_after: on(["shift-right"], "Choose the next bar too", (tool) => stepBars(tool, 1, true)),
+  add_bar: on(["shift-b"], "Add a bar after the chosen ones, or at the end", (tool) => addBar(tool, false)),
+  add_bar_before: on(["alt-shift-b"], "Add a bar before the chosen ones, or at the start", (tool) => addBar(tool, true)),
+
+  previous_section: on(["alt-shift-left"], "Open the section before", (tool) => stepSection(tool, -1)),
+  next_section: on(["alt-shift-right"], "Open the next section", (tool) => stepSection(tool, 1)),
+  move_section_earlier: on(["alt-shift-up"], "Move the section earlier", (tool) => moveSectionBy(tool, openSectionOf(tool)?.id ?? "", -1)),
+  move_section_later: on(["alt-shift-down"], "Move the section later", (tool) => moveSectionBy(tool, openSectionOf(tool)?.id ?? "", 1)),
+  rename_section: on(["shift-r"], "Rename the section", (tool) => {
+    const id = openSectionOf(tool)?.id;
+    if (id) tool.memory.naming = { id, in: "head" };
+  }),
+  add_section: on(["shift-s"], "Start a section at the chosen bar, or add one after this one", (tool) => {
+    if (!startSectionAt(tool)) addSectionAfter(tool, "head");
   }),
 
   rename_instrument: on(["enter"], "Rename the instrument", (tool) => {

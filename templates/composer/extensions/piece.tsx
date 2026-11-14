@@ -6,7 +6,7 @@ import { BarStrip, Rows } from "./piece-bars";
 import { edit, isLaidOut, type Chosen, type Copied } from "./piece-edits";
 import { pieceActions } from "./piece-keys";
 import { Mixer } from "./piece-mixer";
-import { beatRuns, clamp, colourOf, editedPart, editPart, LOW_ROW, pageOf, ROW, SECTION_HEAD, STRIP, titleOf } from "./piece-page";
+import { beatRuns, clamp, colourOf, editedPart, editPart, formOf, LOW_ROW, openSectionOf, pageOf, ROW, SECTION_HEAD, STRIP, titleOf } from "./piece-page";
 import { MasterPanel, Rack } from "./piece-panel";
 import { SectionHead, SectionsList } from "./piece-sections";
 import { Heads } from "./piece-tracks";
@@ -38,6 +38,10 @@ type Memory = {
   open: string | null;
   /** The chosen bars of the open section. */
   chosen: Chosen | null;
+  /** The section that plays, by its id, while the piece plays: the playhead opens it as it gets there. */
+  playing: string | null;
+  /** The section whose name is typed, in the list or in the head. */
+  naming: { id: string; in: "list" | "head" } | null;
   copied: Copied | null;
   below: Below;
   /** The instrument the keyboard plays, as a click on a strip's name chooses it beside the mixer. */
@@ -63,14 +67,24 @@ export const piece = tool({
   title: "Piece",
   when: "You change the piece's page: its sections and bars, its instruments, mixer strips or note editor",
   doc:
-    "A piece in sections of bars, as a score has them. `sections` is the form, in order: each has an `id` (`sec-intro`), a `name` and its `bars` as runs of alike bars, `{ bars, signature, bpm }`, so every bar has its own time signature and tempo; the piece lays them out one after the other and sets the clock's tempo map and section names from them. Each instrument, a `track` child, plays a part in a section as its `timeline` child named by the section's id, its notes in ticks from the start of that section; an instrument with no music in a section has no part there. A part's `start` and `length` are where its section is and how long: the piece sets them, never write them by hand; after a change to `sections` it lays the parts and the clock out again by itself. Each instrument and each return `ret-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the instruments, `solo` names those that play alone. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what an instrument `from` plays at `tap`: into its effects, out of them or out of its fader. The page shows one section at a time, chosen in the column at its left, with a row per instrument; under them shows one of: an instrument's or a return's devices (a click on its head; a double click names it, a right-click renames, colours or deletes it, a drag onto another head moves it), the master's (its row), the mixer (the toggle on the master's row) or the notes of an instrument's part in the open section. A piece opens on its first section with the panel of its first instrument. In a panel an effect is dragged to another place in its chain, or moved a step by the menu of its title or, chosen, by alt-left and alt-right. Escape lets go of what is chosen, then closes what shows below; on a panel, enter renames, delete asks and deletes, up and down choose another instrument and alt-up and alt-down move it. In the note editor N adds a note, Q quantizes, the arrows move the chosen notes (alt-up and alt-down change their velocity), cmd-A, cmd-C, cmd-X, cmd-V and cmd-D choose, copy, cut, paste and duplicate them, delete removes them, and shift-enter makes it large; its notes go into the part, which it makes on the first note when the instrument has none in that section. Space plays and pauses. The keys named here are the first keys of its `actions`, in `piece-keys.ts`.",
+    "A piece in sections of bars, as a score has them. `sections` is the form, in order: each has an `id` (`sec-intro`), a `name` and its `bars` as runs of alike bars, `{ bars, signature, bpm }`, so every bar has its own time signature and tempo; the piece lays them out one after the other and sets the clock's tempo map and section names from them. Each instrument, a `track` child, plays a part in a section as its `timeline` child named by the section's id, its notes in ticks from the start of that section; an instrument with no music in a section has no part there. A part's `start` and `length` are where its section is and how long: the piece sets them, never write them by hand; after a change to `sections` it lays the parts and the clock out again by itself. Each instrument and each return `ret-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the instruments, `solo` names those that play alone. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what an instrument `from` plays at `tap`: into its effects, out of them or out of its fader. The page shows one section at a time, as wide as it is long: the column at its left lists the sections with their bar numbers (a click opens one and plays from it, a double click or shift-R names it, a right-click renames, duplicates, moves, joins it with the next or deletes it, a drag onto another moves it there, Add section or shift-S adds one after it), and a green dot marks the one that plays; while the piece plays, the playhead opens each section it reaches. The head of the open section sets its length in bars and the time signature and tempo of the chosen bars, or of all (a drag up or down, a click to type, one undo step), and repeats them. The strip over the rows chooses bars: a click, shift-click or a drag, the arrows and shift-arrows, cmd-A for all; its plus or shift-B adds a bar after them, alt-shift-B one before, cmd-D duplicates them, delete removes them with their music, a right-click does these and starts a section at the first chosen bar, as shift-S does; alt-shift-left and alt-shift-right open the section before and the next, alt-shift-up and alt-shift-down move it. A row per instrument draws the notes of its part in the open section; a click on it chooses the instrument, a double click opens the notes of its part below. Under the rows shows one of: an instrument's or a return's devices (a click on its head; a double click names it, a right-click renames, colours or deletes it, a drag onto another head moves it), the master's (its row), the mixer (the toggle on the master's row) or the notes of an instrument's part in the open section. A piece opens on its first section with the panel of its first instrument. In a panel an effect is dragged to another place in its chain, or moved a step by the menu of its title or, chosen, by alt-left and alt-right. Escape lets go of what is chosen, chosen bars too, then closes what shows below; on a panel, enter renames, delete asks and deletes, up and down choose another instrument and alt-up and alt-down move it. In the note editor N adds a note, Q quantizes, the arrows move the chosen notes (alt-up and alt-down change their velocity), cmd-A, cmd-C, cmd-X, cmd-V and cmd-D choose, copy, cut, paste and duplicate them, delete removes them, and shift-enter makes it large; its notes go into the part, which it makes on the first note when the instrument has none in that section. Space plays and pauses. The keys named here are the first keys of its `actions`, in `piece-keys.ts`.",
   state: fields,
   children: parts,
   memory: (): Memory => ({
-    open: null, chosen: null, copied: null, below: null, track: null, hovered: null, renaming: null, returnsOpen: false, names: {}, effect: null, opened: false, editor: EDITOR, editorLarge: false,
+    open: null, chosen: null, playing: null, naming: null, copied: null, below: null, track: null, hovered: null, renaming: null, returnsOpen: false, names: {}, effect: null, opened: false, editor: EDITOR, editorLarge: false,
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copiedNotes: null, strength: 1, swing: 0, humanized: 0,
   }),
   actions: pieceActions,
+  tick: ({ memory, clock, state }) => {
+    const places = Object.entries(formOf(state).places);
+    const playing = clock.playing ? (places.find(([, at]) => clock.tick >= at.start && clock.tick < at.start + at.length)?.[0] ?? null) : null;
+    if (playing === memory.playing) return;
+    memory.playing = playing;
+    if (playing !== null && playing !== openSectionOf({ state, memory })?.id) {
+      memory.open = playing;
+      memory.chosen = null;
+    }
+  },
   behaviour: ({ state, children }): Declaration<typeof parts> => {
     const tracks = children.filter((child) => child.tool === "track");
     const returns = children.filter((child) => child.tool === "bus");

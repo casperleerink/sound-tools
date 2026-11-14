@@ -14,6 +14,10 @@ export const STRIP = 44;
 export const ROW = 64;
 export const HEADER = 176;
 export const LOW_ROW = 40;
+/** The room after the last bar of the open section, for the button that adds one. */
+export const AFTER = 48;
+/** How wide a bar of 4/4 is at least and at most, in points. */
+const [NARROWEST, WIDEST] = [36, 200];
 
 /** A row the composer chooses, an instrument's head, a return's, the master's or a section's: one look while it is chosen, and one under the pointer. */
 export const rowLook = (chosen: boolean): Pick<Style, "background" | "hover"> => (chosen ? { background: "selected" } : { hover: { background: "fill" } });
@@ -68,6 +72,33 @@ export const colourOf = (each: Child): Color => {
 
 /** The section `memory.open` names, else the first. */
 export const openSectionOf = ({ state, memory }: Pick<Piece, "state" | "memory">) => state.sections.find((section) => section.id === memory.open) ?? state.sections[0];
+/** Where each section of the piece is, and what the clock keeps of them. */
+export const formOf = (state: Piece["state"]) => laidOut(state.sections as Parameters<typeof laidOut>[0]);
+export const barsIn = (section: Piece["state"]["sections"][number]) => barsOf(section.bars as Parameters<typeof barsOf>[0]);
+
+/** The open section: its id, its bars, the tick each starts at from its start and where its last ends, and where it is in the piece. */
+export function openOf(piece: Pick<Piece, "state" | "memory">) {
+  const section = openSectionOf(piece);
+  const place = section && formOf(piece.state).places[section.id];
+  if (!section || !place) return undefined;
+  const bars = barsIn(section);
+  return { id: section.id, bars, starts: startsOf(bars), place };
+}
+/** Opens the section `id`, no bar chosen, and puts the playhead on its first bar. */
+export function openAt({ state, memory, clock }: Pick<Piece, "state" | "memory" | "clock">, id: string) {
+  memory.open = id;
+  memory.chosen = null;
+  clock.jump(formOf(state).places[id]?.start ?? 0);
+}
+/** Chooses the bars `from` to `to` of the open section and puts the playhead on the first. */
+export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, from: number, to: number) {
+  const open = openOf(piece);
+  if (!open) return;
+  const last = open.bars.length - 1;
+  const [first, end] = [clamp(Math.min(from, to), 0, last), clamp(Math.max(from, to), 0, last)];
+  piece.memory.chosen = { from: first, to: end, rows: null };
+  piece.clock.jump(open.place.start + open.starts[first]!);
+}
 
 /** The part `track` plays in the section `id`: its `timeline` child, or none while it has no music there. */
 export const partAt = (track: Child | undefined, id: string) => {
@@ -83,7 +114,7 @@ export function editedPart(piece: Pick<Piece, "state" | "children" | "memory">) 
   const owner = piece.children.find((child) => child.name === below.track);
   const part = partAt(owner, section.id)?.state;
   if (part || owner?.tool !== "track") return part;
-  const at = laidOut(piece.state.sections as Parameters<typeof laidOut>[0]).places[section.id];
+  const at = formOf(piece.state).places[section.id];
   return at ? { ...emptyPart(at.start, at.length), loop: false, plays: true, quantize: "bar" as const, title: "" } : undefined;
 }
 const emptyPart = (start: number, length: number) => ({ ...structuredClone(NO_MUSIC), start, length });
@@ -118,8 +149,8 @@ export function beatRuns(runs: readonly { readonly signature: string; readonly b
 }
 
 /** The piece's view, with what its parts read, worked out once: its instruments, its sections, the open one and its bars. */
-export function pageOf(piece: Piece) {
-  const { state, children, memory, update, clock, select } = piece;
+export function pageOf(piece: Piece & { size: { readonly width: number } }) {
+  const { state, children, memory, update, select, size } = piece;
   const rank = (name: string) => {
     const at = state.order.indexOf(name);
     return at < 0 ? state.order.length : at;
@@ -136,23 +167,28 @@ export function pageOf(piece: Piece) {
 
   const sections = () => state.sections;
   /** Where each section is, and the tempo map and section names the clock keeps of them. `time` is the context's own, the clock of the sound. */
-  const form = memo(() => laidOut(state.sections as Parameters<typeof laidOut>[0]));
+  const form = memo(() => formOf(state));
   // A memo of the id, so what reads it runs again only when another section opens.
   const openId = memo(() => openSectionOf(piece)?.id ?? null);
   const openSection = () => state.sections.find((section) => section.id === openId());
   const place = () => form().places[openId() ?? ""];
   /** The bars of the open section, each with its time signature and tempo. */
-  const bars = memo(() => barsOf((openSection()?.bars ?? []) as Parameters<typeof barsOf>[0]));
+  const bars = memo(() => {
+    const section = openSection();
+    return section ? barsIn(section) : [];
+  });
   /** The tick each bar of the open section starts at, from its start, and where its last ends. */
   const starts = memo(() => startsOf(bars()));
   /** The tick each bar of the piece starts at, and where its last ends. */
-  const pieceStarts = memo(() => startsOf(state.sections.flatMap((section) => barsOf(section.bars as Parameters<typeof barsOf>[0]))));
-  /** Opens the section `id` and puts the playhead on its first bar. */
-  const open = (id: string) => {
-    memory.open = id;
-    memory.chosen = null;
-    clock.jump(form().places[id]?.start ?? 0);
+  const pieceStarts = memo(() => startsOf(state.sections.flatMap(barsIn)));
+  /** Points per tick: the bars of the open section fill the room right of the heads, each as wide as it is long, between the narrowest and the widest bar. */
+  const scale = () => clamp((size.width - SECTIONS - HEADER - AFTER) / Math.max(starts().at(-1) ?? 0, 1), NARROWEST / (4 * BEAT), WIDEST / (4 * BEAT));
+  /** The bar of the open section at `x` points, from 0, or none past its end. */
+  const barAt = (x: number) => {
+    const ticks = x / scale();
+    return ticks < 0 || ticks >= (starts().at(-1) ?? 0) ? null : Math.max(starts().findLastIndex((start) => start <= ticks), 0);
   };
+  const open = (id: string) => openAt(piece, id);
 
   const panelOf = () => (memory.below?.kind === "track" ? memory.below.name : null);
   /** The instrument of what shows below: its panel, or the notes of its part. */
@@ -194,7 +230,7 @@ export function pageOf(piece: Piece) {
   // The window's own context, not a copy: it reads `time` anew each time.
   return Object.assign(piece, {
     rows, returns, strips, returnsHeight,
-    sections, form, openId, openSection, place, bars, starts, pieceStarts, open, partAt,
+    sections, form, openId, openSection, place, bars, starts, pieceStarts, scale, barAt, open, partAt,
     chosenTrack, choose, openPanel, openEditor, openMaster, toggleMute, toggleSolo,
   });
 }
