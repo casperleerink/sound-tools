@@ -1,21 +1,15 @@
-//! Editable text field. GPUI ships no input widget, so this is the standard pattern: an
-//! `Entity` implementing `EntityInputHandler` plus a custom `Element` that shapes the text and
-//! paints selection and cursor. Create with `cx.new(|cx| TextInput::new(cx))`.
+//! Editable text field. GPUI ships no input widget, so this is an `Entity` implementing
+//! `EntityInputHandler` plus a custom `Element` that shapes the text and paints selection and
+//! caret. Create with `cx.new(|cx| TextInput::new(cx))`.
 //!
-//! It behaves as a browser's input does on macOS. One line by default, which scrolls sideways
-//! to keep the caret in view. `multi_line(n)` wraps at the width of the box, grows up to `n`
-//! rows and then scrolls, for the agent composer: enter submits and shift-enter adds a newline.
-//! `enter_adds_line()` makes enter add a newline and cmd-enter submit, as in a text area.
-//! `fill()` is such an input as tall as its box, for a text that is the whole view.
-//!
-//! The editing keys follow macOS text fields: option moves and deletes by words, cmd by rows
-//! and to the ends of the text, shift with any of them selects, and the ctrl keys of macOS
-//! (ctrl-a, ctrl-e, ctrl-k...) work. Up and down past the first or last row go to the ends of
-//! the text, except in a menu's search, whose rows take them. cmd-z undoes the field's own
-//! edits, never the project's. A double or triple click selects a word or a line, and a drag
-//! after it goes on by words or lines. A right click shows Cut, Copy, Paste and Select All. A
-//! press outside the field takes the focus from it, also where nothing else takes it, such as
-//! a clip under a rename.
+//! It behaves as a browser's input does on macOS: one line by default, which scrolls sideways
+//! to keep the caret in view. The editing keys follow macOS text fields: option moves and
+//! deletes by words, cmd by rows and to the ends of the text, shift with any of them selects,
+//! and the ctrl keys of macOS (ctrl-a, ctrl-e, ctrl-k...) work. Up and down past the first or
+//! last row go to the ends of the text, except in a menu's search, whose rows take them. cmd-z
+//! undoes the field's own edits, never the project's. A double or triple click selects a word
+//! or a line, and a drag after it goes on by words or lines. A right click shows Cut, Copy,
+//! Paste and Select All. A press outside the field takes the focus from it.
 //!
 //! Known limit: where a word too long for a row is broken inside, end stops one character
 //! before the break, because the offset at the break belongs to the next row.
@@ -187,7 +181,6 @@ fn pad_x(size: ControlSize) -> f32 {
     }
 }
 
-/// The height of one row of text.
 const ROW_HEIGHT: f32 = 20.;
 /// As drawn by macOS.
 const CARET_WIDTH: Pixels = px(2.);
@@ -244,7 +237,7 @@ pub struct TextInput {
     /// How far the text is scrolled: up in a multi-line input, left in a one-line one.
     scroll: Point<Pixels>,
     /// Set by every edit and caret move, so the next frame scrolls to the caret. The wheel
-    /// clears it, so the rows stay where the composer scrolled them.
+    /// clears it, so the rows stay where the wheel scrolled them.
     follow_caret: bool,
     /// The x that a run of up and down presses keeps.
     goal_x: Option<Pixels>,
@@ -254,7 +247,6 @@ pub struct TextInput {
     last_edit: Option<(EditKind, usize)>,
     bare: bool,
     disabled: bool,
-    /// Shows stars for the text and copies nothing, for a key.
     secret: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel: Option<SubmitHandler>,
@@ -320,7 +312,7 @@ impl TextInput {
     }
 
     /// Wrap at the width of the box and keep newlines. The box grows with the text from one
-    /// row up to `max_rows`, and then scrolls.
+    /// row up to `max_rows`, and then scrolls. Enter submits and shift-enter adds a newline.
     pub fn multi_line(mut self, max_rows: usize) -> Self {
         self.max_rows = Some(max_rows.max(1));
         self
@@ -339,8 +331,8 @@ impl TextInput {
         self.multi_line(usize::MAX).enter_adds_line()
     }
 
-    /// Drop the field's own surface, border, padding and focus ring, for use inside a card
-    /// that already provides them (the agent composer).
+    /// Drop the field's own surface, border and padding, for use inside a card that already
+    /// provides them (the agent composer).
     pub fn bare(mut self, bare: bool) -> Self {
         self.bare = bare;
         self

@@ -122,7 +122,8 @@ impl Theme {
         self.gray_800
     }
 
-    /// A hint, a unit, an icon that is off. Under 4.5 : 1 on a card: not for what must be read there.
+    /// A hint, a unit, an icon that is off. Under 4.5 : 1 on a card, so not for what must be
+    /// read there.
     pub fn text_muted(&self) -> Hsla {
         self.gray_700
     }
@@ -133,7 +134,7 @@ impl Theme {
     }
 
     /// The colour called `name` as tools of a project name them: a role such as `text-muted`,
-    /// a hue such as `green`, or a step of the palette such as `gray-700`, which older tools use.
+    /// a hue such as `green`, or a step of the palette such as `gray-700`.
     pub fn named(&self, name: &str) -> Option<Hsla> {
         Some(match name {
             "background" => self.background(),

@@ -1,5 +1,4 @@
-//! Indicator: a status dot in three sizes, with an optional halo ring and a slow 3.5 s pulse
-//! (down to 70% opacity) for "agent is working".
+//! Indicator: a status dot in three sizes.
 
 use std::time::Duration;
 

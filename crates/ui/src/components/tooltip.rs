@@ -57,9 +57,8 @@ fn kbd(key: SharedString, fg: Hsla, chip: Hsla) -> impl IntoElement {
 impl Render for Tooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        // An inverted surface: dark background, light text.
+        // An inverted surface: a light background with dark text.
         let (bg, fg) = (theme.text(), theme.text_inverse());
-        // Chips read as a tint of the foreground.
         let mut chip = fg;
         chip.a = 0.12;
 

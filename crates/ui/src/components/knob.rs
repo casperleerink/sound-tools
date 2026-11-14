@@ -1,21 +1,11 @@
-//! Knob: a dial in a cell, with its label and value under it. A bipolar knob, such as pan, draws
-//! its arc from the top. It drags up and down; the rest of the gesture is in
-//! [`gesture`](super::gesture), which the volume and the handles of a display share.
+//! Knob: a dial in a cell, with its label and value under it. It drags up and down; the rest of
+//! the gesture is in [`gesture`](super::gesture), which the slider and the handles of a display
+//! share. Controlled, as they are: a value that changes from outside shows at once, also during
+//! a drag.
 //!
-//! Controlled: the caller owns the value, gives it on every render and hears a [`ValueChange`].
-//! So a knob on saved state keeps no copy of it, and a value that changes from outside shows at
-//! once, also during a drag. The knob keeps only its focus handle and the open drag, in element
-//! state under its id.
-//!
-//! A knob with a [`Unit`] also takes a typed value: a click on its value, or enter while it has
-//! the focus, puts a field where the dial is. Enter, or the focus going elsewhere, reads what
-//! was typed in the unit the knob shows, as one [`ValueChange::Set`]; escape puts it back.
-//!
-//! An automated knob shows the value its lane plays, with the mark of
-//! [`automated`](super::automated), and does not drag, step, reset or take a typed value.
-//!
-//! [`KnobRange`] maps the value to the travel of the knob, linear or logarithmic, and gives
-//! values of three significant digits, so a readout and a saved file stay short.
+//! A [`typed`](Knob::typed) knob also takes a typed value: a click on its value, or enter while
+//! it has the focus, puts a field where the dial is. Enter, or the focus going elsewhere, reads
+//! what was typed in the unit the knob shows, as one [`ValueChange::Set`]; escape puts it back.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -267,7 +257,6 @@ pub struct Knob {
     readout: Option<SharedString>,
     disabled: bool,
     automated: bool,
-    /// Values in whole steps of this, and an arrow key moves one step.
     step: Option<f32>,
     typed: Option<Typed>,
     on_change: Option<ChangeHandler<f32>>,

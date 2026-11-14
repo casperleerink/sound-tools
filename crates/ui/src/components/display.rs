@@ -23,17 +23,9 @@
 //! stop: every value a handle moves also has a knob or a hidden control, which is the path for
 //! the keys.
 //!
-//! A handle may carry a number, such as the band of an EQ: its dot is then larger, with the
-//! number in it, and [`Handle::on_press`] hears every press on it, so that a click selects it.
-//! A handle may also be the whole display, with no dot ([`Handle::area`]): a drag anywhere on
-//! it moves the value, as the position of a wavetable moves. A handle that moves a number an automation lane moves shows where the
-//! lane is and does not drag; the knob of that number carries the mark and says why.
-//!
 //! The display knows no device. The owner gives the curve as points on the display and the
-//! handles with their values, and hears what a handle moves.
-//!
-//! A display can also show a waveform under its curve, with the part outside two lines shaded
-//! and a green line where the sound plays, see [`waveform_display`](super::waveform_display).
+//! handles with their values, and hears what a handle moves. A file under the curve is
+//! [`waveform_display`](super::waveform_display).
 //!
 //! A device that cannot play says why where its display would be: a [`ControlStrip`].
 
@@ -59,7 +51,7 @@ use crate::typography::{TextVariant, Typography};
 
 /// Between a display and the first column of cells after it.
 pub const GAP: f32 = 8.;
-/// Four columns of cells with the gap, and six.
+/// Four columns of cells less the [`GAP`] after it, and six.
 pub const WIDTH: f32 = 4. * CELL_WIDTH - GAP;
 pub const WIDE_WIDTH: f32 = 6. * CELL_WIDTH - GAP;
 pub const INSET_HEIGHT: f32 = 2. * ROW_HEIGHT;
@@ -208,7 +200,8 @@ impl Handle {
     }
 
     /// An automation lane moves a value of the handle: give the value it plays. The handle does
-    /// not drag, and still hears its presses.
+    /// not drag, and still hears its presses. The knob of that value carries the mark and says
+    /// why.
     pub fn automated(mut self, automated: bool) -> Self {
         self.automated = automated;
         self
@@ -236,30 +229,19 @@ pub struct Display {
     base: Div,
     id: ElementId,
     width: f32,
-    /// Points from left to right, `x` and `y` from 0 to 1, `y` up.
     curve: Vec<Point<f32>>,
-    /// Vertical grid lines at these places across, horizontal ones at these places up.
     grid: (Vec<f32>, Vec<f32>),
-    /// The grid lines of [`Display::scale`], each at its place across with its word.
     scale: Vec<(f32, SharedString)>,
-    /// The 0 dB line, at this place up.
     zero: Option<f32>,
-    /// Thin lines up from the bottom, each at a place across to a height.
     marks: Vec<Point<f32>>,
-    /// Soft columns up from the bottom, see [`Display::columns`].
     columns: Vec<(Range<f32>, f32)>,
-    /// A second line, dashed and not filled, from left to right.
     dashed: Vec<Point<f32>>,
-    /// Quiet lines behind the curve.
     lines: Vec<Vec<Point<f32>>>,
-    /// Whether the curve is filled down to the bottom.
     filled: bool,
-    /// The colours of the fill by height, see [`Display::fill_bands`].
     bands: Vec<(f32, Hsla)>,
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
-    /// How far from the right edge the line stands there, see [`Display::caption_at_right`].
     caption_right: Option<f32>,
     controls: Vec<AnyElement>,
     strip: bool,
@@ -339,8 +321,8 @@ impl Display {
         self
     }
 
-    /// The curve, as points from left to right with `x` and `y` from 0 to 1, `y` up. It is
-    /// filled down to the bottom of the display.
+    /// The curve, as points from left to right with `x` and `y` from 0 to 1, `y` up. Filled
+    /// down to the bottom unless [`Display::filled`] says not.
     pub fn curve(mut self, points: impl IntoIterator<Item = Point<f32>>) -> Self {
         self.curve = points.into_iter().collect();
         self
@@ -486,13 +468,9 @@ struct Ink {
 /// What a waveform display draws under the curve.
 #[derive(Clone, Default)]
 struct Waveform {
-    /// The peak of each column across, 0 to 1.
     peaks: Vec<f32>,
-    /// The part that plays, between two lines, with the rest shaded.
     kept: Option<(f32, f32)>,
-    /// Where the part that repeats starts, up to the end of the kept part.
     looped: Option<f32>,
-    /// The green line of where the sound is.
     signal: Option<f32>,
 }
 

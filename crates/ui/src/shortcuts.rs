@@ -230,8 +230,8 @@ impl Shortcuts {
         (self.own.get(id)).is_some_and(|own| Some(own) != default)
     }
 
-    /// The composer picks `keys` for the action `id`, none for an action with no key. Its
-    /// default keys are the same as [`Shortcuts::reset`].
+    /// The composer picks `keys` for the action `id`, none for an action with no key. Picking
+    /// its default keys is [`Shortcuts::reset`].
     pub fn set_keys(&mut self, id: &str, keys: Vec<String>) -> Result<(), ShortcutsError> {
         let default = self.action(id).is_some_and(|action| action.keys == keys);
         self.change(id, (!default).then_some(keys))

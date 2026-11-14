@@ -20,7 +20,6 @@ use crate::typography::{TextVariant, Typography};
 
 /// The height of both halves.
 pub const HEIGHT: f32 = 24.;
-/// The size of the icon before the words.
 const ICON_SIZE: f32 = 14.;
 
 /// A split button that is a row of a list, such as a header: as wide as it is given, its main
@@ -53,7 +52,6 @@ pub struct SplitButton {
     keyboard_focus: KeyboardFocus,
     menu: Entity<DropdownMenu>,
     row: Option<Row>,
-    /// What a test looks the main half up by. The chevron is `<name>-menu`.
     name: SharedString,
 }
 

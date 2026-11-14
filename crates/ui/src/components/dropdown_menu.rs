@@ -511,7 +511,6 @@ impl RenderOnce for MenuList {
                 .child(note)
         });
 
-        // The groups are 4 pt apart and 8 pt from the edge of the menu.
         let groups = div().flex().flex_col().py(px(4.)).children(groups);
         let max_height = self.max_height;
         self.base
@@ -792,7 +791,6 @@ pub struct DropdownMenu {
     side: Side,
     align: Align,
     width: f32,
-    /// Scroll the groups of the open menu past this height.
     max_height: Option<f32>,
     trigger: Trigger,
     /// A trigger this wide, its label at the left and its chevron at the right. `None`: as
@@ -802,7 +800,6 @@ pub struct DropdownMenu {
     trigger_height: Option<f32>,
     /// An icon before the label of a trigger with words, in its own color or the label's.
     icon: Option<(SharedString, Option<Hsla>)>,
-    /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
     debug_name: Option<SharedString>,
     /// The field above the rows of a menu that is searched, see [`Self::searchable`].
     search: Option<Search>,
@@ -860,9 +857,7 @@ impl DropdownMenu {
         }
     }
 
-    /// Puts a field above the rows that keeps only the rows whose label or value holds what is
-    /// typed.
-    /// See the module doc.
+    /// Puts a search field above the rows, see the module doc.
     pub fn searchable(mut self, placeholder: &str, cx: &mut Context<Self>) -> Self {
         let menu = cx.weak_entity();
         let input = cx.new(|cx| {
@@ -1022,8 +1017,6 @@ impl DropdownMenu {
         cx.notify();
     }
 
-    /// Changes what the trigger says, for a menu whose label is what it last picked, such as
-    /// the instrument of a track.
     /// Puts `name` before the label, in `color` or the label's. A select shows the picked
     /// row's icon instead.
     pub fn set_icon(
@@ -1036,6 +1029,8 @@ impl DropdownMenu {
         cx.notify();
     }
 
+    /// Changes what the trigger says, for a menu whose label is what it last picked, such as
+    /// the instrument of a track.
     pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
         let label = label.into();
         if self.label != label {

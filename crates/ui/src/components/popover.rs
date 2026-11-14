@@ -1,5 +1,5 @@
-//! The anchoring, surface and trigger helpers of the overlays: the dropdown menu, the select and
-//! the split button.
+//! The anchoring, surface and trigger helpers shared by the overlays, such as the dropdown menu
+//! and the select.
 
 use gpui::{
     Anchor, App, BoxShadow, Div, Stateful, anchored, deferred, div, hsla, point, prelude::*, px,

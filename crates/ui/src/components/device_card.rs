@@ -4,18 +4,13 @@
 //! the Wavetable, hides [`Section`]s, each after a hairline of its own, and picks the page of
 //! them that shows with tabs in its header.
 //!
-//! The header: the title, which is the picker of the slot in a rack, and at the right the
-//! expand, power and close icons, each only when the owner gives it. Power off mutes the title
-//! and the body.
+//! The header has the title and at the right the expand, power and close icons, each only when
+//! the owner gives it. Power off mutes the title and the body.
 //!
 //! The card knows no device. It shows what it is given and reports clicks; whether it is
-//! expanded is the owner's interface state and whether it is on the owner's record.
-//!
-//! In a rack the view of the device draws the whole card, because it owns what the body shows,
-//! and the rack gives it a [`CardFrame`]: the title, which is the picker of the slot, the
-//! power and close icons of an effect, and the sidechain picker of an effect that takes one.
-//! Whether an effect is on is saved on its slot, which is the rack's, so the frame reads it when
-//! the card draws.
+//! expanded is the owner's interface state and whether it is on the owner's record. In a rack
+//! the view of the device draws the whole card, because it owns what the body shows, and the
+//! rack gives it a [`CardFrame`].
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -67,8 +62,7 @@ type SidechainColumn = Rc<dyn Fn(&App) -> Column>;
 pub struct CardFrame {
     /// The device it shows.
     instance: SharedString,
-    /// Tells this card from every other in the rack, so that two cards with controls of one
-    /// name keep a drag and a focus each, and names its icons for tests: `<id>-close`.
+    /// The card's element id, and what tests find its icons by: `<id>-close`.
     id: SharedString,
     /// The picker of the slot: a title trigger, which brings 8 pt of padding of its own.
     title: AnyView,
@@ -345,7 +339,6 @@ impl ParentElement for DeviceCard {
     }
 }
 
-/// One icon of the header: a 24 pt target with a 12 pt glyph, a strong fill under the pointer.
 fn header_icon(
     card: &ElementId,
     name: &'static str,

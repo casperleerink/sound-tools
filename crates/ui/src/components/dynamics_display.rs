@@ -17,7 +17,7 @@ use crate::theme::ActiveTheme;
 /// The room of the gain reduction bar at the right edge, in points.
 const BAR_ROOM: f32 = 18.;
 
-/// The dot of the level and the bar of the gain reduction, in points.
+/// The dot of the level, and how far the bar of the gain reduction is from the edges.
 const LEVEL_DOT: f32 = 8.;
 const BAR_INSET: f32 = 6.;
 

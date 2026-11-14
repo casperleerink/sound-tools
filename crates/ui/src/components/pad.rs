@@ -85,8 +85,7 @@ impl Pad {
         self
     }
 
-    /// Shows the ring of a drop target, whatever is dragged. A pad that takes files shows it
-    /// by itself while files are over it, see [`Self::on_drop_files`].
+    /// Shows the ring of a drop target, whatever is dragged.
     pub fn drop_target(mut self, drop_target: bool) -> Self {
         self.drop_target = drop_target;
         self

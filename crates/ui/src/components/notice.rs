@@ -1,9 +1,9 @@
 //! Notice: a quiet line for something the composer should know and need not act on, such as
 //! a failed edit or files that did not load. A dot, the message, an optional action, such as
 //! "Restart" for an update, and an optional dismiss button. A long message wraps to at most
-//! three lines. It never blocks: float it in a corner.
-//! Work that takes a while, such as an export, shows its progress as a bar under the message.
-//! Its action and its dismiss button are tab stops of their own, kept under its id.
+//! three lines. It never blocks: float it in a corner. Work that takes a while, such as an
+//! export, shows its progress as a bar under the message. Its action and its dismiss button are
+//! tab stops of their own, kept under its id.
 
 use std::rc::Rc;
 
@@ -44,7 +44,6 @@ pub struct Notice {
     on_dismiss: Option<Handler>,
 }
 
-/// The tab stops of a notice's buttons, kept between frames.
 struct NoticeFocus {
     action: FocusHandle,
     dismiss: FocusHandle,

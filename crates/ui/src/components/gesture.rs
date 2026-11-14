@@ -1,4 +1,4 @@
-//! The one gesture of every control that drags a value: the knob, the volume and the handles of
+//! The one gesture of every control that drags a value: the knob, the slider and the handles of
 //! a display. Each of them is controlled: the owner gives the value on every render and hears a
 //! [`ValueChange`]. The gesture:
 //!
@@ -42,7 +42,8 @@ pub enum ValueChange<V = f32> {
     DragEnd,
     /// Escape, after at least one `Drag`: the value of the press is wanted back.
     DragCancel,
-    /// A key step, or the default by a double click or backspace: one finished change.
+    /// A key step, a typed value, or the default by a double click or backspace: one finished
+    /// change.
     Set(V),
 }
 
