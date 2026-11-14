@@ -24,7 +24,7 @@ export function stepSection(piece: Piece, by: -1 | 1) {
   const bars = next && barsOfSection(barsOfPiece(piece.state), next);
   if (bars) chooseBars(piece, bars.from, bars.from);
 }
-/** Moves the section `id` one place earlier or later; what was chosen of it stays chosen. */
+/** Moves the section `id` one place earlier or later, and chooses it. */
 export function moveSectionBy(piece: Piece, id: string, by: -1 | 1) {
   const ids = idsOf(piece);
   const at = ids.indexOf(id);

@@ -103,7 +103,7 @@ const BandButton = ({ page, id, x, y, text, width, shown, onClick, large = false
     <>
       <Rect x={x} y={y} width={space.pointX.times(width)} height={height} radius={4} color="background" opacity={shown} />
       <Rect key={id} x={x} y={y} width={() => space.pointX.times(width).times(shown())} height={height} radius={4} color="fill" hover="fill-strong" cursor="pointer" opacity={shown} onClick={onClick} />
-      <Label x={() => x().plus(space.pointX.times(width / 2))} y={large ? y + 2 : y + 3} align="center" variant={large ? "title" : "label"} text={text} color="text-secondary" opacity={shown} />
+      <Label x={() => x().plus(space.pointX.times(width / 2))} y={y + 2} align="center" variant={large ? "title" : "label"} text={text} color="text-secondary" opacity={shown} />
     </>
   );
 };
@@ -189,7 +189,8 @@ export const Marks = ({ page }: { page: Page }) => {
       <For each={parts}>
         {(part) => {
           // The name boxed, or its first letter as a rehearsal mark, or a dot: never nothing.
-          const room = () => (parts().find((each) => each.from > part.from)?.from ?? end() + AFTER) - part.from;
+          // The last one ends where "+ Section" starts.
+          const room = () => (parts().find((each) => each.from > part.from)?.from ?? end()) - part.from;
           const widths = [part.name.length * BOLD_LABEL_CHAR + 26, 32];
           const shows = [() => fits(page, room(), widths[0]!), () => fits(page, room(), widths[1]!).times(not(fits(page, room(), widths[0]!))), () => not(fits(page, room(), widths[1]!))];
           // Its name stays at the left edge while the section goes on past it, up to its end.
@@ -254,9 +255,9 @@ export const Marks = ({ page }: { page: Page }) => {
         )}
       </For>
       <BandButton page={page} id="add-bar-end" x={after(10)} y={TOP_DIGIT + 4} text="+" width={24} large shown={() => 1} onClick={() => addBar(page, "end")} />
-      <BandButton page={page} id="add-section" x={after(10)} y={NAME_Y - 1} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
-      <BandButton page={page} id="chosen-add-bar" x={() => space.pointX.times(-46).plus(chosen().x + chosen().width)} y={NAME_Y - 1} text="+ bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
-      <BandButton page={page} id="chosen-remove" x={() => space.pointX.times(-106).plus(chosen().x + chosen().width)} y={NAME_Y - 1} text="remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
+      <BandButton page={page} id="add-section" x={after(10)} y={NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
+      <BandButton page={page} id="chosen-add-bar" x={() => space.pointX.times(-46).plus(chosen().x + chosen().width)} y={NAME_Y - 2} text="+ bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
+      <BandButton page={page} id="chosen-remove" x={() => space.pointX.times(-106).plus(chosen().x + chosen().width)} y={NAME_Y - 2} text="remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
         onClick={() => clearChosen(page, true)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
       <Circle x={playhead} y={MARKS - 4} radius={3} color="text" />
@@ -301,7 +302,7 @@ export const Rows = ({ page }: { page: Page }) => {
     }
     const at = choiceOf(page);
     if (button === "right") {
-      const among = at?.rows?.includes(each.name) && bar >= at.from && bar <= at.to;
+      const among = at && (at.rows === null || at.rows.includes(each.name)) && bar >= at.from && bar <= at.to;
       if (!among) chooseRows(page, bar, bar, [each.name]);
       void choiceMenu(page);
     } else if (clicks === 2) openEditor(each.name);
