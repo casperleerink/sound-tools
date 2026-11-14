@@ -47,13 +47,13 @@ const HUMANIZE = { timing: 20, velocity: 10 };
 /** A lane the editor shows: the velocities, the pedal, an expression lane, or a MIDI controller by number. */
 export type Lane = (typeof LANES)[number] | number;
 export type Clip = FilledStateOfTool<"timeline">;
-/** What the editor keeps in the song's memory: the chosen notes by `noteKey`, the grid, the lane shown, the last note's length and the copied notes, from 0. */
+/** What the editor keeps in the piece's memory: the chosen notes by `noteKey`, the grid, the lane shown, the last note's length and the copied notes, from 0. */
 export interface EditorMemory {
   notes: Set<string>;
   snap: number;
   lane: Lane;
   length: number;
-  copied: Note[] | null;
+  copiedNotes: Note[] | null;
   /** How far Quantize moves a note, 0 to 1, and how much it swings, 0 to 1. */
   strength: number;
   swing: number;
@@ -165,7 +165,7 @@ const SWINGS = [{ label: "No swing", swing: 0 }, { label: "Light", swing: 1 / 3 
 /** The menu of the notes: Quantize with its strength and swing, Humanize and Legato. */
 async function noteMenu(clip: Frozen<Clip>, memory: Memory<EditorMemory>, edit: EditorProps["edit"], openMenu: Context<unknown>["openMenu"]) {
   const items = [
-    { label: "Quantize", shortcut: "song.quantize_notes" as const, run: () => operate("quantize", clip, memory, edit) },
+    { label: "Quantize", shortcut: "piece.quantize_notes" as const, run: () => operate("quantize", clip, memory, edit) },
     ...STRENGTHS.map((strength) => ({ label: `${strength * 100}%`, group: "Strength", checked: memory.strength === strength, run: () => (memory.strength = strength) })),
     ...SWINGS.map(({ label, swing }) => ({ label, group: "Swing", checked: memory.swing === swing, run: () => (memory.swing = swing) })),
     { label: "Humanize", separator: true, run: () => operate("humanize", clip, memory, edit) },
@@ -315,9 +315,9 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
     const note = { start, length: memory.length, pitch: last?.pitch ?? 60, velocity: 100 };
     change("Add a note", (notes) => ({ notes: [...notes, note], chosen: new Set([notes.length]) }));
   } else if (command === "paste") {
-    if (!memory.copied) return false;
+    if (!memory.copiedNotes) return false;
     const at = inside ? playhead - clip.start : chosen.size > 0 ? (({ start, span }) => start + span)(spanOf(picked())) : 0;
-    const pasted = memory.copied.map((note) => ({ ...note, start: note.start + at }));
+    const pasted = memory.copiedNotes.map((note) => ({ ...note, start: note.start + at }));
     change("Paste notes", (notes) => ({ notes: [...notes, ...pasted], chosen: new Set(pasted.map((_, index) => notes.length + index)) }));
   } else if (command === "quantize") {
     operate("quantize", clip, memory, edit);
@@ -327,7 +327,7 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
     change("Delete notes", without);
   } else if (command === "copy" || command === "cut") {
     const { start } = spanOf(picked());
-    memory.copied = picked().map((note) => ({ ...note, start: note.start - start }));
+    memory.copiedNotes = picked().map((note) => ({ ...note, start: note.start - start }));
     if (command === "cut") change("Cut notes", without);
   } else if (command === "duplicate") {
     const { span } = spanOf(picked());
@@ -662,9 +662,9 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
         </Space>
         <Show when={() => said() !== null}>{() => [<Rule />, <NoteReadout />]}</Show>
         <div style={{ direction: "row", align: "center", paddingX: "sm", keep: true }}>
-          <Button key="editor-size" icon={() => (large() ? "chevron-down" : "chevron-up")} variant="ghost" size="sm" tooltip={() => (large() ? "Smaller" : "Larger")} shortcut="song.editor_size" onClick={onLarge} />
+          <Button key="editor-size" icon={() => (large() ? "chevron-down" : "chevron-up")} variant="ghost" size="sm" tooltip={() => (large() ? "Smaller" : "Larger")} shortcut="piece.editor_size" onClick={onLarge} />
           <Button key="note-menu" icon="ellipsis" variant="ghost" size="sm" tooltip="Quantize, humanize, legato" onClick={openNoteMenu} />
-          <Button key="close-editor" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="song.back" onClick={onClose} />
+          <Button key="close-editor" icon="x" variant="ghost" size="sm" tooltip="Close" shortcut="piece.back" onClick={onClose} />
         </div>
       </div>
       <div style={{ height: 1, background: "border", keep: true }} />
