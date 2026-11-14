@@ -143,18 +143,13 @@ export const SectionsList = ({ page }: { page: Page }) => {
  * one, and with 0 the nearest it takes. While the bars it is for differ it shows a dash and does
  * not drag, nor while `still` says so: one stray drag would make them all alike. `typed` takes
  * what is typed first, such as a whole time signature, and says whether it was one; `text` is
- * what the field starts with, and `onTyping` hears when the field opens and closes.
+ * what the field starts with. Whether it is typed is the head's to say, so a key can ask for it.
  */
-const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false, still = mixed, typed, text = () => String(untrack(value)), onTyping }: {
+const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false, still = mixed, typed, text = () => String(untrack(value)), typing, type }: {
   id: string; value: Accessor<number>; steps: (from: number, by: number) => number; set: (value: number) => void; width: number; per?: number; align?: "left" | "right"; mixed?: Accessor<boolean>;
-  still?: Accessor<boolean>; typed?: (text: string) => boolean; text?: () => string; onTyping?: (typing: boolean) => void;
+  still?: Accessor<boolean>; typed?: (text: string) => boolean; text?: () => string; typing: Accessor<boolean>; type: (typing: boolean) => void;
 }) => {
   const [dragged, drag] = signal<number | null>(null);
-  const [typing, setTyping] = signal(false);
-  const type = (on: boolean) => {
-    setTyping(on);
-    onTyping?.(on);
-  };
   let pressed = 0;
   const onTurn = (turn: Turn) => {
     if (!("moved" in turn) || untrack(still)) return;
@@ -215,8 +210,14 @@ export const SectionHead = ({ page }: { page: Page }) => {
   const differ = (of: (bar: { signature: string; bpm: number }) => number) => () => targeted().some((bar) => of(bar) !== of(first()));
   const [beatsOf, noteOf] = [(bar: { signature: string }) => partsOf(bar.signature)[0], (bar: { signature: string }) => partsOf(bar.signature)[1]];
   const signatureDiffers = () => differ(beatsOf)() || differ(noteOf)();
-  // The number of the time signature that is typed: the whole signature is typed in its field, so the other one waits.
-  const [typingSignature, typeSignature] = signal<"beats" | "note" | null>(null);
+  /** Whether the number `which` is typed, and what opens and closes its field. */
+  const typed = (which: NonNullable<typeof memory.typing>) => ({
+    typing: () => memory.typing === which,
+    type: (on: boolean) => {
+      if (on) memory.typing = which;
+      else if (memory.typing === which) memory.typing = null;
+    },
+  });
   // In the beat of each bar: a tempo of 80 dotted quarters is not one of 80 quarters.
   const tempoDiffers = () => targeted().some((bar) => tempoOf(bar) !== tempoOf(first()) || beatOf(bar.signature).sign !== beatOf(first().signature).sign);
   const caption = () => {
@@ -273,7 +274,7 @@ export const SectionHead = ({ page }: { page: Page }) => {
         </Text>
       </div>
       <Field caption="Length">
-        <Amount id="section-length" value={() => bars().length} steps={(from, by) => clamp(Math.round(from + by), 1, 999)} set={lengthTo} width={36} align="right" />
+        <Amount id="section-length" {...typed("length")} value={() => bars().length} steps={(from, by) => clamp(Math.round(from + by), 1, 999)} set={lengthTo} width={36} align="right" />
         <Text tone="muted" style={{ paddingLeft: "sm" }}>{() => (bars().length === 1 ? "bar" : "bars")}</Text>
       </Field>
       <div style={{ width: 1, height: 40, background: "border", keep: true }} />
@@ -284,18 +285,16 @@ export const SectionHead = ({ page }: { page: Page }) => {
         </Show>
       </div>
       <Field caption={() => (signatureDiffers() ? "Time signature · mixed" : "Time signature")}>
-        <Show when={() => typingSignature() !== "note"}>
+        <Show when={() => memory.typing !== "note"}>
           {() => (
-            <Amount id="section-beats" value={() => beatsOf(first())} mixed={differ(beatsOf)} still={signatureDiffers} width={20} align="right" typed={signatureTyped} text={() => first().signature}
-              onTyping={(typing) => typeSignature(typing ? "beats" : null)}
+            <Amount id="section-beats" {...typed("beats")} value={() => beatsOf(first())} mixed={differ(beatsOf)} still={signatureDiffers} width={20} align="right" typed={signatureTyped} text={() => first().signature}
               steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => signatureTo(`${beats}/${noteOf(first())}`)} />
           )}
         </Show>
-        <Show when={() => typingSignature() === null}>{() => <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>}</Show>
-        <Show when={() => typingSignature() !== "beats"}>
+        <Show when={() => memory.typing !== "beats" && memory.typing !== "note"}>{() => <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>}</Show>
+        <Show when={() => memory.typing !== "beats"}>
           {() => (
-            <Amount id="section-note" value={() => noteOf(first())} mixed={differ(noteOf)} still={signatureDiffers} width={20} typed={signatureTyped} text={() => first().signature}
-              onTyping={(typing) => typeSignature(typing ? "note" : null)}
+            <Amount id="section-note" {...typed("note")} value={() => noteOf(first())} mixed={differ(noteOf)} still={signatureDiffers} width={20} typed={signatureTyped} text={() => first().signature}
               steps={(from, by) => {
                 const nearest = NOTES.reduce((best, each) => (Math.abs(each - from) < Math.abs(best - from) ? each : best), 4);
                 return NOTES[clamp(NOTES.indexOf(nearest) + by, 0, NOTES.length - 1)]!;
@@ -306,7 +305,7 @@ export const SectionHead = ({ page }: { page: Page }) => {
       </Field>
       <Field caption={() => (tempoDiffers() ? "Tempo · mixed" : "Tempo")}>
         <Text variant="title" tone="muted" style={{ paddingRight: "sm" }}>{() => `${beatOf(first().signature).sign} =`}</Text>
-        <Amount id="section-tempo" value={() => tempoOf(first())} mixed={tempoDiffers} width={44} per={2}
+        <Amount id="section-tempo" {...typed("tempo")} value={() => tempoOf(first())} mixed={tempoDiffers} width={44} per={2}
           steps={(from, by) => clamp(Math.round((from + by) * 10) / 10, 10, 600)} set={tempoTo} />
       </Field>
       <div style={{ paddingTop: 18, keep: true }}>

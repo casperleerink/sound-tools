@@ -22,8 +22,11 @@ const [VELOCITY_TOP, VELOCITY_BOTTOM] = [8, LANE - 4];
 const GRIDS = [
   { label: "Off", value: 0 },
   { label: "1/4", value: BEAT },
+  { label: "1/4 triplet", value: (BEAT * 2) / 3 },
   { label: "1/8", value: BEAT / 2 },
+  { label: "1/8 triplet", value: BEAT / 3 },
   { label: "1/16", value: BEAT / 4 },
+  { label: "1/16 triplet", value: BEAT / 6 },
   { label: "1/32", value: BEAT / 8 },
 ];
 const LANES = ["velocity", "pedal", "bend", "mod_wheel", "pressure"] as const;
@@ -76,6 +79,11 @@ const rowOf = (pitch: number) => 127 - pitch;
 const snapped = (tick: number, snap: number) => (snap > 0 ? Math.floor(tick / snap) * snap : Math.round(tick));
 /** A note by what it is: an undo or an edit of another tool that moves notes in the list keeps it chosen. */
 const noteKey = (note: Note) => `${note.start}:${note.pitch}:${note.length}:${note.velocity}`;
+/** Where the first of the chosen notes starts, in ticks of the clip: none while none is chosen. */
+export const chosenStart = (chosen: ReadonlySet<string>) => {
+  const starts = [...chosen].map((key) => Number(key.split(":")[0]));
+  return starts.length > 0 ? Math.min(...starts) : null;
+};
 /** Where the notes `chosen` names are in `notes`. */
 const indexesOf = (notes: readonly Note[], chosen: ReadonlySet<string>) =>
   new Set(notes.flatMap((note, index) => (chosen.has(noteKey(note)) ? [index] : [])));
@@ -127,10 +135,11 @@ function changer(memory: Memory<EditorMemory>, edit: EditorProps["edit"]) {
     edit(label, (draft) => {
       const result = next(draft.notes, indexesOf(draft.notes, memory.notes));
       const end = draft.length ?? Infinity;
-      const kept = result.notes.filter((note) => note.start < end);
-      draft.notes = kept;
+      // A note ends where the clip does, as it sounds: it shows no longer than it plays.
+      const fitted = result.notes.map((note) => (note.start + note.length > end ? { ...note, length: end - note.start } : note));
+      draft.notes = fitted.filter((note) => note.start < end);
       memory.notes = new Set([...result.chosen].flatMap((index) => {
-        const note = result.notes[index];
+        const note = fitted[index];
         return note && note.start < end ? [noteKey(note)] : [];
       }));
     });
@@ -219,7 +228,8 @@ const WHOLE = 4 * BEAT;
 /** The note a length is said in, as the 16 of 3/16: the snap's (a quarter for a bar, a sixteenth for none), or the first finer one it is whole in, down to 1/64. */
 const valueOf = (length: number, snap: number) => {
   const coarsest = WHOLE / Math.min(snap || BEAT / 4, BEAT);
-  return [4, 8, 16, 32, 64].find((value) => value >= coarsest && length % (WHOLE / value) === 0) ?? 64;
+  // With the triplets: a twelfth of a whole note is an eighth triplet.
+  return [4, 6, 8, 12, 16, 24, 32, 48, 64].find((value) => value >= coarsest && length % (WHOLE / value) === 0) ?? 64;
 };
 /** The ticks `text` says a note is long: `3/16`, or `3` of the note `value` it is said in now. */
 function lengthAt(text: string, value: number): number | null {
@@ -323,10 +333,12 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
   } else if (command === "quantize") {
     operate("quantize", clip, memory, edit);
   } else if (command === "next" || command === "previous") {
-    // As they sound, whatever order they were written in: the note after the last chosen one, or before the first; with none chosen, the first or the last.
+    // As they sound, whatever order they were written in: the note after the last chosen one, or before the first; with none chosen, the first from the playhead on, or the last before it.
     const order = clip.notes.map((_, index) => index).sort((a, b) => clip.notes[a]!.start - clip.notes[b]!.start || clip.notes[a]!.pitch - clip.notes[b]!.pitch);
     const places = order.flatMap((index, place) => (chosen.has(index) ? [place] : []));
-    const at = command === "next" ? Math.max(...places, -1) + 1 : (places.length > 0 ? Math.min(...places) : order.length) - 1;
+    const ahead = order.findIndex((index) => clip.notes[index]!.start >= (inside ? playhead - clip.start : 0));
+    const near = ahead < 0 ? order.length : ahead;
+    const at = places.length === 0 ? (command === "next" ? near : near - 1) : command === "next" ? Math.max(...places) + 1 : Math.min(...places) - 1;
     const note = clip.notes[order[clamp(at, 0, order.length - 1)] ?? -1];
     if (!note) return false;
     memory.notes = new Set([noteKey(note)]);

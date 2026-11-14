@@ -84,14 +84,13 @@ export function openOf(piece: Pick<Piece, "state" | "memory">) {
   const bars = barsIn(section);
   return { id: section.id, bars, starts: startsOf(bars), place };
 }
-/** Shows the section `id`, no bar chosen; the note editor goes on with its instrument's part there, or closes while it has none. */
-export function showSection({ memory, children }: Pick<Piece, "memory" | "children">, id: string) {
+/** Shows the section `id`, no bar chosen; the note editor goes on with its instrument's part there, empty while it has none. */
+export function showSection({ memory }: Pick<Piece, "memory">, id: string) {
   memory.open = id;
   memory.chosen = null;
+  memory.noteBar = null;
   // A note of the next section that is alike would be chosen with them.
   if (memory.notes.size > 0) memory.notes = new Set();
-  const below = memory.below;
-  if (below?.kind === "editor" && !partAt(children.find((child) => child.name === below.track), id)) memory.below = { kind: "track", name: below.track };
 }
 /**
  * Puts the playhead on `tick` of the piece while it is stopped. While it plays, a choice does not
@@ -116,6 +115,7 @@ export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, fro
   const last = open.bars.length - 1;
   const [first, end] = [clamp(Math.min(from, to), 0, last), clamp(Math.max(from, to), 0, last)];
   piece.memory.chosen = { from: first, to: end, rows: rows && [...rows] };
+  piece.memory.noteBar = null;
   // Chosen notes would take the keys of the chosen bars.
   if (piece.memory.notes.size > 0) piece.memory.notes = new Set();
   goTo(piece, open.place.start + open.starts[first]!);

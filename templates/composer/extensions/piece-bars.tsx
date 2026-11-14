@@ -116,7 +116,7 @@ export const BarStrip = ({ page }: { page: Page }) => {
       <For each={cells}>
         {(cell) => {
           // The longest of its marks that fits before the next bar with marks.
-          const room = () => ((cells().find((each) => each.index > cell.index && each.marks.length > 0)?.from ?? Infinity) - cell.from) * scale() - 12;
+          const room = () => ((cells().find((each) => each.index > cell.index && each.marks.length > 0)?.from ?? starts().at(-1) ?? cell.to) - cell.from) * scale() - 12;
           const marks = () => cell.marks.find((text) => widthOf(text) <= room()) ?? cell.marks.at(-1) ?? "";
           return [
             <Rect x={xOf(page, cell.from)} y={0} width={1} height={STRIP} color="border" />,

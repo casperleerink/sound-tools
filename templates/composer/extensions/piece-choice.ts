@@ -106,6 +106,13 @@ export function stepBars(piece: Piece, by: -1 | 1, extend: boolean): boolean {
   else chooseBars(piece, next, next, choice.rows);
   return true;
 }
+/** Takes in the bars after the chosen ones, up to the last of the section: a tempo or a time signature then goes on from here. */
+export function chooseToEnd(piece: Piece): boolean {
+  const choice = choiceOf(piece);
+  if (!choice) return false;
+  chooseBars(piece, choice.from, choice.open.bars.length - 1, choice.rows);
+  return true;
+}
 /**
  * Moves the chosen music to the instruments above or below, or with `extend` takes in the one
  * there too. Up from the first instrument chooses the whole bars, down from them the first.
@@ -185,6 +192,7 @@ export async function choiceMenu(piece: Piece) {
           { label: "Start a section here", shortcut: "piece.add_section", disabled: choice.from === 0, separator: true, run: () => startSectionAt(piece) },
         ] satisfies Item[])
       : ([{ label: "Edit notes", shortcut: "piece.edit_notes", separator: true, run: () => editChosen(piece) }] satisfies Item[])),
+    { label: "Choose up to the last bar", shortcut: "piece.bars_to_end", disabled: choice.to === choice.open.bars.length - 1, separator: true, run: () => chooseToEnd(piece) },
   ];
   const picked = await piece.openMenu(items.map(({ run: _, ...item }) => item));
   if (picked !== null) items[picked]?.run();

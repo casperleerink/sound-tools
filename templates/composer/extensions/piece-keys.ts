@@ -1,7 +1,7 @@
 import { type Action, type ActionKey } from "./sdk";
-import { noteCommand, type NoteCommand } from "./clip-editor";
+import { chosenStart, noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { addBar, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
+import { addBar, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
 import { chooseBars, clamp, editedPart, editPart, instrumentsOf, openOf, openSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
 import { addSectionAt, moveSectionBy, stepSection } from "./piece-sections";
@@ -26,6 +26,14 @@ function onNotes(tool: Piece, command: NoteCommand): boolean {
 }
 
 const notes = (keys: readonly ActionKey[], title: string, command: NoteCommand) => on(keys, title, (tool) => onNotes(tool, command));
+
+/** Chooses the note before or the next, and has the editor show its bar. */
+const noteStep = (keys: readonly ActionKey[], title: string, command: "next" | "previous") =>
+  on(keys, title, (tool) => {
+    if (!onNotes(tool, command)) return false;
+    const [open, start] = [openOf(tool), chosenStart(tool.memory.notes)];
+    if (open && start !== null) tool.memory.noteBar = Math.max(open.starts.findLastIndex((each) => each <= start), 0);
+  });
 
 /** Escape: lets go of the chosen notes, effect or bars, else closes the editor, else what shows below. */
 function back(tool: Piece) {
@@ -81,8 +89,8 @@ export const pieceActions: Record<string, PieceAction> = {
   notes_softer: notes(["alt-down"], "Make the chosen notes softer", "softer"),
   notes_shorter: notes(["shift-left"], "Make the chosen notes shorter", "shorter"),
   notes_longer: notes(["shift-right"], "Make the chosen notes longer", "longer"),
-  note_before: notes(["alt-left"], "Choose the note before", "previous"),
-  note_after: notes(["alt-right"], "Choose the next note", "next"),
+  note_before: noteStep(["alt-left"], "Choose the note before", "previous"),
+  note_after: noteStep(["alt-right"], "Choose the next note", "next"),
   notes_left: notes(["left"], "Move the chosen notes earlier", "left"),
   notes_right: notes(["right"], "Move the chosen notes later", "right"),
   notes_up: notes(["up"], "Move the chosen notes up", "up"),
@@ -110,6 +118,10 @@ export const pieceActions: Record<string, PieceAction> = {
   bar_after: on(["right"], "Choose the next bar, or the one that plays", (tool) => stepBars(tool, 1, false)),
   bars_before: on(["shift-left"], "Choose the bar before too", (tool) => stepBars(tool, -1, true)),
   bars_after: on(["shift-right"], "Choose the next bar too", (tool) => stepBars(tool, 1, true)),
+  bars_to_end: on(["cmd-shift-right"], "Choose up to the last bar of the section", chooseToEnd),
+  type_tempo: on(["t"], "Type the tempo of the chosen bars, or of the section", ({ memory }) => void (memory.typing = "tempo")),
+  type_time_signature: on(["shift-t"], "Type the time signature of the chosen bars, or of the section", ({ memory }) => void (memory.typing = "beats")),
+  type_length: on(["shift-l"], "Type the length of the section", ({ memory }) => void (memory.typing = "length")),
   music_above: on(["up"], "Choose the music of the instrument above, or the whole bars", (tool) => stepRows(tool, -1, false)),
   music_below: on(["down"], "Choose the music of the instrument below", (tool) => stepRows(tool, 1, false)),
   more_above: on(["shift-up"], "Choose the instrument above too", (tool) => stepRows(tool, -1, true)),
