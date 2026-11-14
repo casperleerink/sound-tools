@@ -30,6 +30,17 @@ export function ticksOf(signature: string): number {
   return (beats * 4 * BEAT) / note;
 }
 
+/**
+ * The beat a bar's tempo is said in, as a score says it: a dotted quarter in 6/8, 9/8 and 12/8,
+ * else a quarter. How many quarters long it is, and its sign. A bar keeps its `bpm` in quarters.
+ */
+export function beatOf(signature: string): { quarters: number; sign: string } {
+  const [beats, note] = partsOf(signature);
+  return note === 8 && beats >= 6 && beats % 3 === 0 ? { quarters: 1.5, sign: "♩." } : { quarters: 1, sign: "♩" };
+}
+/** The tempo of a bar in its own beat, to a tenth. */
+export const tempoOf = (bar: Bar) => Math.round((bar.bpm / beatOf(bar.signature).quarters) * 10) / 10;
+
 export const barsOf = (runs: readonly Run[]): Bar[] =>
   runs.flatMap(({ bars, signature, bpm }) => Array.from({ length: Math.max(Math.round(bars), 0) }, () => ({ signature, bpm })));
 
@@ -96,9 +107,9 @@ export function idFor(name: string, taken: readonly string[]): string {
 /** The bars of a section after a change, and for each bar it had before, its place among them, or `null` when it is gone. */
 export type Change = { bars: Bar[]; to: (number | null)[] };
 
-/** The bars `from` to `to` with another time signature or tempo. */
-export const changed = (bars: readonly Bar[], from: number, to: number, change: Partial<Bar>): Change => ({
-  bars: bars.map((bar, index) => (index >= from && index <= to ? { ...bar, ...change } : bar)),
+/** The bars `from` to `to` with another time signature or tempo: what `change` gives for each. */
+export const changed = (bars: readonly Bar[], from: number, to: number, change: (bar: Bar) => Partial<Bar>): Change => ({
+  bars: bars.map((bar, index) => (index >= from && index <= to ? { ...bar, ...change(bar) } : bar)),
   to: bars.map((_, index) => index),
 });
 /** `added` put in before the bar `at`, or after the last. */

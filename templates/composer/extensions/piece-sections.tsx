@@ -1,8 +1,8 @@
-import { Button, For, h, Input, Label, memo, signal, Space, Text, Toggle, untrack, type Accessor, type Turn } from "./sdk";
+import { Button, For, h, Input, Label, memo, Show, signal, Space, Text, Toggle, untrack, type Accessor, type Turn } from "./sdk";
 import type { Piece } from "./piece";
-import { addSection, deleteSection, duplicateSection, joinSection, moveSection, renameSection, setBars, setLength } from "./piece-edits";
-import { choiceOf, toggleRepeat } from "./piece-choice";
-import { partsOf } from "./piece-form";
+import { addSection, deleteSection, duplicateSection, joinSection, moveSection, renameSection, setLength, setSignature, setTempo } from "./piece-edits";
+import { choiceMenu, choiceOf, toggleLoop } from "./piece-choice";
+import { beatOf, partsOf, tempoOf } from "./piece-form";
 import { barsIn, clamp, DIM, openAt, openOf, openSectionOf, rowLook, SECTION_HEAD, SECTIONS, secondsOf, timeText, type Page } from "./piece-page";
 
 // The sections of the piece, one at a time open: the column that lists them, and the head of the
@@ -140,16 +140,19 @@ export const SectionsList = ({ page }: { page: Page }) => {
  * A number of the section head in title type, as a number box: a drag up or down steps it and
  * changes the piece once, as it is let go, so a bar made shorter and longer again in one drag
  * keeps its notes. A click types it; the arrows step it. `steps` gives the value `by` steps from
- * one, and with 0 the nearest it takes. Dim while the bars it is for differ.
+ * one, and with 0 the nearest it takes. While the bars it is for differ it shows a dash and does
+ * not drag: one stray drag would make them all alike. `typed` takes what is typed first, such
+ * as a whole time signature, and says whether it was one; `text` is what the field starts with.
  */
-const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false }: {
+const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false, typed, text = () => String(untrack(value)) }: {
   id: string; value: Accessor<number>; steps: (from: number, by: number) => number; set: (value: number) => void; width: number; per?: number; align?: "left" | "right"; mixed?: Accessor<boolean>;
+  typed?: (text: string) => boolean; text?: () => string;
 }) => {
   const [dragged, drag] = signal<number | null>(null);
   const [typing, type] = signal(false);
   let pressed = 0;
   const onTurn = (turn: Turn) => {
-    if (!("moved" in turn)) return;
+    if (!("moved" in turn) || untrack(mixed)) return;
     const next = steps(turn.held ? pressed : untrack(value), turn.moved);
     if (turn.held) drag(next);
     else if (next !== untrack(value)) set(next);
@@ -159,21 +162,22 @@ const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed 
     drag(null);
     if (next !== null && next !== untrack(value)) set(next);
   };
-  const typed = (text: string) => {
+  const commit = (entered: string) => {
     type(false);
-    const number = Number.parseFloat(text);
+    if (typed?.(entered)) return;
+    const number = Number.parseFloat(entered);
     if (Number.isFinite(number)) set(steps(number, 0));
   };
   return (
     <div style={{ keep: true }} keys={["enter"]} onKey={() => type(true)}>
       {() =>
         typing() ? (
-          <Input key={`${id}-typed`} value={String(untrack(value))} width={Math.max(width + 24, 48)} size="lg" focus onCommit={typed} onCancel={() => type(false)} />
+          <Input key={`${id}-typed`} value={untrack(mixed) ? "" : text()} width={Math.max(width + 24, 56)} size="lg" focus onCommit={commit} onCancel={() => type(false)} />
         ) : (
           <Space key={id} width={width} height={32} cursor="ns-resize" drag={{ y: { onTurn, step: 1, per } }}
             onPress={() => (pressed = untrack(value))} onRelease={release} onClick={() => type(true)}>
-            <Label x={align === "right" ? width : 0} y={6} align={align} variant="title" color="text" text={() => String(dragged() ?? value())}
-              opacity={() => (mixed() && dragged() === null ? DIM : 1)} />
+            <Label x={align === "right" ? width : 0} y={6} align={align} variant="title" color={() => (mixed() && dragged() === null ? "text-muted" : "text")}
+              text={() => (mixed() && dragged() === null ? "–" : String(dragged() ?? value()))} />
           </Space>
         )
       }
@@ -182,7 +186,7 @@ const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed 
 };
 
 /** A caption over what it names, in the section head. */
-const Field = ({ caption, children }: { caption: string; children?: h.JSX.Element | h.JSX.Element[] }) => (
+const Field = ({ caption, children }: { caption: Accessor<string> | string; children?: h.JSX.Element | h.JSX.Element[] }) => (
   <div style={{ keep: true, gap: 2 }}>
     <Text variant="label" tone="muted">{caption}</Text>
     <div style={{ direction: "row", align: "center", height: 32 }}>{children}</div>
@@ -192,7 +196,7 @@ const Field = ({ caption, children }: { caption: string; children?: h.JSX.Elemen
 /**
  * The head of the open section: its name, which a double click types, where it is in the piece
  * and how long it plays; its length in bars; and, after the bars they are for, the chosen ones or all, their time
- * signature and tempo, the first bar's dim where they differ; and a toggle that repeats them.
+ * signature and tempo, a dash where they differ; and a toggle that repeats them.
  */
 export const SectionHead = ({ page }: { page: Page }) => {
   const { openSection, openId, place, bars, memory, clock } = page;
@@ -205,14 +209,20 @@ export const SectionHead = ({ page }: { page: Page }) => {
   const first = () => targeted()[0] ?? { signature: "4/4", bpm: 120 };
   const differ = (of: (bar: { signature: string; bpm: number }) => number) => () => targeted().some((bar) => of(bar) !== of(first()));
   const [beatsOf, noteOf] = [(bar: { signature: string }) => partsOf(bar.signature)[0], (bar: { signature: string }) => partsOf(bar.signature)[1]];
+  // In the beat of each bar: a tempo of 80 dotted quarters is not one of 80 quarters.
+  const tempoDiffers = () => targeted().some((bar) => tempoOf(bar) !== tempoOf(first()) || beatOf(bar.signature).sign !== beatOf(first().signature).sign);
   const caption = () => {
     const { from, to, chosen } = target();
     const bar = place()?.bar ?? 1;
     return !chosen ? "All bars" : from === to ? `Bar ${bar + from}` : `Bars ${bar + from}–${bar + to}`;
   };
-  const change = (bar: { signature?: string; bpm?: number }) => {
+  const signatureTo = (signature: string) => {
     const id = openId();
-    if (id !== null) setBars(page, id, target().from, target().to, bar);
+    if (id !== null) setSignature(page, id, target().from, target().to, signature);
+  };
+  const tempoTo = (tempo: number) => {
+    const id = openId();
+    if (id !== null) setTempo(page, id, target().from, target().to, tempo);
   };
   const lengthTo = (count: number) => {
     const id = openId();
@@ -221,6 +231,13 @@ export const SectionHead = ({ page }: { page: Page }) => {
     const chosen = memory.chosen;
     if (chosen && chosen.from >= count) memory.chosen = null;
     else if (chosen && chosen.to >= count) memory.chosen = { ...chosen, to: count - 1 };
+  };
+  /** A whole time signature typed into either of its numbers, `6/8`, is one change. */
+  const signatureTyped = (text: string) => {
+    const [, beats, note] = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(text) ?? [];
+    if (!beats) return false;
+    if (Number(beats) >= 1 && Number(beats) <= 32 && NOTES.includes(Number(note))) signatureTo(`${Number(beats)}/${Number(note)}`);
+    return true;
   };
   const naming = () => memory.naming?.in === "head" && memory.naming.id === openId();
   return (
@@ -234,7 +251,10 @@ export const SectionHead = ({ page }: { page: Page }) => {
           return naming() && id !== null ? (
             <Input key={`head-name-${id}`} value={() => openSection()?.name ?? ""} width={280} size="lg" focus onCommit={(name) => rename(page, id, name)} onCancel={() => (memory.naming = null)} />
           ) : (
-            <Text variant="display" style={{ truncate: true }}>{() => openSection()?.name ?? ""}</Text>
+            <div style={{ direction: "row", align: "center", gap: "sm" }}>
+              <Text variant="display" style={{ truncate: true }}>{() => openSection()?.name ?? ""}</Text>
+              <Button key="section-menu" icon="ellipsis" variant="ghost" color="text-secondary" size="sm" tooltip="Rename, duplicate, move, join or delete the section" onClick={() => id !== null && void sectionMenu(page, id)} />
+            </div>
           );
         }}
         <Text variant="label" tone="muted">
@@ -249,27 +269,32 @@ export const SectionHead = ({ page }: { page: Page }) => {
         <Text tone="muted" style={{ paddingLeft: "sm" }}>{() => (bars().length === 1 ? "bar" : "bars")}</Text>
       </Field>
       <div style={{ width: 1, height: 40, background: "border", keep: true }} />
-      <Text key="section-scope" variant="heading" tone={() => (target().chosen ? "text" : "muted")} style={{ keep: true }}>{caption}</Text>
-      <Field caption="Time signature">
-        <Amount id="section-beats" value={() => beatsOf(first())} mixed={differ(beatsOf)} width={20} align="right"
-          steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => change({ signature: `${beats}/${noteOf(first())}` })} />
+      <div style={{ direction: "row", align: "center", gap: "xs", keep: true }}>
+        <Text key="section-scope" variant="heading" tone={() => (target().chosen ? "text" : "muted")}>{caption}</Text>
+        <Show when={() => target().chosen}>
+          {() => <Button key="choice-menu" icon="ellipsis" variant="ghost" color="text-secondary" size="sm" tooltip="Cut, copy, add or remove the chosen bars" onClick={() => void choiceMenu(page)} />}
+        </Show>
+      </div>
+      <Field caption={() => (differ(beatsOf)() || differ(noteOf)() ? "Time signature · mixed" : "Time signature")}>
+        <Amount id="section-beats" value={() => beatsOf(first())} mixed={differ(beatsOf)} width={20} align="right" typed={signatureTyped} text={() => first().signature}
+          steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => signatureTo(`${beats}/${noteOf(first())}`)} />
         <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>
-        <Amount id="section-note" value={() => noteOf(first())} mixed={differ(noteOf)} width={20}
+        <Amount id="section-note" value={() => noteOf(first())} mixed={differ(noteOf)} width={20} typed={signatureTyped} text={() => first().signature}
           steps={(from, by) => {
             const nearest = NOTES.reduce((best, each) => (Math.abs(each - from) < Math.abs(best - from) ? each : best), 4);
             return NOTES[clamp(NOTES.indexOf(nearest) + by, 0, NOTES.length - 1)]!;
           }}
-          set={(note) => change({ signature: `${beatsOf(first())}/${note}` })} />
+          set={(note) => signatureTo(`${beatsOf(first())}/${note}`)} />
       </Field>
-      <Field caption="Tempo">
-        <Amount id="section-tempo" value={() => first().bpm} mixed={differ((bar) => bar.bpm)} width={40} per={2} align="right"
-          steps={(from, by) => clamp(Math.round((from + by) * 10) / 10, 10, 1000)} set={(bpm) => change({ bpm })} />
-        <Text tone="muted" style={{ paddingLeft: "sm" }}>bpm</Text>
+      <Field caption={() => (tempoDiffers() ? "Tempo · mixed" : "Tempo")}>
+        <Text variant="title" tone="muted" style={{ paddingRight: "sm" }}>{() => `${beatOf(first().signature).sign} =`}</Text>
+        <Amount id="section-tempo" value={() => tempoOf(first())} mixed={tempoDiffers} width={44} per={2}
+          steps={(from, by) => clamp(Math.round((from + by) * 10) / 10, 10, 600)} set={tempoTo} />
       </Field>
       <div style={{ paddingTop: 18, keep: true }}>
-        <Toggle key="section-repeat" label="Repeat" on={() => clock.repeat !== null}
-          tooltip={() => (clock.repeat !== null ? "Play on" : target().chosen ? "Repeat the chosen bars" : "Repeat the section")}
-          shortcut="piece.repeat" onClick={() => toggleRepeat(page)} />
+        <Toggle key="section-loop" label="Loop" on={() => clock.repeat !== null}
+          tooltip={() => (clock.repeat !== null ? "Play on" : target().chosen ? "Loop the chosen bars as it plays" : "Loop the section as it plays")}
+          shortcut="piece.loop" onClick={() => toggleLoop(page)} />
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import { type Action, type ActionKey } from "./sdk";
 import { noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { addBar, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleRepeat } from "./piece-choice";
+import { addBar, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
 import { chooseBars, clamp, editedPart, editPart, instrumentsOf, openOf, openSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
 import { addSectionAfter, moveSectionBy, stepSection } from "./piece-sections";
@@ -79,6 +79,8 @@ export const pieceActions: Record<string, PieceAction> = {
   duplicate_notes: notes(["cmd-d"], "Duplicate the chosen notes", "duplicate"),
   notes_louder: notes(["alt-up"], "Make the chosen notes louder", "louder"),
   notes_softer: notes(["alt-down"], "Make the chosen notes softer", "softer"),
+  note_before: notes(["alt-left"], "Choose the note before", "previous"),
+  note_after: notes(["alt-right"], "Choose the next note", "next"),
   notes_left: notes(["left"], "Move the chosen notes earlier", "left"),
   notes_right: notes(["right"], "Move the chosen notes later", "right"),
   notes_up: notes(["up"], "Move the chosen notes up", "up"),
@@ -102,17 +104,17 @@ export const pieceActions: Record<string, PieceAction> = {
     if (!open) return false;
     chooseBars(tool, 0, open.bars.length - 1);
   }),
-  bar_before: on(["left"], "Choose the bar before", (tool) => stepBars(tool, -1, false)),
-  bar_after: on(["right"], "Choose the next bar", (tool) => stepBars(tool, 1, false)),
+  bar_before: on(["left"], "Choose the bar before, or the one that plays", (tool) => stepBars(tool, -1, false)),
+  bar_after: on(["right"], "Choose the next bar, or the one that plays", (tool) => stepBars(tool, 1, false)),
   bars_before: on(["shift-left"], "Choose the bar before too", (tool) => stepBars(tool, -1, true)),
   bars_after: on(["shift-right"], "Choose the next bar too", (tool) => stepBars(tool, 1, true)),
   music_above: on(["up"], "Choose the music of the instrument above, or the whole bars", (tool) => stepRows(tool, -1, false)),
   music_below: on(["down"], "Choose the music of the instrument below", (tool) => stepRows(tool, 1, false)),
   more_above: on(["shift-up"], "Choose the instrument above too", (tool) => stepRows(tool, -1, true)),
   more_below: on(["shift-down"], "Choose the instrument below too", (tool) => stepRows(tool, 1, true)),
-  add_bar: on(["shift-b"], "Add a bar", (tool) => addBar(tool, false)),
-  add_bar_before: on(["alt-shift-b"], "Add a bar before", (tool) => addBar(tool, true)),
-  repeat: on(["l"], "Repeat the chosen bars, or the section, as it plays", toggleRepeat),
+  add_bar: on(["shift-b"], "Add a bar", (tool) => addBar(tool, "after")),
+  add_bar_before: on(["alt-shift-b"], "Add a bar before", (tool) => addBar(tool, "before")),
+  loop: on(["l"], "Loop the chosen bars, or the section, as it plays", toggleLoop),
 
   previous_section: on(["alt-shift-left"], "Section before", (tool) => stepSection(tool, -1)),
   next_section: on(["alt-shift-right"], "Next section", (tool) => stepSection(tool, 1)),

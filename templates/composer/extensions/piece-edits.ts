@@ -1,6 +1,6 @@
 import type { Frozen } from "./sdk";
 import type { Piece } from "./piece";
-import { barsOf, changed, clear, idFor, inserted, isEmpty, laidOut, NO_MUSIC, put, removed, retime, runsOf, sliceOf, startsOf, type Bar, type Change, type Music } from "./piece-form";
+import { barsOf, beatOf, changed, clear, idFor, inserted, isEmpty, laidOut, NO_MUSIC, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Music } from "./piece-form";
 
 // What the piece does to its form: each edit changes the sections in its record, moves the music
 // of every instrument along, and puts the parts and the clock where the sections now are, as one
@@ -91,9 +91,13 @@ function rebar(draft: Draft, id: string, change: (bars: Bar[]) => Change): { was
 
 // Bars
 
-/** Gives the bars `from` to `to` of a section another time signature or tempo: a bar made longer pushes what comes after it. */
-export const setBars = (piece: Piece, id: string, from: number, to: number, change: Partial<Bar>) =>
-  edit(piece, change.signature === undefined ? "Change the tempo" : "Change the time signature", (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, change)));
+/** Gives the bars `from` to `to` of a section another time signature: a bar made longer pushes what comes after it. */
+export const setSignature = (piece: Piece, id: string, from: number, to: number, signature: string) =>
+  edit(piece, "Change the time signature", (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, () => ({ signature }))));
+
+/** Gives the bars `from` to `to` of a section the tempo `tempo`, each in its own beat: 80 is 80 dotted quarters a minute in a bar of 6/8. */
+export const setTempo = (piece: Piece, id: string, from: number, to: number, tempo: number) =>
+  edit(piece, "Change the tempo", (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, (bar) => ({ bpm: tempo * beatOf(bar.signature).quarters }))));
 
 /** Adds `count` empty bars before the bar `at` of a section, or after its last: each as the bar before it, or the first. */
 export const addBars = (piece: Piece, id: string, at: number, count = 1) =>
@@ -160,18 +164,26 @@ export function clearMusic(piece: Piece, id: string, { from, to, rows }: Chosen)
  * Pastes `copied` into the section `id`. On chosen bars it puts its bars in before the first of
  * them, with its music on the instruments it came from. On chosen instruments it writes its
  * music over what they play from the first chosen bar on, the first copied instrument on the
- * first chosen one and the next on those under it, in `order`, and stops at the end of the section.
+ * first chosen one and the next on those under it, in `order`; a section too short for it gets bars at its end.
  */
 export function paste(piece: Piece, id: string, chosen: Chosen, copied: Copied, order: readonly string[]) {
   const rows = chosen.rows;
   if (rows === null) return edit(piece, "Paste bars", (draft) => insertCopied(draft, id, chosen.from, copied));
   edit(piece, "Paste", (draft) => {
-    const starts = startsOf(barsOf(sectionOf(draft, id)?.bars ?? []));
-    const first = order.findIndex((name) => rows.includes(name));
     const length = startsOf(copied.bars).at(-1)!;
+    const before = startsOf(barsOf(sectionOf(draft, id)?.bars ?? []));
+    const at = before[chosen.from] ?? before.at(-1)!;
+    // Music that would end past the section gets the bars it needs, each as the last: none of it is cut.
+    rebar(draft, id, (bars) => {
+      const added: Bar[] = [];
+      for (let end = before.at(-1)!; end < at + length && bars.length > 0; end += ticksOf(bars.at(-1)!.signature)) added.push({ ...bars.at(-1)! });
+      return inserted(bars, bars.length, added);
+    });
+    const end = startsOf(barsOf(sectionOf(draft, id)?.bars ?? [])).at(-1)!;
+    const first = order.findIndex((name) => rows.includes(name));
     copied.rows.forEach((row, index) => {
       const track = tracksOf(draft).find((each) => each.name === order[first + index]);
-      if (first >= 0 && track) withPart(track, id, (music) => put(music, starts[chosen.from] ?? 0, row.music, length, starts.at(-1)!));
+      if (first >= 0 && track) withPart(track, id, (music) => put(music, at, row.music, length, end));
     });
   });
 }

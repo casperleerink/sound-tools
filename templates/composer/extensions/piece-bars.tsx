@@ -1,6 +1,6 @@
 import { Button, Circle, For, Fragment, h, Label, Line, Live, memo, now, Rect, Show, Space, Text, type Drag, type Press } from "./sdk";
 import { addBar, choiceMenu, choiceOf, chooseRows } from "./piece-choice";
-import type { Bar } from "./piece-form";
+import { beatOf, tempoOf, type Bar } from "./piece-form";
 import { AFTER, chooseBars, clamp, colourOf, DIM, LOW_ROW, muted, ROW, STRIP, type Page } from "./piece-page";
 import { addTrack } from "./piece-tracks";
 
@@ -9,6 +9,8 @@ import { addTrack } from "./piece-tracks";
 
 /** Where the two lines of the strip start, the foot of the outline of the chosen bars, and under it the playhead's dot, on the line where the piece repeats. */
 const [NUMBER, MARKS, HEAD, FOOT] = [5, 21, STRIP - 3, STRIP - 6];
+/** The points a bar's number needs before the next one. */
+const NUMBER_ROOM = 26;
 /** About how many points a label of 12 points takes. */
 const widthOf = (text: string) => text.length * 5.6;
 const HINT = "Double-click a bar to write notes";
@@ -20,10 +22,11 @@ const HINT = "Double-click a bar to write notes";
 const marksAt = (bars: readonly Bar[], index: number): string[] => {
   const [bar, before] = [bars[index]!, bars[index - 1]];
   const signature = bar.signature !== before?.signature ? bar.signature : "";
-  const tempo = bar.bpm !== before?.bpm ? String(Math.round(bar.bpm * 10) / 10) : "";
+  const said = (each: Bar) => `${beatOf(each.signature).sign} = ${tempoOf(each)}`;
+  const tempo = !before || said(bar) !== said(before) ? said(bar) : "";
   if (!signature && !tempo) return [];
   if (!tempo) return [signature, "•"];
-  return signature ? [`${signature}  ${tempo} bpm`, `${signature}  ${tempo}`, `${signature} •`, "•"] : [`${tempo} bpm`, tempo, "•"];
+  return signature ? [`${signature}  ${tempo}`, `${signature}  ${tempoOf(bar)}`, `${signature} •`, "•"] : [tempo, String(tempoOf(bar)), "•"];
 };
 
 /** The x of the tick `tick` of the open section, which follows the room and the bars. */
@@ -70,6 +73,11 @@ export const BarStrip = ({ page }: { page: Page }) => {
   const { memory, bars, starts, place, scale, barAt } = page;
   const cells = memo(() => bars().map((_, index) => ({ index, from: starts()[index]!, to: starts()[index + 1]!, number: (place()?.bar ?? 1) + index, marks: marksAt(bars(), index) })));
   const chosen = () => chosenSpan(page);
+  // In a long section every second, fourth, eighth … bar says its number, so the numbers keep their room.
+  const numbered = memo(() => {
+    const narrowest = Math.min(...cells().map((cell) => (cell.to - cell.from) * scale()));
+    return 2 ** Math.max(Math.ceil(Math.log2(NUMBER_ROOM / Math.max(narrowest, 1))), 0);
+  });
   const inChosen = (index: number) => {
     const at = memory.chosen;
     return at !== null && index >= at.from && index <= at.to;
@@ -107,14 +115,15 @@ export const BarStrip = ({ page }: { page: Page }) => {
           const marks = () => cell.marks.find((text) => widthOf(text) <= room()) ?? cell.marks.at(-1) ?? "";
           return [
             <Rect x={xOf(page, cell.from)} y={0} width={1} height={STRIP} color="border" />,
-            <Label x={() => cell.from * scale() + 6} y={NUMBER} text={String(cell.number)} color={() => (inChosen(cell.index) ? "text" : "text-secondary")} />,
+            <Label x={() => cell.from * scale() + 6} y={NUMBER} text={String(cell.number)} color={() => (inChosen(cell.index) ? "text" : "text-secondary")}
+              opacity={() => (cell.index % numbered() === 0 ? 1 : 0)} />,
             <Label x={() => cell.from * scale() + 6} y={MARKS} text={marks} color="text-muted" />,
           ];
         }}
       </For>
       <Rect x={() => (starts().at(-1) ?? 0) * scale()} y={0} width={1} height={STRIP} color="border" />
       <Rect key="add-bar" x={() => (starts().at(-1) ?? 0) * scale() + 10} y={(STRIP - 24) / 2} width={24} height={24} radius={6} color="none" hover="fill" cursor="pointer"
-        onClick={() => addBar(page, false)} />
+        onClick={() => addBar(page, "end")} />
       <Rect x={() => (starts().at(-1) ?? 0) * scale() + 17} y={STRIP / 2 - 0.75} width={10} height={1.5} color="text-secondary" />
       <Rect x={() => (starts().at(-1) ?? 0) * scale() + 21.25} y={STRIP / 2 - 5} width={1.5} height={10} color="text-secondary" />
       <Rect x={() => repeat().x + 1} y={STRIP - 2.5} width={() => Math.max(repeat().width - 2, 0)} height={2} radius={1} color="text" opacity={() => repeat().shown} />

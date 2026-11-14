@@ -391,6 +391,70 @@ fn what_an_agent_left_out_of_place_is_laid_out_again(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
+/// `6/8` typed into the head for bar 2 is one change of both its numbers: the bar is three
+/// quarters long, and what comes after it moves up by one.
+#[gpui::test]
+fn a_whole_time_signature_typed_is_one_change(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    let before = mark(&mut window);
+    let beats = window.until_found("space-section-beats");
+    window.click(beats);
+    window.until("the field", |window| {
+        window.find("space-section-beats").is_none()
+    });
+    window.keys("secondary-a");
+    window.cx.simulate_input("6/8");
+    window.keys("enter");
+    window.until("the bar made shorter", |window| {
+        window.part("t00", "sec-b").0 != 4 * BAR
+    });
+    window.after_the_runs();
+    let bars = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+        { "bars": 1, "signature": "6/8", "bpm": 120 },
+        { "bars": 2, "signature": "4/4", "bpm": 120 },
+    ]);
+    assert_eq!(window.sections()[0]["bars"], bars);
+    assert_eq!(
+        window.part("t00", "sec-a"),
+        (0, vec![0, BAR + BEAT / 2, 2 * BAR - BEAT])
+    );
+    assert_eq!(window.part("t00", "sec-b"), (4 * BAR - BEAT, IN_B.to_vec()));
+    one_undo_step(&mut window, "Change the time signature", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Bars 3 and 4 of the first instrument, repeated: there is no bar after them, so the section
+/// gets two, and none of the music is cut.
+#[gpui::test]
+fn music_repeated_past_the_end_of_its_section_gets_the_bars_it_needs(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let first = window.on_row(10., 0);
+    window.click(first);
+    window.wait_for_bun();
+    for bar in [2, 3] {
+        window.keys("right");
+        window.until_shows(&format!("Bar {bar}"));
+    }
+    window.keys("shift-right");
+    window.until_shows("Bars 3–4");
+    let before = mark(&mut window);
+    window.keys("secondary-d");
+    window.until("repeated", |window| {
+        window.part("t00", "sec-b").0 != 4 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.part("t00", "sec-a"),
+        (0, vec![0, BAR + BEAT / 2, 2 * BAR, 4 * BAR])
+    );
+    assert_eq!(window.record("piece/t00/sec-a")["length"], 6 * BAR);
+    assert_eq!(window.part("t00", "sec-b"), (6 * BAR, IN_B.to_vec()));
+    one_undo_step(&mut window, "Paste", &before);
+    assert_eq!(window.problems(), []);
+}
+
 /// Bar 2 of the first instrument copied, and pasted on bar 3 of the second: its note lands
 /// there, in a part the second instrument did not have.
 #[gpui::test]

@@ -287,7 +287,7 @@ function spanOf(notes: readonly Note[]) {
 }
 
 /** What an action of the song does to the notes of the open clip. */
-export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | keyof typeof NOTE_MOVES;
+export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | "next" | "previous" | keyof typeof NOTE_MOVES;
 /** How far each move takes the chosen notes: in steps of the grid, and in pitches. */
 const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "octave-up": [0, 12], "octave-down": [0, -12] } as const;
 
@@ -321,6 +321,12 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
     change("Paste notes", (notes) => ({ notes: [...notes, ...pasted], chosen: new Set(pasted.map((_, index) => notes.length + index)) }));
   } else if (command === "quantize") {
     operate("quantize", clip, memory, edit);
+  } else if (command === "next" || command === "previous") {
+    // The note after the last chosen one, or before the first: with none chosen, the first or the last.
+    const at = command === "next" ? Math.max(...chosen, -1) + 1 : (chosen.size > 0 ? Math.min(...chosen) : clip.notes.length) - 1;
+    const note = clip.notes[clamp(at, 0, clip.notes.length - 1)];
+    if (!note) return false;
+    memory.notes = new Set([noteKey(note)]);
   } else if (chosen.size === 0) {
     return false;
   } else if (command === "delete") {
@@ -648,6 +654,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
               <Text variant="label" style={{ grow: true, truncate: true }}>{name}</Text>
             </>
           ) : <Text variant="heading" style={{ grow: true, truncate: true }}>{name}</Text>}
+          <Select key="editor-grid" size="sm" title="Grid" value={() => memory.snap} options={snapsOf(WHOLE).map(({ label, ticks }) => ({ value: ticks, label }))} onChange={(snap) => (memory.snap = snap)} />
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}
