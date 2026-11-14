@@ -1,4 +1,4 @@
-import type { Frozen } from "./sdk";
+import { batch, type Frozen } from "./sdk";
 import type { Piece } from "./piece";
 import { barsOf, beatOf, changed, clear, fit, idFor, inserted, isEmpty, laidOut, NO_MUSIC, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Music } from "./piece-form";
 
@@ -65,17 +65,20 @@ export function isLaidOut({ state, children, clock }: Pick<Piece, "state" | "chi
 
 /** One change of the piece as one undo step: what `change` does to its record and its instruments, then the parts and the clock laid out again. With `memory`, it is the composer's, which ends a notice. */
 export function edit({ update, clock, memory }: Pick<Piece, "update" | "clock"> & Partial<Pick<Piece, "memory">>, label: string, change: (draft: Draft) => void) {
-  if (memory) memory.notice = null;
-  const laid: { time?: ReturnType<typeof laidOut> } = {};
-  update(label, (draft) => {
-    change(draft);
-    laid.time = place(draft);
-  });
-  const time = laid.time;
-  if (!time || (same(clock.tempo_map, time.tempo_map) && same(clock.sections, time.sections))) return;
-  clock.update(label, (song) => {
-    song.tempo_map = time.tempo_map;
-    song.sections = time.sections;
+  // Also after an `await`: a view that saw the record change before the clock would lay the piece out again, a second undo step.
+  batch(() => {
+    if (memory) memory.notice = null;
+    const laid: { time?: ReturnType<typeof laidOut> } = {};
+    update(label, (draft) => {
+      change(draft);
+      laid.time = place(draft);
+    });
+    const time = laid.time;
+    if (!time || (same(clock.tempo_map, time.tempo_map) && same(clock.sections, time.sections))) return;
+    clock.update(label, (song) => {
+      song.tempo_map = time.tempo_map;
+      song.sections = time.sections;
+    });
   });
 }
 

@@ -61,7 +61,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
-The templates follow these rules; their own gestures and keys are their code, in `templates/*/extensions`. The Composer differs: one line read as a score; bars are chosen, bar lines are its grid.
+The templates follow these rules; their own gestures and keys are in `templates/*/extensions`. The Composer differs: the whole piece is one line read as a score; time signatures, tempos and section names sit on the bars, typed in place.
 
 ### Gestures
 
@@ -77,7 +77,7 @@ The templates follow these rules; their own gestures and keys are their code, in
 - Adding something never changes the sound: a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands.
 - Audio comes from files only. A dropped file is copied into the project.
-- Arming, the metronome and the computer keys are not saved and are no undo step.
+- Arming, the metronome and the computer keys are no undo step.
 
 ### Keys
 

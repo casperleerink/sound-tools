@@ -167,12 +167,12 @@ export const piece = tool({
         const first = id === null ? 0 : (barsOfSection(untrack(all), id)?.from ?? 0);
         kept = { id, from: first, to: first + 8 };
       }
-      return `${kept.from}-${kept.to}`;
+      return `${kept.from}:${kept.to}`;
     });
     /** The ticks of the part those bars are, inside its section, as it is now. */
     const shownTicks = (bars: string): readonly [number, number] => {
       const [pieceStarts, section, at] = [untrack(starts), untrack(() => barsOfSection(all(), partId() ?? "")), untrack(place)];
-      const [from = 0, to = 8] = bars.split("-").map(Number);
+      const [from = 0, to = 8] = bars.split(":").map(Number);
       if (!section || !at) return [0, 0];
       const tickOf = (bar: number) => (pieceStarts[clamp(bar, section.from, section.to + 1)] ?? 0) - at.start;
       return [tickOf(from), tickOf(to)];

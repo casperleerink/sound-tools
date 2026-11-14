@@ -1,8 +1,9 @@
-//! The piece of the Composer template (`templates/composer`): a bar made longer pushes what
-//! comes after it and nothing else, a bar added or removed moves the rest, a section started at
-//! a bar takes the music after it along, a section moved takes its music with it, and a part an
-//! agent left in the wrong place is laid out again. Each edit is one undo step. The arrows step
-//! across a section line, and a bar made too short for a note says so.
+//! The piece of the Composer template (`templates/composer`), the whole piece on one line with a
+//! band of marks over its rows: a bar made longer pushes what comes after it and nothing else, a
+//! bar added or removed moves the rest, a section started at a bar takes the music after it
+//! along, a section moved takes its music with it, and a part an agent left in the wrong place is
+//! laid out again. A time signature or a tempo typed in place changes the bars it is typed for,
+//! across section lines too. Each edit is one undo step.
 
 use std::path::Path;
 
@@ -16,6 +17,16 @@ use crate::support::{mark, one_undo_step, write_outside};
 const BEAT: u64 = 960;
 /// A row of notes is 64 points tall, as `piece-page.ts` has it.
 const ROW: f32 = 64.;
+/// The points the rows leave before the piece and after it as they open fitted to their width.
+const FIT_BEFORE: f32 = 12.;
+const FIT_AFTER: f32 = 120.;
+/// How long the piece of [`open_piece`] is as it opens: the rows fit it to their width.
+const OPENED: u64 = 6 * BAR;
+/// How far down the band its lines are: the section names, the time signatures and tempos, and
+/// under the bar numbers, empty band over the bars.
+const NAMES: f32 = 17.;
+const MARKS: f32 = 50.;
+const BARS: f32 = 90.;
 /// The notes of `t00` in section A, one in each of its first three bars, and in B.
 const IN_A: [u64; 3] = [0, BAR + BEAT / 2, 2 * BAR];
 const IN_B: [u64; 1] = [0];
@@ -101,40 +112,55 @@ fn open_piece(cx: &mut TestAppContext) -> Opened<'_> {
 }
 
 impl Opened<'_> {
-    /// Where the strip over the rows has `x` points of the open section, half way down.
-    fn on_strip(&mut self, x: f32) -> Point<Pixels> {
-        self.space_at("strip") + point(px(x), px(22.))
+    /// Points per tick across the rows and the band, as the piece opens fitted to their width.
+    fn across(&mut self) -> f32 {
+        let rows = self.bounds("space-rows").unwrap();
+        (f32::from(rows.size.width) - FIT_BEFORE - FIT_AFTER) / OPENED as f32
     }
 
-    /// Where the row of the `row`th instrument has `x` points of the open section.
-    fn on_row(&mut self, x: f32, row: usize) -> Point<Pixels> {
+    /// Where the band over the rows has `tick` of the piece, `y` points down, and `x` points on.
+    fn in_band(&mut self, tick: u64, x: f32, y: f32) -> Point<Pixels> {
+        let across = self.across();
+        let band = self.space_at("marks");
+        band + point(px(FIT_BEFORE + tick as f32 * across + x), px(y))
+    }
+
+    /// Where the row of the `row`th instrument has the middle of the bar `bar`, from 0.
+    fn on_row(&mut self, bar: u64, row: usize) -> Point<Pixels> {
+        let across = self.across();
+        let x = FIT_BEFORE + (bar * BAR + BAR / 2) as f32 * across;
         self.space_at("rows") + point(px(x), px(row as f32 * ROW + ROW / 2.))
     }
 
-    /// Chooses the bar `bar` of the open section, from 0: a click on the first, then the arrow.
-    fn choose_bar(&mut self, bar: usize) {
-        let first = self.on_strip(10.);
-        self.click(first);
-        self.wait_for_bun();
-        for _ in 0..bar {
-            self.keys("right");
-            self.wait_for_bun();
-        }
-        self.until_shows(&format!("Bar {}", bar + 1));
+    /// Chooses the bar `bar` of the piece whole, from 0, with a click in the band over it: the
+    /// playhead goes to it.
+    fn choose_bar(&mut self, bar: u64) {
+        let at = self.in_band(bar * BAR + BAR / 2, 0., BARS);
+        self.click(at);
+        self.until_playhead(bar * BAR);
     }
 
-    /// Whether the page shows `text`.
+    /// Chooses the bar `bar` of the `row`th instrument, with a click in its row.
+    fn choose_music(&mut self, bar: u64, row: usize) {
+        let at = self.on_row(bar, row);
+        self.click(at);
+        self.until_playhead(bar * BAR);
+    }
+
+    /// Types `text` into the field that opened, and enter.
+    fn type_in_field(&mut self, text: &str) {
+        self.until_found("menu-search");
+        self.cx.simulate_input(text);
+        self.keys("enter");
+    }
+
+    /// Whether the page shows `text`, also as a label over the bars.
     fn shows(&mut self, text: &str) -> bool {
         let shell = self.shell.clone();
         self.cx.read(|cx| {
             let page = shell.read(cx).main_view().unwrap();
             sound_typescript::page_has_text(page, text, cx)
         })
-    }
-
-    /// Waits for the page to show `text`, such as the head's caption of the chosen bars.
-    fn until_shows(&mut self, text: &str) {
-        self.until(text, |window| window.shows(text));
     }
 
     /// The start of the part of `track` in the section `id`, and where each of its notes starts.
@@ -185,7 +211,11 @@ fn a_new_composer_project_opens_its_piece_and_its_first_instrument_plays(cx: &mu
     runtime::templates::write(folder.path(), composer()).unwrap();
     let mut window = open_folder(cx, folder);
     window.wait_for_bun();
-    window.until_found("div-section-sec-section-1");
+    // Its one section, named over its bars, and with no notes yet, how to write some.
+    window.until("its section named", |window| window.shows(" Section 1 "));
+    window.until("the hint", |window| {
+        window.shows("Double-click a bar to write notes")
+    });
     window.after_the_runs();
     assert_eq!(window.problems(), []);
     // Its files are laid out as the piece lays them out: opening it made no edit.
@@ -201,24 +231,15 @@ fn a_new_composer_project_opens_its_piece_and_its_first_instrument_plays(cx: &mu
     assert!(window.loudest(4_800) > 0.01);
 }
 
-/// The time signature of bar 2, typed in the head, from 4/4 to 5/4: the notes before it and in
-/// it stay, the one after it in A and the whole of B are a beat later, and the clock's bars,
-/// tempo change and section names follow.
+/// Bar 2 chosen and shift-T, 5/4: the notes before it and in it stay, the one after it in A and
+/// the whole of B are a beat later, and the clock's bars, tempo change and section names follow.
 #[gpui::test]
 fn a_bar_made_longer_pushes_what_comes_after_it_and_nothing_else(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-
-    let beats = window.until_found("space-section-beats");
-    window.click(beats);
-    // A field to type it in takes its place.
-    window.until("the field", |window| {
-        window.find("space-section-beats").is_none()
-    });
-    window.keys("secondary-a");
-    window.cx.simulate_input("5");
-    window.keys("enter");
+    window.keys("shift-t");
+    window.type_in_field("5/4");
     window.until("the bar made longer", |window| {
         window.part("t00", "sec-b").0 != 4 * BAR
     });
@@ -295,6 +316,38 @@ fn a_bar_added_moves_the_rest_later_and_one_removed_takes_its_notes(cx: &mut Tes
     assert_eq!(window.problems(), []);
 }
 
+/// "+ bar" on chosen bar 2 adds one after it, chosen, and "remove" on that takes it out again.
+#[gpui::test]
+fn the_buttons_on_chosen_bars_add_one_after_them_and_remove_them(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    let before = mark(&mut window);
+    // At the right end of the chosen bars, "+ bar", and left of it "remove".
+    let add = window.in_band(2 * BAR, -24., NAMES);
+    window.click(add);
+    window.until("a bar added", |window| {
+        window.part("t00", "sec-b").0 == 5 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.part("t00", "sec-a"),
+        (0, vec![0, BAR + BEAT / 2, 3 * BAR])
+    );
+    one_undo_step(&mut window, "Add a bar", &before);
+
+    window.until_playhead(2 * BAR);
+    let before = mark(&mut window);
+    let remove = window.in_band(3 * BAR, -78., NAMES);
+    window.click(remove);
+    window.until("the bar removed", |window| {
+        window.part("t00", "sec-b").0 == 4 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(window.part("t00", "sec-a"), (0, IN_A.to_vec()));
+    one_undo_step(&mut window, "Remove a bar", &before);
+    assert_eq!(window.problems(), []);
+}
+
 /// Shift-S on bar 3 starts a section there: the note of bar 3 is in its part, counted from its
 /// start, and every note plays where it did.
 #[gpui::test]
@@ -330,6 +383,7 @@ fn a_section_started_at_a_bar_takes_the_music_after_it_and_sounds_the_same(
         [1, 3, 5]
     );
     // Its name waits to be typed, in a field that takes cmd-z for itself.
+    window.until_found("menu-search");
     window.keys("escape");
     one_undo_step(&mut window, "Start a section", &before);
     assert_eq!(window.problems(), []);
@@ -374,12 +428,13 @@ fn a_note_held_across_a_new_section_line_goes_on_in_the_new_section(cx: &mut Tes
     assert_eq!(window.problems(), []);
 }
 
-/// Alt-shift-down moves the open section A after B: the parts of both swap places.
+/// A click on the name of A chooses its bars, and alt-shift-down moves it after B: the parts of
+/// both swap places.
 #[gpui::test]
 fn a_section_moved_takes_its_music_with_it(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
-    let section = window.until_found("div-section-sec-a");
-    window.click(section);
+    let name = window.in_band(0, 14., NAMES);
+    window.click(name);
     window.wait_for_bun();
     let before = mark(&mut window);
     window.keys("alt-shift-down");
@@ -393,6 +448,45 @@ fn a_section_moved_takes_its_music_with_it(cx: &mut TestAppContext) {
         json!([{ "bar": 1, "name": "B" }, { "bar": 3, "name": "A" }])
     );
     one_undo_step(&mut window, "Move a section", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// The name of B dragged onto the bars of A: B lands before A, with its music.
+#[gpui::test]
+fn a_section_name_dragged_onto_another_section_lands_before_it(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let name = window.in_band(4 * BAR, 14., NAMES);
+    let onto = window.in_band(BAR, 0., NAMES);
+    let before = mark(&mut window);
+    window.drag(name, onto);
+    window.until("the section moved", |window| {
+        window.part("t00", "sec-b").0 == 0
+    });
+    window.after_the_runs();
+    assert_eq!(window.part("t00", "sec-a"), (2 * BAR, IN_A.to_vec()));
+    one_undo_step(&mut window, "Move a section", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// A double click on the name of A opens it to type over: the new name is the section's and the
+/// clock's, and its id, so its files, stay.
+#[gpui::test]
+fn a_section_named_in_place_keeps_its_files(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let name = window.in_band(0, 14., NAMES);
+    let before = mark(&mut window);
+    window.double_click(name);
+    window.type_in_field("Theme");
+    window.until("the section named", |window| {
+        window.sections()[0]["name"] == "Theme"
+    });
+    window.after_the_runs();
+    assert_eq!(window.sections()[0]["id"], "sec-a");
+    assert_eq!(
+        window.project_file()["sections"][0],
+        json!({ "bar": 1, "name": "Theme" })
+    );
+    one_undo_step(&mut window, "Rename a section", &before);
     assert_eq!(window.problems(), []);
 }
 
@@ -436,21 +530,15 @@ fn what_an_agent_left_out_of_place_is_laid_out_again(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
-/// `6/8` typed into the head for bar 2 is one change of both its numbers: the bar is three
-/// quarters long, and what comes after it moves up by one.
+/// `6/8` typed for bar 2 is one change of both its numbers: the bar is three quarters long, and
+/// what comes after it moves up by one.
 #[gpui::test]
 fn a_whole_time_signature_typed_is_one_change(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    let beats = window.until_found("space-section-beats");
-    window.click(beats);
-    window.until("the field", |window| {
-        window.find("space-section-beats").is_none()
-    });
-    window.keys("secondary-a");
-    window.cx.simulate_input("6/8");
-    window.keys("enter");
+    window.keys("shift-t");
+    window.type_in_field("6/8");
     window.until("the bar made shorter", |window| {
         window.part("t00", "sec-b").0 != 4 * BAR
     });
@@ -470,32 +558,136 @@ fn a_whole_time_signature_typed_is_one_change(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
-/// Bars 3 and 4 of the first instrument, repeated: there is no bar after them, so the section
-/// gets two, and none of the music is cut.
+/// The last bar of B made 3/4 by hand, then a click on the 4/4 at the first bar and 2/4: every
+/// bar up to that 3/4 is 2/4, in A and in B, and the 3/4 bar stays as it was. One undo step.
 #[gpui::test]
-fn music_repeated_past_the_end_of_its_section_gets_the_bars_it_needs(cx: &mut TestAppContext) {
+fn a_time_signature_typed_on_its_mark_changes_its_run_up_to_the_next(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
-    let first = window.on_row(10., 0);
-    window.click(first);
-    window.wait_for_bun();
-    for bar in [2, 3] {
-        window.keys("right");
-        window.until_shows(&format!("Bar {bar}"));
-    }
-    window.keys("shift-right");
-    window.until_shows("Bars 3–4");
+    let mut piece = window.record("piece");
+    piece["sections"][1]["bars"] = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 90 },
+        { "bars": 1, "signature": "3/4", "bpm": 90 },
+    ]);
+    let record = json!({ "tool": "piece", "state": piece });
+    write_outside(
+        &mut window,
+        "state/piece/instance.json",
+        &record.to_string(),
+    );
+    window.until("the piece laid out", |window| {
+        window.project_file()["tempo_map"]["time_signatures"][1]["signature"] == "3/4"
+    });
+    window.after_the_runs();
     let before = mark(&mut window);
-    window.keys("secondary-d");
-    window.until("repeated", |window| {
+
+    let signature = window.in_band(0, 10., MARKS);
+    window.click(signature);
+    window.type_in_field("2/4");
+    window.until("the run made 2/4", |window| {
         window.part("t00", "sec-b").0 != 4 * BAR
     });
     window.after_the_runs();
     assert_eq!(
-        window.part("t00", "sec-a"),
-        (0, vec![0, BAR + BEAT / 2, 2 * BAR, 4 * BAR])
+        window.sections()[0]["bars"],
+        json!([{ "bars": 4, "signature": "2/4", "bpm": 120 }])
     );
-    assert_eq!(window.record("piece/t00/sec-a")["length"], 6 * BAR);
-    assert_eq!(window.part("t00", "sec-b"), (6 * BAR, IN_B.to_vec()));
+    assert_eq!(
+        window.sections()[1]["bars"],
+        json!([
+            { "bars": 1, "signature": "2/4", "bpm": 90 },
+            { "bars": 1, "signature": "3/4", "bpm": 90 },
+        ])
+    );
+    // Each note keeps its place in its bar.
+    assert_eq!(
+        window.part("t00", "sec-a"),
+        (0, vec![0, 2 * BEAT + BEAT / 2, 4 * BEAT])
+    );
+    assert_eq!(window.part("t00", "sec-b"), (8 * BEAT, IN_B.to_vec()));
+    one_undo_step(&mut window, "Change the time signature", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Bar 2 chosen and T, 100: that bar alone is at 100, and the bar after it at 120 again.
+#[gpui::test]
+fn a_tempo_typed_for_one_bar_changes_that_bar_only(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    let before = mark(&mut window);
+    window.keys("t");
+    window.type_in_field("100");
+    window.until("the tempo changed", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 3
+    });
+    window.after_the_runs();
+    let bars = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+        { "bars": 1, "signature": "4/4", "bpm": 100 },
+        { "bars": 2, "signature": "4/4", "bpm": 120 },
+    ]);
+    assert_eq!(window.sections()[0]["bars"], bars);
+    let tempos = json!([
+        { "tick": 0, "bpm": 120.0 },
+        { "tick": BAR, "bpm": 100.0 },
+        { "tick": 2 * BAR, "bpm": 120.0 },
+        { "tick": 4 * BAR, "bpm": 90.0 },
+    ]);
+    assert_eq!(window.project_file()["tempo_map"]["tempo_changes"], tempos);
+    // Only the time moved: every note is where it was.
+    assert_eq!(window.part("t00", "sec-a"), (0, IN_A.to_vec()));
+    one_undo_step(&mut window, "Change the tempo", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// The last bar of A and the first of B chosen, and T, 100: both are at 100, in one undo step.
+#[gpui::test]
+fn a_tempo_typed_for_bars_across_a_section_line_is_one_change(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(3);
+    window.keys("shift-right");
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("t");
+    window.type_in_field("100");
+    window.until("the tempo changed", |window| {
+        window.sections()[1]["bars"].as_array().unwrap().len() == 2
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 3, "signature": "4/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 100 },
+        ])
+    );
+    assert_eq!(
+        window.sections()[1]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 100 },
+            { "bars": 1, "signature": "4/4", "bpm": 90 },
+        ])
+    );
+    one_undo_step(&mut window, "Change the tempo", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// The two bars of B of the first instrument, repeated: there is no bar after them, so the last
+/// section gets two, and none of the music is cut.
+#[gpui::test]
+fn music_repeated_past_the_end_of_the_piece_gets_the_bars_it_needs(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_music(4, 0);
+    window.keys("shift-right");
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("secondary-d");
+    window.until("repeated", |window| {
+        window.record("piece/t00/sec-b")["length"] != 2 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(window.part("t00", "sec-b"), (4 * BAR, vec![0, 2 * BAR]));
+    assert_eq!(window.record("piece/t00/sec-b")["length"], 4 * BAR);
+    assert_eq!(window.part("t00", "sec-a"), (0, IN_A.to_vec()));
     one_undo_step(&mut window, "Paste", &before);
     assert_eq!(window.problems(), []);
 }
@@ -505,16 +697,12 @@ fn music_repeated_past_the_end_of_its_section_gets_the_bars_it_needs(cx: &mut Te
 #[gpui::test]
 fn a_passage_copied_from_one_instrument_pastes_onto_another(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
-    let first = window.on_row(10., 0);
-    window.click(first);
-    window.wait_for_bun();
-    window.keys("right");
-    window.until_shows("Bar 2");
+    window.choose_music(1, 0);
     window.keys("secondary-c");
     window.keys("down");
     window.wait_for_bun();
     window.keys("right");
-    window.until_shows("Bar 3");
+    window.until_playhead(2 * BAR);
     let before = mark(&mut window);
     window.keys("secondary-v");
     window.until("pasted", |window| window.has("piece/t01/sec-a"));
@@ -525,52 +713,49 @@ fn a_passage_copied_from_one_instrument_pastes_onto_another(cx: &mut TestAppCont
     assert_eq!(window.problems(), []);
 }
 
-/// Right on the last bar of A opens B on its first bar, bar 5 of the piece; left goes back to
-/// the last bar of A.
+/// Right on the last bar of A chooses the first of B, bar 5 of the piece; left goes back to the
+/// last bar of A.
 #[gpui::test]
 fn the_arrows_step_across_a_section_line(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(3);
     window.keys("right");
-    window.until_shows("Bar 5");
+    window.until_playhead(4 * BAR);
     window.keys("left");
-    window.until_shows("Bar 4");
+    window.until_playhead(3 * BAR);
     assert_eq!(window.problems(), []);
 }
 
-/// Bar 2 made 1/8 drops its note, half a beat in: the head says so, and one undo step brings
-/// it back.
+/// Bar 2 made 1/8 drops its note, half a beat in: the band says so, and one undo step brings it
+/// back.
 #[gpui::test]
 fn a_bar_made_too_short_for_a_note_says_so(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    let beats = window.until_found("space-section-beats");
-    window.click(beats);
-    window.until("the field", |window| {
-        window.find("space-section-beats").is_none()
-    });
-    window.keys("secondary-a");
-    window.cx.simulate_input("1/8");
-    window.keys("enter");
-    window.until_shows("1 note did not fit and was removed. Undo brings it back.");
+    window.keys("shift-t");
+    window.type_in_field("1/8");
+    let notice = "1 note did not fit and was removed. Undo brings it back.";
+    window.until("the notice", |window| window.shows(notice));
     window.after_the_runs();
     assert_eq!(window.part("t00", "sec-a"), (0, vec![0, BAR + BEAT / 2]));
     one_undo_step(&mut window, "Change the time signature", &before);
-    // The note is back, so the head no longer says it went.
-    window.until("the notice gone", |window| !window.shows("did not fit"));
+    // Undone, the note is back, so the band no longer says it went.
+    window.wait_for_bun();
+    window.keys("secondary-z");
+    window.until("the notice gone", |window| !window.shows(notice));
     assert_eq!(window.problems(), []);
 }
 
 /// The first bar of an instrument, opened with enter: the note editor shows it and the bar
-/// after it, from the start of the section.
+/// after it, from the start of the section. A click on the first bar of B shows B's part.
 #[gpui::test]
 fn the_first_bar_opens_the_note_editor_on_it(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
-    let first = window.on_row(10., 0);
-    window.click(first);
-    window.until_shows("Bar 1");
+    window.choose_music(0, 0);
     window.keys("enter");
     window.until_found(&format!("space-editor-t00/sec-a/0-{}", 2 * BAR));
+    window.choose_music(4, 0);
+    window.until_found(&format!("space-editor-t00/sec-b/0-{}", 2 * BAR));
     assert_eq!(window.problems(), []);
 }
