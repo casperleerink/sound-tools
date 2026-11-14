@@ -12,11 +12,18 @@ const [NUMBER, MARKS, HEAD, FOOT] = [5, 21, STRIP - 3, STRIP - 6];
 /** About how many points a label of 12 points takes. */
 const widthOf = (text: string) => text.length * 5.6;
 const HINT = "Double-click a bar to write notes";
-const bpmText = (bpm: number) => `${Math.round(bpm * 10) / 10} bpm`;
-/** What the strip says under the number of bar `index`: its time signature and its tempo, where they change, and both at the first bar. */
-const marksAt = (bars: readonly Bar[], index: number) => {
+/**
+ * What the strip says under the number of bar `index`, from the longest to the shortest it may
+ * show: its time signature and its tempo, where they change, and both at the first bar. A change
+ * is never hidden: the narrowest bar still shows a dot.
+ */
+const marksAt = (bars: readonly Bar[], index: number): string[] => {
   const [bar, before] = [bars[index]!, bars[index - 1]];
-  return { signature: bar.signature !== before?.signature ? bar.signature : "", tempo: bar.bpm !== before?.bpm ? bpmText(bar.bpm) : "" };
+  const signature = bar.signature !== before?.signature ? bar.signature : "";
+  const tempo = bar.bpm !== before?.bpm ? String(Math.round(bar.bpm * 10) / 10) : "";
+  if (!signature && !tempo) return [];
+  if (!tempo) return [signature, "•"];
+  return signature ? [`${signature}  ${tempo} bpm`, `${signature}  ${tempo}`, `${signature} •`, "•"] : [`${tempo} bpm`, tempo, "•"];
 };
 
 /** The x of the tick `tick` of the open section, which follows the room and the bars. */
@@ -61,7 +68,7 @@ const repeatSpan = ({ clock, place, scale }: Page) => {
  */
 export const BarStrip = ({ page }: { page: Page }) => {
   const { memory, bars, starts, place, scale, barAt } = page;
-  const cells = memo(() => bars().map((_, index) => ({ index, from: starts()[index]!, to: starts()[index + 1]!, number: (place()?.bar ?? 1) + index, ...marksAt(bars(), index) })));
+  const cells = memo(() => bars().map((_, index) => ({ index, from: starts()[index]!, to: starts()[index + 1]!, number: (place()?.bar ?? 1) + index, marks: marksAt(bars(), index) })));
   const chosen = () => chosenSpan(page);
   const inChosen = (index: number) => {
     const at = memory.chosen;
@@ -95,10 +102,9 @@ export const BarStrip = ({ page }: { page: Page }) => {
       <Rect x={sweep.startX.min(sweep.x)} y={1.5} width={sweep.dx.abs()} height={FOOT - 1.5} radius={4} color="fill" border="text-muted" borderWidth={1} opacity={sweep.active} />
       <For each={cells}>
         {(cell) => {
-          // Its marks show only while the bar leaves them room: the time signature before the tempo.
+          // The longest of its marks the bar leaves room for.
           const room = () => (cell.to - cell.from) * scale() - 12;
-          const both = [cell.signature, cell.tempo].filter(Boolean).join("  ");
-          const marks = () => (widthOf(both) <= room() ? both : widthOf(cell.signature) <= room() ? cell.signature : "");
+          const marks = () => cell.marks.find((text) => widthOf(text) <= room()) ?? cell.marks.at(-1) ?? "";
           return [
             <Rect x={xOf(page, cell.from)} y={0} width={1} height={STRIP} color="border" />,
             <Label x={() => cell.from * scale() + 6} y={NUMBER} text={String(cell.number)} color={() => (inChosen(cell.index) ? "text" : "text-secondary")} />,

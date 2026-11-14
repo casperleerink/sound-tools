@@ -182,17 +182,17 @@ const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed 
 };
 
 /** A caption over what it names, in the section head. */
-const Field = ({ caption, bright = () => false, children }: { caption: Accessor<string> | string; bright?: Accessor<boolean>; children?: h.JSX.Element | h.JSX.Element[] }) => (
+const Field = ({ caption, children }: { caption: string; children?: h.JSX.Element | h.JSX.Element[] }) => (
   <div style={{ keep: true, gap: 2 }}>
-    <Text variant="label" tone={() => (bright() ? "text" : "muted")}>{caption}</Text>
+    <Text variant="label" tone="muted">{caption}</Text>
     <div style={{ direction: "row", align: "center", height: 32 }}>{children}</div>
   </div>
 );
 
 /**
  * The head of the open section: its name, which a double click types, where it is in the piece
- * and how long it plays; its length in bars; and the time signature and tempo of the chosen bars,
- * or of all, the first bar's dim where they differ; and a toggle that repeats them.
+ * and how long it plays; its length in bars; and, after the bars they are for, the chosen ones or all, their time
+ * signature and tempo, the first bar's dim where they differ; and a toggle that repeats them.
  */
 export const SectionHead = ({ page }: { page: Page }) => {
   const { openSection, openId, place, bars, memory, clock } = page;
@@ -248,7 +248,9 @@ export const SectionHead = ({ page }: { page: Page }) => {
         <Amount id="section-length" value={() => bars().length} steps={(from, by) => clamp(Math.round(from + by), 1, 999)} set={lengthTo} width={36} align="right" />
         <Text tone="muted" style={{ paddingLeft: "sm" }}>{() => (bars().length === 1 ? "bar" : "bars")}</Text>
       </Field>
-      <Field caption={caption} bright={() => target().chosen}>
+      <div style={{ width: 1, height: 40, background: "border", keep: true }} />
+      <Text key="section-scope" variant="heading" tone={() => (target().chosen ? "text" : "muted")} style={{ keep: true }}>{caption}</Text>
+      <Field caption="Time signature">
         <Amount id="section-beats" value={() => beatsOf(first())} mixed={differ(beatsOf)} width={20} align="right"
           steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => change({ signature: `${beats}/${noteOf(first())}` })} />
         <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>
@@ -258,7 +260,8 @@ export const SectionHead = ({ page }: { page: Page }) => {
             return NOTES[clamp(NOTES.indexOf(nearest) + by, 0, NOTES.length - 1)]!;
           }}
           set={(note) => change({ signature: `${beatsOf(first())}/${note}` })} />
-        <div style={{ width: 24 }} />
+      </Field>
+      <Field caption="Tempo">
         <Amount id="section-tempo" value={() => first().bpm} mixed={differ((bar) => bar.bpm)} width={40} per={2} align="right"
           steps={(from, by) => clamp(Math.round((from + by) * 10) / 10, 10, 1000)} set={(bpm) => change({ bpm })} />
         <Text tone="muted" style={{ paddingLeft: "sm" }}>bpm</Text>
