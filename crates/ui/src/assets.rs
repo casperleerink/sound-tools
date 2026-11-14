@@ -1,4 +1,4 @@
-//! Embedded assets: fonts and icons. Register with `gpui_platform::application().with_assets(Assets)`.
+//! Embedded fonts and icons. Register with `gpui_platform::application().with_assets(Assets)`.
 
 use std::borrow::Cow;
 

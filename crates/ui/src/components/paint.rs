@@ -118,7 +118,6 @@ pub(crate) fn mirrored_waveform(
     }
     shape.line_to(at(left, middle + first));
     shape.close();
-    // A shape that does not tessellate paints nothing, which is all there is to do about it.
     if let Ok(path) = shape.build() {
         window.paint_path(path, color);
     }

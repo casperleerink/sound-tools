@@ -6,9 +6,6 @@
 //!
 //! It knows no clip and no sampler: the owner gives the overview of the file, where it starts and
 //! ends in seconds, and hears the start and end handles.
-//!
-//! A display that takes a file dropped from the file manager has a [`FileDrop`]: while a file is
-//! dragged over it, the ring and a line that says what a drop does.
 
 use std::path::PathBuf;
 use std::rc::Rc;

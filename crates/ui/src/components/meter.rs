@@ -41,7 +41,7 @@ pub fn db_at(position: f32) -> f32 {
 /// Bars of a vertical meter and the room between them.
 pub const BAR_WIDTH: f32 = 5.;
 pub const BAR_GAP: f32 = 2.;
-/// Bars of a horizontal meter, the master meter in the transport pill.
+/// Bars of a horizontal meter.
 const THIN_BAR: f32 = 3.;
 /// The length of the bars of a horizontal meter.
 const HORIZONTAL_LENGTH: f32 = 40.;
@@ -54,10 +54,10 @@ const SCALE_TOP: f32 = LIGHT + LIGHT_GAP;
 /// Which way the bars of a meter run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Orientation {
-    /// Up, with the clip light on top: the meter under the volume.
+    /// Up, with the clip light on top.
     #[default]
     Vertical,
-    /// To the right, with the clip light at the right end: the master meter.
+    /// To the right, with the clip light at the right end.
     Horizontal,
 }
 
@@ -241,7 +241,6 @@ pub struct Meter {
     id: ElementId,
     level: Level,
     orientation: Orientation,
-    /// Along the bars, with the clip light.
     length: Option<f32>,
     on_clear_clip: Option<ClearHandler>,
 }
@@ -258,7 +257,7 @@ impl Meter {
         }
     }
 
-    /// The master meter: thin bars that run to the right.
+    /// Thin bars that run to the right.
     pub fn horizontal(mut self) -> Self {
         self.orientation = Orientation::Horizontal;
         self
@@ -336,7 +335,7 @@ impl RenderOnce for Meter {
 
 /// Gain reduction: a soft bar from the top down, 0 to 24 dB, with a line at its end. It is not
 /// level, so it has none of the colours of a meter, and not the composer's to drag, so it is not
-/// bright. The Compressor and the Gate draw it inside their display.
+/// bright. The Compressor, the Gate and the Limiter draw it inside their display.
 #[derive(IntoElement)]
 pub struct GainReduction {
     base: Div,

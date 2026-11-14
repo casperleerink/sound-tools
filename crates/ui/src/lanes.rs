@@ -1,14 +1,10 @@
 //! What the automation lanes of a track play into the numbers of one device, for its view.
 //!
-//! The knob of an automated number shows the value that plays, with a mark, and does not drag: the
-//! lane decides that value, not the composer. While automation is written and the project
-//! plays, the knob of a number a lane moves drags, from the value that plays, and the hand
-//! writes into the lane. The view keeps a [`Lanes`] of its instance, with the
-//! numbers the device takes automation for. It works the values out at the playhead from the lanes
-//! the owner of the instance shows ([`Project::lanes`]), with the math of the player, once per
-//! poll and when the lanes change, and tells the view only when one of them changed. A value a
-//! cable plays comes from the engine, so it is looked at also while the project stands. A look
-//! allocates nothing.
+//! The knob of an automated number shows the value that plays, with a mark, and does not drag:
+//! the lane decides that value. While automation is written and the project plays, it drags
+//! from the value that plays, and the hand writes into the lane. The values are worked out at
+//! the playhead from [`Project::lanes`] once per poll, also while the project stands, because a
+//! value a cable plays comes from the engine. The view hears only a change.
 //!
 //! [`Project::lanes`]: sound_core::Project::lanes
 
@@ -24,7 +20,7 @@ pub struct Lanes<S: 'static> {
     session: Entity<Session>,
     instance: InstanceId,
     /// The numbers the device takes automation for, in the order of its `AutomationInput`.
-    /// None for a device that names its numbers as its behaviour runs.
+    /// Empty for a device that names its numbers as its behaviour runs.
     parameters: Vec<&'static Parameter<S>>,
     /// The value of each lane at the playhead, by the name of its number.
     values: Vec<(Arc<str>, f32)>,

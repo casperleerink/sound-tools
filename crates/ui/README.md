@@ -2,8 +2,7 @@
 
 Design tokens, shared components, and the bridge from a live project to GPUI views. This guide
 gives the mental model for writing the view of a tool. The design rules are in `DESIGN.md`,
-and `crates/gallery` shows every component. Read the GPUI skills in `.agents/skills/` before
-you write GPUI code: the pinned GPUI differs from what most examples online show.
+and `crates/gallery` shows every component.
 
 ## The mental model
 
@@ -34,7 +33,7 @@ drag. Nothing needs to sync.
   value on every render and hands its `ValueChange` to `DeviceEdit::change`: one call does the
   gesture, a key step, a reset and a typed value. A knob on a number of the record is a
   `ParameterKnob`, put on the card with `DeviceEdit::knob`; its `Unit` says how the value
-  reads and how a typed one is read. A number an automation lane moves does not drag.
+  reads and how a typed one is read.
 - **A file from the composer goes through `import`:** `choose_file` opens the file panel, and
   `import_file` copies the file into the assets on a background thread.
 - **Something that should sound now but is not an edit**, such as a preview note, goes through
@@ -50,9 +49,7 @@ registries and installs them as GPUI globals:
   instance whose tool it does not know.
 - `Devices`: what a rack says about a slot (`describe`), what the lanes need of a device whose
   numbers are known only as it runs, such as a plugin (`numbers`), and what a composer can pick
-  for it (`instruments`, `effects`). A picker reads the offers when it is made, not per frame,
-  because a source may have to look at the machine, and again when
-  `Devices::offers_generation` changes. A built-in device registers its name, offer, group and
+  for it (`instruments`, `effects`). A built-in device registers its name, offer, group and
   icon (`device-<name>` in `assets/icons`) with one `built_in` call in its own `view::register`;
   the order of those calls in the runtime's `views` is the order inside a group.
 

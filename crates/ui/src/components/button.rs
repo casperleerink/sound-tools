@@ -1,6 +1,5 @@
-//! Button: `primary`, `subtle`, `ghost` plus colour variants (solid, subtle, ghost) taking any
-//! accent, with an optional icon, icon-only squares and a pill shape. Its words are 14 pt; on a
-//! device card they are 12 pt, as those of the toggles and selects beside it
+//! Button: `primary`, `subtle`, `ghost` plus colour variants taking any accent, with an optional
+//! icon, icon-only squares and a pill shape. Its words are 14 pt, 12 pt on a device card
 //! ([`Button::on_card`]).
 
 use std::rc::Rc;
@@ -30,7 +29,7 @@ pub enum ButtonVariant {
     GhostColor(Hsla),
 }
 
-/// Outer horizontal padding; the label adds `label_pad_x` on each side.
+/// Outer horizontal padding; the label adds `label_gap` on each side.
 fn pad_x(size: ControlSize) -> f32 {
     match size {
         ControlSize::Sm => 2.,
@@ -116,8 +115,8 @@ impl Button {
         self
     }
 
-    /// A control of a device card: 24 pt high, with the 12 pt medium words and the padding of
-    /// the toggles and selects of a card.
+    /// A control of a device card: 24 pt high, with the 12 pt medium words of the toggles and
+    /// selects beside it.
     pub fn on_card(mut self) -> Self {
         self.size = ControlSize::Sm;
         self.on_card = true;

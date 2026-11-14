@@ -55,8 +55,8 @@ impl Metering {
     }
 }
 
-/// Runs `tick` on the view once per poll of the session, for as long as the view lives: the
-/// clock of the meters of a view. Keep the task in the view; dropping it stops the ticks.
+/// Runs `tick` on the view once per poll of the session, for as long as the view lives. Keep
+/// the task in the view; dropping it stops the ticks.
 pub fn every_poll<V: 'static>(
     cx: &mut Context<V>,
     tick: impl Fn(&mut V, &mut Context<V>) + 'static,

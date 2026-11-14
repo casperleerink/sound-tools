@@ -235,7 +235,7 @@ impl Session {
         }
     }
 
-    /// The notice of the render that runs ([`crate::render`]) and how far it is, from 0 to 1.
+    /// The notice of the render that runs ([`crate::render()`]) and how far it is, from 0 to 1.
     pub fn rendering(&self) -> Option<(&SharedString, f32)> {
         let (notice, percent) = self.rendering.as_ref()?;
         Some((notice, f32::from(*percent) / 100.))

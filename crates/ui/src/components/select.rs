@@ -134,7 +134,6 @@ impl RenderOnce for Select {
         let trigger_width = self.trigger_width;
         let value = self.value.clone();
         let on_change = self.on_change;
-        // Picks a value: closes the list and tells the owner when it is another value.
         let pick = {
             let state = state.clone();
             move |picked: SharedString, window: &mut Window, cx: &mut App| {
