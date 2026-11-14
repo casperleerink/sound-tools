@@ -4,7 +4,7 @@
 
 Create a music production and composition environment with an integrated AI agent. The v0 is a small, calm DAW with an agent sidebar. The agent has the project's full context and tools to assist with production and composition: adding parts, shaping sounds, arranging, mixing and rendering.
 
-The DAW is a template a new project starts from, written as tools of the project with the TypeScript SDK, so a composer can ask the agent to change any of it. A Bare project starts empty.
+The DAW is a template a new project starts from, written as tools of the project with the TypeScript SDK, so a composer can ask the agent to change any of it. The Composer template lays a piece out in sections and bars, as a score does. A Bare project starts empty.
 
 ## Composer experience
 

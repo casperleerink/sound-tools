@@ -195,32 +195,43 @@ fn every_number_a_lane_moves_has_its_range_in_the_docs() {
 }
 
 /// Types an agent's tool must get right, checked with `bun check` next to the SDK of the
-/// built-in tools, as the doc for agents says to check a tool.
+/// built-in tools, as the doc for agents says to check a tool. And the code of each template, as
+/// a new project from it holds it: one project each, as their files share names.
 #[test]
 fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
+    // The gallery uses every part of the view SDK.
+    let sdk = [
+        ("extensions/types.ts", include_str!("sdk-types.ts")),
+        (
+            "extensions/gallery.tsx",
+            include_str!("../sdk-gallery/extensions/gallery.tsx"),
+        ),
+    ];
+    type_check(&sdk);
+    for template in runtime::TEMPLATES {
+        let code: Vec<_> = (template.files.iter().copied())
+            .filter(|(path, _)| path.starts_with("extensions/"))
+            .collect();
+        if !code.is_empty() {
+            type_check(&code);
+        }
+    }
+}
+
+/// Runs `bun check` on a project of these files, by their paths in its folder.
+fn type_check(files: &[(&str, &str)]) {
     let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let project = tempfile::tempdir().unwrap();
     let extensions = project.path().join("extensions");
     std::fs::create_dir(&extensions).unwrap();
     let schemas = runtime::tool_schemas().unwrap();
     assert!(sound_typescript::Extensions::load(project.path(), &schemas, false).is_some());
-    write(&extensions, "types.ts", include_str!("sdk-types.ts"));
     // The host checks with the SDK it runs next to.
     write(&extensions, "host.ts", sound_typescript::HOST);
     write(&extensions, "node.d.ts", sound_typescript::HOST_TYPES);
-    // And the tools of the DAW template, as a new project from it holds them.
-    let daw = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../templates/daw/extensions"
-    );
-    for file in std::fs::read_dir(daw).unwrap() {
-        let file = file.unwrap();
-        let text = std::fs::read_to_string(file.path()).unwrap();
-        write(&extensions, file.file_name().to_str().unwrap(), &text);
+    for (path, text) in files {
+        write(project.path(), path, text);
     }
-    // And the gallery, which uses every part of the view SDK.
-    let gallery = include_str!("../sdk-gallery/extensions/gallery.tsx");
-    write(&extensions, "gallery.tsx", gallery);
     let checked = sound_core::process::background_command(bun)
         .args(["check", "-p", "extensions"])
         .current_dir(project.path())

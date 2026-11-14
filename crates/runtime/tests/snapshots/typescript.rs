@@ -8,7 +8,8 @@
 //! - `typescript-song.png`: the song of the DAW template (`templates/daw`), 12 tracks of 150 clips,
 //!   as it plays: the SDK's transport on top, and a clip chosen after another was opened, so the
 //!   note editor shows the chosen one and its track's head is the chosen one.
-//! - `typescript-daw.png`: a new project from the DAW template, as it opens.
+//! - `typescript-daw.png`, `typescript-composer.png`: a new project from the DAW template and
+//!   from the Composer template, as it opens.
 //! - `typescript-gallery*.png`: the project `sdk-gallery` as it plays, a page with the transport
 //!   in its header that leads with three tools to copy, a drum machine, the card of a child and
 //!   a drone, and under them the parts of the view SDK the other snapshots do not draw: with a
@@ -222,7 +223,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let opened = open_files_with(cx, &[], |root| {
         runtime::templates::write(root, crate::song::daw())
     })?;
-    save(cx, opened.window.into(), "typescript-daw")
+    save(cx, opened.window.into(), "typescript-daw")?;
+    drop(opened);
+    let composer = runtime::templates::named("Composer").context("no Composer template")?;
+    let opened = open_files_with(cx, &[], |root| runtime::templates::write(root, composer))?;
+    save(cx, opened.window.into(), "typescript-composer")
 }
 
 /// Where a song's rows start: under the title row, the ruler and its line.

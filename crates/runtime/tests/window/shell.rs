@@ -257,9 +257,9 @@ fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAp
         })
         .map(|template| template.name)
         .collect();
-    assert_eq!(rows, ["Bare", "DAW"]);
+    assert_eq!(rows, ["Bare", "Composer", "DAW"]);
 
-    // The keys reach them: the second row is the DAW, and enter clicks it as it goes up.
+    // The keys reach them: the second row is the Composer, and enter clicks it as it goes up.
     picker.simulate_keystrokes("tab tab enter");
     let enter = gpui::Keystroke::parse("enter").unwrap();
     picker.simulate_event(gpui::KeyUpEvent { keystroke: enter });

@@ -19,6 +19,7 @@ use crate::support::{Opened, id, open_files, open_folder, open_folder_watched, p
 
 mod actions;
 mod card_parts;
+mod composer;
 mod edits;
 mod gestures;
 mod lists;
