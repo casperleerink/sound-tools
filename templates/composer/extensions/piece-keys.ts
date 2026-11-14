@@ -1,8 +1,8 @@
 import { type Action, type ActionKey } from "./sdk";
 import { noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { addBar, duplicateChosen, removeChosen, startSectionAt, stepBars } from "./piece-bars";
-import { chooseBars, clamp, editedPart, editPart, openOf, openSectionOf } from "./piece-page";
+import { addBar, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleRepeat } from "./piece-choice";
+import { chooseBars, clamp, editedPart, editPart, instrumentsOf, openOf, openSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
 import { addSectionAfter, moveSectionBy, stepSection } from "./piece-sections";
 import { askToDelete } from "./piece-tracks";
@@ -44,25 +44,16 @@ const shownTrack = ({ memory }: Piece) => (memory.chosen === null && memory.belo
 /** Chooses the instrument above or below the one whose panel shows, or with `move` puts it there. */
 const trackStep = (keys: readonly ActionKey[], title: string, by: -1 | 1, move: boolean) =>
   on(keys, title, (tool) => {
-    const { children, memory, select, state, update } = tool;
     const name = shownTrack(tool);
-    const rank = (each: string) => (state.order.includes(each) ? state.order.indexOf(each) : state.order.length);
-    const names = children
-      .filter((child) => child.tool === "track")
-      .map((child) => child.name)
-      .sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
+    const names = instrumentsOf(tool).map((each) => each.name);
     const at = name === null ? -1 : names.indexOf(name);
     if (name === null || at < 0) return false;
     const next = clamp(at + by, 0, names.length - 1);
-    const other = names[next]!;
-    if (!move) {
-      memory.below = { kind: "track", name: other };
-      memory.track = other;
-      select(other);
-    } else if (next !== at) {
+    if (!move) showPanel(tool, names[next]!);
+    else if (next !== at) {
       names.splice(at, 1);
       names.splice(next, 0, name);
-      update("Move an instrument", (piece) => (piece.state.order = names));
+      tool.update("Move an instrument", (piece) => (piece.state.order = names));
     }
   });
 
@@ -78,9 +69,10 @@ export const pieceActions: Record<string, PieceAction> = {
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
-  add_note: notes(["n"], "Add a note after the chosen ones, or at the playhead", "add"),
-  paste_notes: notes(["cmd-v"], "Paste notes", "paste"),
-  quantize_notes: notes(["q"], "Quantize the chosen notes, or all of them", "quantize"),
+  add_note: notes(["n"], "Add a note", "add"),
+  // With bars chosen and no note, a paste goes to the bars.
+  paste_notes: on(["cmd-v"], "Paste notes", (tool) => (tool.memory.chosen === null || tool.memory.notes.size > 0) && onNotes(tool, "paste")),
+  quantize_notes: notes(["q"], "Quantize notes", "quantize"),
   delete_notes: notes(["backspace", "delete"], "Delete the chosen notes", "delete"),
   copy_notes: notes(["cmd-c"], "Copy the chosen notes", "copy"),
   cut_notes: notes(["cmd-x"], "Cut the chosen notes", "cut"),
@@ -98,8 +90,13 @@ export const pieceActions: Record<string, PieceAction> = {
     memory.editorLarge = !memory.editorLarge;
   }),
 
-  delete_bars: on(["backspace", "delete"], "Remove the chosen bars", removeChosen),
-  duplicate_bars: on(["cmd-d"], "Duplicate the chosen bars", duplicateChosen),
+  remove_bars: on(["backspace", "delete"], "Remove the chosen bars", (tool) => clearChosen(tool, true)),
+  clear_music: on(["backspace", "delete"], "Clear the chosen music", (tool) => clearChosen(tool, false)),
+  cut: on(["cmd-x"], "Cut the chosen bars or music", cutChosen),
+  copy: on(["cmd-c"], "Copy the chosen bars or music", copyChosen),
+  paste: on(["cmd-v"], "Paste before the chosen bars, or over the chosen music", pasteChosen),
+  repeat_music: on(["cmd-d"], "Repeat the chosen bars or music right after them", repeatChosen),
+  edit_notes: on(["enter"], "Edit the notes of the chosen music", editChosen),
   select_all_bars: on(["cmd-a"], "Choose all bars of the section", (tool) => {
     const open = openOf(tool);
     if (!open) return false;
@@ -109,18 +106,23 @@ export const pieceActions: Record<string, PieceAction> = {
   bar_after: on(["right"], "Choose the next bar", (tool) => stepBars(tool, 1, false)),
   bars_before: on(["shift-left"], "Choose the bar before too", (tool) => stepBars(tool, -1, true)),
   bars_after: on(["shift-right"], "Choose the next bar too", (tool) => stepBars(tool, 1, true)),
-  add_bar: on(["shift-b"], "Add a bar after the chosen ones, or at the end", (tool) => addBar(tool, false)),
-  add_bar_before: on(["alt-shift-b"], "Add a bar before the chosen ones, or at the start", (tool) => addBar(tool, true)),
+  music_above: on(["up"], "Choose the music of the instrument above, or the whole bars", (tool) => stepRows(tool, -1, false)),
+  music_below: on(["down"], "Choose the music of the instrument below", (tool) => stepRows(tool, 1, false)),
+  more_above: on(["shift-up"], "Choose the instrument above too", (tool) => stepRows(tool, -1, true)),
+  more_below: on(["shift-down"], "Choose the instrument below too", (tool) => stepRows(tool, 1, true)),
+  add_bar: on(["shift-b"], "Add a bar", (tool) => addBar(tool, false)),
+  add_bar_before: on(["alt-shift-b"], "Add a bar before", (tool) => addBar(tool, true)),
+  repeat: on(["l"], "Repeat the chosen bars, or the section, as it plays", toggleRepeat),
 
-  previous_section: on(["alt-shift-left"], "Open the section before", (tool) => stepSection(tool, -1)),
-  next_section: on(["alt-shift-right"], "Open the next section", (tool) => stepSection(tool, 1)),
+  previous_section: on(["alt-shift-left"], "Section before", (tool) => stepSection(tool, -1)),
+  next_section: on(["alt-shift-right"], "Next section", (tool) => stepSection(tool, 1)),
   move_section_earlier: on(["alt-shift-up"], "Move the section earlier", (tool) => moveSectionBy(tool, openSectionOf(tool)?.id ?? "", -1)),
   move_section_later: on(["alt-shift-down"], "Move the section later", (tool) => moveSectionBy(tool, openSectionOf(tool)?.id ?? "", 1)),
   rename_section: on(["shift-r"], "Rename the section", (tool) => {
     const id = openSectionOf(tool)?.id;
     if (id) tool.memory.naming = { id, in: "head" };
   }),
-  add_section: on(["shift-s"], "Start a section at the chosen bar, or add one after this one", (tool) => {
+  add_section: on(["shift-s"], "Start a section here, or add one", (tool) => {
     if (!startSectionAt(tool)) addSectionAfter(tool, "head");
   }),
 

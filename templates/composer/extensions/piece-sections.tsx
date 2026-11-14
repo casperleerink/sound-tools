@@ -1,6 +1,7 @@
 import { Button, For, h, Input, Label, memo, signal, Space, Text, Toggle, untrack, type Accessor, type Turn } from "./sdk";
 import type { Piece } from "./piece";
 import { addSection, deleteSection, duplicateSection, joinSection, moveSection, renameSection, setBars, setLength } from "./piece-edits";
+import { choiceOf, toggleRepeat } from "./piece-choice";
 import { partsOf } from "./piece-form";
 import { barsIn, clamp, DIM, openAt, openOf, openSectionOf, rowLook, SECTION_HEAD, SECTIONS, secondsOf, timeText, type Page } from "./piece-page";
 
@@ -164,7 +165,7 @@ const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed 
     if (Number.isFinite(number)) set(steps(number, 0));
   };
   return (
-    <div style={{ keep: true }}>
+    <div style={{ keep: true }} keys={["enter"]} onKey={() => type(true)}>
       {() =>
         typing() ? (
           <Input key={`${id}-typed`} value={String(untrack(value))} width={Math.max(width + 24, 48)} size="lg" focus onCommit={typed} onCancel={() => type(false)} />
@@ -194,12 +195,11 @@ const Field = ({ caption, bright = () => false, children }: { caption: Accessor<
  * or of all, the first bar's dim where they differ; and a toggle that repeats them.
  */
 export const SectionHead = ({ page }: { page: Page }) => {
-  const { openSection, openId, place, bars, starts, memory, clock } = page;
+  const { openSection, openId, place, bars, memory, clock } = page;
   /** The bars the time signature and tempo are for: the chosen ones, else all. */
   const target = memo(() => {
-    const chosen = memory.chosen;
-    const last = bars().length - 1;
-    return chosen && chosen.rows === null ? { from: Math.min(chosen.from, last), to: Math.min(chosen.to, last), chosen: true } : { from: 0, to: last, chosen: false };
+    const choice = choiceOf(page);
+    return choice ? { from: choice.from, to: choice.to, chosen: true } : { from: 0, to: bars().length - 1, chosen: false };
   });
   const targeted = () => bars().slice(target().from, target().to + 1);
   const first = () => targeted()[0] ?? { signature: "4/4", bpm: 120 };
@@ -221,11 +221,6 @@ export const SectionHead = ({ page }: { page: Page }) => {
     const chosen = memory.chosen;
     if (chosen && chosen.from >= count) memory.chosen = null;
     else if (chosen && chosen.to >= count) memory.chosen = { ...chosen, to: count - 1 };
-  };
-  /** Where the bars it is for play in the piece. */
-  const span = () => {
-    const at = place()?.start ?? 0;
-    return { from: at + (starts()[target().from] ?? 0), to: at + (starts()[target().to + 1] ?? 0) };
   };
   const naming = () => memory.naming?.in === "head" && memory.naming.id === openId();
   return (
@@ -271,7 +266,7 @@ export const SectionHead = ({ page }: { page: Page }) => {
       <div style={{ paddingTop: 18, keep: true }}>
         <Toggle key="section-repeat" label="Repeat" on={() => clock.repeat !== null}
           tooltip={() => (clock.repeat !== null ? "Play on" : target().chosen ? "Repeat the chosen bars" : "Repeat the section")}
-          onClick={() => clock.setRepeat(clock.repeat !== null ? null : span())} />
+          shortcut="piece.repeat" onClick={() => toggleRepeat(page)} />
       </div>
     </div>
   );

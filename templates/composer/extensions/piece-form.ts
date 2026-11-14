@@ -170,7 +170,8 @@ export function retime(part: Part, was: readonly Bar[], { bars, to }: Change) {
 
 /** The music of a part from `from` up to `to`, counted from `from`: what starts there, a note cut at `to`. */
 export function sliceOf(part: Music, from: number, to: number): Music {
-  const music = structuredClone({ notes: part.notes, pedal: part.pedal, bend: part.bend, mod_wheel: part.mod_wheel, pressure: part.pressure, controllers: part.controllers }) as Music;
+  // Not `structuredClone`: the record a view reads is a proxy, which it refuses.
+  const music = JSON.parse(JSON.stringify({ notes: part.notes, pedal: part.pedal, bend: part.bend, mod_wheel: part.mod_wheel, pressure: part.pressure, controllers: part.controllers })) as Music;
   music.notes = music.notes.flatMap((note) => (note.start >= from && note.start < to ? [{ ...note, start: note.start - from, length: Math.min(note.length, to - note.start) }] : []));
   movePoints(music, (tick) => (tick >= from && tick < to ? tick - from : null));
   return music;

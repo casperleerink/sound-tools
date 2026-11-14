@@ -176,14 +176,6 @@ export function paste(piece: Piece, id: string, chosen: Chosen, copied: Copied, 
   });
 }
 
-/** Gives the instrument `name` a part in the section `id`, empty, for its notes to be written in. */
-export function addPart(piece: Piece, name: string, id: string) {
-  edit(piece, "Add a part", (draft) => {
-    const track = tracksOf(draft).find((each) => each.name === name);
-    if (track && !partOf(track, id)) track.children.push({ name: id as SectionId, tool: "timeline", state: { notes: [] } });
-  });
-}
-
 // Sections
 
 /** Adds a section of eight bars after the section `after`, or at the end, with the time signature and tempo of the bar before it: its id. */

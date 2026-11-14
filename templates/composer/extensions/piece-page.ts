@@ -48,7 +48,7 @@ export type Child = Piece["children"][number];
 type TrackRow = Extract<Child, { tool: typeof track }>;
 
 /** A name or a field in plain words, its unit left out: `osc_1.position` is `Osc 1 position`, `cutoff_hz` is `Cutoff`. */
-export const words = (text: string) =>
+const words = (text: string) =>
   text.replace(/_(hz|db|ms|seconds|cents|octaves|semitones)$/, "").replace(/[._-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
 /** A name with no title, in words: `t00` is Instrument 1, `ret-a` Return A. */
 const wordsOf = (name: string) => {
@@ -84,21 +84,60 @@ export function openOf(piece: Pick<Piece, "state" | "memory">) {
   const bars = barsIn(section);
   return { id: section.id, bars, starts: startsOf(bars), place };
 }
-/** Opens the section `id`, no bar chosen, and puts the playhead on its first bar. */
-export function openAt({ state, memory, clock }: Pick<Piece, "state" | "memory" | "clock">, id: string) {
+/** Shows the section `id`, no bar chosen; the note editor goes on with its instrument's part there, or closes while it has none. */
+export function showSection({ memory, children }: Pick<Piece, "memory" | "children">, id: string) {
   memory.open = id;
   memory.chosen = null;
-  clock.jump(formOf(state).places[id]?.start ?? 0);
+  const below = memory.below;
+  if (below?.kind === "editor" && !partAt(children.find((child) => child.name === below.track), id)) memory.below = { kind: "track", name: below.track };
 }
-/** Chooses the bars `from` to `to` of the open section and puts the playhead on the first. */
-export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, from: number, to: number) {
+/** Opens the section `id`, no bar chosen, and puts the playhead on its first bar. */
+export function openAt(piece: Pick<Piece, "state" | "memory" | "clock" | "children">, id: string) {
+  showSection(piece, id);
+  piece.clock.jump(formOf(piece.state).places[id]?.start ?? 0);
+}
+/** Chooses the bars `from` to `to` of the open section, whole or of the instruments `rows`, and puts the playhead on the first. */
+export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, from: number, to: number, rows: readonly string[] | null = null) {
   const open = openOf(piece);
   if (!open) return;
   const last = open.bars.length - 1;
   const [first, end] = [clamp(Math.min(from, to), 0, last), clamp(Math.max(from, to), 0, last)];
-  piece.memory.chosen = { from: first, to: end, rows: null };
+  piece.memory.chosen = { from: first, to: end, rows: rows && [...rows] };
+  // Chosen notes would take the keys of the chosen bars.
+  if (piece.memory.notes.size > 0) piece.memory.notes = new Set();
   piece.clock.jump(open.place.start + open.starts[first]!);
 }
+
+/** The instruments, in `order`: a row each. */
+export const instrumentsOf = ({ state, children }: Pick<Piece, "state" | "children">) => {
+  const rank = (name: string) => {
+    const at = state.order.indexOf(name);
+    return at < 0 ? state.order.length : at;
+  };
+  return children.filter((child): child is TrackRow => child.tool === "track").sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1));
+};
+/** Chooses the instrument or return `name`: the keyboard plays it. */
+function chooseTrack({ memory, select }: Pick<Piece, "memory" | "select">, name: string | null) {
+  memory.track = name;
+  memory.effect = null;
+  select(name);
+}
+/** Shows the panel of the instrument or return `name` below, and gives it the keyboard. */
+export function showPanel(piece: Pick<Piece, "memory" | "select">, name: string) {
+  chooseTrack(piece, name);
+  const below = piece.memory.below;
+  // One that shows already stays as it is, with its scroll and its cards.
+  if (below?.kind !== "track" || below.name !== name) piece.memory.below = { kind: "track", name };
+}
+/** Shows the notes of the part the instrument `name` plays in the open section below. */
+export function showEditor(piece: Pick<Piece, "memory" | "select">, name: string) {
+  chooseTrack(piece, name);
+  piece.memory.below = { kind: "editor", track: name };
+  piece.memory.notes = new Set();
+}
+/** Chooses the instrument `name` as a press on its row does: the editor, while it shows, shows its notes, else its panel shows. */
+export const showInstrument = (piece: Pick<Piece, "memory" | "select">, name: string) =>
+  piece.memory.below?.kind === "editor" ? showEditor(piece, name) : showPanel(piece, name);
 
 /** The part `track` plays in the section `id`: its `timeline` child, or none while it has no music there. */
 export const partAt = (track: Child | undefined, id: string) => {
@@ -150,15 +189,8 @@ export function beatRuns(runs: readonly { readonly signature: string; readonly b
 
 /** The piece's view, with what its parts read, worked out once: its instruments, its sections, the open one and its bars. */
 export function pageOf(piece: Piece & { size: { readonly width: number } }) {
-  const { state, children, memory, update, select, size } = piece;
-  const rank = (name: string) => {
-    const at = state.order.indexOf(name);
-    return at < 0 ? state.order.length : at;
-  };
-  /** The instruments, in `order`: a row each. */
-  const rows = memo(() =>
-    children.filter((child): child is TrackRow => child.tool === "track").sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1)),
-  );
+  const { state, children, memory, update, size } = piece;
+  const rows = memo(() => instrumentsOf(piece));
   const returns = () => children.filter((child) => child.tool === "bus");
   /** What has a panel: the instruments and the returns. */
   const strips = () => [...rows(), ...returns()];
@@ -195,24 +227,9 @@ export function pageOf(piece: Piece & { size: { readonly width: number } }) {
   const trackBelow = () => (memory.below?.kind === "editor" ? memory.below.track : panelOf());
   /** The one chosen instrument or return, which its head and its strip show: of what shows below, else, beside the mixer, the one the keyboard plays, as a click on a strip's name chooses it. */
   const chosenTrack = () => trackBelow() ?? (memory.below?.kind === "mixer" ? memory.track : null);
-  /** Chooses the instrument or return `name`: the keyboard plays it. */
-  const choose = (name: string | null) => {
-    memory.track = name;
-    memory.effect = null;
-    select(name);
-  };
-  /** Shows the panel of the instrument or return `name` below, and gives it the keyboard. */
-  const openPanel = (name: string) => {
-    choose(name);
-    // One that shows already stays as it is, with its scroll and its cards.
-    if (panelOf() !== name) memory.below = { kind: "track", name };
-  };
-  /** Shows the notes of the part `name` plays in the open section below. */
-  const openEditor = (name: string) => {
-    choose(name);
-    memory.below = { kind: "editor", track: name };
-    memory.notes = new Set();
-  };
+  const choose = (name: string | null) => chooseTrack(piece, name);
+  const openPanel = (name: string) => showPanel(piece, name);
+  const openEditor = (name: string) => showEditor(piece, name);
   const openMaster = () => {
     if (memory.below?.kind !== "master") memory.below = { kind: "master" };
   };
