@@ -306,6 +306,19 @@ impl TextInput {
         self
     }
 
+    /// [`Self::placeholder`] of a field that is already made, such as one a menu opens again.
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let placeholder = placeholder.into();
+        if self.placeholder != placeholder {
+            self.placeholder = placeholder;
+            cx.notify();
+        }
+    }
+
     pub fn size(mut self, size: ControlSize) -> Self {
         self.size = size;
         self

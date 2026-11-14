@@ -42,7 +42,7 @@ export {
 } from "./sdk/live";
 export type {
   ActionId, ActionKey, Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName,
-  MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents,
+  FieldOptions, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents,
   Press, Section, Shortcut, SpaceValues, TakeList, TempoMap, Turn, View, WaveList
 } from "./sdk/live";
 // what runs again when a value changes: `memo`, `signal`, `timeout`

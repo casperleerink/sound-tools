@@ -25,6 +25,11 @@
 //! highlighted, so enter picks it. Up and down move from there and escape closes. It shows at
 //! most a hundred rows: drawing thousands of them on every frame the menu is open would cost
 //! more than typing a few letters.
+//!
+//! [`DropdownMenu::field`] makes the search the answer: a small field where the pointer is, to
+//! type a tempo or a time signature. Its rows are suggestions that what is typed narrows. Enter
+//! picks what is typed, trimmed, unless up or down highlighted a row; a row the pointer is on
+//! is picked by a click only, so enter never picks what the pointer happens to rest on.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -240,9 +245,10 @@ pub(crate) fn highlight_step(
 }
 
 /// The entries whose rows hold `query` in their label or value, whatever the case, at most
-/// [`MAX_FOUND`] of them, and the notes. A quiet line says when nothing does, or how many more
-/// there are. Separators go: the groups they kept apart may be gone.
-fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
+/// [`MAX_FOUND`] of them, and the notes. A quiet line says when nothing does, except in a
+/// field, whose text is the answer then, or how many more there are. Separators go: the groups
+/// they kept apart may be gone.
+fn found(entries: &[MenuEntry], query: &str, field: bool) -> Vec<MenuEntry> {
     let query = query.trim().to_lowercase();
     let mut shown = 0;
     let mut more = 0;
@@ -273,7 +279,7 @@ fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
             MenuEntry::Note(note) => notes.push(MenuEntry::Note(note.clone())),
         }
     }
-    if shown == 0 && !query.is_empty() {
+    if shown == 0 && !query.is_empty() && !field {
         found.push(MenuEntry::Note("Nothing matches.".into()));
     } else if more > 0 {
         let note = format!("{more} more. Type a name to find them.");
@@ -821,6 +827,21 @@ struct Search {
     /// How tall the rows and the field were when the menu opened. They stay as tall while the
     /// search drops rows, so in a menu that opened upward the field does not move as one types.
     opened_height: Rc<Cell<Option<Pixels>>>,
+    /// What is typed is an answer too, see [`DropdownMenu::field`].
+    field: bool,
+    /// The text it opens with, selected.
+    opening: SharedString,
+}
+
+impl Search {
+    /// What the rows are kept by: in a field, nothing until the text it opened with changes, so
+    /// every suggestion shows at first.
+    fn filter(&self) -> &str {
+        match self.field && self.query == self.opening.as_ref() {
+            true => "",
+            false => &self.query,
+        }
+    }
 }
 
 impl DropdownMenu {
@@ -866,11 +887,9 @@ impl DropdownMenu {
                 .size(ControlSize::Md);
             // Enter and escape are the field's own keys, so they come from it.
             let on_enter = menu.clone();
-            input.set_on_submit(move |_, window, cx| {
+            input.set_on_submit(move |text, window, cx| {
                 // A menu that went with its view has nothing left to pick.
-                on_enter
-                    .update(cx, |menu, cx| menu.pick_highlighted(window, cx))
-                    .ok();
+                (on_enter.update(cx, |menu, cx| menu.enter(text, window, cx))).ok();
             });
             input.set_on_cancel(move |_, window, cx| {
                 menu.update(cx, |menu, cx| menu.close(window, cx)).ok();
@@ -885,10 +904,55 @@ impl DropdownMenu {
         self.search = Some(Search {
             input,
             query: String::new(),
-            found: found(&self.entries, ""),
+            found: found(&self.entries, "", false),
             opened_height: Rc::default(),
+            field: false,
+            opening: SharedString::default(),
         });
         self
+    }
+
+    /// Makes the search the answer, see the module doc.
+    pub fn field(self, cx: &mut Context<Self>) -> Self {
+        let mut menu = self.searchable("", cx);
+        if let Some(search) = &mut menu.search {
+            search.field = true;
+        }
+        menu
+    }
+
+    pub fn is_field(&self) -> bool {
+        self.search.as_ref().is_some_and(|search| search.field)
+    }
+
+    /// The text a [`Self::field`] opens with, selected, and what it says while it is empty.
+    pub fn set_field(
+        &mut self,
+        value: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(search) = &mut self.search else {
+            return;
+        };
+        search.opening = value.into();
+        search.found = found(&self.entries, search.filter(), search.field);
+        let placeholder = placeholder.into();
+        (search.input).update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+    }
+
+    /// Enter in the search, with `text` typed: the highlighted row, else in a field the text.
+    fn enter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open {
+            return;
+        }
+        match self.is_field() && flat(self.shown()).get(self.highlighted).is_none() {
+            true => {
+                self.close(window, cx);
+                cx.emit(MenuPicked(text.trim().to_string().into()));
+            }
+            false => self.pick_highlighted(window, cx),
+        }
     }
 
     /// The rows the open menu shows: every one, or what a search keeps.
@@ -900,7 +964,7 @@ impl DropdownMenu {
     }
 
     /// The text of the search changed: the first row it keeps is highlighted, so enter picks
-    /// it. With nothing typed nothing is highlighted, as in a menu with no search.
+    /// it. With nothing typed, or in a field, nothing is highlighted.
     fn search_changed(&mut self, text: String, cx: &mut Context<Self>) {
         let Some(search) = &mut self.search else {
             return;
@@ -908,12 +972,13 @@ impl DropdownMenu {
         if search.query == text {
             return;
         }
-        search.found = found(&self.entries, &text);
-        self.highlighted = match text.trim().is_empty() {
-            true => usize::MAX,
-            false => highlight_step(&search.found, usize::MAX, 1).unwrap_or(usize::MAX),
-        };
+        let highlights_first = !search.field && !text.trim().is_empty();
         search.query = text;
+        search.found = found(&self.entries, search.filter(), search.field);
+        self.highlighted = match highlights_first {
+            true => highlight_step(&search.found, usize::MAX, 1).unwrap_or(usize::MAX),
+            false => usize::MAX,
+        };
         cx.notify();
     }
 
@@ -1006,7 +1071,7 @@ impl DropdownMenu {
         }
         self.entries = entries;
         if let Some(search) = &mut self.search {
-            search.found = found(&self.entries, &search.query);
+            search.found = found(&self.entries, search.filter(), search.field);
         }
         cx.notify();
     }
@@ -1057,11 +1122,15 @@ impl DropdownMenu {
             self.highlighted = row;
         }
         match &self.search {
-            // A search starts empty each time, with the keys in its field.
+            // A search starts empty each time, and a field with its text selected, with the keys
+            // in it.
             Some(search) => {
                 search.opened_height.set(None);
-                let input = search.input.clone();
-                input.update(cx, |input, cx| input.set_text("", cx));
+                let (input, opening) = (search.input.clone(), search.opening.clone());
+                input.update(cx, |input, cx| {
+                    input.set_text(opening, cx);
+                    input.select_all_text(cx);
+                });
                 window.focus(&input.focus_handle(cx), cx);
             }
             None => window.focus(&self.focus_handle, cx),
@@ -1130,8 +1199,11 @@ impl DropdownMenu {
     }
 
     fn point(&mut self, value: SharedString, hovered: bool, cx: &mut Context<Self>) {
-        // The pointer moves the one highlight the keys move too.
-        if hovered && let Some(row) = row_of(self.shown(), &value) {
+        // The pointer moves the one highlight the keys move too, except in a field.
+        if hovered
+            && !self.is_field()
+            && let Some(row) = row_of(self.shown(), &value)
+        {
             self.highlighted = row;
         }
         let pointer_on = match hovered {
@@ -1281,11 +1353,14 @@ impl DropdownMenu {
 
     /// The open menu: the search field and the rows.
     fn panel(&self, cx: &mut Context<Self>) -> Div {
+        // A field with no suggestion to show is the field alone.
+        let alone = self.is_field() && self.shown().is_empty();
         let search = self.search.as_ref().map(|search| {
             div()
+                .debug_selector(|| "menu-search".into())
                 .px(px(8.))
                 .pt(px(8.))
-                .pb(px(4.))
+                .pb(px(if alone { 8. } else { 4. }))
                 .child(search.input.clone())
         });
         let opened_height = (self.search.as_ref()).map(|search| search.opened_height.clone());
@@ -1323,7 +1398,7 @@ impl DropdownMenu {
             .on_key_down(
                 cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)),
             )
-            .child(
+            .child(body.when(!alone, |body| {
                 body.child(
                     MenuList::new(self.shown().to_vec())
                         .selected(self.selected.clone())
@@ -1349,8 +1424,8 @@ impl DropdownMenu {
                         .on_select(cx.processor(|this, value: SharedString, window, cx| {
                             this.pick(value, window, cx)
                         })),
-                ),
-            )
+                )
+            }))
     }
 }
 
@@ -1482,21 +1557,24 @@ mod tests {
         let items = (0..250).map(|index| MenuItem::new(index.to_string(), format!("Knob {index}")));
         let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
 
-        let everything = found(&entries, "");
+        let everything = found(&entries, "", false);
         assert_eq!(labels(&everything).len(), MAX_FOUND);
         assert_eq!(notes(&everything), ["150 more. Type a name to find them."]);
 
-        let some = found(&entries, "KNOB 24");
+        let some = found(&entries, "KNOB 24", false);
         let tens: Vec<String> = (240..250).map(|index| format!("Knob {index}")).collect();
         assert_eq!(labels(&some), [vec!["Knob 24".to_string()], tens].concat());
         assert!(notes(&some).is_empty());
 
-        assert_eq!(notes(&found(&entries, "drive")), ["Nothing matches."]);
+        assert_eq!(
+            notes(&found(&entries, "drive", false)),
+            ["Nothing matches."]
+        );
 
         // Rows past the most that share one label are still found, by their value.
         let same = (0..250).map(|index| MenuItem::new(index.to_string(), "Gain"));
         let same = vec![MenuEntry::Group(MenuGroup::new().items(same))];
-        let last = flat(&found(&same, "249"))
+        let last = flat(&found(&same, "249", false))
             .iter()
             .map(|item| item.value.to_string())
             .collect::<Vec<_>>();

@@ -153,8 +153,8 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
-    /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `confirm`, `offers`
-    /// or `numbers`.
+    /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `openField`,
+    /// `confirm`, `offers` or `numbers`.
     Answer {
         question: u64,
         answer: Answer<'a>,
@@ -228,6 +228,8 @@ pub(crate) enum Answer<'a> {
     Asset(Option<&'a str>),
     /// The place of the item the composer picked in a menu, or none.
     Item(Option<usize>),
+    /// What the composer typed in a field, or none.
+    Typed(Option<&'a str>),
     /// What the window offers that takes what was asked for, and what its pickers say under
     /// them.
     Offers {
@@ -514,6 +516,16 @@ pub(crate) enum Event {
         /// A field above the items that keeps those whose label holds what is typed.
         #[serde(default)]
         search: bool,
+    },
+    /// Code opens a text field where a menu opens: the text goes to its `question`.
+    OpenField {
+        question: u64,
+        value: String,
+        placeholder: String,
+        /// Rows under it that what is typed narrows.
+        suggestions: Vec<String>,
+        #[serde(default)]
+        width: Option<f32>,
     },
     /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
     /// With `at`, the answer says which offer is at that child of `instance` now.

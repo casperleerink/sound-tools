@@ -2,7 +2,7 @@
 
 import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
 import { host } from "./host";
-import { ActionKey, AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Offers, PlainKey, View } from "./live";
+import { ActionKey, AppKey, Clock, FieldOptions, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Offers, PlainKey, View } from "./live";
 import { Child } from "./nodes";
 import { Memory } from "./reactivity";
 import { Tools } from "./records";
@@ -523,6 +523,12 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    * the place of the item the composer picked, or `null` when they picked none.
    */
   openMenu(items: readonly MenuItem[], options?: MenuOptions): Promise<number | null>;
+  /**
+   * Opens a small text field where `openMenu` opens a menu, with the keys in it, such as to
+   * type a tempo or `3/4` on the bars chosen. Answers the text typed, trimmed, on enter, or the
+   * suggestion picked; `null` on escape or a press outside it.
+   */
+  openField(options?: FieldOptions): Promise<string | null>;
   /**
    * Asks the composer `message` with the system's question, its buttons `confirm` and Cancel,
    * such as before what a stray key should not do: whether they said `confirm`.

@@ -172,12 +172,9 @@ impl Drawing<'_> {
     }
 
     /// The key of a space, and where it is scrolled to and how far zoomed now, which the spaces
-    /// that follow it see; the fit it still asks for.
-    pub(super) fn space_view(
-        &mut self,
-        id: u64,
-        space: &SpaceProps,
-    ) -> (String, SpaceView, Option<tree::Fit>) {
+    /// that follow it see; whether it draws again after its paint, for them to see where it
+    /// moved itself to.
+    pub(super) fn space_view(&mut self, id: u64, space: &SpaceProps) -> (String, SpaceView, bool) {
         let key = self.element_name("space", space.key.as_deref(), id);
         let (unit_x, unit_y) = space.unit();
         let extent = space.extent.unwrap_or_default();
@@ -201,8 +198,26 @@ impl Drawing<'_> {
         }
         let follow = space.follow.clone().unwrap_or_default();
         let view = followed(clamped(view, &extent), &follow, &self.spaces);
-        self.spaces.insert(key.clone(), view);
-        (key, view, fit)
+        let turns = (space.turns.as_ref()).map(|turns| self.sources().number(turns));
+        let kept = kept_in_view(view, space.show, turns, &extent);
+        let moved = (kept.left, kept.top) != (view.left, view.top);
+        // Over the page, a draw keeps nothing of its own: where it moved and what it saw stay
+        // here.
+        if space.show.is_some() || space.turns.is_some() {
+            let mut laid_out = self.laid_out.borrow_mut();
+            if let Some(view) = laid_out.get_mut(&key) {
+                (view.left, view.top) = (kept.left, kept.top);
+                (view.shown, view.turns_at) = (kept.shown, kept.turns_at);
+            }
+            if moved {
+                move_leaders(&mut laid_out, &kept, &follow);
+            }
+        }
+        if moved {
+            move_leaders(&mut self.spaces, &kept, &follow);
+        }
+        self.spaces.insert(key.clone(), kept);
+        (key, kept, fit.is_some() || moved)
     }
 
     /// The shapes of a space as they are now, and what it does with the pointer and drops.
@@ -211,7 +226,7 @@ impl Drawing<'_> {
         id: u64,
         space: &SpaceProps,
         children: &[usize],
-        (key, view, fit): (String, SpaceView, Option<tree::Fit>),
+        (key, view, draws_again): (String, SpaceView, bool),
     ) -> AnyElement {
         let (placed, pointed) = self.place(children, &key, &view);
         let frame = Rc::new(SpaceFrame {
@@ -258,10 +273,10 @@ impl Drawing<'_> {
                         first
                     });
                     // The card draws again, for the spaces that follow it and the live values
-                    // that read it to see its fit, or its size on its first paint. Only the first
-                    // paint: drawing again on every resize made `tools::nested`
-                    // fail, for a cause not found.
-                    if fit.is_some() || first {
+                    // that read it to see its fit or where it moved itself, or its size on its
+                    // first paint. Only the first paint: drawing again on every resize made
+                    // `tools::nested` fail, for a cause not found.
+                    if draws_again || first {
                         let card = card.clone();
                         window.on_next_frame(move |_, cx| {
                             card.update(cx, |_, cx| cx.notify()).ok();
@@ -378,6 +393,75 @@ impl SpaceFrame {
             || self.extent.y.is_some()
             || self.zoom.x.is_some()
             || self.zoom.y.is_some()
+    }
+}
+
+/// Moves the spaces `view` follows to it, on their axes, as its own scroll moves them.
+pub(super) fn move_leaders(
+    spaces: &mut HashMap<String, SpaceView>,
+    view: &SpaceView,
+    follow: &tree::Follow,
+) {
+    if let Some(leader) = follow.x.as_ref().and_then(|key| spaces.get_mut(key)) {
+        (leader.left, leader.zoom_x) = (view.left, view.zoom_x);
+    }
+    if let Some(leader) = follow.y.as_ref().and_then(|key| spaces.get_mut(key)) {
+        (leader.top, leader.zoom_y) = (view.top, view.zoom_y);
+    }
+}
+
+/// How far in from its edge, in points, a range `show` scrolls to or a page `turns` to sits.
+const KEPT_IN: f64 = 24.0;
+
+/// `view` scrolled for `show` when it changed, and across for the value of `turns`, `at`, when
+/// it left what shows since the last draw, which a scroll by hand away from it is not. Once it
+/// is laid out: before, it knows not what shows.
+fn kept_in_view(
+    mut view: SpaceView,
+    show: Option<tree::Ranges>,
+    at: Option<f64>,
+    extent: &tree::Ranges,
+) -> SpaceView {
+    if view.width <= 0.0 {
+        return view;
+    }
+    let (across, down) = view.scale();
+    let (wide, tall) = (view.width / across, view.height / down);
+    if show != view.shown {
+        if let Some(show) = show {
+            if let Some(range) = show.x {
+                view.left = showing(view.left, wide, range, KEPT_IN / across);
+            }
+            if let Some(range) = show.y {
+                view.top = showing(view.top, tall, range, KEPT_IN / down);
+            }
+        }
+        view.shown = show;
+    }
+    if let (Some(at), Some(before)) = (at, view.turns_at) {
+        let shows = |value: f64| value >= view.left && value <= view.left + wide;
+        if shows(before) && !shows(at) {
+            view.left = at - KEPT_IN / across;
+        }
+    }
+    view.turns_at = at;
+    clamped(view, extent)
+}
+
+/// The edge of an axis that shows `visible` units from `edge`, moved the least so `range` shows
+/// with `margin` units beside it: not at all when it shows, and to its start when it is wider.
+fn showing(edge: f64, visible: f64, [low, high]: [f32; 2], margin: f64) -> f64 {
+    let (low, high) = (f64::from(low), f64::from(high));
+    if low >= edge && high <= edge + visible {
+        return edge;
+    }
+    if high - low > visible {
+        return low - margin;
+    }
+    let margin = margin.min((visible - (high - low)) / 2.0);
+    match low < edge {
+        true => low - margin,
+        false => high + margin - visible,
     }
 }
 

@@ -8,7 +8,7 @@ use sound_core::ValueRange;
 
 use crate::feeds::Feeds;
 use crate::tools::{Input, ToolInfo};
-use crate::tree::{DragPart, Live, Num, SpacePart, named};
+use crate::tree::{DragPart, Live, Num, Ranges, SpacePart, named};
 
 /// Where a drag is, in the units of its space, as `now.drag(id)` reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -52,6 +52,10 @@ pub(crate) struct SpaceView {
     pub height: f64,
     /// Whether its `fit` was applied, once it was laid out.
     pub fitted: bool,
+    /// The `show` it last scrolled to.
+    pub shown: Option<Ranges>,
+    /// Where its `turns` was when it last drew.
+    pub turns_at: Option<f64>,
 }
 
 impl Default for SpaceView {
@@ -66,6 +70,8 @@ impl Default for SpaceView {
             width: 0.0,
             height: 0.0,
             fitted: false,
+            shown: None,
+            turns_at: None,
         }
     }
 }

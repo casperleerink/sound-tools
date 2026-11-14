@@ -286,6 +286,10 @@ props! {
         scroll: Axes,
         fit: Fit,
         follow: Follow,
+        /// A range it scrolls the least to show, each time it changes.
+        show: Ranges,
+        /// A live value across that turns its page when it leaves what shows.
+        turns: Num,
         background: Color,
         radius: Radius,
         on_press: bool,
@@ -1212,6 +1216,13 @@ fn key_of(props: &Props) -> Option<Keyed> {
 fn uses_of(props: &Props) -> Uses {
     match props {
         Props::Shape(shape) => shape.uses(),
+        Props::Space(space) => {
+            let mut uses = Uses::default();
+            if let Some(turns) = &space.turns {
+                turns.add_uses(&mut uses);
+            }
+            uses
+        }
         Props::Slider(SliderProps {
             value: Some(value), ..
         })
@@ -1383,7 +1394,7 @@ pub(crate) struct Follow {
     pub y: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Ranges {
     pub x: Option<[f32; 2]>,

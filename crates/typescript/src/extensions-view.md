@@ -1,6 +1,6 @@
 # The view and the control loop of a tool
 
-Read `agent-docs/extensions.md` first. The elements and their props are in `extensions/sdk/drawing.ts` and `extensions/sdk/components.ts`. All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`), which also asks the window things: `openMenu`, `confirm`, `openFile`, `render`, `openWindow` (a child's own window, such as a plugin's).
+Read `agent-docs/extensions.md` first. The elements and their props are in `extensions/sdk/drawing.ts` and `extensions/sdk/components.ts`. All code of a tool gets the same `Context` (`extensions/sdk/tools.ts`), which also asks the window things: `openMenu`, `openField` (a text field at the press, to type a tempo), `confirm`, `openFile`, `render`, `openWindow` (a child's own window, such as a plugin's).
 
 - A control's `field` may be a number inside a child's record: `"kit.pads.36.volume_db"`. `value` and `onChange` are what code keeps instead, such as `memory`.
 - A press reaches every div, `Button` and `Toggle` it is in, `onClick` only the innermost; a `Space` and its shapes keep their presses.

@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, FieldOptions, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -1008,7 +1008,7 @@ function selector(instance: string) {
   };
 }
 
-/** Questions to the window, by number, which its answers settle: `openFile`, `render`, `exportNotes`, `openMenu`, `confirm`, `offers`, `numbers`. */
+/** Questions to the window, by number, which its answers settle: `openFile`, `render`, `exportNotes`, `openMenu`, `openField`, `confirm`, `offers`, `numbers`. */
 const asked = new Map<number, (answer: unknown) => void>();
 let questions = Number(bunNumber) * 2 ** 32;
 /** Questions asked since the last ops, which go after them: a menu a new dialog opens belongs to it. */
@@ -1025,6 +1025,8 @@ function askers(instance: string) {
   return {
     openMenu: (items: readonly MenuItem[], { notes = [], width, maxHeight, search = false }: MenuOptions = {}) =>
       ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group, separator, shortcut }) => ({ label, disabled, checked, icon, detail, group, separator, shortcut })), notes, width, maxHeight, search }),
+    openField: ({ value = "", placeholder = "", suggestions = [], width }: FieldOptions = {}) =>
+      ask<string | null>({ type: "open_field", value, placeholder, suggestions, width }),
     offers: (takes: "notes" | "audio", { at }: { at?: string } = {}) => ask<Offers>({ type: "offers", takes, instance, at }),
     numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */
@@ -1294,7 +1296,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, openField: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };

@@ -23,9 +23,9 @@ use sound_ui::components::select::Select;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::{ActiveTheme, Devices, Views};
 
-use crate::bun::EventKind;
+use crate::bun::{EventKind, MenuItemSpec};
 use crate::tree::{CardProps, CardSelect, InputProps, Props};
-use crate::window::OpenedMenu;
+use crate::window::{Asks, OpenedMenu};
 
 use super::controls::shortcut_of;
 use super::drawing::named_node;
@@ -480,60 +480,47 @@ impl TypeScriptCard {
         })
     }
 
-    /// Opens a menu its code asked for: under the div, button or title pressed last, or where
-    /// the pointer is. A menu still open answers that nothing was picked.
+    /// Opens a menu or a field its code asked for: under the div, button or title pressed last,
+    /// or where the pointer is. A menu still open answers that nothing was picked.
     fn open_menu(&mut self, menu: OpenedMenu, window: &mut Window, cx: &mut Context<Self>) {
         let OpenedMenu {
             question,
-            items,
-            notes,
             width,
-            max_height,
-            search,
+            asks,
         } = menu;
-        // A group a run of items of one `group`, under its heading; `None` a separator.
-        let mut entries: Vec<(Option<String>, Option<MenuGroup>)> = Vec::new();
-        for (index, spec) in items.into_iter().enumerate() {
-            let mut item = MenuItem::new(index.to_string(), spec.label)
-                .disabled(spec.disabled)
-                .checked(spec.checked)
-                .selectable(false);
-            if let Some(icon) = spec.icon {
-                item = item.icon(icon);
+        let (kind, entries, width, max_height, field) = match asks {
+            Asks::Item {
+                items,
+                notes,
+                max_height,
+                search,
+            } => {
+                let kind = if search { Kind::Search } else { Kind::Plain };
+                let entries = menu_entries(items, notes, cx);
+                (kind, entries, width.unwrap_or(MENU_WIDTH), max_height, None)
             }
-            if let Some(detail) = spec.detail {
-                item = item.description(detail);
+            Asks::Text {
+                value,
+                placeholder,
+                suggestions,
+            } => {
+                let rows = (suggestions.into_iter())
+                    .map(|text| MenuItem::new(text.clone(), text).selectable(false));
+                let entries = vec![MenuEntry::Group(MenuGroup::new().items(rows))];
+                let width = width.unwrap_or(FIELD_WIDTH);
+                (
+                    Kind::Field,
+                    entries,
+                    width,
+                    None,
+                    Some((value, placeholder)),
+                )
             }
-            if let Some(keys) = (spec.shortcut).and_then(|keys| shortcut_of(&keys, cx)) {
-                item = item.shortcut(keys);
-            }
-            if spec.separator {
-                entries.push((None, None));
-            }
-            match entries.last_mut() {
-                Some((group, Some(items))) if *group == spec.group => {
-                    *items = std::mem::take(items).item(item);
-                }
-                _ => {
-                    let heading = spec.group.clone();
-                    let group = MenuGroup::new().item(item);
-                    let group = match &heading {
-                        Some(heading) => group.label(heading.clone()),
-                        None => group,
-                    };
-                    entries.push((heading, Some(group)));
-                }
-            }
-        }
-        let entries: Vec<MenuEntry> = (entries.into_iter())
-            .map(|(_, group)| group.map_or(MenuEntry::Separator, MenuEntry::Group))
-            .chain(notes.into_iter().map(|note| MenuEntry::Note(note.into())))
-            .collect();
+        };
         self.answer_menu(None, cx);
-        // A menu with a search field is another menu than one without.
         let cached = (self.menu.take())
             .map(|(menu, _)| menu)
-            .filter(|menu| menu.read(cx).is_searchable() == search);
+            .filter(|menu| Kind::of(menu.read(cx)) == kind);
         let menu = match cached {
             Some(menu) => menu,
             None => {
@@ -541,14 +528,14 @@ impl TypeScriptCard {
                     let menu = DropdownMenu::new("", Vec::new(), cx)
                         .trigger(Trigger::Pointer)
                         .debug_name("menu");
-                    match search {
-                        true => menu.searchable("Search", cx),
-                        false => menu,
+                    match kind {
+                        Kind::Plain => menu,
+                        Kind::Search => menu.searchable("Search", cx),
+                        Kind::Field => menu.field(cx),
                     }
                 });
                 cx.subscribe(&menu, |view, _, picked: &MenuPicked, cx| {
-                    let item = picked.0.parse().ok();
-                    view.answer_menu(item, cx);
+                    view.answer_menu(Some(&picked.0), cx);
                 })
                 .detach();
                 // Closed with nothing picked: after a pick's event, which comes after its close.
@@ -567,7 +554,10 @@ impl TypeScriptCard {
         let under = self.anchor.take();
         menu.update(cx, |menu, cx| {
             menu.set_entries(entries, cx);
-            menu.set_size(width.unwrap_or(MENU_WIDTH), max_height);
+            if let Some((value, placeholder)) = field {
+                menu.set_field(value, placeholder, cx);
+            }
+            menu.set_size(width, max_height);
             match under {
                 Some(position) => menu.open_under(position, window, cx),
                 None => menu.open_at(window.mouse_position(), window, cx),
@@ -577,12 +567,83 @@ impl TypeScriptCard {
         self.menu_overlay = self.overlays.last().copied();
     }
 
-    /// Answers the open menu's question, once.
-    fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
-        let Some(question) = self.menu.as_mut().and_then(|(_, waiting)| waiting.take()) else {
+    /// Answers the open menu's question, once: the place of the item `picked` in a menu, the
+    /// text in a field.
+    fn answer_menu(&mut self, picked: Option<&str>, cx: &mut Context<Self>) {
+        let Some((menu, waiting)) = self.menu.as_mut() else {
             return;
         };
-        self.live
-            .update(cx, |live, _| live.menu_picked(question, item));
+        let Some(question) = waiting.take() else {
+            return;
+        };
+        let field = menu.read(cx).is_field();
+        self.live.update(cx, |live, _| match field {
+            true => live.field_typed(question, picked),
+            false => live.menu_picked(question, picked.and_then(|item| item.parse().ok())),
+        });
     }
+}
+
+/// How wide a field its code opens is, unless it says.
+const FIELD_WIDTH: f32 = 200.;
+
+/// The kinds of menu a card opens, each of which it keeps one of.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Plain,
+    Search,
+    Field,
+}
+
+impl Kind {
+    fn of(menu: &DropdownMenu) -> Self {
+        match (menu.is_field(), menu.is_searchable()) {
+            (true, _) => Self::Field,
+            (false, true) => Self::Search,
+            (false, false) => Self::Plain,
+        }
+    }
+}
+
+/// The rows of a menu its code opened, each valued by its place: a group a run of items of one
+/// `group`, under its heading, then the notes.
+fn menu_entries(items: Vec<MenuItemSpec>, notes: Vec<String>, cx: &App) -> Vec<MenuEntry> {
+    // `None` a separator.
+    let mut entries: Vec<(Option<String>, Option<MenuGroup>)> = Vec::new();
+    for (index, spec) in items.into_iter().enumerate() {
+        let mut item = MenuItem::new(index.to_string(), spec.label)
+            .disabled(spec.disabled)
+            .checked(spec.checked)
+            .selectable(false);
+        if let Some(icon) = spec.icon {
+            item = item.icon(icon);
+        }
+        if let Some(detail) = spec.detail {
+            item = item.description(detail);
+        }
+        if let Some(keys) = (spec.shortcut).and_then(|keys| shortcut_of(&keys, cx)) {
+            item = item.shortcut(keys);
+        }
+        if spec.separator {
+            entries.push((None, None));
+        }
+        match entries.last_mut() {
+            Some((group, Some(items))) if *group == spec.group => {
+                *items = std::mem::take(items).item(item);
+            }
+            _ => {
+                let heading = spec.group.clone();
+                let group = MenuGroup::new().item(item);
+                let group = match &heading {
+                    Some(heading) => group.label(heading.clone()),
+                    None => group,
+                };
+                entries.push((heading, Some(group)));
+            }
+        }
+    }
+    (entries.into_iter())
+        .map(|(_, group)| group.map_or(MenuEntry::Separator, MenuEntry::Group))
+        .chain(notes.into_iter().map(|note| MenuEntry::Note(note.into())))
+        .collect()
 }
