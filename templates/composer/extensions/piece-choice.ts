@@ -90,7 +90,11 @@ export function editChosen(piece: Piece): boolean {
   return true;
 }
 
-/** Chooses the bar before or after the chosen ones, of the same instruments, or with `extend` takes it in too. With none chosen, the bar the playhead is in, or the first. */
+/**
+ * Chooses the bar before or after the chosen ones, of the same instruments, or with `extend` takes
+ * it in too. Past the first or the last bar it opens the section before or the next, on its last
+ * or first bar; `extend` stays in the section. With none chosen, the bar the playhead is in, or the first.
+ */
 export function stepBars(piece: Piece, by: -1 | 1, extend: boolean): boolean {
   const choice = choiceOf(piece);
   if (!choice) {
@@ -103,7 +107,15 @@ export function stepBars(piece: Piece, by: -1 | 1, extend: boolean): boolean {
   }
   const next = by < 0 ? choice.from - 1 : choice.to + 1;
   if (extend) chooseBars(piece, Math.min(choice.from, next), Math.max(choice.to, next), choice.rows);
-  else chooseBars(piece, next, next, choice.rows);
+  else if (next >= 0 && next < choice.open.bars.length) chooseBars(piece, next, next, choice.rows);
+  else {
+    const ids = piece.state.sections.map((section) => section.id);
+    const id = ids[ids.indexOf(choice.open.id) + by];
+    if (id === undefined) return true;
+    openAt(piece, id);
+    const bar = by < 0 ? (openOf(piece)?.bars.length ?? 1) - 1 : 0;
+    chooseBars(piece, bar, bar, choice.rows);
+  }
   return true;
 }
 /** Takes in the bars after the chosen ones, up to the last of the section: a tempo or a time signature then goes on from here. */

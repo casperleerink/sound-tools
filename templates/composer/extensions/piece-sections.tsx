@@ -11,6 +11,7 @@ import { barsIn, clamp, DIM, openAt, openOf, openSectionOf, rowLook, SECTION_HEA
 const SECTION_ROW = 36;
 /** The note values a time signature takes. */
 const NOTES = [1, 2, 4, 8, 16, 32];
+const SIGNATURE_TIP = "Click to type, such as 6/8, or drag";
 
 const idsOf = (piece: Pick<Piece, "state">) => piece.state.sections.map((section) => section.id);
 /** The bar numbers of a section in the piece: `5–12`, or `5` for one bar. */
@@ -145,8 +146,8 @@ export const SectionsList = ({ page }: { page: Page }) => {
  * what is typed first, such as a whole time signature, and says whether it was one; `text` is
  * what the field starts with. Whether it is typed is the head's to say, so a key can ask for it.
  */
-const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false, still = mixed, typed, text = () => String(untrack(value)), typing, type }: {
-  id: string; value: Accessor<number>; steps: (from: number, by: number) => number; set: (value: number) => void; width: number; per?: number; align?: "left" | "right"; mixed?: Accessor<boolean>;
+const Amount = ({ id, tooltip, value, steps, set, width, per = 10, align = "left", mixed = () => false, still = mixed, typed, text = () => String(untrack(value)), typing, type }: {
+  id: string; tooltip: string; value: Accessor<number>; steps: (from: number, by: number) => number; set: (value: number) => void; width: number; per?: number; align?: "left" | "right"; mixed?: Accessor<boolean>;
   still?: Accessor<boolean>; typed?: (text: string) => boolean; text?: () => string; typing: Accessor<boolean>; type: (typing: boolean) => void;
 }) => {
   const [dragged, drag] = signal<number | null>(null);
@@ -169,7 +170,7 @@ const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed 
     if (Number.isFinite(number)) set(steps(number, 0));
   };
   return (
-    <div style={{ keep: true, radius: "sm", hover: { background: "fill" } }} keys={["enter"]} onKey={() => type(true)}>
+    <div style={{ keep: true, radius: "sm", hover: { background: "fill" } }} tooltip={tooltip} keys={["enter"]} onKey={() => type(true)}>
       {() =>
         typing() ? (
           <Input key={`${id}-typed`} value={untrack(mixed) ? "" : text()} width={Math.max(width + 24, 56)} size="lg" focus onCommit={commit} onCancel={() => type(false)} />
@@ -195,8 +196,8 @@ const Field = ({ caption, children }: { caption: Accessor<string> | string; chil
 
 /**
  * The head of the open section: its name, which a double click types, where it is in the piece
- * and how long it plays; its length in bars; and, after the bars they are for, the chosen ones or all, their time
- * signature and tempo, a dash where they differ; and a toggle that repeats them.
+ * and how long it plays, or what the last edit removed; its length in bars; and, after the bars they are for, the chosen ones or all
+ * (a click lets go of them), their time signature and tempo, a dash where they differ; and a toggle that repeats them.
  */
 export const SectionHead = ({ page }: { page: Page }) => {
   const { openSection, openId, place, bars, memory, clock } = page;
@@ -205,6 +206,7 @@ export const SectionHead = ({ page }: { page: Page }) => {
     const choice = choiceOf(page);
     return choice ? { from: choice.from, to: choice.to, chosen: true } : { from: 0, to: bars().length - 1, chosen: false };
   });
+  const chosen = memo(() => target().chosen);
   const targeted = () => bars().slice(target().from, target().to + 1);
   const first = () => targeted()[0] ?? { signature: "4/4", bpm: 120 };
   const differ = (of: (bar: { signature: string; bpm: number }) => number) => () => targeted().some((bar) => of(bar) !== of(first()));
@@ -249,6 +251,8 @@ export const SectionHead = ({ page }: { page: Page }) => {
     return true;
   };
   const naming = () => memory.naming?.in === "head" && memory.naming.id === openId();
+  // Not after an undo, which nothing here hears: the sections are then no longer as that edit left them.
+  const notice = () => (memory.notice?.form === JSON.stringify(page.sections()) ? memory.notice.text : null);
   return (
     <div style={{ height: SECTION_HEAD, direction: "row", align: "center", gap: "2xl", paddingX: "lg", keep: true }}>
       <div style={{ grow: true, minWidth: 0, justify: "center" }} onClick={({ clicks }) => {
@@ -266,35 +270,41 @@ export const SectionHead = ({ page }: { page: Page }) => {
             </div>
           );
         }}
-        <Text variant="label" tone="muted">
+        <Text variant="label" tone="muted" style={() => ({ truncate: true, ...(notice() ? { color: "peach" } : {}) })}>
           {() => {
             const at = place();
-            return at ? `${at.bars === 1 ? "Bar" : "Bars"} ${numbersOf(at)} · ${timeText(secondsOf(bars()))}` : "";
+            return notice() ?? (at ? `${at.bars === 1 ? "Bar" : "Bars"} ${numbersOf(at)} · ${timeText(secondsOf(bars()))}` : "");
           }}
         </Text>
       </div>
       <Field caption="Length">
-        <Amount id="section-length" {...typed("length")} value={() => bars().length} steps={(from, by) => clamp(Math.round(from + by), 1, 999)} set={lengthTo} width={36} align="right" />
+        <Amount id="section-length" tooltip="The number of bars: click to type, drag to change" {...typed("length")} value={() => bars().length} steps={(from, by) => clamp(Math.round(from + by), 1, 999)} set={lengthTo} width={36} align="right" />
         <Text tone="muted" style={{ paddingLeft: "sm" }}>{() => (bars().length === 1 ? "bar" : "bars")}</Text>
       </Field>
       <div style={{ width: 1, height: 40, background: "border", keep: true }} />
       <div style={{ direction: "row", align: "center", gap: "xs", keep: true }}>
-        <Text key="section-scope" variant="heading" tone={() => (target().chosen ? "text" : "muted")}>{caption}</Text>
-        <Show when={() => target().chosen}>
+        <Show when={chosen} fallback={() => <Text key="section-scope" variant="heading" tone="muted" style={{ paddingX: "xs" }}>{caption}</Text>}>
+          {() => (
+            <div key="section-scope" cursor="pointer" tooltip="Back to all bars" style={{ radius: "sm", paddingX: "xs", hover: { background: "fill" } }} onClick={() => (memory.chosen = null)}>
+              <Text variant="heading">{caption}</Text>
+            </div>
+          )}
+        </Show>
+        <Show when={chosen}>
           {() => <Button key="choice-menu" icon="ellipsis" variant="ghost" color="text-secondary" size="sm" tooltip="Cut, copy, add or remove the chosen bars" onClick={() => void choiceMenu(page)} />}
         </Show>
       </div>
       <Field caption={() => (signatureDiffers() ? "Time signature · mixed" : "Time signature")}>
         <Show when={() => memory.typing !== "note"}>
           {() => (
-            <Amount id="section-beats" {...typed("beats")} value={() => beatsOf(first())} mixed={differ(beatsOf)} still={signatureDiffers} width={20} align="right" typed={signatureTyped} text={() => first().signature}
+            <Amount id="section-beats" tooltip={SIGNATURE_TIP} {...typed("beats")} value={() => beatsOf(first())} mixed={differ(beatsOf)} still={signatureDiffers} width={20} align="right" typed={signatureTyped} text={() => first().signature}
               steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => signatureTo(`${beats}/${noteOf(first())}`)} />
           )}
         </Show>
         <Show when={() => memory.typing !== "beats" && memory.typing !== "note"}>{() => <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>}</Show>
         <Show when={() => memory.typing !== "beats"}>
           {() => (
-            <Amount id="section-note" {...typed("note")} value={() => noteOf(first())} mixed={differ(noteOf)} still={signatureDiffers} width={20} typed={signatureTyped} text={() => first().signature}
+            <Amount id="section-note" tooltip={SIGNATURE_TIP} {...typed("note")} value={() => noteOf(first())} mixed={differ(noteOf)} still={signatureDiffers} width={20} typed={signatureTyped} text={() => first().signature}
               steps={(from, by) => {
                 const nearest = NOTES.reduce((best, each) => (Math.abs(each - from) < Math.abs(best - from) ? each : best), 4);
                 return NOTES[clamp(NOTES.indexOf(nearest) + by, 0, NOTES.length - 1)]!;
@@ -305,7 +315,7 @@ export const SectionHead = ({ page }: { page: Page }) => {
       </Field>
       <Field caption={() => (tempoDiffers() ? "Tempo · mixed" : "Tempo")}>
         <Text variant="title" tone="muted" style={{ paddingRight: "sm" }}>{() => `${beatOf(first().signature).sign} =`}</Text>
-        <Amount id="section-tempo" {...typed("tempo")} value={() => tempoOf(first())} mixed={tempoDiffers} width={44} per={2}
+        <Amount id="section-tempo" tooltip="Click to type, or drag" {...typed("tempo")} value={() => tempoOf(first())} mixed={tempoDiffers} width={44} per={2}
           steps={(from, by) => clamp(Math.round((from + by) * 10) / 10, 10, 600)} set={tempoTo} />
       </Field>
       <div style={{ paddingTop: 18, keep: true }}>

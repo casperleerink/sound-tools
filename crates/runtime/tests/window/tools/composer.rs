@@ -1,7 +1,8 @@
 //! The piece of the Composer template (`templates/composer`): a bar made longer pushes what
 //! comes after it and nothing else, a bar added or removed moves the rest, a section started at
 //! a bar takes the music after it along, a section moved takes its music with it, and a part an
-//! agent left in the wrong place is laid out again. Each edit is one undo step.
+//! agent left in the wrong place is laid out again. Each edit is one undo step. The arrows step
+//! across a section line, and a bar made too short for a note says so.
 
 use std::path::Path;
 
@@ -122,15 +123,18 @@ impl Opened<'_> {
         self.until_shows(&format!("Bar {}", bar + 1));
     }
 
+    /// Whether the page shows `text`.
+    fn shows(&mut self, text: &str) -> bool {
+        let shell = self.shell.clone();
+        self.cx.read(|cx| {
+            let page = shell.read(cx).main_view().unwrap();
+            sound_typescript::page_has_text(page, text, cx)
+        })
+    }
+
     /// Waits for the page to show `text`, such as the head's caption of the chosen bars.
     fn until_shows(&mut self, text: &str) {
-        let shell = self.shell.clone();
-        self.until(text, |window| {
-            window.cx.read(|cx| {
-                let page = shell.read(cx).main_view().unwrap();
-                sound_typescript::page_has_text(page, text, cx)
-            })
-        });
+        self.until(text, |window| window.shows(text));
     }
 
     /// The start of the part of `track` in the section `id`, and where each of its notes starts.
@@ -518,5 +522,55 @@ fn a_passage_copied_from_one_instrument_pastes_onto_another(cx: &mut TestAppCont
     assert_eq!(window.part("t01", "sec-a"), (0, vec![2 * BAR + BEAT / 2]));
     assert_eq!(window.part("t00", "sec-a"), (0, IN_A.to_vec()));
     one_undo_step(&mut window, "Paste", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Right on the last bar of A opens B on its first bar, bar 5 of the piece; left goes back to
+/// the last bar of A.
+#[gpui::test]
+fn the_arrows_step_across_a_section_line(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(3);
+    window.keys("right");
+    window.until_shows("Bar 5");
+    window.keys("left");
+    window.until_shows("Bar 4");
+    assert_eq!(window.problems(), []);
+}
+
+/// Bar 2 made 1/8 drops its note, half a beat in: the head says so, and one undo step brings
+/// it back.
+#[gpui::test]
+fn a_bar_made_too_short_for_a_note_says_so(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    let before = mark(&mut window);
+    let beats = window.until_found("space-section-beats");
+    window.click(beats);
+    window.until("the field", |window| {
+        window.find("space-section-beats").is_none()
+    });
+    window.keys("secondary-a");
+    window.cx.simulate_input("1/8");
+    window.keys("enter");
+    window.until_shows("1 note did not fit and was removed. Undo brings it back.");
+    window.after_the_runs();
+    assert_eq!(window.part("t00", "sec-a"), (0, vec![0, BAR + BEAT / 2]));
+    one_undo_step(&mut window, "Change the time signature", &before);
+    // The note is back, so the head no longer says it went.
+    window.until("the notice gone", |window| !window.shows("did not fit"));
+    assert_eq!(window.problems(), []);
+}
+
+/// The first bar of an instrument, opened with enter: the note editor shows it and the bar
+/// after it, from the start of the section.
+#[gpui::test]
+fn the_first_bar_opens_the_note_editor_on_it(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let first = window.on_row(10., 0);
+    window.click(first);
+    window.until_shows("Bar 1");
+    window.keys("enter");
+    window.until_found(&format!("space-editor-t00/sec-a/0-{}", 2 * BAR));
     assert_eq!(window.problems(), []);
 }

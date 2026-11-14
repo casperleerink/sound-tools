@@ -145,7 +145,7 @@ const silentOf = ({ rows }: Page) => memo(() => rows().every((each) => each.chil
  * bar lines through them, which the heads scroll with; under them the room beside the returns
  * and the master. A press chooses that bar of that instrument and the instrument, shift-press
  * takes in the bars and instruments up to it, a drag those it goes over; a right press opens the
- * menu of what is chosen; a double click opens the notes of its part.
+ * menu of what is chosen; a double click opens the notes of its part. A press under the rows lets go.
  */
 export const Rows = ({ page }: { page: Page }) => {
   const { rows, returnsHeight, starts, scale, openId, memory, partAt, openPanel, openEditor, barAt } = page;
@@ -157,7 +157,10 @@ export const Rows = ({ page }: { page: Page }) => {
   const press = ({ x, y, clicks, shift, button }: Press) => {
     const each = rows()[Math.floor(y)];
     const bar = barAt(x);
-    if (!each) return;
+    if (!each) {
+      if (button === "left") memory.chosen = null;
+      return;
+    }
     if (bar === null) {
       memory.chosen = null;
       return openPanel(each.name);

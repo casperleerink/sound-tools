@@ -297,6 +297,12 @@ function spanOf(notes: readonly Note[]) {
   return { start, span: Math.max(...notes.map((note) => note.start + note.length)) - start };
 }
 
+/** The middle of the pitches of `notes`, or C4 while there are none: where the editor opens, and where a note is added with none chosen. */
+const middleOf = (notes: readonly Note[]) => {
+  const pitches = notes.map((note) => note.pitch);
+  return pitches.length > 0 ? (Math.min(...pitches) + Math.max(...pitches)) / 2 : 60;
+};
+
 /** What an action of the song does to the notes of the open clip. */
 export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "longer" | "shorter" | "none" | "next" | "previous" | keyof typeof NOTE_MOVES;
 /** How far each move takes the chosen notes: in steps of the grid, and in pitches. */
@@ -308,7 +314,7 @@ const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "o
  * one and a paste need chosen notes. A paste goes to the playhead when it is inside the clip,
  * else right after the chosen notes, else to the start of the clip. A note added goes right
  * after the chosen ones, at the pitch of the last, so adding again makes a row to type the
- * values of, up to the end of the clip; with none chosen, on the grid where a paste goes, at C4.
+ * values of, up to the end of the clip; with none chosen, on the grid where a paste goes, in the middle of the clip's pitches.
  */
 export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   // Notes an undo or another tool took away are no longer chosen.
@@ -323,7 +329,7 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
     const last = picked().reduce<Note | undefined>((latest, note) => (latest && latest.start + latest.length >= note.start + note.length ? latest : note), undefined);
     const start = last ? last.start + last.length : inside ? snapped(playhead - clip.start, memory.snap) : 0;
     if (start >= lengthOf(clip)) return false;
-    const note = { start, length: memory.length, pitch: last?.pitch ?? 60, velocity: 100 };
+    const note = { start, length: memory.length, pitch: last?.pitch ?? Math.round(middleOf(clip.notes)), velocity: 100 };
     change("Add a note", (notes) => ({ notes: [...notes, note], chosen: new Set([notes.length]) }));
   } else if (command === "paste") {
     if (!memory.copiedNotes) return false;
@@ -393,9 +399,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, shows, memory,
   );
   // It opens on the clip: the middle of its notes in the middle of the roll, on a whole row, so no key's name is cut at its top.
   const [opening, middleRow] = untrack(() => {
-    const pitches = notes().map((note) => note.pitch);
-    const middle = pitches.length > 0 ? (Math.min(...pitches) + Math.max(...pitches)) / 2 : 60;
-    return [length(), Math.round(127 - middle + 0.5 - roll() / ROW / 2)] as const;
+    return [length(), Math.round(127 - middleOf(notes()) + 0.5 - roll() / ROW / 2)] as const;
   });
   /** The note the head says: the earliest of the chosen ones, and how many are chosen. */
   const said = memo(() => {

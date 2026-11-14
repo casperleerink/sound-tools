@@ -89,6 +89,7 @@ export function showSection({ memory }: Pick<Piece, "memory">, id: string) {
   memory.open = id;
   memory.chosen = null;
   memory.noteBar = null;
+  memory.notice = null;
   // A note of the next section that is alike would be chosen with them.
   if (memory.notes.size > 0) memory.notes = new Set();
 }
@@ -116,6 +117,7 @@ export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, fro
   const [first, end] = [clamp(Math.min(from, to), 0, last), clamp(Math.max(from, to), 0, last)];
   piece.memory.chosen = { from: first, to: end, rows: rows && [...rows] };
   piece.memory.noteBar = null;
+  piece.memory.notice = null;
   // Chosen notes would take the keys of the chosen bars.
   if (piece.memory.notes.size > 0) piece.memory.notes = new Set();
   goTo(piece, open.place.start + open.starts[first]!);

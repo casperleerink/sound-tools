@@ -61,8 +61,9 @@ export function isLaidOut({ state, children, clock }: Pick<Piece, "state" | "chi
   );
 }
 
-/** One change of the piece as one undo step: what `change` does to its record and its instruments, then the parts and the clock laid out again. */
-export function edit({ update, clock }: Pick<Piece, "update" | "clock">, label: string, change: (draft: Draft) => void) {
+/** One change of the piece as one undo step: what `change` does to its record and its instruments, then the parts and the clock laid out again. With `memory`, it is the composer's, which ends a notice. */
+export function edit({ update, clock, memory }: Pick<Piece, "update" | "clock"> & Partial<Pick<Piece, "memory">>, label: string, change: (draft: Draft) => void) {
+  if (memory) memory.notice = null;
   const laid: { time?: ReturnType<typeof laidOut> } = {};
   update(label, (draft) => {
     change(draft);
@@ -74,6 +75,22 @@ export function edit({ update, clock }: Pick<Piece, "update" | "clock">, label: 
     song.tempo_map = time.tempo_map;
     song.sections = time.sections;
   });
+}
+
+/** An edit of the bars of the section `id` that tells the composer, quietly, of the notes it removed. */
+function editTelling(piece: Piece, label: string, id: string, change: (draft: Draft) => void) {
+  const notesIn = (draft: Draft) => tracksOf(draft).reduce((sum, track) => sum + (partOf(track, id)?.state.notes.length ?? 0), 0);
+  const told = { removed: 0, form: "" };
+  edit(piece, label, (draft) => {
+    const before = notesIn(draft);
+    change(draft);
+    told.removed = before - notesIn(draft);
+    told.form = JSON.stringify(draft.state.sections);
+  });
+  if (told.removed > 0) {
+    const text = told.removed === 1 ? "1 note did not fit and was removed. Undo brings it back." : `${told.removed} notes did not fit and were removed. Undo brings them back.`;
+    piece.memory.notice = { text, form: told.form };
+  }
 }
 
 /** Changes the bars of the section `id` and moves the music of every instrument in it along: the change, or none when it would leave no bar. */
@@ -95,7 +112,7 @@ function rebar(draft: Draft, id: string, change: (bars: Bar[]) => Change): { was
 
 /** Gives the bars `from` to `to` of a section another time signature: a bar made longer pushes what comes after it. */
 export const setSignature = (piece: Piece, id: string, from: number, to: number, signature: string) =>
-  edit(piece, "Change the time signature", (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, () => ({ signature }))));
+  editTelling(piece, "Change the time signature", id, (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, () => ({ signature }))));
 
 /** Gives the bars `from` to `to` of a section the tempo `tempo`, each in its own beat: 80 is 80 dotted quarters a minute in a bar of 6/8. */
 export const setTempo = (piece: Piece, id: string, from: number, to: number, tempo: number) =>
@@ -107,15 +124,17 @@ export const addBars = (piece: Piece, id: string, at: number, count = 1) =>
     void rebar(draft, id, (bars) => inserted(bars, at, Array.from({ length: count }, () => ({ ...(bars[at - 1] ?? bars[0] ?? { signature: "4/4", bpm: 120 }) })))),
   );
 
-/** Takes the bars `from` to `to` out of a section, with their music: what comes after moves up. A section keeps one bar. */
-export const removeBars = (piece: Piece, id: string, from: number, to: number) =>
-  edit(piece, from === to ? "Remove a bar" : "Remove bars", (draft) => void rebar(draft, id, (bars) => removed(bars, from, to)));
+const removeLabel = (from: number, to: number) => (from === to ? "Remove a bar" : "Remove bars");
+const takeOut = (draft: Draft, id: string, from: number, to: number) => void rebar(draft, id, (bars) => removed(bars, from, to));
 
-/** Makes a section `count` bars long: bars added at its end, or taken from it. */
+/** Takes the bars `from` to `to` out of a section, with their music: what comes after moves up. A section keeps one bar. */
+export const removeBars = (piece: Piece, id: string, from: number, to: number) => edit(piece, removeLabel(from, to), (draft) => takeOut(draft, id, from, to));
+
+/** Makes a section `count` bars long: bars added at its end, or taken from it, telling of the notes they took. */
 export function setLength(piece: Piece, id: string, count: number) {
   const bars = barsOf(piece.state.sections.find((section) => section.id === id)?.bars ?? []).length;
   if (count > bars) addBars(piece, id, bars, count - bars);
-  else if (count >= 1 && count < bars) removeBars(piece, id, count, bars - 1);
+  else if (count >= 1 && count < bars) editTelling(piece, removeLabel(count, bars - 1), id, (draft) => takeOut(draft, id, count, bars - 1));
 }
 
 /** Puts `copied` into the section `id` before the bar `at`: its bars, and its music on the instruments it came from that the piece still has. */
