@@ -306,6 +306,49 @@ fn a_space_turns_its_page_when_the_playhead_passes_its_right_edge(cx: &mut TestA
     }
 }
 
+/// The space of [`PAGES`] whose `turns` its code takes away at the first press.
+const PAGES_UNTIL_PRESSED: &str = r#"import { h, Space, tool } from "./sdk";
+
+tool({
+  name: "pages",
+  title: "Pages",
+  when: "Never",
+  doc: "A space that turns its pages with the playhead until it is pressed.",
+  state: {},
+  memory: () => ({ heard: "", presses: 0, follows: true }),
+  view: ({ memory, now }) =>
+    h("div", { style: { padding: 40, gap: 8 } },
+      h(Space, {
+        key: "board", width: 400, height: 40, unit: { x: 0.1 }, extent: { x: [0, 20000] },
+        turns: () => (memory.follows ? now.tick : undefined),
+        onPress: ({ x }) => {
+          memory.presses += 1;
+          memory.heard = `at-${Math.round(x)}-${memory.presses}`;
+          memory.follows = false;
+        },
+      }),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+    ),
+});
+"#;
+
+/// Once its code took `turns` away, the playhead passing the right edge turns no page.
+#[gpui::test]
+fn a_space_whose_turns_is_taken_away_turns_no_page(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pages", PAGES_UNTIL_PRESSED));
+    let board = window.space("board") + point(px(10.), px(10.));
+    for (tick, at) in [(3000, "at-100-1"), (5000, "at-100-2")] {
+        let session = window.session.clone();
+        window.cx.update(|_, cx| {
+            session.update(cx, |session, _| session.engine().seek(Ticks(tick)));
+        });
+        window.until_playhead(tick);
+        window.settle();
+        window.click(board);
+        window.until_found(&format!("div-heard-{at}"));
+    }
+}
+
 const STEPS: &str = r#"import { h, pattern, Steps, tool } from "./sdk";
 
 tool({

@@ -1,8 +1,8 @@
-import { Button, Circle, For, Fragment, h, Label, Line, memo, now, Rect, Show, Space, Text, untrack, type Drag, type Live, type Press } from "./sdk";
+import { Button, Circle, For, Fragment, h, Label, Line, memo, now, Rect, Show, Space, Text, untrack, type Drag, type Live, type Num, type Press, type SpaceValues } from "./sdk";
 import { addBar, askSignature, askTempo, choiceMenu, choiceOf, chooseRows, clearChosen } from "./piece-choice";
 import { moveSection } from "./piece-edits";
 import { beatOf, tempoOf } from "./piece-form";
-import { ACROSS, AFTER, chooseBars, clamp, colourOf, DIM, HEADER, LEAD, LOW_ROW, MARKS, muted, ROW, ZOOM, type Page } from "./piece-page";
+import { ACROSS, AFTER, barAtTick, chooseBars, clamp, colourOf, DIM, HEADER, LEAD, LOW_ROW, MARKS, muted, ROW, ZOOM, type Page } from "./piece-page";
 import { addSectionAtEnd, chooseSection, nameSection, sectionMenu } from "./piece-sections";
 import { addTrack } from "./piece-tracks";
 
@@ -13,8 +13,8 @@ import { addTrack } from "./piece-tracks";
 
 /** Where the lines of the band start: the section names, the two digits of a time signature, a tempo, the bar numbers. */
 const [NAME_Y, TOP_DIGIT, BOTTOM_DIGIT, TEMPO_Y, NUMBER_Y] = [8, 34, 50, 43, 76];
-/** The top of what the outline of chosen bars takes of the band. */
-const CHOSEN_Y = 30;
+/** Where the double line at a section's end starts, under the names; and the bar-number line, where chosen whole bars show, as a score's bar track. */
+const [LINES_Y, TRACK_Y] = [30, NUMBER_Y - 5];
 /** The points a bar's number needs before the next one. */
 const NUMBER_ROOM = 28;
 /** About how many points a character takes: of a label, of a bold label, of a bold heading, of a bold title digit. */
@@ -23,6 +23,8 @@ const HINT = "Double-click a bar to write notes";
 /** Where the piece opens: whole when a bar of 4/4 keeps this many points, else at zoom 1. */
 const NARROWEST = 40;
 const [FIT_BEFORE, FIT_AFTER] = [12, 120];
+/** How wide the two buttons on chosen whole bars are together, and the points they keep from an edge or the last row. */
+const [BUTTONS, GAP] = [104, 6];
 
 /** 1 while `ticks` give at least `points` of room at the zoom it shows: the window works it out as it zooms. */
 const fits = ({ space }: Page, ticks: number, points: number) => space.pointX.le(ticks / points);
@@ -54,7 +56,8 @@ function marksOf({ all, end }: Page) {
     const forms = [
       ...(change.tempo ? [{ signature: change.signature, tempo: full, width: 6 + lead + full.length * BOLD_CHAR + 8 }] : []),
       ...(change.tempo ? [{ signature: change.signature, tempo: short, width: 6 + lead + short.length * BOLD_CHAR + 8 }] : []),
-      ...(change.signature ? [{ signature: true, tempo: "", width: 6 + signatureWidth + 4 }] : []),
+      // The time signature alone, with a dot for a tempo that changes there.
+      ...(change.signature ? [{ signature: true, tempo: "", width: change.tempo ? 6 + lead + 6 : 6 + signatureWidth + 4 }] : []),
     ];
     return {
       ...change, signatureWidth, lead, forms, beats: beats!, note: note!,
@@ -93,17 +96,16 @@ const repeatSpan = ({ clock }: Page) => {
   return repeat ? { x: repeat.from, width: repeat.to - repeat.from, shown: 1 } : { x: 0, width: 0, shown: 0 };
 };
 
-/** A button that keeps its size in points, in the band: a quiet box with a label, over what it covers. */
-const BandButton = ({ page, id, x, y, text, width, shown, onClick, large = false }: {
-  page: Page; id: string; x: () => Live; y: number; text: string; width: number; shown: () => number; onClick: () => void; large?: boolean;
+/** A button that keeps its size in points at any zoom, at `x` and `y` in the units of `space`: a quiet box with a label, over what it covers. */
+const QuietButton = ({ space, id, x, y, text, width, shown, onClick, large = false }: {
+  space: SpaceValues; id: string; x: () => Live; y: () => Num; text: string; width: number; shown: () => number; onClick: () => void; large?: boolean;
 }) => {
-  const { space } = page;
-  const height = large ? 24 : 20;
+  const height = space.pointY.times(large ? 24 : 20);
   return (
     <>
       <Rect x={x} y={y} width={space.pointX.times(width)} height={height} radius={4} color="background" opacity={shown} />
       <Rect key={id} x={x} y={y} width={() => space.pointX.times(width).times(shown())} height={height} radius={4} color="fill" hover="fill-strong" cursor="pointer" opacity={shown} onClick={onClick} />
-      <Label x={() => x().plus(space.pointX.times(width / 2))} y={y + 2} align="center" variant={large ? "title" : "label"} text={text} color="text-secondary" opacity={shown} />
+      <Label x={() => x().plus(space.pointX.times(width / 2))} y={() => space.pointY.times(2).plus(y())} align="center" variant={large ? "title" : "label"} text={text} color="text-secondary" opacity={shown} />
     </>
   );
 };
@@ -111,8 +113,9 @@ const BandButton = ({ page, id, x, y, text, width, shown, onClick, large = false
 /**
  * The band over the rows. A press on a bar chooses it whole, all instruments, shift-press or a
  * drag a range, and puts the playhead there; a right press opens the menu of the chosen bars. A
- * click on a time signature or a tempo types it for the bars it stands for. A section's name
- * chooses its bars, a double click names it, a right press opens its menu, a drag moves it.
+ * click on a time signature or a tempo types it for the bars it stands for, a right press chooses
+ * its bar as one over it does. A section's name chooses its bars, a double click names it, a
+ * right press opens its menu, a drag moves it.
  */
 export const Marks = ({ page }: { page: Page }) => {
   const { memory, all, starts, end, barAt, space, sections } = page;
@@ -165,11 +168,19 @@ export const Marks = ({ page }: { page: Page }) => {
       carried = null;
       if (id === null) return;
       const before = x >= end() ? null : (parts().find((part) => x < part.to)?.id ?? null);
-      if (before !== id && before !== parts()[parts().findIndex((part) => part.id === id) + 1]?.id) moveSection(page, id, before);
+      if (before !== id && before !== (parts()[parts().findIndex((part) => part.id === id) + 1]?.id ?? null)) moveSection(page, id, before);
     },
   };
   const landing = () =>
     parts().reduce((x, part, index) => x.plus(carry.x.ge(part.from).times(part.from - (parts()[index - 1]?.from ?? 0))), carry.x.times(0)).plus(carry.x.ge(end()).times(end() - (parts().at(-1)?.from ?? 0)));
+  /** 1 while a drop would move nothing: on the carried section, its name being where the drag started, or on the one after it. */
+  const landsInPlace = () =>
+    parts().reduce((sum, part, index) => {
+      const carried = carry.startX.ge(part.from).times(carry.startX.lt(part.to));
+      const next = parts()[index + 1];
+      const over = (index === 0 ? not(NONE) : carry.x.ge(part.from)).times(next ? carry.x.lt(next.to) : 1);
+      return sum.plus(carried.times(over));
+    }, carry.x.times(0));
   const pressName = (id: string) => ({ button }: Press) => {
     carried = id;
     if (button === "right") void sectionMenu(page, id);
@@ -184,8 +195,8 @@ export const Marks = ({ page }: { page: Page }) => {
   return (
     <Space key="marks" height={MARKS} unit={{ x: ACROSS }} extent={() => ({ x: [-LEAD, end() + AFTER] })} zoom={{ x: ZOOM }} follow={{ x: "rows" }}
       onPress={press} drag={sweepDrag} cursor="pointer">
-      <Rect x={() => chosen().x} y={CHOSEN_Y} width={() => chosen().width} height={MARKS - CHOSEN_Y - 2} radius={4} color="selected" border="text" borderWidth={1} opacity={() => chosen().whole} />
-      <Rect x={sweep.startX.min(sweep.x)} y={CHOSEN_Y} width={sweep.dx.abs()} height={MARKS - CHOSEN_Y - 2} radius={4} color="fill" border="text-muted" borderWidth={1} opacity={sweep.active} />
+      <Rect x={() => chosen().x} y={TRACK_Y} width={() => chosen().width} height={MARKS - TRACK_Y - 2} radius={4} color="selected" border="text" borderWidth={1} opacity={() => chosen().whole} />
+      <Rect x={sweep.startX.min(sweep.x)} y={TRACK_Y} width={sweep.dx.abs()} height={MARKS - TRACK_Y - 2} radius={4} color="fill" border="text-muted" borderWidth={1} opacity={sweep.active} />
       <For each={parts}>
         {(part) => {
           // The name boxed, or its first letter as a rehearsal mark, or a dot: never nothing.
@@ -201,8 +212,8 @@ export const Marks = ({ page }: { page: Page }) => {
             return at?.rows === null && bars[at.from]?.id === part.id && bars[at.to]?.id === part.id && bars[at.from]?.at === 0 && bars[at.to + 1]?.id !== part.id ? "text" : "text-secondary";
           };
           return [
-            <Rect x={() => space.pointX.times(-3).plus(part.to)} y={CHOSEN_Y} width={space.pointX} height={MARKS - CHOSEN_Y} color="border-strong" />,
-            <Rect x={part.to} y={CHOSEN_Y} width={space.pointX} height={MARKS - CHOSEN_Y} color="border-strong" />,
+            <Rect x={() => space.pointX.times(-3).plus(part.to)} y={LINES_Y} width={space.pointX} height={MARKS - LINES_Y} color="border-strong" />,
+            <Rect x={part.to} y={LINES_Y} width={space.pointX} height={MARKS - LINES_Y} color="border-strong" />,
             <Label x={() => nameX().plus(space.pointX.times(6))} y={NAME_Y} opacity={shows[0]} text={() => [{ text: ` ${part.name} `, color: "text", weight: "semibold", border: colour() }]} />,
             <Label x={() => space.pointX.times(6).plus(part.from)} y={NAME_Y} opacity={shows[1]} text={() => [{ text: ` ${part.name.slice(0, 1)} `, color: "text", weight: "semibold", border: colour() }]} />,
             <Circle x={() => space.pointX.times(8).plus(part.from)} y={NAME_Y + 9} radius={2.5} color="text-secondary" opacity={shows[2]} />,
@@ -212,7 +223,7 @@ export const Marks = ({ page }: { page: Page }) => {
           ];
         }}
       </For>
-      <Rect x={() => landing().minus(space.pointX)} y={0} width={space.pointX.times(2)} height={MARKS} color="lavender" opacity={carry.active.times(carry.dx.abs().gt(0))} />
+      <Rect x={() => landing().minus(space.pointX)} y={0} width={space.pointX.times(2)} height={MARKS} color="lavender" opacity={() => carry.active.times(carry.dx.abs().gt(0)).times(not(landsInPlace()))} />
       <For each={marks}>
         {(mark) => {
           // The longest form that has room before the next mark, else a dot.
@@ -225,6 +236,8 @@ export const Marks = ({ page }: { page: Page }) => {
           const dot = not(fits(page, mark.room, last.width));
           const signatureShows = mark.signature ? not(dot) : NONE;
           const left = (points: number) => () => space.pointX.times(points).plus(mark.tick);
+          // A right press chooses the bar of the mark, as one on the band over it does.
+          const pressMark = (type: () => unknown) => (event: Press) => (event.button === "left" ? void type() : press({ ...event, x: mark.tick }));
           const digit = (text: string, y: number) => (
             <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="title" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureShows} />
           );
@@ -233,16 +246,18 @@ export const Marks = ({ page }: { page: Page }) => {
               ? [
                   digit(mark.beats, TOP_DIGIT), digit(mark.note, BOTTOM_DIGIT),
                   <Rect key={`signature-${mark.index}`} x={left(2)} y={TOP_DIGIT - 2} width={() => space.pointX.times(mark.signatureWidth + 8).times(signatureShows)} height={36} color="none" cursor="pointer"
-                    onPress={({ button }) => button === "left" && void askSignature(page, mark.signatureRun)} />,
+                    onPress={pressMark(() => askSignature(page, mark.signatureRun))} />,
                 ]
               : []),
             ...mark.forms.flatMap((form, index) =>
-              form.tempo === ""
+              form.tempo === "" && !mark.tempo
                 ? []
                 : [
-                    <Label x={left(6 + mark.lead)} y={TEMPO_Y} variant="heading" text={[{ text: form.tempo, weight: "semibold" }]} color="text" opacity={shown[index]} />,
+                    form.tempo === ""
+                      ? <Circle x={left(6 + mark.lead + 2.5)} y={(TOP_DIGIT + BOTTOM_DIGIT) / 2 + 8} radius={2.5} color="text-secondary" opacity={shown[index]} />
+                      : <Label x={left(6 + mark.lead)} y={TEMPO_Y} variant="heading" text={[{ text: form.tempo, weight: "semibold" }]} color="text" opacity={shown[index]} />,
                     <Rect key={`tempo-${mark.index}-${index}`} x={left(2 + mark.lead)} y={TOP_DIGIT - 2} width={space.pointX.times(form.width - mark.lead - 4).times(shown[index]!)} height={36} color="none" cursor="pointer"
-                      onPress={({ button }) => button === "left" && void askTempo(page, mark.tempoRun)} />,
+                      onPress={pressMark(() => askTempo(page, mark.tempoRun))} />,
                   ],
             ),
             <Circle x={left(8)} y={(TOP_DIGIT + BOTTOM_DIGIT) / 2 + 8} radius={2.5} color="text-secondary" opacity={dot} />,
@@ -254,11 +269,8 @@ export const Marks = ({ page }: { page: Page }) => {
           <Label x={() => space.pointX.times(4).plus(tick)} y={NUMBER_Y} text={() => String(index() + 1)} color={() => (inChosen(index()) ? "text" : "text-muted")} opacity={() => numberShows(index())} />
         )}
       </For>
-      <BandButton page={page} id="add-bar-end" x={after(10)} y={TOP_DIGIT + 4} text="+" width={24} large shown={() => 1} onClick={() => addBar(page, "end")} />
-      <BandButton page={page} id="add-section" x={after(10)} y={NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
-      <BandButton page={page} id="chosen-add-bar" x={() => space.pointX.times(-46).plus(chosen().x + chosen().width)} y={NAME_Y - 2} text="+ bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
-      <BandButton page={page} id="chosen-remove" x={() => space.pointX.times(-106).plus(chosen().x + chosen().width)} y={NAME_Y - 2} text="remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
-        onClick={() => clearChosen(page, true)} />
+      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+" width={24} large shown={() => 1} onClick={() => addBar(page, "end")} />
+      <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
       <Circle x={playhead} y={MARKS - 4} radius={3} color="text" />
       <Show when={() => notice() !== null}>
@@ -279,10 +291,10 @@ const silentOf = ({ rows }: Page) => memo(() => rows().every((each) => each.chil
  * returns and the master. A press chooses that bar of that instrument and the instrument,
  * shift-press takes in the bars and instruments up to it, a drag those it goes over; a right press
  * opens the menu of what is chosen; a double click opens the notes of its part. A press under the
- * rows lets go.
+ * rows lets go. Under chosen whole bars, the buttons that add a bar after them and remove them.
  */
 export const Rows = ({ page }: { page: Page }) => {
-  const { rows, returnsHeight, starts, end, all, memory, partAt, openPanel, openEditor, barAt, space, size } = page;
+  const { rows, returnsHeight, starts, end, all, memory, clock, partAt, openPanel, openEditor, barAt, space, size } = page;
   const silent = silentOf(page);
   const chosen = () => chosenSpan(page);
   const names = () => rows().map((each) => each.name);
@@ -328,20 +340,32 @@ export const Rows = ({ page }: { page: Page }) => {
     const room = Math.max(size.width - HEADER - FIT_BEFORE - FIT_AFTER, 1);
     return end() > 0 && (room / end()) * 4 * 960 >= NARROWEST ? end() : room / ACROSS;
   });
-  // The rows scroll the least to show what is chosen.
-  const shown = () => {
+  // The rows scroll the least to show what is chosen as it changes, and the bar the playhead is in as the piece starts to play while the page follows it.
+  type Shown = { x: readonly [number, number]; y?: readonly [number, number] } | undefined;
+  let [shownChoice, wasPlaying, shown]: [string | undefined, boolean, Shown] = [undefined, false, undefined];
+  const toShow = memo((): Shown => {
     const choice = choiceOf(page);
-    if (!choice) return undefined;
-    const x = [starts()[choice.from]!, starts()[choice.to + 1]!] as const;
     const at = chosen();
-    return at.music ? { x, y: [at.top, at.top + at.height] as const } : { x };
-  };
+    const range: Shown = choice && { x: [starts()[choice.from]!, starts()[choice.to + 1]!], ...(at.music ? { y: [at.top, at.top + at.height] } : {}) };
+    const playing = clock.playing && memory.follows;
+    if (JSON.stringify(range) !== shownChoice) shown = range;
+    else if (playing && !wasPlaying) {
+      // A space scrolls only for a range other than the last: one tick, which no choice is, and none once it stops, so each start scrolls.
+      const start = starts()[barAtTick(all(), untrack(() => clock.tick))] ?? 0;
+      shown = { x: [start, start + 1] };
+    } else if (!playing && wasPlaying) shown = undefined;
+    [shownChoice, wasPlaying] = [JSON.stringify(range), playing];
+    return shown;
+  });
   const playhead = now.tick.plus(space.pointX.times(0.5));
+  // The buttons on chosen whole bars: at their left edge, a little under the last row or over the bottom of what shows, never past an edge.
+  const buttonsX = () => space.left.plus(space.pointX.times(GAP)).max(chosen().x).min(space.right.minus(space.pointX.times(BUTTONS + GAP)));
+  const buttonsY = () => space.bottom.minus(space.pointY.times(20 + GAP)).min(rows().length + GAP / ROW);
   return (
     <>
       <div style={{ grow: true }}>
         <Space key="rows" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end() + AFTER], y: [0, rows().length + 1] })} zoom={{ x: ZOOM }}
-          fit={{ x: [0, opening], before: FIT_BEFORE, after: FIT_AFTER }} show={shown} turns={now.tick} onPress={press} drag={sweepDrag}>
+          fit={{ x: [0, opening], before: FIT_BEFORE, after: FIT_AFTER }} show={toShow} turns={() => (memory.follows ? now.tick : undefined)} onPress={press} drag={sweepDrag}>
           <Rect x={() => chosen().x} y={0} width={() => chosen().width} height={() => rows().length} color="selected" opacity={() => chosen().whole} />
           <Rect x={() => chosen().x} y={() => chosen().top + 2 / ROW} width={() => chosen().width} height={() => chosen().height - 4 / ROW} radius={4}
             color="selected" border="text" borderWidth={1} opacity={() => chosen().music} />
@@ -396,6 +420,9 @@ export const Rows = ({ page }: { page: Page }) => {
             ]}
           </Show>
           <Line from={() => [playhead, 0] as const} to={() => [playhead, rows().length] as const} color="text" width={1} />
+          <QuietButton space={space} id="chosen-add-bar" x={buttonsX} y={buttonsY} text="+ bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
+          <QuietButton space={space} id="chosen-remove" x={() => buttonsX().plus(space.pointX.times(48))} y={buttonsY} text="remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
+            onClick={() => clearChosen(page, true)} />
         </Space>
         <Show when={() => rows().length === 0}>{() => <EmptyPiece page={page} />}</Show>
       </div>

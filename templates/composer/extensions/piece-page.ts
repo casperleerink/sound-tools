@@ -16,9 +16,9 @@ export const LOW_ROW = 40;
 /** Points per tick at zoom 1: a bar of 4/4 is 96 points. */
 export const ACROSS = 0.025;
 export const ZOOM = [0.1, 8] as const;
-/** The ticks before the first bar, and after the last, where the buttons that add a bar and a section are. */
+/** The ticks before the first bar, and after the last, where the buttons that add a bar and a section are: 120 points at the smallest zoom. */
 export const LEAD = 480;
-export const AFTER = 6 * 4 * 960;
+export const AFTER = 120 / (ACROSS * ZOOM[0]);
 
 /** A row the composer chooses, an instrument's head, a return's, the master's or a section's: one look while it is chosen, and one under the pointer. */
 export const rowLook = (chosen: boolean): Pick<Style, "background" | "hover"> => (chosen ? { background: "selected" } : { hover: { background: "fill" } });

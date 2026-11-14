@@ -7,8 +7,9 @@
 
 use std::path::Path;
 
-use gpui::{Pixels, Point, TestAppContext, point, px};
+use gpui::{Pixels, Point, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px};
 use serde_json::{Value, json};
+use sound_core::Ticks;
 
 use super::{Opened, open_folder};
 use crate::song::BAR;
@@ -130,6 +131,15 @@ impl Opened<'_> {
         let across = self.across();
         let x = FIT_BEFORE + (bar * BAR + BAR / 2) as f32 * across;
         self.space_at("rows") + point(px(x), px(row as f32 * ROW + ROW / 2.))
+    }
+
+    /// Where the buttons on chosen whole bars starting at `tick` are, `x` points on: a little
+    /// under the last of the two rows, or over the bottom of the rows when they are taller.
+    fn under_rows(&mut self, tick: u64, x: f32) -> Point<Pixels> {
+        let across = self.across();
+        let rows = self.bounds("space-rows").unwrap();
+        let y = (2. * ROW + 6.).min(f32::from(rows.size.height) - 26.) + 10.;
+        rows.origin + point(px(FIT_BEFORE + tick as f32 * across + x), px(y))
     }
 
     /// Chooses the bar `bar` of the piece whole, from 0, with a click in the band over it: the
@@ -316,14 +326,15 @@ fn a_bar_added_moves_the_rest_later_and_one_removed_takes_its_notes(cx: &mut Tes
     assert_eq!(window.problems(), []);
 }
 
-/// "+ bar" on chosen bar 2 adds one after it, chosen, and "remove" on that takes it out again.
+/// "+ bar" under chosen bar 2 adds one after it, chosen, and "remove" under that takes it out
+/// again.
 #[gpui::test]
 fn the_buttons_on_chosen_bars_add_one_after_them_and_remove_them(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    // At the right end of the chosen bars, "+ bar", and left of it "remove".
-    let add = window.in_band(2 * BAR, -24., NAMES);
+    // At the left edge of the chosen bars, "+ bar", and right of it "remove".
+    let add = window.under_rows(BAR, 22.);
     window.click(add);
     window.until("a bar added", |window| {
         window.part("t00", "sec-b").0 == 5 * BAR
@@ -337,7 +348,7 @@ fn the_buttons_on_chosen_bars_add_one_after_them_and_remove_them(cx: &mut TestAp
 
     window.until_playhead(2 * BAR);
     let before = mark(&mut window);
-    let remove = window.in_band(3 * BAR, -78., NAMES);
+    let remove = window.under_rows(2 * BAR, 76.);
     window.click(remove);
     window.until("the bar removed", |window| {
         window.part("t00", "sec-b").0 == 4 * BAR
@@ -387,6 +398,18 @@ fn a_section_started_at_a_bar_takes_the_music_after_it_and_sounds_the_same(
     window.keys("escape");
     one_undo_step(&mut window, "Start a section", &before);
     assert_eq!(window.problems(), []);
+}
+
+/// Shift-S on the first bar of B, which starts a section already, does nothing.
+#[gpui::test]
+fn a_section_is_not_started_where_one_starts(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(4);
+    window.keys("shift-s");
+    window.wait_for_bun();
+    window.after_the_runs();
+    assert_eq!(window.sections().as_array().unwrap().len(), 2);
+    assert_eq!(window.undo_label(), None);
 }
 
 /// A note held from bar 2 into bar 3, and a section started at bar 3: the note ends at the new
@@ -608,14 +631,14 @@ fn a_time_signature_typed_on_its_mark_changes_its_run_up_to_the_next(cx: &mut Te
     assert_eq!(window.problems(), []);
 }
 
-/// Bar 2 chosen and T, 100: that bar alone is at 100, and the bar after it at 120 again.
+/// Bar 2 chosen and T, "100 bpm": that bar alone is at 100, and the bar after it at 120 again.
 #[gpui::test]
 fn a_tempo_typed_for_one_bar_changes_that_bar_only(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
     window.keys("t");
-    window.type_in_field("100");
+    window.type_in_field("100 bpm");
     window.until("the tempo changed", |window| {
         window.sections()[0]["bars"].as_array().unwrap().len() == 3
     });
@@ -758,4 +781,32 @@ fn the_first_bar_opens_the_note_editor_on_it(cx: &mut TestAppContext) {
     window.choose_music(4, 0);
     window.until_found(&format!("space-editor-t00/sec-b/0-{}", 2 * BAR));
     assert_eq!(window.problems(), []);
+}
+
+/// Bar 3 chosen, the rows scrolled far past it by hand, and play: the rows go back to it, so a
+/// click a little in from their left edge is in bar 3.
+#[gpui::test]
+fn the_rows_go_to_the_playhead_as_the_piece_starts_to_play(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(2);
+    let rows = window.space_at("rows");
+    for _ in 0..5 {
+        window.cx.simulate_event(ScrollEvent {
+            position: rows + point(px(300.), px(20.)),
+            delta: ScrollDelta::Pixels(point(px(-600.), px(0.))),
+            touch_phase: TouchPhase::Moved,
+            ..Default::default()
+        });
+    }
+    let session = window.session.clone();
+    let playhead =
+        move |window: &mut Opened| window.cx.read(|cx| *session.read(cx).playhead().read(cx));
+    window.keys("space");
+    window.until("it plays on", |window| {
+        playhead(window).tick > Ticks(2 * BAR)
+    });
+    window.keys("space");
+    window.until("it stops", |window| !playhead(window).playing);
+    window.click(rows + point(px(34.), px(20.)));
+    window.until_playhead(2 * BAR);
 }

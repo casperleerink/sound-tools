@@ -1,7 +1,7 @@
 import { type Action, type ActionKey } from "./sdk";
 import { chosenStart, noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { addBar, askSignature, askTempo, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
+import { addBar, askSignature, askTempo, choiceOf, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
 import { barsOfPiece, chooseBars, clamp, editedPart, editPart, formOf, instrumentsOf, partSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
 import { addSectionAtEnd, currentSection, moveSectionBy, nameSection, stepSection } from "./piece-sections";
@@ -133,8 +133,9 @@ export const pieceActions: Record<string, PieceAction> = {
     const id = currentSection(tool);
     if (id) void nameSection(tool, id);
   }),
-  add_section: on(["shift-s"], "Start a section at the chosen bar, or add one at the end", (tool) => {
-    if (!startSectionAt(tool)) addSectionAtEnd(tool);
+  add_section: on(["shift-s"], "Start a section at the chosen bar, or with none chosen add one at the end", (tool) => {
+    if (choiceOf(tool)) startSectionAt(tool);
+    else addSectionAtEnd(tool);
   }),
 
   rename_instrument: on(["enter"], "Rename the instrument", (tool) => {

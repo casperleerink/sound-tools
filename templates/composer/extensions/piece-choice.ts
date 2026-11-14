@@ -210,7 +210,7 @@ export async function askTempo(piece: Piece, bars: { from: number; to: number } 
   const bar = barsOfPiece(piece.state).bars[bars.from];
   if (!bar) return;
   const typed = await piece.openField({ placeholder: `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`, width: 120 });
-  const [, number] = /(\d+(?:[.,]\d+)?)\s*$/.exec(typed ?? "") ?? [];
+  const [, number] = /(\d+(?:[.,]\d+)?)/.exec(typed ?? "") ?? [];
   if (!number) return;
   const tempo = clamp(Math.round(Number(number.replace(",", ".")) * 10) / 10, 10, 600);
   setTempo(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), tempo);
