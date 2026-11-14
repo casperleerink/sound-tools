@@ -26,7 +26,7 @@ const marksAt = (bars: readonly Bar[], index: number): string[] => {
   const tempo = !before || said(bar) !== said(before) ? said(bar) : "";
   if (!signature && !tempo) return [];
   if (!tempo) return [signature, "•"];
-  return signature ? [`${signature}  ${tempo}`, `${signature}  ${tempoOf(bar)}`, `${signature} •`, "•"] : [tempo, String(tempoOf(bar)), "•"];
+  return signature ? [`${signature}  ${tempo}`, `${signature} •`, "•"] : [tempo, "•"];
 };
 
 /** The x of the tick `tick` of the open section, which follows the room and the bars. */
@@ -78,6 +78,11 @@ export const BarStrip = ({ page }: { page: Page }) => {
     const narrowest = Math.min(...cells().map((cell) => (cell.to - cell.from) * scale()));
     return 2 ** Math.max(Math.ceil(Math.log2(NUMBER_ROOM / Math.max(narrowest, 1))), 0);
   });
+  // The first chosen bar always says its number, and the bar before it gives it the room.
+  const numberShows = (index: number) => {
+    const first = memory.chosen?.from;
+    return index === first || (index % numbered() === 0 && (numbered() === 1 || index + 1 !== first));
+  };
   const inChosen = (index: number) => {
     const at = memory.chosen;
     return at !== null && index >= at.from && index <= at.to;
@@ -110,13 +115,13 @@ export const BarStrip = ({ page }: { page: Page }) => {
       <Rect x={sweep.startX.min(sweep.x)} y={1.5} width={sweep.dx.abs()} height={FOOT - 1.5} radius={4} color="fill" border="text-muted" borderWidth={1} opacity={sweep.active} />
       <For each={cells}>
         {(cell) => {
-          // The longest of its marks the bar leaves room for.
-          const room = () => (cell.to - cell.from) * scale() - 12;
+          // The longest of its marks that fits before the next bar with marks.
+          const room = () => ((cells().find((each) => each.index > cell.index && each.marks.length > 0)?.from ?? Infinity) - cell.from) * scale() - 12;
           const marks = () => cell.marks.find((text) => widthOf(text) <= room()) ?? cell.marks.at(-1) ?? "";
           return [
             <Rect x={xOf(page, cell.from)} y={0} width={1} height={STRIP} color="border" />,
             <Label x={() => cell.from * scale() + 6} y={NUMBER} text={String(cell.number)} color={() => (inChosen(cell.index) ? "text" : "text-secondary")}
-              opacity={() => (cell.index % numbered() === 0 ? 1 : 0)} />,
+              opacity={() => (numberShows(cell.index) ? 1 : 0)} />,
             <Label x={() => cell.from * scale() + 6} y={MARKS} text={marks} color="text-muted" />,
           ];
         }}

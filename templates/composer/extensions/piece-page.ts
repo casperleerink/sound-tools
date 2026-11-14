@@ -104,6 +104,8 @@ function goTo({ clock, memory }: Pick<Piece, "clock" | "memory">, tick: number) 
 export function openAt(piece: Pick<Piece, "state" | "memory" | "clock" | "children">, id: string) {
   showSection(piece, id);
   goTo(piece, formOf(piece.state).places[id]?.start ?? 0);
+  // Back on the section that plays, the page goes on with it.
+  if (piece.clock.playing && id === piece.memory.playing) piece.memory.follows = true;
 }
 /** Chooses the bars `from` to `to` of the open section, whole or of the instruments `rows`, and puts the playhead on the first. */
 export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, from: number, to: number, rows: readonly string[] | null = null) {

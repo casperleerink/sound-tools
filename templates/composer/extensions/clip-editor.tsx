@@ -18,14 +18,13 @@ const GRID_ROOM = 6;
 const VELOCITY_STEP = 10;
 // The top of a velocity of 127, and the bottom of every one, in the lane.
 const [VELOCITY_TOP, VELOCITY_BOTTOM] = [8, LANE - 4];
-/** The grids a note snaps to, as the arrangement's menu: a bar is as long as the bar the clip starts in. */
-export const snapsOf = (bar: number) => [
-  { label: "Off", ticks: 0 },
-  { label: "Bar", ticks: bar },
-  { label: "Beat", ticks: BEAT },
-  { label: "1/8", ticks: BEAT / 2 },
-  { label: "1/16", ticks: BEAT / 4 },
-  { label: "1/32", ticks: BEAT / 8 },
+/** The grids a note snaps to: note values, which fit every time signature. */
+const GRIDS = [
+  { label: "Off", value: 0 },
+  { label: "1/4", value: BEAT },
+  { label: "1/8", value: BEAT / 2 },
+  { label: "1/16", value: BEAT / 4 },
+  { label: "1/32", value: BEAT / 8 },
 ];
 const LANES = ["velocity", "pedal", "bend", "mod_wheel", "pressure"] as const;
 const LANE_NAMES: Record<(typeof LANES)[number], string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod wheel", pressure: "Pressure" };
@@ -185,6 +184,8 @@ export interface EditorProps {
   colour: Accessor<Color>;
   /** Keeps the editor's scroll and zoom, and fits it to a clip once: the clip's `track/clip`. */
   id: string;
+  /** The ticks of the clip it opens on, such as the chosen bars: the whole clip when left out. */
+  shows?: readonly [number, number];
   memory: Memory<EditorMemory>;
   /** Changes the clip as one undo step `label`. */
   edit: (label: string, change: (clip: Clip) => void) => void;
@@ -287,7 +288,7 @@ function spanOf(notes: readonly Note[]) {
 }
 
 /** What an action of the song does to the notes of the open clip. */
-export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | "next" | "previous" | keyof typeof NOTE_MOVES;
+export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "longer" | "shorter" | "none" | "next" | "previous" | keyof typeof NOTE_MOVES;
 /** How far each move takes the chosen notes: in steps of the grid, and in pitches. */
 const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "octave-up": [0, 12], "octave-down": [0, -12] } as const;
 
@@ -322,9 +323,11 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
   } else if (command === "quantize") {
     operate("quantize", clip, memory, edit);
   } else if (command === "next" || command === "previous") {
-    // The note after the last chosen one, or before the first: with none chosen, the first or the last.
-    const at = command === "next" ? Math.max(...chosen, -1) + 1 : (chosen.size > 0 ? Math.min(...chosen) : clip.notes.length) - 1;
-    const note = clip.notes[clamp(at, 0, clip.notes.length - 1)];
+    // As they sound, whatever order they were written in: the note after the last chosen one, or before the first; with none chosen, the first or the last.
+    const order = clip.notes.map((_, index) => index).sort((a, b) => clip.notes[a]!.start - clip.notes[b]!.start || clip.notes[a]!.pitch - clip.notes[b]!.pitch);
+    const places = order.flatMap((index, place) => (chosen.has(index) ? [place] : []));
+    const at = command === "next" ? Math.max(...places, -1) + 1 : (places.length > 0 ? Math.min(...places) : order.length) - 1;
+    const note = clip.notes[order[clamp(at, 0, order.length - 1)] ?? -1];
     if (!note) return false;
     memory.notes = new Set([noteKey(note)]);
   } else if (chosen.size === 0) {
@@ -341,6 +344,10 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
   } else if (command === "louder" || command === "softer") {
     const by = command === "louder" ? VELOCITY_STEP : -VELOCITY_STEP;
     change("Change velocity", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, velocity: clamp(note.velocity + by, 1, 127) } : note)), chosen: all }));
+  } else if (command === "longer" || command === "shorter") {
+    const step = memory.snap || BEAT / 4;
+    const by = command === "longer" ? step : -step;
+    change("Change the length of notes", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, length: Math.max(note.length + by, Math.min(note.length, step)) } : note)), chosen: all }));
   } else if (command === "none") {
     memory.notes = new Set();
   } else {
@@ -351,7 +358,7 @@ export function noteCommand(command: NoteCommand, clip: Frozen<Clip>, playhead: 
 }
 
 /** The editor: a header with the track, the clip's title, the ruler and its buttons, the notes, and the lane under them. */
-export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, preview, seek, onClose, height, large, onLarge, beats, openMenu, hearsControllers }: EditorProps) {
+export function ClipEditor({ clip, bars, name, title, colour, id, shows, memory, edit, preview, seek, onClose, height, large, onLarge, beats, openMenu, hearsControllers }: EditorProps) {
   const isPicked = selector(() => memory.notes);
   const notes = () => clip()?.notes ?? [];
   const length = () => {
@@ -641,6 +648,11 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
   // The roll and what follows it across: the ruler and the lane.
   const across = { unit: { x: ACROSS }, extent: () => ({ x: [-BEAT, end()] as const }), zoom: { x: [0.1, 8] as const } };
   const Rule = () => <div style={{ width: 1, background: "border", keep: true }} />;
+  /** 1 while the number of the bar at `index` has room: zoomed out, every second, fourth, eighth … bar keeps its number. */
+  const numberShows = (index: number, tick: number) => {
+    const apart = index & -index;
+    return apart === 0 ? 1 : space.pointX.le(((bars()[index + apart] ?? tick + apart * WHOLE) - tick) / 36);
+  };
 
   return (
     <div style={() => ({ height: height(), keep: true })}>
@@ -654,7 +666,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
               <Text variant="label" style={{ grow: true, truncate: true }}>{name}</Text>
             </>
           ) : <Text variant="heading" style={{ grow: true, truncate: true }}>{name}</Text>}
-          <Select key="editor-grid" size="sm" title="Grid" value={() => memory.snap} options={snapsOf(WHOLE).map(({ label, ticks }) => ({ value: ticks, label }))} onChange={(snap) => (memory.snap = snap)} />
+          <Select key="editor-grid" size="sm" title="Grid" value={() => memory.snap} options={GRIDS} onChange={(snap) => (memory.snap = snap)} />
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}
@@ -662,7 +674,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
           <For each={() => bars().map((tick, index) => ({ tick, index }))}>
             {({ tick, index }) => [
               <Rect x={tick} y={RULER - 8} width={space.pointX} height={8} color="border-strong" />,
-              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} color="text-muted" />,
+              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} color="text-muted" opacity={() => numberShows(index, tick)} />,
             ]}
           </For>
           <Cursor to={RULER} />
@@ -691,7 +703,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
         </Space>
         <Rule />
         <Space key={key} grow height={roll} {...across} unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-BEAT, end()] as const, y: [0, 128] as const })}
-          fit={{ x: [0, opening], before: 8, after: 96 }} scroll={{ y: middleRow }} drag={marqueeDrag} onPress={pressEmpty}>
+          fit={{ x: shows ?? [0, opening], before: 8, after: 96 }} scroll={{ y: middleRow }} drag={marqueeDrag} onPress={pressEmpty}>
           {pitches.filter(isBlack).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="fill" opacity={0.4} />)}
           {/* Where a note lands: faint lines at the snap inside a beat, while the zoom leaves them room. */}
           {() => {

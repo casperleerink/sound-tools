@@ -4,7 +4,7 @@ import type { Piece } from "./piece";
 import { addBar, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
 import { chooseBars, clamp, editedPart, editPart, instrumentsOf, openOf, openSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
-import { addSectionAfter, moveSectionBy, stepSection } from "./piece-sections";
+import { addSectionAt, moveSectionBy, stepSection } from "./piece-sections";
 import { askToDelete } from "./piece-tracks";
 
 // What the piece does on a key. The actions of one key are tried from the top: the notes of the
@@ -79,6 +79,8 @@ export const pieceActions: Record<string, PieceAction> = {
   duplicate_notes: notes(["cmd-d"], "Duplicate the chosen notes", "duplicate"),
   notes_louder: notes(["alt-up"], "Make the chosen notes louder", "louder"),
   notes_softer: notes(["alt-down"], "Make the chosen notes softer", "softer"),
+  notes_shorter: notes(["shift-left"], "Make the chosen notes shorter", "shorter"),
+  notes_longer: notes(["shift-right"], "Make the chosen notes longer", "longer"),
   note_before: notes(["alt-left"], "Choose the note before", "previous"),
   note_after: notes(["alt-right"], "Choose the next note", "next"),
   notes_left: notes(["left"], "Move the chosen notes earlier", "left"),
@@ -125,7 +127,7 @@ export const pieceActions: Record<string, PieceAction> = {
     if (id) tool.memory.naming = { id, in: "head" };
   }),
   add_section: on(["shift-s"], "Start a section here, or add one", (tool) => {
-    if (!startSectionAt(tool)) addSectionAfter(tool, "head");
+    if (!startSectionAt(tool)) addSectionAt(tool, "after", "head");
   }),
 
   rename_instrument: on(["enter"], "Rename the instrument", (tool) => {

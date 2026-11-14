@@ -190,12 +190,19 @@ export function paste(piece: Piece, id: string, chosen: Chosen, copied: Copied, 
 
 // Sections
 
+/** `Section 3` for the third: the first such name no section has. */
+function freeNameOf(sections: readonly { readonly name: string }[]): string {
+  for (let number = sections.length + 1; ; number++) {
+    if (!sections.some((section) => section.name === `Section ${number}`)) return `Section ${number}`;
+  }
+}
+
 /** Adds a section of eight bars after the section `after`, or at the end, with the time signature and tempo of the bar before it: its id. */
 export function addSection(piece: Piece, after: string | null): string {
   const sections = piece.state.sections;
   const at = after === null ? sections.length : sections.findIndex((section) => section.id === after) + 1 || sections.length;
   const before = sections[at - 1]?.bars.at(-1) ?? sections[0]?.bars[0];
-  const name = `Section ${sections.length + 1}`;
+  const name = freeNameOf(sections);
   const id = idFor(name, sections.map((section) => section.id));
   edit(piece, "Add a section", (draft) => {
     draft.state.sections.splice(at, 0, { id, name, bars: [{ bars: 8, signature: before?.signature ?? "4/4", bpm: before?.bpm ?? 120 }] });
@@ -260,7 +267,7 @@ export function splitSection(piece: Piece, id: string, bar: number): string | un
   const sections = piece.state.sections;
   const source = sections.find((section) => section.id === id);
   if (!source || bar <= 0 || bar >= barsOf(source.bars as Draft["state"]["sections"][number]["bars"]).length) return undefined;
-  const name = `Section ${sections.length + 1}`;
+  const name = freeNameOf(sections);
   const next = idFor(name, sections.map((section) => section.id));
   edit(piece, "Start a section", (draft) => {
     const at = draft.state.sections.findIndex((section) => section.id === id);

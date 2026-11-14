@@ -165,8 +165,8 @@ export async function choiceMenu(piece: Piece) {
   const items: Item[] = [
     { label: "Cut", shortcut: "piece.cut", run: () => cutChosen(piece) },
     { label: "Copy", shortcut: "piece.copy", run: () => copyChosen(piece) },
-    { label: "Paste", shortcut: "piece.paste", disabled: piece.memory.copied === null, run: () => pasteChosen(piece) },
-    { label: "Repeat", shortcut: "piece.repeat_music", run: () => repeatChosen(piece) },
+    { label: whole ? "Paste as new bars" : "Paste", shortcut: "piece.paste", disabled: piece.memory.copied === null, run: () => pasteChosen(piece) },
+    { label: whole ? "Repeat as new bars" : "Repeat", shortcut: "piece.repeat_music", run: () => repeatChosen(piece) },
     whole
       ? { label: "Remove", shortcut: "piece.remove_bars", disabled: isAll(choice), run: () => clearChosen(piece, true) }
       : { label: "Clear", shortcut: "piece.clear_music", run: () => clearChosen(piece, false) },

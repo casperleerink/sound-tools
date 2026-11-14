@@ -29,9 +29,9 @@ export function moveSectionBy(piece: Piece, id: string, by: -1 | 1) {
   if (at < 0 || at + by < 0 || at + by >= ids.length) return;
   moveSection(piece, id, by < 0 ? ids[at - 1]! : (ids[at + 2] ?? null));
 }
-/** Adds a section after the open one and opens it, its name typed in the list or in the head. */
-export function addSectionAfter(piece: Piece, where: "list" | "head") {
-  const id = addSection(piece, openSectionOf(piece)?.id ?? null);
+/** Adds a section, `after` the open one or at the `end` of the piece, and opens it, its name typed in the list or in the head. */
+export function addSectionAt(piece: Piece, at: "after" | "end", where: "list" | "head") {
+  const id = addSection(piece, at === "end" ? null : (openSectionOf(piece)?.id ?? null));
   openAt(piece, id);
   piece.memory.naming = { id, in: where };
 }
@@ -125,8 +125,8 @@ export const SectionsList = ({ page }: { page: Page }) => {
           )}
         </For>
         <div style={{ height: SECTION_ROW, direction: "row", align: "center", paddingX: "sm" }} onDrop={({ carried }) => dropOn(page, carried, null)}>
-          <Button key="add-section" label="Add section" icon="plus" variant="ghost" color="text-secondary" size="sm" shortcut="piece.add_section" tooltip="Add a section after the open one"
-            onClick={() => addSectionAfter(page, "list")} />
+          <Button key="add-section" label="Add section" icon="plus" variant="ghost" color="text-secondary" size="sm" tooltip="Add a section at the end"
+            onClick={() => addSectionAt(page, "end", "list")} />
         </div>
       </div>
       <div style={{ paddingX: "lg", paddingY: "md", keep: true }}>
@@ -141,18 +141,23 @@ export const SectionsList = ({ page }: { page: Page }) => {
  * changes the piece once, as it is let go, so a bar made shorter and longer again in one drag
  * keeps its notes. A click types it; the arrows step it. `steps` gives the value `by` steps from
  * one, and with 0 the nearest it takes. While the bars it is for differ it shows a dash and does
- * not drag: one stray drag would make them all alike. `typed` takes what is typed first, such
- * as a whole time signature, and says whether it was one; `text` is what the field starts with.
+ * not drag, nor while `still` says so: one stray drag would make them all alike. `typed` takes
+ * what is typed first, such as a whole time signature, and says whether it was one; `text` is
+ * what the field starts with, and `onTyping` hears when the field opens and closes.
  */
-const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false, typed, text = () => String(untrack(value)) }: {
+const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed = () => false, still = mixed, typed, text = () => String(untrack(value)), onTyping }: {
   id: string; value: Accessor<number>; steps: (from: number, by: number) => number; set: (value: number) => void; width: number; per?: number; align?: "left" | "right"; mixed?: Accessor<boolean>;
-  typed?: (text: string) => boolean; text?: () => string;
+  still?: Accessor<boolean>; typed?: (text: string) => boolean; text?: () => string; onTyping?: (typing: boolean) => void;
 }) => {
   const [dragged, drag] = signal<number | null>(null);
-  const [typing, type] = signal(false);
+  const [typing, setTyping] = signal(false);
+  const type = (on: boolean) => {
+    setTyping(on);
+    onTyping?.(on);
+  };
   let pressed = 0;
   const onTurn = (turn: Turn) => {
-    if (!("moved" in turn) || untrack(mixed)) return;
+    if (!("moved" in turn) || untrack(still)) return;
     const next = steps(turn.held ? pressed : untrack(value), turn.moved);
     if (turn.held) drag(next);
     else if (next !== untrack(value)) set(next);
@@ -169,7 +174,7 @@ const Amount = ({ id, value, steps, set, width, per = 10, align = "left", mixed 
     if (Number.isFinite(number)) set(steps(number, 0));
   };
   return (
-    <div style={{ keep: true }} keys={["enter"]} onKey={() => type(true)}>
+    <div style={{ keep: true, radius: "sm", hover: { background: "fill" } }} keys={["enter"]} onKey={() => type(true)}>
       {() =>
         typing() ? (
           <Input key={`${id}-typed`} value={untrack(mixed) ? "" : text()} width={Math.max(width + 24, 56)} size="lg" focus onCommit={commit} onCancel={() => type(false)} />
@@ -209,6 +214,9 @@ export const SectionHead = ({ page }: { page: Page }) => {
   const first = () => targeted()[0] ?? { signature: "4/4", bpm: 120 };
   const differ = (of: (bar: { signature: string; bpm: number }) => number) => () => targeted().some((bar) => of(bar) !== of(first()));
   const [beatsOf, noteOf] = [(bar: { signature: string }) => partsOf(bar.signature)[0], (bar: { signature: string }) => partsOf(bar.signature)[1]];
+  const signatureDiffers = () => differ(beatsOf)() || differ(noteOf)();
+  // The number of the time signature that is typed: the whole signature is typed in its field, so the other one waits.
+  const [typingSignature, typeSignature] = signal<"beats" | "note" | null>(null);
   // In the beat of each bar: a tempo of 80 dotted quarters is not one of 80 quarters.
   const tempoDiffers = () => targeted().some((bar) => tempoOf(bar) !== tempoOf(first()) || beatOf(bar.signature).sign !== beatOf(first().signature).sign);
   const caption = () => {
@@ -275,16 +283,26 @@ export const SectionHead = ({ page }: { page: Page }) => {
           {() => <Button key="choice-menu" icon="ellipsis" variant="ghost" color="text-secondary" size="sm" tooltip="Cut, copy, add or remove the chosen bars" onClick={() => void choiceMenu(page)} />}
         </Show>
       </div>
-      <Field caption={() => (differ(beatsOf)() || differ(noteOf)() ? "Time signature · mixed" : "Time signature")}>
-        <Amount id="section-beats" value={() => beatsOf(first())} mixed={differ(beatsOf)} width={20} align="right" typed={signatureTyped} text={() => first().signature}
-          steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => signatureTo(`${beats}/${noteOf(first())}`)} />
-        <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>
-        <Amount id="section-note" value={() => noteOf(first())} mixed={differ(noteOf)} width={20} typed={signatureTyped} text={() => first().signature}
-          steps={(from, by) => {
-            const nearest = NOTES.reduce((best, each) => (Math.abs(each - from) < Math.abs(best - from) ? each : best), 4);
-            return NOTES[clamp(NOTES.indexOf(nearest) + by, 0, NOTES.length - 1)]!;
-          }}
-          set={(note) => signatureTo(`${beatsOf(first())}/${note}`)} />
+      <Field caption={() => (signatureDiffers() ? "Time signature · mixed" : "Time signature")}>
+        <Show when={() => typingSignature() !== "note"}>
+          {() => (
+            <Amount id="section-beats" value={() => beatsOf(first())} mixed={differ(beatsOf)} still={signatureDiffers} width={20} align="right" typed={signatureTyped} text={() => first().signature}
+              onTyping={(typing) => typeSignature(typing ? "beats" : null)}
+              steps={(from, by) => clamp(Math.round(from + by), 1, 32)} set={(beats) => signatureTo(`${beats}/${noteOf(first())}`)} />
+          )}
+        </Show>
+        <Show when={() => typingSignature() === null}>{() => <Text variant="title" tone="muted" style={{ paddingX: "xs" }}>/</Text>}</Show>
+        <Show when={() => typingSignature() !== "beats"}>
+          {() => (
+            <Amount id="section-note" value={() => noteOf(first())} mixed={differ(noteOf)} still={signatureDiffers} width={20} typed={signatureTyped} text={() => first().signature}
+              onTyping={(typing) => typeSignature(typing ? "note" : null)}
+              steps={(from, by) => {
+                const nearest = NOTES.reduce((best, each) => (Math.abs(each - from) < Math.abs(best - from) ? each : best), 4);
+                return NOTES[clamp(NOTES.indexOf(nearest) + by, 0, NOTES.length - 1)]!;
+              }}
+              set={(note) => signatureTo(`${beatsOf(first())}/${note}`)} />
+          )}
+        </Show>
       </Field>
       <Field caption={() => (tempoDiffers() ? "Tempo · mixed" : "Tempo")}>
         <Text variant="title" tone="muted" style={{ paddingRight: "sm" }}>{() => `${beatOf(first().signature).sign} =`}</Text>
@@ -293,7 +311,7 @@ export const SectionHead = ({ page }: { page: Page }) => {
       </Field>
       <div style={{ paddingTop: 18, keep: true }}>
         <Toggle key="section-loop" label="Loop" on={() => clock.repeat !== null}
-          tooltip={() => (clock.repeat !== null ? "Play on" : target().chosen ? "Loop the chosen bars as it plays" : "Loop the section as it plays")}
+          tooltip={() => (clock.repeat !== null ? "Stop looping" : target().chosen ? "Loop the chosen bars as it plays" : "Loop the section as it plays")}
           shortcut="piece.loop" onClick={() => toggleLoop(page)} />
       </div>
     </div>
