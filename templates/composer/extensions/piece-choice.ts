@@ -1,29 +1,39 @@
 import type { MenuItem } from "./sdk";
 import type { Piece } from "./piece";
-import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, splitSection } from "./piece-edits";
-import { startsOf, type Bar } from "./piece-form";
-import { chooseBars, clamp, instrumentsOf, openAt, openOf, showEditor, showInstrument } from "./piece-page";
+import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, setSignature, setTempo, splitSection } from "./piece-edits";
+import { beatOf, startsOf, tempoOf, type Bar } from "./piece-form";
+import { barAtTick, barsOfPiece, barsOfSection, chooseBars, clamp, instrumentsOf, showEditor, showInstrument, spansOf } from "./piece-page";
+import { nameSection } from "./piece-sections";
 
-// What the chosen bars of the open section do, whole or of some instruments: as in a score, a
-// passage is chosen, then cleared, copied, pasted or repeated.
+// What the chosen bars of the piece do, whole or of some instruments: as in a score, a passage is
+// chosen, then cleared, copied, pasted or repeated. A choice may cross section lines.
 
-/** The choice in the open section, kept inside its bars, its instruments in the order of the rows: none while nothing is chosen. */
+/** The choice, kept inside the piece, its instruments in the order of the rows, with the sections it covers: none while nothing is chosen. */
 export function choiceOf(piece: Pick<Piece, "state" | "memory" | "children">) {
-  const [open, chosen] = [openOf(piece), piece.memory.chosen];
-  if (!open || !chosen) return undefined;
-  const last = open.bars.length - 1;
+  const chosen = piece.memory.chosen;
+  const all = barsOfPiece(piece.state);
+  const last = all.bars.length - 1;
+  if (!chosen || last < 0) return undefined;
   const names = instrumentsOf(piece).map((each) => each.name);
   const rows = chosen.rows === null ? null : names.filter((name) => chosen.rows!.includes(name));
   if (rows?.length === 0) return undefined;
-  return { open, from: Math.min(chosen.from, last), to: Math.min(chosen.to, last), rows, names };
+  const [from, to] = [Math.min(chosen.from, last), Math.min(chosen.to, last)];
+  return { all, from, to, rows, names, spans: spansOf(all, from, to) };
 }
 type Choice = NonNullable<ReturnType<typeof choiceOf>>;
 const isWhole = (choice: Choice) => choice.rows === null;
-const isAll = (choice: Choice) => choice.from === 0 && choice.to === choice.open.bars.length - 1;
+const isAll = (choice: Choice) => choice.from === 0 && choice.to === choice.all.bars.length - 1;
+/** The section and its bar a paste at the bar `bar` of the piece goes to: past the last, the end of the last section. */
+const placeOf = ({ all }: Choice, bar: number) => {
+  const at = all.bars[bar];
+  if (at) return { id: at.id, bar: at.at };
+  const last = all.bars.at(-1)!;
+  return { id: last.id, bar: last.at + 1 };
+};
 
 /** What the choice holds, its instruments in the order of the rows, so a paste puts them back in that order. */
 function copied(piece: Piece, choice: Choice) {
-  const copy = copyOf(piece, choice.open.id, choice);
+  const copy = copyOf(piece, choice.spans, choice.rows);
   copy.rows.sort((a, b) => choice.names.indexOf(a.name) - choice.names.indexOf(b.name));
   return copy;
 }
@@ -34,27 +44,27 @@ export function copyChosen(piece: Piece): boolean {
   piece.memory.copied = copied(piece, choice);
   return true;
 }
-/** Takes the chosen music out: whole bars go, unless they are all the section has; of some instruments, it is cleared. */
+/** Takes the chosen music out: whole bars go, unless they are all the piece has; of some instruments, it is cleared. */
 export function clearChosen(piece: Piece, whole: boolean): boolean {
   const choice = choiceOf(piece);
   if (!choice || isWhole(choice) !== whole) return false;
   if (whole && isAll(choice)) return true;
   if (whole) {
-    removeBars(piece, choice.open.id, choice.from, choice.to);
+    removeBars(piece, choice.spans);
     chooseBars(piece, choice.from, choice.from);
-  } else clearMusic(piece, choice.open.id, choice);
+  } else clearMusic(piece, choice.spans, choice.rows);
   return true;
 }
 export function cutChosen(piece: Piece): boolean {
   const choice = choiceOf(piece);
   if (!choice || !copyChosen(piece)) return false;
   if (isWhole(choice) && !isAll(choice)) clearChosen(piece, true);
-  else clearMusic(piece, choice.open.id, choice);
+  else clearMusic(piece, choice.spans, choice.rows);
   return true;
 }
-/** The last bar of the open section that music pasted from the bar `from` lies under: it is as long as its own bars were, which may be other bars than these. */
+/** The last bar of the piece that music pasted from the bar `from` lies under: it is as long as its own bars were, which may be other bars than these. */
 function barsUnder(piece: Piece, from: number, copy: { bars: readonly Bar[] }): number {
-  const starts = openOf(piece)?.starts ?? [];
+  const { starts } = barsOfPiece(piece.state);
   const end = (starts[from] ?? 0) + startsOf(copy.bars).at(-1)!;
   return Math.max(starts.findLastIndex((start) => start < end), from);
 }
@@ -62,22 +72,22 @@ function barsUnder(piece: Piece, from: number, copy: { bars: readonly Bar[] }): 
 export function pasteChosen(piece: Piece): boolean {
   const [choice, copy] = [choiceOf(piece), piece.memory.copied];
   if (!choice || !copy) return false;
-  paste(piece, choice.open.id, choice, copy, choice.names);
+  paste(piece, placeOf(choice, choice.from), choice.rows, copy, choice.names);
   const first = choice.rows === null ? -1 : choice.names.indexOf(choice.rows[0]!);
   const rows = choice.names.slice(first, first + copy.rows.length);
   if (first < 0 || rows.length === 0) chooseBars(piece, choice.from, choice.from + copy.bars.length - 1);
   else chooseBars(piece, choice.from, barsUnder(piece, choice.from, copy), rows);
   return true;
 }
-/** The chosen bars again right after them, with their music; of some instruments, their music over the bars after it, which the section gets where it has too few. The copy is chosen. */
+/** The chosen bars again right after them, with their music; of some instruments, their music over the bars after it, which the piece gets where it has too few. The copy is chosen. */
 export function repeatChosen(piece: Piece): boolean {
   const choice = choiceOf(piece);
   if (!choice) return false;
-  const { open, from, to, rows } = choice;
+  const { from, to, rows } = choice;
   const after = to + 1;
   const copy = copied(piece, choice);
-  if (rows === null) duplicateBars(piece, open.id, from, to);
-  else paste(piece, open.id, { from: after, to: after, rows }, copy, choice.names);
+  if (rows === null) duplicateBars(piece, choice.spans);
+  else paste(piece, placeOf(choice, after), rows, copy, choice.names);
   chooseBars(piece, after, rows === null ? after + to - from : barsUnder(piece, after, copy), rows);
   return true;
 }
@@ -90,39 +100,29 @@ export function editChosen(piece: Piece): boolean {
   return true;
 }
 
-/**
- * Chooses the bar before or after the chosen ones, of the same instruments, or with `extend` takes
- * it in too. Past the first or the last bar it opens the section before or the next, on its last
- * or first bar; `extend` stays in the section. With none chosen, the bar the playhead is in, or the first.
- */
+/** Chooses the bar before or after the chosen ones, of the same instruments, or with `extend` takes it in too. With none chosen, the bar the playhead is in. */
 export function stepBars(piece: Piece, by: -1 | 1, extend: boolean): boolean {
   const choice = choiceOf(piece);
   if (!choice) {
-    const open = openOf(piece);
-    if (!open) return false;
-    const into = piece.clock.tick - open.place.start;
-    const bar = into >= 0 && into < open.place.length ? open.starts.findLastIndex((start) => start <= into) : 0;
+    const bar = barAtTick(barsOfPiece(piece.state), piece.clock.tick);
     chooseBars(piece, bar, bar);
     return true;
   }
   const next = by < 0 ? choice.from - 1 : choice.to + 1;
+  if (next < 0 || next >= choice.all.bars.length) return true;
   if (extend) chooseBars(piece, Math.min(choice.from, next), Math.max(choice.to, next), choice.rows);
-  else if (next >= 0 && next < choice.open.bars.length) chooseBars(piece, next, next, choice.rows);
-  else {
-    const ids = piece.state.sections.map((section) => section.id);
-    const id = ids[ids.indexOf(choice.open.id) + by];
-    if (id === undefined) return true;
-    openAt(piece, id);
-    const bar = by < 0 ? (openOf(piece)?.bars.length ?? 1) - 1 : 0;
-    chooseBars(piece, bar, bar, choice.rows);
-  }
+  else chooseBars(piece, next, next, choice.rows);
   return true;
 }
-/** Takes in the bars after the chosen ones, up to the last of the section: a tempo or a time signature then goes on from here. */
+/** Takes in the bars after the chosen ones up to the end of the section of the last, or of the next section when it ends there: a tempo or a time signature then goes on from here. */
 export function chooseToEnd(piece: Piece): boolean {
   const choice = choiceOf(piece);
   if (!choice) return false;
-  chooseBars(piece, choice.from, choice.open.bars.length - 1, choice.rows);
+  const { all, from, to, rows } = choice;
+  const section = barsOfSection(all, all.bars[to]!.id)!;
+  const next = all.bars[to + 1];
+  const end = to < section.to || !next ? section.to : barsOfSection(all, next.id)!.to;
+  chooseBars(piece, from, end, rows);
   return true;
 }
 /**
@@ -154,33 +154,66 @@ export function chooseRows(piece: Piece, from: number, to: number, rows: readonl
   if (rows[0]) showInstrument(piece, rows[0]);
 }
 
-/** Adds a bar `after` the chosen ones, or `before` them, or at the `end` of the section, as with none chosen: it is chosen. */
+/** Adds a bar `after` the chosen ones, or `before` them, or at the `end` of the piece, as with none chosen: it is chosen. */
 export function addBar(piece: Piece, where: "before" | "after" | "end") {
-  const open = openOf(piece);
-  if (!open) return;
   const choice = choiceOf(piece);
-  const at = !choice || where === "end" ? open.bars.length : where === "before" ? choice.from : choice.to + 1;
-  addBars(piece, open.id, at);
+  const { bars } = barsOfPiece(piece.state);
+  const last = bars.at(-1);
+  if (!last) return;
+  const [bar, at] = !choice || where === "end" ? [last, bars.length] : where === "before" ? [bars[choice.from]!, choice.from] : [bars[choice.to]!, choice.to + 1];
+  addBars(piece, bar.id, where === "before" ? bar.at : bar.at + 1);
   chooseBars(piece, at, at);
 }
-/** A new section from the first chosen bar on, opened with its name to type; none at the first bar. */
+/** A new section from the first chosen bar on, with its name to type; none where a section starts already. */
 export function startSectionAt(piece: Piece): boolean {
   const choice = choiceOf(piece);
-  const id = choice && choice.from > 0 ? splitSection(piece, choice.open.id, choice.from) : undefined;
+  const first = choice?.all.bars[choice.from];
+  const id = first && first.at > 0 ? splitSection(piece, first.id, first.at) : undefined;
   if (!id) return false;
-  openAt(piece, id);
-  piece.memory.naming = { id, in: "head" };
+  void nameSection(piece, id);
   return true;
 }
 
-/** Loops the chosen bars as the piece plays, or the open section while none are; again, it plays on. */
+/** The chosen bars, or with none the bar the playhead is in. */
+function chosenOrPlaying(piece: Piece) {
+  const choice = choiceOf(piece);
+  if (choice) return { from: choice.from, to: choice.to };
+  const bar = barAtTick(barsOfPiece(piece.state), piece.clock.tick);
+  return { from: bar, to: bar };
+}
+
+/** Loops the chosen bars as the piece plays, or the section the playhead is in while none are; again, it plays on. */
 export function toggleLoop(piece: Piece) {
   const { clock } = piece;
-  const open = openOf(piece);
-  if (clock.repeat !== null || !open) return clock.setRepeat(null);
+  const all = barsOfPiece(piece.state);
+  if (clock.repeat !== null || all.bars.length === 0) return clock.setRepeat(null);
   const choice = choiceOf(piece);
-  const [from, to] = choice ? [choice.from, choice.to] : [0, open.bars.length - 1];
-  clock.setRepeat({ from: open.place.start + open.starts[from]!, to: open.place.start + open.starts[to + 1]! });
+  const [from, to] = choice ? [choice.from, choice.to] : (({ from, to }) => [from, to])(barsOfSection(all, all.bars[barAtTick(all, clock.tick)]!.id)!);
+  clock.setRepeat({ from: all.starts[from]!, to: all.starts[to + 1]! });
+}
+
+const SIGNATURES = ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "9/8", "12/8"];
+/** The note values a time signature takes. */
+const NOTES = [1, 2, 4, 8, 16, 32];
+
+/** Asks for the time signature of the bars `from` to `to` of the piece, or with none of the chosen bars or the one that plays, and gives it to them. */
+export async function askSignature(piece: Piece, bars: { from: number; to: number } = chosenOrPlaying(piece)) {
+  const bar = barsOfPiece(piece.state).bars[bars.from];
+  if (!bar) return;
+  const typed = await piece.openField({ placeholder: bar.signature, suggestions: SIGNATURES, width: 120 });
+  const [, beats, note] = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(typed ?? "") ?? [];
+  if (!beats || Number(beats) < 1 || Number(beats) > 32 || !NOTES.includes(Number(note))) return;
+  setSignature(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), `${Number(beats)}/${Number(note)}`);
+}
+/** Asks for the tempo of the bars `from` to `to` of the piece, in the beat of each, or with none of the chosen bars or the one that plays, and gives it to them. */
+export async function askTempo(piece: Piece, bars: { from: number; to: number } = chosenOrPlaying(piece)) {
+  const bar = barsOfPiece(piece.state).bars[bars.from];
+  if (!bar) return;
+  const typed = await piece.openField({ placeholder: `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`, width: 120 });
+  const [, number] = /(\d+(?:[.,]\d+)?)\s*$/.exec(typed ?? "") ?? [];
+  if (!number) return;
+  const tempo = clamp(Math.round(Number(number.replace(",", ".")) * 10) / 10, 10, 600);
+  setTempo(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), tempo);
 }
 
 /** The menu of the choice, each item with its key: whole bars also add a bar or start a section, music opens its notes. */
@@ -188,6 +221,7 @@ export async function choiceMenu(piece: Piece) {
   const choice = choiceOf(piece);
   if (!choice) return;
   const whole = isWhole(choice);
+  const startsSection = choice.all.bars[choice.from]!.at === 0;
   type Item = MenuItem & { run: () => unknown };
   const items: Item[] = [
     { label: "Cut", shortcut: "piece.cut", run: () => cutChosen(piece) },
@@ -197,14 +231,16 @@ export async function choiceMenu(piece: Piece) {
     whole
       ? { label: "Remove", shortcut: "piece.remove_bars", disabled: isAll(choice), run: () => clearChosen(piece, true) }
       : { label: "Clear", shortcut: "piece.clear_music", run: () => clearChosen(piece, false) },
+    { label: "Time signature…", shortcut: "piece.type_time_signature", separator: true, run: () => askSignature(piece) },
+    { label: "Tempo…", shortcut: "piece.type_tempo", run: () => askTempo(piece) },
     ...(whole
       ? ([
           { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },
           { label: "Add a bar after", shortcut: "piece.add_bar", run: () => addBar(piece, "after") },
-          { label: "Start a section here", shortcut: "piece.add_section", disabled: choice.from === 0, separator: true, run: () => startSectionAt(piece) },
+          { label: "Start a section here", shortcut: "piece.add_section", disabled: startsSection, separator: true, run: () => startSectionAt(piece) },
         ] satisfies Item[])
       : ([{ label: "Edit notes", shortcut: "piece.edit_notes", separator: true, run: () => editChosen(piece) }] satisfies Item[])),
-    { label: "Choose up to the last bar", shortcut: "piece.bars_to_end", disabled: choice.to === choice.open.bars.length - 1, separator: true, run: () => chooseToEnd(piece) },
+    { label: "Choose to the end of the section", shortcut: "piece.bars_to_end", disabled: choice.to === choice.all.bars.length - 1, separator: true, run: () => chooseToEnd(piece) },
   ];
   const picked = await piece.openMenu(items.map(({ run: _, ...item }) => item));
   if (picked !== null) items[picked]?.run();

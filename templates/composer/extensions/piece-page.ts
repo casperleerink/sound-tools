@@ -1,23 +1,24 @@
-import { h, memo, type Accessor, type Color, type Style } from "./sdk";
+import { h, memo, now, type Accessor, type Color, type Style } from "./sdk";
 import type { Piece } from "./piece";
-import { barsOf, BEAT, fit, laidOut, NO_MUSIC, partsOf, startsOf, ticksOf, type Bar, type Part } from "./piece-form";
+import type { Span } from "./piece-edits";
+import { barsOf, BEAT, fit, laidOut, NO_MUSIC, partsOf, startsOf, ticksOf, type Part } from "./piece-form";
 import type { track } from "./track";
 
-// What the parts of the piece's page share: its sizes and colours, its instruments, the open
-// section and its bars, and what the view works out once for all of them.
+// What the parts of the piece's page share: its sizes and colours, its instruments, the bars of
+// the whole piece in one line, and what the view works out once for all of them.
 
-// The sections column, the section head, the bar strip over the rows, and rows of 64 points with
-// heads 176 wide. The rows under the heads, of the returns and the master, are 40.
-export const SECTIONS = 200;
-export const SECTION_HEAD = 72;
-export const STRIP = 44;
+// The band of marks over the rows, rows of 64 points with heads 176 wide. The rows under the
+// heads, of the returns and the master, are 40.
+export const MARKS = 98;
 export const ROW = 64;
 export const HEADER = 176;
 export const LOW_ROW = 40;
-/** The room after the last bar of the open section, for the button that adds one. */
-export const AFTER = 48;
-/** How wide a bar of 4/4 is at most, in points: a short section does not stretch over the window. */
-const WIDEST = 200;
+/** Points per tick at zoom 1: a bar of 4/4 is 96 points. */
+export const ACROSS = 0.025;
+export const ZOOM = [0.1, 8] as const;
+/** The ticks before the first bar, and after the last, where the buttons that add a bar and a section are. */
+export const LEAD = 480;
+export const AFTER = 6 * 4 * 960;
 
 /** A row the composer chooses, an instrument's head, a return's, the master's or a section's: one look while it is chosen, and one under the pointer. */
 export const rowLook = (chosen: boolean): Pick<Style, "background" | "hover"> => (chosen ? { background: "selected" } : { hover: { background: "fill" } });
@@ -70,57 +71,59 @@ export const colourOf = (each: Child): Color => {
   return named ?? (colour?.startsWith("#") ? (colour as Color) : "blue");
 };
 
-/** The section `memory.open` names, else the first. */
-export const openSectionOf = ({ state, memory }: Pick<Piece, "state" | "memory">) => state.sections.find((section) => section.id === memory.open) ?? state.sections[0];
 /** Where each section of the piece is, and what the clock keeps of them. */
 export const formOf = (state: Piece["state"]) => laidOut(state.sections as Parameters<typeof laidOut>[0]);
-export const barsIn = (section: Piece["state"]["sections"][number]) => barsOf(section.bars as Parameters<typeof barsOf>[0]);
+const barsIn = (section: Piece["state"]["sections"][number]) => barsOf(section.bars as Parameters<typeof barsOf>[0]);
 
-/** The open section: its id, its bars, the tick each starts at from its start and where its last ends, and where it is in the piece. */
-export function openOf(piece: Pick<Piece, "state" | "memory">) {
-  const section = openSectionOf(piece);
-  const place = section && formOf(piece.state).places[section.id];
-  if (!section || !place) return undefined;
-  const bars = barsIn(section);
-  return { id: section.id, bars, starts: startsOf(bars), place };
+/**
+ * Every bar of the piece, one after the other through its sections: its time signature and
+ * tempo, its section and its place there, from 0. `starts` has the tick each starts at, and
+ * after them where the last ends.
+ */
+export function barsOfPiece(state: Pick<Piece["state"], "sections">) {
+  const bars = state.sections.flatMap((section) => barsIn(section).map((bar, at) => ({ ...bar, id: section.id, at })));
+  return { bars, starts: startsOf(bars) };
 }
-/** Shows the section `id`, no bar chosen; the note editor goes on with its instrument's part there, empty while it has none. */
-export function showSection({ memory }: Pick<Piece, "memory">, id: string) {
-  memory.open = id;
-  memory.chosen = null;
-  memory.noteBar = null;
-  memory.notice = null;
-  // A note of the next section that is alike would be chosen with them.
-  if (memory.notes.size > 0) memory.notes = new Set();
+type PieceBars = ReturnType<typeof barsOfPiece>;
+/** The sections the bars `from` to `to` of the piece cover, each with its own bars of them, from 0 in it. */
+export function spansOf({ bars }: PieceBars, from: number, to: number): Span[] {
+  const spans: Span[] = [];
+  for (const { id, at } of bars.slice(Math.max(from, 0), to + 1)) {
+    const last = spans.at(-1);
+    if (last?.id === id) last.to = at;
+    else spans.push({ id, from: at, to: at });
+  }
+  return spans;
 }
+/** The bar of the piece `tick` is in: the last past the end, the first before the start. */
+export const barAtTick = ({ starts }: PieceBars, tick: number) => clamp(starts.findLastIndex((start) => start <= tick), 0, Math.max(starts.length - 2, 0));
+/** The bars of the piece the section `id` holds, from its first to its last. */
+export function barsOfSection({ bars }: PieceBars, id: string) {
+  const [from, to] = [bars.findIndex((bar) => bar.id === id), bars.findLastIndex((bar) => bar.id === id)];
+  return from < 0 ? undefined : { from, to };
+}
+
 /**
  * Puts the playhead on `tick` of the piece while it is stopped. While it plays, a choice does not
- * move what is heard: the page then stays where the composer put it, and follows the playhead
- * again from the next play.
+ * move what is heard, and the page turns no more with the playhead until the next play.
  */
 function goTo({ clock, memory }: Pick<Piece, "clock" | "memory">, tick: number) {
   if (clock.playing) memory.follows = false;
   else clock.jump(tick);
 }
-/** Opens the section `id`, no bar chosen, and puts the playhead on its first bar. */
-export function openAt(piece: Pick<Piece, "state" | "memory" | "clock" | "children">, id: string) {
-  showSection(piece, id);
-  goTo(piece, formOf(piece.state).places[id]?.start ?? 0);
-  // Back on the section that plays, the page goes on with it.
-  if (piece.clock.playing && id === piece.memory.playing) piece.memory.follows = true;
-}
-/** Chooses the bars `from` to `to` of the open section, whole or of the instruments `rows`, and puts the playhead on the first. */
+/** Chooses the bars `from` to `to` of the piece, whole or of the instruments `rows`, and puts the playhead on the first. Its section's part is the one the note editor shows. */
 export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, from: number, to: number, rows: readonly string[] | null = null) {
-  const open = openOf(piece);
-  if (!open) return;
-  const last = open.bars.length - 1;
+  const all = barsOfPiece(piece.state);
+  const last = all.bars.length - 1;
+  if (last < 0) return;
   const [first, end] = [clamp(Math.min(from, to), 0, last), clamp(Math.max(from, to), 0, last)];
   piece.memory.chosen = { from: first, to: end, rows: rows && [...rows] };
+  piece.memory.part = all.bars[first]!.id;
   piece.memory.noteBar = null;
   piece.memory.notice = null;
   // Chosen notes would take the keys of the chosen bars.
   if (piece.memory.notes.size > 0) piece.memory.notes = new Set();
-  goTo(piece, open.place.start + open.starts[first]!);
+  goTo(piece, all.starts[first]!);
 }
 
 /** The instruments, in `order`: a row each. */
@@ -144,7 +147,7 @@ export function showPanel(piece: Pick<Piece, "memory" | "select">, name: string)
   // One that shows already stays as it is, with its scroll and its cards.
   if (below?.kind !== "track" || below.name !== name) piece.memory.below = { kind: "track", name };
 }
-/** Shows the notes of the part the instrument `name` plays in the open section below. */
+/** Shows the notes of the part the instrument `name` plays in the section of the chosen bars below. */
 export function showEditor(piece: Pick<Piece, "memory" | "select">, name: string) {
   chooseTrack(piece, name);
   piece.memory.below = { kind: "editor", track: name };
@@ -160,10 +163,13 @@ export const partAt = (track: Child | undefined, id: string) => {
   return part?.tool === "timeline" ? part : undefined;
 };
 
-/** The part the note editor shows: of its instrument in the open section, or, while it has none, an empty one where the section is. */
+/** The section whose part the note editor shows: of the first chosen bar, else the first. */
+export const partSectionOf = ({ state, memory }: Pick<Piece, "state" | "memory">) => state.sections.find((section) => section.id === memory.part) ?? state.sections[0];
+
+/** The part the note editor shows: of its instrument in its section, or, while it has none, an empty one where the section is. */
 export function editedPart(piece: Pick<Piece, "state" | "children" | "memory">) {
   const below = piece.memory.below;
-  const section = openSectionOf(piece);
+  const section = partSectionOf(piece);
   if (below?.kind !== "editor" || !section) return undefined;
   const owner = piece.children.find((child) => child.name === below.track);
   const part = partAt(owner, section.id)?.state;
@@ -186,14 +192,6 @@ export const editPart = ({ update }: Pick<Piece, "update">, track: string, id: s
     if (at) fit(part.state, at.length);
   });
 
-/** How long `bars` play, in seconds, each at its own tempo. */
-export const secondsOf = (bars: readonly Bar[]) => bars.reduce((sum, { signature, bpm }) => sum + ((ticksOf(signature) / BEAT) * 60) / bpm, 0);
-/** A time as a composer reads it: `1:21`. */
-export const timeText = (seconds: number) => {
-  const whole = Math.round(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
-};
-
 /** From which tick on a beat is how many ticks long: one for each run of bars of one time signature. */
 export function beatRuns(runs: readonly { readonly signature: string; readonly bars: number }[]): { from: number; ticks: number }[] {
   let from = 0;
@@ -204,9 +202,9 @@ export function beatRuns(runs: readonly { readonly signature: string; readonly b
   });
 }
 
-/** The piece's view, with what its parts read, worked out once: its instruments, its sections, the open one and its bars. */
+/** The piece's view, with what its parts read, worked out once: its instruments, its sections and its bars. */
 export function pageOf(piece: Piece & { size: { readonly width: number } }) {
-  const { state, children, memory, update, size } = piece;
+  const { state, children, memory, update } = piece;
   const rows = memo(() => instrumentsOf(piece));
   const returns = () => children.filter((child) => child.tool === "bus");
   /** What has a panel: the instruments and the returns. */
@@ -215,29 +213,14 @@ export function pageOf(piece: Piece & { size: { readonly width: number } }) {
   const returnsHeight = () => (returns().length === 0 ? 0 : LOW_ROW + (memory.returnsOpen ? Math.min(returns().length, 4.5) * LOW_ROW : 0));
 
   const sections = () => state.sections;
-  /** Where each section is, and the tempo map and section names the clock keeps of them. `time` is the context's own, the clock of the sound. */
+  /** Where each section is, and the tempo map and section names the clock keeps of them. */
   const form = memo(() => formOf(state));
-  // A memo of the id, so what reads it runs again only when another section opens.
-  const openId = memo(() => openSectionOf(piece)?.id ?? null);
-  const openSection = () => state.sections.find((section) => section.id === openId());
-  const place = () => form().places[openId() ?? ""];
-  /** The bars of the open section, each with its time signature and tempo. */
-  const bars = memo(() => {
-    const section = openSection();
-    return section ? barsIn(section) : [];
-  });
-  /** The tick each bar of the open section starts at, from its start, and where its last ends. */
-  const starts = memo(() => startsOf(bars()));
-  /** The tick each bar of the piece starts at, and where its last ends. */
-  const pieceStarts = memo(() => startsOf(state.sections.flatMap(barsIn)));
-  /** Points per tick: the open section always shows whole, its bars filling the room right of the heads, each as wide as it is long, up to the widest. */
-  const scale = () => Math.min(Math.max(size.width - SECTIONS - HEADER - AFTER, 1) / Math.max(starts().at(-1) ?? 0, 1), WIDEST / (4 * BEAT));
-  /** The bar of the open section at `x` points, from 0, or none past its end. */
-  const barAt = (x: number) => {
-    const ticks = x / scale();
-    return ticks < 0 || ticks >= (starts().at(-1) ?? 0) ? null : Math.max(starts().findLastIndex((start) => start <= ticks), 0);
-  };
-  const open = (id: string) => openAt(piece, id);
+  /** Every bar of the piece, and the tick each starts at. */
+  const all = memo(() => barsOfPiece(state));
+  const starts = () => all().starts;
+  const end = () => all().starts.at(-1) ?? 0;
+  /** The bar of the piece at the tick `x`, or none outside it. */
+  const barAt = (x: number) => (x < 0 || x >= end() ? null : barAtTick(all(), x));
 
   const panelOf = () => (memory.below?.kind === "track" ? memory.below.name : null);
   /** The instrument of what shows below: its panel, or the notes of its part. */
@@ -261,11 +244,14 @@ export function pageOf(piece: Piece & { size: { readonly width: number } }) {
       state.solo = state.solo.includes(name) ? state.solo.filter((each) => each !== name) : [...state.solo, name];
     });
 
+  const space = now.space("rows");
+
   // The window's own context, not a copy: it reads `time` anew each time.
   return Object.assign(piece, {
     rows, returns, strips, returnsHeight,
-    sections, form, openId, openSection, place, bars, starts, pieceStarts, scale, barAt, open, partAt,
+    sections, form, all, starts, end, barAt, partAt,
     chosenTrack, choose, openPanel, openEditor, openMaster, toggleMute, toggleSolo,
+    space,
   });
 }
 /** What every part of the piece's page gets. */

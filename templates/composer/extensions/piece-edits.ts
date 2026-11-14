@@ -11,7 +11,9 @@ type Draft = Parameters<Parameters<Piece["update"]>[1]>[0];
 type DraftTrack = Extract<Draft["children"][number], { tool: "track" }>;
 type SectionId = `sec-${string}`;
 
-/** The chosen bars of the open section, from 0, and of which instruments: `null` for the bars themselves, with all their music. */
+/** Bars `from` to `to` of the section `id`, counted from 0 in it: what an edit of bars works on, a choice cut at the section lines. */
+export type Span = { id: string; from: number; to: number };
+/** The chosen bars, counted from 0 through the whole piece, and of which instruments: `null` for the bars themselves, with all their music. */
 export type Chosen = { from: number; to: number; rows: readonly string[] | null };
 /** What a copy holds: the bars, and the music of each instrument it was taken from. */
 export type Copied = { bars: Bar[]; rows: { name: string; music: Music }[] };
@@ -77,9 +79,9 @@ export function edit({ update, clock, memory }: Pick<Piece, "update" | "clock"> 
   });
 }
 
-/** An edit of the bars of the section `id` that tells the composer, quietly, of the notes it removed. */
-function editTelling(piece: Piece, label: string, id: string, change: (draft: Draft) => void) {
-  const notesIn = (draft: Draft) => tracksOf(draft).reduce((sum, track) => sum + (partOf(track, id)?.state.notes.length ?? 0), 0);
+/** An edit of the bars of the sections `ids` that tells the composer, quietly, of the notes it removed. */
+function editTelling(piece: Piece, label: string, ids: readonly string[], change: (draft: Draft) => void) {
+  const notesIn = (draft: Draft) => tracksOf(draft).reduce((sum, track) => sum + ids.reduce((count, id) => count + (partOf(track, id)?.state.notes.length ?? 0), 0), 0);
   const told = { removed: 0, form: "" };
   edit(piece, label, (draft) => {
     const before = notesIn(draft);
@@ -110,13 +112,17 @@ function rebar(draft: Draft, id: string, change: (bars: Bar[]) => Change): { was
 
 // Bars
 
-/** Gives the bars `from` to `to` of a section another time signature: a bar made longer pushes what comes after it. */
-export const setSignature = (piece: Piece, id: string, from: number, to: number, signature: string) =>
-  editTelling(piece, "Change the time signature", id, (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, () => ({ signature }))));
+/** Gives the bars of `spans` another time signature: a bar made longer pushes what comes after it. */
+export const setSignature = (piece: Piece, spans: readonly Span[], signature: string) =>
+  editTelling(piece, "Change the time signature", spans.map((span) => span.id), (draft) => {
+    for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, () => ({ signature })));
+  });
 
-/** Gives the bars `from` to `to` of a section the tempo `tempo`, each in its own beat: 80 is 80 dotted quarters a minute in a bar of 6/8. */
-export const setTempo = (piece: Piece, id: string, from: number, to: number, tempo: number) =>
-  edit(piece, "Change the tempo", (draft) => void rebar(draft, id, (bars) => changed(bars, from, to, (bar) => ({ bpm: tempo * beatOf(bar.signature).quarters }))));
+/** Gives the bars of `spans` the tempo `tempo`, each in its own beat: 80 is 80 dotted quarters a minute in a bar of 6/8. */
+export const setTempo = (piece: Piece, spans: readonly Span[], tempo: number) =>
+  edit(piece, "Change the tempo", (draft) => {
+    for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, (bar) => ({ bpm: tempo * beatOf(bar.signature).quarters })));
+  });
 
 /** Adds `count` empty bars before the bar `at` of a section, or after its last: each as the bar before it, or the first. */
 export const addBars = (piece: Piece, id: string, at: number, count = 1) =>
@@ -124,17 +130,16 @@ export const addBars = (piece: Piece, id: string, at: number, count = 1) =>
     void rebar(draft, id, (bars) => inserted(bars, at, Array.from({ length: count }, () => ({ ...(bars[at - 1] ?? bars[0] ?? { signature: "4/4", bpm: 120 }) })))),
   );
 
-const removeLabel = (from: number, to: number) => (from === to ? "Remove a bar" : "Remove bars");
-const takeOut = (draft: Draft, id: string, from: number, to: number) => void rebar(draft, id, (bars) => removed(bars, from, to));
-
-/** Takes the bars `from` to `to` out of a section, with their music: what comes after moves up. A section keeps one bar. */
-export const removeBars = (piece: Piece, id: string, from: number, to: number) => edit(piece, removeLabel(from, to), (draft) => takeOut(draft, id, from, to));
-
-/** Makes a section `count` bars long: bars added at its end, or taken from it, telling of the notes they took. */
-export function setLength(piece: Piece, id: string, count: number) {
-  const bars = barsOf(piece.state.sections.find((section) => section.id === id)?.bars ?? []).length;
-  if (count > bars) addBars(piece, id, bars, count - bars);
-  else if (count >= 1 && count < bars) editTelling(piece, removeLabel(count, bars - 1), id, (draft) => takeOut(draft, id, count, bars - 1));
+/** Takes the bars of `spans` out, with their music: what comes after moves up, and a section that loses all its bars goes. The piece keeps one bar. */
+export function removeBars(piece: Piece, spans: readonly Span[]) {
+  const count = spans.reduce((sum, { from, to }) => sum + to - from + 1, 0);
+  edit(piece, count === 1 ? "Remove a bar" : "Remove bars", (draft) => {
+    const emptied = spans.filter(({ id, from, to }) => from === 0 && to >= barsOf(sectionOf(draft, id)?.bars ?? []).length - 1).map((span) => span.id);
+    if (emptied.length >= draft.state.sections.length) return;
+    for (const { id, from, to } of spans) if (!emptied.includes(id)) rebar(draft, id, (bars) => removed(bars, from, to));
+    draft.state.sections = draft.state.sections.filter((section) => !emptied.includes(section.id));
+    for (const track of tracksOf(draft)) track.children = track.children.filter((child) => !emptied.includes(child.name));
+  });
 }
 
 /** Puts `copied` into the section `id` before the bar `at`: its bars, and its music on the instruments it came from that the piece still has. */
@@ -149,63 +154,80 @@ function insertCopied(draft: Draft, id: string, at: number, copied: Copied) {
   }
 }
 
-/** What the bars `from` to `to` of a section hold: of the instruments `rows`, or of all. */
-export function copyOf({ state, children }: Pick<Piece, "state" | "children">, id: string, { from, to, rows }: Chosen): Copied {
-  const bars = barsOf((state.sections.find((section) => section.id === id)?.bars ?? []) as Draft["state"]["sections"][number]["bars"]);
-  const starts = startsOf(bars);
-  const [start, end] = [starts[from] ?? 0, starts[to + 1] ?? starts.at(-1)!];
+const noMusic = (): Music => structuredClone(NO_MUSIC);
+
+/** What the bars of `spans` hold, one after the other: of the instruments `rows`, or of all. */
+export function copyOf({ state, children }: Pick<Piece, "state" | "children">, spans: readonly Span[], rows: readonly string[] | null): Copied {
   const tracks = children.filter((child) => child.tool === "track" && (rows === null || rows.includes(child.name)));
-  return {
-    bars: bars.slice(from, to + 1),
-    rows: tracks.flatMap((track) => {
+  const music = tracks.map(noMusic);
+  const bars: Bar[] = [];
+  for (const { id, from, to } of spans) {
+    const all = barsOf((state.sections.find((section) => section.id === id)?.bars ?? []) as Draft["state"]["sections"][number]["bars"]);
+    const starts = startsOf(all);
+    const [start, end, at] = [starts[from] ?? 0, starts[to + 1] ?? starts.at(-1)!, startsOf(bars).at(-1)!];
+    tracks.forEach((track, index) => {
       const part = track.tool === "track" ? track.children.find((child) => child.name === id) : undefined;
-      return [{ name: track.name, music: part?.tool === "timeline" ? sliceOf(part.state as Frozen<Music> as Music, start, end) : { ...NO_MUSIC } }];
-    }),
-  };
+      if (part?.tool === "timeline") put(music[index]!, at, sliceOf(part.state as Frozen<Music> as Music, start, end), end - start, at + end - start);
+    });
+    bars.push(...all.slice(from, to + 1));
+  }
+  return { bars, rows: tracks.map((track, index) => ({ name: track.name, music: music[index]! })) };
 }
 
-/** The bars `from` to `to` of a section again, right after them, with their music. */
-export function duplicateBars(piece: Piece, id: string, from: number, to: number) {
-  const copied = copyOf(piece, id, { from, to, rows: null });
-  edit(piece, from === to ? "Duplicate a bar" : "Duplicate bars", (draft) => insertCopied(draft, id, to + 1, copied));
+/** The bars of `spans` again, right after the last of them, with their music. */
+export function duplicateBars(piece: Piece, spans: readonly Span[]) {
+  const last = spans.at(-1);
+  if (!last) return;
+  const copied = copyOf(piece, spans, null);
+  edit(piece, copied.bars.length === 1 ? "Duplicate a bar" : "Duplicate bars", (draft) => insertCopied(draft, last.id, last.to + 1, copied));
 }
 
-/** Clears the music of the chosen instruments, or of all, in the bars `from` to `to` of a section: the bars stay. */
-export function clearMusic(piece: Piece, id: string, { from, to, rows }: Chosen) {
+/** Clears the music of the instruments `rows`, or of all, in the bars of `spans`: the bars stay. */
+export function clearMusic(piece: Piece, spans: readonly Span[], rows: readonly string[] | null) {
   edit(piece, "Clear the music", (draft) => {
-    const starts = startsOf(barsOf(sectionOf(draft, id)?.bars ?? []));
-    for (const track of tracksOf(draft)) {
-      const part = partOf(track, id);
-      if (part && (rows === null || rows.includes(track.name))) clear(part.state, starts[from] ?? 0, starts[to + 1] ?? starts.at(-1)!);
+    for (const { id, from, to } of spans) {
+      const starts = startsOf(barsOf(sectionOf(draft, id)?.bars ?? []));
+      for (const track of tracksOf(draft)) {
+        const part = partOf(track, id);
+        if (part && (rows === null || rows.includes(track.name))) clear(part.state, starts[from] ?? 0, starts[to + 1] ?? starts.at(-1)!);
+      }
     }
   });
 }
 
 /**
- * Pastes `copied` into the section `id`. On chosen bars it puts its bars in before the first of
- * them, with its music on the instruments it came from. On chosen instruments it writes its
- * music over what they play from the first chosen bar on, the first copied instrument on the
- * first chosen one and the next on those under it, in `order`; a section too short for it gets bars at its end.
+ * Pastes `copied` at the bar `bar` of the section `id`. As bars, with `rows` null, it puts its
+ * bars in before that bar, with their music on the instruments it came from. On the instruments
+ * `rows` it writes its music over what they play from that bar on, the first copied instrument
+ * on the first of them and the next on those under it, in `order`, through the sections after
+ * it, each keeping its own part; the last section gets bars at its end where the piece is too short.
  */
-export function paste(piece: Piece, id: string, chosen: Chosen, copied: Copied, order: readonly string[]) {
-  const rows = chosen.rows;
-  if (rows === null) return edit(piece, "Paste bars", (draft) => insertCopied(draft, id, chosen.from, copied));
+export function paste(piece: Piece, { id, bar }: { id: string; bar: number }, rows: readonly string[] | null, copied: Copied, order: readonly string[]) {
+  if (rows === null) return edit(piece, "Paste bars", (draft) => insertCopied(draft, id, bar, copied));
   edit(piece, "Paste", (draft) => {
     const length = startsOf(copied.bars).at(-1)!;
-    const before = startsOf(barsOf(sectionOf(draft, id)?.bars ?? []));
-    const at = before[chosen.from] ?? before.at(-1)!;
-    // Music that would end past the section gets the bars it needs, each as the last: none of it is cut.
-    rebar(draft, id, (bars) => {
-      const added: Bar[] = [];
-      for (let end = before.at(-1)!; end < at + length && bars.length > 0; end += ticksOf(bars.at(-1)!.signature)) added.push({ ...bars.at(-1)! });
-      return inserted(bars, bars.length, added);
-    });
-    const end = startsOf(barsOf(sectionOf(draft, id)?.bars ?? [])).at(-1)!;
+    const place = laidOut(draft.state.sections).places[id];
+    if (!place) return;
+    const start = place.start + (startsOf(barsOf(sectionOf(draft, id)?.bars ?? []))[bar] ?? place.length);
+    const last = draft.state.sections.at(-1);
+    // Music that would end past the piece gets the bars it needs, each as the last: none of it is cut.
+    if (last) {
+      rebar(draft, last.id, (bars) => {
+        const added: Bar[] = [];
+        for (let end = laidOut(draft.state.sections).end; end < start + length && bars.length > 0; end += ticksOf(bars.at(-1)!.signature)) added.push({ ...bars.at(-1)! });
+        return inserted(bars, bars.length, added);
+      });
+    }
     const first = order.findIndex((name) => rows.includes(name));
-    copied.rows.forEach((row, index) => {
-      const track = tracksOf(draft).find((each) => each.name === order[first + index]);
-      if (first >= 0 && track) withPart(track, id, (music) => put(music, at, row.music, length, end));
-    });
+    if (first < 0) return;
+    for (const [section, at] of Object.entries(laidOut(draft.state.sections).places)) {
+      const [from, to] = [Math.max(start, at.start), Math.min(start + length, at.start + at.length)];
+      if (to <= from) continue;
+      copied.rows.forEach((row, index) => {
+        const track = tracksOf(draft).find((each) => each.name === order[first + index]);
+        if (track) withPart(track, section, (music) => put(music, from - at.start, sliceOf(row.music, from - start, to - start), to - from, at.length));
+      });
+    }
   });
 }
 

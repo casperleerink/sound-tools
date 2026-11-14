@@ -61,7 +61,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
-The templates follow these rules; their own gestures and keys are their code, in `templates/*/extensions`. The Composer differs: bars are things to choose, the bar lines are its grid, and nothing zooms.
+The templates follow these rules; their own gestures and keys are their code, in `templates/*/extensions`. The Composer differs: one line read as a score; bars are chosen, bar lines are its grid.
 
 ### Gestures
 

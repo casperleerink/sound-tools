@@ -2,7 +2,8 @@ import { Button, For, Fragment, h, Icon, Input, onCleanup, Show, Text, Toggle, u
 import { bus } from "./bus";
 import { chain } from "./chain";
 import type { Piece } from "./piece";
-import { colourOf, DIM, HEADER, LOW_ROW, Mark, muted, PALETTE, ROW, rowLook, STRIP, titleOf, type Child, type Page } from "./piece-page";
+import { toggleLoop } from "./piece-choice";
+import { colourOf, DIM, HEADER, LOW_ROW, Mark, MARKS, muted, PALETTE, ROW, rowLook, titleOf, type Child, type Page } from "./piece-page";
 import { freeName, track } from "./track";
 
 // The heads of the rows: an instrument's name and toggles left of its music, and under them the
@@ -10,12 +11,17 @@ import { freeName, track } from "./track";
 
 const Hairline = () => <div style={{ height: 1, background: "border", keep: true }} />;
 
-/** The column left of the rows: an empty corner beside the bar strip, the heads, which scroll with the rows, and under them the returns and the master, which stay. */
+/** The column left of the rows: the corner beside the marks, with the loop, the heads, which scroll with the rows, and under them the returns and the master, which stay. */
 export const Heads = ({ page }: { page: Page }) => {
-  const { rows, returns } = page;
+  const { rows, returns, clock, memory } = page;
   return (
     <div style={{ width: HEADER - 1, keep: true }}>
-      <div style={{ height: STRIP, keep: true }} />
+      <div style={{ height: MARKS, keep: true, justify: "end", paddingX: "lg", paddingBottom: "md" }}>
+        <div style={{ direction: "row" }}>
+          <Toggle key="loop" label="Loop" size="sm" on={() => clock.repeat !== null} shortcut="piece.loop" onClick={() => toggleLoop(page)}
+            tooltip={() => (clock.repeat !== null ? "Stop looping" : memory.chosen ? "Loop the chosen bars as it plays" : "Loop the section that plays")} />
+        </div>
+      </div>
       <div style={{ grow: true }} follow={{ y: "rows" }}>
         <For each={rows}>
           {(each) => (
