@@ -72,6 +72,12 @@ mod typescript;
 mod wavetable;
 
 /// The window in points.
+/// The song page's sizes, as `song-page.ts` has them, where a picture of it clicks: a track's
+/// row and its header, points per tick, and the points left of bar 1.
+const ROW: f32 = 64.0;
+const HEADER: f32 = 176.0;
+const ACROSS: f32 = 0.025;
+const LEAD: f32 = 8.0;
 const WINDOW_WIDTH: f32 = 1470.;
 const WINDOW_HEIGHT: f32 = 920.;
 

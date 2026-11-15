@@ -7,7 +7,7 @@ use gpui::{Modifiers, MouseButton, MouseUpEvent, TestAppContext, point, px};
 use super::Opened;
 use super::song::open_song;
 
-use crate::song::{ACROSS, BAR, LEAD};
+use crate::song::BAR;
 
 impl Opened<'_> {
     fn starts(&mut self, track: &str) -> Vec<u64> {
@@ -41,20 +41,19 @@ fn with_snap_off_a_clip_moves_to_the_tick_and_with_bars_to_the_bar(cx: &mut Test
     window.pick("menu-0");
     window.snap_applied("Off");
     let at = window.on_lane(BAR / 2, 1);
-    window.drag(at, at + point(px(37.), px(0.)));
+    let off = window.ticks(1480);
+    window.drag(at, at + point(off, px(0.)));
     window.until("the clip moved", |window| {
         window.record("song/t01/c00")["start"] != 0
     });
-    assert_eq!(
-        window.record("song/t01/c00")["start"],
-        (37. / ACROSS) as u64
-    );
+    assert_eq!(window.record("song/t01/c00")["start"], 1480);
 
     window.click(snap);
     window.pick("menu-1");
     window.snap_applied("Bar");
     let at = window.on_lane(BAR, 1);
-    window.drag(at, at + point(px(30.), px(0.)));
+    let off = window.ticks(1200);
+    window.drag(at, at + point(off, px(0.)));
     window.until("the clip moved to a bar", |window| {
         window.record("song/t01/c00")["start"] == BAR
     });
@@ -70,13 +69,14 @@ fn a_clip_dragged_with_cmd_held_lands_off_the_grid(cx: &mut TestAppContext) {
         ..Modifiers::default()
     };
     let at = window.on_lane(BAR / 2, 1);
+    let rights = [window.ticks(800), window.ticks(1480)];
     window.press(at);
-    for right in [20., 37.] {
-        let to = at + point(px(right), px(0.));
+    for right in rights {
+        let to = at + point(right, px(0.));
         window.cx.simulate_mouse_move(to, MouseButton::Left, cmd);
         window.cx.run_until_parked();
     }
-    window.release(at + point(px(37.), px(0.)));
+    window.release(at + point(rights[1], px(0.)));
     window.until("the clip moved", |window| {
         window.record("song/t01/c00")["start"] != 0
     });
@@ -94,9 +94,9 @@ fn a_clips_start_dragged_left_keeps_its_notes_where_they_are(cx: &mut TestAppCon
     let length = before["length"].as_u64().unwrap_or_default();
     let body = window.on_lane(start + BAR / 2, 1);
     window.click(body);
-    // The left edge, inside the clip.
-    let edge = window.on_lane(start, 1) + point(px(2.), px(0.));
-    window.drag(edge, edge - point(px(96.), px(0.)));
+    let edge = window.control("shape-clip-start-t01/c01");
+    let bar = window.ticks(BAR);
+    window.drag(edge, edge - point(bar, px(0.)));
     window.until("the start moved", |window| {
         window.record("song/t01/c01")["start"] == start - BAR
     });
@@ -161,9 +161,8 @@ fn clips_of_two_tracks_paste_on_the_chosen_track_and_the_one_under_it(cx: &mut T
 fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let ruler = window.space_at("ruler");
-    let at = |tick: u64, right: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + right), px(8.));
-    window.double_click(at(2 * BAR + 100, 0.));
+    let at = window.in_space("ruler", ((2 * BAR + 100) as f64, 8.));
+    window.double_click(at);
     window.until_found("div-ruler-edit");
     // Enter keeps the name it has and closes the field.
     window.cx.simulate_keystrokes("enter");
@@ -174,8 +173,8 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
         window.project_file()["sections"] == serde_json::json!([{ "bar": 3, "name": "Section 1" }])
     });
     window.wait_for_bun();
-    // Its name, after the number of its bar.
-    window.click(at(2 * BAR, 30.));
+    let name = window.control("Section 1");
+    window.click(name);
     window.until_playhead(2 * BAR);
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
@@ -193,8 +192,8 @@ fn a_tempo_change_clicked_in_the_tempo_lane_is_chosen_played_from_and_deleted(
 ) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let ruler = window.space_at("ruler");
-    let in_ruler = |tick: u64| ruler + point(px(LEAD + tick as f32 * ACROSS), px(8.));
+    let ruler = window.units("ruler");
+    let in_ruler = |tick: u64| ruler.point((tick as f64, 8.));
     window.click_with(in_ruler(2 * BAR), MouseButton::Right);
     window.pick("menu-0");
     let changes = |window: &mut Opened<'_>| {
@@ -207,8 +206,8 @@ fn a_tempo_change_clicked_in_the_tempo_lane_is_chosen_played_from_and_deleted(
     window.click(toggle);
     window.click(in_ruler(6 * BAR));
     window.until_playhead(6 * BAR);
-    let lane = window.space_at("tempo");
-    window.click(lane + point(px(LEAD + (2 * BAR) as f32 * ACROSS), px(15.)));
+    let change = window.control(&format!("shape-tempo-{}", 2 * BAR));
+    window.click(change);
     window.until_playhead(2 * BAR);
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
@@ -229,11 +228,8 @@ fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
 ) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let ruler = window.space_at("ruler");
-    window.click_with(
-        ruler + point(px(LEAD + (2 * BAR) as f32 * ACROSS), px(8.)),
-        MouseButton::Right,
-    );
+    let bar_three = window.in_space("ruler", ((2 * BAR) as f64, 8.));
+    window.click_with(bar_three, MouseButton::Right);
     window.pick("menu-1");
     let signatures =
         |window: &mut Opened<'_>| window.project_file()["tempo_map"]["time_signatures"].clone();
@@ -245,7 +241,7 @@ fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
     window.until_playhead(2 * BAR);
     window.wait_for_bun();
     // Twenty points up: two beats more, from bar 3 on.
-    let beats = window.space_at("transport-beats") + point(px(7.), px(9.));
+    let beats = window.control("space-transport-beats");
     window.press(beats);
     window.drag_to(beats - point(px(0.), px(10.)));
     window.drag_to(beats - point(px(0.), px(20.)));
@@ -275,11 +271,10 @@ fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
         alt: true,
         ..Modifiers::default()
     };
-    let to = inside + point(px(96. + 4.), px(0.));
+    let to = inside + point(window.ticks(BAR + 160), px(0.));
+    let start = inside + point(window.ticks(800), px(0.));
     window.press_with(inside, 1, alt);
-    window
-        .cx
-        .simulate_mouse_move(inside + point(px(20.), px(0.)), MouseButton::Left, alt);
+    window.cx.simulate_mouse_move(start, MouseButton::Left, alt);
     window.cx.simulate_mouse_move(to, MouseButton::Left, alt);
     window.cx.simulate_event(MouseUpEvent {
         position: to,
@@ -365,8 +360,8 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Cut clips"));
 
-    let ruler = window.space_at("ruler");
-    window.click(ruler + point(px(LEAD + (8 * BAR) as f32 * ACROSS), px(8.)));
+    let at = window.in_space("ruler", ((8 * BAR) as f64, 8.));
+    window.click(at);
     window.until_playhead(8 * BAR);
     window.wait_for_bun();
     window.cx.simulate_keystrokes("secondary-v");
@@ -386,8 +381,8 @@ fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppCont
 fn the_keys_add_a_clip_at_the_playhead_and_notes_in_a_row(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let ruler = window.space_at("ruler");
-    window.click(ruler + point(px(LEAD + (8 * BAR) as f32 * ACROSS), px(8.)));
+    let at = window.in_space("ruler", ((8 * BAR) as f64, 8.));
+    window.click(at);
     window.until_playhead(8 * BAR);
     window.cx.simulate_keystrokes("shift-c");
     window.until("a clip added", |window| window.has("song/t00/clip"));

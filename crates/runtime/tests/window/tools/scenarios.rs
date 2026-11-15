@@ -201,16 +201,11 @@ pub(crate) fn run(scenario: Scenario, cx: &mut TestAppContext, project: &Path) -
         Scenario::MovedClip => {
             // The first clip of the first track, a bar on and back.
             let clip = window.on_lane(BAR / 2, 0);
+            let on = clip + point(window.ticks(BAR), px(0.));
             window.measure(BATCHES, |window, step| {
                 let (from, to) = match step % 2 {
-                    0 => (
-                        clip,
-                        clip + point(px(BAR as f32 * crate::song::ACROSS), px(0.)),
-                    ),
-                    _ => (
-                        clip + point(px(BAR as f32 * crate::song::ACROSS), px(0.)),
-                        clip,
-                    ),
+                    0 => (clip, on),
+                    _ => (on, clip),
                 };
                 window.press(from);
                 window.drag_to(point((from.x + to.x) / 2., from.y));

@@ -47,7 +47,8 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::Ticks;
 
-use crate::song::{ACROSS, BAR, HEADER, LEAD, ROW, daw};
+use crate::song::{BAR, daw};
+use crate::{ACROSS, HEADER, LEAD, ROW};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::CaptureWriter;
 

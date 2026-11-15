@@ -180,12 +180,18 @@ pub fn look(window: &mut Window, cx: &mut App) -> Vec<Seen> {
     LOOKING.take().unwrap_or_default()
 }
 
-/// The part named `name` that was drawn last, so on top: of those that show, if any does.
-/// One scrolled out of view is drawn with nothing that shows.
+/// The part named `name` that was drawn last, so on top: of those that show, if any does. A
+/// part with no such name is found by its text, such as a label of a space with no key. One
+/// scrolled out of view is drawn with nothing that shows.
 pub fn find<'a>(seen: &'a [Seen], name: &str) -> Option<&'a Seen> {
-    let mut named = seen.iter().rev().filter(|seen| seen.name == name);
-    let last = named.clone().next();
-    named.find(|seen| seen.shows()).or(last)
+    let named = |seen: &&Seen| seen.name == name;
+    let said = |seen: &&Seen| seen.text.as_ref().is_some_and(|text| text == name);
+    let on_top = |by: &dyn Fn(&&Seen) -> bool| {
+        let mut found = seen.iter().rev().filter(|seen| by(seen));
+        let last = found.clone().next();
+        found.find(|seen| seen.shows()).or(last)
+    };
+    on_top(&named).or_else(|| on_top(&said))
 }
 
 /// One line per part that shows, top to bottom: its name, its text and state, where it is, and

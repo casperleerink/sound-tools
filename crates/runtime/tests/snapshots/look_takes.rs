@@ -23,7 +23,8 @@ use sound_notes::{Pitch, Velocity};
 use super::{
     RECORD, TOP, at, audio_files, away, click, piece_files, settle, wait_for_waveforms, write_audio,
 };
-use crate::song::{BAR, HEADER, ROW};
+use crate::song::BAR;
+use crate::{HEADER, ROW};
 
 /// The pointer pressed at `from` with `modifiers` and moved to `to`, the button still down.
 fn hold(

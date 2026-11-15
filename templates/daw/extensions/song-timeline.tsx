@@ -229,10 +229,10 @@ export const Timeline = ({ page }: { page: Page }) => {
             grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           {notes(dim)}
           <Label x={timeline.pointX.times(8)} y={9 / ROW} text={title} color="text-secondary" opacity={dim} />
-          <Rect x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
+          <Rect key={`clip-end-${key}`} x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
             anchor={() => ({ x: length() })} moves={resizes}
             drag={resizeDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
-          <Rect x={0} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
+          <Rect key={`clip-start-${key}`} x={0} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
             moves={startMoves} drag={resizeStartDrag(snap)} onPress={pressItem(key)} cursor="ew-resize" />
         </Group>
       </>
@@ -272,7 +272,7 @@ export const Timeline = ({ page }: { page: Page }) => {
       onEnd: ({ dy }) => edit("Change gain", (state) => (state.gain_db = clamp(Math.round((Math.max(state.gain_db, GAIN_RANGE[0]) - dy * dbPerRow) * 10) / 10, GAIN_RANGE[0], GAIN_RANGE[1]))),
     };
     const dot = (x: Accessor<Live> | Live, hollow: boolean, drag: Drag, cursor: "ew-resize" | "ns-resize") => [
-      <Circle x={x} y={top} radius={5} color={hollow ? "text" : "well"} drag={drag} cursor={cursor} />,
+      <Circle key={drag.id} x={x} y={top} radius={5} color={hollow ? "text" : "well"} drag={drag} cursor={cursor} />,
       <Circle x={x} y={top} radius={3.5} color={hollow ? "well" : "text"} drag={drag} cursor={cursor} />,
     ];
     /** What a handle makes while it is dragged, in a pill right of it `wide` points wide, as `title` and the value. */
@@ -379,12 +379,12 @@ export const Timeline = ({ page }: { page: Page }) => {
       <>
         <Original x={() => region.state.start} row={row} width={width} picked={chosen} contents={wave} />
         <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? MOVES : undefined)}>
-          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="fill" border={() => (chosen() ? "text" : "border-strong")} borderWidth={1}
+          <Rect key={`region-${key}`} x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="fill" border={() => (chosen() ? "text" : "border-strong")} borderWidth={1}
             drag={moveDrag(snap)} onPress={pressItem(key)} onClick={clickItem(key)} cursor="grab" />
           {wave()}
-          <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={pressItem(key)} cursor="ew-resize"
+          <Rect key={`region-start-${key}`} x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={pressItem(key)} cursor="ew-resize"
             moves={() => (alone() ? ["trim"] : undefined)} />
-          <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={pressItem(key)} cursor="ew-resize"
+          <Rect key={`region-end-${key}`} x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={pressItem(key)} cursor="ew-resize"
             moves={() => (alone() ? ["end"] : undefined)} />
           <Show when={alone}>{() => <RegionHandles region={region} width={width} plays={() => outputs[`${key}.seconds`] ?? 0} edit={editRegion} />}</Show>
         </Group>

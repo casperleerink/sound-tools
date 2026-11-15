@@ -18,7 +18,7 @@ use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
 use sound_typescript::CodeChanges;
-use sound_ui::on_screen::{self, Seen};
+use sound_ui::on_screen::{self, Seen, Units};
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
 
@@ -594,11 +594,15 @@ impl Opened<'_> {
         self.seen(name).map(|seen| seen.middle())
     }
 
-    /// The point of `units` in the space `name`, such as a tick and a row of a timeline, once
-    /// it shows.
-    pub(crate) fn in_space(&mut self, name: &str, units: (f64, f64)) -> Point<Pixels> {
-        let space = self.wait_for(&format!("space-{name}"));
-        space.units.expect("a space has units").point(units)
+    /// The units of the space `key`, such as ticks and rows of a timeline, once it shows.
+    pub(crate) fn units(&mut self, key: &str) -> Units {
+        let space = self.wait_for(&format!("space-{key}"));
+        space.units.expect("a space has units")
+    }
+
+    /// The point of `units` in the space `key`.
+    pub(crate) fn in_space(&mut self, key: &str, units: (f64, f64)) -> Point<Pixels> {
+        self.units(key).point(units)
     }
 
     /// The pointer over `position` with no button down, as a track's head shows its toggles.
