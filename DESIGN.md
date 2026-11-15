@@ -61,7 +61,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
-Templates follow these rules; their keys are in `templates/*/extensions`. The Composer reads the piece as one line of score; time signatures, tempos, `rit.`, fermatas and section names sit on the bars. Tempo changes at once or in a straight line.
+Templates follow these rules; their keys are in `templates/*/extensions`. The Composer reads the piece as one line of score: quiet marks on the bars, and it opens with no panel. Tempo changes at once or in a straight line.
 
 ### Gestures
 

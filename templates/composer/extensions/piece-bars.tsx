@@ -10,8 +10,9 @@ import { addTrack } from "./piece-tracks";
 // rows two lines of words. The first says where you are: a section's first bar number and name,
 // and the number of a bar only while it is chosen or under the pointer. The second says how it
 // goes: the time signature and tempo where they change, a line where the tempo slows down or speeds
-// up, the fermatas. Under them a row of notes per instrument, with no grid: a fine line where a
-// section starts. Across, a unit is a tick; the rows scroll and zoom, the band follows them.
+// up, the fermatas. Under them a row of notes per instrument, with the barlines of a score through
+// all of them: a double one where a section ends. Across, a unit is a tick; the rows scroll and
+// zoom, the band follows them.
 
 /** Where the two lines of the band start, and where its short bar ticks start, over the rows. */
 const [NAME_Y, MARK_Y, TICK_Y] = [6, 25, MARKS - 4];
@@ -23,6 +24,8 @@ const HINT = "Double-click a bar to write notes";
 /** Where the piece opens: whole when a bar of 4/4 keeps this many points, else at zoom 1. */
 const NARROWEST = 40;
 const [FIT_BEFORE, FIT_AFTER] = [12, 120];
+/** The points a bar needs before its barline shows in the rows: narrower, the lines would be all there is to see. */
+const BARLINES = 12;
 /** How wide the two buttons on chosen whole bars are together, and the points they keep from an edge or the last row. */
 const [BUTTONS, GAP] = [152, 6];
 
@@ -137,6 +140,17 @@ const QuietButton = ({ space, id, x, y, text, width, shown, onClick, bare = fals
   );
 };
 
+/** A double barline that ends at `x`, as where a section ends; `final`, the thin and thick one that ends the piece. */
+const DoubleLine = ({ space, x, height, final = false }: { space: SpaceValues; x: Num | (() => number); height: () => number; final?: boolean }) => {
+  const at = (points: number) => () => space.pointX.times(points).plus(typeof x === "function" ? x() : x);
+  return (
+    <>
+      <Rect x={at(final ? -5 : -3)} y={0} width={space.pointX} height={height} color="border-strong" />
+      <Rect x={at(final ? -2 : 0)} y={0} width={space.pointX.times(final ? 3 : 1)} height={height} color="border-strong" />
+    </>
+  );
+};
+
 /** The key of the invisible shape over bar `index` in the band, and in the rows: the pointer over either shows its number. */
 const bandKey = (index: number) => `band-bar-${index}`;
 export const rowsKey = (index: number) => `rows-bar-${index}`;
@@ -168,8 +182,14 @@ export const Marks = ({ page }: { page: Page }) => {
     if (startsSection(index)) return NONE;
     const at = memory.chosen;
     const ends = at !== null && (index === at.from || index === at.to) ? 1 : 0;
-    return now.hover(bandKey(index)).max(now.hover(rowsKey(index))).max(ends);
+    // Not under the name of its section, which says more.
+    const from = starts()[index]!;
+    const part = parts().findLast((each) => each.from <= from);
+    const clear = part ? space.pointX.times(nameWidth(part)).plus(band.left.max(part.from)).le(from) : 1;
+    return now.hover(bandKey(index)).max(now.hover(rowsKey(index))).max(ends).times(clear);
   };
+  /** The points a section's first bar number and name take. */
+  const nameWidth = (part: { from: number; name: string }) => (String(starts().indexOf(part.from) + 1).length + 2 + part.name.length) * MEDIUM_CHAR + 16;
   const fermatas = memo(() => all().bars.flatMap((bar, index) => (bar.fermata ? [{ index, middle: starts()[index]! + (bar.fermata.beat - 0.5) * countOf(bar.signature), end: starts()[index + 1]! }] : [])));
   /** Where a fermata is drawn: over the middle of its count, clear of the end of its bar. */
   const fermataX = (fermata: { middle: number; end: number }) => space.pointX.times(-(FERMATA + 5)).plus(fermata.end).min(fermata.middle);
@@ -270,7 +290,7 @@ export const Marks = ({ page }: { page: Page }) => {
           const number = () => starts().indexOf(part.from) + 1;
           // The bar number and the name, or the name's first letter, or a dot: never nothing.
           const room = () => (parts().find((each) => each.from > part.from)?.from ?? end()) - part.from;
-          const widths = [() => (String(number()).length + 2 + part.name.length) * MEDIUM_CHAR + 16, () => 24];
+          const widths = [() => nameWidth(part), () => 24];
           // Not while its name is typed: the field is where it is.
           const named = () => (memory.typing === `section-${part.id}` ? 0 : 1);
           const shows = [
@@ -422,8 +442,9 @@ export const Marks = ({ page }: { page: Page }) => {
 const silentOf = ({ rows }: Page) => memo(() => rows().every((each) => each.children.every((child) => child.tool !== "timeline" || child.state.notes.length === 0)));
 
 /**
- * A row per instrument with the notes of its parts in its colour, no grid, a fine line where a
- * section starts and one where the piece ends, which the heads scroll with; under them the room beside the
+ * A row per instrument with the notes of its parts in its colour, a line between two, a barline
+ * through all of them while the bars have the room, a double one where a section ends and the
+ * final one where the piece does, which the heads scroll with; under them the room beside the
  * returns and the master. A press chooses that bar of that instrument and the instrument,
  * shift-press takes in the bars and instruments up to it, a drag those it goes over; a right press
  * opens the menu of what is chosen; a double click opens the notes of its part. A press under the
@@ -509,8 +530,13 @@ export const Rows = ({ page }: { page: Page }) => {
           <For each={bars}>
             {(bar) => <Rect key={rowsKey(bar.index)} x={bar.from} y={0} width={bar.to - bar.from} height={() => rows().length} color="none" onPress={press} drag={sweepDrag} />}
           </For>
-          <For each={parts}>{(part) => (part.from > 0 ? <Rect x={part.from} y={0} width={space.pointX} height={() => rows().length} color="border" /> : null)}</For>
-          <Rect x={end} y={0} width={space.pointX} height={() => rows().length} color="border" />
+          <Rect x={space.left} y={0} width={space.right.minus(space.left)} height={space.pointY} color="border" />
+          <For each={rows}>{(_, index) => <Rect x={space.left} y={() => index() + 1} width={space.right.minus(space.left)} height={space.pointY} color="border" />}</For>
+          <For each={bars}>
+            {(bar) => (bar.index > 0 ? <Rect x={bar.from} y={0} width={space.pointX} height={() => rows().length} color="border" opacity={fits(page, bar.to - bar.from, BARLINES)} /> : null)}
+          </For>
+          <For each={parts}>{(part) => (part.from > 0 ? <DoubleLine space={space} x={part.from} height={() => rows().length} /> : null)}</For>
+          <DoubleLine space={space} x={end} height={() => rows().length} final />
           <For each={rows}>
             {(each, index) => {
               /** Its notes in every section, each where it plays in the piece. */

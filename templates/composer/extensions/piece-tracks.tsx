@@ -37,11 +37,13 @@ export const Heads = ({ page }: { page: Page }) => {
           {(each) => (
             <div key={`head-${each.name}`} carry={`track:${each.name}`} onDrop={({ carried }) => carried?.startsWith("track:") && carried.slice(6) !== each.name && moveTrack(page, carried.slice(6), each.name)}
               style={{ height: ROW }}>
+              <Hairline />
               <TrackHead page={page} each={each} />
             </div>
           )}
         </For>
-        <div style={{ height: LOW_ROW, direction: "row", align: "center", paddingX: "xs" }}>
+        <Hairline />
+        <div style={{ height: LOW_ROW - 1, direction: "row", align: "center", paddingX: "xs" }}>
           <Button key="add-instrument" label="Instrument" icon="plus" variant="ghost" color="text-muted" size="sm" onClick={() => addTrack(page, 0)} />
           <Button key="add-kind" icon="chevron-down" variant="ghost" color="text-muted" size="sm" tooltip="Add an instrument or a return" onClick={() => addTrack(page)} />
         </div>
@@ -70,7 +72,7 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   // A head drawn anew hears no leave of the one it replaces.
   onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
-    <div key={`track-head-${each.name}`} style={() => ({ height: ROW, justify: "center", paddingLeft: "md", paddingRight: "sm", ...rowLook(chosen()) })}
+    <div key={`track-head-${each.name}`} style={() => ({ height: ROW - 1, justify: "center", paddingLeft: "md", paddingRight: "sm", ...rowLook(chosen()) })}
       onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))} tabStop>

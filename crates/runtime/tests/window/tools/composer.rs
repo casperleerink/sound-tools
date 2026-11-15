@@ -17,19 +17,19 @@ use crate::song::BAR;
 use crate::support::{mark, one_undo_step, write_outside};
 
 const BEAT: u64 = 960;
-/// A row of notes is 64 points tall, as `piece-page.ts` has it.
-const ROW: f32 = 64.;
+/// A row of notes is 96 points tall, as `piece-page.ts` has it.
+const ROW: f32 = 96.;
 /// The points the rows leave before the piece and after it as they open fitted to their width.
 const FIT_BEFORE: f32 = 12.;
 const FIT_AFTER: f32 = 120.;
 /// How long the piece of [`open_piece`] is as it opens: the rows fit it to their width.
 const OPENED: u64 = 6 * BAR;
-/// How far down the band its lines are: the section names, the time signatures and tempos, and
-/// under the bar numbers, empty band over the bars.
-const NAMES: f32 = 17.;
-const MARKS: f32 = 42.;
-const BARS: f32 = 72.;
-const FERMATA: f32 = 70.;
+/// How far down the band its lines are: the section names, the time signatures and tempos with
+/// the fermatas, and under them, empty band over the bars.
+const NAMES: f32 = 14.;
+const MARKS: f32 = 33.;
+const BARS: f32 = 45.;
+const FERMATA: f32 = 35.;
 /// The notes of `t00` in section A, one in each of its first three bars, and in B.
 const IN_A: [u64; 3] = [0, BAR + BEAT / 2, 2 * BAR];
 const IN_B: [u64; 1] = [0];
@@ -274,7 +274,7 @@ fn a_new_composer_project_opens_its_piece_and_its_first_instrument_plays(cx: &mu
     let mut window = open_folder(cx, folder);
     window.wait_for_bun();
     // Its one section, named over its bars, and with no notes yet, how to write some.
-    window.until("its section named", |window| window.shows(" Section 1 "));
+    window.until("its section named", |window| window.shows("1  Section 1"));
     window.until("the hint", |window| {
         window.shows("Double-click a bar to write notes")
     });
