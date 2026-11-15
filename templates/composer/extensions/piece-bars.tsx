@@ -17,7 +17,7 @@ const [NAME_Y, TEMPO_Y, NUMBER_Y] = [8, 33, 56];
 /** The bar-number line, where chosen whole bars show. */
 const TRACK_Y = NUMBER_Y - 2;
 /** The points a bar's number needs before the next one, and before a fermata on its bar; and which bars keep theirs as the room gets less, as a score numbers every fifth or tenth. */
-const NUMBER_ROOM = 40;
+const NUMBER_ROOM = 52;
 const NUMBERED = [1000, 500, 100, 50, 10, 5, 1];
 /** About how many points a character takes: of a label, of the tempo words, plain and bold, of a rehearsal mark, of a digit of a time signature. */
 const [LABEL_CHAR, WORD_CHAR, BOLD_CHAR, MARK_CHAR, DIGIT] = [5.6, 5.4, 8, 7.6, 15];
@@ -490,9 +490,16 @@ export const Rows = ({ page }: { page: Page }) => {
           </For>
           <For each={rows}>
             {(each, index) => {
-              /** Its notes in every section, each where it plays in the piece. */
+              /** Its notes in every section, each where it plays in the piece, with the time signature they start after. */
               const notes = memo(() =>
-                all().bars.length === 0 ? [] : parts().flatMap((part) => (partAt(each, part.id)?.state.notes ?? []).map((note) => ({ ...note, start: note.start + part.from }))),
+                all().bars.length === 0
+                  ? []
+                  : parts().flatMap((part) =>
+                      (partAt(each, part.id)?.state.notes ?? []).map((note) => {
+                        const start = note.start + part.from;
+                        return { ...note, start, signature: signatures().findLast((mark) => mark.tick <= start) };
+                      }),
+                    ),
               );
               // Between its lowest and highest pitch, a line each, an octave tall at least, in the middle of the row.
               const miniature = memo(() => {
@@ -501,9 +508,8 @@ export const Rows = ({ page }: { page: Page }) => {
                 const range = highest - lowest + 1;
                 const shown = Math.max(range, 12);
                 const step = (ROW - 26) / shown;
-                const height = clamp(step, 2, 3.5);
                 const bottom = ROW - 13 - ((shown - range) / 2) * step;
-                return { lowest, step, height, bottom };
+                return { lowest, step, bottom };
               });
               return (
                 <For each={notes}>
@@ -513,7 +519,10 @@ export const Rows = ({ page }: { page: Page }) => {
                       const { bottom, lowest, step } = miniature();
                       return index() + (bottom - (note.pitch - lowest + 0.5) * step) / ROW;
                     };
-                    const opacity = () => (muted(each) ? DIM : 1);
+                    // Faint where a time signature stands over it, so the signature reads.
+                    const mark = note.signature;
+                    const under = mark ? space.pointX.times(mark.width + 8).plus(mark.tick).gt(note.start).times(fits(page, mark.next - mark.tick, mark.width + 12)) : NONE;
+                    const opacity = () => under.times(-0.8).plus(1).times(muted(each) ? DIM : 1);
                     return [
                       <Rect x={note.start} y={() => y() - 0.6 / ROW} width={space.pointX.times(-1).plus(note.length).max(space.pointX)} height={1.2 / ROW} color={PAPER.soft} opacity={opacity} />,
                       <Circle x={() => space.pointX.times(HEAD).plus(note.start)} y={y} radius={HEAD} color={PAPER.ink} opacity={opacity} />,
@@ -534,7 +543,6 @@ export const Rows = ({ page }: { page: Page }) => {
                   {(_, index) => {
                     const middle = () => index() + 0.5;
                     return [
-                      <Rect x={() => space.pointX.times(-3).plus(x())} y={() => middle() - 27 / ROW} width={space.pointX.times(mark.width + 6)} height={54 / ROW} color={PAPER.veil} opacity={fitsHere} />,
                       <Label x={() => space.pointX.times(mark.width / 2).plus(x())} y={() => middle() - 29 / ROW} align="center" variant="display" text={[{ text: mark.beats, weight: "semibold" }]} color={colour} opacity={fitsHere} />,
                       <Label x={() => space.pointX.times(mark.width / 2).plus(x())} y={() => middle() - 5 / ROW} align="center" variant="display" text={[{ text: mark.note, weight: "semibold" }]} color={colour} opacity={fitsHere} />,
                     ];

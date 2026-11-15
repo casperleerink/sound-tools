@@ -17,7 +17,7 @@ export const MARKS = 78;
  * for a hairline, `chosen` the blue of a chosen passage, as notation programs draw it.
  */
 export const PAPER = {
-  page: "#e9e5db", veil: "#e9e5dbd0", hover: "#dfdacd", bar: "#8d877b", ink: "#1e1c19", soft: "#4a463f", faint: "#6a655c", line: "#cdc6b6",
+  page: "#e9e5db", hover: "#dfdacd", bar: "#8d877b", ink: "#1e1c19", soft: "#4a463f", faint: "#6a655c", line: "#cdc6b6",
   chosen: "#2f66cc", chosenFill: "#2f66cc1f", chosenHead: "#2f66cc26", playhead: "#2b8a50",
 } as const satisfies Record<string, Color>;
 export const ROW = 64;

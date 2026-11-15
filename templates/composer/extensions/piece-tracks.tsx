@@ -11,7 +11,7 @@ const BRACKET = 16;
 /** A switch on the paper, where the window's own would be dark: outlined while off, filled with `tint` while on. */
 const PaperToggle = ({ id, label, on, tint, tooltip, onClick }: { id: string; label: string; on: () => boolean; tint: Color; tooltip: () => string; onClick: () => void }) => (
   <div key={id} tabStop tooltip={tooltip} onClick={onClick}
-    style={() => ({ height: 24, minWidth: 24, paddingX: "sm", radius: "sm", align: "center", justify: "center", keep: true, borderWidth: 1, borderColor: on() ? tint : PAPER.line, ...(on() ? { background: tint } : { hover: { background: PAPER.hover } }) })}>
+    style={() => ({ height: 24, minWidth: 24, paddingX: "sm", radius: "sm", align: "center", justify: "center", keep: true, borderWidth: 1, borderColor: on() ? PAPER.soft : PAPER.line, ...(on() ? { background: tint } : { hover: { background: PAPER.hover } }) })}>
     <Text variant="label" style={{ color: PAPER.ink, weight: "medium" }}>{label}</Text>
   </div>
 );
@@ -74,9 +74,9 @@ const Bracket = ({ page: { rows } }: { page: Page }) => (
       {() => {
         const end = () => rows().length;
         return [
-          <Rect x={4} y={2 / ROW} width={4} height={() => end() - 4 / ROW} color={PAPER.ink} />,
-          <Path points={() => [[4, 2 / ROW], [6, -4 / ROW, 15, -8 / ROW], [9, -1 / ROW, 8, 6 / ROW], [4, 6 / ROW]]} color={PAPER.ink} />,
-          <Path points={() => [[4, end() - 2 / ROW], [6, end() + 4 / ROW, 15, end() + 8 / ROW], [9, end() + 1 / ROW, 8, end() - 6 / ROW], [4, end() - 6 / ROW]]} color={PAPER.ink} />,
+          <Rect x={4} y={8 / ROW} width={4} height={() => end() - 16 / ROW} color={PAPER.ink} />,
+          <Path points={() => [[4, 9 / ROW], [4.5, 2 / ROW, 15, 1 / ROW], [8.5, 4 / ROW, 8, 9 / ROW]]} color={PAPER.ink} />,
+          <Path points={() => [[4, end() - 9 / ROW], [4.5, end() - 2 / ROW, 15, end() - 1 / ROW], [8.5, end() - 4 / ROW, 8, end() - 9 / ROW]]} color={PAPER.ink} />,
         ];
       }}
     </Show>
