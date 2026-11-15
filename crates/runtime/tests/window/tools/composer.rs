@@ -1290,7 +1290,7 @@ fn a_rit_that_starts_at_another_tempo_says_it(cx: &mut TestAppContext) {
     window.keys("alt-t");
     window.type_in_field("60");
     window.until("the tempo and the rit.", |window| {
-        window.shows("♩ = 90  rit.")
+        window.shows("♩ = 90  rit. to 60")
     });
     assert_eq!(window.problems(), []);
 }

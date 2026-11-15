@@ -40,7 +40,7 @@ const said = (bar: Bar, bpm = bar.bpm) => `${beatOf(bar.signature).sign} = ${tem
 /**
  * A mark at a bar where the time signature or the tempo changes: the forms it shows, from the
  * longest, each with the points it needs. Bars that slow down or speed up along one straight line
- * have one mark, `rit.` or `accel.`, and the bar after them says its tempo again.
+ * have one mark, such as `rit. to 60`, and the bar after them says its tempo again.
  */
 function marksOf({ all, end }: Page) {
   const { bars, starts } = all();
@@ -62,26 +62,26 @@ function marksOf({ all, end }: Page) {
     const signatureWidth = Math.max(beats!.length, note!.length) * DIGIT;
     const lead = change.signature ? signatureWidth + 8 : 0;
     const tempoRun = runOf(index, tempoAt);
-    const [last, next] = [bars[tempoRun.to]!, bars[tempoRun.to + 1]];
+    const last = bars[tempoRun.to]!;
     const sliding = change.tempo && slides(index);
+    // A slide says the tempo it goes to with its word, so it is said wherever the word is; and one that does not start where the bar before it ends says the tempo it starts at.
     const word = rises(index) ? "accel." : "rit.";
-    // A slide that does not start where the bar before it ends says the tempo it starts at.
+    const reached = tempoOf({ ...last, bpm: endOf(last) });
+    const going = `${word} to ${reached}`;
     const jumps = index === 0 || endOf(bars[index - 1]!) !== bar.bpm;
-    const texts = !change.tempo ? [] : sliding ? [...(jumps ? [`${said(bar)}  ${word}`] : []), word] : [said(bar), String(tempoOf(bar))];
+    const texts = !change.tempo ? [] : sliding ? [...(jumps ? [`${said(bar)}  ${going}`, `${tempoOf(bar)} ${going}`] : []), going, `${word} ${reached}`, word] : [said(bar), String(tempoOf(bar))];
     const forms = [
       ...texts.map((tempo) => ({ tempo, width: 6 + lead + tempo.length * LABEL_CHAR + 8 })),
       // The time signature alone, with a dot for a tempo that changes there.
       ...(change.signature ? [{ tempo: "", width: change.tempo ? 6 + lead + 6 : 6 + signatureWidth + 4 }] : []),
     ];
-    // The tempo a slide reaches is said at its end, unless the bar after it says it.
-    const reached = next && !slides(tempoRun.to + 1) && next.bpm === endOf(last) ? "" : String(tempoOf({ ...last, bpm: endOf(last) }));
     return {
       ...change, signatureWidth, lead, forms, beats: beats!, note: note!, tempoRun,
       room: (changes[at + 1]?.tick ?? end()) - change.tick,
       signatureRun: runOf(index, signatureAt),
-      slide: sliding ? { end: starts[tempoRun.to + 1]!, reached } : null,
+      slide: sliding ? { end: starts[tempoRun.to + 1]! } : null,
       // What the mark says of the tempo once its bar is off the left edge, where it stays: also when the tempo did not change at it.
-      edgeTempo: slides(index) ? word : said(bar),
+      edgeTempo: slides(index) ? going : said(bar),
       slides: slides(index),
     };
   });
@@ -303,23 +303,19 @@ export const Marks = ({ page }: { page: Page }) => {
             <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="body" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureOpacity} />
           );
           const typeTempo = pressMark(mark.tempoRun, () => (mark.slides ? askSlide : askTempo)(page, mark.tempoRun));
-          // The line of a slide, from its word to where it ends, with the tempo it reaches.
+          // The line of a slide, from its words to where it ends.
           const slide = (() => {
             if (!mark.slide) return [];
-            const { end, reached } = mark.slide;
-            // The word may have its start tempo before it or not: the line starts after the form that shows.
+            const { end } = mark.slide;
+            // The line starts after the form that shows, while it has the room.
             const words = mark.forms.filter((form) => form.tempo !== "").map((form, index) => ({ width: form.width, shows: shown[index]! }));
-            const number = reached.length * LABEL_CHAR + (reached ? 10 : 0);
-            const room = (points: number) => words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + points))), NONE);
-            // The tempo it reaches shows before its line does: with little room, the word and the number.
-            const [lineShows, numberShows] = [room(number + (reached ? 14 : 12)), reached ? room(number + 2) : NONE];
+            const lineShows = words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + 12))), NONE);
             const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width - mark.lead - 10)), NONE);
-            const lineEnd = () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end);
+            const lineEnd = () => space.pointX.times(-5).plus(end);
             const lineStart = () => space.pointX.times(word).plus(tempoX()).min(lineEnd());
             const y = TEMPO_Y + 8;
             return [
               <Line from={() => [lineStart(), y] as const} to={() => [lineEnd(), y] as const} color="text-muted" width={1} opacity={lineShows} />,
-              <Label x={() => space.pointX.times(-5).plus(end)} y={TEMPO_Y} align="right" text={reached} color="text-muted" opacity={numberShows} />,
               <Rect key={`slide-${mark.index}`} x={lineStart} y={TOP_DIGIT - 2} width={() => lineStart().negate().plus(end).times(lineShows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />,
             ];
           })();

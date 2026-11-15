@@ -297,7 +297,7 @@ export async function fermataMenu(piece: Piece, index: number) {
 
 /** Asks how many bars to add after the chosen ones, or at the end with none chosen, and adds them, chosen. */
 export async function askBars(piece: Piece) {
-  const [, number] = /(\d+)/.exec((await piece.openField({ placeholder: "Bars to add, such as 4", width: 180 })) ?? "") ?? [];
+  const [, number] = /(\d+)/.exec((await piece.openField({ placeholder: "Bars to add after, such as 4", width: 210 })) ?? "") ?? [];
   const count = clamp(Number(number ?? 0), 0, 200);
   const choice = choiceOf(piece);
   const { bars } = barsOfPiece(piece.state);
@@ -332,7 +332,7 @@ export async function choiceMenu(piece: Piece, tick?: number) {
       ? ([
           { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },
           { label: "Add a bar after", shortcut: "piece.add_bar", run: () => addBar(piece, "after") },
-          { label: "Add bars…", shortcut: "piece.add_bars", run: () => askBars(piece) },
+          { label: "Add bars after…", shortcut: "piece.add_bars", run: () => askBars(piece) },
           { label: "Start a section here", shortcut: "piece.add_section", disabled: startsSection, separator: true, run: () => startSectionAt(piece) },
         ] satisfies Item[])
       : ([{ label: "Edit notes", shortcut: "piece.edit_notes", separator: true, run: () => editChosen(piece) }] satisfies Item[])),
