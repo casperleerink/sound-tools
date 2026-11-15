@@ -84,7 +84,7 @@ How the engine keeps to that:
 - A test that changes a file tells the code, as the watcher does: `Project::apply_outside_changes`, or `Opened::save_code` for tools. A busy Mac drops file events for minutes, so only CI runs the tests that start the system's watcher.
 - Property tests (`proptest`) cover the graph compiler, the clock round trips, transport events over random tempo maps and buffer sizes, and state application.
 - `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
-- Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
+- Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`), checking the project, the undo history and the files after every gesture. A test finds a part by its name in a look (`sound_ui::on_screen`), or a place by a space's units, never by points of the layout, so a change of sizes breaks no test.
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
 - Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule.

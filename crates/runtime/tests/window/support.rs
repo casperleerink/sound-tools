@@ -422,9 +422,15 @@ impl Opened<'_> {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+        let shows = on_screen::listing(&self.look());
         match held {
-            true => panic!("{what}, but Bun did not answer all it was told within {PATIENCE:?}"),
-            false => panic!("{what} did not happen within {PATIENCE:?}"),
+            true => panic!(
+                "{what}, but Bun did not answer all it was told within {PATIENCE:?}. The window \
+                 shows:\n{shows}"
+            ),
+            false => {
+                panic!("{what} did not happen within {PATIENCE:?}. The window shows:\n{shows}")
+            }
         }
     }
 
@@ -592,6 +598,17 @@ impl Opened<'_> {
     /// The middle of what shows of `name`. `None` when it is not drawn.
     pub(crate) fn find(&mut self, name: &str) -> Option<Point<Pixels>> {
         self.seen(name).map(|seen| seen.middle())
+    }
+
+    /// Where a knob of a view, `space-knob-<key>`, turns: its dial, and its number at its foot,
+    /// which a click types.
+    pub(crate) fn knob(&mut self, key: &str) -> (Point<Pixels>, Point<Pixels>) {
+        let knob = self.wait_for(&format!("space-knob-{key}")).whole;
+        let x = knob.center().x;
+        (
+            point(x, knob.top() + knob.size.height / 4.),
+            point(x, knob.bottom() - px(8.)),
+        )
     }
 
     /// The units of the space `key`, such as ticks and rows of a timeline, once it shows.

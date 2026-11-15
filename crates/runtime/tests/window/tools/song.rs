@@ -182,7 +182,7 @@ fn space_plays_the_song_with_nothing_from_bun(cx: &mut TestAppContext) {
     // The first track chosen: its panel shows its meter.
     let name = window.until_found("div-name-t00");
     window.click(name);
-    window.space_at("fader-t00/mix.gain_db");
+    window.wait_for("space-fader-t00/mix.gain_db");
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
@@ -266,7 +266,7 @@ fn main_in_the_project_file_shows_the_song_and_not_another_page(cx: &mut TestApp
         .cx
         .read(|cx| sound_ui::Views::main_instance(&session, cx).map(|id| id.to_string()));
     assert_eq!(main.as_deref(), Some("song"));
-    window.space_at("timeline");
+    window.wait_for("space-timeline");
 }
 
 /// The Mixer button shows a strip per track and return: a drag on a track's fader turns the

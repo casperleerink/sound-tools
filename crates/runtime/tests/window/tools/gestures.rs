@@ -8,13 +8,6 @@ use gpui::{
 use super::{ONLY_THE_TOOL, Opened, open};
 use crate::support::write_outside;
 
-impl Opened<'_> {
-    /// The top left of the space of `key`, once it shows.
-    fn space(&mut self, key: &str) -> Point<Pixels> {
-        self.wait_for(&format!("space-{key}")).whole.origin
-    }
-}
-
 fn project(name: &str, code: &str) -> [(String, String); 3] {
     [
         (ONLY_THE_TOOL[0].0.into(), ONLY_THE_TOOL[0].1.into()),
@@ -71,7 +64,7 @@ fn a_quiet_number_shows_while_the_pointer_or_the_keys_are_on_a_control_of_its_fi
     cx: &mut TestAppContext,
 ) {
     let mut window = open_project(cx, &project("quiet", QUIET));
-    let fader = window.space("fader-level") + point(px(14.), px(50.));
+    let fader = window.control("space-fader-level");
     let touched = |window: &mut Opened, field: &str| {
         // A draw reads it.
         window.find("space-fader-level");
@@ -107,14 +100,14 @@ fn a_quiet_number_shows_while_the_pointer_or_the_keys_are_on_a_control_of_its_fi
         window.record("quiet")["level"].as_f64() == Some(0.78)
     });
     // A click on the number types it too, and a drag from it still turns it.
-    let number = window.space("level") + point(px(10.), px(10.));
+    let number = window.control("space-level");
     window.click(number);
     window.until_found("div-level-typed");
     window.keys("cmd-a 2 0 enter");
     window.until("the level typed after a click", |window| {
         window.record("quiet")["level"].as_f64() == Some(0.2)
     });
-    let number = window.until_found("space-level") + point(px(10.), px(10.));
+    let number = window.until_found("space-level");
     window.press(number);
     window.drag_to(number - point(px(0.), px(50.)));
     window.release(number - point(px(0.), px(50.)));
@@ -129,7 +122,7 @@ fn a_knob_of_a_page_turns_its_field_as_it_drags_as_one_undo_step_and_asks_bun_fo
     cx: &mut TestAppContext,
 ) {
     let mut window = open_project(cx, &project("dial", DIAL));
-    let dial = window.space("knob-level") + point(px(28.), px(20.));
+    let dial = window.knob("level").0;
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     window.press(dial);
@@ -165,6 +158,7 @@ tool({
   view: ({ state, update, now }) =>
     h(Space, { key: "board", width: 400, height: 100, background: "#000000" },
       h(Rect, {
+        key: "block",
         x: () => now.drag("move").dx.plus(state.x),
         y: 0,
         width: 50,
@@ -184,7 +178,7 @@ tool({
 #[gpui::test]
 fn a_drag_moves_what_binds_to_it_and_bun_hears_it_once_at_its_end(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("mover", MOVER));
-    let block = window.space("board") + point(px(125.), px(25.));
+    let block = window.control("shape-block");
     let (updates, events) = sound_typescript::sent_updates_and_events();
     window.press(block);
     for step in 1..=20 {
@@ -359,7 +353,7 @@ fn a_knob_on_what_code_keeps_tells_its_code_as_it_is_dragged_and_takes_the_keys(
     cx: &mut TestAppContext,
 ) {
     let mut window = open_project(cx, &project("kept", KEPT));
-    let knob = window.space("kept") + point(px(28.), px(20.));
+    let knob = window.control("space-kept");
     let level = |window: &mut Opened<'_>| window.record("kept")["level"].as_f64().unwrap_or(-1.0);
     let becomes = |window: &mut Opened<'_>, wanted: f64| {
         window.until(&format!("its code to hear {wanted}"), |window| {
@@ -497,9 +491,9 @@ tool({
       h(Toggle, { key: "switch", on: false, onClick: (press) => hear(`toggle-click-${press.clicks}`)() }),
       h(Button, { key: "go", label: "Go", onClick: (press) => hear(`button-click-${press.clicks}`)() }),
       h(Space, { key: "board", width: 400, height: 100 },
-        h(Rect, { x: 0, y: 0, width: 50, height: 50, color: "#ffffff", ...pointer("shape") }),
-        h(Rect, { x: 100, y: 0, width: 50, height: 50, color: "#ffffff", drag: { onEnd: hear("drag-end") }, ...pointer("drag") }),
-        vanishing("gone-shape", (heard) => h(Rect, { x: 200, y: 0, width: 50, height: 50, color: "#ffffff", ...heard })),
+        h(Rect, { key: "shape", x: 0, y: 0, width: 50, height: 50, color: "#ffffff", ...pointer("shape") }),
+        h(Rect, { key: "drag", x: 100, y: 0, width: 50, height: 50, color: "#ffffff", drag: { onEnd: hear("drag-end") }, ...pointer("drag") }),
+        vanishing("gone-shape", (heard) => h(Rect, { key: "gone-shape", x: 200, y: 0, width: 50, height: 50, color: "#ffffff", ...heard })),
       ),
     );
   },
@@ -510,7 +504,7 @@ tool({
 fn a_div_and_a_shape_hear_their_press_then_its_release_then_the_click(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
     let pad = window.until_found("div-pad");
-    let shape = window.space("board") + point(px(25.), px(25.));
+    let shape = window.control("shape-shape");
     window.click(pad);
     window.click(shape);
     window.heard_by_the_pointer(
@@ -524,12 +518,9 @@ fn a_release_follows_a_press_off_the_node_after_escape_and_when_the_window_goes_
 ) {
     let mut window = open_project(cx, &project("pointer", POINTER));
     let pad = window.until_found("div-pad");
-    let board = window.space("board");
-    let (shape, slide) = (
-        board + point(px(25.), px(25.)),
-        board + point(px(125.), px(25.)),
-    );
-    let away = board + point(px(300.), px(300.));
+    let (shape, slide) = (window.control("shape-shape"), window.control("shape-drag"));
+    // Under the board, off every node.
+    let away = window.in_space("board", (300., 300.));
     for node in [pad, shape] {
         window.press(node);
         window.drag_to(away);
@@ -577,7 +568,7 @@ fn a_node_its_press_takes_away_still_hears_the_release(cx: &mut TestAppContext) 
     window.press(gone);
     window.until("the div gone", |window| window.find("div-gone").is_none());
     window.release(gone);
-    let shape = window.space("board") + point(px(225.), px(25.));
+    let shape = window.control("shape-gone-shape");
     window.press(shape);
     window.release(shape);
     window.heard_by_the_pointer("gone-press gone-release gone-shape-press gone-shape-release");
@@ -587,10 +578,9 @@ fn a_node_its_press_takes_away_still_hears_the_release(cx: &mut TestAppContext) 
 fn the_other_button_neither_clicks_a_held_press_nor_keeps_its_release(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
     let pad = window.until_found("div-pad");
-    let board = window.space("board");
     let (shape, empty) = (
-        board + point(px(25.), px(25.)),
-        board + point(px(350.), px(80.)),
+        window.control("shape-shape"),
+        window.in_space("board", (350., 80.)),
     );
     window.button(empty, MouseButton::Right, true);
     window.press(shape);
@@ -611,7 +601,7 @@ fn the_other_button_neither_clicks_a_held_press_nor_keeps_its_release(cx: &mut T
 fn the_middle_button_is_not_heard_while_the_left_holds_a_shape(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
     let pad = window.until_found("div-pad");
-    let shape = window.space("board") + point(px(25.), px(25.));
+    let shape = window.control("shape-shape");
     window.press(shape);
     window.button(shape, MouseButton::Middle, true);
     window.button(shape, MouseButton::Middle, false);
@@ -749,7 +739,7 @@ fn space_after_a_click_on_a_button_is_its_views(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_right_button_ends_no_left_click_of_a_div_a_toggle_or_a_button(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("pointer", POINTER));
-    let away = window.space("board") + point(px(350.), px(80.));
+    let away = window.in_space("board", (350., 80.));
     for selector in ["div-pad", "toggle-switch", "button-go"] {
         let node = window.until_found(selector);
         window.press(node);
@@ -1207,7 +1197,10 @@ fn a_pad_and_a_fader_on_what_code_keeps_tell_their_code_as_they_are_dragged(
     cx: &mut TestAppContext,
 ) {
     let mut window = open_project(cx, &project("held", HELD));
-    let pad = window.space("pad");
+    let pad = window.wait_for("space-pad").whole;
+    let at = |across: f32, down: f32| {
+        pad.origin + point(pad.size.width * across, pad.size.height * down)
+    };
     let becomes = |window: &mut Opened<'_>, wanted: [f64; 2]| {
         window.until(&format!("the pad to be at {wanted:?}"), |window| {
             let pad = window.record("held")["pad"].clone();
@@ -1218,16 +1211,16 @@ fn a_pad_and_a_fader_on_what_code_keeps_tell_their_code_as_they_are_dragged(
         });
     };
     // The press plays it where the pointer is, and the drag moves it on: across and up.
-    window.press(pad + point(px(25.), px(25.)));
+    window.press(at(0.25, 0.25));
     becomes(&mut window, [0.25, 0.75]);
-    window.drag_to(pad + point(px(80.), px(90.)));
+    window.drag_to(at(0.8, 0.9));
     becomes(&mut window, [0.8, 0.1]);
     window.cx.simulate_keystrokes("escape");
     becomes(&mut window, [0.5, 0.5]);
-    window.release(pad + point(px(80.), px(90.)));
+    window.release(at(0.8, 0.9));
 
     // 0 dB sits at 0.8 of a fader's travel: a tenth of its length up is about +3.2 dB.
-    let fader = window.space("gain") + point(px(14.), px(20.));
+    let fader = window.control("space-gain");
     window.press(fader);
     window.drag_to(fader - point(px(0.), px(10.)));
     window.until("the fader to move as it is dragged", |window| {
@@ -1273,7 +1266,7 @@ fn a_knob_takes_its_range_from_a_number_inside_a_child_and_steps_a_whole_number(
         ),
     ];
     let mut window = open(cx, &files);
-    let knob = window.space("knob-drums.pads.36.volume_db") + point(px(28.), px(20.));
+    let knob = window.knob("drums.pads.36.volume_db").0;
     // A pad's level runs from -48 to 12 dB: half its travel down from 0 dB is 30 dB less.
     window.drag(knob, knob + point(px(0.), px(100.)));
     window.wait_for_bun();
@@ -1286,7 +1279,7 @@ fn a_knob_takes_its_range_from_a_number_inside_a_child_and_steps_a_whole_number(
     window.until("one note up", |window| {
         window.record("kit")["note"].as_f64() == Some(37.0)
     });
-    let note = window.space("knob-note") + point(px(28.), px(20.));
+    let note = window.knob("note").0;
     window.drag(note, note - point(px(0.), px(14.)));
     window.wait_for_bun();
     let dragged = window.record("kit")["note"].as_f64().unwrap();
@@ -1416,7 +1409,7 @@ fn enter_or_a_click_on_its_value_types_the_value_of_a_knob(cx: &mut TestAppConte
     assert_eq!(window.undo_label().as_deref(), Some("Change pitch"));
     // The knob is back, and still turns with the keys.
     window.until_found("space-knob-pitch");
-    let value = window.space("knob-depth") + point(px(32.), px(62.));
+    let (dial, value) = window.knob("depth");
     window.click(value);
     window.until_found("div-knob-depth-typed");
     window.keys("cmd-a 8 0 enter");
@@ -1424,7 +1417,6 @@ fn enter_or_a_click_on_its_value_types_the_value_of_a_knob(cx: &mut TestAppConte
         window.record("shared")["depth"].as_f64() == Some(0.8)
     });
     // A click on the dial types nothing, and a double click there still resets.
-    let dial = window.space("knob-depth") + point(px(32.), px(18.));
     window.click(dial);
     window.settle();
     assert!(window.find("div-knob-depth-typed").is_none());
@@ -1457,7 +1449,7 @@ tool({
 #[gpui::test]
 fn a_number_input_typed_and_dragged_change_the_same_value(cx: &mut TestAppContext) {
     let mut window = open_project(cx, &project("played", PLAYED));
-    let knob = window.space("knob-rate");
+    let (dial, value) = window.knob("rate");
     window.wait_for_bun();
     let heard = |window: &mut Opened<'_>| {
         window
@@ -1470,18 +1462,17 @@ fn a_number_input_typed_and_dragged_change_the_same_value(cx: &mut TestAppContex
     hears(&mut window, "its default", 2.0);
 
     // A quarter of its travel up.
-    let dial = knob + point(px(32.), px(18.));
     window.press(dial);
     window.drag_to(dial - point(px(0.), px(50.)));
     window.release(dial - point(px(0.), px(50.)));
     hears(&mut window, "the drag", 4.5);
 
-    window.click(knob + point(px(32.), px(62.)));
+    window.click(value);
     window.until_found("div-knob-rate-typed");
     window.keys("7 enter");
     hears(&mut window, "the value typed on the knob", 7.0);
 
-    let number_box = window.space("box") + point(px(10.), px(10.));
+    let number_box = window.control("space-box");
     window.click(number_box);
     window.until_found("div-box-typed");
     window.keys("3 enter");
