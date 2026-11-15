@@ -526,17 +526,21 @@ fn a_section_moved_takes_its_music_with_it(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
-/// The name of B dragged onto the bars of A: B lands before A, with its music.
+/// The name of B, chosen, dragged onto the bars of A: B lands before A, with its music, and
+/// stays chosen where it now is, at the start, not the bars of A that are where it was.
 #[gpui::test]
 fn a_section_name_dragged_onto_another_section_lands_before_it(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     let name = window.in_band(4 * BAR, 14., NAMES);
     let onto = window.in_band(BAR, 0., NAMES);
+    window.click(name);
+    window.until_playhead(4 * BAR);
     let before = mark(&mut window);
     window.drag(name, onto);
     window.until("the section moved", |window| {
         window.part("t00", "sec-b").0 == 0
     });
+    window.until_playhead(0);
     window.after_the_runs();
     assert_eq!(window.part("t00", "sec-a"), (2 * BAR, IN_A.to_vec()));
     one_undo_step(&mut window, "Move a section", &before);
@@ -1415,5 +1419,44 @@ fn a_bar_added_inside_a_rit_joins_it_and_one_removed_leaves_it_whole(cx: &mut Te
     window.until("four bars in A", |window| {
         window.sections()[0]["bars"] == rit
     });
+    assert_eq!(window.problems(), []);
+}
+
+/// A section started at bar 3, then enter on that bar: the note editor shows the part of the
+/// new section, where the bar now is, not that of A.
+#[gpui::test]
+fn the_note_editor_opens_on_the_section_just_started(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(2);
+    window.keys("shift-s");
+    window.type_in_field("C");
+    window.until("the section named", |window| {
+        window.sections()[1]["name"] == "C"
+    });
+    window.after_the_runs();
+    let new = window.sections()[1]["id"].as_str().unwrap().to_string();
+    window.wait_for_bun();
+    window.keys("enter");
+    window.until_found(&format!("space-editor-t00/{new}/0-{}", 2 * BAR));
+    assert_eq!(window.problems(), []);
+}
+
+/// Shift-B on the last bar of the piece: the bar it adds is the chosen one, so the playhead is
+/// on it, and a second shift-B adds one after that. Alt-shift-down on A, chosen, moves it after
+/// B, where it stays chosen.
+#[gpui::test]
+fn what_a_key_adds_or_moves_is_what_stays_chosen(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(5);
+    window.keys("shift-b");
+    window.until_playhead(6 * BAR);
+    window.after_the_runs();
+    window.wait_for_bun();
+    let name = window.in_band(0, 14., NAMES);
+    window.click(name);
+    window.until_playhead(0);
+    window.keys("alt-shift-down");
+    window.until("A after B", |window| window.sections()[1]["id"] == "sec-a");
+    window.until_playhead(3 * BAR);
     assert_eq!(window.problems(), []);
 }

@@ -214,7 +214,10 @@ export const Marks = ({ page }: { page: Page }) => {
       carried = null;
       if (id === null) return;
       const before = x >= end() ? null : (parts().find((part) => x < part.to)?.id ?? null);
-      if (before !== id && before !== (parts()[parts().findIndex((part) => part.id === id) + 1]?.id ?? null)) moveSection(page, id, before);
+      if (before === id || before === (parts()[parts().findIndex((part) => part.id === id) + 1]?.id ?? null)) return;
+      moveSection(page, id, before);
+      // What was chosen would now be over other music.
+      chooseSection(page, id);
     },
   };
   const landing = () =>

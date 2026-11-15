@@ -480,7 +480,7 @@ export type Frozen<T> = T extends string | number | boolean | null | undefined
 /** What all code of an instance gets: its view, `tick`, its `actions`, `onKey` and `onNotes`. */
 export interface Context<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
   extends Performer<I, K> {
-  /** The record as it is now, every field at its default where the record leaves it out. */
+  /** The record as it is now, also right after an `update` of its own, every field at its default where the record leaves it out. */
   state: Frozen<State>;
   /** The records of its children, as its behaviour gets them. */
   children: Frozen<OwnedChild<K>[]>;

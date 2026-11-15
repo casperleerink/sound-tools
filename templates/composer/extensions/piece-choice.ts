@@ -169,7 +169,9 @@ export function startSectionAt(piece: Piece): boolean {
   const choice = choiceOf(piece);
   const first = choice?.all.bars[choice.from];
   const id = first && first.at > 0 ? splitSection(piece, first.id, first.at) : undefined;
-  if (!id) return false;
+  if (!choice || !id) return false;
+  // The chosen bars are the new section's now: the note editor shows its part.
+  piece.memory.part = id;
   void nameSection(piece, id);
   return true;
 }

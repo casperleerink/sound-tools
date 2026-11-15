@@ -977,11 +977,15 @@ function contextOf<Extra extends object>(
     ...doers(instance, spec),
   };
   // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
-  let children: OwnedChild[] | undefined;
+  // And made again after an update of its own, so an action that adds a bar and then chooses it reads the bar it added.
+  let [seen, state, children]: [number, State | undefined, OwnedChild[] | undefined] = [edits, undefined, undefined];
+  const latest = () => {
+    if (seen !== edits) [seen, state, children] = [edits, undefined, undefined];
+  };
   return Object.defineProperties(context, {
-    state: { enumerable: true, value: filledState(spec, record) },
+    state: { enumerable: true, get: () => (latest(), (state ??= filledState(spec, recordOf(instance) ?? record))) },
     outputs: { enumerable: true, value: watches },
-    children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
+    children: { enumerable: true, get: () => (latest(), (children ??= childrenOf(instance))) },
   }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
 }
 
