@@ -108,9 +108,10 @@ const sectionsOf = ({ sections, form }: Page) =>
 const chosenSpan = (page: Page) => {
   const { starts, rows } = page;
   const choice = choiceOf(page);
-  if (!choice) return { x: 0, width: 0, whole: 0, music: 0, all: 0, top: 0, height: 0 };
+  if (!choice) return { x: 0, width: 0, whole: 0, music: 0, all: 0, last: 0, top: 0, height: 0 };
   const [from, to] = [starts()[choice.from]!, starts()[choice.to + 1]!];
-  const span = { x: from, width: to - from, all: choice.from === 0 && choice.to === choice.all.bars.length - 1 ? 1 : 0 };
+  const last = choice.to === choice.all.bars.length - 1 ? 1 : 0;
+  const span = { x: from, width: to - from, all: choice.from === 0 && last ? 1 : 0, last };
   if (choice.rows === null) return { ...span, whole: 1, music: 0, top: 0, height: 0 };
   const indexes = choice.rows.map((name) => rows().findIndex((each) => each.name === name));
   const top = Math.min(...indexes);
@@ -393,7 +394,7 @@ export const Marks = ({ page }: { page: Page }) => {
         ]}
       </For>
       {fermataSign(hold.x, () => hold.active.times(hold.dx.abs().gt(0)).times(0.5))}
-      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+ Bar" width={72} bare shown={() => 1} onClick={() => addBar(page, "end")} />
+      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+ Bar" width={72} bare shown={() => 1 - chosen().whole * chosen().last} onClick={() => addBar(page, "end")} />
       <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} bare shown={() => 1} onClick={() => void addSectionAtEnd(page, true)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
       <Circle x={playhead} y={MARKS - 3} radius={2.5} color="text" />

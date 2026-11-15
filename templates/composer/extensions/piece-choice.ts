@@ -332,7 +332,7 @@ export async function choiceMenu(piece: Piece, tick?: number) {
       : { label: "Clear", shortcut: "piece.clear_music", run: () => clearChosen(piece, false) },
     { label: "Time signature…", shortcut: "piece.type_time_signature", separator: true, run: () => askSignature(piece) },
     { label: "Tempo…", shortcut: "piece.type_tempo", run: () => askTempo(piece) },
-    { label: "Rit. or accel.…", shortcut: "piece.type_slide", run: () => askSlide(piece) },
+    { label: "Rit. or accel…", shortcut: "piece.type_slide", run: () => askSlide(piece) },
     { label: hasFermata ? "Fermata…" : "Fermata", shortcut: "piece.fermata", run: () => toggleFermata(piece, tick) },
     ...(whole
       ? ([
