@@ -6,7 +6,7 @@ import { blend, Button, For, Fragment, h, humanize, Input, Label, legato, Line, 
 const BEAT = 960;
 // Rows of 12 points, keys 40 wide at the right of a header 176 wide, a ruler 32 tall and a lane 56.
 export const ROW = 12;
-const HEADER = 176;
+const HEADER = 152;
 const KEYS = 40;
 const RULER = 32;
 const LANE = 56;
