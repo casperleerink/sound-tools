@@ -357,7 +357,7 @@ export const Marks = ({ page }: { page: Page }) => {
       </For>
       {fermataSign(hold.x, () => hold.active.times(hold.dx.abs().gt(0)).times(0.5))}
       <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+ Bar" width={72} shown={() => 1} onClick={() => addBar(page, "end")} />
-      <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
+      <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => void addSectionAtEnd(page, true)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
       <Circle x={playhead} y={MARKS - 3} radius={2.5} color="text" />
       <Show when={() => notice() !== null}>
@@ -500,7 +500,7 @@ export const Rows = ({ page }: { page: Page }) => {
             }}
           </For>
           <Rect x={-1e6} y={() => rows().length} width={2e6} height={space.pointY} color="border" />
-          <Show when={() => silent() && rows().length > 0}>
+          <Show when={() => silent() && rows().length > 0 && memory.chosen === null}>
             {() => [
               <Rect x={() => space.left.max(0).plus(space.pointX.times(6))} y={0.5 - 12 / ROW} width={space.pointX.times(HINT.length * LABEL_CHAR + 12)} height={24 / ROW} radius={4} color="background" />,
               <Label x={() => space.left.max(0).plus(space.pointX.times(12))} y={0.5 - 8 / ROW} text={HINT} color="text-muted" />,

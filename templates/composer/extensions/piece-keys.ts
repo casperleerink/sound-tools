@@ -150,7 +150,7 @@ export const pieceActions: Record<string, PieceAction> = {
   }),
   add_section: on(["shift-s"], "Start a section at the chosen bar, or with none chosen add one at the end", (tool) => {
     if (choiceOf(tool)) startSectionAt(tool);
-    else addSectionAtEnd(tool);
+    else void addSectionAtEnd(tool);
   }),
 
   rename_instrument: on(["enter"], "Rename the instrument", (tool) => {

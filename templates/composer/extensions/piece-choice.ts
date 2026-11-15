@@ -1,7 +1,7 @@
 import type { MenuItem } from "./sdk";
 import type { Piece } from "./piece";
 import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, setFermatas, setSignature, setSlide, setTempo, splitSection } from "./piece-edits";
-import { beatOf, countOf, endOf, longestHold, partsOf, startsOf, tempoOf, type Bar } from "./piece-form";
+import { beatOf, countOf, endOf, formText, longestHold, partsOf, startsOf, tempoOf, type Bar } from "./piece-form";
 import { barAtTick, barsOfPiece, barsOfSection, chooseBars, clamp, instrumentsOf, showEditor, showInstrument, spansOf } from "./piece-page";
 import { nameSection } from "./piece-sections";
 
@@ -192,7 +192,8 @@ export function toggleLoop(piece: Piece) {
   clock.setRepeat({ from: all.starts[from]!, to: all.starts[to + 1]! });
 }
 
-const SIGNATURES = ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "9/8", "12/8"];
+/** A few to pick: a longer list would cover the bars the field is for. */
+const SIGNATURES = ["2/4", "3/4", "4/4", "6/8"];
 /** The note values a time signature takes. */
 const NOTES = [1, 2, 4, 8, 16, 32];
 
@@ -202,7 +203,10 @@ export async function askSignature(piece: Piece, bars: { from: number; to: numbe
   if (!bar) return;
   const typed = await piece.openField({ placeholder: bar.signature, suggestions: SIGNATURES, width: 120 });
   const [, beats, note] = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(typed ?? "") ?? [];
-  if (!beats || Number(beats) < 1 || Number(beats) > 32 || !NOTES.includes(Number(note))) return;
+  if (!beats || Number(beats) < 1 || Number(beats) > 32 || !NOTES.includes(Number(note))) {
+    if (typed) piece.memory.notice = { text: "A time signature is written like 3/4 or 6/8.", form: formText(piece.state.sections as Parameters<typeof formText>[0]) };
+    return;
+  }
   setSignature(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), `${Number(beats)}/${Number(note)}`);
 }
 /** The first number of what was typed, as a tempo: none when it has no number. */
@@ -244,14 +248,13 @@ function countAt(all: ReturnType<typeof barsOfPiece>, tick: number) {
 }
 /** The bar a fermata goes on: the one at `tick`, or with none the last chosen bar, or the one that plays. */
 const fermataBar = (piece: Piece, tick?: number) => (tick === undefined ? chosenOrPlaying(piece).to : barAtTick(barsOfPiece(piece.state), tick));
-/** Puts a fermata on the count at `tick`, or with none on the last count of the last chosen bar. On a bar that has one: at `tick` it goes, with none its menu opens, so a key reaches how long it holds. */
+/** Puts a fermata on the count at `tick`, or with none on the last count of the last chosen bar. On a bar that has one its menu opens, so a key reaches how long it holds. */
 export function toggleFermata(piece: Piece, tick?: number): boolean {
   const all = barsOfPiece(piece.state);
   const bar = all.bars[fermataBar(piece, tick)];
   if (!bar) return false;
   const beat = tick === undefined ? partsOf(bar.signature)[0] : countAt(all, tick).beat;
-  if (bar.fermata && tick === undefined) void fermataMenu(piece, fermataBar(piece));
-  else if (bar.fermata) setFermatas(piece, "Remove a fermata", [{ id: bar.id, bar: bar.at, fermata: null }]);
+  if (bar.fermata) void fermataMenu(piece, fermataBar(piece, tick));
   else setFermatas(piece, "Add a fermata", [{ id: bar.id, bar: bar.at, fermata: { beat, extra: 1 } }]);
   return true;
 }
@@ -324,7 +327,7 @@ export async function choiceMenu(piece: Piece, tick?: number) {
     { label: "Time signature…", shortcut: "piece.type_time_signature", separator: true, run: () => askSignature(piece) },
     { label: "Tempo…", shortcut: "piece.type_tempo", run: () => askTempo(piece) },
     { label: "Rit. or accel.…", shortcut: "piece.type_slide", run: () => askSlide(piece) },
-    { label: hasFermata ? "Remove the fermata" : "Fermata", shortcut: "piece.fermata", run: () => toggleFermata(piece, tick) },
+    { label: hasFermata ? "Fermata…" : "Fermata", shortcut: "piece.fermata", run: () => toggleFermata(piece, tick) },
     ...(whole
       ? ([
           { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },

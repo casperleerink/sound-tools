@@ -38,11 +38,16 @@ export async function nameSection(piece: Piece, id: string) {
   const typed = await piece.openField({ value: name, placeholder: "Name of the section", width: 200 });
   if (typed !== null && typed !== name) renameSection(piece, id, typed);
 }
-/** Adds a section of eight bars at the end of the piece, chosen, with its name to type. */
-export function addSectionAtEnd(piece: Piece) {
+/**
+ * Adds a section of eight bars at the end of the piece, chosen, with its name to type. `here` is
+ * a press on the button after the last bar: the new name is then under the pointer, where the
+ * field opens, so the page stays put until it is typed.
+ */
+export async function addSectionAtEnd(piece: Piece, here = false) {
   const id = addSection(piece, null);
-  chooseSection(piece, id);
-  void nameSection(piece, id);
+  if (!here) chooseSection(piece, id);
+  await nameSection(piece, id);
+  if (here) chooseSection(piece, id);
 }
 
 export async function sectionMenu(piece: Piece, id: string) {
