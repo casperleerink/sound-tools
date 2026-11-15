@@ -1,13 +1,11 @@
-//! The application window: the title row with the project menu at its left and what the main
-//! view puts in the title bar in its middle, the view of the project's main instance under it, the left panel beside it, and a
-//! quiet line for errors and problems top-right, under the title row.
+//! The application window: the title row, the view of the project's main instance under it,
+//! the left panel beside it, and the notices bottom right.
 //!
-//! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view the installed [`Views`] has for the main instance of the project. Nor does it name the
-//! agent: the Agent tab of the left panel is whatever the installed [`LeftPanelSlot`] makes,
-//! beside the window's own History tab. Its own keys are the app's: undo, the panel, opening
-//! and quitting. Musical keys, such as space to play, are the project's, through
-//! [`GlobalKeys`].
+//! It names no extension type: the main area shows whatever view the installed [`Views`] has
+//! for the main instance of the project. Nor does it name the agent: the Agent tab of the left
+//! panel is whatever the installed [`LeftPanelSlot`] makes, beside the window's own History
+//! tab. Its own keys are the app's actions, see [`app_keys`]. Musical keys, such as space to
+//! play, are the project's, through [`GlobalKeys`].
 
 mod app_keys;
 pub mod audio_input;
@@ -707,8 +705,9 @@ impl Shell {
                 .into_any_element(),
         };
         vec![
-            // The title row: the project menu and the sign of files that are not live, then what the main view puts there, such as a
-            // song's transport, in the middle of the room right of it. The air on both sides of
+            // The title row: the project menu and the sign of files that are not live, then what
+            // the main view puts there, such as a song's transport, in the middle of the room
+            // right of it. The air on both sides of
             // the pill moves the window. In a narrow window the air goes first, so the pill
             // never covers the menu.
             div()
@@ -1235,7 +1234,7 @@ pub fn run(folder: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The app with no folder, as the Finder starts it: the last project, or the folder panel
+/// The app with no folder, as a double click starts it: the last project, or the folder panel
 /// when there is none. See [`start`].
 pub fn run_app() {
     sound_media::load_in_background();
@@ -1376,7 +1375,7 @@ impl Opened {
         // application keeps this until it quits.
         let weak_plugins = plugins.downgrade();
         drop(plugins);
-        // What the Finder opens next time. Not being able to remember it costs nothing now.
+        // What the app opens next time. Not being able to remember it costs nothing now.
         if let Err(error) = crate::app::remember_project(project.root()) {
             eprintln!("error: {error:#}");
         }
@@ -1410,8 +1409,8 @@ impl Opened {
         let timing = stream.timing().clone();
         let session = cx.new(|cx| Session::new(project, cx));
         // A turn of a pinned knob in a plugin's window that is still open when the project
-        // closes is written as one point of history, as the headless loop does with `Plugins::close`.
-        // The release of the session is the last moment the project is at hand.
+        // closes is written as one point of history, as the headless loop does with
+        // `Plugins::close`. The release of the session is the last moment the project is at hand.
         cx.observe_release(&session, {
             let plugins = weak_plugins.clone();
             move |session, _| {

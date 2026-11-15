@@ -1,7 +1,6 @@
-//! What the project runtime is made of, apart from the command line in `main.rs`: the bundled
-//! extensions and their views, the agent sidebar, the default project, the project summary, offline rendering and
-//! the application window. Tests of whole projects, with every bundled extension, use this
-//! crate.
+//! The runtime apart from its command line in `main.rs`: the bundled extensions and their
+//! views, the agent sidebar, templates, the project summary, offline rendering and the window.
+//! Tests of whole projects use this crate.
 
 pub mod app;
 pub mod log_file;
@@ -118,9 +117,6 @@ When `sound-tools` is not on your `PATH`, ask the composer to pick **Install com
 /// project loads and saves their state. Each plugin plays in a process of its own, so one that
 /// crashes costs its own slot; on macOS not yet in a window session, whose plugin windows
 /// still need the plugin in this process.
-///
-/// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
-/// per bundle, so a plugin that crashes while it is looked at costs one bundle.
 pub fn playing_plugins(in_window: bool) -> Result<Plugins> {
     // Headless: what the plugin's process writes goes nowhere, as this process's own output
     // is what its caller reads.
@@ -228,16 +224,13 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
     Ok(registry.tool_schemas())
 }
 
-/// Every bundled extension with a view registers it here, and what a rack calls its devices
-/// and what a composer can pick. The window names no view type and no instrument: it takes
-/// both registries and installs them, see `Shell::new`.
-///
-/// This is the one place that knows the built-in synth and the plugin host at once.
+/// Every bundled extension with a view registers it here, and the devices a composer can pick.
+/// The window names no view type and no instrument.
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
     // The order here is the order of a picker: the instruments, then the effects group by
-    // group, and the plugins of this Mac after the built-in devices.
+    // group, and the plugins of this computer after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
     wavetable::view::register(&mut views, &mut devices);
     sampler::view::register(&mut views, &mut devices);
@@ -288,11 +281,8 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
 }
 
 /// The agent sidebar, in the left panel of the window, and the Agents section of the Settings
-/// page, where its agents are set up. The window names no agent type, so this is where the two
-/// meet. In `support`, the support folder of the machine, the panel keeps whether it is open
-/// (see [`LeftPanelSlot`]), and the agents the programs they download, the threads of each
-/// project and the composer's approval mode and model. The agents and the settings are made
-/// once here and shared by every window, so a change in one is a change in all.
+/// page. The window names no agent type, so this is where the two meet. The agents and the
+/// settings are made once and shared by every window, so a change in one is a change in all.
 pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
     let remembered = support.as_deref().map(app::left_panel_file);
     let downloads = support.as_deref().map(app::agents_folder);
@@ -333,10 +323,8 @@ pub fn sidebar_panel(sidebar: Entity<Sidebar>, cx: &mut Context<Shell>) -> LeftP
 }
 
 /// The plugins `list` gives, as offers for a picker, one for a plugin installed in two formats.
-/// Each writes the record of that plugin into the slot it is picked for, with a state file of
-/// its own, and says its maker, which tells two plugins of one name apart. After them every bundle that
-/// could not be scanned, named by its file and with why, and `Scan again`, which tries those
-/// again. What a failed bundle holds is unknown, so both pickers list it.
+/// After them every bundle that could not be scanned, and `Scan again`. What a failed bundle
+/// holds is unknown, so both pickers list it.
 fn plugin_offers(
     weak: &WeakPlugins,
     list: fn(&plugin_host::Plugins) -> Vec<plugin_host::ScannedPlugin>,
@@ -409,16 +397,14 @@ fn plugin_offers(
 /// The key of the `Scan again` row of a picker, see [`plugin_offers`].
 pub const SCAN_AGAIN: &str = "plugins:scan-again";
 
-/// Opens the project with its lock. The plugin host is given: the application passes
-/// [`plugins`], which scans this machine, and a test passes one that looks in a folder of its
-/// own. A host that was not told to scan on a thread scans on this one, the first time a
-/// record needs a plugin.
+/// Opens the project with its lock. The app passes [`playing_plugins`]; a test passes a host
+/// that looks in a folder of its own.
 ///
-/// An empty or missing folder becomes an empty project: 120 bpm, 4/4, every bundled extension.
-/// A folder with other files and no `project.json` is refused, see [`app::check_project_folder`].
+/// An empty or missing folder becomes an empty project. A folder with other files and no
+/// `project.json` is refused, see [`app::check_project_folder`].
 ///
-/// With no window, it waits for what the behaviours of its own tools declare, so it plays what
-/// the records say from the start.
+/// Unlike [`open_with_extensions`], it waits for what the behaviours of the project's tools
+/// declare, so it plays what the records say from the start.
 pub fn open_or_create_with(
     folder: &Path,
     control: EngineControl,
@@ -748,12 +734,8 @@ pub fn problems(project: &Project) -> String {
 }
 
 /// One buffer of an offline render: the engine, and then the main-thread work of the plugin
-/// host, exactly as the loop of a live session does.
-///
-/// A render that leaves the host out is a render in which a plugin's main-thread requests are
-/// never answered: a CLAP plugin that asked for a callback waits for ever, and what a VST 3
-/// plugin changed by itself never reaches its controller. A plugin may be silent until it is
-/// answered, so this is not a nicety. Both callers of a render loop go through here.
+/// host, as the loop of a live session does. Without it a plugin's main-thread requests are
+/// never answered, and a plugin may stay silent until they are.
 pub fn render_block(
     project: &mut Project,
     engine: &mut Engine,
@@ -882,8 +864,7 @@ pub fn render(
 ///
 /// What the engine plays while it waits after a play or a seek, for the tracks with latency to
 /// reach the device, is left out and does not count: a render from the start has tick 0 on its
-/// first frame and ends where it would without latency. A project without latency never waits,
-/// so it renders exactly what it did before latency was compensated.
+/// first frame and ends where it would without latency.
 pub fn render_into(
     project: &mut Project,
     engine: &mut Engine,

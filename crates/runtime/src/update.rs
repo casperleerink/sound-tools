@@ -1,9 +1,9 @@
-//! The app updates itself from the latest GitHub release, as an Electron app does.
+//! The app updates itself from the latest GitHub release.
 //!
-//! When the window opens, and every day while it stays open, it asks GitHub for the latest release. A newer
-//! one is downloaded in the background with the agent's downloader (the system's curl, a lock,
-//! resume), checked against the release's `SHA256SUMS` and unpacked in the support folder.
-//! The window then shows a notice with **Restart**. The swap itself happens at the next start
+//! When the window opens, and every day while it stays open, it asks GitHub for the latest
+//! release. A newer one is downloaded in the background with the agent's downloader (the
+//! system's curl, a lock, resume), checked against the release's `SHA256SUMS` and unpacked in
+//! the support folder. The window then shows a notice with **Restart**. The swap itself happens at the next start
 //! of the windowed app, before any window: Restart is a quit and a start again, and a quit
 //! without Restart gets the update at the next launch. GPUI gives a quit too little time to
 //! copy an app.
