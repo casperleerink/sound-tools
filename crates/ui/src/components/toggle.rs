@@ -9,6 +9,7 @@
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
 //! plays and pauses first, as it does on any focused button.
 
+use crate::on_screen::{self, Named, Seen};
 use std::rc::Rc;
 
 use gpui::{
@@ -209,12 +210,21 @@ impl RenderOnce for Toggle {
         };
         let on = self.on;
         let on_click = self.on_click.filter(|_| !disabled);
-        // For tests, which find a toggle by its id: `toggle-<id>`. Nothing in a normal build.
-        let selector = self.id.clone();
+        let seen = on_screen::looking().then(|| {
+            let seen = Seen::named(format!("toggle-{}", self.id));
+            let seen = match &self.face {
+                Face::Label(label) => seen.text(label.clone()),
+                _ => seen,
+            };
+            match (on, disabled) {
+                (_, true) => seen.state("disabled"),
+                (true, false) => seen.state("on"),
+                (false, false) => seen.state("off"),
+            }
+        });
 
         self.base
             .id(self.id)
-            .debug_selector(move || format!("toggle-{selector}"))
             .flex()
             .flex_none()
             .items_center()
@@ -230,6 +240,7 @@ impl RenderOnce for Toggle {
             .rounded(self.size.radius())
             .bg(background)
             .border_1()
+            .when_some(seen, |toggle, seen| toggle.seen(|| seen))
             .border_color(match ring_shows {
                 true => ring,
                 false => outline,

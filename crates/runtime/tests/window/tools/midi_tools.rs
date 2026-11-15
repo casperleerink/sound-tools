@@ -102,7 +102,7 @@ fn a_controller_lane_of_a_clip_is_picked_and_its_points_edited(cx: &mut TestAppC
     window.click(picker);
     // Velocity, Pedal, Bend, Mod wheel, Pressure, then Brightness.
     window.pick("menu-5");
-    window.double_click(editor.lane(1000., 8.));
+    window.double_click(editor.lane(1000., 0.15));
     window.until("a second point", |window| {
         window.record("song/t01/c00")["controllers"]["74"]
             .as_array()
@@ -133,9 +133,10 @@ fn a_clip_trimmed_before_its_controller_lane_drops_it(cx: &mut TestAppContext) {
     write_clip(&mut window, &[(0, 60)], lanes);
     let body = window.on_lane(BAR / 4, 1);
     window.click(body);
-    // The right edge, inside the clip, half a clip to the left.
-    let edge = window.on_lane(BAR, 1) - point(px(2.), px(0.));
-    window.drag(edge, edge - point(px(48.), px(0.)));
+    // The right edge, half a clip to the left.
+    let edge = window.control("shape-clip-end-t01/c00");
+    let half = window.ticks(BAR / 2);
+    window.drag(edge, edge - point(half, px(0.)));
     window.until("the end moved", |window| {
         window.record("song/t01/c00")["length"] == BAR / 2
     });

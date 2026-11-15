@@ -78,13 +78,13 @@ fn a_list_that_grows_taller_draws_the_rows_it_now_shows(cx: &mut TestAppContext)
             .cx
             .update(|window, cx| window.simulate_next_frame(cx));
         window.cx.run_until_parked();
-        (window.cx.debug_bounds("div-list")).is_some_and(|list| list.size.height == px(300.))
+        (window.seen("div-list")).is_some_and(|list| list.whole.size.height == px(300.))
     });
     window
         .cx
         .update(|window, cx| window.simulate_next_frame(cx));
     window.cx.run_until_parked();
-    assert!(window.cx.debug_bounds("div-row-10").is_some());
+    assert!(window.seen("div-row-10").is_some());
 }
 
 /// A div with a key with a `#` in it that scrolls, and a click that changes another part.

@@ -6,6 +6,7 @@
 //! is the gesture of the knob, see [`gesture`](super::gesture). Controlled: the owner gives the
 //! value on every render and hears a [`ValueChange`].
 
+use crate::on_screen::Named;
 use std::rc::Rc;
 
 use gpui::{
@@ -142,11 +143,10 @@ impl RenderOnce for Slider {
             span: self.width - DOT,
             sideways: true,
         };
-        // For tests, which find the slider by its id: `slider-<id>`.
         let selector = self.id.clone();
         self.base
             .id(self.id)
-            .debug_selector(move || format!("slider-{selector}"))
+            .seen(move || format!("slider-{selector}"))
             .flex_none()
             .w(px(self.width))
             .h(px(HEIGHT))

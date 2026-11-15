@@ -20,7 +20,7 @@ use sound_ui::components::text_input::TextInput;
 use sound_ui::{Devices, Session, Views};
 
 use crate::plugin_hosts::open_or_create;
-use crate::support::{self, Opened};
+use crate::support::{self, Opened, seen_in};
 
 fn reverb_id() -> InstanceId {
     InstanceId::new("room").unwrap()
@@ -248,13 +248,9 @@ fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAp
     });
     let picker = picker.expect("the templates did not open");
     let mut picker = VisualTestContext::from_window(picker.into(), &opened.cx.cx);
-    picker.update(|window, _| window.refresh());
     picker.run_until_parked();
     let rows: Vec<&str> = (runtime::TEMPLATES.iter())
-        .filter(|template| {
-            let selector: &'static str = format!("template-{}", template.name).leak();
-            picker.debug_bounds(selector).is_some()
-        })
+        .filter(|template| seen_in(&mut picker, &format!("template-{}", template.name)).is_some())
         .map(|template| template.name)
         .collect();
     assert_eq!(rows, ["Bare", "DAW"]);

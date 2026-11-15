@@ -5,6 +5,7 @@
 //! Stateful, because the menu is. Both halves emit [`MenuPicked`]: the main half with the
 //! value of the menu item it stands for, so whoever holds it handles one event for both.
 
+use crate::on_screen::Named;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, IntoElement,
     MouseButton, Render, SharedString, Window, div, prelude::*, px,
@@ -144,7 +145,6 @@ impl Render for SplitButton {
         };
         let main = div()
             .id("split-main")
-            .debug_selector(move || name.to_string())
             .track_focus(&self.main_focus)
             .flex()
             .items_center()
@@ -155,6 +155,7 @@ impl Render for SplitButton {
             .pr(px(10.))
             .rounded_l(radius::MD)
             .border_1()
+            .seen(move || name)
             .border_color(match ring_shows {
                 true => ring,
                 false => Hsla::transparent_black(),

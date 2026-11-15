@@ -913,6 +913,7 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sound_ui::on_screen::{self, Named};
 
     fn plain() -> SpanStyle {
         SpanStyle::default()
@@ -1322,7 +1323,7 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
             div()
                 .w(px(400.))
-                .debug_selector(|| "message".into())
+                .seen(|| "message")
                 .child(MarkdownText::new("message", self.0.clone()))
         }
     }
@@ -1340,7 +1341,8 @@ mod tests {
         let source = "First **paragraph**.\n\n- Größe one\n\n```\ncode line\n```";
         let (message, cx) = cx.add_window_view(|_, _| Message(Markdown::parse(source)));
         cx.run_until_parked();
-        let bounds = cx.debug_bounds("message").expect("the message is drawn");
+        let seen = cx.update(on_screen::look);
+        let bounds = (on_screen::find(&seen, "message").expect("the message is drawn")).whole;
         let copied = |cx: &mut gpui::VisualTestContext| {
             cx.simulate_keystrokes("secondary-c");
             cx.read_from_clipboard().and_then(|item| item.text())

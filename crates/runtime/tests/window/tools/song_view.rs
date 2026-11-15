@@ -15,35 +15,32 @@ use sound_core::Ticks;
 use super::gestures::press_key;
 use super::song::open_song;
 use super::{Opened, write_sine};
-use crate::song::{ACROSS, BAR, HEADER, LEAD, song_files};
+use crate::song::{BAR, song_files};
+use crate::support::seen_in;
+use sound_ui::on_screen::{Seen, Units};
 
-/// The note editor's rows and lane, as `clip-editor.tsx` has them: 12 points a pitch, a lane 56
-/// tall, and as it opens on a clip, 8 points before it and 96 after it, 2.4 to 192 points a beat.
-const EDITOR_ROW: f32 = 12.;
-const EDITOR_LANE: f32 = 56.;
-
-/// The note editor of one clip, as it opened on it.
+/// The note editor of one clip, as it opened on it: its roll, a row a pitch, and its lane below.
 pub(super) struct Editor {
-    roll: Bounds<Pixels>,
-    lane: Point<Pixels>,
-    across: f32,
-    top: f32,
+    roll: Units,
+    lane: Seen,
 }
 
 impl Editor {
     /// Where `tick` of the clip and the middle of the row of `pitch` are in the roll.
     pub(super) fn at(&self, tick: f32, pitch: u8) -> Point<Pixels> {
-        let row = 127. - f32::from(pitch) - self.top;
-        self.roll.origin
-            + point(
-                px(8. + tick * self.across),
-                px(row * EDITOR_ROW + EDITOR_ROW / 2.),
-            )
+        let row = 127. - f64::from(pitch) + 0.5;
+        self.roll.point((f64::from(tick), row))
     }
 
-    /// Where `tick` of the clip is in the lane, `down` points from its top.
+    /// How tall a row of the roll is.
+    pub(super) fn row(&self) -> f32 {
+        self.roll.down as f32
+    }
+
+    /// Where `tick` of the clip is in the lane, `down` of the way from its top to its bottom.
     pub(super) fn lane(&self, tick: f32, down: f32) -> Point<Pixels> {
-        self.lane + point(px(8. + tick * self.across), px(down))
+        let units = self.lane.units.expect("a space has units");
+        units.point((f64::from(tick), f64::from(down)))
     }
 }
 
@@ -51,38 +48,12 @@ impl Opened<'_> {
     /// The editor of `clip`, `track/clip` of the song, once it is open and fitted to the clip.
     pub(super) fn editor(&mut self, clip: &str) -> Editor {
         let key = format!("editor-{clip}");
-        let roll = self.space_at(&key);
+        self.wait_for(&format!("space-{key}"));
         self.wait_for_bun();
-        let selector: &'static str = format!("space-{key}").leak();
-        let roll = self
-            .cx
-            .debug_bounds(selector)
-            .unwrap_or(Bounds::new(roll, Default::default()));
-        let lane = self.space_at(&format!("{key}-lane"));
-        let record = self.record(&format!("song/{clip}"));
-        let notes = record["notes"].as_array().cloned().unwrap_or_default();
-        let field = |note: &serde_json::Value, name: &str| note[name].as_f64().unwrap_or(0.) as f32;
-        let end = notes
-            .iter()
-            .map(|note| field(note, "start") + field(note, "length"))
-            .fold(1., f32::max);
-        let length = record["length"]
-            .as_f64()
-            .map_or(end, |length| length as f32);
-        let width = f32::from(roll.size.width);
-        let across = ((width - 104.) / length).clamp(0.0025, 0.2);
-        let pitches = notes.iter().map(|note| field(note, "pitch"));
-        let middle = match (pitches.clone().reduce(f32::min), pitches.reduce(f32::max)) {
-            (Some(low), Some(high)) => (low + high) / 2.,
-            _ => 60.,
-        };
-        let height = f32::from(roll.size.height);
-        let top = (127. - middle + 0.5 - height / EDITOR_ROW / 2.).round();
+        let roll = self.wait_for(&format!("space-{key}"));
         Editor {
-            roll,
-            lane,
-            across,
-            top,
+            roll: roll.units.expect("a space has units"),
+            lane: self.wait_for(&format!("space-{key}-lane")),
         }
     }
 
@@ -294,9 +265,8 @@ fn export_audio_asks_how_and_writes_the_mp3_chosen(cx: &mut TestAppContext) {
     });
     let screen = screen.expect("the export settings did not open");
     let mut screen = VisualTestContext::from_window(screen.into(), &window.cx.cx);
-    screen.update(|window, _| window.refresh());
     screen.run_until_parked();
-    assert!(screen.debug_bounds("segment-24").is_some());
+    assert!(seen_in(&mut screen, "segment-24").is_some());
     // Tab reaches the rows, as in the main window.
     let focused = |screen: &mut VisualTestContext| screen.update(|window, cx| window.focused(cx));
     let before = focused(&mut screen);
@@ -314,13 +284,12 @@ fn export_audio_asks_how_and_writes_the_mp3_chosen(cx: &mut TestAppContext) {
         (cx.windows().into_iter()).find_map(|window| window.downcast::<ExportSettings>())
     });
     let mut screen = VisualTestContext::from_window(screen.unwrap().into(), &window.cx.cx);
-    screen.update(|window, _| window.refresh());
     screen.run_until_parked();
-    let mp3 = screen.debug_bounds("segment-mp3").unwrap().center();
+    let mp3 = seen_in(&mut screen, "segment-mp3").unwrap().middle();
     screen.simulate_click(mp3, Modifiers::default());
     screen.run_until_parked();
     assert!(
-        screen.debug_bounds("segment-24").is_none(),
+        seen_in(&mut screen, "segment-24").is_none(),
         "an MP3 has no bit depth"
     );
     screen.simulate_keystrokes("enter");
@@ -356,9 +325,11 @@ fn a_track_head_dragged_onto_another_goes_before_it(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 3, 2);
     window.wait_for_bun();
     // By the left edge of a head, where none of its buttons is.
-    let edge = point(px(HEADER / 2. - 2.), px(0.));
-    let from = window.until_found("div-head-t02") - edge;
-    let to = window.until_found("div-head-t00") - edge;
+    let mut edge = |head: &str| {
+        let head = window.wait_for(head).whole;
+        point(head.left() + px(2.), head.center().y)
+    };
+    let (from, to) = (edge("div-head-t02"), edge("div-head-t00"));
     window.press(from);
     for step in [0.2, 0.5, 0.8, 1.0] {
         window.drag_to(from + (to - from) * step);
@@ -503,7 +474,8 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     let added = window.record("song/t00/lane-cutoff")["points"][1].clone();
     assert_eq!(added["tick"], 2 * BAR, "{added}");
     // Dragged off the grid, it lands on a sixteenth: a whole tick the lane takes.
-    window.drag(at, at + point(px(37.), px(0.)));
+    let off = window.ticks(1480);
+    window.drag(at, at + point(off, px(0.)));
     window.until("the point moved", |window| {
         window.record("song/t00/lane-cutoff")["points"][1]["tick"] != 2 * BAR
     });
@@ -602,8 +574,8 @@ fn a_line_of_a_lane_bends_by_its_handle_and_a_double_click_straightens_it(cx: &m
         window.record("song/t00/lane-cutoff")["points"][0]["curve"].as_f64()
     };
     // A point at the foot of the row at bar 4, 20 Hz: the line from 6 kHz falls to it.
-    let foot = point(px(0.), px(0.4 * crate::song::ROW));
-    let [four, five] = [4, 5].map(|bar| window.on_lane(bar * BAR, 1) + foot);
+    let timeline = window.units("timeline");
+    let [four, five] = [4, 5].map(|bar| timeline.point(((bar * BAR) as f64, 1.9)));
     window.click(four);
     window.until("a point added", |window| {
         window.record("song/t00/lane-cutoff")["points"][1]["tick"] == 4 * BAR
@@ -611,13 +583,9 @@ fn a_line_of_a_lane_bends_by_its_handle_and_a_double_click_straightens_it(cx: &m
     window.after_the_runs();
     // The handle is at bar 2, halfway along the line on the cutoff's log travel.
     let middle = (6_000f32 / 20.).ln() / 1_000f32.ln() / 2.;
-    let handle = window.on_lane(2 * BAR, 1)
-        + point(
-            px(0.),
-            px((0.1 + (1. - middle) * 0.8 - 0.5) * crate::song::ROW),
-        );
+    let handle = timeline.point(((2 * BAR) as f64, 1.1 + f64::from(1. - middle) * 0.8));
     let before = crate::support::mark(&mut window);
-    let pulled = point(px(0.), px(0.1 * crate::song::ROW));
+    let pulled = point(px(0.), px(0.1 * timeline.down as f32));
     window.drag(handle, handle + pulled);
     window.until("the line bent", |window| curve(window).is_some());
     window.after_the_runs();
@@ -674,10 +642,15 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
     let editor = window.editor("t01/c00");
 
     // The velocity of the first note, which starts the clip, dragged up.
-    let velocity = window.record("song/t01/c00")["notes"][0]["velocity"]
-        .as_u64()
-        .unwrap_or(100);
-    let bar = editor.lane(1., EDITOR_LANE - 4. - 44. * velocity as f32 / 127. + 3.);
+    let first = window.record("song/t01/c00")["notes"][0].clone();
+    let velocity = first["velocity"].as_u64().unwrap_or(100);
+    let field = |name: &str| &first[name];
+    let bar = window.control(&format!(
+        "shape-velocity-{}:{}:{}:{velocity}",
+        field("start"),
+        field("pitch"),
+        field("length")
+    ));
     window.press(bar);
     window.drag_to(bar - point(px(0.), px(10.)));
     window.drag_to(bar - point(px(0.), px(20.)));
@@ -693,7 +666,7 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
     let lanes = window.until_found("div-editor-lane-pick");
     window.click(lanes);
     window.pick("menu-2");
-    let at = editor.lane(1000., EDITOR_LANE / 2.);
+    let at = editor.lane(1000., 0.5);
     window.double_click(at);
     window.until("a bend point", |window| {
         window.record("song/t01/c00")["bend"]
@@ -735,8 +708,8 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
 fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let ruler = window.space_at("ruler");
-    let third = ruler + point(px(LEAD + (2 * BAR + 200) as f32 * ACROSS), px(8.));
+    // Its bar numbers are at its top.
+    let third = window.in_space("ruler", ((2 * BAR + 200) as f64, 8.));
     window.click_with(third, MouseButton::Right);
     window.pick("menu-0");
     let tempo_at = |window: &mut Opened<'_>, bpm: f64| {
@@ -753,7 +726,7 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     window.until("a tempo change", |window| tempo_at(window, 120.0));
     window.until_playhead(2 * BAR + 240);
     window.wait_for_bun();
-    let tempo = window.space_at("transport-tempo") + point(px(10.), px(8.));
+    let tempo = window.control("space-transport-tempo");
     window.press(tempo);
     window.drag_to(tempo - point(px(0.), px(10.)));
     window.drag_to(tempo - point(px(0.), px(20.)));
@@ -776,10 +749,10 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     assert_eq!(window.undo_label().as_deref(), Some("Name a section"));
 
     // A drag over the ruler, away from the repeat's bar, repeats bars 6 and 7; it is no edit.
-    let strip = window.space_at("ruler") + point(px(LEAD + (5 * BAR) as f32 * ACROSS), px(8.));
+    let ruler = window.units("ruler");
     let (from, to) = (
-        strip + point(px(BAR as f32 * ACROSS), px(0.)),
-        strip + point(px(3. * BAR as f32 * ACROSS), px(0.)),
+        ruler.point(((6 * BAR) as f64, 8.)),
+        ruler.point(((8 * BAR) as f64, 8.)),
     );
     window.press(from);
     window.drag_to(from + point(px(20.), px(0.)));
@@ -813,9 +786,12 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
         )
     };
     // The repeat's bar is at the foot of the ruler, once a drag over the ruler made one.
-    let ruler = window.space_at("ruler");
-    let on_bar =
-        |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(38.));
+    let ruler = window.wait_for("space-ruler");
+    let (units, foot) = (
+        ruler.units.unwrap(),
+        f64::from(ruler.whole.size.height) - 6.,
+    );
+    let at_foot = |tick: u64| units.point((tick as f64, foot));
     // Each press waits for the bar where the last change put it.
     let drag = |window: &mut Opened<'_>, from: Point<Pixels>, by: f32| {
         window.wait_for_bun();
@@ -824,36 +800,39 @@ fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a
         window.drag_to(from + point(px(by), px(0.)));
         window.release(from + point(px(by), px(0.)));
     };
-    let bar = BAR as f32 * ACROSS;
+    let bar = (BAR as f64 * units.across) as f32;
 
     // None yet: a click where the bar will be plays from there and repeats nothing.
-    window.click(on_bar(2 * BAR, 0.));
+    window.click(at_foot(2 * BAR));
     window.wait_for_bun();
     assert!(!looped(&mut window).0);
-    drag(&mut window, on_bar(0, 0.), 4. * bar);
+    drag(&mut window, at_foot(0), 4. * bar);
     window.until("the repeat on", |window| looped(window) == (true, 0, 4));
     // Its bar shows once the song heard of it.
     window.wait_for_bun();
-    window.click(on_bar(2 * BAR, 0.));
+    let repeat = window.control("shape-repeat");
+    window.click(repeat);
     window.until("the repeat off", |window| !looped(window).0);
-    window.click(on_bar(2 * BAR, 0.));
+    window.click(repeat);
     window.until("the repeat on again", |window| looped(window).0);
 
-    drag(&mut window, on_bar(2 * BAR, 0.), bar);
+    drag(&mut window, repeat, bar);
     window.until("the repeat moved a bar on", |window| {
         looped(window) == (true, 1, 5)
     });
-    drag(&mut window, on_bar(5 * BAR, -3.), bar);
+    let end = window.control("shape-repeat-end");
+    drag(&mut window, end, bar);
     window.until("its end a bar later", |window| {
         looped(window) == (true, 1, 6)
     });
-    drag(&mut window, on_bar(BAR, 3.), bar);
+    let start = window.control("shape-repeat-start");
+    drag(&mut window, start, bar);
     window.until("its start a bar later", |window| {
         looped(window) == (true, 2, 6)
     });
 
     // A double click on the ruler adds a section at the nearest bar line, its name open.
-    window.double_click(ruler + point(px(LEAD + (4 * BAR + 100) as f32 * ACROSS), px(8.)));
+    window.double_click(units.point(((4 * BAR + 100) as f64, 8.)));
     window.until_found("div-ruler-edit");
     window.cx.simulate_keystrokes("enter");
     window.until("a section", |window| {
@@ -927,13 +906,14 @@ fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
-    // A second at 120 bpm is two beats: its end, a little inside.
-    let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
+    // A second at 120 bpm is two beats.
     window.until_found("toggle-mixer-toggle");
+    let end = window.control("shape-region-end-audio-voice/region");
+    let beat = window.ticks(960);
     window.press(end);
     window.drag_to(end - point(px(5.), px(0.)));
-    window.drag_to(end - point(px(960. * ACROSS), px(0.)));
-    window.release(end - point(px(960. * ACROSS), px(0.)));
+    window.drag_to(end - point(beat, px(0.)));
+    window.release(end - point(beat, px(0.)));
     window.until("the end trimmed", |window| {
         window.record("song/audio-voice/region")["file_end_seconds"]
             .as_f64()
@@ -955,8 +935,9 @@ fn a_marquee_over_the_timeline_chooses_the_clips_under_it(cx: &mut TestAppContex
     window.wait_for_bun();
     // Between the first and second clips of each track (every clip is one or two bars), down
     // to the middle of the third track: the second clips of the first three tracks.
-    let from = window.on_lane(2 * BAR + BAR / 2, 0) - point(px(0.), px(10.));
-    let to = window.on_lane(3 * BAR + BAR / 2, 2);
+    let timeline = window.units("timeline");
+    let from = timeline.point(((2 * BAR + BAR / 2) as f64, 0.35));
+    let to = timeline.point(((3 * BAR + BAR / 2) as f64, 2.5));
     window.press(from);
     window.drag_to(from + point(px(10.), px(10.)));
     window.drag_to(to);
@@ -1060,8 +1041,8 @@ fn a_clip_made_shorter_cuts_what_starts_past_its_end(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 4, 0);
     window.click(clip);
     window.after_the_runs();
-    let end = window.on_lane(length, 0) - point(px(2.), px(0.));
-    let half = px((length / 2) as f32 * ACROSS);
+    let end = window.control("shape-clip-end-t00/c00");
+    let half = window.ticks(length / 2);
     window.press(end);
     window.drag_to(end - point(half / 2., px(0.)));
     window.drag_to(end - point(half, px(0.)));
@@ -1104,12 +1085,13 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     );
     window.wait_for_bun();
     window.drop_sine();
-    let end = window.on_lane(2 * BAR + 960, 2) - point(px(2.), px(0.));
     window.until_found("toggle-mixer-toggle");
+    let end = window.control("shape-region-end-audio-voice/region");
+    let beat = window.ticks(480);
     window.press(end);
     window.drag_to(end - point(px(5.), px(0.)));
-    window.drag_to(end - point(px(480. * ACROSS), px(0.)));
-    window.release(end - point(px(480. * ACROSS), px(0.)));
+    window.drag_to(end - point(beat, px(0.)));
+    window.release(end - point(beat, px(0.)));
     window.until("the end trimmed", |window| {
         window.record("song/audio-voice/region")["file_end_seconds"]
             .as_f64()
@@ -1225,18 +1207,23 @@ fn the_timeline_scrolls_to_its_last_clip(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 1, 30);
     let last = window.record("song/t00/c29")["start"].as_u64().unwrap();
     assert!(last > 64 * BAR);
-    let timeline = window.space_at("timeline");
+    let timeline = window.units("timeline");
     window.wait_for_bun();
+    assert!(window.seen("shape-clip-t00/c29").is_none());
     window.cx.simulate_event(gpui::ScrollEvent {
-        position: timeline + point(px(200.), px(10.)),
-        delta: gpui::ScrollDelta::Pixels(point(px(-(last as f32) * ACROSS), px(0.))),
+        position: timeline.point((BAR as f64, 0.2)),
+        delta: gpui::ScrollDelta::Pixels(point(
+            px(-(last as f64 * timeline.across) as f32),
+            px(0.),
+        )),
         modifiers: Modifiers::default(),
         touch_phase: gpui::TouchPhase::Moved,
         ..Default::default()
     });
     window.cx.run_until_parked();
-    let at = window.on_lane(BAR / 2, 0);
-    window.click(at);
+    let clip = window.wait_for("shape-clip-t00/c29");
+    assert!(clip.shows(), "{clip:?}");
+    window.click(clip.middle());
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
     window.until("the last clip deleted", |window| {
@@ -1251,12 +1238,13 @@ fn a_region_that_plays_its_whole_file_trims_no_further_out(cx: &mut TestAppConte
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
-    let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
     window.until_found("toggle-mixer-toggle");
+    let end = window.control("shape-region-end-audio-voice/region");
+    let beat = window.ticks(960);
     window.press(end);
     window.drag_to(end + point(px(5.), px(0.)));
-    window.drag_to(end + point(px(960. * ACROSS), px(0.)));
-    window.release(end + point(px(960. * ACROSS), px(0.)));
+    window.drag_to(end + point(beat, px(0.)));
+    window.release(end + point(beat, px(0.)));
     window.after_the_runs();
     window.wait_for_bun();
     assert_eq!(
@@ -1807,7 +1795,7 @@ fn the_mixer_fader_of_a_track_writes_into_its_volume_lane_while_it_plays(cx: &mu
     let mut window = open_with_a_volume_lane(cx);
     write_automation(&mut window);
     let session = window.session.clone();
-    let fader = window.space_at("fader-t00/mix.gain_db") + point(px(14.), px(40.));
+    let fader = window.control("space-fader-t00/mix.gain_db");
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
     window.play_and_draw(4_800);
     let (before, record) = (
@@ -1867,7 +1855,7 @@ fn a_volume_typed_while_its_lane_plays_is_refused_and_with_write_lands_in_the_la
         window.record("song/t00/lane-volume"),
     );
     let type_volume = |window: &mut Opened<'_>, volume: &str| {
-        let number = window.space_at("gain-t00/mix") + point(px(10.), px(8.));
+        let number = window.control("space-gain-t00/mix");
         window.click(number);
         window.until_found("div-gain-t00/mix-typed");
         window.keys("secondary-a");
@@ -1967,9 +1955,9 @@ fn the_head_of_the_note_editor_says_a_note_only_while_one_is_chosen(cx: &mut Tes
     window.until_found("div-note-readout");
     // A key up, still held.
     window.press(note);
-    window.drag_to(note - point(px(0.), px(EDITOR_ROW)));
+    window.drag_to(note - point(px(0.), px(editor.row())));
     assert!(window.find("div-note-readout").is_some());
-    window.release(note - point(px(0.), px(EDITOR_ROW)));
+    window.release(note - point(px(0.), px(editor.row())));
     window.until("the note moved", |window| {
         window.record("song/t00/c00")["notes"][0]["pitch"] == 61
     });
@@ -2072,35 +2060,35 @@ fn the_note_editor_takes_more_of_the_window_by_its_line_and_its_key(cx: &mut Tes
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
-    window.editor("t00/c00");
+    let row = window.editor("t00/c00").row();
     let label = window.undo_label();
     let roll = |window: &mut Opened| {
-        let roll = window.bounds("space-editor-t00/c00").unwrap();
-        f32::from(roll.size.height)
+        let roll = window.seen("space-editor-t00/c00").unwrap();
+        f32::from(roll.whole.size.height)
     };
     let line =
         |window: &mut Opened| window.until_found("space-editor-divider") + point(px(300.), px(2.));
     let opened = roll(&mut window);
     let at = line(&mut window);
     window.press(at);
-    window.drag_to(at - point(px(0.), px(3. * EDITOR_ROW)));
-    window.release(at - point(px(0.), px(3. * EDITOR_ROW)));
+    window.drag_to(at - point(px(0.), px(3. * row)));
+    window.release(at - point(px(0.), px(3. * row)));
     window.until("the editor taller", |window| {
-        roll(window) == opened + 3. * EDITOR_ROW
+        roll(window) == opened + 3. * row
     });
     // The line moved up with it.
-    assert_eq!(line(&mut window), at - point(px(0.), px(3. * EDITOR_ROW)));
+    assert_eq!(line(&mut window), at - point(px(0.), px(3. * row)));
 
     window.keys("shift-enter");
     window.until("the editor large", |window| {
-        roll(window) > opened + 3. * EDITOR_ROW
+        roll(window) > opened + 3. * row
     });
     // A track and the master stay over it.
     let head = window.until_found("div-track-head-t00");
     assert!(head.y < line(&mut window).y);
     window.keys("shift-enter");
     window.until("the editor put back", |window| {
-        roll(window) == opened + 3. * EDITOR_ROW
+        roll(window) == opened + 3. * row
     });
 
     let at = line(&mut window);

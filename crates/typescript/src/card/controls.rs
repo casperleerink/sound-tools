@@ -1,5 +1,6 @@
 //! The controls of the app that nodes draw, and how a control meets the keys and the pointer.
 
+use sound_ui::on_screen::Named;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -86,7 +87,7 @@ impl Drawing<'_> {
                     .ok();
                 })
             });
-        (div().flex_none().occlude().debug_selector(move || selector))
+        (div().flex_none().occlude().seen(move || selector))
             .child(control)
             .into_any_element()
     }
@@ -165,7 +166,7 @@ impl Drawing<'_> {
             .flex_col()
             .p(px(if modal { 16. } else { 8. }))
             .text_size(px(12.))
-            .debug_selector(move || selector)
+            .seen(move || selector)
             .children(content);
         if modal {
             let focus = self.focus.clone();
@@ -222,7 +223,6 @@ impl Drawing<'_> {
             (None, true) => Toggle::dot(name, on),
             (None, false) => Toggle::new(name, props.label.clone().unwrap_or_default(), on),
         };
-        let selector = format!("toggle-{}", props.key.as_deref().unwrap_or_default());
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
@@ -236,11 +236,7 @@ impl Drawing<'_> {
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
         let wrap = self
-            .control(
-                div().flex_none().occlude().debug_selector(move || selector),
-                id,
-                Control::press(),
-            )
+            .control(div().flex_none().occlude(), id, Control::press())
             .when(hears.any(), Div::cursor_pointer);
         self.hears_pointer(wrap, id, hears)
             .child(toggle)
@@ -286,7 +282,7 @@ impl Drawing<'_> {
                     button
                 },
             )
-            .debug_selector(move || selector);
+            .seen(move || selector);
         let wrap = self.control(div().flex_none().relative(), id, Control::press());
         self.hears_pointer(wrap, id, hears)
             .child(button)

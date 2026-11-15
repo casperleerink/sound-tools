@@ -185,13 +185,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened = open_files_with(cx, &files, write_voice)?;
     // Where bar 1 starts on the first row: right of the headers, under the title row and the
     // ruler.
-    let timeline = point(px(crate::song::HEADER + crate::song::LEAD), px(TOP));
+    let timeline = point(px(crate::HEADER + crate::LEAD), px(TOP));
     let lane = |tick: u64, row: f32| {
-        timeline
-            + point(
-                px(tick as f32 * crate::song::ACROSS),
-                px(row * crate::song::ROW),
-            )
+        timeline + point(px(tick as f32 * crate::ACROSS), px(row * crate::ROW))
     };
     // A clip of the third track opens below; then the second of the fifth is chosen, and the
     // editor follows to it. The transport of the page is above the rows.

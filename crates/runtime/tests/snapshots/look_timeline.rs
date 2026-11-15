@@ -20,7 +20,8 @@ use gpui::{
 use serde_json::{Value, json};
 
 use super::{at, away, click, piece_files, settle};
-use crate::song::{ACROSS, BAR, HEADER, LEAD};
+use crate::song::BAR;
+use crate::{ACROSS, HEADER, LEAD};
 
 /// Where `tick` is on the top line of the ruler, `right` points after it.
 fn in_ruler(tick: u64, right: f32) -> Point<Pixels> {

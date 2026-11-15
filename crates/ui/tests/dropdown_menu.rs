@@ -1,9 +1,10 @@
 //! The dropdown menu with a keyboard, while its items change under it.
 
+use sound_ui::on_screen;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui::{Modifiers, SharedString, TestAppContext, point, px};
+use gpui::{Modifiers, Pixels, SharedString, TestAppContext, VisualTestContext, point, px};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -13,6 +14,12 @@ fn entries(undo_label: &str, values: &[&'static str]) -> Vec<MenuEntry> {
         .iter()
         .map(|value| MenuItem::new(*value, format!("{undo_label} {value}")).selectable(false));
     vec![MenuEntry::Group(MenuGroup::new().items(items))]
+}
+
+/// Where the part named `name` is, whole, as a look sees it: see `sound_ui::on_screen`.
+fn whole_bounds(cx: &mut VisualTestContext, name: &str) -> Option<gpui::Bounds<Pixels>> {
+    let seen = cx.update(on_screen::look);
+    on_screen::find(&seen, name).map(|seen| seen.whole)
 }
 
 #[gpui::test]
@@ -72,7 +79,7 @@ fn the_pointer_moves_the_highlight_the_keys_move(cx: &mut TestAppContext) {
     });
     menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
     cx.run_until_parked();
-    let redo = cx.debug_bounds("menu-redo").unwrap();
+    let redo = whole_bounds(cx, "menu-redo").unwrap();
     cx.simulate_mouse_move(redo.center(), None, Modifiers::none());
     cx.run_until_parked();
     cx.simulate_keystrokes("enter");
@@ -161,11 +168,11 @@ fn a_row_in_a_submenu_is_picked_with_the_pointer_and_with_the_keys(cx: &mut Test
 
     menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
     cx.run_until_parked();
-    assert!(cx.debug_bounds("menu-piano").is_none());
-    let row = cx.debug_bounds("menu-recent").unwrap();
+    assert!(whole_bounds(cx, "menu-piano").is_none());
+    let row = whole_bounds(cx, "menu-recent").unwrap();
     cx.simulate_mouse_move(row.center(), None, Modifiers::none());
     cx.run_until_parked();
-    let piano = cx.debug_bounds("menu-piano").unwrap();
+    let piano = whole_bounds(cx, "menu-piano").unwrap();
     assert!(piano.left() >= row.right(), "the submenu is beside its row");
     cx.simulate_mouse_move(piano.center(), None, Modifiers::none());
     // A key in between, which GPUI takes as the end of hovering by default.
@@ -188,7 +195,7 @@ fn a_row_in_a_submenu_is_picked_with_the_pointer_and_with_the_keys(cx: &mut Test
     menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
     cx.run_until_parked();
     cx.simulate_keystrokes("down down enter left");
-    assert!(cx.debug_bounds("menu-night").is_none());
+    assert!(whole_bounds(cx, "menu-night").is_none());
     assert!(menu.read_with(cx, |menu, _| menu.is_open()));
 }
 
@@ -230,8 +237,8 @@ fn a_search_that_opened_upward_stays_put_as_it_drops_rows(cx: &mut TestAppContex
         menu.open_at(point(px(20.), bottom - px(10.)), window, cx)
     });
     cx.run_until_parked();
-    let before = cx.debug_bounds("menu-bass").unwrap().origin;
+    let before = whole_bounds(cx, "menu-bass").unwrap().origin;
     cx.simulate_keystrokes("b");
-    assert!(cx.debug_bounds("menu-keys").is_none());
-    assert_eq!(cx.debug_bounds("menu-bass").unwrap().origin, before);
+    assert!(whole_bounds(cx, "menu-keys").is_none());
+    assert_eq!(whole_bounds(cx, "menu-bass").unwrap().origin, before);
 }

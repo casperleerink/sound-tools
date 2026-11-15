@@ -11,6 +11,7 @@ use gpui::{
 
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
+use crate::on_screen::{self, Named, Seen};
 use crate::scale::ControlSize;
 use crate::theme::ActiveTheme;
 use crate::typography::{TextVariant, Typography};
@@ -70,6 +71,7 @@ pub struct Button {
     focus_handle: Option<FocusHandle>,
     tab_stop: bool,
     on_click: Option<ClickHandler>,
+    seen: Option<SharedString>,
 }
 
 /// Kept under the button's id: its own focus handle, for [`Button::tab_stop`], and whether a
@@ -94,6 +96,7 @@ impl Button {
             focus_handle: None,
             tab_stop: false,
             on_click: None,
+            seen: None,
         }
     }
 
@@ -154,6 +157,14 @@ impl Button {
 
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(f));
+        self
+    }
+
+    /// Its name in a look, which also sees its label and whether it is disabled.
+    pub fn seen<S: Into<SharedString>>(mut self, name: impl FnOnce() -> S) -> Self {
+        if on_screen::looking() {
+            self.seen = Some(name().into());
+        }
         self
     }
 }
@@ -254,6 +265,17 @@ impl RenderOnce for Button {
         let disabled = self.disabled;
         let icon_only = self.label.is_none();
         let icon_size = icon_size(size, icon_only);
+        let seen = self.seen.map(|name| {
+            let seen = Seen::named(name);
+            let seen = match &self.label {
+                Some(label) => seen.text(label.clone()),
+                None => seen,
+            };
+            match disabled {
+                true => seen.state("disabled"),
+                false => seen,
+            }
+        });
 
         self.base
             .id(self.id)
@@ -280,6 +302,7 @@ impl RenderOnce for Button {
                 }
             })
             .border_1()
+            .when_some(seen, |base, seen| base.seen(|| seen))
             .border_color(border)
             .bg(bg)
             .text_color(fg)

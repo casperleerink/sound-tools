@@ -6,6 +6,7 @@
 //! Controlled: the owner gives every state and hears a press and a drop of files. A pad is no
 //! tab stop: the grid it sits in is one, and the owner moves the selection with the arrows.
 
+use crate::on_screen::Named;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -134,11 +135,9 @@ impl RenderOnce for Pad {
             PadGlyph::Sample => Icon::new("audio-lines").size(GLYPH).color(text),
             PadGlyph::Missing => Icon::new("triangle-alert").size(GLYPH).color(warning),
         });
-        // For tests, which find a pad by its id: `pad-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
         let pad = div()
             .id(self.id)
-            .debug_selector(move || format!("pad-{selector}"))
             .relative()
             .flex_none()
             .flex()
@@ -151,6 +150,7 @@ impl RenderOnce for Pad {
             .rounded(radius::MD)
             .bg(fill)
             .border_1()
+            .seen(move || format!("pad-{selector}"))
             .border_color(if self.selected { selected } else { border })
             .text_variant(TextVariant::Label)
             .line_height(px(14.))

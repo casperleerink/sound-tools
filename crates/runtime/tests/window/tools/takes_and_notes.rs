@@ -11,7 +11,7 @@ use sound_ui::LiveNote;
 
 use super::Opened;
 use super::song::open_song;
-use crate::song::{ACROSS, BAR, ROW};
+use crate::song::BAR;
 
 impl Opened<'_> {
     /// A key down and up, as a person presses it, and Bun's answer.
@@ -210,14 +210,14 @@ fn the_editor_ruler_seeks_and_a_line_draws_velocities(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
     let editor = window.editor("t00/c00");
-    let ruler = window.space_at("editor-t00/c00-ruler");
-    window.click(point(editor.at(970., 60).x, ruler.y + px(16.)));
+    let ruler = window.wait_for("space-editor-t00/c00-ruler").middle();
+    window.click(point(editor.at(970., 60).x, ruler.y));
     window.until_playhead(960);
 
     // From the bottom before the first note to the top half way through the clip.
     let notes = window.notes_of("song/t00/c00");
-    let from = editor.lane(-20., 52.);
-    let to = editor.lane(BAR as f32 / 2., 8.);
+    let from = editor.lane(-20., 0.93);
+    let to = editor.lane(BAR as f32 / 2., 0.15);
     window.press(from);
     window.drag_to(from + point(px(10.), px(0.)));
     window.drag_to(to);
@@ -260,15 +260,13 @@ fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
     let middle = window.on_lane(2 * BAR + 960, 2);
     window.click(middle);
     window.wait_for_bun();
-    // The handles are 7 points under the top of the region, which is 4 under the row's.
-    let top = middle.y - px(ROW / 2.) + px(11.);
-    let start = window.on_lane(2 * BAR, 2).x;
 
-    let fade = point(start + px(5.), top);
+    let fade = window.control("shape-fade-in");
+    let eighth = window.ticks(480);
     window.press(fade);
     window.drag_to(fade + point(px(5.), px(0.)));
-    window.drag_to(fade + point(px(480. * ACROSS), px(0.)));
-    window.release(fade + point(px(480. * ACROSS), px(0.)));
+    window.drag_to(fade + point(eighth, px(0.)));
+    window.release(fade + point(eighth, px(0.)));
     window.until("the fade in", |window| {
         window.record("song/audio-voice/region")["fade_in_ms"].as_f64() > Some(0.)
     });
@@ -279,7 +277,7 @@ fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Change fade in"));
 
-    let gain = point(middle.x, top);
+    let gain = window.control("shape-gain");
     window.press(gain);
     window.drag_to(gain - point(px(0.), px(5.)));
     window.drag_to(gain - point(px(0.), px(50.)));

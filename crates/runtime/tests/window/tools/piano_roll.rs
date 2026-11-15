@@ -11,11 +11,6 @@ use super::{ONLY_THE_TOOL, Opened, open};
 
 const PIANO_ROLL: &str = include_str!("../../../../../tooling/agent-eval/examples/piano-roll.tsx");
 
-/// Points per tick and per pitch of the roll at zoom 1, and the row at its top as it opens.
-const ACROSS: f32 = 0.1;
-pub(super) const ROW: f32 = 12.0;
-const TOP_ROW: f32 = 40.0;
-
 /// Three notes: a at 0 on 86, b after it on 84, c later on 82.
 fn three_notes() -> Value {
     json!([
@@ -42,20 +37,17 @@ pub(super) fn open_roll<'a>(cx: &'a mut TestAppContext, notes: &Value) -> Opened
 }
 
 impl Opened<'_> {
-    /// The top left of the space of `key`, once it shows.
-    pub(super) fn space_at(&mut self, key: &str) -> Point<Pixels> {
-        let selector: &'static str = format!("space-{key}").leak();
-        self.until(&format!("the space {key}"), |window| {
-            window.find(selector).is_some()
-        });
-        self.cx.debug_bounds(selector).unwrap().origin
+    /// Where `tick` and the middle of the row of `pitch` are in the roll.
+    pub(super) fn on_roll(&mut self, tick: f32, pitch: u8) -> Point<Pixels> {
+        let row = 127.0 - f64::from(pitch) + 0.5;
+        self.in_space("roll", (f64::from(tick), row))
     }
 
-    /// Where `tick` and the middle of the row of `pitch` are in the roll, as it opens.
-    pub(super) fn on_roll(&mut self, tick: f32, pitch: u8) -> Point<Pixels> {
-        let roll = self.space_at("roll");
-        let row = 127.0 - f32::from(pitch) - TOP_ROW;
-        roll + point(px(tick * ACROSS), px(row * ROW + ROW / 2.))
+    /// How far `ticks` across and `rows` down are in the roll.
+    fn on_roll_by(&mut self, ticks: f32, rows: f32) -> Point<Pixels> {
+        let roll = self.units("roll");
+        let (across, down) = (roll.across as f32, roll.down as f32);
+        point(px(ticks * across), px(rows * down))
     }
 
     fn pointer_down(&mut self, at: Point<Pixels>, modifiers: Modifiers, clicks: usize) {
@@ -149,13 +141,14 @@ fn a_drag_moves_the_selected_notes_on_the_grid_as_one_undo_step_and_bun_hears_it
 ) {
     let mut window = open_roll(cx, &three_notes());
     let (a, b) = (window.on_roll(100.0, 86), window.on_roll(1100.0, 84));
+    let by = window.on_roll_by(520., 1.);
     window.click_at(a, Modifiers::none(), 1);
     window.click_at(b, Modifiers::shift(), 1);
     window.pointer_down(a, Modifiers::none(), 1);
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     // 520 ticks right and a row down: a lands on the sixteenth at 480.
-    let to = window.pointer_drag(a, point(px(52.), px(ROW)), 20, Modifiers::none());
+    let to = window.pointer_drag(a, by, 20, Modifiers::none());
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
     window.pointer_up(to, Modifiers::none());
     window.notes_become(
@@ -174,7 +167,8 @@ fn a_drag_with_alt_copies_the_selected_notes(cx: &mut TestAppContext) {
     let mut window = open_roll(cx, &three_notes());
     let c = window.on_roll(3000.0, 82);
     window.click_at(c, Modifiers::none(), 1);
-    window.drag_by(c, point(px(96.), px(-2. * ROW)), Modifiers::alt());
+    let by = window.on_roll_by(960., -2.);
+    window.drag_by(c, by, Modifiers::alt());
     let mut notes = three_notes();
     notes.as_array_mut().unwrap().push(note(3840, 480, 84, 60));
     window.notes_become("the note to be copied", notes);
@@ -186,7 +180,8 @@ fn a_drag_of_the_end_of_a_note_resizes_it_to_the_grid(cx: &mut TestAppContext) {
     let mut window = open_roll(cx, &three_notes());
     // The end of b is at 1920; 330 ticks on puts it on 2160.
     let end_of_b = window.on_roll(1900.0, 84);
-    window.drag_by(end_of_b, point(px(33.), px(0.)), Modifiers::none());
+    let by = window.on_roll_by(330., 0.);
+    window.drag_by(end_of_b, by, Modifiers::none());
     window.notes_become(
         "the note to be resized",
         json!([
@@ -202,7 +197,8 @@ fn a_drag_of_the_end_of_a_note_resizes_it_to_the_grid(cx: &mut TestAppContext) {
 fn a_marquee_selects_what_it_covers_and_delete_removes_it(cx: &mut TestAppContext) {
     let mut window = open_roll(cx, &three_notes());
     let from = window.on_roll(2000.0, 87);
-    window.drag_by(from, point(px(150.), px(6. * ROW)), Modifiers::none());
+    let by = window.on_roll_by(1500., 6.);
+    window.drag_by(from, by, Modifiers::none());
     window.chord("backspace");
     window.notes_become(
         "the covered note to be deleted",
@@ -236,8 +232,7 @@ fn copy_paste_duplicate_and_select_all_work_from_the_keys(cx: &mut TestAppContex
 #[gpui::test]
 fn a_drag_of_a_bar_in_the_lane_changes_the_velocity(cx: &mut TestAppContext) {
     let mut window = open_roll(cx, &three_notes());
-    let lane = window.space_at("velocity");
-    let bar_of_c = lane + point(px(2880. * ACROSS + 2.), px(68.));
+    let bar_of_c = window.control("shape-velocity-2");
     // 31 points up of the lane's 62: half of 127 more.
     window.drag_by(bar_of_c, point(px(0.), px(-31.)), Modifiers::none());
     window.notes_become(
@@ -258,7 +253,8 @@ fn escape_lets_go_of_a_drag_and_its_code_hears_nothing(cx: &mut TestAppContext) 
     window.pointer_down(a, Modifiers::none(), 1);
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
-    let to = window.pointer_drag(a, point(px(100.), px(0.)), 8, Modifiers::none());
+    let by = window.on_roll_by(1000., 0.);
+    let to = window.pointer_drag(a, by, 8, Modifiers::none());
     window.cx.simulate_keystrokes("escape");
     window.pointer_up(to, Modifiers::none());
     window.wait_for_bun();

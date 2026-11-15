@@ -3,7 +3,7 @@
 //! mutes, and its meter follows the engine with nothing from Bun.
 
 use super::{Opened, open};
-use crate::song::{ACROSS, BAR, HEADER, LEAD, NAME, ROW, song_files};
+use crate::song::{BAR, song_files};
 use gpui::{
     Modifiers, Pixels, Point, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px,
 };
@@ -17,14 +17,14 @@ pub(super) fn open_song(cx: &mut TestAppContext, tracks: usize, clips: usize) ->
 }
 
 impl Opened<'_> {
-    /// Where `tick` is on the row of track `row` of the timeline, as it opens.
+    /// Where `tick` is in the middle of the row `row` of the timeline.
     pub(super) fn on_lane(&mut self, tick: u64, row: usize) -> Point<Pixels> {
-        let timeline = self.space_at("timeline");
-        timeline
-            + point(
-                px(LEAD + tick as f32 * ACROSS),
-                px(row as f32 * ROW + ROW / 2.),
-            )
+        self.in_space("timeline", (tick as f64, row as f64 + 0.5))
+    }
+
+    /// How wide `ticks` are on the timeline.
+    pub(super) fn ticks(&mut self, ticks: u64) -> Pixels {
+        px((ticks as f64 * self.units("timeline").across) as f32)
     }
 
     /// Every record of the song's clips, by id.
@@ -45,14 +45,17 @@ fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContex
     let mut window = open_song(cx, 4, 12);
     let before = window.clips();
     // The second clip of the second track, half a bar into it.
-    let at = window.on_lane(3 * BAR + BAR / 2, 1);
+    let start = (3 * BAR + BAR / 2) as f64;
+    let timeline = window.units("timeline");
+    let at = timeline.point((start, 1.5));
     window.wait_for_bun();
     let questions = sound_typescript::asked_behaviours();
     window.press(at);
-    window.drag_to(at + point(px(10.), px(0.)));
+    window.drag_to(timeline.point((start + 400., 1.5)));
     // A bar and a bit on: it lands on the nearest sixteenth, the grid a song starts on.
-    window.drag_to(at + point(px(96. + 31.), px(0.)));
-    window.release(at + point(px(96. + 31.), px(0.)));
+    let to = timeline.point((start + (BAR + 1240) as f64, 1.5));
+    window.drag_to(to);
+    window.release(to);
     window.until("the clip moved", |window| {
         window.record("song/t01/c01")["start"] != 3 * BAR
     });
@@ -118,14 +121,14 @@ fn the_mute_of_a_track_mutes_its_mix_as_one_undo_step(cx: &mut TestAppContext) {
 fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     // More tracks than the window is tall.
     let mut window = open_song(cx, 40, 40);
-    let timeline = window.space_at("timeline");
+    let timeline = window.units("timeline");
     window.wait_for_bun();
     // Only the heads that show are drawn.
     assert!(window.find("div-name-t00").is_some());
     assert!(window.find("div-name-t35").is_none());
     window.cx.simulate_event(ScrollEvent {
-        position: timeline + point(px(200.), px(100.)),
-        delta: ScrollDelta::Pixels(point(px(0.), px(-10. * ROW))),
+        position: timeline.point((BAR as f64, 1.5)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-10. * timeline.down as f32))),
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::Moved,
         ..Default::default()
@@ -133,7 +136,11 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     window.cx.run_until_parked();
     assert!(window.find("div-name-t00").is_none());
     // The header on the top row is the eleventh track's now.
-    let top = timeline + point(px(NAME.0) - px(HEADER), px(NAME.1));
+    let top = window.control("div-name-t10");
+    assert!(
+        top.y < timeline.origin.y + px(timeline.down as f32),
+        "{top:?}"
+    );
     window.hover(top);
     let mute = window.until_found("toggle-mute-t10");
     window.click(mute);
@@ -175,7 +182,7 @@ fn space_plays_the_song_with_nothing_from_bun(cx: &mut TestAppContext) {
     // The first track chosen: its panel shows its meter.
     let name = window.until_found("div-name-t00");
     window.click(name);
-    window.space_at("fader-t00/mix.gain_db");
+    window.wait_for("space-fader-t00/mix.gain_db");
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
@@ -202,11 +209,7 @@ fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selectio
     window.play_midi(60);
     assert!(window.loudest(4_800) > 0.01);
 
-    let lane = window.on_lane(0, 1);
-    let name = point(
-        lane.x - px(LEAD + HEADER) + px(NAME.0),
-        lane.y - px(ROW / 2.) + px(NAME.1),
-    );
+    let name = window.control("div-name-t01");
     window.press(name);
     window.release(name);
     let session = window.session.clone();
@@ -263,7 +266,7 @@ fn main_in_the_project_file_shows_the_song_and_not_another_page(cx: &mut TestApp
         .cx
         .read(|cx| sound_ui::Views::main_instance(&session, cx).map(|id| id.to_string()));
     assert_eq!(main.as_deref(), Some("song"));
-    window.space_at("timeline");
+    window.wait_for("space-timeline");
 }
 
 /// The Mixer button shows a strip per track and return: a drag on a track's fader turns the
@@ -277,7 +280,7 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
     let toggle = window.until_found("toggle-mixer-toggle");
     window.press(toggle);
     window.release(toggle);
-    let fader = window.space_at("fader-t01/mix.gain_db") + point(px(20.), px(80.));
+    let fader = window.control("space-fader-t01/mix.gain_db");
     // The pointer comes over the strip, which then says its numbers, before the drag.
     window.hover(fader);
     window.wait_for_bun();

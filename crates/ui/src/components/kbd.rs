@@ -1,6 +1,7 @@
 //! Kbd: one keyboard shortcut drawn as key caps. `Kbd::new("mod+k")` renders `⌘ K` on macOS
 //! and `Ctrl K` on Windows and Linux, as the `secondary` of a key binding.
 
+use crate::on_screen::Named;
 use gpui::{App, Div, SharedString, StyleRefinement, Window, div, prelude::*, px};
 
 use crate::scale::radius;
@@ -84,7 +85,7 @@ impl RenderOnce for Kbd {
 
         let selector = self.shortcut.clone();
         self.base
-            .debug_selector(move || format!("kbd-{selector}"))
+            .seen(move || format!("kbd-{selector}"))
             .flex()
             .flex_none()
             .items_center()

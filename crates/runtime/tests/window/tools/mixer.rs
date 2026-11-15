@@ -92,7 +92,7 @@ fn a_meter_shows_the_level_of_its_strip_as_it_plays_and_asks_bun_for_nothing(
     cx: &mut TestAppContext,
 ) {
     let mut window = open_mixer(cx, 4);
-    window.space_at("fader-kick");
+    window.wait_for("space-fader-kick");
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     window.until("the meter of the kick to show its tone", |window| {
@@ -110,7 +110,7 @@ fn a_fader_turns_the_volume_of_its_strip_as_one_undo_step_and_changes_no_node(
     cx: &mut TestAppContext,
 ) {
     let mut window = open_mixer(cx, 4);
-    let fader = window.space_at("fader-bass") + point(px(20.), px(110.));
+    let fader = window.control("space-fader-bass");
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let batches = sound_typescript::heard_batches();
@@ -141,7 +141,7 @@ fn a_fader_turns_the_volume_of_its_strip_as_one_undo_step_and_changes_no_node(
 fn a_pan_knob_shows_the_pan_a_cable_plays_and_not_its_record(cx: &mut TestAppContext) {
     let mut window = open_mixer(cx, 4);
     // The first strip in name order.
-    window.space_at("pan-bass");
+    window.wait_for("space-pan-bass");
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     window.until("the pan of the bass to swing", |window| {
@@ -430,7 +430,7 @@ fn open_swept(cx: &mut TestAppContext) -> Opened<'_> {
 #[gpui::test]
 fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAppContext) {
     let mut window = open_swept(cx);
-    let cutoff = window.space_at("knob-filter.cutoff_hz") + point(px(28.), px(18.));
+    let cutoff = window.control("space-knob-filter.cutoff_hz");
     assert_eq!(window.problems(), []);
     window.wait_for_bun();
     window.renders_in(10);
@@ -460,7 +460,7 @@ fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAp
     assert_eq!(window.undo_label(), None);
 
     // The knob beside it, which no lane moves, turns as ever.
-    let resonance = window.space_at("knob-filter.resonance") + point(px(28.), px(18.));
+    let resonance = window.control("space-knob-filter.resonance");
     window.press(resonance);
     window.drag_to(resonance - point(px(0.), px(50.)));
     window.release(resonance - point(px(0.), px(50.)));
@@ -473,9 +473,7 @@ fn a_knob_on_a_field_shows_what_its_lane_plays_and_does_not_drag(cx: &mut TestAp
 #[gpui::test]
 fn a_value_typed_on_a_knob_its_lane_moves_changes_nothing(cx: &mut TestAppContext) {
     let mut window = open_swept(cx);
-    let value_of = |window: &mut Opened<'_>, field: &str| {
-        window.space_at(&format!("knob-{field}")) + point(px(32.), px(62.))
-    };
+    let value_of = |window: &mut Opened<'_>, field: &str| window.knob(field).1;
     let cutoff = value_of(&mut window, "filter.cutoff_hz");
     window.wait_for_bun();
     window.click(cutoff);

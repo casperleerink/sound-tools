@@ -496,7 +496,7 @@ impl SamplerView {
     /// The display with no file that plays: what it says, `Choose file` and the drop.
     fn no_file(&self, says: String, has_sample: bool, cx: &mut Context<Self>) -> TextDisplay {
         let button = Button::new("choose-file", "Choose file")
-            .debug_selector(|| "choose-file".to_string())
+            .seen(|| "choose-file")
             .variant(ButtonVariant::Subtle)
             .on_card()
             .focus_handle(&self.choose_focus)
@@ -640,7 +640,7 @@ impl SamplerView {
                     "download",
                     format!("{label} · {} on disk", size_text(entry.disk_bytes)),
                 )
-                .debug_selector(|| "download".to_string())
+                .seen(|| "download")
                 .variant(ButtonVariant::Subtle)
                 .on_card()
                 .on_click(cx.listener(move |view, _, _, cx| view.download(entry, cx))),

@@ -5,6 +5,7 @@
 //! export, shows its progress as a bar under the message. Its action and its dismiss button are
 //! tab stops of their own, kept under its id.
 
+use crate::on_screen::Named;
 use std::rc::Rc;
 
 use gpui::{
@@ -115,11 +116,9 @@ impl RenderOnce for Notice {
             theme.text(),
         );
 
-        // For tests, which find a notice by its id: `notice-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
         self.base
             .id(self.id)
-            .debug_selector(move || format!("notice-{selector}"))
             .flex()
             .items_start()
             .gap(px(8.))
@@ -134,6 +133,7 @@ impl RenderOnce for Notice {
             .rounded(radius::LG)
             .bg(fill)
             .border_1()
+            .seen(move || format!("notice-{selector}"))
             .border_color(border)
             .text_variant(TextVariant::Body)
             .line_height(px(20.))

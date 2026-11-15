@@ -12,6 +12,7 @@ pub mod import;
 pub mod lanes;
 pub mod metering;
 pub mod names;
+pub mod on_screen;
 pub mod recording;
 pub mod render;
 pub mod renders;

@@ -565,7 +565,7 @@ export function ClipEditor({ clip, bars, name, title, colour, id, memory, edit, 
     const picked = memo(() => isPicked(noteKey(note)));
     const top = () => (VELOCITY_BOTTOM - ((VELOCITY_BOTTOM - VELOCITY_TOP) * note.velocity) / 127) / LANE;
     return (
-      <Rect x={() => (picked() ? moving.dx.plus(note.start).max(0) : note.start)} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
+      <Rect key={untrack(() => `velocity-${noteKey(note)}`)} x={() => (picked() ? moving.dx.plus(note.start).max(0) : note.start)} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
         moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "text" : blend(colour(), "text", boxed(note)))}
         cursor="ns-resize" drag={velocityDrag} onPress={pressNote(note)} />
     );

@@ -20,7 +20,7 @@ impl Opened<'_> {
 #[gpui::test]
 fn a_drag_on_the_tempo_of_the_transport_is_one_undo_step(cx: &mut TestAppContext) {
     let mut window = open(cx, &BEAT);
-    let tempo = window.space_at("tempo") + point(px(10.), px(8.));
+    let tempo = window.control("space-tempo");
     window.press(tempo);
     window.drag_to(tempo + point(px(0.), px(-10.)));
     // Twenty points up: ten beats a minute faster.
@@ -38,7 +38,7 @@ fn a_drag_on_the_tempo_of_the_transport_is_one_undo_step(cx: &mut TestAppContext
 fn a_tempo_typed_into_the_number_box_is_one_undo_step(cx: &mut TestAppContext) {
     let mut window = open(cx, &BEAT);
     window.wait_for_bun();
-    let tempo = window.space_at("tempo") + point(px(10.), px(8.));
+    let tempo = window.control("space-tempo");
     window.double_click(tempo);
     window.until_found("div-tempo-typed");
     window.cx.simulate_input("95");
@@ -47,12 +47,12 @@ fn a_tempo_typed_into_the_number_box_is_one_undo_step(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Change the tempo"));
 
-    let tempo = window.space_at("tempo") + point(px(10.), px(8.));
+    let tempo = window.control("space-tempo");
     window.double_click(tempo);
     window.until_found("div-tempo-typed");
     window.cx.simulate_input("140");
     window.cx.simulate_keystrokes("escape");
-    window.space_at("tempo");
+    window.wait_for("space-tempo");
     window.after_the_runs();
     assert_eq!(window.tempo(), 95.0);
 }

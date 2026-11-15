@@ -182,7 +182,7 @@ export const pianoRoll = tool({
     const bar = (note: Note, index: Accessor<number>) => {
       const picked = memo(() => isPicked(index()));
       return (
-        <Rect x={() => note.start} y={() => LANE - barHeight(note.velocity)} width={() => Math.min(note.length, 120)} height={LANE}
+        <Rect key={() => `velocity-${index()}`} x={() => note.start} y={() => LANE - barHeight(note.velocity)} width={() => Math.min(note.length, 120)} height={LANE}
           moves={() => (picked() ? VELOCITY : undefined)}
           color={() => (picked() ? "text" : "blue")} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
       );

@@ -7,6 +7,7 @@
 //! under the id. Tab reaches the trigger; enter or space opens the list, up and down move in
 //! it, enter picks and escape or tab closes, and the focus goes back to the trigger.
 
+use crate::on_screen::{Named, Seen};
 use std::rc::Rc;
 
 use gpui::{
@@ -209,7 +210,6 @@ impl RenderOnce for Select {
         };
         let close_outside =
             move |_: &MouseDownEvent, window: &mut Window, cx: &mut App| close(&state, window, cx);
-        // For tests, which find a select by its id: `select-<id>`.
         let selector = self.id.clone();
 
         self.base
@@ -218,10 +218,13 @@ impl RenderOnce for Select {
             .flex_none()
             .child(
                 select_trigger(self.id, self.size, cx)
-                    .debug_selector(move || format!("select-{selector}"))
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .track_focus(&trigger_focus)
                     .border_1()
+                    .seen({
+                        let label = label.clone();
+                        move || Seen::named(format!("select-{selector}")).text(label)
+                    })
                     .border_color(Hsla::transparent_black())
                     .focus_visible(move |style| style.border_color(ring))
                     .child(

@@ -26,6 +26,7 @@
 //! most a hundred rows: drawing thousands of them on every frame the menu is open would cost
 //! more than typing a few letters.
 
+use crate::on_screen::{Named, Seen};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -502,7 +503,7 @@ impl RenderOnce for MenuList {
             div()
                 .id(("menu-note", note_ix))
                 // What a test looks a quiet line up by, as a row is looked up by its value.
-                .debug_selector(move || format!("menu-note-{note_ix}"))
+                .seen(move || format!("menu-note-{note_ix}"))
                 .px(px(18.))
                 .py(px(6.))
                 .text_variant(TextVariant::Label)
@@ -548,10 +549,17 @@ fn row(
         theme.text(),
         theme.fill(),
     );
-    let selector = item.value.clone();
+    let (selector, label, disabled) = (item.value.clone(), item.label.clone(), item.disabled);
     div()
         .id(id)
-        .debug_selector(move || format!("menu-{selector}"))
+        .seen(move || {
+            let seen = Seen::named(format!("menu-{selector}")).text(label);
+            match (disabled, selected) {
+                (true, _) => seen.state("disabled"),
+                (false, true) => seen.state("checked"),
+                (false, false) => seen,
+            }
+        })
         .flex()
         .flex_none()
         .items_center()
@@ -608,7 +616,7 @@ fn row(
             let selector = item.value.clone();
             d.child(
                 div()
-                    .debug_selector(move || format!("menu-check-{selector}"))
+                    .seen(move || format!("menu-check-{selector}"))
                     .child(Icon::new("check").size(16.).color(text)),
             )
         })
@@ -1412,13 +1420,13 @@ impl Render for DropdownMenu {
             .child(
                 trigger_element
                     .min_w_0()
-                    .when_some(self.debug_name.clone(), |element, name| {
-                        element.debug_selector(move || name.to_string())
-                    })
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .when_some(trigger_height, |trigger, height| trigger.h(px(height)))
                     .track_focus(&self.trigger_focus)
                     .border_1()
+                    .when_some(self.debug_name.clone(), |element, name| {
+                        element.seen(move || name)
+                    })
                     .focus_visible(move |s| s.border_color(ring))
                     .map(|trigger| match icon {
                         Some(icon) => trigger.child(Icon::new(icon).size(14.).color(text)),

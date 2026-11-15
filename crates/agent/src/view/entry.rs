@@ -1,6 +1,7 @@
 //! How each entry of the thread looks: the composer's message as a bubble, the agent's turn as
 //! markdown with its meta line, and quiet lines.
 
+use sound_ui::on_screen::Named;
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
@@ -148,7 +149,7 @@ pub(super) fn turn(
             false => row.id(id),
         };
         let row = row
-            .debug_selector(move || format!("agent-worked-for-{index}"))
+            .seen(move || format!("agent-worked-for-{index}"))
             .min_w_0()
             // A failure has no summary and may wrap; with a summary, the summary is cut.
             .child(
@@ -165,7 +166,7 @@ pub(super) fn turn(
     });
     let steps = steps_open.then(|| {
         div()
-            .debug_selector(move || format!("agent-steps-{index}"))
+            .seen(move || format!("agent-steps-{index}"))
             .flex()
             .flex_col()
             .text_variant(TextVariant::Label)
@@ -314,7 +315,7 @@ pub(super) fn problems(
         .child(
             div().flex().child(
                 tab_stop(div(), ("problems", index).into(), window, cx)
-                    .debug_selector(move || format!("agent-problems-{index}"))
+                    .seen(move || format!("agent-problems-{index}"))
                     .flex()
                     .items_start()
                     .gap(px(4.))
@@ -330,7 +331,7 @@ pub(super) fn problems(
         .when(open, |lines| {
             lines.children(lines_of.into_iter().enumerate().map(|(number, line)| {
                 div()
-                    .debug_selector(move || format!("agent-problem-{index}-{number}"))
+                    .seen(move || format!("agent-problem-{index}-{number}"))
                     .pl(px(16.))
                     .text_color(muted)
                     .child(line)
@@ -352,7 +353,7 @@ pub(super) fn action(
     let theme = cx.theme();
     let (muted, bright) = (theme.text_muted(), theme.text());
     let line = tab_stop(div(), id.into(), window, cx)
-        .debug_selector(move || format!("agent-{id}"))
+        .seen(move || format!("agent-{id}"))
         .flex()
         .items_center()
         .gap(px(4.))

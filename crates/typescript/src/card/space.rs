@@ -7,11 +7,12 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, DispatchPhase, ElementId, ExternalPaths, Hitbox, Hsla, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollEvent,
-    WeakEntity, Window, canvas, div, point, prelude::*, px,
+    WeakEntity, Window, canvas, div, prelude::*, px,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::TabStop;
+use sound_ui::on_screen::{self, Units};
 
 use crate::bun::EventKind;
 use crate::live::SpaceView;
@@ -20,7 +21,7 @@ use crate::tree::{self, Cursor, Drag, Props, SpaceProps};
 use super::controls::{Control, Keys};
 use super::drawing::Drawing;
 use super::input::{Carried, Hears, KeyTurned, heard};
-use super::paint::{Painted, found, paint, prepaint};
+use super::paint::{Painted, found, paint, prepaint, seen};
 use super::shapes::{Placed, Placing, Pointer, Shown};
 use super::{Lifted, TypeScriptCard};
 
@@ -67,7 +68,6 @@ impl Drawing<'_> {
         children: &[usize],
     ) -> AnyElement {
         let (key, view, fit) = self.space_view(id, space);
-        let selector = format!("space-{key}");
         let name = key.clone();
         let inner = match self.lifting.filter(|(lifted, _)| lifted.contains(&id)) {
             // The layer over the page draws it where this lays it out.
@@ -92,7 +92,7 @@ impl Drawing<'_> {
             }
             None => self.space_element(id, space, children, (key, view, fit)),
         };
-        let holder = div().debug_selector(move || selector).child(inner);
+        let holder = div().child(inner);
         let holder = match space.width {
             Some(width) => holder.w(px(width)),
             None => holder.w_full(),
@@ -214,8 +214,15 @@ impl Drawing<'_> {
         (key, view, fit): (String, SpaceView, Option<tree::Fit>),
     ) -> AnyElement {
         let (placed, pointed) = self.place(children, &key, &view);
+        let keys = match on_screen::looking() {
+            true => (placed.iter())
+                .filter_map(|each| Some((each.node, self.table.shape_key(each.node)?.to_string())))
+                .collect(),
+            false => HashMap::new(),
+        };
         let frame = Rc::new(SpaceFrame {
             key,
+            keys,
             node: id,
             view,
             placed,
@@ -237,7 +244,11 @@ impl Drawing<'_> {
             {
                 let frame = frame.clone();
                 move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut App| {
-                    prepaint(&frame, bounds, window)
+                    let (hitbox, painted) = prepaint(&frame, bounds, window);
+                    if on_screen::looking() {
+                        seen(&frame, bounds, &painted, window);
+                    }
+                    (hitbox, painted)
                 }
             },
             {
@@ -303,6 +314,8 @@ impl Drawing<'_> {
 /// Everything a space paints and hears the pointer with, for one draw.
 pub(super) struct SpaceFrame {
     pub(super) key: String,
+    /// The keys of its shapes by their nodes, only while a look draws.
+    pub(super) keys: HashMap<u64, String>,
     /// The node of the space, which hears a press and a drag on it.
     pub(super) node: u64,
     pub(super) view: SpaceView,
@@ -320,22 +333,25 @@ pub(super) struct SpaceFrame {
 }
 
 impl SpaceFrame {
-    /// The units at a point of the window.
-    pub(super) fn units_at(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f64, f64) {
+    /// Where its units are in the window, painted at `bounds`.
+    pub(super) fn units(&self, bounds: Bounds<Pixels>) -> Units {
         let (across, down) = self.view.scale();
-        (
-            self.view.left + f64::from(f32::from(position.x - bounds.origin.x)) / across,
-            self.view.top + f64::from(f32::from(position.y - bounds.origin.y)) / down,
-        )
+        Units {
+            origin: bounds.origin,
+            left: self.view.left,
+            top: self.view.top,
+            across,
+            down,
+        }
     }
 
-    pub(super) fn point_at(&self, bounds: Bounds<Pixels>, (x, y): (f64, f64)) -> Point<Pixels> {
-        let (across, down) = self.view.scale();
-        bounds.origin
-            + point(
-                px(((x - self.view.left) * across) as f32),
-                px(((y - self.view.top) * down) as f32),
-            )
+    /// The units at a point of the window.
+    pub(super) fn units_at(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f64, f64) {
+        self.units(bounds).at(position)
+    }
+
+    pub(super) fn point_at(&self, bounds: Bounds<Pixels>, units: (f64, f64)) -> Point<Pixels> {
+        self.units(bounds).point(units)
     }
 
     /// The view after a wheel: it scrolls over the extent, and zooms with cmd.
@@ -555,6 +571,7 @@ fn frame_now(
     view.height = f64::from(f32::from(bounds.size.height));
     SpaceFrame {
         key: frame.key.clone(),
+        keys: HashMap::new(),
         node: frame.node,
         view,
         placed: Vec::new(),
@@ -572,12 +589,13 @@ fn frame_now(
 
 #[cfg(test)]
 mod tests {
-    use gpui::size;
+    use gpui::{point, size};
 
     use super::*;
 
     fn frame(view: SpaceView, extent: tree::Ranges, zoom: tree::Ranges) -> SpaceFrame {
         SpaceFrame {
+            keys: HashMap::new(),
             key: "roll".into(),
             node: 1,
             view,

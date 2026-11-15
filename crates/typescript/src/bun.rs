@@ -896,7 +896,6 @@ impl Bun {
         Err(LoadFailure { file, why })
     }
 
-    #[cfg(feature = "test-support")]
     pub(crate) fn is_idle(&self) -> bool {
         self.busy
             .lock()

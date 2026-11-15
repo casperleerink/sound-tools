@@ -12,6 +12,7 @@
 //! the view of the device draws the whole card, because it owns what the body shows, and the
 //! rack gives it a [`CardFrame`].
 
+use crate::on_screen::Named;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -360,11 +361,9 @@ fn header_icon(
         .shows_ring(&focus_handle, window);
     let theme = cx.theme();
     let (hover, ring) = (theme.fill_strong(), theme.lavender);
-    // For tests, which find an icon by the card and its name: `<card>-power`.
     let card = card.clone();
     div()
         .id(id)
-        .debug_selector(move || format!("{card}-{name}"))
         .flex()
         .flex_none()
         .items_center()
@@ -372,6 +371,7 @@ fn header_icon(
         .size(px(ICON_TARGET))
         .rounded(radius::MD)
         .border(px(BORDER))
+        .seen(move || format!("{card}-{name}"))
         .border_color(match ring_shows {
             true => ring,
             false => Hsla::transparent_black(),
@@ -420,14 +420,13 @@ impl RenderOnce for DeviceCard {
             icons.push(icon.into_any_element());
         }
 
-        // For tests, which find the header of a card by its id: `<card>-header`.
         let card = self.id.clone();
         let header = div()
             .id(ElementId::NamedChild(
                 Arc::new(self.id.clone()),
                 SharedString::from("header"),
             ))
-            .debug_selector(move || format!("{card}-header"))
+            .seen(move || format!("{card}-header"))
             .flex_none()
             // The body makes the card as wide as it is, and the title gives way: a plugin may
             // have a name longer than its card.

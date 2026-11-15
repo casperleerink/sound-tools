@@ -5,6 +5,7 @@
 //!
 //! Tab reaches the group as one stop, and left and right select the option before or after.
 
+use crate::on_screen::{Named, Seen};
 use std::rc::Rc;
 
 use gpui::{
@@ -157,11 +158,17 @@ impl RenderOnce for SegmentedControl {
                 let selected = val == value;
                 let marked = self.marked.contains(&val);
                 let on_change = on_change.clone();
-                // For tests, which find an option by its value. Nothing in a normal build.
                 let selector = val.clone();
+                let words = label.clone();
                 div()
                     .id(("segment", ix))
-                    .debug_selector(move || format!("segment-{selector}"))
+                    .seen(move || {
+                        let seen = Seen::named(format!("segment-{selector}")).text(words);
+                        match selected {
+                            true => seen.state("on"),
+                            false => seen,
+                        }
+                    })
                     .flex()
                     .flex_none()
                     .items_center()

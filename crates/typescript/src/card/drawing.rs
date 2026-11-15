@@ -1,5 +1,6 @@
 //! One draw of the nodes of a card into elements.
 
+use sound_ui::on_screen::{self, Named, Seen};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -395,13 +396,25 @@ impl Drawing<'_> {
                     }
                     None => style.apply(base, disabled).children(children),
                 };
-                // Tests find a div by its key.
-                let element = match key {
-                    Some(key) => {
-                        let selector = format!("div-{key}");
-                        element.debug_selector(move || selector)
+                // A look sees its key, and the text right in it.
+                let element = match on_screen::looking() {
+                    true => {
+                        let text: Vec<&str> = (shown.iter())
+                            .filter_map(|child| match &table.get(*child)?.props {
+                                Props::Text(TextProps { text }) => text.as_deref(),
+                                _ => None,
+                            })
+                            .collect();
+                        let name = key.as_ref().map(|key| format!("div-{key}"));
+                        match (name, text.is_empty()) {
+                            (None, true) => element,
+                            (name, true) => element.seen(|| Seen::named(name.unwrap_or_default())),
+                            (name, false) => element.seen(|| {
+                                Seen::named(name.unwrap_or_default()).text(text.join(" "))
+                            }),
+                        }
                     }
-                    None => element,
+                    false => element,
                 };
                 let pointer = Hears::of(*on_press, *on_release, *on_click);
                 let hears =

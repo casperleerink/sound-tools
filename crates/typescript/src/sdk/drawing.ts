@@ -42,7 +42,7 @@ export type ControlSize = "sm" | "md" | "lg";
 
 /** What a shape the pointer reaches can do. */
 interface Pointed extends PointerEvents {
-  /** Names it for `now.hover(key)`. */
+  /** Names it for `now.hover(key)`, and as `shape-<key>` for `sound-tools --look`. */
   key?: Bind<string>;
   /** A drag, made once and given to every shape it drags. */
   drag?: Drag;

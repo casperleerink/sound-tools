@@ -2,6 +2,7 @@
 //! project menu, cmd-N and the start window open it. A pick closes it and asks where the
 //! project goes. A template the composer saved can be removed here.
 
+use sound_ui::on_screen::Named;
 use std::rc::Rc;
 
 use gpui::{
@@ -201,7 +202,6 @@ pub fn template_row(name: &str, description: &str, cx: &App) -> Stateful<Div> {
     let id = SharedString::from(format!("template-{name}"));
     div()
         .id(id.clone())
-        .debug_selector(move || id.to_string())
         .flex()
         .flex_col()
         .flex_none()
@@ -210,6 +210,7 @@ pub fn template_row(name: &str, description: &str, cx: &App) -> Stateful<Div> {
         .text_left()
         .rounded_md()
         .border_1()
+        .seen(move || id)
         .border_color(theme.border_strong())
         .bg(theme.well())
         .hover(|row| row.bg(theme.surface()))
