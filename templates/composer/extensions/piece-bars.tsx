@@ -33,6 +33,8 @@ const [BUTTONS, GAP] = [152, 8];
 const [DASH, DASHES] = [4, 120];
 /** The radius of a note's head, in points. */
 const HEAD = 2.6;
+/** How tall the notes of an instrument are drawn, in points: about a staff with what is written over and under it. */
+const STAFF = 44;
 
 /** 1 while `ticks` give at least `points` of room at the zoom it shows: the window works it out as it zooms. */
 const fits = ({ space }: Page, ticks: number, points: number) => space.pointX.le(ticks / points);
@@ -501,14 +503,14 @@ export const Rows = ({ page }: { page: Page }) => {
                       }),
                     ),
               );
-              // Between its lowest and highest pitch, a line each, an octave tall at least, in the middle of the row.
+              // Between its lowest and highest pitch, a line each, an octave tall at least, as tall as a staff in the middle of the row, with room between the staves.
               const miniature = memo(() => {
                 const pitches = notes().map((note) => note.pitch);
                 const [lowest, highest] = [Math.min(...pitches), Math.max(...pitches)];
                 const range = highest - lowest + 1;
                 const shown = Math.max(range, 12);
-                const step = (ROW - 26) / shown;
-                const bottom = ROW - 13 - ((shown - range) / 2) * step;
+                const step = STAFF / shown;
+                const bottom = (ROW + STAFF) / 2 - ((shown - range) / 2) * step;
                 return { lowest, step, bottom };
               });
               return (

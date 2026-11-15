@@ -37,7 +37,7 @@ export const Heads = ({ page }: { page: Page }) => {
             <PaperToggle id="loop" label="Loop" tint={PAPER.chosenHead} on={() => clock.repeat !== null} onClick={() => toggleLoop(page)}
               tooltip={() => (clock.repeat !== null ? "Stop looping" : memory.chosen ? "Loop the chosen bars as it plays" : "Loop the section that plays")} />
             <Show when={() => clock.playing && !memory.follows}>
-              {() => <Button key="follow" label="Follow" size="sm" variant="ghost" shortcut="piece.follow" tooltip="Turn the page with the playhead again" onClick={() => (memory.follows = true)} />}
+              {() => <Button key="follow" label="Follow" size="sm" variant="ghost" color={PAPER.soft} shortcut="piece.follow" tooltip="Turn the page with the playhead again" onClick={() => (memory.follows = true)} />}
             </Show>
           </div>
         </div>
