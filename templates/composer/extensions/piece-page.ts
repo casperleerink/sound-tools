@@ -7,9 +7,9 @@ import type { track } from "./track";
 // What the parts of the piece's page share: its sizes and colours, its instruments, the bars of
 // the whole piece in one line, and what the view works out once for all of them.
 
-// The band of marks over the rows, two lines of words, and rows of 96 points with heads 152
+// The band of marks over the rows, two lines of words and room for a fermata, and rows of 96 points with heads 152
 // wide: the music is the picture. The rows under the heads, of the returns and the master, are 40.
-export const MARKS = 48;
+export const MARKS = 56;
 export const ROW = 96;
 export const HEADER = 152;
 export const LOW_ROW = 40;

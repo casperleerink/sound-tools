@@ -15,11 +15,11 @@ import { addTrack } from "./piece-tracks";
 // zoom, the band follows them.
 
 /** Where the two lines of the band start, and where its short bar ticks start, over the rows. */
-const [NAME_Y, MARK_Y, TICK_Y] = [6, 25, MARKS - 4];
+const [NAME_Y, MARK_Y, TICK_Y] = [6, 24, MARKS - 4];
 /** About how many points a character takes: of a label, of a medium one. */
 const [LABEL_CHAR, MEDIUM_CHAR] = [5.6, 6.2];
-/** A fermata, in the line of the marks: where the middle of its arc is, and its radius. */
-const [FERMATA_Y, FERMATA] = [MARK_Y + 12, 5];
+/** A fermata, under the marks and right over the music, as a score has it: where the middle of its arc is, and its radius. */
+const [FERMATA_Y, FERMATA] = [MARKS - 5, 5];
 const HINT = "Double-click a bar to write notes";
 /** Where the piece opens: whole when a bar of 4/4 keeps this many points, else at zoom 1. */
 const NARROWEST = 40;
@@ -153,7 +153,7 @@ const DoubleLine = ({ space, x, height, final = false }: { space: SpaceValues; x
 
 /** The key of the invisible shape over bar `index` in the band, and in the rows: the pointer over either shows its number. */
 const bandKey = (index: number) => `band-bar-${index}`;
-export const rowsKey = (index: number) => `rows-bar-${index}`;
+const rowsKey = (index: number) => `rows-bar-${index}`;
 /** Each bar of the piece, from the tick it starts at to where it ends. */
 const barsAcross = ({ starts }: Page) => memo(() => starts().slice(0, -1).map((from, index) => ({ index, from, to: starts()[index + 1]! })));
 
@@ -185,11 +185,14 @@ export const Marks = ({ page }: { page: Page }) => {
     // Not under the name of its section, which says more.
     const from = starts()[index]!;
     const part = parts().findLast((each) => each.from <= from);
-    const clear = part ? space.pointX.times(nameWidth(part)).plus(band.left.max(part.from)).le(from) : 1;
+    const clear = part ? space.pointX.times(nameShown(part)).plus(band.left.max(part.from)).le(from) : 1;
     return now.hover(bandKey(index)).max(now.hover(rowsKey(index))).max(ends).times(clear);
   };
-  /** The points a section's first bar number and name take. */
+  /** The points a section's first bar number and name take, and those its first letter does, which shows where they have no room. */
   const nameWidth = (part: { from: number; name: string }) => (String(starts().indexOf(part.from) + 1).length + 2 + part.name.length) * MEDIUM_CHAR + 16;
+  const LETTER = 24;
+  /** The points what a section shows of its name takes. */
+  const nameShown = (part: { from: number; to: number; name: string }) => fits(page, part.to - part.from, nameWidth(part)).times(nameWidth(part) - LETTER).plus(LETTER);
   const fermatas = memo(() => all().bars.flatMap((bar, index) => (bar.fermata ? [{ index, middle: starts()[index]! + (bar.fermata.beat - 0.5) * countOf(bar.signature), end: starts()[index + 1]! }] : [])));
   /** Where a fermata is drawn: over the middle of its count, clear of the end of its bar. */
   const fermataX = (fermata: { middle: number; end: number }) => space.pointX.times(-(FERMATA + 5)).plus(fermata.end).min(fermata.middle);
@@ -290,7 +293,7 @@ export const Marks = ({ page }: { page: Page }) => {
           const number = () => starts().indexOf(part.from) + 1;
           // The bar number and the name, or the name's first letter, or a dot: never nothing.
           const room = () => (parts().find((each) => each.from > part.from)?.from ?? end()) - part.from;
-          const widths = [() => nameWidth(part), () => 24];
+          const widths = [() => nameWidth(part), () => LETTER];
           // Not while its name is typed: the field is where it is.
           const named = () => (memory.typing === `section-${part.id}` ? 0 : 1);
           const shows = [
@@ -362,16 +365,15 @@ export const Marks = ({ page }: { page: Page }) => {
           };
           const signatureOpacity = mark.signature ? signatureShows : atEdge;
           const typeTempo = pressMark("tempo", mark.tempoRun, () => (mark.slides ? askSlide : askTempo)(page, mark.tempoRun));
-          // The line of a slide, from its words to where it ends, or to a fermata on its way.
+          // The line of a slide, from its words to where it ends.
           const slide = (() => {
             if (!mark.slide) return [];
             const { end } = mark.slide;
-            const held = untrack(fermatas).find((fermata) => fermata.middle > mark.tick && fermata.middle < end);
             // The line starts after the form that shows, while it has the room.
             const words = mark.forms.filter((form) => form.tempo !== null).map((form, index) => ({ width: form.width, shows: shown[index]! }));
             const lineShows = words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + 24))), NONE);
             const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width - mark.lead - 10)), NONE);
-            const lineEnd = () => (held ? fermataX(held).minus(space.pointX.times(FERMATA + 4)) : space.pointX.times(-5).plus(end));
+            const lineEnd = () => space.pointX.times(-5).plus(end);
             const lineStart = () => space.pointX.times(word).plus(tempoX()).min(lineEnd());
             const y = MARK_Y + 8;
             return [
@@ -416,7 +418,7 @@ export const Marks = ({ page }: { page: Page }) => {
       <For each={fermatas}>
         {(fermata) => [
           ...fermataSign(() => fermataX(fermata), 1),
-          <Rect key={`fermata-${fermata.index}`} x={() => space.pointX.times(-9).plus(fermataX(fermata))} y={MARK_Y - 3} width={space.pointX.times(18)} height={20} color="none" cursor="pointer"
+          <Rect key={`fermata-${fermata.index}`} x={() => space.pointX.times(-11).plus(fermataX(fermata))} y={MARK_Y + 17} width={space.pointX.times(22)} height={MARKS - MARK_Y - 17} color="none" cursor="pointer"
             drag={holdDrag} onPress={pressFermata(fermata.index)}
             onClick={() => {
               chooseBars(page, fermata.index, fermata.index);
@@ -451,7 +453,7 @@ const silentOf = ({ rows }: Page) => memo(() => rows().every((each) => each.chil
  * rows lets go. Under chosen whole bars, the buttons that add a bar after them and remove them.
  */
 export const Rows = ({ page }: { page: Page }) => {
-  const { rows, returnsHeight, starts, end, all, memory, clock, partAt, openPanel, openEditor, barAt, space, size } = page;
+  const { rows, returnsHeight, starts, end, all, memory, clock, partAt, openEditor, barAt, space, size } = page;
   const silent = silentOf(page);
   const chosen = () => chosenSpan(page);
   const names = () => rows().map((each) => each.name);
@@ -460,13 +462,9 @@ export const Rows = ({ page }: { page: Page }) => {
   const press = ({ x, y, clicks, shift, button }: Press) => {
     const each = rows()[Math.floor(y)];
     const bar = barAt(x);
-    if (!each) {
+    if (!each || bar === null) {
       if (button === "left") memory.chosen = null;
       return;
-    }
-    if (bar === null) {
-      memory.chosen = null;
-      return openPanel(each.name);
     }
     const at = choiceOf(page);
     if (button === "right") {

@@ -24,12 +24,12 @@ const FIT_BEFORE: f32 = 12.;
 const FIT_AFTER: f32 = 120.;
 /// How long the piece of [`open_piece`] is as it opens: the rows fit it to their width.
 const OPENED: u64 = 6 * BAR;
-/// How far down the band its lines are: the section names, the time signatures and tempos with
-/// the fermatas, and under them, empty band over the bars.
+/// How far down the band its lines are: the section names, the time signatures and tempos, and
+/// under them, where the fermatas are, empty band over the bars.
 const NAMES: f32 = 14.;
-const MARKS: f32 = 33.;
+const MARKS: f32 = 32.;
 const BARS: f32 = 45.;
-const FERMATA: f32 = 35.;
+const FERMATA: f32 = 50.;
 /// The notes of `t00` in section A, one in each of its first three bars, and in B.
 const IN_A: [u64; 3] = [0, BAR + BEAT / 2, 2 * BAR];
 const IN_B: [u64; 1] = [0];
@@ -771,6 +771,24 @@ fn music_repeated_past_the_end_of_the_piece_gets_the_bars_it_needs(cx: &mut Test
     assert_eq!(window.problems(), []);
 }
 
+/// A piece opens with no panel below and its first instrument chosen: the down arrow chooses the
+/// second, which the keyboard then plays.
+#[gpui::test]
+fn the_arrows_choose_another_instrument_as_the_piece_opens(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let session = window.session.clone();
+    let chosen = move |window: &mut Opened<'_>| {
+        (window.cx).read(|cx| session.read(cx).selected().map(ToString::to_string))
+    };
+    window.until("the first instrument chosen", |window| {
+        chosen(window) == Some("piece/t00".to_string())
+    });
+    window.keys("down");
+    window.until("the second instrument chosen", |window| {
+        chosen(window) == Some("piece/t01".to_string())
+    });
+}
+
 /// Bar 2 of the first instrument copied, and pasted on bar 3 of the second: its note lands
 /// there, in a part the second instrument did not have.
 #[gpui::test]
@@ -1046,6 +1064,36 @@ fn with_a_fermata(cx: &mut TestAppContext) -> Opened<'_> {
     });
     window.after_the_runs();
     window
+}
+
+/// A fermata on the first count of the first bar, by hand, is over the time signature there: a
+/// click on that time signature still types it, since the fermata has its own place under it.
+#[gpui::test]
+fn a_fermata_over_a_time_signature_leaves_it_to_type(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let mut piece = window.record("piece");
+    piece["sections"][0]["bars"] = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 120, "fermata": 1, "hold": 1 },
+        { "bars": 3, "signature": "4/4", "bpm": 120 },
+    ]);
+    let record = json!({ "tool": "piece", "state": piece });
+    write_outside(
+        &mut window,
+        "state/piece/instance.json",
+        &record.to_string(),
+    );
+    window.until("the fermata heard", |window| window.tempos()[0] == (0, 60.));
+    window.after_the_runs();
+
+    let signature = window.in_band(0, 10., MARKS);
+    window.click(signature);
+    window.type_in_field("3/4");
+    window.until("the time signature typed", |window| {
+        window.sections()[1]["bars"][0]["signature"] == "3/4"
+    });
+    window.after_the_runs();
+    assert_eq!(window.sections()[0]["bars"][0]["fermata"], 1);
+    assert_eq!(window.problems(), []);
 }
 
 /// A click on the fermata of bar 2 and "2 beats longer": it holds two beats, its count a third

@@ -2,7 +2,7 @@ import { type Action, type ActionKey } from "./sdk";
 import { chosenStart, noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
 import { addBar, askBars, askSignature, askSlide, askTempo, choiceMenu, choiceOf, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleFermata, toggleLoop } from "./piece-choice";
-import { barsOfPiece, chooseBars, clamp, editedPart, editPart, formOf, instrumentsOf, partSectionOf, showPanel } from "./piece-page";
+import { barsOfPiece, chooseBars, clamp, editedPart, editPart, formOf, instrumentsOf, partSectionOf, showInstrument } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
 import { addSectionAtEnd, currentSection, moveSectionBy, nameSection, sectionMenu, stepSection } from "./piece-sections";
 import { askToDelete } from "./piece-tracks";
@@ -46,8 +46,8 @@ function back(tool: Piece) {
   else if (below) memory.below = null;
 }
 
-/** The instrument or return whose panel shows while no bars are chosen. */
-const shownTrack = ({ memory }: Piece) => (memory.chosen === null && memory.below?.kind === "track" ? memory.below.name : null);
+/** The instrument or return the keys act on while no bars are chosen: the one whose panel shows, or with nothing below the chosen one. */
+const shownTrack = ({ memory }: Piece) => (memory.chosen !== null ? null : memory.below?.kind === "track" ? memory.below.name : memory.below === null ? memory.track : null);
 
 /** Chooses the instrument above or below the one whose panel shows, or with `move` puts it there. */
 const trackStep = (keys: readonly ActionKey[], title: string, by: -1 | 1, move: boolean) =>
@@ -57,7 +57,7 @@ const trackStep = (keys: readonly ActionKey[], title: string, by: -1 | 1, move: 
     const at = name === null ? -1 : names.indexOf(name);
     if (name === null || at < 0) return false;
     const next = clamp(at + by, 0, names.length - 1);
-    if (!move) showPanel(tool, names[next]!);
+    if (!move) showInstrument(tool, names[next]!);
     else if (next !== at) {
       names.splice(at, 1);
       names.splice(next, 0, name);

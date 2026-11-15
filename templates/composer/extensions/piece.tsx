@@ -50,7 +50,7 @@ type Memory = {
   below: Below;
   /** The instrument the keyboard plays, as a click on a strip's name chooses it beside the mixer. */
   track: string | null;
-  /** The instrument whose head the pointer is over, which shows all its toggles. */
+  /** The instrument whose head the pointer is over, which shows all its toggles, or the corner, which shows Loop. */
   hovered: string | null;
   renaming: string | null;
   /** What is being typed in a field over the band, which hides under it: `section-` and its id, or `signature-` or `tempo-` and the bar of the mark. */

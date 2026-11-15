@@ -4,7 +4,7 @@ import { blend, Button, For, Fragment, h, humanize, Input, Label, legato, Line, 
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
 // expression lanes. Times are ticks from the clip's start.
 const BEAT = 960;
-// Rows of 12 points, keys 40 wide at the right of a header 176 wide, a ruler 32 tall and a lane 56.
+// Rows of 12 points, keys 40 wide at the right of a header 152 wide, a ruler 32 tall and a lane 56.
 export const ROW = 12;
 const HEADER = 152;
 const KEYS = 40;
