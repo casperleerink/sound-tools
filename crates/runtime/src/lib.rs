@@ -4,10 +4,10 @@
 
 pub mod app;
 pub mod log_file;
+#[cfg(target_os = "macos")]
+pub mod look;
 pub mod recorder;
 pub mod report;
-#[cfg(target_os = "macos")]
-pub mod screenshot;
 pub mod templates;
 pub mod update;
 pub mod window;

@@ -223,7 +223,6 @@ impl Drawing<'_> {
             (None, true) => Toggle::dot(name, on),
             (None, false) => Toggle::new(name, props.label.clone().unwrap_or_default(), on),
         };
-        let selector = format!("toggle-{}", props.key.as_deref().unwrap_or_default());
         let hears =
             Hears::of(props.on_press, props.on_release, props.on_click).unless(props.disabled);
         let toggle = toggle
@@ -237,11 +236,7 @@ impl Drawing<'_> {
             .disabled(props.disabled == Some(true));
         // A click on it is its own, not the row's under it.
         let wrap = self
-            .control(
-                div().flex_none().occlude().seen(move || selector),
-                id,
-                Control::press(),
-            )
+            .control(div().flex_none().occlude(), id, Control::press())
             .when(hears.any(), Div::cursor_pointer);
         self.hears_pointer(wrap, id, hears)
             .child(toggle)

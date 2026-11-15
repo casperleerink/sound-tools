@@ -1,6 +1,6 @@
 //! Tooltip view for GPUI's `.tooltip(..)`: label text plus optional keyboard shortcut chips.
 
-use crate::on_screen::Named;
+use crate::on_screen::{Named, Seen};
 use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,
 };
@@ -64,7 +64,9 @@ impl Render for Tooltip {
         chip.a = 0.12;
 
         // Outer padding keeps the popup off the cursor.
-        div().seen(|| "tooltip").pt(px(6.)).pl(px(6.)).child(
+        let text = self.text.clone();
+        let seen = move || Seen::named("tooltip").text(text);
+        div().seen(seen).pt(px(6.)).pl(px(6.)).child(
             div()
                 .flex()
                 .items_center()

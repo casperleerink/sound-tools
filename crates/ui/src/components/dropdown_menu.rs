@@ -26,7 +26,7 @@
 //! most a hundred rows: drawing thousands of them on every frame the menu is open would cost
 //! more than typing a few letters.
 
-use crate::on_screen::Named;
+use crate::on_screen::{Named, Seen};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -549,10 +549,17 @@ fn row(
         theme.text(),
         theme.fill(),
     );
-    let selector = item.value.clone();
+    let (selector, label, disabled) = (item.value.clone(), item.label.clone(), item.disabled);
     div()
         .id(id)
-        .seen(move || format!("menu-{selector}"))
+        .seen(move || {
+            let seen = Seen::named(format!("menu-{selector}")).text(label);
+            match (disabled, selected) {
+                (true, _) => seen.state("disabled"),
+                (false, true) => seen.state("checked"),
+                (false, false) => seen,
+            }
+        })
         .flex()
         .flex_none()
         .items_center()

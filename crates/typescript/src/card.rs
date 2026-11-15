@@ -179,7 +179,6 @@ pub fn node_counts(page: &AnyView, cx: &App) -> std::collections::BTreeMap<Strin
 }
 
 /// Flushes pending watches, and checks that the window applied Bun's replies.
-#[cfg(feature = "test-support")]
 pub fn page_ready(page: &AnyView, cx: &mut App) -> bool {
     let Ok(page) = page.clone().downcast::<Page>() else {
         return true;

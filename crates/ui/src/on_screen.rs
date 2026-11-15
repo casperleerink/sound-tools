@@ -55,6 +55,12 @@ impl Seen {
         self
     }
 
+    /// Whether a point or more of it is cut off: a text a little taller than its box is not.
+    pub fn is_cut(&self) -> bool {
+        let (whole, shown) = (self.whole.size, self.bounds.size);
+        whole.width - shown.width >= px(1.) || whole.height - shown.height >= px(1.)
+    }
+
     pub fn shows(&self) -> bool {
         !self.bounds.is_empty()
     }
@@ -215,7 +221,7 @@ pub fn listing(seen: &[Seen]) -> String {
             number(size.height)
         )
         .ok();
-        if each.bounds != each.whole {
+        if each.is_cut() {
             line.push_str(" cut");
         }
         if let Some(units) = &each.units {
@@ -227,11 +233,14 @@ pub fn listing(seen: &[Seen]) -> String {
             )
             .ok();
         }
-        if each.text.is_some() {
-            // A text inside another is a part of it, such as the label of a button.
+        // Two plain texts over each other are a layout gone wrong; a tooltip or a menu over
+        // a text is not.
+        let plain = |seen: &Seen| seen.name.is_empty() && seen.text.is_some();
+        if plain(each) {
+            // A div's text inside another div's is a part of it.
             let inside = |a: &Bounds<Pixels>, b: &Bounds<Pixels>| a.intersect(b) == *a;
             let over = (shown.iter().enumerate())
-                .filter(|(other, seen)| *other != index && seen.text.is_some())
+                .filter(|(other, seen)| *other != index && plain(seen))
                 .find(|(_, seen)| {
                     let (a, b) = (&seen.bounds, &each.bounds);
                     a.intersects(b) && !inside(a, b) && !inside(b, a)
@@ -244,4 +253,47 @@ pub fn listing(seen: &[Seen]) -> String {
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::size;
+
+    fn text(text: &str, (x, y, width, height): (f32, f32, f32, f32)) -> Seen {
+        let whole = Bounds::new(point(px(x), px(y)), size(px(width), px(height)));
+        Seen::named("").text(text.to_string()).at(whole, whole)
+    }
+
+    #[test]
+    fn the_listing_tells_texts_that_cross_and_cut_texts_from_ones_inside_others() {
+        let mut cut = text("Long name", (0., 100., 80., 18.));
+        cut.bounds.size.width = px(60.);
+        let seen = [
+            text("Bar 1", (0., 0., 40., 16.)),
+            text("Bar 2", (30., 0., 40., 16.)),
+            text("Track", (0., 40., 100., 20.)),
+            text("T", (10., 42., 10., 16.)),
+            Seen::named("tooltip").text("Play").at(
+                Bounds::new(point(px(5.), px(5.)), size(px(50.), px(20.))),
+                Bounds::new(point(px(5.), px(5.)), size(px(50.), px(20.))),
+            ),
+            cut,
+        ];
+        let listing = listing(&seen);
+        let line = |start: &str| {
+            listing
+                .lines()
+                .find(|line| line.starts_with(start))
+                .unwrap()
+        };
+        assert!(
+            line("\"Bar 1\"").ends_with("overlaps \"Bar 2\""),
+            "{listing}"
+        );
+        assert!(!line("\"Track\"").contains("overlaps"), "{listing}");
+        assert!(!line("tooltip").contains("overlaps"), "{listing}");
+        assert!(line("\"Long name\"").contains(" cut"), "{listing}");
+        assert!(!line("\"Bar 2\"").contains(" cut"), "{listing}");
+    }
 }

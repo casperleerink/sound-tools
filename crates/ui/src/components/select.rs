@@ -7,7 +7,7 @@
 //! under the id. Tab reaches the trigger; enter or space opens the list, up and down move in
 //! it, enter picks and escape or tab closes, and the focus goes back to the trigger.
 
-use crate::on_screen::Named;
+use crate::on_screen::{Named, Seen};
 use std::rc::Rc;
 
 use gpui::{
@@ -221,7 +221,10 @@ impl RenderOnce for Select {
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .track_focus(&trigger_focus)
                     .border_1()
-                    .seen(move || format!("select-{selector}"))
+                    .seen({
+                        let label = label.clone();
+                        move || Seen::named(format!("select-{selector}")).text(label)
+                    })
                     .border_color(Hsla::transparent_black())
                     .focus_visible(move |style| style.border_color(ring))
                     .child(

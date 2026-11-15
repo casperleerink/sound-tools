@@ -738,7 +738,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png> [--click <x>,<y>]... [--play <seconds>] | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | <step>... | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)\n<step>: --look | --screenshot <png> | --click <part> | --double-click <part> | --right-click <part> | --hover <part> | --drag <part> <part>|<dx>,<dy> | --scroll <part> <dx>,<dy> | --key <keys> | --type <text> | --play <seconds>\n<part>: a name --look lists, as button-play; <name>@<x>,<y> is a place in it: units of a space, else points from its top left";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -827,12 +827,12 @@ fn main() -> Result<()> {
             save_template(Path::new(folder), name, flags)
         }
         #[cfg(target_os = "macos")]
-        [folder, "--screenshot", png, flags @ ..] => {
-            let before = runtime::screenshot::Before::parse(flags)?;
-            runtime::screenshot::screenshot(Path::new(folder), Path::new(png), &before)
+        [folder, first, ..] if runtime::look::Step::starts(first) => {
+            let steps = runtime::look::Step::parse(&arguments[1..])?;
+            runtime::look::run(Path::new(folder), &steps)
         }
         #[cfg(not(target_os = "macos"))]
-        [_, "--screenshot", ..] => bail!("--screenshot works on macOS only"),
+        [_, "--look" | "--screenshot", ..] => bail!("the window's steps work on macOS only"),
         _ => bail!(USAGE),
     }
 }

@@ -1,7 +1,7 @@
 //! What the nodes of a card show that is an entity of the window: a text field, the card of
 //! another instance, and a menu or a question its code opens.
 
-use sound_ui::on_screen::Named;
+use sound_ui::on_screen::{Named, Seen};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -113,8 +113,8 @@ impl Render for CardTitle {
         let title = div()
             .id("card-title")
             .seen({
-                let instance = self.instance.clone();
-                move || format!("card-title-{instance}")
+                let (instance, name) = (self.instance.clone(), self.name.clone());
+                move || Seen::named(format!("card-title-{instance}")).text(name)
             })
             .flex()
             .min_w_0()

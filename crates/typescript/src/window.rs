@@ -498,7 +498,6 @@ impl Live {
         })
     }
 
-    #[cfg(feature = "test-support")]
     pub(crate) fn flush(&mut self, cx: &mut Context<Self>) -> bool {
         let idle = |host: &Host| match host {
             Host::Running { bun, .. } => bun.is_idle(),

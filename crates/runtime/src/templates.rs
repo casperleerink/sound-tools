@@ -281,6 +281,19 @@ fn make_room(path: &Path) -> Result<()> {
     }
 }
 
+/// Makes the copy of a template's folder a project, as a new project of it starts: so the
+/// window's steps (see `crate::look`) show a template as it is on disk.
+#[cfg(target_os = "macos")]
+pub(crate) fn open_as_project(folder: &Path) -> Result<()> {
+    if !folder.join(ABOUT_FILE).is_file() {
+        return Ok(());
+    }
+    let file = folder.join(PROJECT_FILE);
+    let contents = std::fs::read_to_string(&file)?;
+    std::fs::write(&file, with_extensions(&contents)?)?;
+    Ok(())
+}
+
 /// The `project.json` of a template, with every bundled extension enabled where it names none.
 fn with_extensions(contents: &str) -> Result<String> {
     let mut file: serde_json::Value =

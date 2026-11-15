@@ -7,7 +7,7 @@
 //! it has the focus, puts a field where the dial is. Enter, or the focus going elsewhere, reads
 //! what was typed in the unit the knob shows, as one [`ValueChange::Set`]; escape puts it back.
 
-use crate::on_screen::Named;
+use crate::on_screen::{self, Named, Seen};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -678,10 +678,21 @@ impl RenderOnce for Knob {
             span: TRAVEL,
             sideways: false,
         };
-        let selector = self.id.clone();
+        let seen = on_screen::looking().then(|| {
+            let seen = Seen::named(format!("knob-{}", self.id));
+            let seen = match &self.label {
+                Some(label) => seen.text(label.clone()),
+                None => seen,
+            };
+            match (&self.readout, disabled) {
+                (_, true) => seen.state("disabled"),
+                (Some(readout), false) => seen.state(readout.clone()),
+                (None, false) => seen,
+            }
+        });
         let knob = div()
             .id(self.id.clone())
-            .seen(move || format!("knob-{selector}"))
+            .when_some(seen, |knob, seen| knob.seen(|| seen))
             .relative()
             .size(px(DIAL))
             .when(disabled, |d| d.cursor_not_allowed())
