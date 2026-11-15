@@ -3,7 +3,7 @@ import type { Piece } from "./piece";
 import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, setFermatas, setSignature, setSlide, setTempo, splitSection } from "./piece-edits";
 import { beatOf, countOf, endOf, formText, longestHold, partsOf, startsOf, tempoOf, type Bar } from "./piece-form";
 import { barAtTick, barsOfPiece, barsOfSection, chooseBars, clamp, instrumentsOf, showEditor, showInstrument, spansOf } from "./piece-page";
-import { nameSection } from "./piece-sections";
+import { nameSection, sectionMenu } from "./piece-sections";
 
 // What the chosen bars of the piece do, whole or of some instruments: as in a score, a passage is
 // chosen, then cleared, copied, pasted or repeated. A choice may cross section lines.
@@ -319,6 +319,8 @@ export async function choiceMenu(piece: Piece, tick?: number) {
   const hasFermata = choice.all.bars[fermataBar(piece, tick)]?.fermata !== undefined;
   const whole = isWhole(choice);
   const startsSection = choice.all.bars[choice.from]!.at === 0;
+  const [first, last] = [choice.all.bars[choice.from]!, choice.all.bars[choice.to]!];
+  const section = whole && startsSection && first.id === last.id && choice.all.bars[choice.to + 1]?.id !== first.id ? first.id : undefined;
   type Item = MenuItem & { run: () => unknown };
   const items: Item[] = [
     { label: "Cut", shortcut: "piece.cut", run: () => cutChosen(piece) },
@@ -334,7 +336,9 @@ export async function choiceMenu(piece: Piece, tick?: number) {
     { label: hasFermata ? "Fermata…" : "Fermata", shortcut: "piece.fermata", run: () => toggleFermata(piece, tick) },
     ...(whole
       ? ([
-          { label: "Start a section here", shortcut: "piece.add_section", disabled: startsSection, separator: true, run: () => startSectionAt(piece) },
+          // With all the bars of one section chosen, its own menu: its name, a copy, its place.
+          ...(section ? ([{ label: "Section…", shortcut: "piece.section_menu", separator: true, run: () => sectionMenu(piece, section) }] satisfies Item[]) : []),
+          { label: "Start a section here", shortcut: "piece.add_section", disabled: startsSection, separator: section === undefined, run: () => startSectionAt(piece) },
           // One bar after them is the button under them, and shift-B.
           { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },
           { label: "Add bars after…", shortcut: "piece.add_bars", run: () => askBars(piece) },
