@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun-types"
+    ],
+    "jsxImportSource": "sdk",
+    "paths": {
+      "sdk/jsx-runtime": [
+        "./jsx-runtime.ts"
+      ],
+      "sdk/jsx-dev-runtime": [
+        "./jsx-runtime.ts"
+      ]
+    }
+  }
+}
