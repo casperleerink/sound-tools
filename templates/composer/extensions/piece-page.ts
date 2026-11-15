@@ -7,10 +7,10 @@ import type { track } from "./track";
 // What the parts of the piece's page share: its sizes and colours, its instruments, the bars of
 // the whole piece in one line, and what the view works out once for all of them.
 
-// The band of marks over the rows, two lines of words, and rows of 120 points with heads 152
+// The band of marks over the rows, two lines of words, and rows of 96 points with heads 152
 // wide: the music is the picture. The rows under the heads, of the returns and the master, are 40.
 export const MARKS = 48;
-export const ROW = 120;
+export const ROW = 96;
 export const HEADER = 152;
 export const LOW_ROW = 40;
 /** Points per tick at zoom 1: a bar of 4/4 is 96 points. */
@@ -153,9 +153,13 @@ export function showEditor(piece: Pick<Piece, "memory" | "select">, name: string
   piece.memory.below = { kind: "editor", track: name };
   piece.memory.notes = new Set();
 }
-/** Chooses the instrument `name` as a press on its row does: the editor, while it shows, shows its notes, else its panel shows. */
-export const showInstrument = (piece: Pick<Piece, "memory" | "select">, name: string) =>
-  piece.memory.below?.kind === "editor" ? showEditor(piece, name) : showPanel(piece, name);
+/** Chooses the instrument `name` as a press on its music does: the editor or a panel, while one shows, shows its own; else nothing opens below, so the music stays alone. */
+export function showInstrument(piece: Pick<Piece, "memory" | "select">, name: string) {
+  const below = piece.memory.below?.kind;
+  if (below === "editor") showEditor(piece, name);
+  else if (below === "track") showPanel(piece, name);
+  else chooseTrack(piece, name);
+}
 
 /** The part `track` plays in the section `id`: its `timeline` child, or none while it has no music there. */
 export const partAt = (track: Child | undefined, id: string) => {

@@ -551,10 +551,10 @@ export const Rows = ({ page }: { page: Page }) => {
             ]}
           </Show>
           <Line from={() => [playhead, 0] as const} to={() => [playhead, rows().length] as const} color="text" width={1} />
-          <QuietButton space={space} id="chosen-add-bar" x={buttonsX} y={buttonsY} text="+ Bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
-          <QuietButton space={space} id="chosen-remove" x={() => buttonsX().plus(space.pointX.times(48))} y={buttonsY} text="Remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
+          <QuietButton space={space} id="chosen-add-bar" x={buttonsX} y={buttonsY} text="+ Bar" width={44} bare shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
+          <QuietButton space={space} id="chosen-remove" x={() => buttonsX().plus(space.pointX.times(48))} y={buttonsY} text="Remove" width={56} bare shown={() => chosen().whole * (1 - chosen().all)}
             onClick={() => clearChosen(page, true)} />
-          <QuietButton space={space} id="chosen-more" x={() => buttonsX().plus(space.pointX.times(108 * chosen().whole))} y={buttonsY} text="More" width={44} shown={() => chosen().whole + chosen().music}
+          <QuietButton space={space} id="chosen-more" x={() => buttonsX().plus(space.pointX.times(108 * chosen().whole))} y={buttonsY} text="More" width={44} bare shown={() => chosen().whole + chosen().music}
             onClick={() => void choiceMenu(page)} />
         </Space>
         <Show when={() => rows().length === 0}>{() => <EmptyPiece page={page} />}</Show>

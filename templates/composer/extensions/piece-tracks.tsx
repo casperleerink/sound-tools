@@ -80,7 +80,7 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
           memory.renaming === each.name ? (
             <Input value={() => titleOf(each)} width={104} focus onCommit={(title) => rename(page, each.name, title)} />
           ) : (
-            <Text key={`name-${each.name}`} variant="heading" tone={() => (chosen() ? "text" : "secondary")} style={() => ({ truncate: true, opacity: dim() })}>{() => titleOf(each)}</Text>
+            <Text key={`name-${each.name}`} variant="heading" tone={() => (chosen() || memory.track === each.name ? "text" : "secondary")} style={() => ({ truncate: true, opacity: dim() })}>{() => titleOf(each)}</Text>
           )
         }
       </div>
