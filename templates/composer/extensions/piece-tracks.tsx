@@ -11,7 +11,7 @@ import { freeName, track } from "./track";
 
 const Hairline = () => <div style={{ height: 1, background: "border", keep: true }} />;
 
-/** The column left of the rows: the corner beside the marks, with the loop while it can be used, the names, which scroll with the rows, and under them the returns and the master, which stay. */
+/** The column left of the rows: the corner beside the marks, with the loop while it can be used, the heads, which scroll with the rows, and under them the returns and the master, which stay. */
 export const Heads = ({ page }: { page: Page }) => {
   const { rows, returns, clock, memory } = page;
   // Loop shows while it loops, while bars are chosen, and under the pointer.
@@ -43,9 +43,9 @@ export const Heads = ({ page }: { page: Page }) => {
           )}
         </For>
         <Hairline />
-        <div style={{ height: LOW_ROW - 1, direction: "row", align: "center", paddingX: "xs" }}>
-          <Button key="add-instrument" label="Instrument" icon="plus" variant="ghost" color="text-muted" size="sm" onClick={() => addTrack(page, 0)} />
-          <Button key="add-kind" icon="chevron-down" variant="ghost" color="text-muted" size="sm" tooltip="Add an instrument or a return" onClick={() => addTrack(page)} />
+        <div style={{ height: ROW, direction: "row", align: "center", paddingX: "sm" }}>
+          <Button key="add-instrument" label="Add instrument" icon="plus" variant="ghost" color="text-secondary" size="sm" onClick={() => addTrack(page, 0)} />
+          <Button key="add-kind" icon="chevron-down" variant="ghost" color="text-secondary" size="sm" tooltip="Add an instrument or a return" onClick={() => addTrack(page)} />
         </div>
       </div>
       <div style={{ keep: true }}>
@@ -59,10 +59,9 @@ export const Heads = ({ page }: { page: Page }) => {
 const CORNER = "Corner";
 
 /**
- * An instrument's head: a dot of its colour and its name. While the pointer is over it or it is
- * chosen, also what plays it and its toggles; of these only those that are on show otherwise. A
- * click anywhere on it but its toggles shows its panel, a double click names it, a right press
- * opens its menu.
+ * An instrument's head: its colour, its name, what plays it, and of its toggles those that are
+ * on, all of them while the pointer is over it or it is chosen. A click anywhere on it but its
+ * toggles shows its panel, a double click names it, a right press opens its menu.
  */
 const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   const { state, memory, chosenTrack, openPanel, toggleMute, toggleSolo } = page;
@@ -72,35 +71,35 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   // A head drawn anew hears no leave of the one it replaces.
   onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
-    <div key={`track-head-${each.name}`} style={() => ({ height: ROW - 1, justify: "center", paddingLeft: "md", paddingRight: "sm", ...rowLook(chosen()) })}
+    <div key={`track-head-${each.name}`} style={() => ({ height: ROW - 1, direction: "row", align: "center", paddingRight: "sm", ...rowLook(chosen()) })}
       onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))} tabStop>
-      <div style={{ direction: "row", align: "center", gap: "sm", paddingTop: "lg" }}>
-        <Mark colour={() => colourOf(each)} dim={() => muted(each)} />
+      <div style={() => ({ width: 4, height: ROW - 16, radius: "full", keep: true, background: colourOf(each), opacity: dim() })} />
+      <div style={{ grow: true, minWidth: 0, paddingLeft: "md" }}>
         {() =>
           memory.renaming === each.name ? (
-            <Input value={() => titleOf(each)} width={104} focus onCommit={(title) => rename(page, each.name, title)} />
+            <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
           ) : (
-            <Text key={`name-${each.name}`} variant="heading" tone={() => (chosen() || memory.track === each.name ? "text" : "secondary")} style={() => ({ truncate: true, opacity: dim() })}>{() => titleOf(each)}</Text>
+            <Text key={`name-${each.name}`} variant="heading" style={() => ({ truncate: true, opacity: dim() })}>{() => titleOf(each)}</Text>
           )
         }
-      </div>
-      <div style={{ height: 24, direction: "row", align: "center", gap: "xs", paddingLeft: "md" }}>
-        <Text variant="label" tone="muted" style={() => ({ grow: true, truncate: true, opacity: all() ? 1 : 0 })}>{() => memory.names[`${each.name}/synth`] ?? ""}</Text>
-        {() => {
-          // Runs again, and learns its name again, when another instrument or plugin takes its place.
-          const synth = each.children.find((child) => child.name === "synth");
-          const playing = synth && `${synth.tool} ${(synth.state as { plugin_id?: string }).plugin_id}`;
-          if (playing) untrack(() => learnName(page, each.name));
-          return null;
-        }}
-        <Show when={() => all() || muted(each)}>
-          {() => <Toggle key={`mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
-        </Show>
-        <Show when={() => all() || state.solo.includes(each.name)}>
-          {() => <Toggle key={`solo-${each.name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
-        </Show>
+        <div style={{ height: 24, direction: "row", align: "center", gap: "xs" }}>
+          <Text variant="label" tone="muted" style={() => ({ grow: true, truncate: true, opacity: dim() })}>{() => memory.names[`${each.name}/synth`] ?? ""}</Text>
+          {() => {
+            // Runs again, and learns its name again, when another instrument or plugin takes its place.
+            const synth = each.children.find((child) => child.name === "synth");
+            const playing = synth && `${synth.tool} ${(synth.state as { plugin_id?: string }).plugin_id}`;
+            if (playing) untrack(() => learnName(page, each.name));
+            return null;
+          }}
+          <Show when={() => all() || muted(each)}>
+            {() => <Toggle key={`mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
+          </Show>
+          <Show when={() => all() || state.solo.includes(each.name)}>
+            {() => <Toggle key={`solo-${each.name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
+          </Show>
+        </div>
       </div>
     </div>
   );
