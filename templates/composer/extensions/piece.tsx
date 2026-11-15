@@ -208,14 +208,12 @@ export const piece = tool({
       );
     };
     const Hairline = ({ strong = false }: { strong?: boolean }) => <div style={{ height: 1, background: strong ? "border-strong" : "border", keep: true }} />;
-    const Rule = () => <div style={{ width: 1, background: "border", keep: true }} />;
 
     return (
       <Page flush header={<Transport computerKeys tempo={false} />}>
         <Hairline strong />
         <div style={{ direction: "row", grow: true }}>
           <Heads page={page} />
-          <Rule />
           <div style={{ grow: true }}>
             <Marks page={page} />
             <Rows page={page} />

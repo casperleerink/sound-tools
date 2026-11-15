@@ -1,9 +1,20 @@
-import { Button, For, Fragment, h, Icon, Input, onCleanup, Show, Text, Toggle, untrack } from "./sdk";
+import { Button, For, Fragment, h, Icon, Input, onCleanup, Path, Rect, Show, Space, Text, Toggle, untrack, type Color } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import type { Piece } from "./piece";
 import { toggleLoop } from "./piece-choice";
-import { colourOf, DIM, HEADER, LOW_ROW, Mark, MARKS, muted, PALETTE, ROW, rowLook, titleOf, type Child, type Page } from "./piece-page";
+import { colourOf, DIM, HEADER, LOW_ROW, Mark, MARKS, muted, PALETTE, PAPER, ROW, rowLook, titleOf, type Child, type Page } from "./piece-page";
+
+/** How wide the bracket of the system is, at the right of the margin. */
+const BRACKET = 16;
+
+/** A switch on the paper, where the window's own would be dark: outlined while off, filled with `tint` while on. */
+const PaperToggle = ({ id, label, on, tint, tooltip, onClick }: { id: string; label: string; on: () => boolean; tint: Color; tooltip: () => string; onClick: () => void }) => (
+  <div key={id} tabStop tooltip={tooltip} onClick={onClick}
+    style={() => ({ height: 24, minWidth: 24, paddingX: "sm", radius: "sm", align: "center", justify: "center", keep: true, borderWidth: 1, borderColor: on() ? tint : PAPER.line, ...(on() ? { background: tint } : { hover: { background: PAPER.hover } }) })}>
+    <Text variant="label" style={{ color: PAPER.ink, weight: "medium" }}>{label}</Text>
+  </div>
+);
 import { freeName, track } from "./track";
 
 // The heads of the rows: an instrument's name and toggles left of its music, and under them the
@@ -11,34 +22,41 @@ import { freeName, track } from "./track";
 
 const Hairline = () => <div style={{ height: 1, background: "border", keep: true }} />;
 
-/** The column left of the rows: the corner beside the marks, with the loop, the heads, which scroll with the rows, and under them the returns and the master, which stay. */
+/**
+ * The column left of the rows, a score's left margin on the paper: the corner beside the marks,
+ * with the loop, the instruments' names by the system's bracket, which scroll with the rows, and
+ * under them, off the paper, the returns and the master, which stay.
+ */
 export const Heads = ({ page }: { page: Page }) => {
   const { rows, returns, clock, memory } = page;
   return (
-    <div style={{ width: HEADER - 1, keep: true }}>
-      <div style={{ height: MARKS, keep: true, justify: "end", paddingX: "lg", paddingBottom: "xs" }}>
-        <div style={{ direction: "row", gap: "sm" }}>
-          <Toggle key="loop" label="Loop" size="sm" on={() => clock.repeat !== null} shortcut="piece.loop" onClick={() => toggleLoop(page)}
-            tooltip={() => (clock.repeat !== null ? "Stop looping" : memory.chosen ? "Loop the chosen bars as it plays" : "Loop the section that plays")} />
-          <Show when={() => clock.playing && !memory.follows}>
-            {() => <Button key="follow" label="Follow" size="sm" variant="ghost" shortcut="piece.follow" tooltip="Turn the page with the playhead again" onClick={() => (memory.follows = true)} />}
-          </Show>
+    <div style={{ width: HEADER, keep: true }}>
+      <div style={{ grow: true, background: PAPER.page }}>
+        <div style={{ height: MARKS, keep: true, justify: "end", paddingX: "lg", paddingBottom: "sm" }}>
+          <div style={{ direction: "row", gap: "sm" }}>
+            <PaperToggle id="loop" label="Loop" tint={PAPER.chosenHead} on={() => clock.repeat !== null} onClick={() => toggleLoop(page)}
+              tooltip={() => (clock.repeat !== null ? "Stop looping" : memory.chosen ? "Loop the chosen bars as it plays" : "Loop the section that plays")} />
+            <Show when={() => clock.playing && !memory.follows}>
+              {() => <Button key="follow" label="Follow" size="sm" variant="ghost" shortcut="piece.follow" tooltip="Turn the page with the playhead again" onClick={() => (memory.follows = true)} />}
+            </Show>
+          </div>
         </div>
-      </div>
-      <div style={{ grow: true }} follow={{ y: "rows" }}>
-        <For each={rows}>
-          {(each) => (
-            <div key={`head-${each.name}`} carry={`track:${each.name}`} onDrop={({ carried }) => carried?.startsWith("track:") && carried.slice(6) !== each.name && moveTrack(page, carried.slice(6), each.name)}
-              style={{ height: ROW }}>
-              <Hairline />
-              <TrackHead page={page} each={each} />
+        <div style={{ grow: true, direction: "row" }}>
+          <div style={{ grow: true }} follow={{ y: "rows" }}>
+            <For each={rows}>
+              {(each) => (
+                <div key={`head-${each.name}`} carry={`track:${each.name}`} onDrop={({ carried }) => carried?.startsWith("track:") && carried.slice(6) !== each.name && moveTrack(page, carried.slice(6), each.name)}
+                  style={{ height: ROW }}>
+                  <TrackHead page={page} each={each} />
+                </div>
+              )}
+            </For>
+            <div style={{ height: ROW, direction: "row", align: "center", justify: "end" }}>
+              <Button key="add-instrument" label="Add instrument" icon="plus" variant="ghost" color={PAPER.soft} size="sm" onClick={() => addTrack(page, 0)} />
+              <Button key="add-kind" icon="chevron-down" variant="ghost" color={PAPER.soft} size="sm" tooltip="Add an instrument or a return" onClick={() => addTrack(page)} />
             </div>
-          )}
-        </For>
-        <Hairline />
-        <div style={{ height: ROW, direction: "row", align: "center", paddingX: "sm" }}>
-          <Button key="add-instrument" label="Add instrument" icon="plus" variant="ghost" color="text-secondary" size="sm" onClick={() => addTrack(page, 0)} />
-          <Button key="add-kind" icon="chevron-down" variant="ghost" color="text-secondary" size="sm" tooltip="Add an instrument or a return" onClick={() => addTrack(page)} />
+          </div>
+          <Bracket page={page} />
         </div>
       </div>
       <div style={{ keep: true }}>
@@ -49,10 +67,27 @@ export const Heads = ({ page }: { page: Page }) => {
   );
 };
 
+/** The bracket that holds the instruments together as one system, with its hooks, beside their names. */
+const Bracket = ({ page: { rows } }: { page: Page }) => (
+  <Space key="bracket" width={BRACKET} unit={{ y: ROW }} extent={() => ({ y: [0, rows().length + 1] })} follow={{ y: "rows" }}>
+    <Show when={() => rows().length > 0}>
+      {() => {
+        const end = () => rows().length;
+        return [
+          <Rect x={4} y={2 / ROW} width={4} height={() => end() - 4 / ROW} color={PAPER.ink} />,
+          <Path points={() => [[4, 2 / ROW], [6, -4 / ROW, 15, -8 / ROW], [9, -1 / ROW, 8, 6 / ROW], [4, 6 / ROW]]} color={PAPER.ink} />,
+          <Path points={() => [[4, end() - 2 / ROW], [6, end() + 4 / ROW, 15, end() + 8 / ROW], [9, end() + 1 / ROW, 8, end() - 6 / ROW], [4, end() - 6 / ROW]]} color={PAPER.ink} />,
+        ];
+      }}
+    </Show>
+  </Space>
+);
+
 /**
- * An instrument's head: its colour, its name, what plays it, and of its toggles those that are
- * on, all of them while the pointer is over it or it is chosen. A click anywhere on it but its
- * toggles shows its panel, a double click names it, a right press opens its menu.
+ * An instrument's name in the margin, as a score sets it, with what plays it under it, as a score
+ * says which instrument it is; of its toggles those that are on, all of them while the pointer is
+ * over it or it is chosen. A click anywhere on it but its toggles shows its panel, a double click
+ * names it, a right press opens its menu.
  */
 const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   const { state, memory, chosenTrack, openPanel, toggleMute, toggleSolo } = page;
@@ -62,35 +97,32 @@ const TrackHead = ({ page, each }: { page: Page; each: Child }) => {
   // A head drawn anew hears no leave of the one it replaces.
   onCleanup(() => memory.hovered === each.name && (memory.hovered = null));
   return (
-    <div key={`track-head-${each.name}`} style={() => ({ height: ROW - 1, direction: "row", align: "center", paddingRight: "sm", ...rowLook(chosen()) })}
+    <div key={`track-head-${each.name}`} style={() => ({ height: ROW, direction: "row", align: "center", gap: "xs", paddingLeft: "sm", paddingRight: "sm", ...(chosen() ? { background: PAPER.chosenHead } : { hover: { background: PAPER.hover } }) })}
       onHover={(over) => (memory.hovered = over ? each.name : memory.hovered === each.name ? null : memory.hovered)}
       onPress={({ button }) => button === "right" && trackMenu(page, each)}
       onClick={({ clicks }) => (clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))} tabStop>
-      <div style={() => ({ width: 4, height: ROW - 16, radius: "full", keep: true, background: colourOf(each), opacity: dim() })} />
-      <div style={{ grow: true, minWidth: 0, paddingLeft: "md" }}>
+      <Show when={() => all() || muted(each)}>
+        {() => <PaperToggle id={`mute-${each.name}`} label="M" tooltip={() => "Mute"} on={() => muted(each)} tint="peach" onClick={() => toggleMute(each.name)} />}
+      </Show>
+      <Show when={() => all() || state.solo.includes(each.name)}>
+        {() => <PaperToggle id={`solo-${each.name}`} label="S" tooltip={() => "Solo"} on={() => state.solo.includes(each.name)} tint="yellow" onClick={() => toggleSolo(each.name)} />}
+      </Show>
+      <div style={{ grow: true, minWidth: 0, align: "end" }}>
         {() =>
           memory.renaming === each.name ? (
-            <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(page, each.name, title)} />
+            <Input value={() => titleOf(each)} width={110} focus onCommit={(title) => rename(page, each.name, title)} />
           ) : (
-            <Text key={`name-${each.name}`} variant="heading" style={() => ({ truncate: true, opacity: dim() })}>{() => titleOf(each)}</Text>
+            <Text key={`name-${each.name}`} variant="title" style={() => ({ truncate: true, opacity: dim(), color: chosen() ? PAPER.chosen : PAPER.ink })}>{() => titleOf(each)}</Text>
           )
         }
-        <div style={{ height: 24, direction: "row", align: "center", gap: "xs" }}>
-          <Text variant="label" tone="muted" style={() => ({ grow: true, truncate: true, opacity: dim() })}>{() => memory.names[`${each.name}/synth`] ?? ""}</Text>
-          {() => {
-            // Runs again, and learns its name again, when another instrument or plugin takes its place.
-            const synth = each.children.find((child) => child.name === "synth");
-            const playing = synth && `${synth.tool} ${(synth.state as { plugin_id?: string }).plugin_id}`;
-            if (playing) untrack(() => learnName(page, each.name));
-            return null;
-          }}
-          <Show when={() => all() || muted(each)}>
-            {() => <Toggle key={`mute-${each.name}`} size="sm" label="M" tooltip="Mute" on={() => muted(each)} color="peach" onClick={() => toggleMute(each.name)} />}
-          </Show>
-          <Show when={() => all() || state.solo.includes(each.name)}>
-            {() => <Toggle key={`solo-${each.name}`} size="sm" label="S" tooltip="Solo" on={() => state.solo.includes(each.name)} color="yellow" onClick={() => toggleSolo(each.name)} />}
-          </Show>
-        </div>
+        <Text variant="label" style={() => ({ truncate: true, opacity: dim(), color: PAPER.faint })}>{() => memory.names[`${each.name}/synth`] ?? ""}</Text>
+        {() => {
+          // Runs again, and learns its name again, when another instrument or plugin takes its place.
+          const synth = each.children.find((child) => child.name === "synth");
+          const playing = synth && `${synth.tool} ${(synth.state as { plugin_id?: string }).plugin_id}`;
+          if (playing) untrack(() => learnName(page, each.name));
+          return null;
+        }}
       </div>
     </div>
   );

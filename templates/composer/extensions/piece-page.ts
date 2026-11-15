@@ -9,7 +9,17 @@ import type { track } from "./track";
 
 // The band of marks over the rows, rows of 64 points with heads 176 wide. The rows under the
 // heads, of the returns and the master, are 40.
-export const MARKS = 82;
+export const MARKS = 78;
+/**
+ * The page the piece is engraved on: a score lying on its side, in ink on paper, under and beside
+ * the window's dark chrome. The theme is dark only and has no roles for this, so the page names its
+ * own: `ink` for the marks and names, `soft` for what is said less loud, `faint` for hints, `line`
+ * for a hairline, `chosen` the blue of a chosen passage, as notation programs draw it.
+ */
+export const PAPER = {
+  page: "#e9e5db", veil: "#e9e5dbd0", hover: "#dfdacd", bar: "#8d877b", ink: "#1e1c19", soft: "#4a463f", faint: "#6a655c", line: "#cdc6b6",
+  chosen: "#2f66cc", chosenFill: "#2f66cc1f", chosenHead: "#2f66cc26", playhead: "#2b8a50",
+} as const satisfies Record<string, Color>;
 export const ROW = 64;
 export const HEADER = 176;
 export const LOW_ROW = 40;
