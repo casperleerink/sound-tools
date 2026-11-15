@@ -327,7 +327,9 @@ impl Driven {
             Step::Play(time) => {
                 let session = self.session.clone();
                 (self.cx).update(|cx| session.update(cx, |session, _| session.engine().play()));
+                // No settle after: it would play on past the time asked for.
                 self.run(Time::Played(*time));
+                return Ok(());
             }
         }
         self.run(Time::Settle);

@@ -17,7 +17,7 @@ use sound_ui::on_screen::{self, Named};
 const UNIT: KnobRange = KnobRange::linear(0., 1.);
 
 /// Where the part named `name` is, whole, as a look sees it: see `sound_ui::on_screen`.
-fn debug_bounds(cx: &mut VisualTestContext, name: &str) -> Option<gpui::Bounds<Pixels>> {
+fn whole_bounds(cx: &mut VisualTestContext, name: &str) -> Option<gpui::Bounds<Pixels>> {
     let seen = cx.update(on_screen::look);
     on_screen::find(&seen, name).map(|seen| seen.whole)
 }
@@ -134,7 +134,7 @@ fn open(cx: &mut TestAppContext) -> (gpui::Entity<Controls>, &mut VisualTestCont
 }
 
 fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> gpui::Bounds<Pixels> {
-    debug_bounds(cx, selector).unwrap_or_else(|| panic!("nothing is called {selector}"))
+    whole_bounds(cx, selector).unwrap_or_else(|| panic!("nothing is called {selector}"))
 }
 
 fn press(cx: &mut VisualTestContext, at: Point<Pixels>, click_count: usize) {
@@ -206,7 +206,7 @@ fn a_handle_drags_from_where_it_is_and_escape_puts_it_back(cx: &mut TestAppConte
 
 /// Whether the line of the display says `words`, as `caption-<words>`.
 fn says(cx: &mut VisualTestContext, words: &'static str) -> bool {
-    debug_bounds(cx, words).is_some()
+    whole_bounds(cx, words).is_some()
 }
 
 #[gpui::test]
@@ -360,7 +360,7 @@ fn two_cards_with_the_same_inner_ids_keep_a_focus_and_a_drag_each(cx: &mut TestA
     assert_eq!(knobs, [1, 1]);
 
     // A drag of the handle of the first card moves that one only.
-    let bounds = debug_bounds(cx, "handle-cutoff").unwrap();
+    let bounds = whole_bounds(cx, "handle-cutoff").unwrap();
     let at = bounds.center();
     press(cx, at, 1);
     drag_to(cx, at + point(px(12.), px(0.)), false);

@@ -7,12 +7,12 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, DispatchPhase, ElementId, ExternalPaths, Hitbox, Hsla, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollEvent,
-    WeakEntity, Window, canvas, div, point, prelude::*, px,
+    WeakEntity, Window, canvas, div, prelude::*, px,
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::focus::TabStop;
-use sound_ui::on_screen;
+use sound_ui::on_screen::{self, Units};
 
 use crate::bun::EventKind;
 use crate::live::SpaceView;
@@ -333,22 +333,25 @@ pub(super) struct SpaceFrame {
 }
 
 impl SpaceFrame {
-    /// The units at a point of the window.
-    pub(super) fn units_at(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f64, f64) {
+    /// Where its units are in the window, painted at `bounds`.
+    pub(super) fn units(&self, bounds: Bounds<Pixels>) -> Units {
         let (across, down) = self.view.scale();
-        (
-            self.view.left + f64::from(f32::from(position.x - bounds.origin.x)) / across,
-            self.view.top + f64::from(f32::from(position.y - bounds.origin.y)) / down,
-        )
+        Units {
+            origin: bounds.origin,
+            left: self.view.left,
+            top: self.view.top,
+            across,
+            down,
+        }
     }
 
-    pub(super) fn point_at(&self, bounds: Bounds<Pixels>, (x, y): (f64, f64)) -> Point<Pixels> {
-        let (across, down) = self.view.scale();
-        bounds.origin
-            + point(
-                px(((x - self.view.left) * across) as f32),
-                px(((y - self.view.top) * down) as f32),
-            )
+    /// The units at a point of the window.
+    pub(super) fn units_at(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f64, f64) {
+        self.units(bounds).at(position)
+    }
+
+    pub(super) fn point_at(&self, bounds: Bounds<Pixels>, units: (f64, f64)) -> Point<Pixels> {
+        self.units(bounds).point(units)
     }
 
     /// The view after a wheel: it scrolls over the extent, and zooms with cmd.
@@ -586,7 +589,7 @@ fn frame_now(
 
 #[cfg(test)]
 mod tests {
-    use gpui::size;
+    use gpui::{point, size};
 
     use super::*;
 

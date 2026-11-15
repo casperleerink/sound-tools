@@ -7,7 +7,7 @@ use gpui::{
     App, Bounds, Corners, FontWeight, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString,
     TextAlign, TextRun, Window, fill, outline, point, px, size,
 };
-use sound_ui::on_screen::{self, Seen, Units};
+use sound_ui::on_screen::{self, Seen};
 use sound_ui::{ActiveTheme, typography};
 
 use crate::tree::{Align, Cursor, Weight};
@@ -229,35 +229,16 @@ pub(super) fn seen(
     window: &Window,
 ) {
     let mask = window.content_mask().bounds;
-    let (across, down) = frame.view.scale();
-    let units = Units {
-        origin: bounds.origin,
-        left: frame.view.left,
-        top: frame.view.top,
-        across,
-        down,
-    };
+    let units = frame.units(bounds);
     let mut space = Seen::named(format!("space-{}", frame.key)).at(bounds, mask);
     space.units = Some(units);
     on_screen::record(space);
     for each in painted {
         let key = frame.keys.get(&each.node);
         let (whole, text) = match &each.shape {
-            PaintedShape::Text(origin, text, _, (font_size, weight), align) => {
-                let run = TextRun {
-                    len: text.len(),
-                    font: gpui::Font {
-                        weight: *weight,
-                        ..typography::ui_font()
-                    },
-                    color: each.color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let width = (window.text_system())
-                    .shape_line(text.clone(), px(*font_size), &[run], None)
-                    .width;
+            PaintedShape::Text(origin, text, parts, font, align) => {
+                let font_size = font.0;
+                let width = shape_text(text, parts, *font, each.color, window).width;
                 let left = match align {
                     Align::Left => origin.x,
                     Align::Center => origin.x - width / 2.,
@@ -339,6 +320,43 @@ pub(super) fn paint(
     });
 }
 
+/// A text of a space as it paints: each part in its colour and weight, digits tabular.
+fn shape_text(
+    text: &SharedString,
+    parts: &[TextPart],
+    (font_size, font_weight): (f32, FontWeight),
+    color: Hsla,
+    window: &Window,
+) -> gpui::ShapedLine {
+    let run = |len: usize, color: Hsla, weight: Option<Weight>| TextRun {
+        len,
+        font: gpui::Font {
+            weight: weight.map_or(font_weight, Weight::font),
+            ..typography::ui_font()
+        },
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let runs: Vec<TextRun> = match parts.is_empty() {
+        true => vec![run(text.len(), color, None)],
+        false => (parts.iter())
+            .filter(|part| part.len > 0)
+            .map(|part| run(part.len, part.color.unwrap_or(color), part.weight))
+            .collect(),
+    };
+    let mut at = 0;
+    let runs: Vec<TextRun> = (runs.iter())
+        .flat_map(|run| {
+            let part = text.get(at..at + run.len).unwrap_or_default();
+            at += run.len;
+            typography::tabular_runs(part, run)
+        })
+        .collect();
+    (window.text_system()).shape_line(text.clone(), px(font_size), &runs, None)
+}
+
 fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut App) {
     match shape {
         PaintedShape::Rect(bounds, radius, border) => {
@@ -412,36 +430,8 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 window.paint_path(path, color);
             }
         }
-        PaintedShape::Text(origin, text, parts, (font_size, font_weight), align) => {
-            let run = |len: usize, color: Hsla, weight: Option<Weight>| TextRun {
-                len,
-                font: gpui::Font {
-                    weight: weight.map_or(*font_weight, Weight::font),
-                    ..typography::ui_font()
-                },
-                color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let runs: Vec<TextRun> = match parts.is_empty() {
-                true => vec![run(text.len(), color, None)],
-                false => (parts.iter())
-                    .filter(|part| part.len > 0)
-                    .map(|part| run(part.len, part.color.unwrap_or(color), part.weight))
-                    .collect(),
-            };
-            let mut at = 0;
-            let runs: Vec<TextRun> = (runs.iter())
-                .flat_map(|run| {
-                    let part = text.get(at..at + run.len).unwrap_or_default();
-                    at += run.len;
-                    typography::tabular_runs(part, run)
-                })
-                .collect();
-            let shaped = window
-                .text_system()
-                .shape_line(text.clone(), px(*font_size), &runs, None);
+        PaintedShape::Text(origin, text, parts, font, align) => {
+            let (font_size, shaped) = (font.0, shape_text(text, parts, *font, color, window));
             let left = match align {
                 Align::Left => origin.x,
                 Align::Center => origin.x - shaped.width / 2.,

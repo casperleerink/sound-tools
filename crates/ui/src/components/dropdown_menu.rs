@@ -1420,13 +1420,13 @@ impl Render for DropdownMenu {
             .child(
                 trigger_element
                     .min_w_0()
-                    .when_some(self.debug_name.clone(), |element, name| {
-                        element.seen(move || name)
-                    })
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .when_some(trigger_height, |trigger, height| trigger.h(px(height)))
                     .track_focus(&self.trigger_focus)
                     .border_1()
+                    .when_some(self.debug_name.clone(), |element, name| {
+                        element.seen(move || name)
+                    })
                     .focus_visible(move |s| s.border_color(ring))
                     .map(|trigger| match icon {
                         Some(icon) => trigger.child(Icon::new(icon).size(14.).color(text)),
