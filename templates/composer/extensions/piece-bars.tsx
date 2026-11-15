@@ -45,7 +45,9 @@ const said = (bar: Bar, bpm = bar.bpm) => `${beatOf(bar.signature).sign} = ${tem
 function marksOf({ all, end }: Page) {
   const { bars, starts } = all();
   const slides = (index: number) => bars[index]?.to !== undefined;
-  const goesOn = (index: number) => slides(index) && slides(index - 1) && bars[index - 1]!.to === bars[index]!.bpm;
+  const rises = (index: number) => endOf(bars[index]!) > bars[index]!.bpm;
+  /** Whether a bar slides on from the bar before it: from the tempo that one ends at, the same way. */
+  const goesOn = (index: number) => slides(index) && slides(index - 1) && bars[index - 1]!.to === bars[index]!.bpm && rises(index) === rises(index - 1);
   const tempoAt = (index: number) => index === 0 || (slides(index) ? !goesOn(index) : slides(index - 1) || said(bars[index - 1]!) !== said(bars[index]!));
   const signatureAt = (index: number) => index === 0 || bars[index - 1]!.signature !== bars[index]!.signature;
   /** The bars a mark stands for: from its bar up to the next with a mark of its kind. */
@@ -62,14 +64,17 @@ function marksOf({ all, end }: Page) {
     const tempoRun = runOf(index, tempoAt);
     const [last, next] = [bars[tempoRun.to]!, bars[tempoRun.to + 1]];
     const sliding = change.tempo && slides(index);
-    const texts = !change.tempo ? [] : sliding ? [endOf(last) < bar.bpm ? "rit." : "accel."] : [said(bar), String(tempoOf(bar))];
+    const word = rises(index) ? "accel." : "rit.";
+    // A slide that does not start where the bar before it ends says the tempo it starts at.
+    const jumps = index === 0 || endOf(bars[index - 1]!) !== bar.bpm;
+    const texts = !change.tempo ? [] : sliding ? [...(jumps ? [`${said(bar)}  ${word}`] : []), word] : [said(bar), String(tempoOf(bar))];
     const forms = [
       ...texts.map((tempo) => ({ tempo, width: 6 + lead + tempo.length * LABEL_CHAR + 8 })),
       // The time signature alone, with a dot for a tempo that changes there.
       ...(change.signature ? [{ tempo: "", width: change.tempo ? 6 + lead + 6 : 6 + signatureWidth + 4 }] : []),
     ];
     // The tempo a slide reaches is said at its end, unless the bar after it says it.
-    const reached = next && !slides(tempoRun.to + 1) && said(next) === said(last, endOf(last)) ? "" : String(tempoOf({ ...last, bpm: endOf(last) }));
+    const reached = next && !slides(tempoRun.to + 1) && next.bpm === endOf(last) ? "" : String(tempoOf({ ...last, bpm: endOf(last) }));
     return {
       ...change, signatureWidth, lead, forms, beats: beats!, note: note!, tempoRun,
       room: (changes[at + 1]?.tick ?? end()) - change.tick,
@@ -146,9 +151,13 @@ export const Marks = ({ page }: { page: Page }) => {
     const room = index === 0 ? not(NONE) : fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
     // Not under the fermata of its bar.
     const fermata = all().bars[index]?.fermata;
+    // The first and the last chosen bar always say their number.
+    if (memory.chosen && (index === memory.chosen.from || index === memory.chosen.to)) return not(NONE);
     return fermata ? room.times(fits(page, (fermata.beat - 0.5) * countOf(all().bars[index]!.signature), 28)) : room;
   };
-  const fermatas = memo(() => all().bars.flatMap((bar, index) => (bar.fermata ? [{ index, x: starts()[index]! + (bar.fermata.beat - 0.5) * countOf(bar.signature) }] : [])));
+  const fermatas = memo(() => all().bars.flatMap((bar, index) => (bar.fermata ? [{ index, middle: starts()[index]! + (bar.fermata.beat - 0.5) * countOf(bar.signature), end: starts()[index + 1]! }] : [])));
+  /** Where a fermata is drawn: over the middle of its count, clear of the line its bar ends at. */
+  const fermataX = (fermata: { middle: number; end: number }) => space.pointX.times(-(FERMATA + 5)).plus(fermata.end).min(fermata.middle);
   // A fermata carried along the band lands on the count it is let go on.
   let held: number | null = null;
   const hold = now.drag("fermata");
@@ -281,15 +290,17 @@ export const Marks = ({ page }: { page: Page }) => {
           const slide = (() => {
             if (!mark.slide) return [];
             const { end, reached } = mark.slide;
-            const [word, number] = [mark.forms[0]!.width, reached.length * LABEL_CHAR + (reached ? 6 : 0)];
-            const lineShows = shown[0]!.times(fits(page, end - mark.tick, word + 12));
-            const numberShows = reached ? shown[0]!.times(fits(page, end - mark.tick, word + number + 14)) : NONE;
-            const [y, lineEnd] = [TEMPO_Y + 8, () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end)];
+            // The word may have its start tempo before it or not: the line starts after the form that shows.
+            const words = mark.forms.filter((form) => form.tempo !== "").map((form, index) => ({ width: form.width, shows: shown[index]! }));
+            const number = reached.length * LABEL_CHAR + (reached ? 10 : 0);
+            const room = (points: number) => words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + points))), NONE);
+            const [lineShows, numberShows] = [room(12), reached ? room(number + 14) : NONE];
+            const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width)), NONE);
+            const [y, lineStart, lineEnd] = [TEMPO_Y + 8, () => space.pointX.times(word.minus(4)).plus(mark.tick), () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end)];
             return [
-              <Line from={() => [left(word - 4)(), y] as const} to={() => [lineEnd(), y] as const} color="text-muted" width={1} opacity={lineShows} />,
-              <Line from={() => [lineEnd(), y] as const} to={() => [lineEnd(), y + 5] as const} color="text-muted" width={1} opacity={lineShows.times(not(numberShows))} />,
+              <Line from={() => [lineStart(), y] as const} to={() => [lineEnd(), y] as const} color="text-muted" width={1} opacity={lineShows} />,
               <Label x={() => space.pointX.times(-5).plus(end)} y={TEMPO_Y} align="right" text={reached} color="text-muted" opacity={numberShows} />,
-              <Rect key={`slide-${mark.index}`} x={left(word - 4)} y={TOP_DIGIT - 2} width={() => space.pointX.times(-word).plus(end - mark.tick).times(lineShows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />,
+              <Rect key={`slide-${mark.index}`} x={lineStart} y={TOP_DIGIT - 2} width={() => space.pointX.times(word.negate()).plus(end - mark.tick).times(lineShows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />,
             ];
           })();
           return [
@@ -323,16 +334,16 @@ export const Marks = ({ page }: { page: Page }) => {
       </For>
       <For each={fermatas}>
         {(fermata) => [
-          ...fermataSign(fermata.x, 1),
-          <Rect key={`fermata-${fermata.index}`} x={() => space.pointX.times(-9).plus(fermata.x)} y={NUMBER_Y} width={space.pointX.times(18)} height={MARKS - NUMBER_Y} color="none" cursor="pointer"
+          ...fermataSign(() => fermataX(fermata), 1),
+          <Rect key={`fermata-${fermata.index}`} x={() => space.pointX.times(-9).plus(fermataX(fermata))} y={NUMBER_Y} width={space.pointX.times(18)} height={MARKS - NUMBER_Y} color="none" cursor="pointer"
             drag={holdDrag} onPress={pressFermata(fermata.index)} onClick={() => void fermataMenu(page, fermata.index)} />,
         ]}
       </For>
       {fermataSign(hold.x, () => hold.active.times(hold.dx.abs().gt(0)).times(0.5))}
-      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+" width={24} large shown={() => 1} onClick={() => addBar(page, "end")} />
+      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+ Bar" width={46} shown={() => 1} onClick={() => addBar(page, "end")} />
       <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
-      <Circle x={playhead} y={MARKS - 4} radius={3} color="text" />
+      <Circle x={playhead} y={MARKS - 3} radius={2.5} color="text" />
       <Show when={() => notice() !== null}>
         {() => [
           <Rect x={band.left} y={NAME_Y - 4} width={() => band.pointX.times((notice()?.length ?? 0) * LABEL_CHAR + 24)} height={22} color="background" />,
@@ -480,8 +491,8 @@ export const Rows = ({ page }: { page: Page }) => {
             ]}
           </Show>
           <Line from={() => [playhead, 0] as const} to={() => [playhead, rows().length] as const} color="text" width={1} />
-          <QuietButton space={space} id="chosen-add-bar" x={buttonsX} y={buttonsY} text="+ bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
-          <QuietButton space={space} id="chosen-remove" x={() => buttonsX().plus(space.pointX.times(48))} y={buttonsY} text="remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
+          <QuietButton space={space} id="chosen-add-bar" x={buttonsX} y={buttonsY} text="+ Bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
+          <QuietButton space={space} id="chosen-remove" x={() => buttonsX().plus(space.pointX.times(48))} y={buttonsY} text="Remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
             onClick={() => clearChosen(page, true)} />
         </Space>
         <Show when={() => rows().length === 0}>{() => <EmptyPiece page={page} />}</Show>

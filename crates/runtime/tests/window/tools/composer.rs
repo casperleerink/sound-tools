@@ -1253,3 +1253,60 @@ fn bars_music_needs_past_a_rit_and_a_fermata_are_steady_at_the_tempo_reached(
     assert_eq!(tempos.last(), Some(&(6 * BAR, 60.)));
     assert_eq!(window.problems(), []);
 }
+
+/// Bar 2 slows down to 60 and bar 3 speeds up from there to 120: the band says both, "rit." then
+/// "accel.", not one mark over the two.
+#[gpui::test]
+fn a_rit_then_an_accel_are_two_marks(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit."));
+    window.after_the_runs();
+    window.choose_bar(2);
+    window.keys("t");
+    window.type_in_field("60");
+    window.until("bar 3 at 60", |window| {
+        window.sections()[0]["bars"][2]["bpm"] == 60
+    });
+    window.after_the_runs();
+    window.keys("alt-t");
+    window.type_in_field("120");
+    window.until("the accel.", |window| window.shows("accel."));
+    assert!(window.shows("rit."));
+    assert_eq!(window.problems(), []);
+}
+
+/// The first bar of B, at 90 after a bar at 120, slows down to 60: its mark says the tempo it
+/// starts at, as no bar before it does.
+#[gpui::test]
+fn a_rit_that_starts_at_another_tempo_says_it(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(4);
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the tempo and the rit.", |window| {
+        window.shows("♩ = 90  rit.")
+    });
+    assert_eq!(window.problems(), []);
+}
+
+/// A bar with a fermata of one beat made as slow as 15: the clock plays no slower than 10, so
+/// the fermata holds half a beat, which its record says and the clock plays.
+#[gpui::test]
+fn a_fermata_holds_no_longer_than_its_tempo_can_play(cx: &mut TestAppContext) {
+    let mut window = with_a_fermata(cx);
+    window.keys("t");
+    window.type_in_field("15");
+    window.until("bar 2 at 15", |window| {
+        window.sections()[0]["bars"][1]["bpm"] == 15
+    });
+    window.after_the_runs();
+    assert_eq!(window.sections()[0]["bars"][1]["hold"], 0.5);
+    let tempos = window.tempos();
+    assert!(tempos.contains(&(BAR + 3 * BEAT, 10.)));
+    // Four beats at 15 are 16 seconds, and half a beat more is 2.
+    assert_eq!(seconds(&tempos, BAR, 2 * BAR), 18.);
+    assert_eq!(window.problems(), []);
+}

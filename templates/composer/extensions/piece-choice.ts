@@ -1,7 +1,7 @@
 import type { MenuItem } from "./sdk";
 import type { Piece } from "./piece";
 import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, setFermatas, setSignature, setSlide, setTempo, splitSection } from "./piece-edits";
-import { beatOf, countOf, endOf, partsOf, startsOf, tempoOf, type Bar } from "./piece-form";
+import { beatOf, countOf, endOf, longestHold, partsOf, startsOf, tempoOf, type Bar } from "./piece-form";
 import { barAtTick, barsOfPiece, barsOfSection, chooseBars, clamp, instrumentsOf, showEditor, showInstrument, spansOf } from "./piece-page";
 import { nameSection } from "./piece-sections";
 
@@ -273,15 +273,17 @@ export async function fermataMenu(piece: Piece, index: number) {
   const set = (extra: number | null) => setFermatas(piece, extra === null ? "Remove a fermata" : "Change a fermata", [{ id: bar.id, bar: bar.at, fermata: extra === null ? null : { ...fermata, extra } }]);
   const other = !HOLDS.includes(fermata.extra);
   const picked = await piece.openMenu([
-    ...HOLDS.map((beats) => ({ label: holdSaid(beats), checked: fermata.extra === beats })),
+    // Not a hold the bar's tempo cannot play: the clock goes no slower than 10.
+    ...HOLDS.map((beats) => ({ label: holdSaid(beats), checked: fermata.extra === beats, disabled: beats > longestHold(bar) })),
     { label: other ? `${holdSaid(fermata.extra)}…` : "Another length…", checked: other },
     { label: "Remove the fermata", separator: true },
   ]);
   if (picked === null) return;
   if (picked > HOLDS.length) return set(null);
   if (picked < HOLDS.length) return set(HOLDS[picked]!);
-  const [, number] = /(\d+(?:[.,]\d+)?)/.exec((await piece.openField({ placeholder: "Beats longer, such as 3", width: 180 })) ?? "") ?? [];
-  if (number && Number(number.replace(",", ".")) > 0) set(clamp(Math.round(Number(number.replace(",", ".")) * 100) / 100, 0.25, 64));
+  const longest = longestHold(bar);
+  const [, number] = /(\d+(?:[.,]\d+)?)/.exec((await piece.openField({ placeholder: `Beats longer, up to ${longest}`, width: 200 })) ?? "") ?? [];
+  if (number && Number(number.replace(",", ".")) > 0) set(Math.min(Math.round(Number(number.replace(",", ".")) * 100) / 100, longest));
 }
 
 /** The menu of the choice, each item with its key: whole bars also add a bar or start a section, music opens its notes. Opened at the tick `tick`, its fermata goes on the count there. */

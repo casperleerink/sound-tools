@@ -51,8 +51,11 @@ export const barsOf = (runs: readonly Run[]): Bar[] =>
     const count = Math.max(Math.round(bars), 0);
     const slides = to > 0 && to !== bpm;
     const at = (bar: number) => exact(bpm + (to - bpm) * (bar / count));
-    const held = fermata >= 1 ? { fermata: { beat: Math.min(Math.round(fermata), partsOf(signature)[0]), extra: hold > 0 ? hold : 1 } } : {};
-    return Array.from({ length: count }, (_, bar): Bar => ({ signature, bpm: slides ? at(bar) : bpm, ...(slides ? { to: at(bar + 1) } : {}), ...held }));
+    const fermataOf = fermata >= 1 ? { fermata: { beat: fermata, extra: hold > 0 ? hold : 1 } } : {};
+    return Array.from({ length: count }, (_, bar): Bar => {
+      const each: Bar = { signature, bpm: slides ? at(bar) : bpm, ...(slides ? { to: at(bar + 1) } : {}), ...fermataOf };
+      return held(each, each.fermata);
+    });
   });
 
 export function runsOf(bars: readonly Bar[]): Run[] {
@@ -76,6 +79,11 @@ export const endOf = (bar: Bar) => bar.to ?? bar.bpm;
 export const countOf = (signature: string) => (4 * BEAT) / partsOf(signature)[1];
 /** How often the tempo steps along a straight line: every sixteenth. */
 const STEP = BEAT / 4;
+/** The slowest tempo the clock plays. */
+const SLOWEST = 10;
+/** The most beats a fermata can add to a count of `bar`, to a hundredth: its count then plays at the slowest tempo. */
+export const longestHold = (bar: Bar) =>
+  Math.max(Math.floor(((countOf(bar.signature) * (Math.min(bar.bpm, endOf(bar)) / SLOWEST - 1)) / (beatOf(bar.signature).quarters * BEAT)) * 100) / 100, 0.01);
 
 /**
  * The tempo through one bar, from its tick 0: steady, or in steps along its straight line, each
@@ -91,7 +99,7 @@ export function temposOf(bar: Bar): { tick: number; bpm: number }[] {
   return ticks.map((tick, index) => {
     const middle = (tick + (ticks[index + 1] ?? length)) / 2;
     const bpm = bar.bpm + (endOf(bar) - bar.bpm) * (bar.to === undefined ? 0 : middle / length);
-    return { tick, bpm: exact(Math.max(held && tick >= held.from && tick < held.to ? bpm * held.by : bpm, 10)) };
+    return { tick, bpm: exact(Math.max(held && tick >= held.from && tick < held.to ? bpm * held.by : bpm, SLOWEST)) };
   });
 }
 
@@ -153,11 +161,14 @@ export const changed = (bars: readonly Bar[], from: number, to: number, change: 
   bars: bars.map((bar, index) => (index >= from && index <= to ? change(bar, index) : bar)),
   to: bars.map((_, index) => index),
 });
-/** A bar at the tempo `from`, steady, or reaching `to` at its end. */
-export const paced = ({ to: _, ...bar }: Bar, from: number, to = from): Bar => ({ ...bar, bpm: exact(from), ...(exact(to) === exact(from) ? {} : { to: exact(to) }) });
-/** A bar with the fermata `fermata`, kept on a count it has, or with none. */
+/** A bar with the fermata `fermata`, kept on a count it has and no longer than its tempo can play, or with none. */
 export const held = ({ fermata: _, ...bar }: Bar, fermata: Fermata | undefined): Bar =>
-  fermata ? { ...bar, fermata: { beat: Math.min(Math.max(Math.round(fermata.beat), 1), partsOf(bar.signature)[0]), extra: fermata.extra } } : bar;
+  fermata ? { ...bar, fermata: { beat: Math.min(Math.max(Math.round(fermata.beat), 1), partsOf(bar.signature)[0]), extra: Math.min(fermata.extra, longestHold(bar)) } } : bar;
+/** A bar at the tempo `from`, steady, or reaching `to` at its end. */
+export function paced({ to: _, ...bar }: Bar, from: number, to = from): Bar {
+  const next: Bar = { ...bar, bpm: exact(from), ...(exact(to) === exact(from) ? {} : { to: exact(to) }) };
+  return held(next, next.fermata);
+}
 /** `added` put in before the bar `at`, or after the last. */
 export const inserted = (bars: readonly Bar[], at: number, added: readonly Bar[]): Change => ({
   bars: [...bars.slice(0, at), ...added, ...bars.slice(at)],
