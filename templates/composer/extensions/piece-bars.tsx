@@ -27,7 +27,7 @@ const HINT = "Double-click a bar to write notes";
 const NARROWEST = 40;
 const [FIT_BEFORE, FIT_AFTER] = [12, 120];
 /** How wide the two buttons on chosen whole bars are together, and the points they keep from an edge or the last row. */
-const [BUTTONS, GAP] = [104, 6];
+const [BUTTONS, GAP] = [136, 6];
 
 /** 1 while `ticks` give at least `points` of room at the zoom it shows: the window works it out as it zooms. */
 const fits = ({ space }: Page, ticks: number, points: number) => space.pointX.le(ticks / points);
@@ -253,14 +253,14 @@ export const Marks = ({ page }: { page: Page }) => {
           const room = () => (parts().find((each) => each.from > part.from)?.from ?? end()) - part.from;
           const widths = [part.name.length * BOLD_LABEL_CHAR + 26, 32];
           // Not while its name is typed: the field is where it is.
-          const named = () => (memory.naming === part.id ? 0 : 1);
+          const named = () => (memory.typing === `section-${part.id}` ? 0 : 1);
           const shows = [() => fits(page, room(), widths[0]!).times(named()), () => fits(page, room(), widths[1]!).times(not(fits(page, room(), widths[0]!))).times(named()), () => not(fits(page, room(), widths[1]!))];
           // Its name stays at the left edge while the section goes on past it, up to its end.
           const nameX = () => band.left.max(part.from).min(space.pointX.times(-widths[0]!).plus(part.to)).max(part.from);
           // Bright while all its bars, and only they, are chosen.
           const colour = () => {
             const [at, bars] = [memory.chosen, all().bars];
-            return at?.rows === null && bars[at.from]?.id === part.id && bars[at.to]?.id === part.id && bars[at.from]?.at === 0 && bars[at.to + 1]?.id !== part.id ? "text" : "text-secondary";
+            return at?.rows === null && bars[at.from]?.id === part.id && bars[at.to]?.id === part.id && bars[at.from]?.at === 0 && bars[at.to + 1]?.id !== part.id ? "text" : "text-muted";
           };
           return [
             <Rect x={() => space.pointX.times(-3).plus(part.to)} y={LINES_Y} width={space.pointX} height={MARKS - LINES_Y} color="border-strong" />,
@@ -297,16 +297,19 @@ export const Marks = ({ page }: { page: Page }) => {
             along(space.pointX.times(6 + mark.lead).plus(mark.tick), band.left.plus(space.pointX.times(6 + signatureLead)).min(space.pointX.times(-(edgeWidth - 6 - signatureLead)).plus(next)));
           const left = (points: number) => () => space.pointX.times(points).plus(signatureX());
           // A click types for the bars the mark stands for, which it chooses, so they show; a right press chooses the bar of the mark, as one on the band over it does.
-          const pressMark = (run: { from: number; to: number }, type: () => unknown) => (event: Press) => {
+          // The mark hides while its field, which says it, is over it.
+          const pressMark = (kind: "signature" | "tempo", run: { from: number; to: number }, type: () => Promise<unknown>) => (event: Press) => {
             if (event.button !== "left") return press({ ...event, x: mark.tick });
             chooseBars(page, run.from, run.to);
-            void type();
+            memory.typing = `${kind}-${mark.index}`;
+            void type().finally(() => (memory.typing = null));
           };
+          const unless = (kind: "signature" | "tempo", opacity: Num) => () => (memory.typing === `${kind}-${mark.index}` ? 0 : opacity);
           const signatureOpacity = mark.signature ? signatureShows : atEdge;
           const digit = (text: string, y: number) => (
-            <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="body" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureOpacity} />
+            <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="body" text={[{ text, weight: "semibold" }]} color="text" opacity={unless("signature", signatureOpacity)} />
           );
-          const typeTempo = pressMark(mark.tempoRun, () => (mark.slides ? askSlide : askTempo)(page, mark.tempoRun));
+          const typeTempo = pressMark("tempo", mark.tempoRun, () => (mark.slides ? askSlide : askTempo)(page, mark.tempoRun));
           // The line of a slide, from its words to where it ends.
           const slide = (() => {
             if (!mark.slide) return [];
@@ -329,16 +332,16 @@ export const Marks = ({ page }: { page: Page }) => {
           return [
             digit(mark.beats, TOP_DIGIT), digit(mark.note, BOTTOM_DIGIT),
             <Rect key={`signature-${mark.index}`} x={left(2)} y={TOP_DIGIT - 2} width={() => space.pointX.times(mark.signatureWidth + 8).times(signatureOpacity)} height={30} color="none" cursor="pointer"
-              onPress={pressMark(mark.signatureRun, () => askSignature(page, mark.signatureRun))} />,
+              onPress={pressMark("signature", mark.signatureRun, () => askSignature(page, mark.signatureRun))} />,
             ...slide,
             ...(mark.tempo
               ? mark.forms.flatMap((form, index) => [
                   form.tempo === ""
                     ? <Circle x={() => space.pointX.times(2.5).plus(tempoX())} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={shown[index]} />
-                    : <Label x={tempoX} y={TEMPO_Y} text={form.tempo} color="text-secondary" opacity={shown[index]} />,
+                    : <Label x={tempoX} y={TEMPO_Y} text={form.tempo} color="text-secondary" opacity={unless("tempo", shown[index]!)} />,
                   tempoBox(`tempo-${mark.index}-${index}`, form.width - mark.lead - 4, shown[index]!),
                 ])
-              : [<Label x={tempoX} y={TEMPO_Y} text={mark.edgeTempo} color="text-secondary" opacity={atEdge} />, tempoBox(`tempo-${mark.index}-edge`, mark.edgeTempo.length * LABEL_CHAR + 8, atEdge)]),
+              : [<Label x={tempoX} y={TEMPO_Y} text={mark.edgeTempo} color="text-secondary" opacity={unless("tempo", atEdge)} />, tempoBox(`tempo-${mark.index}-edge`, mark.edgeTempo.length * LABEL_CHAR + 8, atEdge)]),
             <Circle x={left(8)} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={dot} />,
           ];
         }}
@@ -352,7 +355,11 @@ export const Marks = ({ page }: { page: Page }) => {
         {(fermata) => [
           ...fermataSign(() => fermataX(fermata), 1),
           <Rect key={`fermata-${fermata.index}`} x={() => space.pointX.times(-9).plus(fermataX(fermata))} y={NUMBER_Y} width={space.pointX.times(18)} height={MARKS - NUMBER_Y} color="none" cursor="pointer"
-            drag={holdDrag} onPress={pressFermata(fermata.index)} onClick={() => void fermataMenu(page, fermata.index)} />,
+            drag={holdDrag} onPress={pressFermata(fermata.index)}
+            onClick={() => {
+              chooseBars(page, fermata.index, fermata.index);
+              void fermataMenu(page, fermata.index);
+            }} />,
         ]}
       </For>
       {fermataSign(hold.x, () => hold.active.times(hold.dx.abs().gt(0)).times(0.5))}
@@ -510,6 +517,8 @@ export const Rows = ({ page }: { page: Page }) => {
           <QuietButton space={space} id="chosen-add-bar" x={buttonsX} y={buttonsY} text="+ Bar" width={44} shown={() => chosen().whole} onClick={() => addBar(page, "after")} />
           <QuietButton space={space} id="chosen-remove" x={() => buttonsX().plus(space.pointX.times(48))} y={buttonsY} text="Remove" width={56} shown={() => chosen().whole * (1 - chosen().all)}
             onClick={() => clearChosen(page, true)} />
+          <QuietButton space={space} id="chosen-more" x={() => buttonsX().plus(space.pointX.times(108 * chosen().whole))} y={buttonsY} text="…" width={28} shown={() => chosen().whole + chosen().music}
+            onClick={() => void choiceMenu(page)} />
         </Space>
         <Show when={() => rows().length === 0}>{() => <EmptyPiece page={page} />}</Show>
       </div>

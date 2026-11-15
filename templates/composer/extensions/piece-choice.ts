@@ -176,11 +176,12 @@ export function startSectionAt(piece: Piece): boolean {
   return true;
 }
 
-/** The chosen bars, or with none the bar the playhead is in. */
+/** The chosen bars, or with none the bar the playhead is in, which it chooses: what a key then changes shows. */
 function chosenOrPlaying(piece: Piece) {
   const choice = choiceOf(piece);
   if (choice) return { from: choice.from, to: choice.to };
   const bar = barAtTick(barsOfPiece(piece.state), piece.clock.tick);
+  chooseBars(piece, bar, bar);
   return { from: bar, to: bar };
 }
 

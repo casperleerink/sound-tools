@@ -1,5 +1,7 @@
+import type { MenuItem } from "./sdk";
 import type { Piece } from "./piece";
 import { addSection, deleteSection, duplicateSection, joinSection, moveSection, renameSection } from "./piece-edits";
+import { askSignature, askTempo } from "./piece-choice";
 import { barAtTick, barsOfPiece, barsOfSection, chooseBars } from "./piece-page";
 
 // The sections of the piece: choosing one, naming it, and its menu, which duplicates, moves,
@@ -35,9 +37,9 @@ export function moveSectionBy(piece: Piece, id: string, by: -1 | 1) {
 /** Opens the name of the section `id` to type, where the pointer pressed last; no name keeps the one it has. */
 export async function nameSection(piece: Piece, id: string) {
   const name = piece.state.sections.find((section) => section.id === id)?.name ?? "";
-  piece.memory.naming = id;
+  piece.memory.typing = `section-${id}`;
   const typed = await piece.openField({ value: name, placeholder: "Name of the section", width: 200 });
-  piece.memory.naming = null;
+  piece.memory.typing = null;
   if (typed !== null && typed !== name) renameSection(piece, id, typed);
 }
 /**
@@ -52,29 +54,44 @@ export async function addSectionAtEnd(piece: Piece, here = false) {
   if (here) chooseSection(piece, id);
 }
 
+/** The menu of the section `id`, which it chooses: its name, a copy, the time signature and tempo of its bars, its place, and off. */
 export async function sectionMenu(piece: Piece, id: string) {
   chooseSection(piece, id);
   const ids = idsOf(piece);
   const at = ids.indexOf(id);
   const last = at === ids.length - 1;
-  const picked = await piece.openMenu([
-    { label: "Rename", shortcut: "piece.rename_section" },
-    { label: "Duplicate" },
-    { label: "Move earlier", shortcut: "piece.move_section_earlier", disabled: at === 0, separator: true },
-    { label: "Move later", shortcut: "piece.move_section_later", disabled: last },
-    { label: "Join with the next", disabled: last },
-    { label: "Delete", disabled: ids.length <= 1, separator: true },
-  ]);
-  if (picked === 0) void nameSection(piece, id);
-  else if (picked === 1) {
-    const copy = duplicateSection(piece, id);
-    if (copy) chooseSection(piece, copy);
-  } else if (picked === 2 || picked === 3) moveSectionBy(piece, id, picked === 2 ? -1 : 1);
-  else if (picked === 4) {
-    joinSection(piece, id);
-    chooseSection(piece, id);
-  } else if (picked === 5) {
-    deleteSection(piece, id);
-    piece.memory.chosen = null;
-  }
+  type Item = MenuItem & { run: () => unknown };
+  const items: Item[] = [
+    { label: "Rename", shortcut: "piece.rename_section", run: () => nameSection(piece, id) },
+    {
+      label: "Duplicate",
+      run: () => {
+        const copy = duplicateSection(piece, id);
+        if (copy) chooseSection(piece, copy);
+      },
+    },
+    { label: "Time signature…", shortcut: "piece.type_time_signature", separator: true, run: () => askSignature(piece) },
+    { label: "Tempo…", shortcut: "piece.type_tempo", run: () => askTempo(piece) },
+    { label: "Move earlier", shortcut: "piece.move_section_earlier", disabled: at === 0, separator: true, run: () => moveSectionBy(piece, id, -1) },
+    { label: "Move later", shortcut: "piece.move_section_later", disabled: last, run: () => moveSectionBy(piece, id, 1) },
+    {
+      label: "Join with the next",
+      disabled: last,
+      run: () => {
+        joinSection(piece, id);
+        chooseSection(piece, id);
+      },
+    },
+    {
+      label: "Delete",
+      disabled: ids.length <= 1,
+      separator: true,
+      run: () => {
+        deleteSection(piece, id);
+        piece.memory.chosen = null;
+      },
+    },
+  ];
+  const picked = await piece.openMenu(items.map(({ run: _, ...item }) => item));
+  if (picked !== null) void items[picked]?.run();
 }
