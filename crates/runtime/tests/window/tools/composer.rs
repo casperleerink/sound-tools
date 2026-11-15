@@ -1460,3 +1460,48 @@ fn what_a_key_adds_or_moves_is_what_stays_chosen(cx: &mut TestAppContext) {
     window.until_playhead(3 * BAR);
     assert_eq!(window.problems(), []);
 }
+
+/// A rit. over the last bar of A and the first of B, from 120 to 60, and a bar added after the
+/// last bar of A: the three bars, on both sides of the section line, are one rit. to 60. The
+/// added bar removed, the rit. is as it was.
+#[gpui::test]
+fn a_bar_added_inside_a_rit_across_a_section_line_joins_it(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(3);
+    window.keys("shift-right");
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit. to 60"));
+    window.after_the_runs();
+    let rit = window.sections();
+    window.choose_bar(3);
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("shift-b");
+    window.until("five bars in A", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 3
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 3, "signature": "4/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 120, "to": 100 },
+            { "bars": 1, "signature": "4/4", "bpm": 100, "to": 80 },
+        ])
+    );
+    assert_eq!(
+        window.sections()[1]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 80, "to": 60 },
+            { "bars": 1, "signature": "4/4", "bpm": 90 },
+        ])
+    );
+    assert_slide(&window.tempos(), 3 * BAR, 6 * BAR, 120., 60.);
+    one_undo_step(&mut window, "Add a bar", &before);
+
+    window.wait_for_bun();
+    window.keys("backspace");
+    window.until("the rit. as it was", |window| window.sections() == rit);
+    assert_eq!(window.problems(), []);
+}

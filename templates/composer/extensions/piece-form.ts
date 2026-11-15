@@ -156,14 +156,8 @@ export function slidesOn(bars: readonly Bar[], index: number): boolean {
   const [before, bar] = [bars[index - 1], bars[index]];
   return before?.to !== undefined && bar?.to !== undefined && before.to === bar.bpm && endOf(bar) > bar.bpm === endOf(before) > before.bpm;
 }
-/** `bars` with those `from` to `to` on one straight line of tempo, from `start` to `end`. */
-export function spread(bars: readonly Bar[], from: number, to: number, start: number, end: number): Bar[] {
-  const ends = startsOf(bars.slice(from, to + 1));
-  const at = (bar: number) => start + (end - start) * (ends[bar]! / ends.at(-1)!);
-  return bars.map((bar, index) => (index >= from && index <= to ? paced(bar, at(index - from), at(index - from + 1)) : bar));
-}
 /** The slide the bars `first` and `last` are both in, from its first bar to its last: none when they are not in one. */
-function slideOf(bars: readonly Bar[], first: number, last: number) {
+export function slideOf(bars: readonly Bar[], first: number, last: number) {
   for (let index = first + 1; index <= last; index++) if (!slidesOn(bars, index)) return undefined;
   let [from, to] = [first, last];
   while (slidesOn(bars, from)) from--;
@@ -189,24 +183,16 @@ export function paced({ to: _, ...bar }: Bar, from: number, to = from): Bar {
   const next: Bar = { ...bar, bpm: exact(from), ...(exact(to) === exact(from) ? {} : { to: exact(to) }) };
   return held(next, next.fermata);
 }
-/** `added` put in before the bar `at`, or after the last. Between two bars of one rit. or accel. they join it: its line is spread over them too. */
-export function inserted(bars: readonly Bar[], at: number, added: readonly Bar[]): Change {
-  const all = [...bars.slice(0, at), ...added, ...bars.slice(at)];
-  const slide = slideOf(bars, at - 1, at);
-  return {
-    bars: slide ? spread(all, slide.from, slide.to + added.length, slide.start, slide.end) : all,
-    to: bars.map((_, index) => (index < at ? index : index + added.length)),
-  };
-}
-/** The bars `from` to `to` taken out. From inside one rit. or accel., its line is spread over the bars it keeps. */
-export function removed(bars: readonly Bar[], from: number, to: number): Change {
-  const kept = bars.filter((_, index) => index < from || index > to);
-  const slide = slideOf(bars, from - 1, to + 1);
-  return {
-    bars: slide ? spread(kept, slide.from, slide.to - (to - from + 1), slide.start, slide.end) : kept,
-    to: bars.map((_, index) => (index < from ? index : index > to ? index - (to - from + 1) : null)),
-  };
-}
+/** `added` put in before the bar `at`, or after the last. */
+export const inserted = (bars: readonly Bar[], at: number, added: readonly Bar[]): Change => ({
+  bars: [...bars.slice(0, at), ...added, ...bars.slice(at)],
+  to: bars.map((_, index) => (index < at ? index : index + added.length)),
+});
+/** The bars `from` to `to` taken out. */
+export const removed = (bars: readonly Bar[], from: number, to: number): Change => ({
+  bars: bars.filter((_, index) => index < from || index > to),
+  to: bars.map((_, index) => (index < from ? index : index > to ? index - (to - from + 1) : null)),
+});
 
 const byStart = (a: Part["notes"][number], b: Part["notes"][number]) => a.start - b.start || a.length - b.length || a.pitch - b.pitch || a.velocity - b.velocity;
 

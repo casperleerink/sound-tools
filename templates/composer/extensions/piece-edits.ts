@@ -1,6 +1,6 @@
 import { batch, type Frozen } from "./sdk";
 import type { Piece } from "./piece";
-import { barsOf, beatOf, changed, clear, endOf, fit, formText, held, idFor, inserted, isEmpty, laidOut, NO_MUSIC, paced, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Fermata, type Music } from "./piece-form";
+import { barsOf, beatOf, changed, clear, endOf, fit, formText, held, idFor, inserted, isEmpty, laidOut, NO_MUSIC, paced, put, removed, retime, runsOf, slideOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Fermata, type Music } from "./piece-form";
 
 // What the piece does to its form: each edit changes the sections in its record, moves the music
 // of every instrument along, and puts the parts and the clock where the sections now are, as one
@@ -127,6 +127,23 @@ export const setTempo = (piece: Piece, spans: readonly Span[], tempo: number) =>
     for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, (bar) => paced(bar, tempo * beatOf(bar.signature).quarters)));
   });
 
+/** Every bar of the piece as a draft has it, in order, with its section and its place there. */
+const barsIn = (draft: Draft) => draft.state.sections.flatMap((section) => barsOf(section.bars).map((bar, at) => ({ ...bar, id: section.id, at })));
+/** Where the bar `at` of the section `id` is among the bars of the piece. */
+const placeOf = (all: ReturnType<typeof barsIn>, id: string, at: number) => all.findIndex((bar) => bar.id === id && bar.at === at);
+
+/** Puts the bars `from` to `to` of the piece on one straight line of tempo, from `start` to `end`, across section lines. */
+function slideOver(draft: Draft, from: number, to: number, start: number, end: number) {
+  const bars = barsIn(draft).slice(from, to + 1);
+  const ends = startsOf(bars);
+  const at = (bar: number) => start + (end - start) * (ends[bar]! / ends.at(-1)!);
+  for (const id of new Set(bars.map((bar) => bar.id))) {
+    const first = bars.findIndex((bar) => bar.id === id);
+    const [low, high] = [bars[first]!.at, bars.findLast((bar) => bar.id === id)!.at];
+    rebar(draft, id, (each) => changed(each, low, high, (bar, index) => paced(bar, at(first + index - low), at(first + index - low + 1))));
+  }
+}
+
 /**
  * Has the tempo move over the bars of `spans` in a straight line, from the tempo the first starts
  * at to `tempo` at the end of the last, in the beat of the last: a ritardando or an accelerando.
@@ -134,17 +151,11 @@ export const setTempo = (piece: Piece, spans: readonly Span[], tempo: number) =>
  */
 export const setSlide = (piece: Piece, spans: readonly Span[], tempo: number | null) =>
   edit(piece, tempo === null ? "Keep the tempo steady" : "Change the tempo gradually", (draft) => {
-    const chosen = spans.flatMap(({ id, from, to }) => barsOf(sectionOf(draft, id)?.bars ?? []).slice(from, to + 1));
-    const [first, last] = [chosen[0], chosen.at(-1)];
-    if (!first || !last) return;
-    const [ends, target] = [startsOf(chosen), tempo === null ? first.bpm : tempo * beatOf(last.signature).quarters];
-    const at = (bar: number) => first.bpm + (target - first.bpm) * (ends[bar]! / ends.at(-1)!);
-    let done = 0;
-    for (const { id, from, to } of spans) {
-      const before = done - from;
-      rebar(draft, id, (bars) => changed(bars, from, to, (bar, index) => paced(bar, at(before + index), at(before + index + 1))));
-      done += to - from + 1;
-    }
+    const all = barsIn(draft);
+    const [first, last] = [spans[0], spans.at(-1)];
+    const [from, to] = first && last ? [placeOf(all, first.id, first.from), placeOf(all, last.id, last.to)] : [-1, -1];
+    const [start, end] = [all[from], all[to]];
+    if (start && end) slideOver(draft, from, to, start.bpm, tempo === null ? start.bpm : tempo * beatOf(end.signature).quarters);
   });
 
 /** Puts a fermata on the bar `bar` of each section named, or with `null` takes it off: one undo step, so one moves from a bar to another. */
@@ -153,25 +164,42 @@ export const setFermatas = (piece: Piece, label: string, changes: readonly { id:
     for (const { id, bar, fermata } of changes) rebar(draft, id, (bars) => changed(bars, bar, bar, (each) => held(each, fermata ?? undefined)));
   });
 
-/** Adds `count` empty bars before the bar `at` of a section, or after its last: each as the bar before it ends, or the first starts, with no fermata. */
+/**
+ * Adds `count` empty bars before the bar `at` of a section, or after its last: each as the bar
+ * before it ends, or the first starts, with no fermata. Between two bars of one rit. or accel.,
+ * also across a section line, they join it: its line is spread over them too.
+ */
 export const addBars = (piece: Piece, id: string, at: number, count = 1) =>
-  edit(piece, count === 1 ? "Add a bar" : "Add bars", (draft) =>
-    void rebar(draft, id, (bars) => {
+  edit(piece, count === 1 ? "Add a bar" : "Add bars", (draft) => {
+    const all = barsIn(draft);
+    const next = at === 0 ? placeOf(all, id, 0) : placeOf(all, id, at - 1) + 1;
+    const slide = next > 0 ? slideOf(all, next - 1, next) : undefined;
+    const done = rebar(draft, id, (bars) => {
       const like = bars[at - 1] ?? bars[0];
       const bar: Bar = like ? { signature: like.signature, bpm: bars[at - 1] ? endOf(like) : like.bpm } : { signature: "4/4", bpm: 120 };
       return inserted(bars, at, Array.from({ length: count }, () => ({ ...bar })));
-    }),
-  );
+    });
+    if (done && slide) slideOver(draft, slide.from, slide.to + count, slide.start, slide.end);
+  });
 
-/** Takes the bars of `spans` out, with their music: what comes after moves up, and a section that loses all its bars goes. The piece keeps one bar. */
+/**
+ * Takes the bars of `spans` out, with their music: what comes after moves up, and a section that
+ * loses all its bars goes. The piece keeps one bar. From inside one rit. or accel., its line is
+ * spread over the bars it keeps.
+ */
 export function removeBars(piece: Piece, spans: readonly Span[]) {
   const count = spans.reduce((sum, { from, to }) => sum + to - from + 1, 0);
   edit(piece, count === 1 ? "Remove a bar" : "Remove bars", (draft) => {
     const emptied = spans.filter(({ id, from, to }) => from === 0 && to >= barsOf(sectionOf(draft, id)?.bars ?? []).length - 1).map((span) => span.id);
     if (emptied.length >= draft.state.sections.length) return;
+    const all = barsIn(draft);
+    const [first, last] = [spans[0], spans.at(-1)];
+    const [from, to] = first && last ? [placeOf(all, first.id, first.from), placeOf(all, last.id, last.to)] : [-1, -1];
+    const slide = from > 0 && to >= from ? slideOf(all, from - 1, to + 1) : undefined;
     for (const { id, from, to } of spans) if (!emptied.includes(id)) rebar(draft, id, (bars) => removed(bars, from, to));
     draft.state.sections = draft.state.sections.filter((section) => !emptied.includes(section.id));
     for (const track of tracksOf(draft)) track.children = track.children.filter((child) => !emptied.includes(child.name));
+    if (slide) slideOver(draft, slide.from, slide.to - count, slide.start, slide.end);
   });
 }
 
