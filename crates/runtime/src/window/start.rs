@@ -1,10 +1,10 @@
-//! The app started with no folder, as the Finder starts it. It opens the last project, or
-//! shows the macOS folder panel when there is none: the panel has a New Folder button, and a
+//! The app started with no folder, as a double click starts it. It opens the last project, or
+//! shows the system's folder panel when there is none: the panel has a New Folder button, and a
 //! new empty folder becomes a new, empty project. Cancel quits. The start window also makes a
 //! new project from a template.
 //!
 //! When a project does not open, a small window says why and offers the panel again, since an
-//! app started from the Finder has no terminal to print to.
+//! app started with a double click has no terminal to print to.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -24,7 +24,7 @@ use crate::app::check_project_folder;
 const START_WIDTH: f32 = 520.;
 const START_HEIGHT: f32 = 280.;
 
-/// The folder panel of macOS, for a project folder.
+/// The system's folder panel, for a project folder.
 pub(super) fn folder_prompt() -> PathPromptOptions {
     PathPromptOptions {
         files: false,

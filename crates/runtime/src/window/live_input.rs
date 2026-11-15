@@ -422,7 +422,7 @@ impl LiveInput {
     }
 
     /// The input went away, such as an interface that was unplugged. Everything is disarmed:
-    /// arming again opens the default input that macOS has then. A take that records audio ends
+    /// arming again opens the default input the system has then. A take that records audio ends
     /// and says so itself; the recorder writes the last of it before the input closes.
     fn input_gone(&mut self, cx: &mut Context<Self>) {
         if !self.hold.audio {

@@ -1,8 +1,5 @@
-//! The project menu: the project name top-left as a quiet menu. Export the project or the
-//! selected clips, undo and redo with what they would do, a new, recent or another
-//! project, the project as a template, the project folder in the Finder or in a terminal, the
-//! command line tool, Settings and the app version. The terminal is where the composer starts a
-//! coding agent on the project, and the tool is what that agent runs to read the whole piece.
+//! The project menu: the project name top-left as a quiet menu, with export, undo and redo,
+//! the projects and templates, the project folder, Settings and the app version.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -433,7 +430,7 @@ fn new_project(session: &Session, template: Choice, cx: &mut Context<Session>) {
     .detach();
 }
 
-/// Picks another project folder in the macOS panel and opens it. The app starts again on it:
+/// Picks another project folder in the system's panel and opens it. The app starts again on it:
 /// this process quits the way cmd-q quits, which saves the state of every plugin and frees the
 /// project, and the new one opens the folder as the last project.
 pub(super) fn open_another_project(cx: &mut Context<Session>) {
@@ -617,10 +614,10 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
     })
 }
 
-/// The last group: a new project, this one as a template, another one, a recent one in a
-/// submenu, the project folder in the Finder, a terminal in it for a coding agent, the command
-/// that agent runs, and the app's log to send us. Windows has no command line tool, see
-/// `app::Installed`. A dev build or one started from a terminal writes no log, see `log_file`.
+/// The last group: the projects and templates, the project folder and a terminal in it for a
+/// coding agent, the command line tool that agent runs, and the app's log to send us. Windows
+/// has no command line tool, see `app::Installed`. A dev build or one started from a terminal
+/// writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf], keys: &Keys) -> Vec<MenuItem> {
     let new_project = MenuItem::new(NEW_PROJECT, "New project…").selectable(false);
     let mut items = vec![with_key(new_project, &keys.new_project)];

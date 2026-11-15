@@ -54,7 +54,7 @@ pub fn start() {
         }
     };
     // A panic says where it happened; the backtrace says how it got there. Nobody sets
-    // `RUST_BACKTRACE` for an app opened from the Finder.
+    // `RUST_BACKTRACE` for an app opened with a double click.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default_hook(info);

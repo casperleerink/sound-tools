@@ -2,8 +2,8 @@
 //! current point is open on its latest changes, with where other versions start between them;
 //! the other versions follow, newest first, each saying what it started from. A click on a
 //! change goes to it, on a card to its latest point, and a double click renames; its menu
-//! renames, keeps, merges and folds away. The panel is one tab stop: up and down move a highlight, enter goes, the menu key or
-//! shift-F10 opens its menu.
+//! renames, keeps, merges and folds away. The panel is one tab stop: up and down move a
+//! highlight, enter goes, the menu key or shift-F10 opens its menu.
 
 use std::collections::{HashMap, HashSet};
 use std::io;

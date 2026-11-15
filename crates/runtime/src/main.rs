@@ -1,43 +1,12 @@
-//! The project runtime. It opens a project folder, keeps it live and plays it on the default
-//! output device, in a window or headless.
-//!
-//! ```text
-//! runtime                                                  the app: the last project, or a folder panel
-//! runtime <project-folder>                                 run live in the window
-//! runtime <project-folder> --headless                      run live, commands from stdin
-//! runtime <project-folder> --inspect                       print a summary, open no device
-//! runtime <project-folder> --render <file>                render the project and its tail
-//! runtime <project-folder> --render <file> --seconds <n>   render the first n seconds
-//! runtime <project-folder> --render <file> --from <at> --to <at> [--no-tail]
-//!                                                          render a range and its tail
-//! runtime <project-folder> --analyze                       measure the project and its tail
-//! runtime <project-folder> --screenshot <png> [--click x,y]... [--play <seconds>]
-//!                                                          draw the window as it opens, or after clicks
-//!                                                          and after the piece played (macOS)
-//! runtime <project-folder> --save-template <name> [--with-content] [--replace]
-//!                                                          save the project as a template
-//! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
-//! runtime --plugins                                        list the plugins of this machine
-//! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
-//! runtime --help                                           print this usage
-//! ```
-//!
-//! `<at>` is a position in ticks (`3840`), or a time as a playhead shows it (`1:23.5`) or in
-//! seconds (`83.5s`). A render and an analysis of a project take `--from` and `--to`, either
-//! one alone, or `--seconds`, and `--only <path>`, the one instance whose sound the device plays,
-//! which changes no file. `--no-tail` stops a range at its end. An analysis of a file takes times only.
-//!
-//! A render writes a `.wav` or an `.mp3`, as the file is named, and takes `--rate 44100|48000`,
-//! `--depth 16|24|32` (a WAV) and `--loudness streaming|broadcast`: see [`sound_export`].
-//! With `--progress` at the end it also prints `progress: <percent>` lines, for the progress bar
-//! of the window's export.
-//!
-//! Only the first two forms start GPUI. Tests, CI and agents use the others. In
+//! The project runtime: the app, and the command line forms in `USAGE` that tests, CI and
+//! agents use. Only the forms with a folder and no flag, or nothing at all, open a window. In
 //! `Sound Tools.app` and as the command line tool this program is called `sound-tools`.
 //!
-//! Headless, it reads one command per line from stdin: `play`, `pause`, `stop`,
-//! `seek <ticks>`, `undo`, `redo`, `status`, `quit`. The end of stdin also quits. This is
-//! provisional. It is not the protocol of the outer application.
+//! `--only <path>` makes the device play that one instance, in memory. `--progress` at the end
+//! prints `progress: <percent>` lines, for the window's export.
+//!
+//! Headless, it reads one command per line from stdin, see `run_command`. The end of stdin
+//! quits.
 //!
 //! On Windows it is a window program, so the app opens no console window next to its own.
 //! Started from a terminal, it prints there anyway: see `print_to_the_terminal`. The window
@@ -243,9 +212,7 @@ fn run(folder: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Reads the project without its lock, so it works next to a running runtime. It loads no
-/// plugin: printing a project needs none, and a plugin that is loaded runs somebody else's
-/// code in this process. A plugin this machine does not have is still named in the problems.
+/// See [`runtime::open_for_inspect`].
 fn inspect(folder: &Path) -> Result<()> {
     let project = runtime::open_for_inspect(folder)?;
     print_summary(&project);
@@ -492,10 +459,6 @@ fn open_for_render(
 }
 
 /// Plays `span` into `write`, and prints what the plugin host reported on the way.
-///
-/// The plugin host is polled for every buffer, as the live loop does: a render answers a
-/// plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
-/// like, which can be nothing at all.
 fn play(
     project: &mut Project,
     engine: &mut Engine,
@@ -702,10 +665,6 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
 
 /// Prints every plugin this machine has, with how long the scan took. A composer or an agent
 /// needs the plugin's own id to put it on a track, and it is in no file.
-///
-/// It looks at every bundle again and writes what it finds, so a plugin that hung or crashed
-/// once is tried again, as `Scan again` in a picker does: the cache of this machine does not
-/// try one twice by itself.
 fn list_plugins() -> Result<()> {
     let plugins = runtime::plugins_refreshing_the_cache()?;
     let started = std::time::Instant::now();
@@ -831,7 +790,7 @@ fn main() -> Result<()> {
     };
     runtime::use_library();
     match arguments {
-        // What a double click in the Finder starts.
+        // What a double click on the app starts.
         [] => {
             if !start_window_process() {
                 runtime::window::run_app();

@@ -1,6 +1,5 @@
-//! The app on this machine, apart from its window: the projects it had open last, whether its
-//! left panel was open, the audio devices chosen, the composer's own keys, a start of the app
-//! again on another project, and the command line tool for agents.
+//! The app on this machine, apart from its window: what it remembers in the support folder,
+//! starting it again, and the command line tool for agents.
 //!
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
 //! write the last project, so a test cannot change what the app opens next.
@@ -153,8 +152,8 @@ fn path_of_bytes(bytes: &[u8]) -> Option<PathBuf> {
     std::str::from_utf8(bytes).ok().map(PathBuf::from)
 }
 
-/// Remembers `folder` as the project to open when the app starts with no folder, which is
-/// what a double click in the Finder does, and first of the recent projects.
+/// Remembers `folder` as the project to open when the app starts with no folder, and first of
+/// the recent projects.
 pub fn remember_project(folder: &Path) -> Result<()> {
     remember_project_in(&support_folder()?, folder)
 }
