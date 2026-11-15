@@ -153,7 +153,9 @@ fn toggles_on_click(cx: &mut gpui::TestAppContext) {
 }
 ```
 `VisualTestContext` also has `simulate_input(str)`, `simulate_mouse_move/down/up`,
-`simulate_resize(size)`, `dispatch_action(action)`, `update(|window, cx| ..)`, `draw(..)`, `debug_bounds(selector)`;
+`simulate_resize(size)`, `dispatch_action(action)`, `update(|window, cx| ..)`, `draw(..)`.
+Name a part with `.seen(..)` and find it with `cx.update(sound_ui::on_screen::look)`, not with
+`debug_selector`/`debug_bounds`, which record nothing outside debug test builds;
 `TestAppContext` has `update`, `read`, `set_global`, `executor()`, `notifications(&entity)`, `events(&entity)`.
 This snippet (with a `Root` that binds `cmd-up` to an `Increment` action) compiled and passed
 against the pinned version. In tests, wait with `cx.background_executor().timer(..)`, never
