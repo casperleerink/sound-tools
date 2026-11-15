@@ -7,6 +7,7 @@
 //! The owner draws its own curve and handles on [`Levels`], keeps a [`Reading`] from its meters
 //! and adds them with [`Levels::meters`].
 
+use crate::on_screen::Named;
 use gpui::{App, div, prelude::*, px};
 
 use crate::components::display::{Display, INSET_HEIGHT, WIDTH};
@@ -114,7 +115,7 @@ impl Levels {
         let level = (level_db > self.bottom_db).then(|| {
             let (x, y) = (self.across(level_db), self.up(level_db - reduction_db));
             div()
-                .debug_selector(move || selector.into())
+                .seen(move || selector)
                 .absolute()
                 .left(px(x * WIDTH - LEVEL_DOT / 2.))
                 .top(px((1. - y) * INSET_HEIGHT - LEVEL_DOT / 2.))

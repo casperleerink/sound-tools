@@ -102,7 +102,7 @@ fn a_controller_lane_of_a_clip_is_picked_and_its_points_edited(cx: &mut TestAppC
     window.click(picker);
     // Velocity, Pedal, Bend, Mod wheel, Pressure, then Brightness.
     window.pick("menu-5");
-    window.double_click(editor.lane(1000., 8.));
+    window.double_click(editor.lane(1000., 0.15));
     window.until("a second point", |window| {
         window.record("song/t01/c00")["controllers"]["74"]
             .as_array()

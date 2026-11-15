@@ -7,6 +7,7 @@
 //! it has the focus, puts a field where the dial is. Enter, or the focus going elsewhere, reads
 //! what was typed in the unit the knob shows, as one [`ValueChange::Set`]; escape puts it back.
 
+use crate::on_screen::Named;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -626,7 +627,7 @@ impl RenderOnce for Knob {
         if let Some(field) = field {
             let selector = self.id.clone();
             let field = div()
-                .debug_selector(move || format!("knob-{selector}-typed"))
+                .seen(move || format!("knob-{selector}-typed"))
                 .w(px(cell::control_width(1)))
                 .child(field);
             let field = Some(field.into_any_element());
@@ -667,7 +668,7 @@ impl RenderOnce for Knob {
         let marked = self.id.clone();
         let mark = automated.then(|| {
             let mark = automated::mark(DIAL - automated::MARK - MARK_INSET, MARK_INSET, cx);
-            mark.debug_selector(move || format!("automated-{marked}"))
+            mark.seen(move || format!("automated-{marked}"))
         });
         let dragged = Dragged {
             range,
@@ -677,11 +678,10 @@ impl RenderOnce for Knob {
             span: TRAVEL,
             sideways: false,
         };
-        // For tests, which find the knob by its id: `knob-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
         let knob = div()
             .id(self.id.clone())
-            .debug_selector(move || format!("knob-{selector}"))
+            .seen(move || format!("knob-{selector}"))
             .relative()
             .size(px(DIAL))
             .when(disabled, |d| d.cursor_not_allowed())
@@ -712,7 +712,7 @@ impl RenderOnce for Knob {
             let selector = self.id.clone();
             div()
                 .id(ElementId::NamedChild(Arc::new(self.id), "value".into()))
-                .debug_selector(move || format!("knob-{selector}-value"))
+                .seen(move || format!("knob-{selector}-value"))
                 .absolute()
                 .top(px(cell::VALUE_LINE))
                 .left_0()

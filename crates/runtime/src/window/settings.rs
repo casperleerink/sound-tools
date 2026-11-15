@@ -7,6 +7,7 @@
 
 mod shortcuts;
 
+use sound_ui::on_screen::Named;
 use std::sync::Arc;
 
 use gpui::{
@@ -175,7 +176,7 @@ impl SettingsPage {
         let muted = cx.theme().text_muted();
         let back = Button::new("settings-back", "Back")
             .icon("arrow-left")
-            .debug_selector(|| "settings-back".to_string())
+            .seen(|| "settings-back")
             .variant(ButtonVariant::GhostColor(muted))
             .size(ControlSize::Md)
             .focus_handle(&self.back)
@@ -191,7 +192,7 @@ impl SettingsPage {
             let name = section.name();
             let row = div()
                 .id(name)
-                .debug_selector(move || format!("settings-{}", name.to_lowercase()))
+                .seen(move || format!("settings-{}", name.to_lowercase()))
                 .flex()
                 .items_center()
                 .gap(px(10.))

@@ -105,9 +105,7 @@ fn open_song(cx: &mut TestAppContext) -> Opened<'_> {
 impl Opened<'_> {
     /// The width of the space `probe`, once it shows.
     fn probe(&mut self) -> f32 {
-        self.until("the probe", |window| window.find("space-probe").is_some());
-        let bounds = self.cx.debug_bounds("space-probe").unwrap();
-        f32::from(bounds.size.width)
+        f32::from(self.wait_for("space-probe").whole.size.width)
     }
 
     fn exists(&self, path: &str) -> bool {

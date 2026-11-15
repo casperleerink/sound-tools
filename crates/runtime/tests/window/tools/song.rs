@@ -3,7 +3,7 @@
 //! mutes, and its meter follows the engine with nothing from Bun.
 
 use super::{Opened, open};
-use crate::song::{ACROSS, BAR, HEADER, LEAD, NAME, ROW, song_files};
+use crate::song::{BAR, HEADER, LEAD, NAME, ROW, song_files};
 use gpui::{
     Modifiers, Pixels, Point, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px,
 };
@@ -19,12 +19,7 @@ pub(super) fn open_song(cx: &mut TestAppContext, tracks: usize, clips: usize) ->
 impl Opened<'_> {
     /// Where `tick` is on the row of track `row` of the timeline, as it opens.
     pub(super) fn on_lane(&mut self, tick: u64, row: usize) -> Point<Pixels> {
-        let timeline = self.space_at("timeline");
-        timeline
-            + point(
-                px(LEAD + tick as f32 * ACROSS),
-                px(row as f32 * ROW + ROW / 2.),
-            )
+        self.in_space("timeline", (tick as f64, row as f64 + 0.5))
     }
 
     /// Every record of the song's clips, by id.

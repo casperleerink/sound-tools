@@ -18,6 +18,7 @@ use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
 use sound_typescript::CodeChanges;
+use sound_ui::on_screen::{self, Seen};
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
 
@@ -550,34 +551,54 @@ impl Opened<'_> {
         self.project(|project| project.root().join(relative))
     }
 
-    /// The middle of a control that names itself for tests: `knob-<id>` or `segment-<value>`.
-    /// GPUI knows the bounds of what the last frame painted, and a cached view paints
-    /// nothing, so this asks for a whole frame first. Waits for Bun to draw it.
-    pub(crate) fn control(&mut self, selector: &str) -> Point<Pixels> {
-        let mut found = None;
-        self.until(selector, |window| {
-            found = window.find(selector);
-            found.is_some()
-        });
-        found.unwrap()
+    /// What the window shows, by name: see `sound_ui::on_screen`.
+    pub(crate) fn look(&mut self) -> Vec<Seen> {
+        self.cx.update(on_screen::look)
     }
 
-    /// Where a control is on screen, whole. `None` when it is not there.
-    pub(crate) fn bounds(&mut self, selector: &str) -> Option<Bounds<Pixels>> {
-        let selector: &'static str = Box::leak(selector.to_string().into_boxed_str());
-        self.cx.update(|window, _| window.refresh());
-        self.cx.run_until_parked();
-        self.cx.debug_bounds(selector)
+    /// The part named `name` as it is drawn now, such as `knob-<id>` or `shape-<key>`: see
+    /// `on_screen::find`.
+    pub(crate) fn seen(&mut self, name: &str) -> Option<Seen> {
+        on_screen::find(&self.look(), name).cloned()
     }
 
-    /// The same, `None` when that control is not on screen. A selector that is made while the
-    /// test runs, such as a menu row of a plugin, is leaked: GPUI keeps them by `&'static str`
-    /// and a test process is short.
-    pub(crate) fn find(&mut self, selector: &str) -> Option<Point<Pixels>> {
-        let selector: &'static str = Box::leak(selector.to_string().into_boxed_str());
-        self.cx.update(|window, _| window.refresh());
-        self.cx.run_until_parked();
-        self.cx.debug_bounds(selector).map(|bounds| bounds.center())
+    /// The middle of what shows of `name`, once Bun drew it. A test that waits in vain says
+    /// what the window shows instead.
+    pub(crate) fn control(&mut self, name: &str) -> Point<Pixels> {
+        self.wait_for(name).middle()
+    }
+
+    /// `name` as it shows, once Bun drew it.
+    pub(crate) fn wait_for(&mut self, name: &str) -> Seen {
+        let start = Instant::now();
+        while start.elapsed() < PATIENCE {
+            self.settle();
+            if let Some(seen) = self.seen(name)
+                && self.page_ready()
+            {
+                return seen;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let shows = on_screen::listing(&self.look());
+        panic!("found no {name} within {PATIENCE:?}. The window shows:\n{shows}");
+    }
+
+    /// Where all of `name` is, what shows of it or not. `None` when it is not drawn.
+    pub(crate) fn bounds(&mut self, name: &str) -> Option<Bounds<Pixels>> {
+        self.seen(name).map(|seen| seen.whole)
+    }
+
+    /// The middle of what shows of `name`. `None` when it is not drawn.
+    pub(crate) fn find(&mut self, name: &str) -> Option<Point<Pixels>> {
+        self.seen(name).map(|seen| seen.middle())
+    }
+
+    /// The point of `units` in the space `name`, such as a tick and a row of a timeline, once
+    /// it shows.
+    pub(crate) fn in_space(&mut self, name: &str, units: (f64, f64)) -> Point<Pixels> {
+        let space = self.wait_for(&format!("space-{name}"));
+        space.units.expect("a space has units").point(units)
     }
 
     /// The pointer over `position` with no button down, as a track's head shows its toggles.
@@ -686,6 +707,11 @@ impl Opened<'_> {
         self.click(position);
         self.press_times(position, 2);
     }
+}
+
+/// The part named `name` in another window, such as a dialog, as it shows now.
+pub(crate) fn seen_in(cx: &mut VisualTestContext, name: &str) -> Option<Seen> {
+    on_screen::find(&cx.update(on_screen::look), name).cloned()
 }
 
 /// The record of a plugin instrument that names the repository's test plugin.

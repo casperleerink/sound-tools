@@ -7,6 +7,7 @@ use gpui::{
     App, Bounds, Corners, FontWeight, Hitbox, HitboxBehavior, Hsla, Pixels, Point, SharedString,
     TextAlign, TextRun, Window, fill, outline, point, px, size,
 };
+use sound_ui::on_screen::{self, Seen, Units};
 use sound_ui::{ActiveTheme, typography};
 
 use crate::tree::{Align, Cursor, Weight};
@@ -17,6 +18,7 @@ use super::space::SpaceFrame;
 /// A shape placed in points, as it paints and as the pointer finds it.
 pub(super) struct Painted {
     index: usize,
+    node: u64,
     shape: PaintedShape,
     color: Hsla,
     hitbox: Option<(Hitbox, Cursor)>,
@@ -208,6 +210,7 @@ pub(super) fn prepaint(
             cursor.map(|cursor| (window.insert_hitbox(shown, HitboxBehavior::Normal), cursor));
         painted.push(Painted {
             index: placed.index,
+            node: placed.node,
             shape,
             color: placed.color,
             hitbox,
@@ -215,6 +218,64 @@ pub(super) fn prepaint(
         });
     }
     (hitbox, Rc::new(painted))
+}
+
+/// What a look sees of a space: the space with its units, and each of its shapes with a key or
+/// a text, the text as wide as it is drawn.
+pub(super) fn seen(
+    frame: &SpaceFrame,
+    bounds: Bounds<Pixels>,
+    painted: &[Painted],
+    window: &Window,
+) {
+    let mask = window.content_mask().bounds;
+    let (across, down) = frame.view.scale();
+    let units = Units {
+        origin: bounds.origin,
+        left: frame.view.left,
+        top: frame.view.top,
+        across,
+        down,
+    };
+    let mut space = Seen::named(format!("space-{}", frame.key)).at(bounds, mask);
+    space.units = Some(units);
+    on_screen::record(space);
+    for each in painted {
+        let key = frame.keys.get(&each.node);
+        let (whole, text) = match &each.shape {
+            PaintedShape::Text(origin, text, _, (font_size, weight), align) => {
+                let run = TextRun {
+                    len: text.len(),
+                    font: gpui::Font {
+                        weight: *weight,
+                        ..typography::ui_font()
+                    },
+                    color: each.color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let width = (window.text_system())
+                    .shape_line(text.clone(), px(*font_size), &[run], None)
+                    .width;
+                let left = match align {
+                    Align::Left => origin.x,
+                    Align::Center => origin.x - width / 2.,
+                    Align::Right => origin.x - width,
+                };
+                let size = size(width, px(font_size * 1.3));
+                (Bounds::new(point(left, origin.y), size), Some(text.clone()))
+            }
+            _ if key.is_some() => (each.shape.bounds(), None),
+            _ => continue,
+        };
+        let name = key.map_or_else(String::new, |key| format!("shape-{key}"));
+        let seen = Seen::named(name).at(whole, each.clip.unwrap_or(bounds).intersect(&mask));
+        on_screen::record(match text {
+            Some(text) => seen.text(text),
+            None => seen,
+        });
+    }
 }
 
 pub(super) fn paint(

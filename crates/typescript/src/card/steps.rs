@@ -6,6 +6,7 @@
 //! off. The step that plays has a green ring: sound is moving. A secondary row has none, so a
 //! stack of rows shows one ring.
 
+use sound_ui::on_screen::Named;
 use std::rc::Rc;
 
 use gpui::{
@@ -223,12 +224,12 @@ impl RenderOnce for Steps {
                     .border_2()
                     .border_color(ring)
                     .when(playing == Some(step), |square| {
-                        square.debug_selector(move || format!("step-{step}-playing"))
+                        square.seen(move || format!("step-{step}-playing"))
                     });
                 let state = state.clone();
                 div()
                     .id(("step", step))
-                    .debug_selector(move || format!("step-{step}"))
+                    .seen(move || format!("step-{step}"))
                     .flex()
                     .flex_none()
                     .items_center()
@@ -369,7 +370,7 @@ impl Drawing<'_> {
             menu: None,
         };
         // A press on it is its own, not the row's under it.
-        let wrap = div().flex_none().occlude().debug_selector(move || selector);
+        let wrap = div().flex_none().occlude().seen(move || selector);
         (self.control(wrap, id, control).child(steps)).into_any_element()
     }
 
@@ -449,7 +450,7 @@ impl Drawing<'_> {
         });
         (div().flex().flex_none().child(rows))
             .children(rest.collect::<Vec<_>>())
-            .debug_selector(|| "grid".into())
+            .seen(|| "grid")
             .into_any_element()
     }
 }

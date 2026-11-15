@@ -1,5 +1,6 @@
 //! The controls of the app that nodes draw, and how a control meets the keys and the pointer.
 
+use sound_ui::on_screen::Named;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -86,7 +87,7 @@ impl Drawing<'_> {
                     .ok();
                 })
             });
-        (div().flex_none().occlude().debug_selector(move || selector))
+        (div().flex_none().occlude().seen(move || selector))
             .child(control)
             .into_any_element()
     }
@@ -165,7 +166,7 @@ impl Drawing<'_> {
             .flex_col()
             .p(px(if modal { 16. } else { 8. }))
             .text_size(px(12.))
-            .debug_selector(move || selector)
+            .seen(move || selector)
             .children(content);
         if modal {
             let focus = self.focus.clone();
@@ -237,7 +238,7 @@ impl Drawing<'_> {
         // A click on it is its own, not the row's under it.
         let wrap = self
             .control(
-                div().flex_none().occlude().debug_selector(move || selector),
+                div().flex_none().occlude().seen(move || selector),
                 id,
                 Control::press(),
             )
@@ -286,7 +287,7 @@ impl Drawing<'_> {
                     button
                 },
             )
-            .debug_selector(move || selector);
+            .seen(move || selector);
         let wrap = self.control(div().flex_none().relative(), id, Control::press());
         self.hears_pointer(wrap, id, hears)
             .child(button)

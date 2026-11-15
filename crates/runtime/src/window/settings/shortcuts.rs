@@ -2,6 +2,7 @@
 //! with the keys that do it. A click on an action, or enter, makes it wait for a key, which is
 //! then its one key. Beside it its key is removed, or put back as it was at first.
 
+use sound_ui::on_screen::Named;
 use std::collections::HashMap;
 
 use gpui::{
@@ -193,7 +194,7 @@ impl ShortcutList {
         let quiet = |id: &str, icon: &'static str, tooltip: &'static str| {
             let selector = format!("shortcut-{id}-{}", row.id);
             let mut button = Button::icon_only(SharedString::from(selector.clone()), icon)
-                .debug_selector(move || selector)
+                .seen(move || selector)
                 .variant(ButtonVariant::GhostColor(muted))
                 .size(ControlSize::Sm)
                 .tab_stop(true);
@@ -233,7 +234,7 @@ impl ShortcutList {
             (true, _) => {
                 let selector = format!("shortcut-waiting-{}", row.id);
                 (keys.text_variant(TextVariant::Label).text_color(accent))
-                    .debug_selector(move || selector)
+                    .seen(move || selector)
                     .font_weight(FontWeight::MEDIUM)
                     .child("Press a key")
             }
@@ -246,7 +247,7 @@ impl ShortcutList {
         let hint = row.hint.map(|hint| {
             let selector = format!("shortcut-hint-{}", row.id);
             div()
-                .debug_selector(move || selector)
+                .seen(move || selector)
                 .truncate()
                 .text_variant(TextVariant::Label)
                 .text_color(muted)
@@ -255,7 +256,7 @@ impl ShortcutList {
         let selector = format!("shortcut-{}", row.id);
         let action = div()
             .id(SharedString::from(selector.clone()))
-            .debug_selector(move || selector)
+            .seen(move || selector)
             .group(group)
             .flex()
             .items_center()

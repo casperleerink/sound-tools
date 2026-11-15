@@ -216,8 +216,8 @@ fn the_editor_ruler_seeks_and_a_line_draws_velocities(cx: &mut TestAppContext) {
 
     // From the bottom before the first note to the top half way through the clip.
     let notes = window.notes_of("song/t00/c00");
-    let from = editor.lane(-20., 52.);
-    let to = editor.lane(BAR as f32 / 2., 8.);
+    let from = editor.lane(-20., 0.93);
+    let to = editor.lane(BAR as f32 / 2., 0.15);
     window.press(from);
     window.drag_to(from + point(px(10.), px(0.)));
     window.drag_to(to);

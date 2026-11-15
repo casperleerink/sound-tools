@@ -42,7 +42,7 @@ impl Shell {
             "Ask the agent to fix them"
         };
         let sign = Button::new("problems", files.to_string())
-            .debug_selector(|| "problems".to_string())
+            .seen(|| "problems")
             .icon("triangle-alert")
             .variant(ButtonVariant::GhostColor(peach))
             .size(ControlSize::Md)
@@ -82,7 +82,7 @@ impl Shell {
                     .child(title)
                     .child(if agent {
                         Button::new("problems-ask", fix)
-                            .debug_selector(|| "problems-ask".to_string())
+                            .seen(|| "problems-ask")
                             .variant(ButtonVariant::Subtle)
                             .size(ControlSize::Sm)
                             .on_click(cx.listener(|shell, _, window, cx| {

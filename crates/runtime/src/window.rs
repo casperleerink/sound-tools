@@ -21,6 +21,7 @@ mod save_template;
 mod settings;
 mod start;
 
+use sound_ui::on_screen::Named;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -562,7 +563,7 @@ impl Shell {
                 ButtonVariant::GhostColor(muted)
             };
             Button::new(id, label)
-                .debug_selector(move || format!("left-panel-{id}"))
+                .seen(move || format!("left-panel-{id}"))
                 .variant(variant)
                 .size(ControlSize::Md)
                 .on_click(cx.listener(move |shell, _, _, cx| shell.show_tab(tab, cx)))
@@ -638,7 +639,7 @@ impl Shell {
             .flex_none()
             .child(
                 Button::icon_only("left-panel", "panel-left")
-                    .debug_selector(|| "left-panel-icon".to_string())
+                    .seen(|| "left-panel-icon")
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Md)
                     .focus_handle(&self.left_panel_icon_focus)
@@ -649,7 +650,7 @@ impl Shell {
             .when(busy, |icon| {
                 icon.child(
                     div()
-                        .debug_selector(|| "left-panel-busy".to_string())
+                        .seen(|| "left-panel-busy")
                         .absolute()
                         .top(px(2.))
                         .right(px(2.))

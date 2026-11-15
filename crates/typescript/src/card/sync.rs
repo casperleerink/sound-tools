@@ -1,6 +1,7 @@
 //! What the nodes of a card show that is an entity of the window: a text field, the card of
 //! another instance, and a menu or a question its code opens.
 
+use sound_ui::on_screen::Named;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -98,7 +99,7 @@ fn sidechain_column(
 /// menu, a chevron after it and the wash of the pointer over it.
 struct CardTitle {
     name: SharedString,
-    /// For tests, which find it as `card-title-<instance>`.
+    /// What a look names it by: `card-title-<instance>`.
     instance: String,
     on_press: Option<Rc<dyn Fn(Option<Bounds<Pixels>>, &mut App)>>,
     /// Where it was last laid out, so the menu of a press hangs under it.
@@ -111,7 +112,7 @@ impl Render for CardTitle {
         let (hover, muted) = (theme.fill_strong(), theme.text_muted());
         let title = div()
             .id("card-title")
-            .debug_selector({
+            .seen({
                 let instance = self.instance.clone();
                 move || format!("card-title-{instance}")
             })

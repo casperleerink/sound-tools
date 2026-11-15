@@ -54,6 +54,8 @@ pub(super) struct Pointer {
 pub(super) struct Placed {
     /// Its place among the shapes of the space, which its pointer is found by.
     pub(super) index: usize,
+    /// Its node, which a look names it by.
+    pub(super) node: u64,
     pub(super) geometry: Geometry,
     pub(super) color: Hsla,
     /// The box of the groups around it, outside which it does not show.
@@ -453,6 +455,7 @@ impl Reads {
 /// in what colour unless it is see-through.
 #[derive(Clone)]
 struct Showing {
+    node: u64,
     pointer: Option<Pointer>,
     placed: Option<(Geometry, Hsla, Option<Area>)>,
 }
@@ -801,6 +804,7 @@ impl Placing<'_> {
             as f32;
         if opacity <= 0.0 {
             return Some(Showing {
+                node: id,
                 pointer,
                 placed: None,
             });
@@ -822,13 +826,19 @@ impl Placing<'_> {
         };
         color.a *= opacity;
         Some(Showing {
+            node: id,
             pointer,
             placed: Some((geometry, color, clip)),
         })
     }
 
     fn put(&mut self, shaped: Option<Showing>) {
-        let Some(Showing { pointer, placed }) = shaped else {
+        let Some(Showing {
+            node,
+            pointer,
+            placed,
+        }) = shaped
+        else {
             return;
         };
         let index = self.pointed.len();
@@ -836,6 +846,7 @@ impl Placing<'_> {
         if let Some((geometry, color, clip)) = placed {
             self.placed.push(Placed {
                 index,
+                node,
                 geometry,
                 color,
                 clip,

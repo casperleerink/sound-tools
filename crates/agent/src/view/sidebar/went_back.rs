@@ -6,6 +6,7 @@ use sound_core::{Line, PointId};
 use sound_ui::ActiveTheme;
 use sound_ui::ControlSize;
 use sound_ui::components::button::{Button, ButtonVariant};
+use sound_ui::on_screen::Named;
 use sound_ui::{TextVariant, Typography};
 
 use super::Sidebar;
@@ -54,7 +55,7 @@ impl Sidebar {
         let went_back = self.went_back.as_ref()?;
         let muted = cx.theme().text_muted();
         let line = div()
-            .debug_selector(|| "agent-went-back".to_string())
+            .seen(|| "agent-went-back")
             .flex()
             .items_center()
             .gap(px(4.))
@@ -71,7 +72,7 @@ impl Sidebar {
             )
             .child(
                 Button::icon_only("went-back-dismiss", "x")
-                    .debug_selector(|| "agent-went-back-dismiss".to_string())
+                    .seen(|| "agent-went-back-dismiss")
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Sm)
                     .focus_handle(&self.went_back_dismiss)

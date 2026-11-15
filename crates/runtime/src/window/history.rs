@@ -5,6 +5,7 @@
 //! renames, keeps, merges and folds away. The panel is one tab stop: up and down move a
 //! highlight, enter goes, the menu key or shift-F10 opens its menu.
 
+use sound_ui::on_screen::Named;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::rc::Rc;
@@ -453,7 +454,7 @@ impl HistoryPanel {
         let ring = colors.ring;
         div()
             .id(SharedString::from(selector.clone()))
-            .debug_selector(move || selector)
+            .seen(move || selector)
             .group(SharedString::from(format!("{item:?}")))
             .cursor_pointer()
             .when(highlighted == Some(item), |row| {
@@ -534,7 +535,7 @@ impl HistoryPanel {
             .child(
                 div()
                     .id(SharedString::from(format!("from-{}", card.line.start)))
-                    .debug_selector({
+                    .seen({
                         let start = card.line.start.short();
                         move || format!("history-from-{start}")
                     })

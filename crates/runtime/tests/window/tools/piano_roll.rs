@@ -44,11 +44,7 @@ pub(super) fn open_roll<'a>(cx: &'a mut TestAppContext, notes: &Value) -> Opened
 impl Opened<'_> {
     /// The top left of the space of `key`, once it shows.
     pub(super) fn space_at(&mut self, key: &str) -> Point<Pixels> {
-        let selector: &'static str = format!("space-{key}").leak();
-        self.until(&format!("the space {key}"), |window| {
-            window.find(selector).is_some()
-        });
-        self.cx.debug_bounds(selector).unwrap().origin
+        self.wait_for(&format!("space-{key}")).whole.origin
     }
 
     /// Where `tick` and the middle of the row of `pitch` are in the roll, as it opens.

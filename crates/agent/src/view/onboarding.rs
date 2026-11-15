@@ -298,7 +298,7 @@ impl Buttons {
             .clone();
         let selector = format!("setup-{id}");
         let button = Button::new(SharedString::from(format!("{}-{id}", self.key)), label)
-            .debug_selector(move || selector)
+            .seen(move || selector)
             .variant(variant)
             .focus_handle(&handle);
         let button = match wide {

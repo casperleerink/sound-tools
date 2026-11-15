@@ -15,6 +15,7 @@ mod threads;
 mod turn;
 mod went_back;
 
+use sound_ui::on_screen::Named;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -762,7 +763,7 @@ impl Sidebar {
                         ApprovalAnswer::Deny => ButtonVariant::Ghost,
                     };
                     Button::new(id, label)
-                        .debug_selector(move || format!("approval-{id}"))
+                        .seen(move || format!("approval-{id}"))
                         .variant(variant)
                         .size(ControlSize::Md)
                         .focus_handle(focus)
@@ -791,7 +792,7 @@ impl Sidebar {
     fn instructions_header(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         self.instructions.as_ref()?;
         let back = Button::icon_only("instructions-back", "arrow-left")
-            .debug_selector(|| "agent-instructions-back".to_string())
+            .seen(|| "agent-instructions-back")
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Sm)
             .on_click(cx.listener(|sidebar, _, window, cx| {
@@ -831,7 +832,7 @@ impl Sidebar {
             (false, None) => "Set up an agent to start.".to_string(),
         };
         let open = Button::new("open-settings", "Open Settings")
-            .debug_selector(|| "agent-open-settings".to_string())
+            .seen(|| "agent-open-settings")
             .variant(ButtonVariant::Primary)
             .size(ControlSize::Lg)
             .focus_handle(&self.send_focus)
@@ -863,7 +864,7 @@ impl Sidebar {
         // While a turn runs the send button stops it: one turn at a time.
         let button = if working {
             Button::icon_only("stop", "square")
-                .debug_selector(|| "agent-stop".to_string())
+                .seen(|| "agent-stop")
                 .variant(ButtonVariant::Solid(stop))
                 .on_click(cx.listener(|sidebar, _, _, cx| sidebar.stop(cx)))
         } else if can_send {
@@ -889,7 +890,7 @@ impl Sidebar {
             .child(
                 div()
                     .id("agent-composer")
-                    .debug_selector(|| "agent-composer".to_string())
+                    .seen(|| "agent-composer")
                     // Before the field's own paste, which takes only text.
                     .capture_action(cx.listener(|sidebar, _: &Paste, _, cx| {
                         if sidebar.paste_attachments(cx) {
@@ -963,7 +964,7 @@ impl Sidebar {
             .child(
                 Button::new("new-thread-instead", "New thread")
                     .icon("plus")
-                    .debug_selector(|| "agent-cannot-continue".to_string())
+                    .seen(|| "agent-cannot-continue")
                     .variant(ButtonVariant::Subtle)
                     .size(ControlSize::Md)
                     .focus_handle(&self.send_focus)

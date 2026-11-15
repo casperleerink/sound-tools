@@ -7,6 +7,7 @@
 //! It knows no clip and no sampler: the owner gives the overview of the file, where it starts and
 //! ends in seconds, and hears the start and end handles.
 
+use crate::on_screen::Named;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -238,7 +239,6 @@ impl RenderOnce for FileDrop {
         let on_drop = self.on_drop;
         div()
             .id("file-drop")
-            .debug_selector(|| "file-drop".into())
             .absolute()
             .top_0()
             .left_0()
@@ -248,6 +248,7 @@ impl RenderOnce for FileDrop {
             .justify_center()
             .rounded(radius::MD)
             .border(px(2.))
+            .seen(|| "file-drop")
             .border_color(theme.lavender)
             // Opaque, so the line reads over a waveform.
             .bg(theme.background())

@@ -409,13 +409,7 @@ fn a_page_follows_its_room_when_the_window_resizes(cx: &mut TestAppContext) {
     ];
     let mut window = open(cx, &files);
     window.until_found("div-room");
-    let width = |window: &mut Opened| {
-        window.find("div-room");
-        window
-            .cx
-            .debug_bounds("div-room")
-            .map(|bounds| bounds.size.width)
-    };
+    let width = |window: &mut Opened| window.seen("div-room").map(|seen| seen.whole.size.width);
     let before = width(&mut window);
     window
         .cx

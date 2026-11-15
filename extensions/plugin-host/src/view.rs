@@ -10,6 +10,7 @@
 //! The list of parameters and the plugin's text both call into the plugin, which drawing may
 //! not do. So the view asks when the session says something changed and draws from the answers.
 
+use sound_ui::on_screen::Named;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -648,7 +649,7 @@ fn missing(id: u32, pin: &Pin, cx: &mut Context<PluginView>) -> AnyElement {
     let face = div()
         .id(("missing", u64::from(id)))
         // For tests.
-        .debug_selector(move || format!("missing-{id}"))
+        .seen(move || format!("missing-{id}"))
         .text_variant(TextVariant::Label)
         .line_height(px(14.))
         .text_color(peach)
@@ -689,7 +690,7 @@ impl Render for PluginView {
         let id = self.device.instance.id();
         let button = |id: &'static str, label: &'static str| {
             Button::new(id, label)
-                .debug_selector(move || id.to_string())
+                .seen(move || id)
                 .variant(ButtonVariant::Subtle)
                 .on_card()
                 .w(px(control_width(OWN_SPAN)))

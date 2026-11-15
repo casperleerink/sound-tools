@@ -229,7 +229,7 @@ impl Sidebar {
                     )
                     .child(
                         Button::icon_only(("remove-attachment", index), "x")
-                            .debug_selector(move || format!("agent-remove-attachment-{index}"))
+                            .seen(move || format!("agent-remove-attachment-{index}"))
                             .variant(ButtonVariant::Ghost)
                             .size(ControlSize::Sm)
                             .focus_handle(&attached.remove)

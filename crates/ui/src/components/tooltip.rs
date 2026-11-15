@@ -1,5 +1,6 @@
 //! Tooltip view for GPUI's `.tooltip(..)`: label text plus optional keyboard shortcut chips.
 
+use crate::on_screen::Named;
 use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,
 };
@@ -62,25 +63,21 @@ impl Render for Tooltip {
         let mut chip = fg;
         chip.a = 0.12;
 
-        // Outer padding keeps the popup off the cursor. Tests find it as `tooltip`.
-        div()
-            .debug_selector(|| "tooltip".into())
-            .pt(px(6.))
-            .pl(px(6.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(28.))
-                    .px(px(10.))
-                    .rounded(radius::LG)
-                    .bg(bg)
-                    .text_variant(TextVariant::Label)
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(fg)
-                    .child(self.text.clone())
-                    .children(self.keys.iter().map(|key| kbd(key.clone(), fg, chip))),
-            )
+        // Outer padding keeps the popup off the cursor.
+        div().seen(|| "tooltip").pt(px(6.)).pl(px(6.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .h(px(28.))
+                .px(px(10.))
+                .rounded(radius::LG)
+                .bg(bg)
+                .text_variant(TextVariant::Label)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(fg)
+                .child(self.text.clone())
+                .children(self.keys.iter().map(|key| kbd(key.clone(), fg, chip))),
+        )
     }
 }

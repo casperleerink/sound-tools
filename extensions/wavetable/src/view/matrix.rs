@@ -13,6 +13,7 @@ use sound_ui::components::icon::Icon;
 use sound_ui::components::knob::KnobRange;
 use sound_ui::components::slider::{self, Slider};
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::on_screen::Named;
 use sound_ui::radius;
 use sound_ui::{ActiveTheme, typography};
 use sound_ui::{TextVariant, Typography};
@@ -103,7 +104,7 @@ impl WavetableView {
                 view.route_change(index, "Change route amount", change, set, cx);
             }));
         let remove = Button::icon_only(("route-remove", index), "x")
-            .debug_selector(move || format!("route-remove-{index}"))
+            .seen(move || format!("route-remove-{index}"))
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Sm)
             .focus_handle(&self.remove_focus[index])
@@ -174,7 +175,6 @@ impl WavetableView {
         let add = (state.matrix.len() < MAX_ROUTES).then(|| {
             div()
                 .id("route-add")
-                .debug_selector(|| "route-add".to_string())
                 .track_focus(&self.add_focus)
                 .flex()
                 .flex_none()
@@ -185,6 +185,7 @@ impl WavetableView {
                 .pr(px(8.))
                 .rounded(radius::MD)
                 .border_1()
+                .seen(|| "route-add")
                 .border_color(gpui::Hsla::transparent_black())
                 .focus_visible(move |style| style.border_color(ring))
                 .bg(background)

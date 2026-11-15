@@ -1,5 +1,6 @@
 //! One draw of the nodes of a card into elements.
 
+use sound_ui::on_screen::Named;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -395,11 +396,10 @@ impl Drawing<'_> {
                     }
                     None => style.apply(base, disabled).children(children),
                 };
-                // Tests find a div by its key.
                 let element = match key {
                     Some(key) => {
                         let selector = format!("div-{key}");
-                        element.debug_selector(move || selector)
+                        element.seen(move || selector)
                     }
                     None => element,
                 };

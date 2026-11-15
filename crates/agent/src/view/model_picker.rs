@@ -12,6 +12,7 @@ use sound_ui::components::icon::Icon;
 use sound_ui::components::popover::{Align, Side, anchor, surface};
 use sound_ui::components::text_input::{Arrow, TextInput};
 use sound_ui::components::tooltip::Tooltip;
+use sound_ui::on_screen::Named;
 use sound_ui::radius;
 use sound_ui::{TextVariant, Typography};
 
@@ -235,7 +236,6 @@ impl ModelPicker {
             };
             div()
                 .id(SharedString::from(format!("model-picker-{}", icon)))
-                .debug_selector(move || format!("model-picker-{icon}"))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -247,6 +247,7 @@ impl ModelPicker {
                     rail.cursor_pointer().hover(move |s| s.bg(hover))
                 })
                 .border_1()
+                .seen(move || format!("model-picker-{icon}"))
                 .border_color(gpui::transparent_black())
                 .when_some(focus, |rail, focus| {
                     rail.track_focus(&focus)
@@ -310,7 +311,7 @@ impl ModelPicker {
                 let selector = format!("model-picker-{key}-{id}");
                 div()
                     .id(SharedString::from(selector.clone()))
-                    .debug_selector(move || selector)
+                    .seen(move || selector)
                     .flex()
                     .items_center()
                     .gap(px(8.))
@@ -432,7 +433,6 @@ impl Render for ModelPicker {
         let logo = self.shown.current.map(|provider| logo(provider, 14.));
         let trigger = div()
             .id("model-picker-trigger")
-            .debug_selector(|| "model-menu".to_string())
             .track_focus(&self.trigger_focus)
             .flex()
             .items_center()
@@ -442,6 +442,7 @@ impl Render for ModelPicker {
             .px(px(8.))
             .rounded(radius::LG)
             .border_1()
+            .seen(|| "model-menu")
             .border_color(gpui::transparent_black())
             .focus_visible(move |s| s.border_color(ring))
             .text_variant(TextVariant::Heading)

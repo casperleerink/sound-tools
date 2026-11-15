@@ -11,11 +11,7 @@ use crate::support::write_outside;
 impl Opened<'_> {
     /// The top left of the space of `key`, once it shows.
     fn space(&mut self, key: &str) -> Point<Pixels> {
-        let selector: &'static str = format!("space-{key}").leak();
-        self.until(&format!("the space {key}"), |window| {
-            window.find(selector).is_some()
-        });
-        self.cx.debug_bounds(selector).unwrap().origin
+        self.wait_for(&format!("space-{key}")).whole.origin
     }
 }
 
@@ -721,7 +717,7 @@ fn an_edit_of_the_record_of_a_page_keeps_its_title_bar(cx: &mut TestAppContext) 
         project.finish(edit)
     });
     window.settle();
-    assert!(window.cx.debug_bounds("button-go").is_some());
+    assert!(window.seen("button-go").is_some());
 }
 
 /// A button in the title bar, out of its page, hands the page the keys it does not click with.

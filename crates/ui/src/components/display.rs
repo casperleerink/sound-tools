@@ -29,6 +29,7 @@
 //!
 //! A device that cannot play says why where its display would be: a [`ControlStrip`].
 
+use crate::on_screen::Named;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -866,7 +867,7 @@ fn handle_element(
     let area = handle.area;
     div()
         .id(handle.id)
-        .debug_selector(move || format!("handle-{selector}"))
+        .seen(move || format!("handle-{selector}"))
         // A handle that speaks tells the display while the pointer is on it or drags it.
         .when_some(pointing.clone(), |target, pointing| {
             target
@@ -1063,10 +1064,9 @@ impl RenderOnce for Display {
                 Side::Right => self.caption_right.unwrap_or(CAPTION_INSET),
                 Side::Middle | Side::Left => CAPTION_INSET,
             };
-            // For tests, which find the line by what it says: `caption-<words>`.
             let selector = caption.clone();
             let words = div()
-                .debug_selector(move || format!("caption-{selector}"))
+                .seen(move || format!("caption-{selector}"))
                 .h(px(CAPTION_PLATE))
                 .px(px(CAPTION_PADDING))
                 .flex()
