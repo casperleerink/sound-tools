@@ -1,0 +1,18 @@
+[package]
+name = "gpui-daw"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace, so the root workspace ignores it. Cargo's default release profile, not the
+# root's thin LTO, so build times compare with the Rune app's.
+[workspace]
+
+[dependencies]
+daw-model = { path = "../model" }
+# The root Cargo.toml's rev and features. `test-support` gives the offscreen renderer
+# `--screenshot` uses, as the runtime has it on macOS.
+gpui = { git = "https://github.com/zed-industries/zed", version = "0.2", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c", features = ["test-support"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c", features = ["runtime_shaders", "font-kit", "wayland", "x11", "test-support"] }
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
