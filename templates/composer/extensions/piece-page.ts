@@ -111,13 +111,13 @@ function goTo({ clock, memory }: Pick<Piece, "clock" | "memory">, tick: number) 
   if (clock.playing) memory.follows = false;
   else clock.jump(tick);
 }
-/** Chooses the bars `from` to `to` of the piece, whole or of the instruments `rows`, and puts the playhead on the first. Its section's part is the one the note editor shows. */
+/** Chooses the bars `from` to `to` of the piece, whole or of the instruments `rows`, and puts the playhead on the first. `from` is where the choice starts, also when it is the later bar: shift moves the other end. Its section's part is the one the note editor shows. */
 export function chooseBars(piece: Pick<Piece, "state" | "memory" | "clock">, from: number, to: number, rows: readonly string[] | null = null) {
   const all = barsOfPiece(piece.state);
   const last = all.bars.length - 1;
   if (last < 0) return;
   const [first, end] = [clamp(Math.min(from, to), 0, last), clamp(Math.max(from, to), 0, last)];
-  piece.memory.chosen = { from: first, to: end, rows: rows && [...rows] };
+  piece.memory.chosen = { from: first, to: end, rows: rows && [...rows], anchor: clamp(from, 0, last) };
   piece.memory.part = all.bars[first]!.id;
   piece.memory.noteBar = null;
   piece.memory.notice = null;

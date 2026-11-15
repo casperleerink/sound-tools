@@ -212,7 +212,7 @@ export const Marks = ({ page }: { page: Page }) => {
     if (button === "right") {
       if (!among) chooseBars(page, bar, bar);
       void choiceMenu(page, x);
-    } else if (shift && at !== null) chooseBars(page, Math.min(at.from, bar), Math.max(at.to, bar));
+    } else if (shift && at !== null) chooseBars(page, at.anchor, bar);
     else chooseBars(page, bar, bar);
   };
   // A section's name carried along the band lands before the section it is let go on, after the last past the end.
@@ -445,8 +445,8 @@ export const Rows = ({ page }: { page: Page }) => {
     } else if (clicks === 2) openEditor(each.name);
     else if (shift && at?.rows) {
       const indexes = [names().indexOf(each.name), names().indexOf(at.rows[0]!), names().indexOf(at.rows.at(-1)!)];
-      chooseRows(page, Math.min(at.from, bar), Math.max(at.to, bar), names().slice(Math.min(...indexes), Math.max(...indexes) + 1));
-    } else if (shift && at) chooseBars(page, Math.min(at.from, bar), Math.max(at.to, bar));
+      chooseRows(page, at.anchor, bar, names().slice(Math.min(...indexes), Math.max(...indexes) + 1));
+    } else if (shift && at) chooseBars(page, at.anchor, bar);
     else chooseRows(page, bar, bar, [each.name]);
   };
   // A drag chooses whole bars of whole rows: the bars and rows under its ends.

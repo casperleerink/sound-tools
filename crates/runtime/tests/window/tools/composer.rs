@@ -1505,3 +1505,41 @@ fn a_bar_added_inside_a_rit_across_a_section_line_joins_it(cx: &mut TestAppConte
     window.until("the rit. as it was", |window| window.sections() == rit);
     assert_eq!(window.problems(), []);
 }
+
+/// Bar 2 chosen, shift-right twice and shift-left once: bars 2 and 3 are chosen, the fourth let
+/// go, so a time signature typed is theirs alone. From bar 3, shift-left takes in bar 2 and
+/// shift-right lets it go again.
+#[gpui::test]
+fn shift_and_an_arrow_back_lets_go_of_a_bar_it_took_in(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    window.keys("shift-right");
+    window.keys("shift-right");
+    window.keys("shift-left");
+    window.keys("t");
+    window.type_in_field("3/4");
+    window.until("two bars of 3/4", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 3
+    });
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+            { "bars": 2, "signature": "3/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+        ])
+    );
+    window.after_the_runs();
+    window.wait_for_bun();
+    window.choose_bar(0);
+    window.keys("right");
+    window.keys("right");
+    // The third bar starts after one of 4/4 and one of 3/4.
+    let third = BAR + 3 * BEAT;
+    window.until_playhead(third);
+    window.keys("shift-left");
+    window.until_playhead(BAR);
+    window.keys("shift-right");
+    window.until_playhead(third);
+    assert_eq!(window.problems(), []);
+}

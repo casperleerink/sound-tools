@@ -13,8 +13,8 @@ type SectionId = `sec-${string}`;
 
 /** Bars `from` to `to` of the section `id`, counted from 0 in it: what an edit of bars works on, a choice cut at the section lines. */
 export type Span = { id: string; from: number; to: number };
-/** The chosen bars, counted from 0 through the whole piece, and of which instruments: `null` for the bars themselves, with all their music. */
-export type Chosen = { from: number; to: number; rows: readonly string[] | null };
+/** The chosen bars, counted from 0 through the whole piece, and of which instruments: `null` for the bars themselves, with all their music. `anchor` is the end the choice started at, which stays as shift takes more in or lets some go. */
+export type Chosen = { from: number; to: number; rows: readonly string[] | null; anchor: number };
 /** What a copy holds: the bars, and the music of each instrument it was taken from. */
 export type Copied = { bars: Bar[]; rows: { name: string; music: Music }[] };
 

@@ -18,7 +18,7 @@ export function choiceOf(piece: Pick<Piece, "state" | "memory" | "children">) {
   const rows = chosen.rows === null ? null : names.filter((name) => chosen.rows!.includes(name));
   if (rows?.length === 0) return undefined;
   const [from, to] = [Math.min(chosen.from, last), Math.min(chosen.to, last)];
-  return { all, from, to, rows, names, spans: spansOf(all, from, to) };
+  return { all, from, to, rows, names, anchor: chosen.anchor <= from ? from : to, spans: spansOf(all, from, to) };
 }
 type Choice = NonNullable<ReturnType<typeof choiceOf>>;
 const isWhole = (choice: Choice) => choice.rows === null;
@@ -100,7 +100,7 @@ export function editChosen(piece: Piece): boolean {
   return true;
 }
 
-/** Chooses the bar before or after the chosen ones, of the same instruments, or with `extend` takes it in too. With none chosen, the bar the playhead is in. */
+/** Chooses the bar before or after the chosen ones, of the same instruments, or with `extend` moves the end of the choice a bar. With none chosen, the bar the playhead is in. */
 export function stepBars(piece: Piece, by: -1 | 1, extend: boolean): boolean {
   const choice = choiceOf(piece);
   if (!choice) {
@@ -108,10 +108,10 @@ export function stepBars(piece: Piece, by: -1 | 1, extend: boolean): boolean {
     chooseBars(piece, bar, bar);
     return true;
   }
-  const next = by < 0 ? choice.from - 1 : choice.to + 1;
+  // With `extend` the end away from where the choice started moves: back over bars it took in, they are let go.
+  const next = extend ? (choice.anchor === choice.from ? choice.to : choice.from) + by : by < 0 ? choice.from - 1 : choice.to + 1;
   if (next < 0 || next >= choice.all.bars.length) return true;
-  if (extend) chooseBars(piece, Math.min(choice.from, next), Math.max(choice.to, next), choice.rows);
-  else chooseBars(piece, next, next, choice.rows);
+  chooseBars(piece, extend ? choice.anchor : next, next, choice.rows);
   return true;
 }
 /** Takes in the bars after the chosen ones up to the end of the section of the last, or of the next section when it ends there: a tempo or a time signature then goes on from here. */
