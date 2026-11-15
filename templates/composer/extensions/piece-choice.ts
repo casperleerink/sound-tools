@@ -1,7 +1,7 @@
 import type { MenuItem } from "./sdk";
 import type { Piece } from "./piece";
-import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, setSignature, setTempo, splitSection } from "./piece-edits";
-import { beatOf, startsOf, tempoOf, type Bar } from "./piece-form";
+import { addBars, clearMusic, copyOf, duplicateBars, paste, removeBars, setFermatas, setSignature, setSlide, setTempo, splitSection } from "./piece-edits";
+import { beatOf, countOf, endOf, partsOf, startsOf, tempoOf, type Bar } from "./piece-form";
 import { barAtTick, barsOfPiece, barsOfSection, chooseBars, clamp, instrumentsOf, showEditor, showInstrument, spansOf } from "./piece-page";
 import { nameSection } from "./piece-sections";
 
@@ -205,21 +205,90 @@ export async function askSignature(piece: Piece, bars: { from: number; to: numbe
   if (!beats || Number(beats) < 1 || Number(beats) > 32 || !NOTES.includes(Number(note))) return;
   setSignature(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), `${Number(beats)}/${Number(note)}`);
 }
-/** Asks for the tempo of the bars `from` to `to` of the piece, in the beat of each, or with none of the chosen bars or the one that plays, and gives it to them. */
+/** The first number of what was typed, as a tempo: none when it has no number. */
+function tempoIn(typed: string | null): number | undefined {
+  const [, number] = /(\d+(?:[.,]\d+)?)/.exec(typed ?? "") ?? [];
+  return number ? clamp(Math.round(Number(number.replace(",", ".")) * 10) / 10, 10, 600) : undefined;
+}
+/** Asks for the tempo of the bars `from` to `to` of the piece, in the beat of each, or with none of the chosen bars or the one that plays, and gives it to them, steady. */
 export async function askTempo(piece: Piece, bars: { from: number; to: number } = chosenOrPlaying(piece)) {
   const bar = barsOfPiece(piece.state).bars[bars.from];
   if (!bar) return;
-  const typed = await piece.openField({ placeholder: `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`, width: 120 });
-  const [, number] = /(\d+(?:[.,]\d+)?)/.exec(typed ?? "") ?? [];
-  if (!number) return;
-  const tempo = clamp(Math.round(Number(number.replace(",", ".")) * 10) / 10, 10, 600);
-  setTempo(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), tempo);
+  const tempo = tempoIn(await piece.openField({ placeholder: `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`, width: 120 }));
+  if (tempo !== undefined) setTempo(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), tempo);
+}
+const STEADY = "Steady tempo";
+/**
+ * Asks for the tempo the bars `from` to `to` of the piece slow down or speed up to, in the beat of
+ * the last, or with none of the chosen bars or the one that plays: they get there in a straight
+ * line from the tempo the first starts at. Bars that do so already can be made steady again.
+ */
+export async function askSlide(piece: Piece, bars: { from: number; to: number } = chosenOrPlaying(piece)) {
+  const all = barsOfPiece(piece.state);
+  const last = all.bars[bars.to];
+  if (!last) return;
+  const slides = all.bars.slice(bars.from, bars.to + 1).some((bar) => bar.to !== undefined);
+  const sign = beatOf(last.signature).sign;
+  const typed = await piece.openField({ placeholder: slides ? `to ${sign} = ${tempoOf({ ...last, bpm: endOf(last) })}` : `Slow down or speed up to ${sign} =`, suggestions: slides ? [STEADY] : [], width: slides ? 140 : 220 });
+  const spans = spansOf(barsOfPiece(piece.state), bars.from, bars.to);
+  if (typed === STEADY) return setSlide(piece, spans, null);
+  const tempo = tempoIn(typed);
+  if (tempo !== undefined) setSlide(piece, spans, tempo);
 }
 
-/** The menu of the choice, each item with its key: whole bars also add a bar or start a section, music opens its notes. */
-export async function choiceMenu(piece: Piece) {
+/** The bar of the piece the tick `tick` is in, and the count of that bar, from 1. */
+function countAt(all: ReturnType<typeof barsOfPiece>, tick: number) {
+  const bar = barAtTick(all, tick);
+  const signature = all.bars[bar]?.signature ?? "4/4";
+  return { bar, beat: clamp(Math.floor((tick - all.starts[bar]!) / countOf(signature)) + 1, 1, partsOf(signature)[0]) };
+}
+/** The bar a fermata goes on: the one at `tick`, or with none the last chosen bar, or the one that plays. */
+const fermataBar = (piece: Piece, tick?: number) => (tick === undefined ? chosenOrPlaying(piece).to : barAtTick(barsOfPiece(piece.state), tick));
+/** Puts a fermata on the count at `tick`, or with none on the last count of the last chosen bar; a bar that has one loses it. */
+export function toggleFermata(piece: Piece, tick?: number): boolean {
+  const all = barsOfPiece(piece.state);
+  const bar = all.bars[fermataBar(piece, tick)];
+  if (!bar) return false;
+  const beat = tick === undefined ? partsOf(bar.signature)[0] : countAt(all, tick).beat;
+  if (bar.fermata) setFermatas(piece, "Remove a fermata", [{ id: bar.id, bar: bar.at, fermata: null }]);
+  else setFermatas(piece, "Add a fermata", [{ id: bar.id, bar: bar.at, fermata: { beat, extra: 1 } }]);
+  return true;
+}
+/** Moves the fermata of the bar `from` of the piece to the count at `tick`, in place of one its bar has. */
+export function moveFermata(piece: Piece, from: number, tick: number) {
+  const all = barsOfPiece(piece.state);
+  const [was, to] = [all.bars[from], countAt(all, tick)];
+  const bar = all.bars[to.bar];
+  if (!was?.fermata || !bar || (to.bar === from && to.beat === was.fermata.beat)) return;
+  setFermatas(piece, "Move a fermata", [...(to.bar === from ? [] : [{ id: was.id, bar: was.at, fermata: null }]), { id: bar.id, bar: bar.at, fermata: { ...was.fermata, beat: to.beat } }]);
+}
+/** How much longer a fermata holds, to pick from. */
+const HOLDS = [0.5, 1, 2, 4];
+const holdSaid = (beats: number) => (beats === 0.5 ? "Half a beat longer" : beats === 1 ? "1 beat longer" : `${beats} beats longer`);
+/** The menu of the fermata of the bar `index` of the piece: how much longer it holds, a length to type, or off. */
+export async function fermataMenu(piece: Piece, index: number) {
+  const bar = barsOfPiece(piece.state).bars[index];
+  const fermata = bar?.fermata;
+  if (!bar || !fermata) return;
+  const set = (extra: number | null) => setFermatas(piece, extra === null ? "Remove a fermata" : "Change a fermata", [{ id: bar.id, bar: bar.at, fermata: extra === null ? null : { ...fermata, extra } }]);
+  const other = !HOLDS.includes(fermata.extra);
+  const picked = await piece.openMenu([
+    ...HOLDS.map((beats) => ({ label: holdSaid(beats), checked: fermata.extra === beats })),
+    { label: other ? `${holdSaid(fermata.extra)}…` : "Another length…", checked: other },
+    { label: "Remove the fermata", separator: true },
+  ]);
+  if (picked === null) return;
+  if (picked > HOLDS.length) return set(null);
+  if (picked < HOLDS.length) return set(HOLDS[picked]!);
+  const [, number] = /(\d+(?:[.,]\d+)?)/.exec((await piece.openField({ placeholder: "Beats longer, such as 3", width: 180 })) ?? "") ?? [];
+  if (number && Number(number.replace(",", ".")) > 0) set(clamp(Math.round(Number(number.replace(",", ".")) * 100) / 100, 0.25, 64));
+}
+
+/** The menu of the choice, each item with its key: whole bars also add a bar or start a section, music opens its notes. Opened at the tick `tick`, its fermata goes on the count there. */
+export async function choiceMenu(piece: Piece, tick?: number) {
   const choice = choiceOf(piece);
   if (!choice) return;
+  const hasFermata = choice.all.bars[fermataBar(piece, tick)]?.fermata !== undefined;
   const whole = isWhole(choice);
   const startsSection = choice.all.bars[choice.from]!.at === 0;
   type Item = MenuItem & { run: () => unknown };
@@ -233,6 +302,8 @@ export async function choiceMenu(piece: Piece) {
       : { label: "Clear", shortcut: "piece.clear_music", run: () => clearChosen(piece, false) },
     { label: "Time signature…", shortcut: "piece.type_time_signature", separator: true, run: () => askSignature(piece) },
     { label: "Tempo…", shortcut: "piece.type_tempo", run: () => askTempo(piece) },
+    { label: "Rit. or accel.…", shortcut: "piece.type_slide", run: () => askSlide(piece) },
+    { label: hasFermata ? "Remove the fermata" : "Fermata", shortcut: "piece.fermata", run: () => toggleFermata(piece, tick) },
     ...(whole
       ? ([
           { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },

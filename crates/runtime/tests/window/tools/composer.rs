@@ -26,8 +26,8 @@ const OPENED: u64 = 6 * BAR;
 /// How far down the band its lines are: the section names, the time signatures and tempos, and
 /// under the bar numbers, empty band over the bars.
 const NAMES: f32 = 17.;
-const MARKS: f32 = 50.;
-const BARS: f32 = 90.;
+const MARKS: f32 = 42.;
+const BARS: f32 = 72.;
 /// The notes of `t00` in section A, one in each of its first three bars, and in B.
 const IN_A: [u64; 3] = [0, BAR + BEAT / 2, 2 * BAR];
 const IN_B: [u64; 1] = [0];

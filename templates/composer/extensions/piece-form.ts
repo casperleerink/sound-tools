@@ -6,10 +6,12 @@ import type { FilledStateOfTool, TempoMap } from "./sdk";
 
 export const BEAT = 960;
 
-/** A bar: its time signature, such as `3/4`, and how fast it plays. */
-export type Bar = { signature: string; bpm: number };
-/** Bars in a row that are alike, as the piece's record holds them. */
-export type Run = Bar & { bars: number };
+/** A fermata: the count of its bar it sits on, from 1, as the time signature counts, and how many beats longer that count lasts, in the beat the tempo is said in. */
+export type Fermata = { beat: number; extra: number };
+/** A bar: its time signature, such as `3/4`, how fast it starts, with `to` the tempo it reaches at its end in a straight line, and its fermata. */
+export type Bar = { signature: string; bpm: number; to?: number; fermata?: Fermata };
+/** Bars in a row that are alike, as the piece's record holds them: with `to`, one straight line of tempo over all of them; `fermata` is the count, 0 for none, and `hold` its beats. */
+export type Run = { bars: number; signature: string; bpm: number; to: number; fermata: number; hold: number };
 /** A section as the piece's record holds it. */
 export type Section = { id: string; name: string; bars: Run[] };
 /** What one instrument plays in one section. */
@@ -41,17 +43,56 @@ export function beatOf(signature: string): { quarters: number; sign: string } {
 /** The tempo of a bar in its own beat, to a tenth. */
 export const tempoOf = (bar: Bar) => Math.round((bar.bpm / beatOf(bar.signature).quarters) * 10) / 10;
 
+/** A tempo as the clock keeps it, to a thousandth. */
+const exact = (bpm: number) => Math.round(bpm * 1000) / 1000;
+
 export const barsOf = (runs: readonly Run[]): Bar[] =>
-  runs.flatMap(({ bars, signature, bpm }) => Array.from({ length: Math.max(Math.round(bars), 0) }, () => ({ signature, bpm })));
+  runs.flatMap(({ bars, signature, bpm, to, fermata, hold }) => {
+    const count = Math.max(Math.round(bars), 0);
+    const slides = to > 0 && to !== bpm;
+    const at = (bar: number) => exact(bpm + (to - bpm) * (bar / count));
+    const held = fermata >= 1 ? { fermata: { beat: Math.min(Math.round(fermata), partsOf(signature)[0]), extra: hold > 0 ? hold : 1 } } : {};
+    return Array.from({ length: count }, (_, bar): Bar => ({ signature, bpm: slides ? at(bar) : bpm, ...(slides ? { to: at(bar + 1) } : {}), ...held }));
+  });
 
 export function runsOf(bars: readonly Bar[]): Run[] {
   const runs: Run[] = [];
-  for (const { signature, bpm } of bars) {
+  for (const { signature, bpm, to, fermata } of bars) {
     const last = runs.at(-1);
-    if (last && last.signature === signature && last.bpm === bpm) last.bars += 1;
-    else runs.push({ bars: 1, signature, bpm });
+    const plain = to === undefined && fermata === undefined;
+    if (plain && last && last.signature === signature && last.bpm === bpm && !last.to && !last.fermata) last.bars += 1;
+    // A record leaves out a field at its default.
+    else runs.push({ bars: 1, signature, bpm, ...(to === undefined ? {} : { to }), ...(fermata ? { fermata: fermata.beat, hold: fermata.extra } : {}) } as Run);
   }
   return runs;
+}
+
+/** The form of a piece as one text, the same however its record writes its runs: what a notice is about. */
+export const formText = (sections: readonly Section[]) => JSON.stringify(sections.map(({ id, name, bars }) => [id, name, barsOf(bars)]));
+
+/** The tempo a bar ends at. */
+export const endOf = (bar: Bar) => bar.to ?? bar.bpm;
+/** The ticks one count of a time signature is long, and the tick in its bar a count, from 1, starts at. */
+export const countOf = (signature: string) => (4 * BEAT) / partsOf(signature)[1];
+/** How often the tempo steps along a straight line: every sixteenth. */
+const STEP = BEAT / 4;
+
+/**
+ * The tempo through one bar, from its tick 0: steady, or in steps along its straight line, each
+ * at the tempo of its middle, and slower through the count of its fermata by the beats that holds.
+ */
+export function temposOf(bar: Bar): { tick: number; bpm: number }[] {
+  const length = ticksOf(bar.signature);
+  const count = countOf(bar.signature);
+  const held = bar.fermata ? { from: (bar.fermata.beat - 1) * count, to: bar.fermata.beat * count, by: count / (count + bar.fermata.extra * beatOf(bar.signature).quarters * BEAT) } : undefined;
+  const cuts = new Set([0, ...(held ? [held.from, held.to] : [])]);
+  if (bar.to !== undefined) for (let tick = STEP; tick < length; tick += STEP) cuts.add(tick);
+  const ticks = [...cuts].filter((tick) => tick < length).sort((a, b) => a - b);
+  return ticks.map((tick, index) => {
+    const middle = (tick + (ticks[index + 1] ?? length)) / 2;
+    const bpm = bar.bpm + (endOf(bar) - bar.bpm) * (bar.to === undefined ? 0 : middle / length);
+    return { tick, bpm: exact(Math.max(held && tick >= held.from && tick < held.to ? bpm * held.by : bpm, 10)) };
+  });
 }
 
 /** The tick each of `bars` starts at, from the first, and after them the tick the last ends at. */
@@ -66,8 +107,8 @@ export type Place = { start: number; length: number; bar: number; bars: number }
 
 /**
  * The piece in time, worked out from its sections: where each is, and what the clock keeps of
- * them, the time signatures as runs, a tempo change where the tempo changes, and a name at the
- * first bar of each section.
+ * them, the time signatures as runs, a tempo change where the tempo changes, in steps where it
+ * slides, and a name at the first bar of each section.
  */
 export function laidOut(sections: readonly Section[]): { places: Record<string, Place>; end: number; tempo_map: TempoMap; sections: { bar: number; name: string }[] } {
   const places: Record<string, Place> = {};
@@ -84,7 +125,7 @@ export function laidOut(sections: readonly Section[]): { places: Record<string, 
       const last = signatures.at(-1);
       if (last?.signature === each.signature) last.bars += 1;
       else signatures.push({ signature: each.signature, bars: 1 });
-      if (tempos.at(-1)?.bpm !== each.bpm) tempos.push({ tick, bpm: each.bpm });
+      for (const step of temposOf(each)) if (tempos.at(-1)?.bpm !== step.bpm) tempos.push({ tick: tick + step.tick, bpm: step.bpm });
       tick += ticksOf(each.signature);
       bar += 1;
     }
@@ -107,11 +148,16 @@ export function idFor(name: string, taken: readonly string[]): string {
 /** The bars of a section after a change, and for each bar it had before, its place among them, or `null` when it is gone. */
 export type Change = { bars: Bar[]; to: (number | null)[] };
 
-/** The bars `from` to `to` with another time signature or tempo: what `change` gives for each. */
-export const changed = (bars: readonly Bar[], from: number, to: number, change: (bar: Bar) => Partial<Bar>): Change => ({
-  bars: bars.map((bar, index) => (index >= from && index <= to ? { ...bar, ...change(bar) } : bar)),
+/** The bars `from` to `to` each as `change` gives it: another time signature, tempo or fermata. */
+export const changed = (bars: readonly Bar[], from: number, to: number, change: (bar: Bar, index: number) => Bar): Change => ({
+  bars: bars.map((bar, index) => (index >= from && index <= to ? change(bar, index) : bar)),
   to: bars.map((_, index) => index),
 });
+/** A bar at the tempo `from`, steady, or reaching `to` at its end. */
+export const paced = ({ to: _, ...bar }: Bar, from: number, to = from): Bar => ({ ...bar, bpm: exact(from), ...(exact(to) === exact(from) ? {} : { to: exact(to) }) });
+/** A bar with the fermata `fermata`, kept on a count it has, or with none. */
+export const held = ({ fermata: _, ...bar }: Bar, fermata: Fermata | undefined): Bar =>
+  fermata ? { ...bar, fermata: { beat: Math.min(Math.max(Math.round(fermata.beat), 1), partsOf(bar.signature)[0]), extra: fermata.extra } } : bar;
 /** `added` put in before the bar `at`, or after the last. */
 export const inserted = (bars: readonly Bar[], at: number, added: readonly Bar[]): Change => ({
   bars: [...bars.slice(0, at), ...added, ...bars.slice(at)],

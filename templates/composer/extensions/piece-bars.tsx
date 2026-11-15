@@ -1,24 +1,27 @@
-import { Button, Circle, For, Fragment, h, Label, Line, memo, now, Rect, Show, Space, Text, untrack, type Drag, type Live, type Num, type Press, type SpaceValues } from "./sdk";
-import { addBar, askSignature, askTempo, choiceMenu, choiceOf, chooseRows, clearChosen } from "./piece-choice";
+import { Arc, Button, Circle, For, Fragment, h, Label, Line, memo, now, Rect, Show, Space, Text, untrack, type Drag, type Live, type Num, type Press, type SpaceValues } from "./sdk";
+import { addBar, askSignature, askSlide, askTempo, choiceMenu, choiceOf, chooseRows, clearChosen, fermataMenu, moveFermata } from "./piece-choice";
 import { moveSection } from "./piece-edits";
-import { beatOf, tempoOf } from "./piece-form";
+import { beatOf, countOf, endOf, formText, tempoOf, type Bar } from "./piece-form";
 import { ACROSS, AFTER, barAtTick, chooseBars, clamp, colourOf, DIM, HEADER, LEAD, LOW_ROW, MARKS, muted, ROW, ZOOM, type Page } from "./piece-page";
 import { addSectionAtEnd, chooseSection, nameSection, sectionMenu } from "./piece-sections";
 import { addTrack } from "./piece-tracks";
 
 // The whole piece on one line, as a score's continuous view: over the rows a band of marks, with
-// the section names, the time signatures and tempos where they change, and the bar numbers; under
-// it a row of notes per instrument. Across, a unit is a tick; the rows scroll and zoom, the band
+// the section names, the time signatures and tempos where they change, a line where the tempo
+// slows down or speeds up, the bar numbers and the fermatas; under it a row of notes per instrument. Across, a unit is a tick; the rows scroll and zoom, the band
 // follows them.
 
 /** Where the lines of the band start: the section names, the two digits of a time signature, a tempo, the bar numbers. */
-const [NAME_Y, TOP_DIGIT, BOTTOM_DIGIT, TEMPO_Y, NUMBER_Y] = [8, 34, 50, 43, 76];
+const [NAME_Y, TOP_DIGIT, BOTTOM_DIGIT, TEMPO_Y, NUMBER_Y] = [7, 28, 41, 35, 63];
 /** Where the double line at a section's end starts, under the names; and the bar-number line, where chosen whole bars show, as a score's bar track. */
-const [LINES_Y, TRACK_Y] = [30, NUMBER_Y - 5];
-/** The points a bar's number needs before the next one. */
-const NUMBER_ROOM = 28;
-/** About how many points a character takes: of a label, of a bold label, of a bold heading, of a bold title digit. */
-const [LABEL_CHAR, BOLD_LABEL_CHAR, BOLD_CHAR, DIGIT] = [5.6, 6.6, 7.8, 9.5];
+const [LINES_Y, TRACK_Y] = [28, NUMBER_Y - 3];
+/** The points a bar's number needs before the next one, and before a fermata on its bar; and which bars keep theirs as the room gets less, as a score numbers every fifth or tenth. */
+const NUMBER_ROOM = 44;
+const NUMBERED = [1000, 500, 100, 50, 10, 5, 1];
+/** About how many points a character takes: of a label, of a bold label, of a bold digit of a time signature. */
+const [LABEL_CHAR, BOLD_LABEL_CHAR, DIGIT] = [5.6, 6.6, 8.4];
+/** A fermata, in the line of the bar numbers: where the middle of its arc is, and its radius. */
+const [FERMATA_Y, FERMATA] = [NUMBER_Y + 8, 6];
 const HINT = "Double-click a bar to write notes";
 /** Where the piece opens: whole when a bar of 4/4 keeps this many points, else at zoom 1. */
 const NARROWEST = 40;
@@ -32,38 +35,46 @@ const not = (value: Live) => value.negate().plus(1);
 /** A live 0, for a mark with no time signature. */
 const NONE = now.tick.times(0);
 
-/** A mark at a bar where the time signature or the tempo changes: the forms it shows, from the longest, each with the points it needs. */
+const said = (bar: Bar, bpm = bar.bpm) => `${beatOf(bar.signature).sign} = ${tempoOf({ ...bar, bpm })}`;
+
+/**
+ * A mark at a bar where the time signature or the tempo changes: the forms it shows, from the
+ * longest, each with the points it needs. Bars that slow down or speed up along one straight line
+ * have one mark, `rit.` or `accel.`, and the bar after them says its tempo again.
+ */
 function marksOf({ all, end }: Page) {
   const { bars, starts } = all();
-  const said = (bar: (typeof bars)[number]) => `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`;
-  const changes = bars.flatMap((bar, index) => {
-    const before = bars[index - 1];
-    const signature = !before || before.signature !== bar.signature;
-    const tempo = !before || said(before) !== said(bar);
-    return signature || tempo ? [{ index, tick: starts[index]!, bar, signature, tempo }] : [];
-  });
-  /** The bars a mark stands for: from its bar up to the next whose time signature, or tempo, differs from it. */
-  const runOf = (index: number, same: (bar: (typeof bars)[number]) => string) => {
-    const next = bars.findIndex((bar, at) => at > index && same(bar) !== same(bars[index]!));
+  const slides = (index: number) => bars[index]?.to !== undefined;
+  const goesOn = (index: number) => slides(index) && slides(index - 1) && bars[index - 1]!.to === bars[index]!.bpm;
+  const tempoAt = (index: number) => index === 0 || (slides(index) ? !goesOn(index) : slides(index - 1) || said(bars[index - 1]!) !== said(bars[index]!));
+  const signatureAt = (index: number) => index === 0 || bars[index - 1]!.signature !== bars[index]!.signature;
+  /** The bars a mark stands for: from its bar up to the next with a mark of its kind. */
+  const runOf = (index: number, marked: (index: number) => boolean) => {
+    const next = bars.findIndex((_, at) => at > index && marked(at));
     return { from: index, to: next < 0 ? bars.length - 1 : next - 1 };
   };
+  const changes = bars.flatMap((bar, index) => (signatureAt(index) || tempoAt(index) ? [{ index, tick: starts[index]!, bar, signature: signatureAt(index), tempo: tempoAt(index) }] : []));
   return changes.map((change, at) => {
-    const [beats, note] = change.bar.signature.split("/");
+    const { bar, index } = change;
+    const [beats, note] = bar.signature.split("/");
     const signatureWidth = Math.max(beats!.length, note!.length) * DIGIT;
     const lead = change.signature ? signatureWidth + 8 : 0;
-    const full = said(change.bar);
-    const short = String(tempoOf(change.bar));
+    const tempoRun = runOf(index, tempoAt);
+    const [last, next] = [bars[tempoRun.to]!, bars[tempoRun.to + 1]];
+    const sliding = change.tempo && slides(index);
+    const texts = !change.tempo ? [] : sliding ? [endOf(last) < bar.bpm ? "rit." : "accel."] : [said(bar), String(tempoOf(bar))];
     const forms = [
-      ...(change.tempo ? [{ signature: change.signature, tempo: full, width: 6 + lead + full.length * BOLD_CHAR + 8 }] : []),
-      ...(change.tempo ? [{ signature: change.signature, tempo: short, width: 6 + lead + short.length * BOLD_CHAR + 8 }] : []),
+      ...texts.map((tempo) => ({ tempo, width: 6 + lead + tempo.length * LABEL_CHAR + 8 })),
       // The time signature alone, with a dot for a tempo that changes there.
-      ...(change.signature ? [{ signature: true, tempo: "", width: change.tempo ? 6 + lead + 6 : 6 + signatureWidth + 4 }] : []),
+      ...(change.signature ? [{ tempo: "", width: change.tempo ? 6 + lead + 6 : 6 + signatureWidth + 4 }] : []),
     ];
+    // The tempo a slide reaches is said at its end, unless the bar after it says it.
+    const reached = next && !slides(tempoRun.to + 1) && said(next) === said(last, endOf(last)) ? "" : String(tempoOf({ ...last, bpm: endOf(last) }));
     return {
-      ...change, signatureWidth, lead, forms, beats: beats!, note: note!,
+      ...change, signatureWidth, lead, forms, beats: beats!, note: note!, tempoRun,
       room: (changes[at + 1]?.tick ?? end()) - change.tick,
-      signatureRun: runOf(change.index, (bar) => bar.signature),
-      tempoRun: runOf(change.index, said),
+      signatureRun: runOf(index, signatureAt),
+      slide: sliding ? { end: starts[tempoRun.to + 1]!, reached } : null,
     };
   });
 }
@@ -113,9 +124,10 @@ const QuietButton = ({ space, id, x, y, text, width, shown, onClick, large = fal
 /**
  * The band over the rows. A press on a bar chooses it whole, all instruments, shift-press or a
  * drag a range, and puts the playhead there; a right press opens the menu of the chosen bars. A
- * click on a time signature or a tempo types it for the bars it stands for, a right press chooses
- * its bar as one over it does. A section's name chooses its bars, a double click names it, a
- * right press opens its menu, a drag moves it.
+ * click on a time signature, a tempo or a slide types it for the bars it stands for, a right press
+ * chooses its bar as one over it does. A click on a fermata opens how long it holds, a drag moves
+ * it to another count. A section's name chooses its bars, a double click names it, a right press
+ * opens its menu, a drag moves it.
  */
 export const Marks = ({ page }: { page: Page }) => {
   const { memory, all, starts, end, barAt, space, sections } = page;
@@ -129,11 +141,34 @@ export const Marks = ({ page }: { page: Page }) => {
   };
   /** 1 while the number of bar `index` shows: zoomed out, every second, fourth, eighth … bar keeps its room. */
   const numberShows = (index: number) => {
-    if (index === 0) return 1;
     const tick = starts()[index] ?? 0;
-    const apart = index & -index;
-    return fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
+    const apart = NUMBERED.find((every) => (index + 1) % every === 0)!;
+    const room = index === 0 ? not(NONE) : fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
+    // Not under the fermata of its bar.
+    const fermata = all().bars[index]?.fermata;
+    return fermata ? room.times(fits(page, (fermata.beat - 0.5) * countOf(all().bars[index]!.signature), 28)) : room;
   };
+  const fermatas = memo(() => all().bars.flatMap((bar, index) => (bar.fermata ? [{ index, x: starts()[index]! + (bar.fermata.beat - 0.5) * countOf(bar.signature) }] : [])));
+  // A fermata carried along the band lands on the count it is let go on.
+  let held: number | null = null;
+  const hold = now.drag("fermata");
+  const holdDrag: Drag = {
+    id: "fermata",
+    axis: "x",
+    onEnd: ({ x }) => {
+      const from = held;
+      held = null;
+      if (from !== null) moveFermata(page, from, clamp(x, 0, end() - 1));
+    },
+  };
+  const pressFermata = (index: number) => ({ button }: Press) => {
+    held = index;
+    if (button === "right") void fermataMenu(page, index);
+  };
+  const fermataSign = (x: Num | (() => Num), opacity: Num | (() => Num)) => [
+    <Arc x={x} y={FERMATA_Y} radius={FERMATA} from={-0.25} to={0.25} color="text" width={1.5} opacity={opacity} />,
+    <Circle x={x} y={FERMATA_Y - 2} radius={1.5} color="text" opacity={opacity} />,
+  ];
   const sweep = now.drag("bars");
   const sweepDrag: Drag = {
     id: "bars",
@@ -153,7 +188,7 @@ export const Marks = ({ page }: { page: Page }) => {
     const among = at !== null && at.rows === null && bar >= at.from && bar <= at.to;
     if (button === "right") {
       if (!among) chooseBars(page, bar, bar);
-      void choiceMenu(page);
+      void choiceMenu(page, x);
     } else if (shift && at !== null) chooseBars(page, Math.min(at.from, bar), Math.max(at.to, bar));
     else chooseBars(page, bar, bar);
   };
@@ -187,7 +222,7 @@ export const Marks = ({ page }: { page: Page }) => {
   };
   const clickName = (id: string) => ({ clicks }: Press) => (clicks === 2 ? void nameSection(page, id) : chooseSection(page, id));
   // Not after an undo, which nothing here hears: the sections are then no longer as that edit left them.
-  const notice = () => (memory.notice?.form === JSON.stringify(sections()) ? memory.notice.text : null);
+  const notice = () => (memory.notice?.form === formText(sections() as Parameters<typeof formText>[0]) ? memory.notice.text : null);
   const repeat = () => repeatSpan(page);
   const playhead = now.tick.plus(space.pointX.times(0.5));
   const after = (points: number) => () => space.pointX.times(points).plus(end());
@@ -239,28 +274,45 @@ export const Marks = ({ page }: { page: Page }) => {
           // A right press chooses the bar of the mark, as one on the band over it does.
           const pressMark = (type: () => unknown) => (event: Press) => (event.button === "left" ? void type() : press({ ...event, x: mark.tick }));
           const digit = (text: string, y: number) => (
-            <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="title" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureShows} />
+            <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="body" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureShows} />
           );
+          const typeTempo = pressMark(() => (mark.slide ? askSlide : askTempo)(page, mark.tempoRun));
+          // The line of a slide, from its word to where it ends, with the tempo it reaches or a hook.
+          const slide = (() => {
+            if (!mark.slide) return [];
+            const { end, reached } = mark.slide;
+            const [word, number] = [mark.forms[0]!.width, reached.length * LABEL_CHAR + (reached ? 6 : 0)];
+            const lineShows = shown[0]!.times(fits(page, end - mark.tick, word + 12));
+            const numberShows = reached ? shown[0]!.times(fits(page, end - mark.tick, word + number + 14)) : NONE;
+            const [y, lineEnd] = [TEMPO_Y + 8, () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end)];
+            return [
+              <Line from={() => [left(word - 4)(), y] as const} to={() => [lineEnd(), y] as const} color="text-muted" width={1} opacity={lineShows} />,
+              <Line from={() => [lineEnd(), y] as const} to={() => [lineEnd(), y + 5] as const} color="text-muted" width={1} opacity={lineShows.times(not(numberShows))} />,
+              <Label x={() => space.pointX.times(-5).plus(end)} y={TEMPO_Y} align="right" text={reached} color="text-muted" opacity={numberShows} />,
+              <Rect key={`slide-${mark.index}`} x={left(word - 4)} y={TOP_DIGIT - 2} width={() => space.pointX.times(-word).plus(end - mark.tick).times(lineShows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />,
+            ];
+          })();
           return [
             ...(mark.signature
               ? [
                   digit(mark.beats, TOP_DIGIT), digit(mark.note, BOTTOM_DIGIT),
-                  <Rect key={`signature-${mark.index}`} x={left(2)} y={TOP_DIGIT - 2} width={() => space.pointX.times(mark.signatureWidth + 8).times(signatureShows)} height={36} color="none" cursor="pointer"
+                  <Rect key={`signature-${mark.index}`} x={left(2)} y={TOP_DIGIT - 2} width={() => space.pointX.times(mark.signatureWidth + 8).times(signatureShows)} height={30} color="none" cursor="pointer"
                     onPress={pressMark(() => askSignature(page, mark.signatureRun))} />,
                 ]
               : []),
+            ...slide,
             ...mark.forms.flatMap((form, index) =>
               form.tempo === "" && !mark.tempo
                 ? []
                 : [
                     form.tempo === ""
-                      ? <Circle x={left(6 + mark.lead + 2.5)} y={(TOP_DIGIT + BOTTOM_DIGIT) / 2 + 8} radius={2.5} color="text-secondary" opacity={shown[index]} />
-                      : <Label x={left(6 + mark.lead)} y={TEMPO_Y} variant="heading" text={[{ text: form.tempo, weight: "semibold" }]} color="text" opacity={shown[index]} />,
-                    <Rect key={`tempo-${mark.index}-${index}`} x={left(2 + mark.lead)} y={TOP_DIGIT - 2} width={space.pointX.times(form.width - mark.lead - 4).times(shown[index]!)} height={36} color="none" cursor="pointer"
-                      onPress={pressMark(() => askTempo(page, mark.tempoRun))} />,
+                      ? <Circle x={left(6 + mark.lead + 2.5)} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={shown[index]} />
+                      : <Label x={left(6 + mark.lead)} y={TEMPO_Y} text={form.tempo} color="text-secondary" opacity={shown[index]} />,
+                    <Rect key={`tempo-${mark.index}-${index}`} x={left(2 + mark.lead)} y={TOP_DIGIT - 2} width={space.pointX.times(form.width - mark.lead - 4).times(shown[index]!)} height={30} color="none" cursor="pointer"
+                      onPress={typeTempo} />,
                   ],
             ),
-            <Circle x={left(8)} y={(TOP_DIGIT + BOTTOM_DIGIT) / 2 + 8} radius={2.5} color="text-secondary" opacity={dot} />,
+            <Circle x={left(8)} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={dot} />,
           ];
         }}
       </For>
@@ -269,6 +321,14 @@ export const Marks = ({ page }: { page: Page }) => {
           <Label x={() => space.pointX.times(4).plus(tick)} y={NUMBER_Y} text={() => String(index() + 1)} color={() => (inChosen(index()) ? "text" : "text-muted")} opacity={() => numberShows(index())} />
         )}
       </For>
+      <For each={fermatas}>
+        {(fermata) => [
+          ...fermataSign(fermata.x, 1),
+          <Rect key={`fermata-${fermata.index}`} x={() => space.pointX.times(-9).plus(fermata.x)} y={NUMBER_Y} width={space.pointX.times(18)} height={MARKS - NUMBER_Y} color="none" cursor="pointer"
+            drag={holdDrag} onPress={pressFermata(fermata.index)} onClick={() => void fermataMenu(page, fermata.index)} />,
+        ]}
+      </For>
+      {fermataSign(hold.x, () => hold.active.times(hold.dx.abs().gt(0)).times(0.5))}
       <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+" width={24} large shown={() => 1} onClick={() => addBar(page, "end")} />
       <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
@@ -316,7 +376,7 @@ export const Rows = ({ page }: { page: Page }) => {
     if (button === "right") {
       const among = at && (at.rows === null || at.rows.includes(each.name)) && bar >= at.from && bar <= at.to;
       if (!among) chooseRows(page, bar, bar, [each.name]);
-      void choiceMenu(page);
+      void choiceMenu(page, x);
     } else if (clicks === 2) openEditor(each.name);
     else if (shift && at?.rows) {
       const indexes = [names().indexOf(each.name), names().indexOf(at.rows[0]!), names().indexOf(at.rows.at(-1)!)];

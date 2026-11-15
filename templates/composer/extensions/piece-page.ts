@@ -9,7 +9,7 @@ import type { track } from "./track";
 
 // The band of marks over the rows, rows of 64 points with heads 176 wide. The rows under the
 // heads, of the returns and the master, are 40.
-export const MARKS = 98;
+export const MARKS = 82;
 export const ROW = 64;
 export const HEADER = 176;
 export const LOW_ROW = 40;

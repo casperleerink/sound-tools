@@ -61,7 +61,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
-The templates follow these rules; their own gestures and keys are in `templates/*/extensions`. The Composer differs: the whole piece is one line read as a score; time signatures, tempos and section names sit on the bars, typed in place.
+The templates follow these rules; their own gestures and keys are in `templates/*/extensions`. The Composer differs: the whole piece is one line read as a score; time signatures, tempos, `rit.`, fermatas and section names sit on the bars, edited in place. Its tempo changes at once or in a straight line, not along a curve.
 
 ### Gestures
 

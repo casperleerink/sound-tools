@@ -1,6 +1,6 @@
 import { batch, type Frozen } from "./sdk";
 import type { Piece } from "./piece";
-import { barsOf, beatOf, changed, clear, fit, idFor, inserted, isEmpty, laidOut, NO_MUSIC, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Music } from "./piece-form";
+import { barsOf, beatOf, changed, clear, endOf, fit, formText, held, idFor, inserted, isEmpty, laidOut, NO_MUSIC, paced, put, removed, retime, runsOf, sliceOf, startsOf, ticksOf, type Bar, type Change, type Fermata, type Music } from "./piece-form";
 
 // What the piece does to its form: each edit changes the sections in its record, moves the music
 // of every instrument along, and puts the parts and the clock where the sections now are, as one
@@ -90,7 +90,7 @@ function editTelling(piece: Piece, label: string, ids: readonly string[], change
     const before = notesIn(draft);
     change(draft);
     told.removed = before - notesIn(draft);
-    told.form = JSON.stringify(draft.state.sections);
+    told.form = formText(draft.state.sections);
   });
   if (told.removed > 0) {
     const text = told.removed === 1 ? "1 note did not fit and was removed. Undo brings it back." : `${told.removed} notes did not fit and were removed. Undo brings them back.`;
@@ -118,19 +118,49 @@ function rebar(draft: Draft, id: string, change: (bars: Bar[]) => Change): { was
 /** Gives the bars of `spans` another time signature: a bar made longer pushes what comes after it. */
 export const setSignature = (piece: Piece, spans: readonly Span[], signature: string) =>
   editTelling(piece, "Change the time signature", spans.map((span) => span.id), (draft) => {
-    for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, () => ({ signature })));
+    for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, (bar) => held({ ...bar, signature }, bar.fermata)));
   });
 
-/** Gives the bars of `spans` the tempo `tempo`, each in its own beat: 80 is 80 dotted quarters a minute in a bar of 6/8. */
+/** Gives the bars of `spans` the tempo `tempo`, steady, each in its own beat: 80 is 80 dotted quarters a minute in a bar of 6/8. */
 export const setTempo = (piece: Piece, spans: readonly Span[], tempo: number) =>
   edit(piece, "Change the tempo", (draft) => {
-    for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, (bar) => ({ bpm: tempo * beatOf(bar.signature).quarters })));
+    for (const { id, from, to } of spans) rebar(draft, id, (bars) => changed(bars, from, to, (bar) => paced(bar, tempo * beatOf(bar.signature).quarters)));
   });
 
-/** Adds `count` empty bars before the bar `at` of a section, or after its last: each as the bar before it, or the first. */
+/**
+ * Has the tempo move over the bars of `spans` in a straight line, from the tempo the first starts
+ * at to `tempo` at the end of the last, in the beat of the last: a ritardando or an accelerando.
+ * With `null` they are steady again, at the tempo the first starts at.
+ */
+export const setSlide = (piece: Piece, spans: readonly Span[], tempo: number | null) =>
+  edit(piece, tempo === null ? "Keep the tempo steady" : "Change the tempo gradually", (draft) => {
+    const chosen = spans.flatMap(({ id, from, to }) => barsOf(sectionOf(draft, id)?.bars ?? []).slice(from, to + 1));
+    const [first, last] = [chosen[0], chosen.at(-1)];
+    if (!first || !last) return;
+    const [ends, target] = [startsOf(chosen), tempo === null ? first.bpm : tempo * beatOf(last.signature).quarters];
+    const at = (bar: number) => first.bpm + (target - first.bpm) * (ends[bar]! / ends.at(-1)!);
+    let done = 0;
+    for (const { id, from, to } of spans) {
+      const before = done - from;
+      rebar(draft, id, (bars) => changed(bars, from, to, (bar, index) => paced(bar, at(before + index), at(before + index + 1))));
+      done += to - from + 1;
+    }
+  });
+
+/** Puts a fermata on the bar `bar` of each section named, or with `null` takes it off: one undo step, so one moves from a bar to another. */
+export const setFermatas = (piece: Piece, label: string, changes: readonly { id: string; bar: number; fermata: Fermata | null }[]) =>
+  edit(piece, label, (draft) => {
+    for (const { id, bar, fermata } of changes) rebar(draft, id, (bars) => changed(bars, bar, bar, (each) => held(each, fermata ?? undefined)));
+  });
+
+/** Adds `count` empty bars before the bar `at` of a section, or after its last: each as the bar before it ends, or the first starts, with no fermata. */
 export const addBars = (piece: Piece, id: string, at: number, count = 1) =>
   edit(piece, count === 1 ? "Add a bar" : "Add bars", (draft) =>
-    void rebar(draft, id, (bars) => inserted(bars, at, Array.from({ length: count }, () => ({ ...(bars[at - 1] ?? bars[0] ?? { signature: "4/4", bpm: 120 }) })))),
+    void rebar(draft, id, (bars) => {
+      const like = bars[at - 1] ?? bars[0];
+      const bar: Bar = like ? { signature: like.signature, bpm: bars[at - 1] ? endOf(like) : like.bpm } : { signature: "4/4", bpm: 120 };
+      return inserted(bars, at, Array.from({ length: count }, () => ({ ...bar })));
+    }),
   );
 
 /** Takes the bars of `spans` out, with their music: what comes after moves up, and a section that loses all its bars goes. The piece keeps one bar. */
@@ -252,11 +282,12 @@ function freeNameOf(sections: readonly { readonly name: string }[]): string {
 export function addSection(piece: Piece, after: string | null): string {
   const sections = piece.state.sections;
   const at = after === null ? sections.length : sections.findIndex((section) => section.id === after) + 1 || sections.length;
-  const before = sections[at - 1]?.bars.at(-1) ?? sections[0]?.bars[0];
+  const last = barsOf(sections[at - 1]?.bars ?? []).at(-1);
+  const [signature, bpm] = last ? [last.signature, endOf(last)] : ["4/4", 120];
   const name = freeNameOf(sections);
   const id = idFor(name, takenBy(piece));
   edit(piece, "Add a section", (draft) => {
-    draft.state.sections.splice(at, 0, { id, name, bars: [{ bars: 8, signature: before?.signature ?? "4/4", bpm: before?.bpm ?? 120 }] });
+    draft.state.sections.splice(at, 0, { id, name, bars: runsOf(Array.from({ length: 8 }, () => ({ signature, bpm }))) });
   });
   return id;
 }

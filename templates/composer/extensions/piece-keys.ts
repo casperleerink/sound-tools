@@ -1,7 +1,7 @@
 import { type Action, type ActionKey } from "./sdk";
 import { chosenStart, noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { addBar, askSignature, askTempo, choiceOf, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleLoop } from "./piece-choice";
+import { addBar, askSignature, askSlide, askTempo, choiceOf, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleFermata, toggleLoop } from "./piece-choice";
 import { barsOfPiece, chooseBars, clamp, editedPart, editPart, formOf, instrumentsOf, partSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
 import { addSectionAtEnd, currentSection, moveSectionBy, nameSection, stepSection } from "./piece-sections";
@@ -116,6 +116,8 @@ export const pieceActions: Record<string, PieceAction> = {
   bars_after: on(["shift-right"], "Choose the next bar too", (tool) => stepBars(tool, 1, true)),
   bars_to_end: on(["cmd-shift-right"], "Choose up to the end of the section", chooseToEnd),
   type_tempo: on(["t"], "Type the tempo of the chosen bars, or of the bar that plays", (tool) => void askTempo(tool)),
+  type_slide: on(["alt-t"], "Type the tempo the chosen bars slow down or speed up to", (tool) => void askSlide(tool)),
+  fermata: on(["f"], "Put a fermata on the last chosen bar, or take it off", (tool) => toggleFermata(tool)),
   type_time_signature: on(["shift-t"], "Type the time signature of the chosen bars, or of the bar that plays", (tool) => void askSignature(tool)),
   music_above: on(["up"], "Choose the music of the instrument above, or the whole bars", (tool) => stepRows(tool, -1, false)),
   music_below: on(["down"], "Choose the music of the instrument below", (tool) => stepRows(tool, 1, false)),
